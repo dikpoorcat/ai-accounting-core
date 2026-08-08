@@ -1,0 +1,12 @@
+[mcp_servers.ai_accounting]
+command = "D:/GitHub/ai-accounting-core/.venv/Scripts/python.exe"
+args = ["-m", "ai_accounting.mcp_server"]
+cwd = "D:/GitHub/ai-accounting-core"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.ai_accounting.env]
+DATABASE_URL = "postgresql+psycopg://finance:finance@localhost:5432/finance"
+FINANCE_EVIDENCE_DIR = "D:/GitHub/ai-accounting-core/data/evidence"
+

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-accounting-core"
+version = "0.1.0"
+description = "Deterministic accounting kernel for Chinese small-scale VAT taxpayers"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "ai-accounting-core contributors" }]
+dependencies = [
+  "alembic>=1.16,<2",
+  "mcp>=1.13,<2",
+  "openpyxl>=3.1,<4",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.11,<2.13",
+  "pydantic-settings>=2.10,<3",
+  "sqlalchemy>=2.0.41,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.135,<7",
+  "pytest>=8.4,<10",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+  "testcontainers[postgres]>=4.10,<5",
+]
+
+[project.scripts]
+finance-mcp = "ai_accounting.mcp_server:main"
+finance-bootstrap = "ai_accounting.bootstrap:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_accounting"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = ["postgres: requires a local Docker daemon and validates PostgreSQL triggers"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

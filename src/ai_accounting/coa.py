@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import uuid
+from datetime import date
+from decimal import Decimal
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .models import Account, Organization, TaxRule
+
+DEFAULT_ACCOUNTS = [
+    ("1001", "库存现金", "asset", "debit", "cash"),
+    ("1002", "银行存款", "asset", "debit", "bank"),
+    ("1122", "应收账款", "asset", "debit", "accounts_receivable"),
+    ("1221", "其他应收款", "asset", "debit", "employee_receivable"),
+    ("2202", "应付账款", "liability", "credit", "accounts_payable"),
+    ("2203", "合同负债及预收款", "liability", "credit", "contract_liability"),
+    ("222101", "应交增值税", "liability", "credit", "vat_payable"),
+    ("222102", "应交附加税费", "liability", "credit", "surtax_payable"),
+    ("224101", "其他应付款—员工", "liability", "credit", "employee_payable"),
+    ("2241", "其他应付款—股东", "liability", "credit", "owner_payable"),
+    ("3001", "实收资本", "equity", "credit", "paid_in_capital"),
+    ("5001", "主营业务收入", "revenue", "credit", "service_revenue"),
+    ("5403", "税金及附加", "expense", "debit", "taxes_and_surcharges"),
+    ("5602", "管理费用", "expense", "debit", "general_expense"),
+    ("5603", "财务费用", "expense", "debit", "finance_expense"),
+    ("6301", "营业外收入", "revenue", "credit", "tax_relief_income"),
+]
+
+
+TAX_RULES = [
+    {
+        "code": "small_scale_vat_2026_2027",
+        "jurisdiction": "CN",
+        "effective_from": date(2026, 1, 1),
+        "effective_to": date(2027, 12, 31),
+        "version": "2026.1",
+        "source_url": "https://fgk.chinatax.gov.cn/zcfgk/c100012/c5247426/content.html",
+        "parameters": {
+            "monthly_threshold_fen": 10_000_000,
+            "quarterly_threshold_fen": 30_000_000,
+            "standard_rate_percent": "3",
+            "reduced_rate_percent": "1",
+            "threshold_operator": "strictly_below",
+        },
+    },
+    {
+        "code": "small_scale_surtax_2023_2027",
+        "jurisdiction": "CN",
+        "effective_from": date(2023, 1, 1),
+        "effective_to": date(2027, 12, 31),
+        "version": "2023.12",
+        "source_url": "https://www.mof.gov.cn/jrttts/202308/t20230802_3899936.htm",
+        "parameters": {
+            "small_tax_reduction_factor": "0.5",
+            "education_surcharge_rate": "0.03",
+            "local_education_surcharge_rate": "0.02",
+            "basis_source_urls": [
+                "https://fgk.chinatax.gov.cn/zcfgk/c100009/c5193055/content.html",
+                "https://www.chinatax.gov.cn/chinatax/n810214/n810641/n2985871/c101728/c5160742/content.html",
+            ],
+        },
+    },
+]
+
+
+def seed_organization(
+    session: Session,
+    *,
+    name: str,
+    filing_cycle: str = "quarterly",
+    jurisdiction: str = "CN",
+    urban_maintenance_rate: Decimal = Decimal("0.07"),
+    org_id: uuid.UUID | None = None,
+) -> Organization:
+    organization = Organization(
+        id=org_id or uuid.uuid4(),
+        name=name,
+        filing_cycle=filing_cycle,
+        jurisdiction=jurisdiction,
+        urban_maintenance_rate=urban_maintenance_rate,
+    )
+    session.add(organization)
+    session.flush()
+    for code, account_name, category, normal_side, system_role in DEFAULT_ACCOUNTS:
+        session.add(
+            Account(
+                org_id=organization.id,
+                code=code,
+                name=account_name,
+                category=category,
+                normal_side=normal_side,
+                system_role=system_role,
+            )
+        )
+    for rule_data in TAX_RULES:
+        existing = session.scalar(
+            select(TaxRule).where(
+                TaxRule.code == rule_data["code"], TaxRule.version == rule_data["version"]
+            )
+        )
+        if existing is None:
+            session.add(TaxRule(**rule_data))
+    session.flush()
+    return organization
+
+
+def get_account_by_role(session: Session, org_id: uuid.UUID, role: str) -> Account:
+    account = session.scalar(
+        select(Account).where(
+            Account.org_id == org_id, Account.system_role == role, Account.active.is_(True)
+        )
+    )
+    if account is None:
+        raise ValueError(f"missing active account mapping for system role: {role}")
+    return account
+
+
+def get_account_by_code(session: Session, org_id: uuid.UUID, code: str) -> Account:
+    account = session.scalar(
+        select(Account).where(
+            Account.org_id == org_id, Account.code == code, Account.active.is_(True)
+        )
+    )
+    if account is None:
+        raise ValueError(f"unknown or inactive account code: {code}")
+    return account
