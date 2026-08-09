@@ -36,8 +36,8 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                 event = BusinessEvent(
                     org_id=organization.id,
                     idempotency_key="unbalanced-direct-write",
-                    event_type="test",
-                    status="posted",
+                    event_type="expense_cash",
+                    status="draft",
                     description="应在提交时失败",
                     facts={},
                     business_date=date(2026, 8, 8),
@@ -52,12 +52,14 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                     voucher_number="202608-9998",
                     posting_date=date(2026, 8, 8),
                     description="不平凭证",
+                    status="draft",
                 )
                 session.add(voucher)
                 session.flush()
                 bank = get_account_by_role(session, organization.id, "bank")
                 session.add(
                     VoucherLine(
+                        org_id=organization.id,
                         voucher_id=voucher.id,
                         line_number=1,
                         account_id=bank.id,
@@ -65,6 +67,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                         credit_fen=0,
                     )
                 )
+                voucher.status = "posted"
                 with pytest.raises(DBAPIError):
                     session.commit()
 
@@ -73,8 +76,8 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                 event = BusinessEvent(
                     org_id=organization.id,
                     idempotency_key="balanced-direct-write",
-                    event_type="test",
-                    status="posted",
+                    event_type="expense_cash",
+                    status="draft",
                     description="合法凭证",
                     facts={},
                     business_date=date(2026, 8, 8),
@@ -89,6 +92,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                     voucher_number="202608-9999",
                     posting_date=date(2026, 8, 8),
                     description="合法凭证",
+                    status="draft",
                 )
                 session.add(voucher)
                 session.flush()
@@ -97,6 +101,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                 session.add_all(
                     [
                         VoucherLine(
+                            org_id=organization.id,
                             voucher_id=voucher.id,
                             line_number=1,
                             account_id=bank.id,
@@ -104,6 +109,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                             credit_fen=0,
                         ),
                         VoucherLine(
+                            org_id=organization.id,
                             voucher_id=voucher.id,
                             line_number=2,
                             account_id=revenue.id,
@@ -112,6 +118,9 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                         ),
                     ]
                 )
+                session.flush()
+                voucher.status = "posted"
+                event.status = "posted"
                 session.commit()
                 voucher.description = "禁止修改"
                 with pytest.raises(DBAPIError):

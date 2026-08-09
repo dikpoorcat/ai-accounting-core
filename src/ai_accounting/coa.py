@@ -26,6 +26,33 @@ DEFAULT_ACCOUNTS = [
     ("5602", "管理费用", "expense", "debit", "general_expense"),
     ("5603", "财务费用", "expense", "debit", "finance_expense"),
     ("6301", "营业外收入", "revenue", "credit", "tax_relief_income"),
+    ("560201", "管理费用—职工薪酬", "expense", "debit", "payroll_management_expense"),
+    ("560101", "销售费用—职工薪酬", "expense", "debit", "payroll_sales_expense"),
+    ("540101", "主营业务成本—职工薪酬", "expense", "debit", "payroll_service_cost"),
+    ("221101", "应付职工薪酬—工资", "liability", "credit", "employee_salary_payable"),
+    ("221102", "应付职工薪酬—单位社保", "liability", "credit", "employer_social_payable"),
+    (
+        "221103",
+        "应付职工薪酬—单位住房公积金",
+        "liability",
+        "credit",
+        "employer_housing_fund_payable",
+    ),
+    (
+        "224102",
+        "其他应付款—代扣个人社保",
+        "liability",
+        "credit",
+        "withheld_employee_social_payable",
+    ),
+    (
+        "224103",
+        "其他应付款—代扣个人住房公积金",
+        "liability",
+        "credit",
+        "withheld_employee_housing_fund_payable",
+    ),
+    ("222103", "应交个人所得税", "liability", "credit", "individual_income_tax_payable"),
 ]
 
 

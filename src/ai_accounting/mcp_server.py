@@ -1,41 +1,58 @@
 from __future__ import annotations
 
+import logging
 import uuid
+from collections.abc import Callable
+from functools import wraps
 from typing import Any
 
 import mcp.server.fastmcp.server as fastmcp_server
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import ValidationError
+from pydantic import ConfigDict, ValidationError
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
-from .bank_import import import_bank_statement
+from .bank_import import BankStatementInputError, import_bank_statement
 from .database import SessionLocal
 from .evidence import register_evidence
 from .models import (
     Account,
     AuditLog,
     BankTransaction,
+    BankTransactionMatch,
     BusinessEvent,
+    Evidence,
     OpenItem,
     Organization,
+    PayrollBatch,
+    PayrollEventLink,
     TaxRule,
     Voucher,
+    event_evidence,
 )
 from .schemas import (
     DISABLED_EVENT_TYPES,
     EVENT_REQUIREMENTS,
     INTERNAL_EVENT_TYPES,
+    ConfirmPayrollRequest,
     EventType,
     ImportBankStatementRequest,
+    PreviewPayrollRequest,
     RecordEventRequest,
+    RegisterEmployeePayrollProfileVersionRequest,
+    RegisterEmployeeRequest,
     RegisterEvidenceRequest,
+    RegisterPayrollOpeningStateRequest,
+    RegisterPayrollPolicyVersionRequest,
     ReverseEventRequest,
     TaxPeriodRequest,
 )
 from .service import FinanceService
+
+logger = logging.getLogger(__name__)
 
 # mcp 1.29 ships a generic Settings forward reference that pydantic-settings 2.15
 # cannot resolve automatically. Rebuild it with the defining module's namespace
@@ -62,18 +79,140 @@ REVERSAL_WRITE = ToolAnnotations(
 )
 
 
+def _database_error_code(exc: SQLAlchemyError) -> str:
+    """Classify database exceptions without inspecting their SQL text or parameters."""
+    original = getattr(exc, "orig", None)
+    sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    sqlite_errorcode = getattr(original, "sqlite_errorcode", None)
+
+    if isinstance(exc, IntegrityError):
+        if sqlstate == "23505" or sqlite_errorcode in {1555, 2067}:
+            return "UNIQUE_CONFLICT"
+        return "CONSTRAINT_VIOLATION"
+    if isinstance(exc, OperationalError):
+        if sqlstate in {"40001", "40P01", "55P03"} or sqlite_errorcode in {5, 6}:
+            return "CONCURRENCY_CONFLICT"
+        return "DATABASE_UNAVAILABLE"
+    if isinstance(exc, DBAPIError) and exc.connection_invalidated:
+        return "DATABASE_UNAVAILABLE"
+    return "DATABASE_OPERATION_FAILED"
+
+
 def _invalid(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, ValidationError):
         errors = [
-            {"path": ".".join(str(part) for part in item["loc"]), "message": item["msg"]}
+            {
+                "code": "VALIDATION_ERROR",
+                "path": ".".join(str(part) for part in item["loc"]),
+                "message": "invalid value",
+            }
             for item in exc.errors()
         ]
-    else:
-        errors = [{"message": str(exc)}]
+        return {"status": "rejected", "errors": errors}
+    if isinstance(exc, SQLAlchemyError):
+        error_code = _database_error_code(exc)
+        logger.warning("MCP database request failed with %s", error_code)
+        return {"status": "rejected", "errors": [error_code]}
+    if isinstance(exc, OSError):
+        return {"status": "rejected", "errors": ["INPUT_UNAVAILABLE"]}
+    if isinstance(exc, ValueError):
+        return {"status": "rejected", "errors": ["INVALID_REQUEST"]}
+    logger.warning("MCP request failed with %s", type(exc).__name__)
+    errors = ["INTERNAL_ERROR"]
     return {"status": "rejected", "errors": errors}
 
 
+def _database_error_boundary(
+    function: Callable[..., dict[str, Any]],
+) -> Callable[..., dict[str, Any]]:
+    """Translate database failures from read-only handlers before FastMCP serializes them."""
+
+    @wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return function(*args, **kwargs)
+        except SQLAlchemyError as exc:
+            return _invalid(exc)
+
+    return wrapped
+
+
+def _make_tool_inputs_strict(*tool_names: str) -> None:
+    """Make FastMCP's generated argument models reject undeclared top-level fields.
+
+    FastMCP 1.x creates dynamic argument models with Pydantic's default
+    ``extra='ignore'`` configuration.  The payroll request models already forbid
+    undeclared nested fields; this closes the otherwise-open MCP tool envelope and
+    keeps the advertised inputSchema aligned with runtime validation.
+    """
+    for tool_name in tool_names:
+        tool = mcp._tool_manager.get_tool(tool_name)
+        if tool is None:  # pragma: no cover - catches registration mistakes at import time.
+            raise RuntimeError(f"MCP tool was not registered: {tool_name}")
+        argument_model = tool.fn_metadata.arg_model
+        argument_model.model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+        argument_model.model_rebuild(force=True)
+        tool.parameters = argument_model.model_json_schema(by_alias=True)
+
+
+def _sanitize_tool_errors(*tool_names: str) -> None:
+    """Expose only stable error codes at FastMCP's outer tool boundary.
+
+    FastMCP wraps both argument-model failures and handler exceptions in
+    ``ToolError`` before serializing them.  Its default formatting includes the
+    original exception message, which can include caller input, SQL or a
+    connection string.  Preserve strict validation paths, while translating all
+    other categories into stable public codes.
+    """
+    for tool_name in tool_names:
+        tool = mcp._tool_manager.get_tool(tool_name)
+        if tool is None:  # pragma: no cover - catches registration mistakes at import time.
+            raise RuntimeError(f"MCP tool was not registered: {tool_name}")
+        original_run = tool.run
+
+        async def sanitized_run(
+            arguments: dict[str, Any],
+            context: Any = None,
+            convert_result: bool = False,
+            *,
+            _original_run: Callable[..., Any] = original_run,
+        ) -> Any:
+            try:
+                return await _original_run(
+                    arguments,
+                    context=context,
+                    convert_result=convert_result,
+                )
+            except Exception as exc:
+                # ``Tool.run`` wraps all ordinary failures in ToolError with
+                # the actual exception as its cause.  If a FastMCP version
+                # raises directly, classify that exception as well.
+                source = exc.__cause__ if isinstance(exc, ToolError) and exc.__cause__ else exc
+                if isinstance(source, ValidationError):
+                    paths = sorted(
+                        ".".join(str(part) for part in error["loc"])
+                        for error in source.errors()
+                    )
+                    raise ToolError(
+                        "VALIDATION_ERROR: " + ", ".join(paths or ["request"])
+                    ) from None
+                if isinstance(source, SQLAlchemyError):
+                    raise ToolError(_database_error_code(source)) from None
+                if isinstance(source, OSError):
+                    raise ToolError("INPUT_UNAVAILABLE") from None
+                if isinstance(source, ValueError):
+                    raise ToolError("INVALID_REQUEST") from None
+                logger.warning("MCP tool failed with %s", type(source).__name__)
+                raise ToolError("INTERNAL_ERROR") from None
+
+        # Tool is a Pydantic model and deliberately rejects ordinary runtime
+        # attributes.  A bound per-tool runner is nevertheless the narrowest
+        # hook before FastMCP serializes its otherwise-leaky ToolError.
+        object.__setattr__(tool, "run", sanitized_run)
+
+
 @mcp.tool(annotations=READ_ONLY)
+@_database_error_boundary
 def finance_get_profile(org_id: str) -> dict[str, Any]:
     """读取企业、纳税配置、系统科目映射和有效税务规则。"""
     try:
@@ -128,8 +267,12 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
         for item in EventType
         if item not in DISABLED_EVENT_TYPES and item not in INTERNAL_EVENT_TYPES
     ]
-    disabled = [item.value for item in DISABLED_EVENT_TYPES]
-    internal = [item.value for item in INTERNAL_EVENT_TYPES]
+    # ``payroll`` remains rejected by the generic event writer.  It is not a
+    # disabled product module, though: payroll has a typed, dedicated workflow
+    # below.  Report the legacy sentinel as internal so an MCP client does not
+    # conclude incorrectly that payroll is unavailable.
+    disabled = [item.value for item in DISABLED_EVENT_TYPES if item is not EventType.PAYROLL]
+    internal = [item.value for item in INTERNAL_EVENT_TYPES] + [EventType.PAYROLL.value]
     if event_type and event_type not in {item.value for item in EventType}:
         return {"status": "rejected", "errors": ["UNKNOWN_EVENT_TYPE"]}
     return {
@@ -138,7 +281,26 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
         "enabled_event_types": enabled,
         "disabled_event_types": disabled,
         "internal_event_types": internal,
-        "record_event_schema": RecordEventRequest.model_json_schema(),
+        "module_capabilities": {
+            "payroll": {
+                "status": "enabled",
+                "entry_tools": [
+                    "finance_register_employee",
+                    "finance_register_employee_profile_version",
+                    "finance_register_payroll_policy_version",
+                    "finance_register_payroll_opening_state",
+                    "finance_preview_payroll",
+                    "finance_confirm_payroll",
+                    "finance_get_payroll_batch",
+                ],
+                "generic_event_writer": "not_available",
+                "accrual_entry": "finance_confirm_payroll",
+            }
+        },
+        # Return the schema actually advertised by FastMCP, including its strict
+        # tool envelope, rather than maintaining a second model-only contract.
+        "record_event_schema": mcp._tool_manager.get_tool("finance_record_event").parameters,
+        "reverse_event_schema": mcp._tool_manager.get_tool("finance_reverse_event").parameters,
         "event_requirements": (
             EVENT_REQUIREMENTS.get(event_type) if event_type else EVENT_REQUIREMENTS
         ),
@@ -152,12 +314,11 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_register_evidence(request: dict[str, Any]) -> dict[str, Any]:
+def finance_register_evidence(request: RegisterEvidenceRequest) -> dict[str, Any]:
     """把本地文件或 base64 内容登记到 SHA-256 内容寻址证据库。"""
     try:
-        parsed = RegisterEvidenceRequest.model_validate(request)
         with SessionLocal.begin() as session:
-            evidence = register_evidence(session, parsed)
+            evidence = register_evidence(session, request)
             return {
                 "status": "registered",
                 "evidence_id": str(evidence.id),
@@ -169,17 +330,98 @@ def finance_register_evidence(request: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_import_bank_statement(request: dict[str, Any]) -> dict[str, Any]:
+def finance_import_bank_statement(request: ImportBankStatementRequest) -> dict[str, Any]:
     """按 Agent 提供的列映射导入 CSV/XLSX 银行流水并做稳定去重。"""
     try:
-        parsed = ImportBankStatementRequest.model_validate(request)
         with SessionLocal.begin() as session:
-            return {"status": "ok", **import_bank_statement(session, parsed)}
+            return {"status": "ok", **import_bank_statement(session, request)}
+    except BankStatementInputError as exc:
+        error: dict[str, str] = {"code": exc.code}
+        if exc.field is not None:
+            error["field"] = exc.field
+        return {"status": "rejected", "errors": [error]}
     except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
 
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_employee(request: RegisterEmployeeRequest) -> dict[str, Any]:
+    """登记非敏感员工主数据；不接受证件号、银行卡或自由会计科目。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).register_employee(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_employee_profile_version(
+    request: RegisterEmployeePayrollProfileVersionRequest,
+) -> dict[str, Any]:
+    """登记员工有效期工资档案版本及明确的缴费基数。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).register_employee_payroll_profile_version(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_payroll_policy_version(
+    request: RegisterPayrollPolicyVersionRequest,
+) -> dict[str, Any]:
+    """登记有官方来源、有效期和参数的工资政策版本。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).register_payroll_policy_version(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_payroll_opening_state(
+    request: RegisterPayrollOpeningStateRequest,
+) -> dict[str, Any]:
+    """登记年中启用时已知的累计个税期初状态，缺失历史不会被当作零。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).register_payroll_opening_state(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_preview_payroll(request: PreviewPayrollRequest) -> dict[str, Any]:
+    """试算并保存不可变工资草稿；资料不全时返回具体 needs_information。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).preview_payroll(request).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_payroll(request: ConfirmPayrollRequest) -> dict[str, Any]:
+    """确认草稿哈希并用固定内部模板入账，绝不接受外部借贷分录。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).confirm_payroll(request).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
 @mcp.tool(annotations=READ_ONLY)
+def finance_get_payroll_batch(org_id: uuid.UUID, batch_id: uuid.UUID) -> dict[str, Any]:
+    """读取工资草稿/正式批次、计算哈希、明细、规则轨迹与入账结果。"""
+    try:
+        with SessionLocal() as session:
+            return FinanceService(session).get_payroll_batch(org_id, batch_id)
+    except (ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_database_error_boundary
 def finance_query_context(
     org_id: str,
     counterparty_id: str | None = None,
@@ -213,6 +455,9 @@ def finance_query_context(
                     "open_amount_fen": item.original_amount_fen - item.settled_amount_fen,
                     "due_date": item.due_date.isoformat() if item.due_date else None,
                     "source_event_id": str(item.source_event_id),
+                    "payable_category": item.payable_category,
+                    "payable_agency_code": item.payable_agency_code,
+                    "insurance_kind": item.insurance_kind,
                 }
                 for item in items
             ],
@@ -255,16 +500,42 @@ def finance_query_context(
                 }
                 for row in bank
             ]
+        matches = session.scalars(
+            select(BankTransactionMatch)
+            .where(BankTransactionMatch.org_id == parsed_org)
+            .order_by(BankTransactionMatch.created_at, BankTransactionMatch.id)
+        ).all()
+        result["bank_transaction_match_history"] = [
+            {
+                "match_id": str(match.id),
+                "bank_transaction_id": str(match.bank_transaction_id),
+                "event_id": str(match.event_id),
+                "current": match.invalidated_by_event_id is None,
+                "invalidated_by_event_id": (
+                    str(match.invalidated_by_event_id)
+                    if match.invalidated_by_event_id is not None
+                    else None
+                ),
+                "invalidated_at": (
+                    match.invalidated_at.isoformat() if match.invalidated_at else None
+                ),
+            }
+            for match in matches
+        ]
         return result
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_record_event(request: dict[str, Any]) -> dict[str, Any]:
+def finance_record_event(request: RecordEventRequest) -> dict[str, Any]:
     """提交结构化业务事实；只在资料完整且规则唯一时原子入账。"""
     try:
-        parsed = RecordEventRequest.model_validate(request)
+        if request.event_type is EventType.PAYROLL:
+            return {
+                "status": "rejected",
+                "errors": ["PAYROLL_REQUIRES_SPECIALIZED_WORKFLOW"],
+            }
         with SessionLocal.begin() as session:
-            return FinanceService(session).record_event(parsed).model_dump(mode="json")
+            return FinanceService(session).record_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -282,17 +553,17 @@ def finance_calculate_tax_period(request: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=REVERSAL_WRITE)
-def finance_reverse_event(request: dict[str, Any]) -> dict[str, Any]:
+def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
     """生成关联冲正凭证；原凭证保持不变。"""
     try:
-        parsed = ReverseEventRequest.model_validate(request)
         with SessionLocal.begin() as session:
-            return FinanceService(session).reverse_event(parsed).model_dump(mode="json")
+            return FinanceService(session).reverse_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
 
 @mcp.tool(annotations=READ_ONLY)
+@_database_error_boundary
 def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
     """读取业务事实、凭证、规则轨迹、证据及审计记录。"""
     try:
@@ -314,6 +585,210 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
         logs = session.scalars(
             select(AuditLog).where(AuditLog.event_id == event.id).order_by(AuditLog.created_at)
         ).all()
+
+        # A reversal chain is a relational fact: ``reversed_by_event_id`` is
+        # the canonical source and a final reversal's PEL/evidence edges are
+        # read from their normalized tables.  Do not reconstruct this graph
+        # from ``facts`` or from a human description.
+        predecessor: BusinessEvent | None = None
+        current = event
+        backwards: list[BusinessEvent] = []
+        for _ in range(32):
+            predecessor = session.scalar(
+                select(BusinessEvent).where(
+                    BusinessEvent.org_id == parsed_org,
+                    BusinessEvent.reversed_by_event_id == current.id,
+                )
+            )
+            if predecessor is None:
+                break
+            backwards.append(predecessor)
+            current = predecessor
+        forwards: list[BusinessEvent] = []
+        current = event
+        for _ in range(32):
+            if current.reversed_by_event_id is None:
+                break
+            successor = session.scalar(
+                select(BusinessEvent).where(
+                    BusinessEvent.org_id == parsed_org,
+                    BusinessEvent.id == current.reversed_by_event_id,
+                )
+            )
+            if successor is None:
+                break
+            forwards.append(successor)
+            current = successor
+        chain_events = [*reversed(backwards), event, *forwards]
+        chain_event_ids = [item.id for item in chain_events]
+        reversal_parent_ids = {
+            item.reversed_by_event_id: item.id
+            for item in chain_events
+            if item.reversed_by_event_id is not None
+        }
+
+        evidence_rows = session.execute(
+            select(
+                event_evidence.c.event_id,
+                event_evidence.c.evidence_id,
+                event_evidence.c.relation_kind,
+            )
+            .where(
+                event_evidence.c.org_id == parsed_org,
+                event_evidence.c.event_id.in_(chain_event_ids),
+            )
+            .order_by(
+                event_evidence.c.event_id,
+                event_evidence.c.relation_kind,
+                event_evidence.c.evidence_id,
+            )
+        ).all()
+        evidence_by_id = {
+            item.id: item
+            for item in session.scalars(
+                select(Evidence).where(
+                    Evidence.org_id == parsed_org,
+                    Evidence.id.in_([row.evidence_id for row in evidence_rows]),
+                )
+            ).all()
+        }
+        payroll_links = session.scalars(
+            select(PayrollEventLink)
+            .where(
+                PayrollEventLink.org_id == parsed_org,
+                PayrollEventLink.event_id.in_(chain_event_ids),
+            )
+            .order_by(
+                PayrollEventLink.event_id,
+                PayrollEventLink.link_kind,
+                PayrollEventLink.source_payment_event_id,
+                PayrollEventLink.source_open_item_id,
+                PayrollEventLink.id,
+            )
+        ).all()
+        batches_by_id = {
+            batch.id: batch
+            for batch in session.scalars(
+                select(PayrollBatch).where(
+                    PayrollBatch.org_id == parsed_org,
+                    PayrollBatch.id.in_([link.payroll_batch_id for link in payroll_links]),
+                )
+            ).all()
+        }
+        source_items_by_id = {
+            item.id: item
+            for item in session.scalars(
+                select(OpenItem).where(
+                    OpenItem.org_id == parsed_org,
+                    OpenItem.id.in_(
+                        [
+                            link.source_open_item_id
+                            for link in payroll_links
+                            if link.source_open_item_id is not None
+                        ]
+                    ),
+                )
+            ).all()
+        }
+        source_events_by_id = {
+            source_event.id: source_event
+            for source_event in session.scalars(
+                select(BusinessEvent).where(
+                    BusinessEvent.org_id == parsed_org,
+                    BusinessEvent.id.in_(
+                        [
+                            link.source_payment_event_id
+                            for link in payroll_links
+                            if link.source_payment_event_id is not None
+                        ]
+                    ),
+                )
+            ).all()
+        }
+
+        def event_summary(item: BusinessEvent) -> dict[str, Any]:
+            return {
+                "id": str(item.id),
+                "event_type": item.event_type,
+                "status": item.status,
+                "business_date": item.business_date.isoformat(),
+                "payment_date": item.payment_date.isoformat() if item.payment_date else None,
+                "posting_date": item.posting_date.isoformat(),
+                "reversal_of_event_id": (
+                    str(reversal_parent_ids[item.id]) if item.id in reversal_parent_ids else None
+                ),
+                "reversed_by_event_id": (
+                    str(item.reversed_by_event_id) if item.reversed_by_event_id else None
+                ),
+            }
+
+        def payroll_link_projection(link: PayrollEventLink) -> dict[str, Any]:
+            batch = batches_by_id.get(link.payroll_batch_id)
+            source_item = source_items_by_id.get(link.source_open_item_id)
+            source_event = source_events_by_id.get(link.source_payment_event_id)
+            return {
+                "id": str(link.id),
+                "event_id": str(link.event_id),
+                "link_kind": link.link_kind,
+                "payroll_batch_id": str(link.payroll_batch_id),
+                "payroll_batch": (
+                    {
+                        "batch_kind": batch.batch_kind,
+                        "payroll_period": batch.payroll_period,
+                        "policy_version_id": str(batch.policy_version_id),
+                        "reversal_of_batch_id": (
+                            str(batch.reversal_of_batch_id)
+                            if batch.reversal_of_batch_id
+                            else None
+                        ),
+                    }
+                    if batch is not None
+                    else None
+                ),
+                "source_payment_event_id": (
+                    str(link.source_payment_event_id) if link.source_payment_event_id else None
+                ),
+                "source_payment_event": (
+                    {
+                        "event_type": source_event.event_type,
+                        "status": source_event.status,
+                        "reversed_by_event_id": (
+                            str(source_event.reversed_by_event_id)
+                            if source_event.reversed_by_event_id
+                            else None
+                        ),
+                    }
+                    if source_event is not None
+                    else None
+                ),
+                "source_open_item_id": (
+                    str(link.source_open_item_id) if link.source_open_item_id else None
+                ),
+                "source_open_item": (
+                    {
+                        "payable_category": source_item.payable_category,
+                        "payable_agency_code": source_item.payable_agency_code,
+                        "insurance_kind": source_item.insurance_kind,
+                        "source_event_id": str(source_item.source_event_id),
+                    }
+                    if source_item is not None
+                    else None
+                ),
+            }
+
+        evidence_projection = [
+            {
+                "event_id": str(row.event_id),
+                "id": str(row.evidence_id),
+                "relation_kind": row.relation_kind,
+                "sha256": evidence_by_id[row.evidence_id].sha256,
+                "original_name": evidence_by_id[row.evidence_id].original_name,
+                "source": evidence_by_id[row.evidence_id].source,
+                "size_bytes": evidence_by_id[row.evidence_id].size_bytes,
+            }
+            for row in evidence_rows
+            if row.evidence_id in evidence_by_id
+        ]
         return {
             "status": "ok",
             "event": {
@@ -375,6 +850,13 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 }
                 for item in event.evidence
             ],
+            "canonical_reversal_chain": {
+                "root_event_id": str(chain_events[0].id),
+                "terminal_event_id": str(chain_events[-1].id),
+                "events": [event_summary(item) for item in chain_events],
+                "event_evidence": evidence_projection,
+                "payroll_event_links": [payroll_link_projection(link) for link in payroll_links],
+            },
             "audit_log": [
                 {
                     "action": log.action,
@@ -385,6 +867,24 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 for log in logs
             ],
         }
+
+
+_make_tool_inputs_strict(
+    "finance_record_event",
+    "finance_reverse_event",
+    "finance_register_evidence",
+    "finance_import_bank_statement",
+    "finance_register_employee",
+    "finance_register_employee_profile_version",
+    "finance_register_payroll_policy_version",
+    "finance_register_payroll_opening_state",
+    "finance_preview_payroll",
+    "finance_confirm_payroll",
+    "finance_get_payroll_batch",
+)
+_sanitize_tool_errors(
+    *(tool.name for tool in mcp._tool_manager.list_tools()),
+)
 
 
 def main() -> None:

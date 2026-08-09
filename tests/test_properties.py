@@ -78,6 +78,6 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
             assert item.original_amount_fen == original
             assert item.settled_amount_fen == sum(payments)
             assert item.original_amount_fen - item.settled_amount_fen >= 0
-            assert item.status == ("settled" if sum(payments) == original else "open")
+            assert item.status == ("settled" if sum(payments) == original else "partial")
     finally:
         engine.dispose()

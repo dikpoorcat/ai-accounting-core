@@ -29,23 +29,54 @@ CANONICAL_COLUMNS = {
 }
 
 
+class BankStatementInputError(ValueError):
+    """A stable, caller-safe failure while opening or parsing a statement."""
+
+    def __init__(self, code: str, *, field: str | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.field = field
+
+
+class BankStatementRowError(ValueError):
+    """A stable, caller-safe validation failure for one input record."""
+
+    def __init__(self, code: str, field: str) -> None:
+        super().__init__(code)
+        self.code = code
+        self.field = field
+
+
 def import_bank_statement(session: Session, request: ImportBankStatementRequest) -> dict[str, Any]:
     if session.get(Organization, request.org_id) is None:
         raise ValueError("ORGANIZATION_NOT_FOUND")
-    path = request.file_path.resolve(strict=True)
+    try:
+        path = request.file_path.resolve(strict=True)
+    except OSError as exc:
+        raise BankStatementInputError("BANK_STATEMENT_FILE_UNAVAILABLE") from exc
     extension = path.suffix.lower()
     if extension not in {".csv", ".xlsx"}:
-        raise ValueError("only CSV and XLSX bank statements are supported")
-    _validate_mapping(request.column_mapping)
+        raise BankStatementInputError("BANK_STATEMENT_FORMAT_UNSUPPORTED")
+    mapping = request.column_mapping.model_dump(exclude_none=True)
+    _validate_mapping(mapping)
     source_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    rows = _read_csv(path) if extension == ".csv" else _read_xlsx(path, request.sheet_name)
+    try:
+        rows = (
+            _read_csv(path, mapping)
+            if extension == ".csv"
+            else _read_xlsx(path, request.sheet_name, mapping)
+        )
+    except BankStatementInputError:
+        raise
+    except Exception as exc:
+        raise BankStatementInputError("BANK_STATEMENT_PARSE_FAILED") from exc
 
     imported: list[str] = []
     duplicates: list[str] = []
     errors: list[dict[str, Any]] = []
     for row_number, row in enumerate(rows, start=2):
         try:
-            normalized = _normalize_row(row, request)
+            normalized = _normalize_row(row, mapping, request.date_format)
             fingerprint = _fingerprint(
                 request.org_id,
                 request.bank_account_code,
@@ -70,8 +101,8 @@ def import_bank_statement(session: Session, request: ImportBankStatementRequest)
             session.add(transaction)
             session.flush()
             imported.append(str(transaction.id))
-        except (ValueError, InvalidOperation) as exc:
-            errors.append({"row": row_number, "error": str(exc)})
+        except BankStatementRowError as exc:
+            errors.append({"row": row_number, "field": exc.field, "code": exc.code})
     return {
         "source_sha256": source_sha,
         "imported_count": len(imported),
@@ -93,7 +124,7 @@ def _validate_mapping(mapping: dict[str, str]) -> None:
         raise ValueError("map amount, or map both debit and credit")
 
 
-def _read_csv(path: Path) -> Iterable[dict[str, Any]]:
+def _read_csv(path: Path, mapping: dict[str, str]) -> Iterable[dict[str, Any]]:
     raw = path.read_bytes()
     decoded: str | None = None
     for encoding in ("utf-8-sig", "gb18030"):
@@ -103,39 +134,78 @@ def _read_csv(path: Path) -> Iterable[dict[str, Any]]:
         except UnicodeDecodeError:
             continue
     if decoded is None:
-        raise ValueError("CSV encoding must be UTF-8 or GB18030")
-    return list(csv.DictReader(decoded.splitlines()))
+        raise BankStatementInputError("BANK_STATEMENT_PARSE_FAILED")
+    reader = csv.DictReader(decoded.splitlines())
+    _validate_source_columns(reader.fieldnames or [], mapping)
+    return list(reader)
 
 
-def _read_xlsx(path: Path, sheet_name: str | None) -> Iterable[dict[str, Any]]:
+def _read_xlsx(
+    path: Path, sheet_name: str | None, mapping: dict[str, str]
+) -> Iterable[dict[str, Any]]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         worksheet = workbook[sheet_name] if sheet_name else workbook.active
         rows = worksheet.iter_rows(values_only=True)
         headers = [str(value).strip() if value is not None else "" for value in next(rows)]
+        _validate_source_columns(headers, mapping)
         return [dict(zip(headers, values, strict=True)) for values in rows]
     finally:
         workbook.close()
 
 
-def _normalize_row(row: dict[str, Any], request: ImportBankStatementRequest) -> dict[str, Any]:
-    def value(canonical: str, default: Any = None) -> Any:
-        source_name = request.column_mapping.get(canonical)
-        return row.get(source_name, default) if source_name else default
+def _validate_source_columns(headers: Iterable[str], mapping: dict[str, str]) -> None:
+    header_names = set(headers)
+    for canonical, source_name in mapping.items():
+        if source_name not in header_names:
+            raise BankStatementInputError(
+                "BANK_STATEMENT_MISSING_COLUMN", field=canonical
+            )
 
-    booking_date = _parse_date(value("booking_date"), request.date_format)
-    if "amount" in request.column_mapping:
-        amount = _decimal(value("amount"))
+
+def _normalize_row(
+    row: dict[str, Any], mapping: dict[str, str], date_format: str | None
+) -> dict[str, Any]:
+    def value(canonical: str, default: Any = None) -> Any:
+        source_name = mapping.get(canonical)
+        if source_name is None:
+            return default
+        if source_name not in row:
+            raise BankStatementRowError("BANK_STATEMENT_MISSING_COLUMN", canonical)
+        return row[source_name]
+
+    try:
+        booking_date = _parse_date(value("booking_date"), date_format)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise BankStatementRowError("BANK_STATEMENT_INVALID_DATE", "booking_date") from exc
+    if "amount" in mapping:
+        try:
+            amount = _decimal(value("amount"))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise BankStatementRowError("BANK_STATEMENT_INVALID_AMOUNT", "amount") from exc
     else:
-        credit = _decimal(value("credit", 0), blank_zero=True)
-        debit = _decimal(value("debit", 0), blank_zero=True)
+        try:
+            credit = _decimal(value("credit", 0), blank_zero=True)
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise BankStatementRowError("BANK_STATEMENT_INVALID_AMOUNT", "credit") from exc
+        try:
+            debit = _decimal(value("debit", 0), blank_zero=True)
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise BankStatementRowError("BANK_STATEMENT_INVALID_AMOUNT", "debit") from exc
         amount = credit - debit
-    amount_fen = int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    try:
+        amount_fen = int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, OverflowError, ValueError) as exc:
+        raise BankStatementRowError(
+            "BANK_STATEMENT_INVALID_AMOUNT", "amount" if "amount" in mapping else "credit"
+        ) from exc
     if amount_fen == 0:
-        raise ValueError("amount cannot be zero")
+        raise BankStatementRowError(
+            "BANK_STATEMENT_ZERO_AMOUNT", "amount" if "amount" in mapping else "credit"
+        )
     currency = str(value("currency", "CNY") or "CNY").strip().upper()
     if currency != "CNY":
-        raise ValueError("phase 1 supports CNY bank transactions only")
+        raise BankStatementRowError("BANK_STATEMENT_INVALID_CURRENCY", "currency")
     return {
         "external_id": _optional_text(value("external_id")),
         "booking_date": booking_date,

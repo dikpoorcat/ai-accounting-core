@@ -125,7 +125,7 @@ def test_credit_sale_partial_settlement_and_oversettlement_rejected(
     )
     assert service.record_event(partial).status == "posted"
     assert item.settled_amount_fen == 40_000
-    assert item.status == "open"
+    assert item.status == "partial"
 
     excessive = RecordEventRequest.model_validate(
         {

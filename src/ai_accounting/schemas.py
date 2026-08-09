@@ -5,9 +5,15 @@ from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+
+# Monetary accounting facts are always integer fen.  ``StrictInt`` is
+# intentional: JSON 12.0, ``true`` and "12" must never be silently accepted
+# as a monetary value merely because they can be coerced by Python.
+Fen = Annotated[StrictInt, Field(ge=0)]
+PositiveFen = Annotated[StrictInt, Field(gt=0)]
 
 
 class EventType(StrEnum):
@@ -28,6 +34,10 @@ class EventType(StrEnum):
     INTERNAL_TRANSFER = "internal_transfer"
     TAX_PAYMENT = "tax_payment"
     TAX_RELIEF = "tax_relief"
+    SALARY_PAYMENT = "salary_payment"
+    SOCIAL_INSURANCE_PAYMENT = "social_insurance_payment"
+    HOUSING_FUND_PAYMENT = "housing_fund_payment"
+    INDIVIDUAL_INCOME_TAX_PAYMENT = "individual_income_tax_payment"
     PAYROLL = "payroll"
     FIXED_ASSET = "fixed_asset"
     INTANGIBLE_ASSET = "intangible_asset"
@@ -154,6 +164,36 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "required_details": ["tax_type=vat|surtax"],
         "constraint": "cannot exceed posted tax payable balance",
     },
+    EventType.SALARY_PAYMENT.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "allocations": (
+            "required; salary open items only; total equals cash plus explicit withholdings"
+        ),
+        "salary_withholding_allocations": (
+            "required; classified employee deductions per salary open item"
+        ),
+        "bank_transactions": "required; outflow total must equal payment",
+        "creates": "withheld statutory payroll payables internally",
+    },
+    EventType.SOCIAL_INSURANCE_PAYMENT.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "allocations": "required; social-insurance payables only; total must equal payment",
+        "bank_transactions": "required; outflow total must equal payment",
+    },
+    EventType.HOUSING_FUND_PAYMENT.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "allocations": "required; housing-fund payables only; total must equal payment",
+        "bank_transactions": "required; outflow total must equal payment",
+    },
+    EventType.INDIVIDUAL_INCOME_TAX_PAYMENT.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "allocations": "required; individual-income-tax payables only; total must equal payment",
+        "bank_transactions": "required; outflow total must equal payment",
+    },
 }
 
 
@@ -164,6 +204,8 @@ class ResultStatus(StrEnum):
 
 
 class BusinessDates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     business_date: date
     posting_date: date
     fulfillment_date: date | None = None
@@ -173,6 +215,8 @@ class BusinessDates(BaseModel):
 
 
 class CounterpartyRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: uuid.UUID | None = None
     kind: str | None = None
     name: str | None = None
@@ -188,8 +232,10 @@ class CounterpartyRef(BaseModel):
 
 
 class AmountFacts(BaseModel):
-    amount_fen: int | None = Field(default=None, gt=0)
-    gross_amount_fen: int | None = Field(default=None, gt=0)
+    model_config = ConfigDict(extra="forbid")
+
+    amount_fen: Fen | None = None
+    gross_amount_fen: PositiveFen | None = None
     currency: str = "CNY"
     expense_account_role: str = "general_expense"
 
@@ -203,6 +249,8 @@ class AmountFacts(BaseModel):
 
 
 class TaxFacts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     taxable: bool = True
     rate_percent: Decimal = Field(default=Decimal("1"), ge=0, le=100)
     invoice_type: str = "none"
@@ -221,15 +269,19 @@ class TaxFacts(BaseModel):
 
 
 class InvoiceReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     number: str
     direction: str = "output"
     invoice_type: str = "ordinary"
     issue_date: date
-    gross_amount_fen: int = Field(gt=0)
-    tax_amount_fen: int = Field(ge=0)
+    gross_amount_fen: PositiveFen
+    tax_amount_fen: Fen
 
 
 class BankTransactionReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: uuid.UUID | None = None
     fingerprint: str | None = None
 
@@ -241,8 +293,378 @@ class BankTransactionReference(BaseModel):
 
 
 class Allocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     open_item_id: uuid.UUID
-    amount_fen: int = Field(gt=0)
+    amount_fen: PositiveFen
+
+
+class SalaryWithholdingAllocation(BaseModel):
+    """Explicit non-cash deductions for one salary-payable allocation.
+
+    A partial salary payment must state these facts explicitly.  The service never
+    derives them by proportion from a payroll line.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    open_item_id: uuid.UUID
+    employee_social_insurance_items: dict[str, Fen] = Field(default_factory=dict)
+    employee_housing_fund_items: dict[str, Fen] = Field(default_factory=dict)
+    individual_income_tax_fen: Fen = 0
+
+    @model_validator(mode="after")
+    def component_amounts_are_nonnegative(self) -> SalaryWithholdingAllocation:
+        components = [
+            *self.employee_social_insurance_items.values(),
+            *self.employee_housing_fund_items.values(),
+        ]
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in components
+        ):
+            raise ValueError("withholding component values must be non-negative integer fen")
+        return self
+
+
+class EventDetails(BaseModel):
+    """Finite event-catalog detail fields; the public writer has no free-form map."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    due_date: date | None = None
+    tax_previously_accrued: bool | None = None
+    refund_kind: Literal["advance", "sale_return"] | None = None
+    paid_now: bool | None = None
+    source_account: str | None = Field(default=None, min_length=1, max_length=50)
+    destination_account: str | None = Field(default=None, min_length=1, max_length=50)
+    tax_type: Literal["vat", "surtax"] | None = None
+    original_event_id: uuid.UUID | None = None
+    unallocated_treatment: Literal["advance"] | None = None
+    recognition_source: Literal["contract_liability"] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_internal_transfer_names(cls, value: Any) -> Any:
+        """Map pre-contract names without advertising account-code entry fields."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if "source_account_code" in normalized:
+            normalized.setdefault("source_account", normalized["source_account_code"])
+            normalized.pop("source_account_code")
+        if "destination_account_code" in normalized:
+            normalized.setdefault("destination_account", normalized["destination_account_code"])
+            normalized.pop("destination_account_code")
+        return normalized
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        value = getattr(self, key)
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and getattr(self, key, None) is not None
+
+
+class PayrollBatchKind(StrEnum):
+    REGULAR = "regular"
+    ANNUAL_BONUS = "annual_bonus"
+
+
+class AnnualBonusTaxMethod(StrEnum):
+    SEPARATE = "separate"
+    COMBINED = "combined"
+
+
+class PayrollEmployeeItem(BaseModel):
+    """Classified employee payroll facts; all monetary values are integer fen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: uuid.UUID
+    base_salary_fen: Fen = 0
+    performance_pay_fen: Fen = 0
+    taxable_allowance_fen: Fen = 0
+    tax_exempt_income_fen: Fen = 0
+    attendance_deduction_fen: Fen = 0
+    special_additional_deduction_fen: Fen = 0
+    other_legal_deduction_fen: Fen = 0
+    tax_relief_fen: Fen = 0
+    annual_bonus_fen: Fen = 0
+    # Combined annual-bonus taxation is permitted only against immutable facts
+    # from this posted regular payroll batch.  A caller cannot provide free-form
+    # monthly wage tax inputs.
+    regular_payroll_batch_id: uuid.UUID | None = None
+
+
+class RegisterEmployeeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    employee_code: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=200)
+    employment_start_date: date
+    employment_end_date: date | None = None
+    status: Literal["active", "inactive", "terminated"] = "active"
+
+    @model_validator(mode="after")
+    def employment_dates_are_ordered(self) -> RegisterEmployeeRequest:
+        if (
+            self.employment_end_date is not None
+            and self.employment_end_date < self.employment_start_date
+        ):
+            raise ValueError("employment_end_date must not precede employment_start_date")
+        return self
+
+
+class RegisterEmployeePayrollProfileVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    employee_id: uuid.UUID
+    effective_from: date
+    effective_to: date | None = None
+    expense_role: Literal[
+        "payroll_management_expense", "payroll_sales_expense", "payroll_service_cost"
+    ]
+    social_insurance_base_fen: Fen
+    housing_fund_base_fen: Fen
+    resident_employee: bool
+    supersedes_profile_version_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def effective_dates_are_ordered(self) -> RegisterEmployeePayrollProfileVersionRequest:
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("effective_to must not precede effective_from")
+        return self
+
+
+class PayrollContributionRuleParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=50)
+    base_kind: Literal["social_insurance", "housing_fund"]
+    employee_rate: Decimal = Field(ge=0, le=1)
+    employer_rate: Decimal = Field(ge=0, le=1)
+    minimum_base_fen: Fen
+    maximum_base_fen: Fen
+    rounding_rule: Literal["half_up", "down", "up"]
+    enabled: bool = True
+
+    @model_validator(mode="after")
+    def base_range_is_ordered(self) -> PayrollContributionRuleParameters:
+        if self.maximum_base_fen < self.minimum_base_fen:
+            raise ValueError("maximum_base_fen must not be below minimum_base_fen")
+        return self
+
+
+class IncomeTaxBracketParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    upper_bound_fen: PositiveFen | None = None
+    rate: Decimal = Field(ge=0, le=1)
+    quick_deduction_fen: Fen
+
+
+class IncomeTaxParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1, max_length=50)
+    primary_source_url: str = Field(min_length=1, max_length=4000)
+    legal_basis_source_url: str = Field(min_length=1, max_length=4000)
+    effective_from: date
+    effective_to: date | None = None
+    monthly_standard_deduction_fen: Fen
+    brackets: list[IncomeTaxBracketParameters] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def effective_dates_are_ordered(self) -> IncomeTaxParameters:
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("income-tax effective_to must not precede effective_from")
+        return self
+
+
+class AnnualBonusBracketParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    upper_monthly_average_fen: PositiveFen | None = None
+    rate: Decimal = Field(ge=0, le=1)
+    quick_deduction_fen: Fen
+
+
+class AnnualBonusParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1, max_length=50)
+    primary_source_url: str = Field(min_length=1, max_length=4000)
+    effective_from: date
+    effective_to: date | None = None
+    brackets: list[AnnualBonusBracketParameters] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def effective_dates_are_ordered(self) -> AnnualBonusParameters:
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("annual-bonus effective_to must not precede effective_from")
+        return self
+
+
+class StatutoryPaymentTargetParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agency_code: str = Field(min_length=1, max_length=100)
+    agency_name: str = Field(min_length=1, max_length=200)
+
+
+class PayrollPaymentTargetsParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    social_insurance: StatutoryPaymentTargetParameters
+    housing_fund: StatutoryPaymentTargetParameters
+    individual_income_tax: StatutoryPaymentTargetParameters
+
+
+class PayrollPolicyParameters(BaseModel):
+    """Complete public policy contract stored as an immutable JSON snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contribution_rules: list[PayrollContributionRuleParameters] = Field(min_length=1)
+    income_tax: IncomeTaxParameters
+    annual_bonus: AnnualBonusParameters | None = None
+    payment_targets: PayrollPaymentTargetsParameters
+
+
+class RegisterPayrollPolicyVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    region: str = Field(min_length=1, max_length=100)
+    effective_from: date
+    effective_to: date | None = None
+    version: str = Field(min_length=1, max_length=50)
+    source_url: str = Field(min_length=1, max_length=4000)
+    parameters: PayrollPolicyParameters
+    supersedes_policy_version_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def effective_dates_are_ordered(self) -> RegisterPayrollPolicyVersionRequest:
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("effective_to must not precede effective_from")
+        return self
+
+
+class RegisterPayrollOpeningStateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    employee_id: uuid.UUID
+    tax_year: Annotated[StrictInt, Field(ge=1900, le=9999)]
+    through_month: Annotated[StrictInt, Field(ge=1, le=12)]
+    cumulative_income_fen: Fen
+    cumulative_tax_exempt_income_fen: Fen
+    cumulative_basic_deduction_fen: Fen
+    cumulative_employee_social_insurance_fen: Fen
+    cumulative_employee_housing_fund_fen: Fen
+    cumulative_special_additional_deduction_fen: Fen
+    cumulative_other_legal_deduction_fen: Fen
+    cumulative_tax_relief_fen: Fen
+    cumulative_tax_withheld_fen: Fen
+    # The physical opening-state key is immutable.  A later through-month can
+    # supersede an unused import; corrections after dependent payroll exist are
+    # rejected and must be reversed/rebuilt.
+    supersedes_opening_state_id: uuid.UUID | None = None
+
+
+class PreviewPayrollRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    batch_kind: PayrollBatchKind
+    payroll_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    posting_date: date
+    payment_date: date
+    employee_items: list[PayrollEmployeeItem] = Field(min_length=1)
+    tax_method: AnnualBonusTaxMethod | None = None
+    evidence_references: list[uuid.UUID] = Field(default_factory=list)
+    description: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def payroll_shape_is_explicit(self) -> PreviewPayrollRequest:
+        if self.payment_date < self.posting_date:
+            raise ValueError("payment_date must not precede posting_date")
+        employee_ids = [item.employee_id for item in self.employee_items]
+        if len(employee_ids) != len(set(employee_ids)):
+            raise ValueError("employee_items must contain each employee once")
+        if self.batch_kind == PayrollBatchKind.REGULAR:
+            if self.tax_method is not None:
+                raise ValueError("tax_method is only available for annual_bonus payroll")
+            if any(item.annual_bonus_fen for item in self.employee_items):
+                raise ValueError("annual_bonus_fen is only available for annual_bonus payroll")
+            if any(item.regular_payroll_batch_id is not None for item in self.employee_items):
+                raise ValueError(
+                    "regular_payroll_batch_id is only available for annual_bonus payroll"
+                )
+        else:
+            if any(item.annual_bonus_fen <= 0 for item in self.employee_items):
+                raise ValueError("annual_bonus_fen must be positive for annual_bonus payroll")
+            if any(
+                item.base_salary_fen
+                or item.performance_pay_fen
+                or item.taxable_allowance_fen
+                or item.tax_exempt_income_fen
+                or item.attendance_deduction_fen
+                or item.special_additional_deduction_fen
+                or item.other_legal_deduction_fen
+                for item in self.employee_items
+            ):
+                raise ValueError("annual_bonus payroll cannot include regular monthly wage facts")
+            if self.tax_method == AnnualBonusTaxMethod.COMBINED and any(
+                item.regular_payroll_batch_id is None for item in self.employee_items
+            ):
+                raise ValueError(
+                    "combined annual_bonus payroll requires regular_payroll_batch_id per employee"
+                )
+        return self
+
+
+class ConfirmPayrollRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    batch_id: uuid.UUID
+    calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    confirmed_by: str = Field(min_length=1, max_length=100)
+    confirmation_note: str = Field(default="", max_length=2000)
+
+
+class PayrollResultStatus(StrEnum):
+    CALCULATED = "calculated"
+    POSTED = "posted"
+    REVERSED = "reversed"
+    SUPERSEDED = "superseded"
+    NEEDS_INFORMATION = "needs_information"
+    REJECTED = "rejected"
+
+
+class PayrollResult(BaseModel):
+    status: PayrollResultStatus
+    batch_id: uuid.UUID | None = None
+    calculation_hash: str | None = None
+    event_id: uuid.UUID | None = None
+    voucher_id: uuid.UUID | None = None
+    voucher_number: str | None = None
+    missing_information: list[dict[str, Any] | str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    rule_version: str | None = None
+    trace: list[dict[str, Any]] = Field(default_factory=list)
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class RecordEventRequest(BaseModel):
@@ -259,8 +681,19 @@ class RecordEventRequest(BaseModel):
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     allocations: list[Allocation] = Field(default_factory=list)
+    salary_withholding_allocations: list[SalaryWithholdingAllocation] = Field(default_factory=list)
     description: str = Field(default="", max_length=2000)
-    details: dict[str, Any] = Field(default_factory=dict)
+    details: EventDetails = Field(default_factory=EventDetails)
+
+    @model_validator(mode="after")
+    def zero_cash_is_limited_to_salary_withholding_settlement(self) -> RecordEventRequest:
+        if self.amounts.amount_fen != 0:
+            return self
+        if self.event_type != EventType.SALARY_PAYMENT:
+            raise ValueError("zero amount_fen is only available for salary payment withholding")
+        if self.amounts.gross_amount_fen is not None:
+            raise ValueError("zero-cash salary payment must use amount_fen only")
+        return self
 
 
 class FinanceResult(BaseModel):
@@ -276,6 +709,10 @@ class FinanceResult(BaseModel):
 
 
 class RegisterEvidenceRequest(BaseModel):
+    """Public MCP contract for content-addressed supporting evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
     org_id: uuid.UUID
     source: str = Field(min_length=1, max_length=50)
     file_path: Path | None = None
@@ -290,12 +727,88 @@ class RegisterEvidenceRequest(BaseModel):
             raise ValueError("provide exactly one of file_path or content_base64")
         return self
 
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: Any, handler: Any
+    ) -> dict[str, Any]:
+        """Publish the same mutually-exclusive content rule enforced at runtime."""
+
+        schema = handler(core_schema)
+        schema["oneOf"] = [
+            {
+                "required": ["file_path"],
+                "properties": {
+                    "file_path": {"type": "string"},
+                    "content_base64": {"type": "null"},
+                },
+            },
+            {
+                "required": ["content_base64"],
+                "properties": {
+                    "file_path": {"type": "null"},
+                    "content_base64": {"type": "string"},
+                },
+            },
+        ]
+        return schema
+
+
+class BankStatementColumnMapping(BaseModel):
+    """Fixed canonical fields accepted when importing a bank statement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    booking_date: str = Field(min_length=1)
+    amount: str | None = Field(default=None, min_length=1)
+    debit: str | None = Field(default=None, min_length=1)
+    credit: str | None = Field(default=None, min_length=1)
+    counterparty: str | None = Field(default=None, min_length=1)
+    memo: str | None = Field(default=None, min_length=1)
+    external_id: str | None = Field(default=None, min_length=1)
+    currency: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def amount_mapping_is_complete(self) -> BankStatementColumnMapping:
+        if self.amount is None and (self.debit is None or self.credit is None):
+            raise ValueError("map amount, or map both debit and credit")
+        return self
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: Any, handler: Any
+    ) -> dict[str, Any]:
+        """Expose the conditional amount mapping requirement to MCP clients."""
+
+        schema = handler(core_schema)
+        schema["allOf"] = [
+            {
+                "anyOf": [
+                    {
+                        "required": ["amount"],
+                        "properties": {"amount": {"type": "string", "minLength": 1}},
+                    },
+                    {
+                        "required": ["debit", "credit"],
+                        "properties": {
+                            "debit": {"type": "string", "minLength": 1},
+                            "credit": {"type": "string", "minLength": 1},
+                        },
+                    },
+                ]
+            }
+        ]
+        return schema
+
 
 class ImportBankStatementRequest(BaseModel):
+    """Public MCP contract for a caller-provided bank statement file."""
+
+    model_config = ConfigDict(extra="forbid")
+
     org_id: uuid.UUID
     file_path: Path
     bank_account_code: str = "1002"
-    column_mapping: dict[str, str]
+    column_mapping: BankStatementColumnMapping
     sheet_name: str | None = None
     date_format: str | None = None
 
@@ -317,6 +830,8 @@ class TaxPeriodRequest(BaseModel):
 
 
 class ReverseEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     org_id: uuid.UUID
     event_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=200)
