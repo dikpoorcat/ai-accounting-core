@@ -53,6 +53,33 @@ DEFAULT_ACCOUNTS = [
         "withheld_employee_housing_fund_payable",
     ),
     ("222103", "应交个人所得税", "liability", "credit", "individual_income_tax_payable"),
+    ("1604", "在建工程—待启用固定资产", "asset", "debit", "fixed_asset_pending"),
+    ("1601", "固定资产", "asset", "debit", "fixed_asset_cost"),
+    ("1602", "累计折旧", "asset", "credit", "accumulated_depreciation"),
+    (
+        "560202",
+        "管理费用—固定资产折旧",
+        "expense",
+        "debit",
+        "management_depreciation_expense",
+    ),
+    (
+        "560102",
+        "销售费用—固定资产折旧",
+        "expense",
+        "debit",
+        "sales_depreciation_expense",
+    ),
+    (
+        "540102",
+        "主营业务成本—固定资产折旧",
+        "expense",
+        "debit",
+        "service_cost_depreciation",
+    ),
+    ("1606", "固定资产清理", "asset", "debit", "fixed_asset_clearance"),
+    ("630101", "营业外收入—固定资产处置", "revenue", "credit", "fixed_asset_disposal_gain"),
+    ("571101", "营业外支出—固定资产处置", "expense", "debit", "fixed_asset_disposal_loss"),
 ]
 
 
@@ -87,6 +114,19 @@ TAX_RULES = [
                 "https://fgk.chinatax.gov.cn/zcfgk/c100009/c5193055/content.html",
                 "https://www.chinatax.gov.cn/chinatax/n810214/n810641/n2985871/c101728/c5160742/content.html",
             ],
+        },
+    },
+    {
+        "code": "small_scale_used_fixed_asset_vat_2026",
+        "jurisdiction": "CN",
+        "effective_from": date(2026, 1, 1),
+        "effective_to": None,
+        "version": "2026.1",
+        "source_url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5247434/content.html",
+        "parameters": {
+            "tax_inclusive_base_rate_percent": "3",
+            "effective_levy_rate_percent": "2",
+            "calculation": "tax_sales_fen=gross_fen/(1+3%);vat_fen=tax_sales_fen*2%",
         },
     },
 ]

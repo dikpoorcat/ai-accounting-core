@@ -15,9 +15,10 @@
 - 幂等入账、期间关闭校验、关联冲正、凭证规则轨迹和审计日志。
 - PostgreSQL 延迟借贷平衡约束及已入账凭证不可改删触发器。
 - 工资、社保、公积金、累计个税和全年一次性奖金的登记、试算、确认、支付与冲正闭环。
-- 16 个严格参数的本地 STDIO MCP 工具；无聊天 UI、REST API 或模型调用。
+- 固定资产外购、启用、逐月直线折旧、出售/报废、资产卡片和逆序冲正闭环。
+- 22 个严格参数的本地 STDIO MCP 工具；无聊天 UI、REST API 或模型调用。
 
-工资只能通过专用工具登记、试算和确认；通用事件入口不会接受 Agent 自行组织工资分录。固定资产、无形资产、借款利息和存货事件仍会明确返回 `MODULE_NOT_ENABLED`。
+工资和固定资产只能通过各自的专用工具登记、试算和确认；通用事件入口不会接受 Agent 自行组织这些分录。无形资产、借款利息和存货事件仍会明确返回 `MODULE_NOT_ENABLED`。
 
 ## 本地启动
 
@@ -64,6 +65,20 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 
 资料缺失、政策无有效版本、累计状态断层或支付无法唯一归属时，内核返回 `needs_information` 或稳定拒绝原因，不推测会改变会计处理的事实。
 
+### 固定资产专用工作流
+
+固定资产同样不经过 `finance_record_event`，只接受有限业务事实：
+
+1. `finance_acquire_fixed_asset` 登记外购待启用资产；银行现付必须精确匹配流水，供应商挂账会生成受控应付开放项。
+2. `finance_activate_fixed_asset` 启用资产并冻结直线法、使用寿命月数、预计净残值、受益区域和官方规则来源。
+3. `finance_preview_fixed_asset_depreciation` 按启用月份次月起算单月折旧并返回计算哈希。
+4. `finance_confirm_fixed_asset_depreciation` 复算同一哈希后生成固定模板凭证；月份必须连续且入账日必须属于该折旧月份。
+5. `finance_dispose_fixed_asset` 处理单项非不动产资产出售或零收入报废，自动读取原值和累计折旧并计算清理损益；出售按有效的旧固定资产专项增值税规则计算。
+6. `finance_get_fixed_asset` 查询资产卡片、政策版本、全部历史规范事实、凭证、证据和冲正链。
+7. 更正仍使用 `finance_reverse_event`，顺序为处置、最新折旧、启用、购置；原凭证和规范事实不修改。
+
+房屋建筑物、土地、自建/改建、融资租赁、减值、加速折旧、所得税折旧及税会差异仍不在本阶段范围。完整契约见[固定资产模块开发基线](docs/fixed-asset-module-development-plan.md)。
+
 ### 10,100 元服务现销示例
 
 ```json
@@ -106,6 +121,8 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 ## 文档
 
 - [文档索引](docs/README.md)
+- [固定资产模块第一期最终验收](docs/fixed-asset-module-acceptance.md)
+- [固定资产模块开发基线](docs/fixed-asset-module-development-plan.md)
 - [工资模块开发基线](docs/payroll-module-development-plan.md)
 - [工资模块第七轮最终验收](docs/payroll-module-acceptance-remediation-round-7.md)
 - [多 Agent 协作与本地质量验证手册](docs/agent-collaboration-and-local-verification.md)
@@ -116,7 +133,8 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 - 企业按月或按季、城建税率均为显式配置。
 - 起征点采用“不含税销售额严格小于阈值”判断；达到阈值时不免税。
 - 专用发票或明确放弃免税的销售不进入减免金额。
-- 小规模纳税人的采购税额随价税合计进入费用，不形成进项抵扣。
+- 小规模纳税人的采购税额随价税合计进入费用或相关资产成本，不形成进项抵扣。
+- 2026-01-01 起出售自己使用过的非不动产固定资产，按 3% 含税基数换算并减按 2% 计算增值税；是否进入期间起征点减免仍取决于发票与放弃免税事实。
 - 每次政策更新必须新增有效期版本和官方来源，不能覆盖历史规则。
 
 政策依据：
@@ -125,6 +143,7 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 - [2023—2027 年“六税两费”减半政策](https://www.mof.gov.cn/jrttts/202308/t20230802_3899936.htm)
 - [中华人民共和国城市维护建设税法](https://fgk.chinatax.gov.cn/zcfgk/c100009/c5193055/content.html)
 - [增值税会计处理规定](https://www.mof.gov.cn/gkml/caizhengwengao/2017wg/wg201703/201707/t20170707_2641107.htm)
+- [2026 年小规模纳税人出售自己使用过固定资产专项规则](https://fgk.chinatax.gov.cn/zcfgk/c102416/c5247434/content.html)
 - [小企业会计准则附录](https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852734144.pdf)
 
 ## 许可证状态

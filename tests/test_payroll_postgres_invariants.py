@@ -1025,7 +1025,7 @@ def test_r4_011_0004_salary_source_backfill_is_proved_and_downgrade_is_safe() ->
                 command.downgrade(config, "0004_payroll_round3_integrity")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0008_payroll_r7_tax_closure"
+                    "0009_fixed_assets"
                 )
         finally:
             engine.dispose()

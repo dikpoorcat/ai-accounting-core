@@ -280,9 +280,7 @@ class PayrollVersionGuard(Base):
             "guard_kind IN ('profile','policy','opening')",
             name="ck_payroll_version_guard_kind",
         ),
-        CheckConstraint(
-            "length(dimension_key) > 0", name="ck_payroll_version_guard_dimension"
-        ),
+        CheckConstraint("length(dimension_key) > 0", name="ck_payroll_version_guard_dimension"),
     )
 
 
@@ -796,6 +794,304 @@ class AccountingPeriod(Base):
     )
 
 
+class FixedAsset(Base):
+    __tablename__ = "fixed_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    asset_code: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(30))
+    expected_use_over_one_year: Mapped[bool] = mapped_column()
+    acquisition_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    purchase_price_fen: Mapped[int] = mapped_column(BigInteger)
+    noncreditable_tax_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    transport_and_handling_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    installation_and_direct_cost_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    cost_fen: Mapped[int] = mapped_column(BigInteger)
+    supplier_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    settlement_method: Mapped[str] = mapped_column(String(20))
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    acquisition_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "supplier_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_fixed_asset_org_supplier",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "acquisition_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_fixed_asset_org_acquisition_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_fixed_asset_org_id"),
+        UniqueConstraint("org_id", "asset_code", name="uq_fixed_asset_org_code"),
+        CheckConstraint(
+            "category IN ('production_equipment','tools_furniture','transport',"
+            "'electronic','other_movable_tangible')",
+            name="ck_fixed_asset_category",
+        ),
+        CheckConstraint("expected_use_over_one_year IS TRUE", name="ck_fixed_asset_expected_use"),
+        CheckConstraint(
+            "purchase_price_fen >= 0 AND noncreditable_tax_fen >= 0 "
+            "AND transport_and_handling_fen >= 0 "
+            "AND installation_and_direct_cost_fen >= 0",
+            name="ck_fixed_asset_cost_components_nonnegative",
+        ),
+        CheckConstraint("cost_fen > 0", name="ck_fixed_asset_cost_positive"),
+        CheckConstraint(
+            "cost_fen = purchase_price_fen + noncreditable_tax_fen "
+            "+ transport_and_handling_fen + installation_and_direct_cost_fen",
+            name="ck_fixed_asset_cost_components_total",
+        ),
+        CheckConstraint(
+            "settlement_method IN ('bank','payable')", name="ck_fixed_asset_settlement_method"
+        ),
+        CheckConstraint(
+            "(settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL) OR "
+            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL)",
+            name="ck_fixed_asset_settlement_dates",
+        ),
+    )
+
+
+class FixedAssetActivation(Base):
+    __tablename__ = "fixed_asset_activations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    in_service_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    depreciation_method: Mapped[str] = mapped_column(String(30), default="straight_line")
+    useful_life_months: Mapped[int] = mapped_column(Integer)
+    residual_value_fen: Mapped[int] = mapped_column(BigInteger)
+    benefit_area: Mapped[str] = mapped_column(String(30))
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "asset_id"],
+            ["fixed_assets.org_id", "fixed_assets.id"],
+            name="fk_fixed_asset_activation_org_asset",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_fixed_asset_activation_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_fixed_asset_activation_org_id"),
+        CheckConstraint("depreciation_method = 'straight_line'", name="ck_asset_activation_method"),
+        CheckConstraint("useful_life_months >= 13", name="ck_asset_activation_life"),
+        CheckConstraint("residual_value_fen >= 0", name="ck_asset_activation_residual"),
+        CheckConstraint(
+            "benefit_area IN ('management','sales','service_delivery')",
+            name="ck_asset_activation_benefit_area",
+        ),
+    )
+
+
+class FixedAssetDepreciation(Base):
+    __tablename__ = "fixed_asset_depreciations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    period_start: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    sequence_no: Mapped[int] = mapped_column(Integer)
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    accumulated_after_fen: Mapped[int] = mapped_column(BigInteger)
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "asset_id"],
+            ["fixed_assets.org_id", "fixed_assets.id"],
+            name="fk_fixed_asset_depreciation_org_asset",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "activation_id"],
+            ["fixed_asset_activations.org_id", "fixed_asset_activations.id"],
+            name="fk_fixed_asset_depreciation_org_activation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_fixed_asset_depreciation_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_fixed_asset_depreciation_org_id"),
+        CheckConstraint("sequence_no > 0", name="ck_fixed_asset_depreciation_sequence"),
+        CheckConstraint("amount_fen > 0", name="ck_fixed_asset_depreciation_amount"),
+        CheckConstraint(
+            "accumulated_after_fen >= amount_fen", name="ck_fixed_asset_depreciation_accumulated"
+        ),
+        CheckConstraint(
+            "length(calculation_hash) = 64", name="ck_fixed_asset_depreciation_hash_length"
+        ),
+        CheckConstraint(
+            "calculation_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_fixed_asset_depreciation_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "period_start = date_trunc('month', period_start)::date",
+            name="ck_fixed_asset_depreciation_period_month_start",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "date_trunc('month', posting_date)::date = period_start",
+            name="ck_fixed_asset_depreciation_posting_month",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "strftime('%Y-%m', posting_date) = strftime('%Y-%m', period_start)",
+            name="ck_fixed_asset_depreciation_posting_month",
+        ).ddl_if(dialect="sqlite"),
+    )
+
+
+class FixedAssetDisposal(Base):
+    __tablename__ = "fixed_asset_disposals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    disposal_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    disposal_kind: Mapped[str] = mapped_column(String(20))
+    settlement_method: Mapped[str] = mapped_column(String(20))
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    gross_proceeds_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    invoice_type: Mapped[str] = mapped_column(String(20), default="none")
+    waive_threshold_exemption: Mapped[bool] = mapped_column(default=False)
+    vat_tax_sales_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    vat_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    clearance_cost_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    accumulated_depreciation_fen: Mapped[int] = mapped_column(BigInteger)
+    book_value_fen: Mapped[int] = mapped_column(BigInteger)
+    gain_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    loss_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    tax_rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("tax_rules.id", ondelete="RESTRICT"), nullable=True
+    )
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "asset_id"],
+            ["fixed_assets.org_id", "fixed_assets.id"],
+            name="fk_fixed_asset_disposal_org_asset",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "activation_id"],
+            ["fixed_asset_activations.org_id", "fixed_asset_activations.id"],
+            name="fk_fixed_asset_disposal_org_activation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_fixed_asset_disposal_org_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "customer_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_fixed_asset_disposal_org_customer",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_fixed_asset_disposal_org_id"),
+        CheckConstraint("disposal_kind IN ('sale','retirement')", name="ck_asset_disposal_kind"),
+        CheckConstraint(
+            "settlement_method IN ('bank','receivable','none')",
+            name="ck_asset_disposal_settlement_method",
+        ),
+        CheckConstraint(
+            "invoice_type IN ('ordinary','special','none')", name="ck_asset_disposal_invoice_type"
+        ),
+        CheckConstraint(
+            "gross_proceeds_fen >= 0 AND vat_tax_sales_fen >= 0 AND vat_fen >= 0 "
+            "AND clearance_cost_fen >= 0 AND accumulated_depreciation_fen >= 0 "
+            "AND book_value_fen >= 0 AND gain_fen >= 0 AND loss_fen >= 0",
+            name="ck_asset_disposal_amounts_nonnegative",
+        ),
+        CheckConstraint(
+            "NOT (gain_fen > 0 AND loss_fen > 0)", name="ck_asset_disposal_gain_loss_exclusive"
+        ),
+        CheckConstraint(
+            "(disposal_kind = 'sale' AND settlement_method IN ('bank','receivable') "
+            "AND customer_id IS NOT NULL AND gross_proceeds_fen > 0 AND tax_rule_id IS NOT NULL) "
+            "OR (disposal_kind = 'retirement' AND settlement_method = 'none' "
+            "AND customer_id IS NULL AND gross_proceeds_fen = 0 AND vat_tax_sales_fen = 0 "
+            "AND vat_fen = 0 AND tax_rule_id IS NULL AND invoice_type = 'none' "
+            "AND waive_threshold_exemption IS FALSE)",
+            name="ck_asset_disposal_business_shape",
+        ),
+    )
+
+
+class FixedAssetAccountMigrationAction(Base):
+    """Migration-owned account adoption ledger used for a reversible downgrade."""
+
+    __tablename__ = "fixed_asset_account_migration_actions"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action: Mapped[str] = mapped_column(String(20))
+    original_system_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "account_id"],
+            ["accounts.org_id", "accounts.id"],
+            name="fk_fixed_asset_account_action_org_account",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("action IN ('created','bound')", name="ck_fixed_asset_account_action"),
+    )
+
+
+class FixedAssetTaxRuleMigrationAction(Base):
+    """Tracks whether 0009 owns the effective-dated fixed-asset tax rule."""
+
+    __tablename__ = "fixed_asset_tax_rule_migration_actions"
+
+    tax_rule_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("tax_rules.id", ondelete="RESTRICT"), primary_key=True
+    )
+    action: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (CheckConstraint("action = 'created'", name="ck_fixed_asset_tax_rule_action"),)
+
+
 class TaxRule(Base):
     __tablename__ = "tax_rules"
 
@@ -836,9 +1132,9 @@ class Evidence(Base):
         UniqueConstraint("org_id", "sha256", name="uq_evidence_org_sha"),
         UniqueConstraint("org_id", "id", name="uq_evidence_org_id"),
         CheckConstraint("length(sha256) = 64", name="ck_evidence_sha256_length"),
-        CheckConstraint(
-            "sha256 ~ '^[0-9a-f]{64}$'", name="ck_evidence_sha256_lower_hex"
-        ).ddl_if(dialect="postgresql"),
+        CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_evidence_sha256_lower_hex").ddl_if(
+            dialect="postgresql"
+        ),
         CheckConstraint("size_bytes >= 0", name="ck_evidence_size"),
     )
 
@@ -1110,9 +1406,7 @@ class BankTransactionMatch(Base):
             name="fk_bank_match_org_invalidation_event",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint(
-            "org_id", "bank_transaction_id", "event_id", name="uq_bank_match_event"
-        ),
+        UniqueConstraint("org_id", "bank_transaction_id", "event_id", name="uq_bank_match_event"),
         CheckConstraint(
             "(invalidated_by_event_id IS NULL AND invalidated_at IS NULL) OR "
             "(invalidated_by_event_id IS NOT NULL AND invalidated_at IS NOT NULL)",

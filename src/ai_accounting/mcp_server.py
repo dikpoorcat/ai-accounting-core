@@ -37,9 +37,14 @@ from .schemas import (
     DISABLED_EVENT_TYPES,
     EVENT_REQUIREMENTS,
     INTERNAL_EVENT_TYPES,
+    AcquireFixedAssetRequest,
+    ActivateFixedAssetRequest,
+    ConfirmFixedAssetDepreciationRequest,
     ConfirmPayrollRequest,
+    DisposeFixedAssetRequest,
     EventType,
     ImportBankStatementRequest,
+    PreviewFixedAssetDepreciationRequest,
     PreviewPayrollRequest,
     RecordEventRequest,
     RegisterEmployeePayrollProfileVersionRequest,
@@ -211,6 +216,14 @@ def _sanitize_tool_errors(*tool_names: str) -> None:
         object.__setattr__(tool, "run", sanitized_run)
 
 
+def _fixed_asset_service(session: Any) -> Any:
+    """Load the specialized asset workflow only when an asset tool is invoked."""
+
+    from .fixed_asset_service import FixedAssetService
+
+    return FixedAssetService(session)
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_database_error_boundary
 def finance_get_profile(org_id: str) -> dict[str, Any]:
@@ -295,7 +308,20 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 ],
                 "generic_event_writer": "not_available",
                 "accrual_entry": "finance_confirm_payroll",
-            }
+            },
+            "fixed_asset": {
+                "status": "enabled",
+                "entry_tools": [
+                    "finance_acquire_fixed_asset",
+                    "finance_activate_fixed_asset",
+                    "finance_preview_fixed_asset_depreciation",
+                    "finance_confirm_fixed_asset_depreciation",
+                    "finance_dispose_fixed_asset",
+                    "finance_get_fixed_asset",
+                ],
+                "generic_event_writer": "not_available",
+                "accrual_entry": "finance_confirm_fixed_asset_depreciation",
+            },
         },
         # Return the schema actually advertised by FastMCP, including its strict
         # tool envelope, rather than maintaining a second model-only contract.
@@ -420,6 +446,76 @@ def finance_get_payroll_batch(org_id: uuid.UUID, batch_id: uuid.UUID) -> dict[st
         return _invalid(exc)
 
 
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_acquire_fixed_asset(request: AcquireFixedAssetRequest) -> dict[str, Any]:
+    """登记外购待启用资产；只接受固定业务事实，不接受自由分录。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _fixed_asset_service(session).acquire_fixed_asset(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_activate_fixed_asset(request: ActivateFixedAssetRequest) -> dict[str, Any]:
+    """启用待启用资产并冻结折旧寿命、残值与受益区域。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _fixed_asset_service(session).activate_fixed_asset(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_fixed_asset_depreciation(
+    request: PreviewFixedAssetDepreciationRequest,
+) -> dict[str, Any]:
+    """读取不可变资产事实，试算单资产单月折旧而不写入草稿。"""
+    try:
+        with SessionLocal() as session:
+            result = _fixed_asset_service(session).preview_fixed_asset_depreciation(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_fixed_asset_depreciation(
+    request: ConfirmFixedAssetDepreciationRequest,
+) -> dict[str, Any]:
+    """以试算哈希确认月折旧；内核复算后才按固定模板入账。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _fixed_asset_service(session).confirm_fixed_asset_depreciation(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_dispose_fixed_asset(request: DisposeFixedAssetRequest) -> dict[str, Any]:
+    """出售或零收入报废已启用资产，并由内核计算清理损益与增值税。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _fixed_asset_service(session).dispose_fixed_asset(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_fixed_asset(org_id: uuid.UUID, asset_id: uuid.UUID) -> dict[str, Any]:
+    """读取资产卡片、冻结规则、折旧、处置、凭证与冲正链。"""
+    try:
+        with SessionLocal() as session:
+            result = _fixed_asset_service(session).get_fixed_asset(org_id, asset_id)
+            return result.model_dump(mode="json")
+    except (ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_database_error_boundary
 def finance_query_context(
@@ -534,6 +630,17 @@ def finance_record_event(request: RecordEventRequest) -> dict[str, Any]:
                 "status": "rejected",
                 "errors": ["PAYROLL_REQUIRES_SPECIALIZED_WORKFLOW"],
             }
+        if request.event_type in {
+            EventType.FIXED_ASSET,
+            EventType.FIXED_ASSET_ACQUISITION,
+            EventType.FIXED_ASSET_ACTIVATION,
+            EventType.FIXED_ASSET_DEPRECIATION,
+            EventType.FIXED_ASSET_DISPOSAL,
+        }:
+            return {
+                "status": "rejected",
+                "errors": ["FIXED_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
+            }
         with SessionLocal.begin() as session:
             return FinanceService(session).record_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
@@ -557,7 +664,7 @@ def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
     """生成关联冲正凭证；原凭证保持不变。"""
     try:
         with SessionLocal.begin() as session:
-            return FinanceService(session).reverse_event(request).model_dump(mode="json")
+            return _fixed_asset_service(session).reverse_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -881,6 +988,12 @@ _make_tool_inputs_strict(
     "finance_preview_payroll",
     "finance_confirm_payroll",
     "finance_get_payroll_batch",
+    "finance_acquire_fixed_asset",
+    "finance_activate_fixed_asset",
+    "finance_preview_fixed_asset_depreciation",
+    "finance_confirm_fixed_asset_depreciation",
+    "finance_dispose_fixed_asset",
+    "finance_get_fixed_asset",
 )
 _sanitize_tool_errors(
     *(tool.name for tool in mcp._tool_manager.list_tools()),

@@ -7,7 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 # Monetary accounting facts are always integer fen.  ``StrictInt`` is
 # intentional: JSON 12.0, ``true`` and "12" must never be silently accepted
@@ -40,6 +40,10 @@ class EventType(StrEnum):
     INDIVIDUAL_INCOME_TAX_PAYMENT = "individual_income_tax_payment"
     PAYROLL = "payroll"
     FIXED_ASSET = "fixed_asset"
+    FIXED_ASSET_ACQUISITION = "fixed_asset_acquisition"
+    FIXED_ASSET_ACTIVATION = "fixed_asset_activation"
+    FIXED_ASSET_DEPRECIATION = "fixed_asset_depreciation"
+    FIXED_ASSET_DISPOSAL = "fixed_asset_disposal"
     INTANGIBLE_ASSET = "intangible_asset"
     LOAN_INTEREST = "loan_interest"
     INVENTORY = "inventory"
@@ -47,13 +51,19 @@ class EventType(StrEnum):
 
 DISABLED_EVENT_TYPES = {
     EventType.PAYROLL,
-    EventType.FIXED_ASSET,
     EventType.INTANGIBLE_ASSET,
     EventType.LOAN_INTEREST,
     EventType.INVENTORY,
 }
 
-INTERNAL_EVENT_TYPES = {EventType.TAX_RELIEF}
+INTERNAL_EVENT_TYPES = {
+    EventType.TAX_RELIEF,
+    EventType.FIXED_ASSET,
+    EventType.FIXED_ASSET_ACQUISITION,
+    EventType.FIXED_ASSET_ACTIVATION,
+    EventType.FIXED_ASSET_DEPRECIATION,
+    EventType.FIXED_ASSET_DISPOSAL,
+}
 
 
 EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
@@ -193,6 +203,21 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "allocations": "required; individual-income-tax payables only; total must equal payment",
         "bank_transactions": "required; outflow total must equal payment",
+    },
+    EventType.FIXED_ASSET.value: {
+        "workflow": "specialized fixed-asset tools only",
+    },
+    EventType.FIXED_ASSET_ACQUISITION.value: {
+        "workflow": "finance_acquire_fixed_asset only",
+    },
+    EventType.FIXED_ASSET_ACTIVATION.value: {
+        "workflow": "finance_activate_fixed_asset only",
+    },
+    EventType.FIXED_ASSET_DEPRECIATION.value: {
+        "workflow": "finance_preview_fixed_asset_depreciation then confirm only",
+    },
+    EventType.FIXED_ASSET_DISPOSAL.value: {
+        "workflow": "finance_dispose_fixed_asset only",
     },
 }
 
@@ -663,6 +688,480 @@ class PayrollResult(BaseModel):
     missing_information: list[dict[str, Any] | str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     rule_version: str | None = None
+    trace: list[dict[str, Any]] = Field(default_factory=list)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class FixedAssetCategory(StrEnum):
+    PRODUCTION_EQUIPMENT = "production_equipment"
+    TOOLS_FURNITURE = "tools_furniture"
+    TRANSPORT = "transport"
+    ELECTRONIC = "electronic"
+    OTHER_MOVABLE_TANGIBLE = "other_movable_tangible"
+
+
+class FixedAssetBenefitArea(StrEnum):
+    MANAGEMENT = "management"
+    SALES = "sales"
+    SERVICE_DELIVERY = "service_delivery"
+
+
+class FixedAssetAcquisitionSettlementKind(StrEnum):
+    BANK = "bank"
+    PAYABLE = "payable"
+
+
+class FixedAssetDepreciationMethod(StrEnum):
+    STRAIGHT_LINE = "straight_line"
+
+
+class FixedAssetDisposalKind(StrEnum):
+    SALE = "sale"
+    RETIREMENT = "retirement"
+
+
+class FixedAssetDisposalSettlementKind(StrEnum):
+    BANK = "bank"
+    RECEIVABLE = "receivable"
+    NONE = "none"
+
+
+class FixedAssetCostComponents(BaseModel):
+    """The finite Phase-1 capitalisable acquisition-cost facts, all in fen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    purchase_price_fen: Fen | None = None
+    noncreditable_tax_fen: Fen | None = None
+    transport_and_handling_fen: Fen | None = None
+    installation_and_direct_cost_fen: Fen | None = None
+
+    def missing_fields(self) -> list[str]:
+        return [
+            field_name
+            for field_name in (
+                "purchase_price_fen",
+                "noncreditable_tax_fen",
+                "transport_and_handling_fen",
+                "installation_and_direct_cost_fen",
+            )
+            if getattr(self, field_name) is None
+        ]
+
+
+class FixedAssetInformationRequirement(BaseModel):
+    """A missing fact that may change fixed-asset accounting treatment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+    fields: list[str]
+
+
+class AcquireFixedAssetRequest(BaseModel):
+    """Facts for one externally acquired, not-yet-enabled fixed asset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    asset_code: str | None = Field(default=None, min_length=1, max_length=100)
+    asset_name: str | None = Field(default=None, min_length=1, max_length=200)
+    category: FixedAssetCategory | None = None
+    expected_use_over_one_year: StrictBool | None = None
+    purchase_date: date | None = None
+    posting_date: date | None = None
+    cost_components: FixedAssetCostComponents = Field(default_factory=FixedAssetCostComponents)
+    supplier: CounterpartyRef | None = None
+    settlement_method: FixedAssetAcquisitionSettlementKind | None = None
+    payment_date: date | None = None
+    due_date: date | None = None
+    evidence_references: list[uuid.UUID] = Field(default_factory=list)
+    bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
+    claims_creditable_input_vat: StrictBool | None = None
+    description: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def dates_are_ordered(self) -> AcquireFixedAssetRequest:
+        if self.posting_date and self.purchase_date and self.posting_date < self.purchase_date:
+            raise ValueError("posting_date must not precede purchase_date")
+        if self.due_date and self.purchase_date and self.due_date < self.purchase_date:
+            raise ValueError("due_date must not precede purchase_date")
+        return self
+
+    def missing_information(self) -> list[FixedAssetInformationRequirement]:
+        missing: list[FixedAssetInformationRequirement] = []
+        identity = [
+            field_name
+            for field_name in ("asset_code", "asset_name", "category")
+            if getattr(self, field_name) is None
+        ]
+        if identity:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_IDENTITY_REQUIRED",
+                    message="asset code, name, and supported category are required",
+                    fields=identity,
+                )
+            )
+        if self.expected_use_over_one_year is None:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_EXPECTED_USE_REQUIRED",
+                    message="expected use over one year must be stated explicitly",
+                    fields=["expected_use_over_one_year"],
+                )
+            )
+        if self.claims_creditable_input_vat is None:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_INPUT_VAT_TREATMENT_REQUIRED",
+                    message="whether acquisition input VAT is claimed creditable must be stated",
+                    fields=["claims_creditable_input_vat"],
+                )
+            )
+        dates = [
+            field_name
+            for field_name in ("purchase_date", "posting_date")
+            if getattr(self, field_name) is None
+        ]
+        if dates:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_ACQUISITION_DATES_REQUIRED",
+                    message="purchase and posting dates are required",
+                    fields=dates,
+                )
+            )
+        if cost_fields := self.cost_components.missing_fields():
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_COST_COMPONENTS_REQUIRED",
+                    message="every capitalisable cost component must be stated, including zero",
+                    fields=[f"cost_components.{item}" for item in cost_fields],
+                )
+            )
+        if self.supplier is None:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_SUPPLIER_REQUIRED",
+                    message="supplier identity is required",
+                    fields=["supplier"],
+                )
+            )
+        if self.settlement_method is None:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_ACQUISITION_SETTLEMENT_REQUIRED",
+                    message="bank payment or supplier payable settlement must be selected",
+                    fields=["settlement_method"],
+                )
+            )
+        elif self.settlement_method is FixedAssetAcquisitionSettlementKind.BANK:
+            if self.payment_date is None:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_PAYMENT_DATE_REQUIRED",
+                        message="a bank-paid acquisition requires its payment date",
+                        fields=["payment_date"],
+                    )
+                )
+            if not self.bank_transaction_references:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED",
+                        message="a bank-paid acquisition requires bank transaction references",
+                        fields=["bank_transaction_references"],
+                    )
+                )
+        elif self.due_date is None:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_DUE_DATE_REQUIRED",
+                    message="a supplier-payable acquisition requires its due date",
+                    fields=["due_date"],
+                )
+            )
+        if not self.evidence_references:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_EVIDENCE_REQUIRED",
+                    message="at least one acquisition evidence reference is required",
+                    fields=["evidence_references"],
+                )
+            )
+        return missing
+
+
+class ActivateFixedAssetRequest(BaseModel):
+    """Facts that freeze one asset's useful life and accounting use area."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    asset_id: uuid.UUID | None = None
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    activation_date: date | None = None
+    posting_date: date | None = None
+    depreciation_method: FixedAssetDepreciationMethod = FixedAssetDepreciationMethod.STRAIGHT_LINE
+    useful_life_months: Annotated[StrictInt, Field(ge=13)] | None = None
+    residual_value_fen: Fen | None = None
+    benefit_area: FixedAssetBenefitArea | None = None
+    evidence_references: list[uuid.UUID] = Field(default_factory=list)
+    description: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def dates_are_ordered(self) -> ActivateFixedAssetRequest:
+        if self.posting_date and self.activation_date and self.posting_date < self.activation_date:
+            raise ValueError("posting_date must not precede activation_date")
+        return self
+
+    def missing_information(self) -> list[FixedAssetInformationRequirement]:
+        fields = [
+            field_name
+            for field_name in (
+                "asset_id",
+                "activation_date",
+                "posting_date",
+                "useful_life_months",
+                "residual_value_fen",
+                "benefit_area",
+            )
+            if getattr(self, field_name) is None
+        ]
+        missing = []
+        if fields:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_ACTIVATION_FACTS_REQUIRED",
+                    message=(
+                        "asset, activation date, life, residual value, and benefit area are "
+                        "required"
+                    ),
+                    fields=fields,
+                )
+            )
+        if not self.evidence_references:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_EVIDENCE_REQUIRED",
+                    message="at least one activation evidence reference is required",
+                    fields=["evidence_references"],
+                )
+            )
+        return missing
+
+
+class PreviewFixedAssetDepreciationRequest(BaseModel):
+    """Request a deterministic calculation for one asset and one calendar month."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    asset_id: uuid.UUID | None = None
+    depreciation_period: str | None = Field(
+        default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"
+    )
+    posting_date: date | None = None
+
+    def missing_information(self) -> list[FixedAssetInformationRequirement]:
+        fields = [
+            field_name
+            for field_name in ("asset_id", "depreciation_period", "posting_date")
+            if getattr(self, field_name) is None
+        ]
+        return (
+            [
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_DEPRECIATION_FACTS_REQUIRED",
+                    message="asset, YYYY-MM depreciation period, and posting date are required",
+                    fields=fields,
+                )
+            ]
+            if fields
+            else []
+        )
+
+
+class ConfirmFixedAssetDepreciationRequest(PreviewFixedAssetDepreciationRequest):
+    """Confirm an unchanged depreciation calculation by its SHA-256 hash."""
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    confirmed_by: str | None = Field(default=None, min_length=1, max_length=100)
+    confirmation_note: str = Field(default="", max_length=2000)
+
+    def missing_information(self) -> list[FixedAssetInformationRequirement]:
+        missing = super().missing_information()
+        fields = [
+            field_name
+            for field_name in ("calculation_hash", "confirmed_by")
+            if getattr(self, field_name) is None
+        ]
+        if fields:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_CONFIRMATION_REQUIRED",
+                    message="calculation hash and confirmer identity are required",
+                    fields=fields,
+                )
+            )
+        return missing
+
+
+class DisposeFixedAssetRequest(BaseModel):
+    """Facts for a sale or zero-income retirement of one active asset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    asset_id: uuid.UUID | None = None
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    disposal_date: date | None = None
+    posting_date: date | None = None
+    disposal_kind: FixedAssetDisposalKind | None = None
+    gross_proceeds_fen: PositiveFen | None = None
+    invoice_type: Literal["ordinary", "special", "none"] | None = None
+    waive_exemption: StrictBool | None = None
+    settlement_method: FixedAssetDisposalSettlementKind | None = None
+    customer: CounterpartyRef | None = None
+    tax_obligation_date: date | None = None
+    clearance_cost_fen: Fen | None = None
+    evidence_references: list[uuid.UUID] = Field(default_factory=list)
+    bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
+    description: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def disposal_dates_are_ordered(self) -> DisposeFixedAssetRequest:
+        if self.posting_date and self.disposal_date and self.posting_date < self.disposal_date:
+            raise ValueError("posting_date must not precede disposal_date")
+        if self.disposal_kind is FixedAssetDisposalKind.RETIREMENT:
+            if (
+                self.settlement_method is not None
+                and self.settlement_method is not FixedAssetDisposalSettlementKind.NONE
+            ):
+                raise ValueError("a retirement must use settlement_method='none'")
+            forbidden = {
+                "gross_proceeds_fen": self.gross_proceeds_fen,
+                "invoice_type": self.invoice_type,
+                "waive_exemption": self.waive_exemption,
+                "customer": self.customer,
+                "tax_obligation_date": self.tax_obligation_date,
+            }
+            if any(value is not None for value in forbidden.values()):
+                raise ValueError("a retirement cannot include sale or tax facts")
+        if (
+            self.disposal_kind is FixedAssetDisposalKind.SALE
+            and self.settlement_method is FixedAssetDisposalSettlementKind.NONE
+        ):
+            raise ValueError("a sale must use bank or receivable settlement")
+        return self
+
+    def missing_information(self) -> list[FixedAssetInformationRequirement]:
+        fields = [
+            field_name
+            for field_name in ("asset_id", "disposal_date", "posting_date", "disposal_kind")
+            if getattr(self, field_name) is None
+        ]
+        missing = []
+        if fields:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_DISPOSAL_FACTS_REQUIRED",
+                    message="asset, disposal date, posting date, and disposal kind are required",
+                    fields=fields,
+                )
+            )
+        if self.clearance_cost_fen is None:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_CLEARANCE_COST_REQUIRED",
+                    message="clearance cost must be explicitly stated, including zero",
+                    fields=["clearance_cost_fen"],
+                )
+            )
+        if self.disposal_kind is FixedAssetDisposalKind.SALE:
+            sale_fields = [
+                field_name
+                for field_name in (
+                    "gross_proceeds_fen",
+                    "invoice_type",
+                    "waive_exemption",
+                    "settlement_method",
+                    "customer",
+                    "tax_obligation_date",
+                )
+                if getattr(self, field_name) is None
+            ]
+            if sale_fields:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_SALE_FACTS_REQUIRED",
+                        message=(
+                            "sale proceeds, invoice, tax, settlement, and customer facts are "
+                            "required"
+                        ),
+                        fields=sale_fields,
+                    )
+                )
+        requires_bank_references = (
+            self.disposal_kind is FixedAssetDisposalKind.SALE
+            and self.settlement_method is FixedAssetDisposalSettlementKind.BANK
+        ) or bool(self.clearance_cost_fen)
+        if requires_bank_references and not self.bank_transaction_references:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED",
+                    message=(
+                        "bank-settled disposal or clearance cost requires bank transaction "
+                        "references"
+                    ),
+                    fields=["bank_transaction_references"],
+                )
+            )
+        if self.disposal_kind is FixedAssetDisposalKind.RETIREMENT:
+            retirement_fields = []
+            if self.settlement_method is None:
+                retirement_fields.append("settlement_method")
+            if retirement_fields:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_RETIREMENT_SETTLEMENT_REQUIRED",
+                        message="a retirement must explicitly state settlement_method='none'",
+                        fields=retirement_fields,
+                    )
+                )
+        if not self.evidence_references:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_EVIDENCE_REQUIRED",
+                    message="at least one disposal evidence reference is required",
+                    fields=["evidence_references"],
+                )
+            )
+        return missing
+
+
+class FixedAssetResultStatus(StrEnum):
+    CALCULATED = "calculated"
+    POSTED = "posted"
+    REVERSED = "reversed"
+    NEEDS_INFORMATION = "needs_information"
+    REJECTED = "rejected"
+
+
+class FixedAssetResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: FixedAssetResultStatus
+    asset_id: uuid.UUID | None = None
+    event_id: uuid.UUID | None = None
+    voucher_id: uuid.UUID | None = None
+    voucher_number: str | None = None
+    calculation_hash: str | None = None
+    missing_information: list[FixedAssetInformationRequirement] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
     trace: list[dict[str, Any]] = Field(default_factory=list)
     data: dict[str, Any] = Field(default_factory=dict)
 
