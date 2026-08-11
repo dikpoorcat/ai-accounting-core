@@ -3247,7 +3247,7 @@ class FinanceService:
         event.status = "posted"
         batch.status = "posted"
         batch.business_event_id = event.id
-        batch.confirmed_by = request.confirmed_by
+        batch.confirmed_by = None
         batch.confirmation_note = request.confirmation_note
         batch.confirmed_at = datetime.now(UTC)
         if (
@@ -3269,7 +3269,7 @@ class FinanceService:
                 org_id=batch.org_id,
                 event_id=event.id,
                 action="payroll_confirmed",
-                actor=request.confirmed_by,
+                actor="ai_agent:ai-accounting-core",
                 details={"batch_id": str(batch.id), "calculation_hash": batch.calculation_hash},
             )
         )
@@ -5929,7 +5929,7 @@ class FinanceService:
             posting_date=request.posting_date,
             payment_date=original_batch.payment_date,
             tax_method=original_batch.tax_method,
-            confirmed_by="system-reversal",
+            confirmed_by=None,
             confirmation_note=request.reason,
             confirmed_at=datetime.now(UTC),
             business_event_id=reversal_event.id,

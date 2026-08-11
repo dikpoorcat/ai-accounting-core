@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
-import uuid
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
 from .models import Evidence, Organization
+from .path_security import (
+    PathSecurityError,
+    ensure_directory_in_root,
+    read_regular_file_in_root,
+    write_new_regular_file_in_root,
+)
 from .schemas import RegisterEvidenceRequest
 
 
@@ -23,11 +28,12 @@ def register_evidence(
         raise ValueError("ORGANIZATION_NOT_FOUND")
 
     if request.file_path is not None:
-        source_path = request.file_path.resolve(strict=True)
-        size = source_path.stat().st_size
-        if size > settings.finance_max_evidence_bytes:
-            raise ValueError("evidence exceeds configured maximum size")
-        content = source_path.read_bytes()
+        import_root = settings.finance_evidence_import_dir or request.file_path.parent
+        source_path, content = read_regular_file_in_root(
+            request.file_path,
+            import_root,
+            max_bytes=settings.finance_max_evidence_bytes,
+        )
         original_name = request.original_name or source_path.name
     else:
         try:
@@ -43,15 +49,32 @@ def register_evidence(
         select(Evidence).where(Evidence.org_id == request.org_id, Evidence.sha256 == digest)
     )
     if existing:
+        _, stored_content = read_regular_file_in_root(
+            Path(existing.storage_path),
+            settings.finance_evidence_dir,
+            max_bytes=settings.finance_max_evidence_bytes,
+        )
+        if hashlib.sha256(stored_content).hexdigest() != existing.sha256:
+            raise PathSecurityError("EVIDENCE_CONTENT_ADDRESS_MISMATCH")
         return existing
 
-    root = settings.finance_evidence_dir.resolve()
+    root = ensure_directory_in_root(settings.finance_evidence_dir, settings.finance_evidence_dir)
     destination = root / digest[:2] / digest[2:4] / digest
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists():
-        temporary = destination.with_name(f".{digest}.{uuid.uuid4().hex}.tmp")
-        temporary.write_bytes(content)
-        os.replace(temporary, destination)
+    destination_parent = ensure_directory_in_root(destination.parent, root)
+    destination = destination_parent / digest
+    destination = write_new_regular_file_in_root(
+        destination,
+        root,
+        content,
+        max_bytes=settings.finance_max_evidence_bytes,
+    )
+    destination, stored_content = read_regular_file_in_root(
+        destination,
+        root,
+        max_bytes=settings.finance_max_evidence_bytes,
+    )
+    if hashlib.sha256(stored_content).hexdigest() != digest:
+        raise PathSecurityError("EVIDENCE_CONTENT_ADDRESS_MISMATCH")
 
     evidence = Evidence(
         org_id=request.org_id,

@@ -62,7 +62,7 @@ pytestmark = [
 def postgres_engine() -> Iterator[Engine]:
     """Use one empty PostgreSQL 17 database for the R5 service concurrency matrix."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
@@ -204,7 +204,6 @@ def _prepare_payment_requests(
                 batch_id=preview.batch_id,
                 calculation_hash=preview.calculation_hash,
                 idempotency_key="r5-payment-confirm",
-                confirmed_by="r5",
             )
         )
         assert confirmed.status == "posted", confirmed.errors
@@ -336,7 +335,6 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
                 batch_id=preview.batch_id,
                 calculation_hash=preview.calculation_hash,
                 idempotency_key="r5-pg-correction-confirm",
-                confirmed_by="r5",
             )
         )
         assert confirmed.status == "posted", confirmed.errors
@@ -430,7 +428,6 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
         batch_id=preview.batch_id,
         calculation_hash=preview.calculation_hash,
         idempotency_key="r5-confirm-same",
-        confirmed_by="r5",
     )
     confirmation_results = _run_two_connections(
         factory,
@@ -457,7 +454,7 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
         batch_id=next_preview.batch_id,
         calculation_hash=next_preview.calculation_hash,
         idempotency_key="r5-confirm-different",
-        confirmed_by="r5-different",
+        confirmation_note="R5 并发确认负例二",
     )
     confirmation_mismatch = _run_two_connections(
         factory,
@@ -467,7 +464,7 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
                 batch_id=next_preview.batch_id,
                 calculation_hash=next_preview.calculation_hash,
                 idempotency_key="r5-confirm-different",
-                confirmed_by="r5",
+                confirmation_note="R5 并发确认负例一",
             ),
             different_confirm,
         ],
@@ -583,14 +580,12 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
                     batch_id=first_preview.batch_id,
                     calculation_hash=first_preview.calculation_hash,
                     idempotency_key="r5-agency-confirm-one",
-                    confirmed_by="r5",
                 ),
                 ConfirmPayrollRequest(
                     org_id=org_id,
                     batch_id=second_preview.batch_id,
                     calculation_hash=second_preview.calculation_hash,
                     idempotency_key="r5-agency-confirm-two",
-                    confirmed_by="r5",
                 ),
             ],
             lambda service, request: service.confirm_payroll(request),

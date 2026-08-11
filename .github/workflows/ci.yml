@@ -1,0 +1,92 @@
+name: Continuous integration
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  non-postgres:
+    name: Non-PostgreSQL checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7.5.0
+        with:
+          version: "0.12.3"
+          enable-cache: true
+      - name: Install the locked project and development tools
+        run: uv sync --locked --all-extras
+      - name: Verify installed dependencies
+        run: uv run python -m pip check
+      - name: Lint
+        run: uv run ruff check .
+      - name: Run non-PostgreSQL tests
+        run: uv run pytest -m "not postgres"
+      - name: Generate CycloneDX SBOM
+        run: uv run cyclonedx-py environment --of JSON --output-file sbom.cdx.json
+      - name: Generate dependency vulnerability report
+        # DEC-026 A: never ignore or waive a scanner-reported vulnerability.
+        run: uv run pip-audit --format json --output pip-audit.json
+      - name: Upload SBOM and vulnerability report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-security-reports
+          path: |
+            sbom.cdx.json
+            pip-audit.json
+          if-no-files-found: warn
+
+  postgres-17:
+    name: PostgreSQL 17 tests and Alembic
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: finance_ci
+          POSTGRES_USER: finance_ci
+          POSTGRES_PASSWORD: finance_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finance_ci -d finance_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://finance_ci:finance_ci@localhost:5432/finance_ci
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7.5.0
+        with:
+          version: "0.12.3"
+          enable-cache: true
+      - name: Install the locked project and development tools
+        run: uv sync --locked --all-extras
+      - name: Apply and validate Alembic migrations
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+      - name: Run PostgreSQL 17 invariant tests
+        run: uv run pytest -m postgres
+
+  gitleaks:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

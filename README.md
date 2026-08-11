@@ -1,8 +1,8 @@
 # AI Accounting Core
 
-面向中国小规模纳税人服务型企业的确定性记账内核。它让 Codex 等 Agent 提交“发生了什么”，但不允许 Agent 自由编造借贷分录。只有资料完整且规则唯一的业务事件才会原子入账；信息不足时返回 `needs_information`。
+面向中国小规模纳税人服务型企业的确定性记账内核。产品目标是让一位不懂财务的小企业负责人亲自使用：负责人只提供原始凭据并说清发生了什么，AI 与确定性内核负责分类、计算、记账、校验和追问。AI 不能自由编造借贷分录或推测缺失事实；只有资料完整且规则唯一的业务事件才会原子入账，信息不足时返回 `needs_information`。
 
-> 当前版本是单企业私有试用内核，不是法定账簿、财务报表、纳税申报或税务意见。投入实际使用前，应由有资质的中国会计和税务专业人士复核企业配置及政策规则。
+> 当前版本是单企业私有试用内核，不是法定账簿、财务报表、纳税申报或税务意见。按 DEC-018 A，正式试用入口保留一次离线专业校准和书面证据，但专业人士不进入系统，也不介入日常工作；该校准和其余试用门禁完成前不得据此处理真实资料。
 
 > 正式试用尚未启动。当前只允许虚构数据和隔离临时数据库验证；在试用前决策、安全、备份恢复和专业复核门禁关闭前，不得导入真实业务资料或部署为生产服务。
 
@@ -13,7 +13,7 @@
 - 股东借款/投入/归还、银行手续费、内部转账、税款支付。
 - 应收应付开放项及严格核销，禁止超额核销制造负数往来。
 - 小规模纳税人价税分离、期间起征点、增值税减免和附加税试算。
-- SHA-256 内容寻址证据库、CSV/XLSX 银行流水导入与去重。
+- SHA-256 内容寻址证据库；开发模式保留旧 CSV/XLSX 银行导入回归，生产模式已停用旧直接写入口，等待新的预检/确认与迟到证据闭环。
 - 幂等入账、期间关闭校验、关联冲正、凭证规则轨迹和审计日志。
 - PostgreSQL 延迟借贷平衡约束及已入账凭证不可改删触发器。
 - 工资、社保、公积金、累计个税和全年一次性奖金的登记、试算、确认、支付与冲正闭环。
@@ -49,7 +49,7 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 
 1. `finance_get_profile`：读取企业、科目和税务政策。
 2. `finance_get_event_schema`：取得业务事件 JSON Schema。
-3. 可选调用 `finance_register_evidence`、`finance_import_bank_statement`。
+3. 可选调用 `finance_register_evidence`。`finance_import_bank_statement` 仅保留开发回归，生产模式不可用。
 4. `finance_query_context`：查询开放项和未匹配流水。
 5. `finance_record_event`：提交业务事实。
 6. `finance_get_event`：审阅事实、凭证、证据和轨迹。
@@ -174,6 +174,7 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 - [会计期间与月结产品决策记录](docs/accounting-period-close-decisions.md)
 - [迟到银行外部证据开发基线](docs/late-bank-evidence-development-plan.md)
 - [正式私有试用前准备度记录](docs/private-pilot-readiness.md)
+- [正式私有试用工程控制基线](docs/private-pilot-engineering-controls.md)
 - [工资模块开发基线](docs/payroll-module-development-plan.md)
 - [工资模块第七轮最终验收](docs/payroll-module-acceptance-remediation-round-7.md)
 - [多 Agent 协作与本地质量验证手册](docs/agent-collaboration-and-local-verification.md)

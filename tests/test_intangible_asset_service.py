@@ -443,7 +443,6 @@ def test_supplier_identity_cost_sum_and_calendar_bounds_are_strict(
             **boundary_preview_request.model_dump(),
             idempotency_key="intangible-calendar-boundary-amortization",
             calculation_hash=boundary_preview.calculation_hash,
-            confirmed_by="tester",
         )
     )
     assert boundary_amortization.status == "posted", boundary_amortization.errors
@@ -506,7 +505,6 @@ def test_amortization_hash_sequence_retirement_and_reverse_order(
         **preview_request.model_dump(),
         idempotency_key="intangible-amortization-stale",
         calculation_hash="0" * 64,
-        confirmed_by="tester",
     )
     stale = service.confirm_intangible_asset_amortization(stale_request)
     assert stale.errors == ["INTANGIBLE_ASSET_CALCULATION_STALE"]
@@ -714,7 +712,6 @@ def test_service_amortization_is_continuous_and_final_month_closes_to_zero(
                 **preview_request.model_dump(),
                 idempotency_key=f"intangible-final-amortization-{month:02d}",
                 calculation_hash=preview.calculation_hash,
-                confirmed_by="tester",
             )
         )
         assert confirmed.status == "posted", confirmed.errors

@@ -23,8 +23,11 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     and_,
+    event,
+    select,
+    text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, Session, attributes, mapped_column, relationship
 
 from .database import Base
 
@@ -99,6 +102,352 @@ class Organization(Base):
     )
 
 
+class OwnerAccount(Base):
+    """The sole local business owner identity for this deployment."""
+
+    __tablename__ = "owner_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    singleton_key: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    login_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    login_name_normalized: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    credential_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    password_failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    password_throttled_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recovery_failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    recovery_throttled_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_authenticated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    password_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_owner_account_org",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("singleton_key", name="uq_owner_account_singleton"),
+        UniqueConstraint("org_id", name="uq_owner_account_org"),
+        UniqueConstraint("login_name_normalized", name="uq_owner_account_login_normalized"),
+        UniqueConstraint("org_id", "id", name="uq_owner_account_org_id"),
+        CheckConstraint("singleton_key = 1", name="ck_owner_account_singleton"),
+        CheckConstraint(
+            "length(login_name) BETWEEN 3 AND 100 AND login_name = trim(login_name)",
+            name="ck_owner_account_login_name",
+        ),
+        CheckConstraint(
+            "login_name_normalized = lower(trim(login_name))",
+            name="ck_owner_account_login_normalized",
+        ),
+        CheckConstraint(
+            "length(password_hash) = 97 AND "
+            "password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=4$%'",
+            name="ck_owner_account_password_hash",
+        ),
+        CheckConstraint(
+            "login_name ~ '^[A-Za-z0-9][A-Za-z0-9._-]{2,99}$'",
+            name="ck_owner_account_login_ascii",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "login_name NOT GLOB '*[^A-Za-z0-9._-]*' "
+            "AND substr(login_name, 1, 1) GLOB '[A-Za-z0-9]'",
+            name="ck_owner_account_login_ascii",
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint(
+            "password_hash ~ "
+            "'^\\$argon2id\\$v=19\\$m=65536,t=3,p=4\\$[A-Za-z0-9+/]{22}\\$"
+            "[A-Za-z0-9+/]{43}$'",
+            name="ck_owner_account_password_hash_shape",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint("status IN ('active','disabled')", name="ck_owner_account_status"),
+        CheckConstraint("credential_version >= 1", name="ck_owner_account_credential_version"),
+        CheckConstraint(
+            "password_failed_attempts >= 0", name="ck_owner_account_password_failures"
+        ),
+        CheckConstraint(
+            "recovery_failed_attempts >= 0", name="ck_owner_account_recovery_failures"
+        ),
+    )
+
+
+class OwnerSession(Base):
+    """A server-side session containing only the SHA-256 digest of its secret."""
+
+    __tablename__ = "owner_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    secret_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    idle_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "owner_account_id"],
+            ["owner_accounts.org_id", "owner_accounts.id"],
+            name="fk_owner_session_org_account",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("secret_sha256", name="uq_owner_session_secret_sha256"),
+        UniqueConstraint("org_id", "id", name="uq_owner_session_org_id"),
+        UniqueConstraint(
+            "org_id",
+            "owner_account_id",
+            "id",
+            "credential_version",
+            name="uq_owner_session_execution_authority",
+        ),
+        CheckConstraint("length(secret_sha256) = 64", name="ck_owner_session_secret_sha256"),
+        CheckConstraint(
+            "secret_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_owner_session_secret_lowerhex",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "secret_sha256 NOT GLOB '*[^0-9a-f]*'",
+            name="ck_owner_session_secret_lowerhex",
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint("credential_version >= 1", name="ck_owner_session_credential_version"),
+        CheckConstraint("last_seen_at >= created_at", name="ck_owner_session_last_seen"),
+        CheckConstraint("idle_expires_at > created_at", name="ck_owner_session_idle_expiry"),
+        CheckConstraint(
+            "absolute_expires_at > created_at", name="ck_owner_session_absolute_expiry"
+        ),
+        CheckConstraint(
+            "idle_expires_at <= absolute_expires_at", name="ck_owner_session_expiry_order"
+        ),
+        CheckConstraint(
+            "(revoked_at IS NULL AND revoke_reason IS NULL) OR "
+            "(revoked_at IS NOT NULL AND revoke_reason IS NOT NULL)",
+            name="ck_owner_session_revocation_state",
+        ),
+        CheckConstraint(
+            "revoked_at IS NULL OR revoked_at >= created_at",
+            name="ck_owner_session_revoked_at",
+        ),
+        CheckConstraint(
+            "revoke_reason IS NULL OR revoke_reason IN "
+            "('logout','credential_changed','recovery_used','idle_expired',"
+            "'absolute_expired','credential_version_mismatch')",
+            name="ck_owner_session_revoke_reason",
+        ),
+    )
+
+
+class OwnerRecoveryCode(Base):
+    """One-time recovery-code history; only a SHA-256 digest is persisted."""
+
+    __tablename__ = "owner_recovery_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    code_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    credential_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "owner_account_id"],
+            ["owner_accounts.org_id", "owner_accounts.id"],
+            name="fk_owner_recovery_code_org_account",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("code_sha256", name="uq_owner_recovery_code_sha256"),
+        UniqueConstraint("org_id", "id", name="uq_owner_recovery_code_org_id"),
+        CheckConstraint(
+            "length(code_sha256) = 64", name="ck_owner_recovery_code_sha256"
+        ),
+        CheckConstraint(
+            "code_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_owner_recovery_code_lowerhex",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "code_sha256 NOT GLOB '*[^0-9a-f]*'",
+            name="ck_owner_recovery_code_lowerhex",
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint(
+            "credential_version >= 1", name="ck_owner_recovery_code_credential_version"
+        ),
+        CheckConstraint(
+            "used_at IS NULL OR invalidated_at IS NULL",
+            name="ck_owner_recovery_code_terminal_state",
+        ),
+        CheckConstraint(
+            "used_at IS NULL OR used_at >= created_at",
+            name="ck_owner_recovery_code_used_at",
+        ),
+        CheckConstraint(
+            "invalidated_at IS NULL OR invalidated_at >= created_at",
+            name="ck_owner_recovery_code_invalidated_at",
+        ),
+    )
+
+
+class IdentityAuditEvent(Base):
+    """Fixed-shape, append-only local identity security audit event."""
+
+    __tablename__ = "identity_audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    owner_account_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    request_correlation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_identity_audit_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "owner_account_id"],
+            ["owner_accounts.org_id", "owner_accounts.id"],
+            name="fk_identity_audit_org_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "session_id"],
+            ["owner_sessions.org_id", "owner_sessions.id"],
+            name="fk_identity_audit_org_session",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "event_type IN ('owner_provisioned','login_succeeded','login_failed',"
+            "'session_revoked','session_expired','password_changed',"
+            "'recovery_succeeded','recovery_failed','recovery_code_replaced')",
+            name="ck_identity_audit_event_type",
+        ),
+        CheckConstraint(
+            "outcome IN ('succeeded','rejected','blocked')",
+            name="ck_identity_audit_outcome",
+        ),
+        CheckConstraint(
+            "reason_code IS NULL OR reason_code IN "
+            "('INVALID_CREDENTIALS','ACCOUNT_THROTTLED','ACCOUNT_DISABLED',"
+            "'SESSION_REVOKED','SESSION_IDLE_EXPIRED','SESSION_ABSOLUTE_EXPIRED',"
+            "'SESSION_CREDENTIAL_VERSION_MISMATCH','RECOVERY_CODE_INVALID',"
+            "'RECOVERY_THROTTLED','PASSWORD_POLICY_REJECTED','OWNER_ALREADY_PROVISIONED')",
+            name="ck_identity_audit_reason_code",
+        ),
+    )
+
+
+class ExecutionAttribution(Base):
+    """Immutable owner authority and server executor frozen for one write call."""
+
+    __tablename__ = "execution_attributions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_credential_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    executor_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    executor_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    executor_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    request_correlation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            [
+                "org_id",
+                "owner_account_id",
+                "owner_session_id",
+                "owner_credential_version",
+            ],
+            [
+                "owner_sessions.org_id",
+                "owner_sessions.owner_account_id",
+                "owner_sessions.id",
+                "owner_sessions.credential_version",
+            ],
+            name="fk_execution_attribution_session_authority",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_execution_attribution_org_id"),
+        UniqueConstraint(
+            "request_correlation_id",
+            name="uq_execution_attribution_request_correlation",
+        ),
+        CheckConstraint(
+            "owner_credential_version >= 1",
+            name="ck_execution_attribution_credential_version",
+        ),
+        CheckConstraint(
+            "executor_kind IN ('ai_agent','deterministic_kernel','system_job')",
+            name="ck_execution_attribution_executor_kind",
+        ),
+        CheckConstraint(
+            "length(executor_name) BETWEEN 1 AND 100",
+            name="ck_execution_attribution_executor_name",
+        ),
+        CheckConstraint(
+            "length(executor_version) BETWEEN 1 AND 100",
+            name="ck_execution_attribution_executor_version",
+        ),
+        CheckConstraint(
+            "length(tool_name) BETWEEN 1 AND 100",
+            name="ck_execution_attribution_tool_name",
+        ),
+        CheckConstraint(
+            "executor_name ~ '^[A-Za-z0-9._:-]{1,100}$'",
+            name="ck_execution_attribution_executor_name_ascii",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "executor_version ~ '^[A-Za-z0-9._:-]{1,100}$'",
+            name="ck_execution_attribution_executor_version_ascii",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "tool_name ~ '^finance_[a-z0-9_]{1,92}$'",
+            name="ck_execution_attribution_tool_name_ascii",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+
+Index(
+    "uq_owner_recovery_code_current",
+    OwnerRecoveryCode.owner_account_id,
+    unique=True,
+    postgresql_where=(
+        OwnerRecoveryCode.used_at.is_(None) & OwnerRecoveryCode.invalidated_at.is_(None)
+    ),
+    sqlite_where=(
+        OwnerRecoveryCode.used_at.is_(None) & OwnerRecoveryCode.invalidated_at.is_(None)
+    ),
+)
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
@@ -153,6 +502,7 @@ class Employee(Base):
     employment_start_date: Mapped[date] = mapped_column(Date)
     employment_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     counterparty: Mapped[Counterparty] = relationship(lazy="joined")
@@ -162,6 +512,12 @@ class Employee(Base):
             ["org_id", "counterparty_id"],
             ["counterparties.org_id", "counterparties.id"],
             name="fk_employee_org_counterparty",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_employee_execution_attribution",
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_employee_org_id"),
@@ -188,6 +544,7 @@ class EmployeePayrollProfileVersion(Base):
     social_insurance_base_fen: Mapped[int] = mapped_column(BigInteger)
     housing_fund_base_fen: Mapped[int] = mapped_column(BigInteger)
     resident_employee: Mapped[bool] = mapped_column(default=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
@@ -195,6 +552,12 @@ class EmployeePayrollProfileVersion(Base):
             ["org_id", "employee_id"],
             ["employees.org_id", "employees.id"],
             name="fk_payroll_profile_org_employee",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_payroll_profile_execution_attribution",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -245,6 +608,7 @@ class PayrollPolicyVersion(Base):
     version: Mapped[str] = mapped_column(String(50))
     source_url: Mapped[str] = mapped_column(Text)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
@@ -260,6 +624,12 @@ class PayrollPolicyVersion(Base):
                 "payroll_policy_versions.id",
             ],
             name="fk_payroll_policy_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_payroll_policy_execution_attribution",
             ondelete="RESTRICT",
         ),
         CheckConstraint(
@@ -321,6 +691,7 @@ class PayrollBatch(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
     reversal_of_batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
@@ -328,6 +699,12 @@ class PayrollBatch(Base):
             ["org_id", "policy_version_id"],
             ["payroll_policy_versions.org_id", "payroll_policy_versions.id"],
             name="fk_payroll_batch_org_policy",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_payroll_batch_execution_attribution",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -631,6 +1008,7 @@ class PayrollOpeningState(Base):
     cumulative_other_legal_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     cumulative_tax_relief_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     cumulative_tax_withheld_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
@@ -638,6 +1016,12 @@ class PayrollOpeningState(Base):
             ["org_id", "employee_id"],
             ["employees.org_id", "employees.id"],
             name="fk_payroll_opening_state_org_employee",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_payroll_opening_execution_attribution",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -829,9 +1213,16 @@ class AccountingPeriodAction(Base):
     errors: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     confirmed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_period_action_execution_attribution",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "id", name="uq_accounting_period_action_org_id"),
         UniqueConstraint(
             "org_id", "idempotency_key", name="uq_accounting_period_action_idempotency"
@@ -1942,9 +2333,16 @@ class Evidence(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     storage_path: Mapped[str] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_evidence_execution_attribution",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "sha256", name="uq_evidence_org_sha"),
         UniqueConstraint("org_id", "id", name="uq_evidence_org_id"),
         CheckConstraint("length(sha256) = 64", name="ck_evidence_sha256_length"),
@@ -1979,6 +2377,7 @@ class BusinessEvent(Base):
     reversed_by_event_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("business_events.id", ondelete="RESTRICT"), nullable=True
     )
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     evidence: Mapped[list[Evidence]] = relationship(
@@ -2006,6 +2405,12 @@ class BusinessEvent(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_business_event_execution_attribution",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "id", name="uq_business_event_org_id"),
         UniqueConstraint("org_id", "idempotency_key", name="uq_event_org_idempotency"),
         CheckConstraint(
@@ -2297,9 +2702,16 @@ class BankTransaction(Base):
     matched_event_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("business_events.id", ondelete="RESTRICT"), nullable=True
     )
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_bank_transaction_execution_attribution",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "fingerprint", name="uq_bank_transaction_fingerprint"),
         UniqueConstraint("org_id", "id", name="uq_bank_transaction_org_id"),
         CheckConstraint("amount_fen <> 0", name="ck_bank_transaction_nonzero"),
@@ -2584,6 +2996,75 @@ class AuditLog(Base):
     actor: Mapped[str] = mapped_column(String(100), default="agent")
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+EXECUTION_ATTRIBUTION_SESSION_KEY = "finance_execution_attribution_id"
+_ATTRIBUTED_ROOT_TYPES = (
+    AccountingPeriodAction,
+    BankTransaction,
+    BusinessEvent,
+    Employee,
+    EmployeePayrollProfileVersion,
+    Evidence,
+    PayrollBatch,
+    PayrollOpeningState,
+    PayrollPolicyVersion,
+)
+
+
+@event.listens_for(Session, "before_flush")
+def _enforce_orm_execution_attribution(
+    session: Session,
+    _flush_context: object,
+    _instances: object,
+) -> None:
+    """Keep owner-mode ORM writes fail-closed, including direct service calls.
+
+    PostgreSQL receives equivalent guards in revision 0014.  This listener also
+    protects SQLite/service tests and automatically attaches the already
+    authenticated write-call attribution held in ``Session.info``.
+    """
+
+    expected = session.info.get(EXECUTION_ATTRIBUTION_SESSION_KEY)
+    owner_mode: bool | None = None
+
+    if any(isinstance(item, ExecutionAttribution) for item in session.deleted):
+        raise ValueError("EXECUTION_ATTRIBUTION_APPEND_ONLY")
+    for item in session.dirty:
+        if isinstance(item, ExecutionAttribution) and session.is_modified(item):
+            raise ValueError("EXECUTION_ATTRIBUTION_APPEND_ONLY")
+
+    for root in session.new:
+        if not isinstance(root, _ATTRIBUTED_ROOT_TYPES):
+            continue
+        if owner_mode is None:
+            owner_mode = session.scalar(select(OwnerAccount.id).limit(1)) is not None
+        supplied = root.execution_attribution_id
+        if expected is not None:
+            if supplied is not None and supplied != expected:
+                raise ValueError("BUSINESS_EXECUTION_ATTRIBUTION_MISMATCH")
+            root.execution_attribution_id = expected
+        elif owner_mode:
+            raise ValueError("BUSINESS_EXECUTION_ATTRIBUTION_REQUIRED")
+
+    for root in session.dirty:
+        if not isinstance(root, _ATTRIBUTED_ROOT_TYPES):
+            continue
+        if root.execution_attribution_id is None:
+            if expected is not None:
+                root.execution_attribution_id = expected
+            else:
+                if owner_mode is None:
+                    owner_mode = session.scalar(select(OwnerAccount.id).limit(1)) is not None
+                if owner_mode:
+                    raise ValueError("BUSINESS_EXECUTION_ATTRIBUTION_REQUIRED")
+        history = attributes.get_history(root, "execution_attribution_id")
+        if history.has_changes() and not (
+            list(history.deleted) == [None]
+            and expected is not None
+            and list(history.added) == [expected]
+        ):
+            raise ValueError("BUSINESS_EXECUTION_ATTRIBUTION_IMMUTABLE")
 
 
 Index("ix_open_items_org_status", OpenItem.org_id, OpenItem.item_type, OpenItem.status)

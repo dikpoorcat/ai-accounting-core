@@ -63,7 +63,6 @@ class GenerateAccountingPeriodRequest(BaseModel):
     org_id: uuid.UUID
     period_month: str = Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
-    confirmed_by: str | None = Field(default=None, min_length=1, max_length=100)
     confirmation_note: str | None = Field(default=None, min_length=1, max_length=2000)
     evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
 
@@ -74,7 +73,7 @@ class GenerateAccountingPeriodRequest(BaseModel):
             raise ValueError("period month year must be 0001 through 9999")
         return value
 
-    @field_validator("idempotency_key", "confirmed_by", "confirmation_note")
+    @field_validator("idempotency_key", "confirmation_note")
     @classmethod
     def reject_blank_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -87,7 +86,7 @@ class GenerateAccountingPeriodRequest(BaseModel):
     def missing_information(self) -> list[AccountingPeriodInformationRequirement]:
         fields = [
             name
-            for name in ("idempotency_key", "confirmed_by", "confirmation_note")
+            for name in ("idempotency_key", "confirmation_note")
             if getattr(self, name) is None
         ]
         if not self.evidence_references:
@@ -97,7 +96,7 @@ class GenerateAccountingPeriodRequest(BaseModel):
                 AccountingPeriodInformationRequirement(
                     code="ACCOUNTING_PERIOD_GENERATION_CONFIRMATION_REQUIRED",
                     message=(
-                        "idempotency key, confirmer, note, and at least one evidence "
+                        "idempotency key, note, and at least one evidence "
                         "reference are required"
                     ),
                     fields=fields,
@@ -120,11 +119,10 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
     review_facts: AccountingPeriodReviewFacts = Field(default_factory=AccountingPeriodReviewFacts)
-    confirmed_by: str | None = Field(default=None, min_length=1, max_length=100)
     confirmation_note: str | None = Field(default=None, min_length=1, max_length=2000)
     evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
 
-    @field_validator("idempotency_key", "confirmed_by", "confirmation_note")
+    @field_validator("idempotency_key", "confirmation_note")
     @classmethod
     def reject_blank_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -137,7 +135,7 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     def missing_information(self) -> list[AccountingPeriodInformationRequirement]:
         fields = [
             name
-            for name in ("calculation_hash", "idempotency_key", "confirmed_by", "confirmation_note")
+            for name in ("calculation_hash", "idempotency_key", "confirmation_note")
             if getattr(self, name) is None
         ]
         fields.extend(f"review_facts.{name}" for name in self.review_facts.missing_fields())
@@ -149,7 +147,7 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
                     code="ACCOUNTING_PERIOD_CLOSE_CONFIRMATION_REQUIRED",
                     message=(
                         "preview hash, idempotency key, all review declarations, "
-                        "confirmer, note, and evidence are required"
+                        "note and evidence are required"
                     ),
                     fields=fields,
                 )

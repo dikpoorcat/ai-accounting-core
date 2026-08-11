@@ -69,7 +69,7 @@ def _reverse_request(org_id: object, event_id: object, *, key: str) -> ReverseEv
 def test_r3_008_reversal_replays_after_source_lock_and_r3_009_rebooks_bank_row() -> None:
     """Two PG sessions replay the same reversal and retain immutable bank history."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)

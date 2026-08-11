@@ -39,7 +39,7 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -139,7 +139,6 @@ def _post_two_partial_salary_social_payment(
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key="r3-pg-source-confirm",
-            confirmed_by="r3-lineage-postgres",
         )
     )
     assert confirmed.status == "posted", confirmed.errors

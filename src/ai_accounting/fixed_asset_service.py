@@ -750,7 +750,6 @@ class FixedAssetService(FinanceService):
         trace[0] = {
             **trace[0],
             "command": "finance_confirm_fixed_asset_depreciation",
-            "confirmed_by": request.confirmed_by,
         }
         event = self._new_fixed_asset_event(
             request,

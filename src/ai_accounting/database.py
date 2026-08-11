@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 
 
 def make_engine(url: str | None = None, *, echo: bool = False) -> Engine:
-    engine = create_engine(url or get_settings().database_url, echo=echo)
+    engine = create_engine(url or get_settings().runtime_database_url(), echo=echo)
     if engine.dialect.name == "sqlite":
         event.listen(engine, "connect", _enable_sqlite_foreign_keys)
     return engine

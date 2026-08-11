@@ -322,7 +322,7 @@ def _add_duplicate_disposal_attempt(
 def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         monkeypatch.setenv("DATABASE_URL", url)
         config = Config("alembic.ini")
@@ -489,7 +489,7 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
 def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         monkeypatch.setenv("DATABASE_URL", url)
         config = Config("alembic.ini")
@@ -721,7 +721,7 @@ def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
 def test_postgres_fixed_asset_upgrade_downgrade_round_trip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         monkeypatch.setenv("DATABASE_URL", url)
         config = Config("alembic.ini")
@@ -747,7 +747,7 @@ def test_postgres_fixed_asset_upgrade_downgrade_round_trip(
             command.check(config)
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0012_accounting_period_close"
+                    "0014_execution_attribution"
                 )
         finally:
             engine.dispose()

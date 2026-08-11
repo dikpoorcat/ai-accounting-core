@@ -161,7 +161,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
         (date(2026, 3, 7), -140_000, "公积金中心", "公积金缴纳", "R2-HOUSING"),
         (date(2026, 3, 7), -10_500, "税务局", "个税缴纳", "R2-IIT"),
     )
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
@@ -690,7 +690,6 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "batch_id": preview["batch_id"],
                                     "calculation_hash": preview["calculation_hash"],
                                     "idempotency_key": "r2-stdio-confirm",
-                                    "confirmed_by": "r2-stdio",
                                 }
                             },
                         )
@@ -1059,7 +1058,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                 batch = session.get(PayrollBatch, batch_id)
                 assert batch is not None and batch.status == "posted"
                 assert batch.business_event_id == uuid.UUID(result["confirmed"]["event_id"])
-                assert batch.confirmed_by == "r2-stdio"
+                assert batch.confirmed_by is None
                 assert batch.confirmed_at is not None
                 assert batch.calculation_hash == result["preview"]["calculation_hash"]
                 evidence_edges = session.scalars(
@@ -1277,7 +1276,7 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
     malformed_xlsx = tmp_path / "r7-malformed.xlsx"
     malformed_xlsx.write_bytes(sentinels["file"].encode("utf-8"))
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)

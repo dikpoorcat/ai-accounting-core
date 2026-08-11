@@ -46,7 +46,7 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
@@ -82,7 +82,6 @@ def _confirmed_payroll_with_evidence(
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key=f"r4-{key}-confirm",
-            confirmed_by="round4-postgres",
         )
     )
     assert confirmed.status == "posted", confirmed.errors
@@ -659,7 +658,6 @@ def _salary_payment_with_unsettled_statutory_sources(
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key=f"r4-statutory-{key}-confirm",
-            confirmed_by="round4-statutory-attack",
         )
     )
     assert confirmed.status == "posted", confirmed.errors

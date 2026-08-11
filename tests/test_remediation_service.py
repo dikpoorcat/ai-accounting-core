@@ -91,7 +91,6 @@ def _confirm(session: Session, organization: Organization, preview: object, key:
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key=key,
-            confirmed_by="remediation-test",
         )
     )
 
@@ -288,7 +287,6 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
             batch_id=regular.batch_id,
             calculation_hash=regular.calculation_hash,
             idempotency_key="r2-011-regular-confirm",
-            confirmed_by="r2-011",
         )
     )
     assert regular_confirmation.status == "posted", regular_confirmation.errors
@@ -400,7 +398,6 @@ def test_r2_013_preview_persists_organization_bound_evidence_for_draft_and_poste
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key="r2-evidence-confirm",
-            confirmed_by="remediation-test",
             confirmation_note="different payload",
         )
     )
@@ -658,7 +655,7 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
 
     from alembic import command
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -823,7 +820,7 @@ def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connecti
 
     from alembic import command
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -884,7 +881,6 @@ def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connecti
                         batch_id=later_preview.batch_id,
                         calculation_hash=later_preview.calculation_hash,
                         idempotency_key="r2-001-later-confirm",
-                        confirmed_by="r2-001",
                     )
                 )
                 assert later_confirmation.status == "posted", later_confirmation.errors
@@ -902,7 +898,7 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
 
     from alembic import command
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)

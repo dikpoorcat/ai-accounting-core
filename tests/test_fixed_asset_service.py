@@ -453,7 +453,6 @@ def test_depreciation_preview_confirm_hash_and_sequence(
             **preview_request.model_dump(),
             idempotency_key="asset-depreciation-confirm",
             calculation_hash=preview.calculation_hash,
-            confirmed_by="tester",
         )
     )
     assert confirmed.status == "posted", confirmed.errors
@@ -466,7 +465,6 @@ def test_depreciation_preview_confirm_hash_and_sequence(
             **preview_request.model_dump(),
             idempotency_key="asset-depreciation-confirm",
             calculation_hash=preview.calculation_hash,
-            confirmed_by="tester",
         )
     )
     assert confirmed_replay.calculation_hash == preview.calculation_hash
@@ -648,7 +646,6 @@ def test_depreciation_preview_confirm_hash_and_sequence(
             **preview_b_request.model_dump(),
             idempotency_key="asset-depreciation-confirm-b",
             calculation_hash=preview_b.calculation_hash,
-            confirmed_by="tester",
         )
     )
     assert confirmed_b.status == "posted", confirmed_b.errors

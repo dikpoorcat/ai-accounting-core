@@ -322,7 +322,6 @@ class AccountingPeriodService:
             payload_hash,
             "posted",
             request.model_dump(mode="json"),
-            request.confirmed_by,
             request.confirmation_note,
         )
         calendar = self.session.scalar(
@@ -447,7 +446,6 @@ class AccountingPeriodService:
             payload_hash,
             "posted",
             request.model_dump(mode="json"),
-            request.confirmed_by,
             request.confirmation_note,
         )
         self.session.add(action)
@@ -1021,7 +1019,6 @@ class AccountingPeriodService:
         payload_hash: str,
         status: str,
         input_facts: dict[str, Any],
-        confirmed_by: str | None,
         confirmation_note: str | None,
         *,
         missing: list[AccountingPeriodInformationRequirement] | None = None,
@@ -1037,7 +1034,9 @@ class AccountingPeriodService:
             input_facts=input_facts,
             missing_information=[field for item in missing or [] for field in item.fields],
             errors=[{"code": code, "field_paths": field_paths or []} for code in errors or []],
-            confirmed_by=confirmed_by,
+            # Historical column only.  Authenticated owner/executor identity is
+            # frozen by execution_attribution_id, never by caller text.
+            confirmed_by=None,
             confirmation_note=confirmation_note,
         )
 
@@ -1070,7 +1069,6 @@ class AccountingPeriodService:
             payload_hash,
             status.value,
             input_facts,
-            None,
             None,
             missing=missing,
             errors=failure_codes,

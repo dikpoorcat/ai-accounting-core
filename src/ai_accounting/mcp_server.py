@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import uuid
 from collections.abc import Callable
+from contextlib import AbstractContextManager
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any
 
@@ -10,7 +13,7 @@ import mcp.server.fastmcp.server as fastmcp_server
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import ConfigDict, ValidationError
+from pydantic import ConfigDict, SecretStr, ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
@@ -29,8 +32,13 @@ from .borrowing_schemas import (
     PreviewBorrowingInterestRequest,
     RepayBorrowingPrincipalRequest,
 )
+from .config import get_settings
+from .credential_store import WindowsCredentialStore
 from .database import SessionLocal
 from .evidence import register_evidence
+from .execution_attribution import persist_execution_attribution
+from .identity import ExecutorIdentity, ExecutorKind, IdentityError
+from .identity_service import IdentityService
 from .intangible_asset_schemas import (
     AcquireIntangibleAssetRequest,
     ConfirmIntangibleAssetAmortizationRequest,
@@ -46,6 +54,7 @@ from .models import (
     Evidence,
     OpenItem,
     Organization,
+    OwnerAccount,
     PayrollBatch,
     PayrollEventLink,
     TaxRule,
@@ -76,8 +85,53 @@ from .schemas import (
     TaxPeriodPreviewRequest,
 )
 from .service import FinanceService
+from .service_lease import acquire_windows_service_lease
+from .windows_backup import WindowsCurrentUserOnlyAclVerifier
 
 logger = logging.getLogger(__name__)
+
+SERVER_MCP_EXECUTOR = ExecutorIdentity(
+    kind=ExecutorKind.AI_AGENT,
+    executor_name="ai-accounting-core",
+    executor_version="0.1.0",
+)
+_ACTIVE_TOOL_SESSION: ContextVar[Any | None] = ContextVar(
+    "finance_mcp_active_tool_session", default=None
+)
+_MCP_SESSION_TOKEN: SecretStr | None = None
+
+
+class _BorrowedSessionContext(AbstractContextManager[Any]):
+    def __init__(self, session: Any) -> None:
+        self._session = session
+
+    def __enter__(self) -> Any:
+        return self._session
+
+    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+        return None
+
+
+class _ContextAwareSessionFactory:
+    """Route a handler's legacy session block to the authenticated transaction."""
+
+    def __init__(self, factory: Any) -> None:
+        self._factory = factory
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        active = _ACTIVE_TOOL_SESSION.get()
+        if active is not None:
+            return _BorrowedSessionContext(active)
+        return self._factory(*args, **kwargs)
+
+    def begin(self) -> Any:
+        active = _ACTIVE_TOOL_SESSION.get()
+        if active is not None:
+            return _BorrowedSessionContext(active)
+        return self._factory.begin()
+
+
+SessionLocal = _ContextAwareSessionFactory(SessionLocal)
 
 # mcp 1.29 ships a generic Settings forward reference that pydantic-settings 2.15
 # cannot resolve automatically. Rebuild it with the defining module's namespace
@@ -102,6 +156,115 @@ IDEMPOTENT_WRITE = ToolAnnotations(
 REVERSAL_WRITE = ToolAnnotations(
     readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
 )
+
+
+def _set_mcp_session_token_for_tests(token: SecretStr | None) -> None:
+    """Inject an opaque token in-process; production startup never calls this."""
+
+    global _MCP_SESSION_TOKEN
+    _MCP_SESSION_TOKEN = token
+
+
+def _load_startup_session_token() -> None:
+    """Read DEC-031 B's token once; login afterwards requires an MCP restart."""
+
+    global _MCP_SESSION_TOKEN
+    try:
+        _MCP_SESSION_TOKEN = WindowsCredentialStore().load_session_token()
+    except IdentityError:
+        if get_settings().finance_environment == "production":
+            raise
+        _MCP_SESSION_TOKEN = None
+
+
+def _tool_org_id(
+    function: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> uuid.UUID:
+    bound = inspect.signature(function).bind_partial(*args, **kwargs)
+    request = bound.arguments.get("request")
+    raw = getattr(request, "org_id", None) if request is not None else bound.arguments.get("org_id")
+    if isinstance(raw, uuid.UUID):
+        return raw
+    if not isinstance(raw, str):
+        raise ValueError("organization id is required")
+    return uuid.UUID(raw)
+
+
+def _rejected_identity(code: str) -> dict[str, Any]:
+    return {"status": "rejected", "errors": [code]}
+
+
+def _begin_mcp_transaction() -> Any:
+    begin = getattr(SessionLocal, "begin", None)
+    if begin is not None:
+        return begin()
+    # Narrow compatibility path for existing in-process handler fakes.  The
+    # production factory always exposes begin().
+    return SessionLocal()
+
+
+def _secure_registered_data_tools() -> None:
+    """Wrap every enterprise-data tool without changing its public schema."""
+
+    for tool in mcp._tool_manager.list_tools():
+        if tool.name == "finance_get_event_schema":
+            continue
+        original = tool.fn
+        is_write = not bool(tool.annotations and tool.annotations.readOnlyHint)
+
+        @wraps(original)
+        def authenticated(
+            *args: Any,
+            _original: Callable[..., Any] = original,
+            _tool_name: str = tool.name,
+            _is_write: bool = is_write,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            try:
+                requested_org_id = _tool_org_id(_original, args, kwargs)
+            except ValueError:
+                return _rejected_identity("INVALID_REQUEST")
+            environment = get_settings().finance_environment
+            if _MCP_SESSION_TOKEN is None and environment != "development":
+                return _rejected_identity("AUTHENTICATION_REQUIRED")
+            with _begin_mcp_transaction() as session:
+                owner_exists = session.scalar(select(OwnerAccount.id).limit(1)) is not None
+                if not owner_exists and environment == "development":
+                    marker = _ACTIVE_TOOL_SESSION.set(session)
+                    try:
+                        return _original(*args, **kwargs)
+                    finally:
+                        _ACTIVE_TOOL_SESSION.reset(marker)
+                if _MCP_SESSION_TOKEN is None:
+                    return _rejected_identity("AUTHENTICATION_REQUIRED")
+                correlation_id = uuid.uuid4()
+                try:
+                    context = IdentityService(session).authorize_execution(
+                        session_token=_MCP_SESSION_TOKEN.get_secret_value(),
+                        executor=SERVER_MCP_EXECUTOR,
+                        request_correlation_id=correlation_id,
+                        expected_org_id=requested_org_id,
+                    )
+                except IdentityError as exc:
+                    if exc.code == "ORGANIZATION_CONTEXT_MISMATCH":
+                        return _rejected_identity("ORGANIZATION_CONTEXT_MISMATCH")
+                    return _rejected_identity("AUTHENTICATION_REQUIRED")
+                marker = _ACTIVE_TOOL_SESSION.set(session)
+                try:
+                    if _is_write:
+                        with persist_execution_attribution(
+                            session,
+                            context=context,
+                            tool_name=_tool_name,
+                        ):
+                            return _original(*args, **kwargs)
+                    return _original(*args, **kwargs)
+                finally:
+                    _ACTIVE_TOOL_SESSION.reset(marker)
+
+        object.__setattr__(tool, "fn", authenticated)
 
 
 def _database_error_code(exc: SQLAlchemyError) -> str:
@@ -162,18 +325,14 @@ def _database_error_boundary(
     return wrapped
 
 
-def _make_tool_inputs_strict(*tool_names: str) -> None:
+def _make_all_tool_inputs_strict() -> None:
     """Make FastMCP's generated argument models reject undeclared top-level fields.
 
     FastMCP 1.x creates dynamic argument models with Pydantic's default
-    ``extra='ignore'`` configuration.  The payroll request models already forbid
-    undeclared nested fields; this closes the otherwise-open MCP tool envelope and
-    keeps the advertised inputSchema aligned with runtime validation.
+    ``extra='ignore'`` configuration.  Apply one registry-wide policy so newly
+    registered tools cannot accidentally publish or accept an open envelope.
     """
-    for tool_name in tool_names:
-        tool = mcp._tool_manager.get_tool(tool_name)
-        if tool is None:  # pragma: no cover - catches registration mistakes at import time.
-            raise RuntimeError(f"MCP tool was not registered: {tool_name}")
+    for tool in mcp._tool_manager.list_tools():
         argument_model = tool.fn_metadata.arg_model
         argument_model.model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
         argument_model.model_rebuild(force=True)
@@ -1320,48 +1479,25 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
         }
 
 
-_make_tool_inputs_strict(
-    "finance_generate_accounting_period",
-    "finance_preview_accounting_period_close",
-    "finance_confirm_accounting_period_close",
-    "finance_get_accounting_periods",
-    "finance_record_event",
-    "finance_calculate_tax_period",
-    "finance_confirm_tax_period",
-    "finance_reverse_event",
-    "finance_register_evidence",
-    "finance_import_bank_statement",
-    "finance_register_employee",
-    "finance_register_employee_profile_version",
-    "finance_register_payroll_policy_version",
-    "finance_register_payroll_opening_state",
-    "finance_preview_payroll",
-    "finance_confirm_payroll",
-    "finance_get_payroll_batch",
-    "finance_acquire_fixed_asset",
-    "finance_activate_fixed_asset",
-    "finance_preview_fixed_asset_depreciation",
-    "finance_confirm_fixed_asset_depreciation",
-    "finance_dispose_fixed_asset",
-    "finance_get_fixed_asset",
-    "finance_acquire_intangible_asset",
-    "finance_preview_intangible_asset_amortization",
-    "finance_confirm_intangible_asset_amortization",
-    "finance_retire_intangible_asset",
-    "finance_get_intangible_asset",
-    "finance_draw_borrowing",
-    "finance_preview_borrowing_interest",
-    "finance_confirm_borrowing_interest",
-    "finance_pay_borrowing_interest",
-    "finance_repay_borrowing_principal",
-    "finance_get_borrowing",
-)
+_secure_registered_data_tools()
+_make_all_tool_inputs_strict()
 _sanitize_tool_errors(
     *(tool.name for tool in mcp._tool_manager.list_tools()),
 )
 
 
 def main() -> None:
+    settings = get_settings()
+    if settings.finance_environment == "production":
+        with acquire_windows_service_lease(
+            settings.finance_service_lock_file,
+            mode="service",
+            access_verifier=WindowsCurrentUserOnlyAclVerifier(),
+        ):
+            _load_startup_session_token()
+            mcp.run(transport="stdio")
+        return
+    _load_startup_session_token()
     mcp.run(transport="stdio")
 
 

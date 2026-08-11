@@ -143,7 +143,6 @@ def test_r3_010_policy_snapshot_uses_each_rule_actual_effective_date_and_detects
             batch_id=batch.id,
             calculation_hash=batch.calculation_hash,
             idempotency_key="r3-010-forged-snapshot-confirm",
-            confirmed_by="r3-010",
         )
     )
     assert rejected.status == "rejected"

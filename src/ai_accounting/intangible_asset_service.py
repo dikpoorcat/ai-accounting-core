@@ -666,7 +666,6 @@ class IntangibleAssetService(FinanceService):
         trace.append(
             {
                 "stage": "calculation_confirmed",
-                "confirmed_by": request.confirmed_by,
                 "confirmation_note": request.confirmation_note,
             }
         )

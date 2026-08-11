@@ -290,7 +290,6 @@ org_id
 batch_id
 calculation_hash
 idempotency_key
-confirmed_by
 confirmation_note
 ```
 

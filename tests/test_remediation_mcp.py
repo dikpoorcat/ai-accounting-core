@@ -514,7 +514,6 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                             "batch_id": preview["batch_id"],
                             "calculation_hash": preview["calculation_hash"],
                             "idempotency_key": "stdio-payroll-confirm",
-                            "confirmed_by": "stdio-remediation-test",
                         }
                     },
                 )

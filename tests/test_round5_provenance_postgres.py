@@ -63,7 +63,7 @@ pytestmark = [
 def postgres_engine() -> Iterator[object]:
     """Install the complete migration head in a clean PostgreSQL 17 instance."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
@@ -424,7 +424,6 @@ def _confirm(session: Session, *, org_id: object, preview: object, key: str) -> 
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key=key,
-            confirmed_by="r5-provenance-postgres",
         )
     )
     assert result.status == "posted", result.errors

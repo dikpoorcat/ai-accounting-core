@@ -10,9 +10,11 @@
 - [无形资产与借款利息第一期最终验收记录](./intangible-assets-and-borrowing-acceptance.md)：双模块闭环、0011 提交点、真实 STDIO、独立负向审计和最终质量门禁。
 - [会计期间生成与月结第一期开发基线](./accounting-period-close-development-plan.md)：自然月生成、累计完整性检查、预览哈希确认、单向关闭、后续开放月更正和 0012 提交点契约。
 - [会计期间生成与月结第一期最终验收记录](./accounting-period-close-acceptance.md)：四个专用工具、0012 提交点、并发/历史迁移、真实 STDIO、独立终审和最终门禁。
-- [会计期间与月结产品决策记录](./accounting-period-close-decisions.md)：反结账、启用策略、期间粒度、空月、时区和银行迟到证据等正式产品取舍。
-- [迟到银行外部证据开发基线](./late-bank-evidence-development-plan.md)：`DEC-013 B` 的日期、锁序、快照不变、后续开放月处理和待决策暂停点。
+- [会计期间与月结产品决策记录](./accounting-period-close-decisions.md)：反结账、期间、银行迟到证据、单一企业负责人、AI 执行归因和正式试用治理等产品取舍。
+- [迟到银行外部证据开发基线](./late-bank-evidence-development-plan.md)：`DEC-013 B` 的日期、锁序、快照不变、人工身份解析、后续开放月处理和身份前置暂停点。
 - [正式私有试用前准备度记录](./private-pilot-readiness.md)：五个虚构历史月演练证据、正式试用停止线、待决策与上线前置。
+- [本地单负责人身份与 AI 执行归因开发基线](./local-owner-identity-development-plan.md)：单账户密码、服务端会话、一次性恢复码、人类授权与 AI/内核执行者分离。
+- [正式私有试用工程控制基线](./private-pilot-engineering-controls.md)：生产配置、数据库账号分离、文件白名单、CI、本地身份与备份恢复边界。
 - [固定资产模块第一期最终验收记录](./fixed-asset-module-acceptance.md)：购置、启用、月折旧、出售/报废和逆序冲正闭环的最终门禁与独立审计结论。
 - [固定资产模块开发基线](./fixed-asset-module-development-plan.md)：已完成阶段的稳定契约、官方依据、边界和验收标准。
 - [工资模块开发基线](./payroll-module-development-plan.md)：当前业务边界、数据模型、工具契约和验收标准。

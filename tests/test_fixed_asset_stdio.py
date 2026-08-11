@@ -248,7 +248,6 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
                             **depreciation_facts,
                             "idempotency_key": "stdio-fixed-asset-confirm-stale",
                             "calculation_hash": bad_hash,
-                            "confirmed_by": "stdio-test",
                             "confirmation_note": secret_note,
                         }
                     },
@@ -266,7 +265,6 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
                             **depreciation_facts,
                             "idempotency_key": "stdio-fixed-asset-confirm",
                             "calculation_hash": preview["calculation_hash"],
-                            "confirmed_by": "stdio-test",
                         }
                     },
                 )

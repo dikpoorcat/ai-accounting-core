@@ -209,7 +209,6 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
                 org_id=org_id,
                 period_month="2026-07",
                 idempotency_key="mcp-generate-2026-07",
-                confirmed_by="mcp-reviewer",
                 confirmation_note="MCP 显式生成七月",
                 evidence_references=[evidence_id],
             )
@@ -242,7 +241,6 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
                     tax_items_reviewed=True,
                     asset_and_borrowing_schedules_reviewed=True,
                 ),
-                confirmed_by="mcp-reviewer",
                 confirmation_note="MCP 确认七月关账",
                 evidence_references=[evidence_id],
             )
@@ -291,7 +289,6 @@ def test_mcp_posting_uses_china_current_date_boundary(
                 org_id=org_id,
                 period_month="2026-08",
                 idempotency_key="mcp-china-date-generation",
-                confirmed_by="reviewer",
                 confirmation_note="验证中国日期",
                 evidence_references=[evidence_id],
             )

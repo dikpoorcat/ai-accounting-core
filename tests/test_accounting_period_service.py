@@ -64,7 +64,6 @@ def test_generation_is_one_month_contiguous_and_idempotent() -> None:
         org_id=organization.id,
         period_month="2026-03",
         idempotency_key="period-generation-03",
-        confirmed_by="reviewer",
         confirmation_note="从三月零录入",
         evidence_references=[evidence.id],
     )
@@ -100,7 +99,6 @@ def test_generation_rejects_future_month_with_injected_current_date() -> None:
             org_id=organization.id,
             period_month="2026-08",
             idempotency_key="current-month",
-            confirmed_by="reviewer",
             confirmation_note="当前月",
             evidence_references=[evidence.id],
         )
@@ -110,7 +108,6 @@ def test_generation_rejects_future_month_with_injected_current_date() -> None:
             org_id=organization.id,
             period_month="2026-09",
             idempotency_key="future-month",
-            confirmed_by="reviewer",
             confirmation_note="未来月",
             evidence_references=[evidence.id],
         )
@@ -129,7 +126,6 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
             org_id=organization.id,
             period_month="2026-03",
             idempotency_key="period-generation-03",
-            confirmed_by="reviewer",
             confirmation_note="从三月零录入",
             evidence_references=[evidence.id],
         )
@@ -143,7 +139,6 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
             **preview_request.model_dump(),
             calculation_hash=preview.calculation_hash,
             idempotency_key="period-close-missing",
-            confirmed_by="reviewer",
             confirmation_note="月结",
             evidence_references=[evidence.id],
         )
@@ -180,7 +175,6 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
             org_id=organization.id,
             period_month="2026-03",
             idempotency_key="empty-generation",
-            confirmed_by="reviewer",
             confirmation_note="从零录入",
             evidence_references=[evidence.id],
         )
@@ -195,7 +189,6 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
         **preview_request.model_dump(),
         calculation_hash=preview.calculation_hash,
         idempotency_key="empty-close",
-        confirmed_by="reviewer",
         confirmation_note="确认本月无业务",
         evidence_references=[evidence.id],
         review_facts=AccountingPeriodReviewFacts(

@@ -32,7 +32,7 @@ from alembic import command
 REVISION_0005 = "0005_payroll_round4_integrity"
 REVISION_0007 = "0007_payroll_round6_closure"
 REVISION_0008 = "0008_payroll_r7_tax_closure"
-REVISION_HEAD = "0012_accounting_period_close"
+REVISION_HEAD = "0014_execution_attribution"
 
 pytestmark = [
     pytest.mark.postgres,
@@ -50,7 +50,7 @@ def _config(database_url: str) -> Config:
 def _postgres_at(revision: str) -> Iterator[tuple[Config, object]]:
     """Create an isolated PostgreSQL 17 database at exactly ``revision``."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = _config(database_url)
         command.upgrade(config, revision)

@@ -209,7 +209,6 @@ def _generate(
             org_id=org_id,
             period_month=f"2026-{month:02d}",
             idempotency_key=f"pilot-generate-2026-{month:02d}",
-            confirmed_by="fictional-pilot-reviewer",
             confirmation_note=f"虚构试用连续生成 2026-{month:02d}",
             evidence_references=[evidence_id],
         )
@@ -239,7 +238,6 @@ def _close(
             calculation_hash=preview.calculation_hash,
             idempotency_key=f"pilot-close-2026-{month:02d}",
             review_facts=_review_facts(),
-            confirmed_by="fictional-pilot-reviewer",
             confirmation_note=f"虚构试用逐月关闭 2026-{month:02d}",
             evidence_references=[evidence_id],
         )
@@ -289,7 +287,6 @@ def _confirm_fixed_asset_depreciation(
             **request.model_dump(),
             calculation_hash=preview.calculation_hash,
             idempotency_key=f"pilot-fixed-depreciation-2026-{month:02d}",
-            confirmed_by="fictional-pilot-reviewer",
         )
     )
     assert result.status == "posted", result.errors
@@ -311,7 +308,6 @@ def _confirm_intangible_amortization(
             **request.model_dump(),
             calculation_hash=preview.calculation_hash,
             idempotency_key=f"pilot-intangible-amortization-2026-{month:02d}",
-            confirmed_by="fictional-pilot-reviewer",
         )
     )
     assert result.status == "posted", result.errors
@@ -320,7 +316,7 @@ def _confirm_intangible_amortization(
 def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17() -> None:
     """Exercise the private-pilot path without real data or a Compose database."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -437,7 +433,6 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                         batch_id=payroll_preview.batch_id,
                         calculation_hash=payroll_preview.calculation_hash,
                         idempotency_key="pilot-fictional-payroll-confirm",
-                        confirmed_by="fictional-pilot-reviewer",
                     )
                 )
                 assert payroll.status == "posted", payroll.errors

@@ -12,6 +12,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "ai-accounting-core contributors" }]
 dependencies = [
   "alembic>=1.16,<2",
+  "argon2-cffi>=25.1,<26",
   "mcp>=1.13,<2",
   "openpyxl>=3.1,<4",
   "psycopg[binary]>=3.2,<4",
@@ -22,7 +23,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "cyclonedx-bom>=7.1,<8",
   "hypothesis>=6.135,<7",
+  "pip-audit>=2.9,<3",
   "pytest>=8.4,<10",
   "pytest-cov>=6.2,<8",
   "ruff>=0.12,<1",
@@ -32,6 +35,12 @@ dev = [
 [project.scripts]
 finance-mcp = "ai_accounting.mcp_server:main"
 finance-bootstrap = "ai_accounting.bootstrap:main"
+finance-login = "ai_accounting.identity_cli:main"
+finance-backup = "ai_accounting.backup_cli:main"
+
+[tool.uv]
+# Keep local and CI lock-file resolution on the same audited uv release.
+required-version = "==0.12.3"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_accounting"]

@@ -158,7 +158,7 @@ def _insert_raw_payroll_batch(
 
 
 def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         config = _config(database_url)
         command.upgrade(config, "head")
@@ -206,7 +206,6 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                         org_id=org_id,
                         period_month="2026-07",
                         idempotency_key="pg-generate-july",
-                        confirmed_by="pg-reviewer",
                         confirmation_note="PG逐月生成",
                         evidence_references=[evidence_id],
                     )
@@ -313,7 +312,6 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                             tax_items_reviewed=True,
                             asset_and_borrowing_schedules_reviewed=True,
                         ),
-                        confirmed_by="pg-reviewer",
                         confirmation_note="PG月结",
                         evidence_references=[evidence_id],
                     )
@@ -366,6 +364,12 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                         key="direct-payroll-closed",
                         version=2,
                     )
+            with engine.connect() as connection:
+                future_posting_date = connection.scalar(
+                    sa.text(
+                        "SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date"
+                    )
+                ) + timedelta(days=1)
             with pytest.raises(
                 DBAPIError, match="ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"
             ):
@@ -373,7 +377,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                     _insert_raw_event(
                         connection,
                         org_id=org_id,
-                        posting_date=date(2026, 8, 12),
+                        posting_date=future_posting_date,
                         status="draft",
                         key="direct-draft-future",
                     )
@@ -381,14 +385,14 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                 _insert_raw_event(
                     connection,
                     org_id=org_id,
-                    posting_date=date(2026, 8, 12),
+                    posting_date=future_posting_date,
                     status="needs_information",
                     key="audit-needs-information-future",
                 )
                 _insert_raw_event(
                     connection,
                     org_id=org_id,
-                    posting_date=date(2026, 8, 12),
+                    posting_date=future_posting_date,
                     status="rejected",
                     key="audit-rejected-future",
                 )
@@ -415,7 +419,6 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                         org_id=org_id,
                         period_month="2026-08",
                         idempotency_key="pg-generate-august",
-                        confirmed_by="pg-reviewer",
                         confirmation_note="PG连续生成八月",
                         evidence_references=[evidence_id],
                     )
@@ -442,7 +445,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
 
 
 def test_postgres_0012_empty_round_trip() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         config = _config(database_url)
         command.upgrade(config, "head")
@@ -586,7 +589,7 @@ def test_postgres_0012_empty_round_trip() -> None:
 
 
 def test_postgres_close_vs_close_is_linearized() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -614,7 +617,6 @@ def test_postgres_close_vs_close_is_linearized() -> None:
                         org_id=org_id,
                         period_month="2026-07",
                         idempotency_key="pg-concurrent-generate",
-                        confirmed_by="pg-reviewer",
                         confirmation_note="并发测试空月生成",
                         evidence_references=[evidence_id],
                     )
@@ -651,7 +653,6 @@ def test_postgres_close_vs_close_is_linearized() -> None:
                                 tax_items_reviewed=True,
                                 asset_and_borrowing_schedules_reviewed=True,
                             ),
-                            confirmed_by="pg-reviewer",
                             confirmation_note="显式确认空月无业务并关闭",
                             evidence_references=[evidence_id],
                         )
@@ -673,7 +674,7 @@ def test_postgres_close_vs_close_is_linearized() -> None:
 
 
 def test_postgres_close_vs_post_is_linearized() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -700,7 +701,6 @@ def test_postgres_close_vs_post_is_linearized() -> None:
                         org_id=org_id,
                         period_month="2026-07",
                         idempotency_key="pg-post-close-generate",
-                        confirmed_by="pg-reviewer",
                         confirmation_note="入账月结并发期间",
                         evidence_references=[evidence_id],
                     )
@@ -742,7 +742,6 @@ def test_postgres_close_vs_post_is_linearized() -> None:
                                 tax_items_reviewed=True,
                                 asset_and_borrowing_schedules_reviewed=True,
                             ),
-                            confirmed_by="pg-reviewer",
                             confirmation_note="并发关闭",
                             evidence_references=[evidence_id],
                         )
@@ -774,7 +773,7 @@ def test_postgres_close_vs_post_is_linearized() -> None:
 
 
 def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -806,7 +805,6 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
                             org_id=org_id,
                             period_month="2026-03",
                             idempotency_key="pg-generation-same-key",
-                            confirmed_by="pg-reviewer",
                             confirmation_note="并发同载荷生成",
                             evidence_references=[evidence_id],
                         )
@@ -831,7 +829,6 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
                         org_id=org_id,
                         period_month="2026-04",
                         idempotency_key="pg-generation-same-key",
-                        confirmed_by="pg-reviewer",
                         confirmation_note="并发同载荷生成",
                         evidence_references=[evidence_id],
                     )
@@ -841,7 +838,6 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
                         org_id=org_id,
                         period_month="2026-03",
                         idempotency_key="pg-generation-different-key",
-                        confirmed_by="pg-reviewer",
                         confirmation_note="不同键重复月份",
                         evidence_references=[evidence_id],
                     )
@@ -884,7 +880,6 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
                             org_id=tamper_org.id,
                             period_month="2026-03",
                             idempotency_key="pg-generation-tamper",
-                            confirmed_by="pg-reviewer",
                             confirmation_note="构造期注入额外键",
                             evidence_references=[tamper_evidence.id],
                         )
@@ -1095,7 +1090,7 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
 
 
 def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -1140,7 +1135,6 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                         org_id=org_id,
                         period_month="2026-07",
                         idempotency_key="extra-generate-july",
-                        confirmed_by="pg-reviewer",
                         confirmation_note="并发期间",
                         evidence_references=[evidence_id],
                     )
@@ -1174,7 +1168,6 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                                 tax_items_reviewed=True,
                                 asset_and_borrowing_schedules_reviewed=True,
                             ),
-                            confirmed_by="pg-reviewer",
                             confirmation_note="并发月结",
                             evidence_references=[evidence_id],
                         )
@@ -1345,7 +1338,6 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                             org_id=second_org_id,
                             period_month=month,
                             idempotency_key=f"org-lock-{month}",
-                            confirmed_by="pg-reviewer",
                             confirmation_note="跨月并发",
                             evidence_references=[second_evidence_id],
                         )
@@ -1382,7 +1374,6 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                 "org_id": str(direct_org_id),
                 "period_month": "2026-07",
                 "idempotency_key": "direct-sql-july",
-                "confirmed_by": "pg-reviewer",
                 "confirmation_note": "服务与直写锁序",
                 "evidence_references": [str(direct_evidence_id)],
             }
@@ -1459,7 +1450,6 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                             org_id=direct_org_id,
                             period_month="2026-05",
                             idempotency_key="service-may",
-                            confirmed_by="pg-reviewer",
                             confirmation_note="服务与直写锁序",
                             evidence_references=[direct_evidence_id],
                         )

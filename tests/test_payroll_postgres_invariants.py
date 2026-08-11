@@ -44,7 +44,7 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -700,7 +700,7 @@ def test_pay_017_open_item_settlement_conservation_and_org_links(postgres_engine
 
 
 def test_pay_018_postgresql_migration_round_trips_leave_no_payroll_objects() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -746,7 +746,7 @@ def test_pay_018_postgresql_migration_round_trips_leave_no_payroll_objects() -> 
 def test_r3_011_open_item_state_preflight_rejects_pollution_without_partial_upgrade() -> None:
     """0003 data with a full balance labelled open must remain safely on 0003."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -835,7 +835,7 @@ def test_r3_011_open_item_state_preflight_rejects_pollution_without_partial_upgr
 def test_r4_004_event_evidence_cross_organization_preflight_keeps_0004() -> None:
     """0005 must not invent an organization for a polluted legacy evidence edge."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -923,7 +923,7 @@ def test_r4_004_event_evidence_cross_organization_preflight_keeps_0004() -> None
 def test_r4_011_0004_salary_source_backfill_is_proved_and_downgrade_is_safe() -> None:
     """Only the single real salary settlement can repair a polluted R4 source edge."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -1187,7 +1187,7 @@ def test_r4_011_0004_salary_source_backfill_is_proved_and_downgrade_is_safe() ->
                 command.downgrade(config, "0004_payroll_round3_integrity")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0012_accounting_period_close"
+                    "0014_execution_attribution"
                 )
         finally:
             engine.dispose()
@@ -1731,7 +1731,7 @@ def test_r2_010_explicit_version_successors_allow_only_their_own_overlap(
 def test_r2_014_postgresql_legacy_settlement_pollution_keeps_revision_0001() -> None:
     """The preflight is direct SQL and fails before migration DDL is applied."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)

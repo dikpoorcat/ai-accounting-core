@@ -175,7 +175,6 @@ def preview_and_confirm(
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key="payroll-confirm-1",
-            confirmed_by="tester",
         )
     )
     assert confirmed.status == "posted"
@@ -204,7 +203,6 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
             org_id=organization.id,
             period_month="2026-09",
             idempotency_key="payroll-period-generate",
-            confirmed_by="reviewer",
             confirmation_note="生成工资月份",
             evidence_references=[evidence.id],
         )
@@ -228,7 +226,6 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
                 tax_items_reviewed=True,
                 asset_and_borrowing_schedules_reviewed=True,
             ),
-            confirmed_by="reviewer",
             confirmation_note="关闭工资月份",
             evidence_references=[evidence.id],
         )

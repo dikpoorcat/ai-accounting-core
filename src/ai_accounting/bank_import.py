@@ -14,6 +14,7 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .models import BankTransaction, Organization
 from .schemas import ImportBankStatementRequest
 
@@ -48,6 +49,8 @@ class BankStatementRowError(ValueError):
 
 
 def import_bank_statement(session: Session, request: ImportBankStatementRequest) -> dict[str, Any]:
+    if get_settings().finance_environment == "production":
+        raise BankStatementInputError("BANK_STATEMENT_PREVIEW_CONFIRM_REQUIRED")
     if session.get(Organization, request.org_id) is None:
         raise ValueError("ORGANIZATION_NOT_FOUND")
     try:

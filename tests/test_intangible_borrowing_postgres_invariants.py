@@ -95,7 +95,7 @@ def _draw_request(
 
 
 def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         command.check(_config(database_url))
@@ -219,7 +219,6 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                         **preview_request.model_dump(),
                         idempotency_key="pg-intangible-amortization",
                         calculation_hash=preview.calculation_hash,
-                        confirmed_by="postgres-test",
                     )
                 )
                 assert amortized.status == "posted", amortized.errors
@@ -561,7 +560,7 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 command.downgrade(_config(database_url), "0010_tax_determinism")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0012_accounting_period_close"
+                    "0014_execution_attribution"
                 )
                 assert (
                     connection.scalar(sa.text("SELECT COUNT(*) FROM business_events")),
@@ -573,7 +572,7 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
 
 
 def test_postgres_empty_linear_upgrade_downgrade_and_base_round_trip() -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         config = _config(database_url)
         command.upgrade(config, "0010_tax_determinism")

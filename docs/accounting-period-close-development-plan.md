@@ -52,11 +52,11 @@
 
 所有请求均为类型化 Pydantic 对象且 `additionalProperties: false`。公共接口不接受科目、借贷行、余额、检查结果覆盖值或任意对象。
 
-生成请求必须明确：`org_id`、严格 `YYYY-MM` 的 `period_month`、`idempotency_key`、`confirmed_by`、`confirmation_note` 和至少一份 `evidence_references`。年份只接受 `0001..9999`，月份只接受 `01..12`；按 DEC-010/012，只允许生成 Asia/Shanghai 当前月或过去月份。
+生成请求必须明确：`org_id`、严格 `YYYY-MM` 的 `period_month`、`idempotency_key`、`confirmation_note` 和至少一份 `evidence_references`。年份只接受 `0001..9999`，月份只接受 `01..12`；按 DEC-010/012，只允许生成 Asia/Shanghai 当前月或过去月份。负责人身份只来自服务端认证执行上下文，不接受自由 `confirmed_by` 文本。
 
 预览请求只接受 `org_id`、`period_id` 和 `closing_date`。`closing_date` 必须等于该月最后一日，期间末日不得晚于 Asia/Shanghai 当前日期。预览纯读，不写动作、期间或快照。
 
-确认请求在预览字段外必须携带 `calculation_hash`、`idempotency_key`、严格人工复核事实、`confirmed_by`、`confirmation_note` 和至少一份证据。缺失复核事实返回 `needs_information`；显式为 `false` 返回 `ACCOUNTING_PERIOD_REVIEW_INCOMPLETE`，不关闭期间。
+确认请求在预览字段外必须携带 `calculation_hash`、`idempotency_key`、严格人工复核事实、`confirmation_note` 和至少一份证据。缺失复核事实返回 `needs_information`；显式为 `false` 返回 `ACCOUNTING_PERIOD_REVIEW_INCOMPLETE`，不关闭期间。
 
 人工复核事实固定为严格布尔字段：
 

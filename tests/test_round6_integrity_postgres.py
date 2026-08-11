@@ -70,7 +70,7 @@ pytestmark = [
 def postgres_engine() -> Iterator[object]:
     """A blank current-head PostgreSQL 17 schema for COMMIT-boundary attacks."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -97,7 +97,7 @@ def _commit_rejects(
 def _postgres_at_0006() -> Iterator[tuple[Config, object]]:
     """Yield an untouched, exact 0006 schema for migration preflight tests."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -267,7 +267,6 @@ def _confirmed_cross_month_regular(session: Session, *, key: str) -> tuple[objec
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key=f"{key}-confirm",
-            confirmed_by="round6",
         )
     )
     assert confirmed.status == "posted", confirmed.errors
@@ -736,7 +735,7 @@ def test_r6_005_0006_preflight_rejects_cross_period_final_payment_collection() -
 def test_r6_0007_downgrade_and_reupgrade_preserve_a_real_revision_boundary() -> None:
     """A clean real database crosses 0006/head twice without hybrid DDL."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", postgres.get_connection_url(driver="psycopg"))
         command.upgrade(config, "head")
@@ -963,7 +962,6 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
                         batch_id=preview.batch_id,
                         calculation_hash=preview.calculation_hash,
                         idempotency_key=f"r6-{kind}-confirmation",
-                        confirmed_by="round6-race",
                     )
                 )
                 session.commit()
@@ -1023,7 +1021,6 @@ def test_r6_001_direct_update_cannot_move_a_draft_successor_over_final_profile_f
                 batch_id=preview.batch_id,
                 calculation_hash=preview.calculation_hash,
                 idempotency_key="r6-profile-update-confirm",
-                confirmed_by="round6-update",
             )
         )
         assert result.status == "posted", result.errors

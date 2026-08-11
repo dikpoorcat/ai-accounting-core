@@ -263,7 +263,6 @@ def test_r3_006_one_statutory_payment_keeps_each_partial_salary_source(
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key="r3-source-confirm",
-            confirmed_by="r3-lineage",
         )
     )
     assert confirmed.status == "posted", confirmed.errors
@@ -409,7 +408,6 @@ def test_r3_007_new_preview_seals_its_evidence_set_before_confirmation(
             batch_id=replacement.batch_id,
             calculation_hash=replacement.calculation_hash,
             idempotency_key="r3-evidence-confirm",
-            confirmed_by="r3-lineage",
         )
     )
     assert confirmed.status == "posted", confirmed.errors

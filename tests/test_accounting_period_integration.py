@@ -205,7 +205,6 @@ def test_china_current_date_boundary_blocks_future_posting_for_all_organizations
             org_id=controlled.id,
             period_month="2026-08",
             idempotency_key="china-date-generate",
-            confirmed_by="reviewer",
             confirmation_note="验证中国当前日期边界",
             evidence_references=[evidence.id],
         )
@@ -330,7 +329,6 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
             org_id=organization.id,
             period_month="2026-07",
             idempotency_key="generate-2026-07",
-            confirmed_by="period-reviewer",
             confirmation_note="从七月启用期间控制",
             evidence_references=[evidence.id],
         )
@@ -377,7 +375,6 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
                 tax_items_reviewed=True,
                 asset_and_borrowing_schedules_reviewed=True,
             ),
-            confirmed_by="period-reviewer",
             confirmation_note="七月非零凭证已完整复核",
             evidence_references=[evidence.id],
         )
@@ -413,7 +410,6 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
             org_id=organization.id,
             period_month="2026-08",
             idempotency_key="generate-2026-08",
-            confirmed_by="period-reviewer",
             confirmation_note="连续生成八月期间",
             evidence_references=[evidence.id],
         )
@@ -455,7 +451,6 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
             org_id=organization.id,
             period_month="2026-07",
             idempotency_key="tax-generate-2026-07",
-            confirmed_by="tax-period-reviewer",
             confirmation_note="从七月启用期间控制",
             evidence_references=[evidence.id],
         )
@@ -489,7 +484,6 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
                 tax_items_reviewed=True,
                 asset_and_borrowing_schedules_reviewed=True,
             ),
-            confirmed_by="tax-period-reviewer",
             confirmation_note="税务事项已复核后关闭七月",
             evidence_references=[evidence.id],
         )
@@ -530,7 +524,6 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
             org_id=organization.id,
             period_month="2026-08",
             idempotency_key="tax-generate-2026-08",
-            confirmed_by="tax-period-reviewer",
             confirmation_note="连续生成八月期间用于税务调整",
             evidence_references=[evidence.id],
         )

@@ -405,7 +405,7 @@ FORGERIES: tuple[tuple[str, GraphMutation], ...] = (
 def test_direct_sql_forgeries_and_concurrent_confirm_are_closed_at_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         engine = sa.create_engine(database_url)
         try:

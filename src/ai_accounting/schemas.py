@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -7,7 +8,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 # Monetary accounting facts are always integer fen.  ``StrictInt`` is
 # intentional: JSON 12.0, ``true`` and "12" must never be silently accepted
@@ -718,7 +727,6 @@ class ConfirmPayrollRequest(BaseModel):
     batch_id: uuid.UUID
     calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     idempotency_key: str = Field(min_length=1, max_length=200)
-    confirmed_by: str = Field(min_length=1, max_length=100)
     confirmation_note: str = Field(default="", max_length=2000)
 
 
@@ -1042,21 +1050,16 @@ class ConfirmFixedAssetDepreciationRequest(PreviewFixedAssetDepreciationRequest)
 
     idempotency_key: str = Field(min_length=1, max_length=200)
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    confirmed_by: str | None = Field(default=None, min_length=1, max_length=100)
     confirmation_note: str = Field(default="", max_length=2000)
 
     def missing_information(self) -> list[FixedAssetInformationRequirement]:
         missing = super().missing_information()
-        fields = [
-            field_name
-            for field_name in ("calculation_hash", "confirmed_by")
-            if getattr(self, field_name) is None
-        ]
+        fields = ["calculation_hash"] if self.calculation_hash is None else []
         if fields:
             missing.append(
                 FixedAssetInformationRequirement(
                     code="FIXED_ASSET_CONFIRMATION_REQUIRED",
-                    message="calculation hash and confirmer identity are required",
+                    message="calculation hash is required",
                     fields=fields,
                 )
             )
@@ -1272,6 +1275,39 @@ class RegisterEvidenceRequest(BaseModel):
     original_name: str | None = None
     media_type: str = "application/octet-stream"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def reject_identity_and_secret_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        forbidden = (
+            "actor",
+            "clientid",
+            "confirmedby",
+            "credentialversion",
+            "executor",
+            "owneraccountid",
+            "ownersessionid",
+            "password",
+            "passwd",
+            "recoverycode",
+            "secret",
+            "sessiontoken",
+            "token",
+        )
+
+        def visit(item: Any) -> None:
+            if isinstance(item, dict):
+                for key, nested in item.items():
+                    normalized = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+                    if any(part in normalized for part in forbidden):
+                        raise ValueError("identity and secret metadata keys are forbidden")
+                    visit(nested)
+            elif isinstance(item, list):
+                for nested in item:
+                    visit(nested)
+
+        visit(value)
+        return value
 
     @model_validator(mode="after")
     def exactly_one_content_source(self) -> RegisterEvidenceRequest:

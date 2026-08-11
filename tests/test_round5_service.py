@@ -158,7 +158,6 @@ def test_r5_004_opening_correction_blocks_all_later_payroll_kinds(
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
             idempotency_key="r5-opening-correction-confirm",
-            confirmed_by="r5",
         )
     )
     assert confirmed.status == "posted", confirmed.errors

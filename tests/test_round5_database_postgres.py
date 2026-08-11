@@ -29,9 +29,6 @@ from testcontainers.community.postgres import PostgresContainer
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import make_session_factory
 from ai_accounting.models import (
-    BusinessEvent,
-    Counterparty,
-    Employee,
     EmployeePayrollProfileVersion,
     Evidence,
     OpenItem,
@@ -61,7 +58,7 @@ def _alembic_config(database_url: str) -> Config:
 def postgres_engine() -> Iterator[object]:
     """A clean current-head database for commit-boundary attacks."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = _alembic_config(database_url)
         command.upgrade(config, "head")
@@ -378,13 +375,17 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
 def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> None:
     """Each R5 legacy preflight fails before DDL and leaves the database at 0005."""
 
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = _alembic_config(database_url)
         command.upgrade(config, "0005_payroll_round4_integrity")
         engine = create_engine(database_url)
         try:
             organization_id = uuid.uuid4()
+            evidence_id = uuid.uuid4()
+            counterparty_id = uuid.uuid4()
+            payment_id = uuid.uuid4()
+            open_item_id = uuid.uuid4()
             with engine.begin() as connection:
                 connection.execute(
                     sa.text(
@@ -396,50 +397,56 @@ def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> 
                     ),
                     {"id": organization_id},
                 )
-            with Session(engine) as session:
-                evidence = Evidence(
-                    org_id=organization_id,
-                    sha256="too-short",
-                    original_name="legacy.bin",
-                    media_type="application/octet-stream",
-                    source="legacy",
-                    size_bytes=1,
-                    storage_path="/legacy.bin",
-                    metadata_json={},
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO evidence "
+                        "(id, org_id, sha256, original_name, media_type, source, size_bytes, "
+                        "storage_path, metadata, created_at) VALUES "
+                        "(:id, :org_id, 'too-short', 'legacy.bin', "
+                        "'application/octet-stream', 'legacy', 1, '/legacy.bin', "
+                        "'{}'::jsonb, now())"
+                    ),
+                    {"id": evidence_id, "org_id": organization_id},
                 )
-                counterparty = Counterparty(
-                    org_id=organization_id, kind="supplier", name="R5 旧版供应商"
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO counterparties (id, org_id, kind, name) "
+                        "VALUES (:id, :org_id, 'supplier', 'R5 旧版供应商')"
+                    ),
+                    {"id": counterparty_id, "org_id": organization_id},
                 )
-                payment = BusinessEvent(
-                    org_id=organization_id,
-                    idempotency_key="r5-legacy-settlement-payment",
-                    event_type="expense_cash",
-                    status="draft",
-                    description="R5 旧版结算污染",
-                    facts={},
-                    business_date=date(2025, 7, 1),
-                    posting_date=date(2025, 7, 1),
-                    rule_trace=[],
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO business_events "
+                        "(id, org_id, idempotency_key, event_type, status, description, facts, "
+                        "business_date, posting_date, rule_trace, created_at) VALUES "
+                        "(:id, :org_id, 'r5-legacy-settlement-payment', 'expense_cash', "
+                        "'draft', 'R5 旧版结算污染', '{}'::jsonb, '2025-07-01', "
+                        "'2025-07-01', '[]'::jsonb, now())"
+                    ),
+                    {"id": payment_id, "org_id": organization_id},
                 )
-                session.add_all([evidence, counterparty, payment])
-                session.flush()
-                open_item = OpenItem(
-                    org_id=organization_id,
-                    counterparty_id=counterparty.id,
-                    source_event_id=payment.id,
-                    item_type="payable",
-                    original_amount_fen=100,
-                    settled_amount_fen=0,
-                    status="open",
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO open_items "
+                        "(id, org_id, counterparty_id, source_event_id, item_type, "
+                        "original_amount_fen, settled_amount_fen, status) VALUES "
+                        "(:id, :org_id, :counterparty_id, :source_event_id, 'payable', "
+                        "100, 0, 'open')"
+                    ),
+                    {
+                        "id": open_item_id,
+                        "org_id": organization_id,
+                        "counterparty_id": counterparty_id,
+                        "source_event_id": payment_id,
+                    },
                 )
-                session.add(open_item)
-                session.commit()
-                identifiers = {
-                    "org_id": organization_id,
-                    "evidence_id": evidence.id,
-                    "payment_id": payment.id,
-                    "open_item_id": open_item.id,
-                }
+            identifiers = {
+                "org_id": organization_id,
+                "evidence_id": evidence_id,
+                "payment_id": payment_id,
+                "open_item_id": open_item_id,
+            }
 
             with pytest.raises(
                 RuntimeError, match="R5_EVIDENCE_ORGANIZATION_OR_HASH_PRECHECK_FAILED"
@@ -474,23 +481,31 @@ def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> 
                     sa.text("DELETE FROM settlements WHERE org_id = :org_id"), identifiers
                 )
 
-            with Session(engine) as session:
-                employee_counterparty = Counterparty(
-                    org_id=identifiers["org_id"], kind="employee", name="R5 旧版版本员工"
+            employee_counterparty_id = uuid.uuid4()
+            employee_id = uuid.uuid4()
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO counterparties (id, org_id, kind, name) "
+                        "VALUES (:id, :org_id, 'employee', 'R5 旧版版本员工')"
+                    ),
+                    {"id": employee_counterparty_id, "org_id": identifiers["org_id"]},
                 )
-                session.add(employee_counterparty)
-                session.flush()
-                employee = Employee(
-                    org_id=identifiers["org_id"],
-                    counterparty_id=employee_counterparty.id,
-                    employee_code="R5-LEGACY-VERSION",
-                    name="R5 旧版版本员工",
-                    employment_start_date=date(2025, 7, 1),
-                    status="active",
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO employees "
+                        "(id, org_id, counterparty_id, employee_code, name, "
+                        "employment_start_date, status, created_at) VALUES "
+                        "(:id, :org_id, :counterparty_id, 'R5-LEGACY-VERSION', "
+                        "'R5 旧版版本员工', '2025-07-01', 'active', now())"
+                    ),
+                    {
+                        "id": employee_id,
+                        "org_id": identifiers["org_id"],
+                        "counterparty_id": employee_counterparty_id,
+                    },
                 )
-                session.add(employee)
-                session.commit()
-                identifiers["employee_id"] = employee.id
+            identifiers["employee_id"] = employee_id
 
             with engine.begin() as connection:
                 connection.execute(

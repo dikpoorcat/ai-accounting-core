@@ -323,7 +323,6 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                             **amortization_facts,
                             "idempotency_key": "stdio-intangible-amortize",
                             "calculation_hash": amortization_preview["calculation_hash"],
-                            "confirmed_by": "stdio-test",
                         }
                     },
                 )

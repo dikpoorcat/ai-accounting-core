@@ -316,7 +316,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert len("0010_tax_determinism") <= 32
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = _config(url, monkeypatch)
         engine = sa.create_engine(url)
@@ -410,7 +410,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 command.downgrade(config, "0009_fixed_assets")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0012_accounting_period_close"
+                    "0014_execution_attribution"
                 )
             with engine.begin() as connection:
                 connection.execute(sa.text("DROP VIEW external_pgcrypto_dependency"))
@@ -1284,7 +1284,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 command.downgrade(config, "0009_fixed_assets")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0012_accounting_period_close"
+                    "0014_execution_attribution"
                 )
         finally:
             engine.dispose()

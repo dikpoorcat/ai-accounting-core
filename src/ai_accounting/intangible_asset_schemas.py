@@ -349,31 +349,16 @@ class ConfirmIntangibleAssetAmortizationRequest(
 ):
     idempotency_key: str = Field(min_length=1, max_length=200)
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    confirmed_by: str | None = Field(default=None, min_length=1, max_length=100)
     confirmation_note: str = Field(default="", max_length=2000)
-
-    @field_validator("confirmed_by")
-    @classmethod
-    def strip_confirmer(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("confirmed_by must not be blank")
-        return stripped
 
     def missing_information(self) -> list[IntangibleAssetInformationRequirement]:
         missing = super().missing_information()
-        fields = [
-            field_name
-            for field_name in ("calculation_hash", "confirmed_by")
-            if getattr(self, field_name) is None
-        ]
+        fields = ["calculation_hash"] if self.calculation_hash is None else []
         if fields:
             missing.append(
                 IntangibleAssetInformationRequirement(
                     code="INTANGIBLE_ASSET_CONFIRMATION_REQUIRED",
-                    message="calculation hash and confirmer identity are required",
+                    message="calculation hash is required",
                     fields=fields,
                 )
             )

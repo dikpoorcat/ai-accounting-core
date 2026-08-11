@@ -62,7 +62,7 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", postgres.get_connection_url(driver="psycopg"))
         command.upgrade(config, "head")
