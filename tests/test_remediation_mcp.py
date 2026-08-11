@@ -254,9 +254,9 @@ def test_r2_007_record_reverse_and_policy_contracts_are_real_and_strict() -> Non
             "idempotency_key": "r2-record-strict-float",
             "event_type": "expense_cash",
             "business_dates": {
-                "business_date": "2026-09-05",
-                "posting_date": "2026-09-05",
-                "payment_date": "2026-09-05",
+                "business_date": "2026-07-05",
+                "posting_date": "2026-07-05",
+                "payment_date": "2026-07-05",
             },
             "amounts": {"amount_fen": 12.0},
         }
@@ -306,7 +306,7 @@ def test_pay_019_payroll_capability_is_discoverable_but_not_a_free_event() -> No
         "org_id": "00000000-0000-0000-0000-000000000000",
         "idempotency_key": "must-not-post-payroll-directly",
         "event_type": "payroll",
-        "business_dates": {"business_date": "2026-09-05", "posting_date": "2026-09-05"},
+        "business_dates": {"business_date": "2026-07-05", "posting_date": "2026-07-05"},
         "amounts": {"amount_fen": 1},
     }
     assert mcp_server.finance_record_event(RecordEventRequest.model_validate(request)) == {
@@ -389,6 +389,8 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
     factory = make_session_factory(engine)
     with factory.begin() as database_session:
         organization = seed_organization(database_session, name="工资 STDIO 回归企业")
+        organization.accounting_period_control_enabled = False
+        database_session.flush()
         org_id = str(organization.id)
     engine.dispose()
 
@@ -437,7 +439,7 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                             "org_id": org_id,
                             "employee_code": "STDIO-E-001",
                             "name": "工资回归员工",
-                            "employment_start_date": "2026-09-01",
+                            "employment_start_date": "2026-07-01",
                             "status": "active",
                         }
                     },
@@ -451,7 +453,7 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                         "request": {
                             "org_id": org_id,
                             "employee_id": employee_id,
-                            "effective_from": "2026-09-01",
+                            "effective_from": "2026-07-01",
                             "expense_role": "payroll_management_expense",
                             "social_insurance_base_fen": 1_000_000,
                             "housing_fund_base_fen": 1_000_000,
@@ -484,9 +486,9 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                             "org_id": org_id,
                             "idempotency_key": "stdio-payroll-preview",
                             "batch_kind": "regular",
-                            "payroll_period": "2026-09",
-                            "posting_date": "2026-09-05",
-                            "payment_date": "2026-09-05",
+                            "payroll_period": "2026-07",
+                            "posting_date": "2026-07-05",
+                            "payment_date": "2026-07-05",
                             "employee_items": [
                                 {
                                     "employee_id": employee_id,

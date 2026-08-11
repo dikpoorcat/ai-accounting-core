@@ -86,7 +86,7 @@ def _reverse_accrual(
     batch_id: uuid.UUID,
     key: str,
     bypass_downstream_guard: bool,
-    posting_date: date = date(2026, 10, 20),
+    posting_date: date = date(2026, 4, 20),
 ) -> None:
     """Use a canonical accrual reversal, bypassing only the public precheck.
 
@@ -211,7 +211,7 @@ def _register_second_employee(session: Session, *, org_id: uuid.UUID, key: str) 
             org_id=org_id,
             employee_code=f"R7-{key}-E002",
             name=f"R7 {key} 员工二",
-            employment_start_date=date(2026, 9, 1),
+            employment_start_date=date(2026, 3, 1),
             status="active",
         )
     )
@@ -221,7 +221,7 @@ def _register_second_employee(session: Session, *, org_id: uuid.UUID, key: str) 
         RegisterEmployeePayrollProfileVersionRequest(
             org_id=org_id,
             employee_id=employee_id,
-            effective_from=date(2026, 9, 1),
+            effective_from=date(2026, 3, 1),
             expense_role="payroll_management_expense",
             social_insurance_base_fen=1_000_000,
             housing_fund_base_fen=1_000_000,
@@ -229,6 +229,61 @@ def _register_second_employee(session: Session, *, org_id: uuid.UUID, key: str) 
         )
     )
     assert profile["status"] == "registered", profile
+    return employee_id
+
+
+def _register_payroll_facts_with_initial_policy(
+    session: Session,
+    *,
+    organization: Organization,
+    employee_code: str,
+    employment_start_date: date,
+    policy_effective_from: date,
+    policy_effective_to: date,
+    policy_version: str,
+    parameters: dict[str, object],
+) -> uuid.UUID:
+    """Register unposted payroll facts with an explicit initial policy period."""
+
+    service = FinanceService(session)
+    employee = service.register_employee(
+        RegisterEmployeeRequest(
+            org_id=organization.id,
+            employee_code=employee_code,
+            name=f"R7 {employee_code} 员工",
+            employment_start_date=employment_start_date,
+            status="active",
+        )
+    )
+    assert employee["status"] == "registered", employee
+    employee_id = uuid.UUID(employee["employee_id"])
+    profile = service.register_employee_payroll_profile_version(
+        RegisterEmployeePayrollProfileVersionRequest(
+            org_id=organization.id,
+            employee_id=employee_id,
+            effective_from=employment_start_date,
+            expense_role="payroll_management_expense",
+            social_insurance_base_fen=1_000_000,
+            housing_fund_base_fen=1_000_000,
+            resident_employee=True,
+        )
+    )
+    assert profile["status"] == "registered", profile
+    policy = service.register_payroll_policy_version(
+        RegisterPayrollPolicyVersionRequest(
+            org_id=organization.id,
+            region="测试地区",
+            effective_from=policy_effective_from,
+            effective_to=policy_effective_to,
+            version=policy_version,
+            source_url=(
+                "https://www.chinatax.gov.cn/chinatax/n810341/n810765/"
+                "n3359382/201812/c4182700/content.html"
+            ),
+            parameters=parameters,
+        )
+    )
+    assert policy["status"] == "registered", policy
     return employee_id
 
 
@@ -258,9 +313,7 @@ def _version_ids(
     session: Session, *, batch_id: uuid.UUID
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     batch = session.get(PayrollBatch, batch_id)
-    line = session.scalar(
-        select(PayrollLine).where(PayrollLine.payroll_batch_id == batch_id)
-    )
+    line = session.scalar(select(PayrollLine).where(PayrollLine.payroll_batch_id == batch_id))
     assert batch is not None and line is not None
     return batch.id, line.employee_payroll_profile_version_id, batch.policy_version_id
 
@@ -396,9 +449,9 @@ def _stage_direct_statutory_payment(
         status="draft",
         description="R7 直接构造规范法定缴款集合",
         facts={},
-        business_date=date(2027, 1, 6),
-        payment_date=date(2027, 1, 6),
-        posting_date=date(2027, 1, 6),
+        business_date=date(2026, 7, 6),
+        payment_date=date(2026, 7, 6),
+        posting_date=date(2026, 7, 6),
         rule_trace=[],
     )
     session.add(event)
@@ -471,13 +524,15 @@ def test_r7_001_reversed_direct_batch_keeps_cumulative_downstream_blocked_at_com
     """September reversal cannot free a successor while October stays final."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 累计闭包企业")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 累计闭包企业"
+        )
         employee_id = register_payroll_facts(session, organization)
         september_preview = _preview_regular(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r7-september-preview",
         )
         september_confirmed = _confirm(
@@ -491,7 +546,7 @@ def test_r7_001_reversed_direct_batch_keeps_cumulative_downstream_blocked_at_com
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-10",
+            payroll_period="2026-04",
             key="r7-october-preview",
         )
         october_confirmed = _confirm(
@@ -520,8 +575,8 @@ def test_r7_001_reversed_direct_batch_keeps_cumulative_downstream_blocked_at_com
             "october_id": october.id,
             "profile_id": profile.id,
             "policy_id": policy.id,
-            "effective_from": date(2026, 9, 1),
-            "effective_to": date(2026, 9, 30),
+            "effective_from": date(2026, 3, 1),
+            "effective_to": date(2026, 3, 31),
         }
         _reverse_accrual(
             session,
@@ -531,7 +586,6 @@ def test_r7_001_reversed_direct_batch_keeps_cumulative_downstream_blocked_at_com
             bypass_downstream_guard=True,
         )
         session.commit()
-
 
     with Session(postgres_engine) as session:
         october = session.get(PayrollBatch, ids["october_id"])
@@ -581,14 +635,16 @@ def test_r7_007_combined_enters_cumulative_closure(
     """A same-month combined bonus stays in a reversed direct batch's closure."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 combined 累计闭包")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 combined 累计闭包"
+        )
         employee_id = register_payroll_facts(session, organization)
         separate_preview = _preview_annual_bonus(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-09",
-            payment_date=date(2026, 9, 4),
+            payroll_period="2026-03",
+            payment_date=date(2026, 3, 4),
             tax_method="separate",
             key="r7-bonus-direct-separate-preview",
         )
@@ -602,7 +658,7 @@ def test_r7_007_combined_enters_cumulative_closure(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r7-bonus-regular-preview",
         )
         regular = _confirm(
@@ -615,8 +671,8 @@ def test_r7_007_combined_enters_cumulative_closure(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-09",
-            payment_date=date(2026, 9, 6),
+            payroll_period="2026-03",
+            payment_date=date(2026, 3, 6),
             tax_method="combined",
             regular_payroll_batch_id=regular_preview.batch_id,
             key="r7-bonus-combined-preview",
@@ -634,8 +690,8 @@ def test_r7_007_combined_enters_cumulative_closure(
         ids = {
             "org_id": organization.id,
             "policy_id": policy_id,
-            "effective_from": date(2026, 9, 4),
-            "effective_to": date(2026, 9, 4),
+            "effective_from": date(2026, 3, 4),
+            "effective_to": date(2026, 3, 4),
             "version": "r7-combined-closure-policy",
         }
         _reverse_accrual(
@@ -649,9 +705,7 @@ def test_r7_007_combined_enters_cumulative_closure(
 
     with Session(postgres_engine) as session:
         with pytest.raises(DBAPIError, match="R6_FINAL_PAYROLL_POLICY_CORRECTION_BLOCKED"):
-            session.execute(
-                _policy_successor_statement(), {**ids, "id": uuid.uuid4()}
-            )
+            session.execute(_policy_successor_statement(), {**ids, "id": uuid.uuid4()})
             session.commit()
         session.rollback()
         _reverse_accrual(
@@ -681,13 +735,15 @@ def test_r7_007_later_separate_bonus_does_not_enter_cumulative_closure(
     """A separate bonus after a reversed regular batch remains posted and does not block."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 separate 不进入累计闭包")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 separate 不进入累计闭包"
+        )
         employee_id = register_payroll_facts(session, organization)
         regular_preview = _preview_regular(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r7-later-separate-regular-preview",
         )
         regular = _confirm(
@@ -700,8 +756,8 @@ def test_r7_007_later_separate_bonus_does_not_enter_cumulative_closure(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-10",
-            payment_date=date(2026, 10, 5),
+            payroll_period="2026-04",
+            payment_date=date(2026, 4, 5),
             tax_method="separate",
             key="r7-later-separate-preview",
         )
@@ -712,14 +768,12 @@ def test_r7_007_later_separate_bonus_does_not_enter_cumulative_closure(
             key="r7-later-separate-confirm",
         )
         assert regular.status == separate.status == "posted"
-        _batch_id, _profile_id, policy_id = _version_ids(
-            session, batch_id=regular_preview.batch_id
-        )
+        _batch_id, _profile_id, policy_id = _version_ids(session, batch_id=regular_preview.batch_id)
         ids = {
             "org_id": organization.id,
             "policy_id": policy_id,
-            "effective_from": date(2026, 9, 5),
-            "effective_to": date(2026, 9, 5),
+            "effective_from": date(2026, 3, 5),
+            "effective_to": date(2026, 3, 5),
             "version": "r7-later-separate-policy",
         }
         _reverse_accrual(
@@ -744,14 +798,16 @@ def test_r7_007_direct_separate_bonus_still_blocks_profile_and_policy(
     """Separate tax is outside later closure only; a directly affected bonus blocks."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 separate 直接阻断")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 separate 直接阻断"
+        )
         employee_id = register_payroll_facts(session, organization)
         preview = _preview_annual_bonus(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-09",
-            payment_date=date(2026, 9, 6),
+            payroll_period="2026-03",
+            payment_date=date(2026, 3, 6),
             tax_method="separate",
             key="r7-direct-separate-preview",
         )
@@ -776,8 +832,8 @@ def test_r7_007_direct_separate_bonus_still_blocks_profile_and_policy(
             _profile_successor_statement(),
             {
                 **base_ids,
-                "effective_from": date(2026, 9, 30),
-                "effective_to": date(2026, 9, 30),
+                "effective_from": date(2026, 3, 31),
+                "effective_to": date(2026, 3, 31),
             },
             "R6_FINAL_PAYROLL_PROFILE_CORRECTION_BLOCKED",
         ),
@@ -785,8 +841,8 @@ def test_r7_007_direct_separate_bonus_still_blocks_profile_and_policy(
             _policy_successor_statement(),
             {
                 **base_ids,
-                "effective_from": date(2026, 9, 6),
-                "effective_to": date(2026, 9, 6),
+                "effective_from": date(2026, 3, 6),
+                "effective_to": date(2026, 3, 6),
                 "version": "r7-direct-separate-policy",
             },
             "R6_FINAL_PAYROLL_POLICY_CORRECTION_BLOCKED",
@@ -806,30 +862,41 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
     """A posted January batch does not keep a corrected December fact blocked."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 跨支付税年边界")
-        employee_id = register_payroll_facts(session, organization)
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 跨支付税年边界"
+        )
         parameters = deepcopy(payroll_parameters())
         income_tax = parameters["income_tax"]
         assert isinstance(income_tax, dict)
         income_tax.update(
             {
-                "version": "test-income-tax-2027",
-                "effective_from": "2027-01-01",
-                "effective_to": "2027-12-31",
+                "version": "r7-income-tax-2025",
+                "effective_from": "2025-01-01",
+                "effective_to": "2025-12-31",
             }
+        )
+        employee_id = _register_payroll_facts_with_initial_policy(
+            session,
+            organization=organization,
+            employee_code="R7-TAX-YEAR-E001",
+            employment_start_date=date(2025, 12, 1),
+            policy_effective_from=date(2025, 1, 1),
+            policy_effective_to=date(2025, 12, 31),
+            policy_version="r7-tax-year-2025",
+            parameters=parameters,
         )
         registered = FinanceService(session).register_payroll_policy_version(
             RegisterPayrollPolicyVersionRequest(
                 org_id=organization.id,
                 region="测试地区",
-                effective_from=date(2027, 1, 1),
-                effective_to=date(2027, 12, 31),
-                version="test-2027",
+                effective_from=date(2026, 1, 1),
+                effective_to=date(2026, 12, 31),
+                version="r7-tax-year-2026",
                 source_url=(
                     "https://www.chinatax.gov.cn/chinatax/n810341/n810765/"
                     "n3359382/201812/c4182700/content.html"
                 ),
-                parameters=parameters,
+                parameters=payroll_parameters(),
             )
         )
         assert registered["status"] == "registered", registered
@@ -837,7 +904,7 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-12",
+            payroll_period="2025-12",
             key="r7-tax-year-december-preview",
         )
         december = _confirm(
@@ -850,7 +917,7 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2027-01",
+            payroll_period="2026-01",
             key="r7-tax-year-january-preview",
         )
         january = _confirm(
@@ -860,16 +927,14 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
             key="r7-tax-year-january-confirm",
         )
         assert december.status == january.status == "posted"
-        _batch_id, profile_id, policy_id = _version_ids(
-            session, batch_id=december_preview.batch_id
-        )
+        _batch_id, profile_id, policy_id = _version_ids(session, batch_id=december_preview.batch_id)
         ids = {
             "org_id": organization.id,
             "employee_id": employee_id,
             "profile_id": profile_id,
             "policy_id": policy_id,
-            "effective_from": date(2026, 12, 5),
-            "effective_to": date(2026, 12, 31),
+            "effective_from": date(2025, 12, 5),
+            "effective_to": date(2025, 12, 31),
         }
         _reverse_accrual(
             session,
@@ -877,7 +942,7 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
             batch_id=december_preview.batch_id,
             key="r7-tax-year-december",
             bypass_downstream_guard=True,
-            posting_date=date(2026, 12, 20),
+            posting_date=date(2025, 12, 20),
         )
         session.commit()
 
@@ -906,15 +971,17 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
         )
         assert lock_function is not None
         assert "ORDER BY guard_kind, dimension_key" in lock_function
-        organization = seed_organization(session, name="R7 双员工共享政策")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 双员工共享政策"
+        )
         first_employee_id = register_payroll_facts(session, organization)
         second_employee_id = _register_second_employee(
             session, org_id=organization.id, key="shared-policy"
         )
         chains: list[tuple[object, object]] = []
         for label, employee_id, direct_period, downstream_period in (
-            ("first", first_employee_id, "2026-09", "2026-10"),
-            ("second", second_employee_id, "2026-11", "2026-12"),
+            ("first", first_employee_id, "2026-03", "2026-04"),
+            ("second", second_employee_id, "2026-05", "2026-06"),
         ):
             salary = 1_000_000 if label == "first" else 1_100_000
             direct = _preview_regular_salary(
@@ -946,14 +1013,12 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
                 key=f"r7-shared-{label}-downstream-confirm",
             )
             chains.append((direct, downstream))
-        _batch_id, _profile_id, policy_id = _version_ids(
-            session, batch_id=chains[0][0].batch_id
-        )
+        _batch_id, _profile_id, policy_id = _version_ids(session, batch_id=chains[0][0].batch_id)
         ids = {
             "org_id": organization.id,
             "policy_id": policy_id,
-            "effective_from": date(2026, 9, 1),
-            "effective_to": date(2026, 11, 30),
+            "effective_from": date(2026, 3, 1),
+            "effective_to": date(2026, 5, 31),
             "version": "r7-shared-policy-correction",
         }
         for index, (direct, _downstream) in enumerate(chains, start=1):
@@ -963,7 +1028,7 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
                 batch_id=direct.batch_id,
                 key=f"r7-shared-{index}-direct",
                 bypass_downstream_guard=True,
-                posting_date=date(2026, 12, 20),
+                posting_date=date(2026, 6, 20),
             )
         _reverse_accrual(
             session,
@@ -971,15 +1036,13 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
             batch_id=chains[0][1].batch_id,
             key="r7-shared-first-downstream",
             bypass_downstream_guard=False,
-            posting_date=date(2026, 12, 20),
+            posting_date=date(2026, 6, 20),
         )
         session.commit()
 
     with Session(postgres_engine) as session:
         with pytest.raises(DBAPIError, match="R6_FINAL_PAYROLL_POLICY_CORRECTION_BLOCKED"):
-            session.execute(
-                _policy_successor_statement(), {**ids, "id": uuid.uuid4()}
-            )
+            session.execute(_policy_successor_statement(), {**ids, "id": uuid.uuid4()})
             session.commit()
         session.rollback()
         _reverse_accrual(
@@ -988,7 +1051,7 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
             batch_id=chains[1][1].batch_id,
             key="r7-shared-second-downstream",
             bypass_downstream_guard=False,
-            posting_date=date(2026, 12, 20),
+            posting_date=date(2026, 6, 20),
         )
         session.commit()
 
@@ -1003,13 +1066,15 @@ def test_r7_002_iit_uses_payment_tax_month_not_payroll_period_at_commit(
     """Same September period cannot merge an October-paid separate bonus tax."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 个税税月企业")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 个税税月企业"
+        )
         employee_id = register_payroll_facts(session, organization)
         _regular_preview, regular_tax = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r7-iit-regular",
         )
         bonus_preview = _preview_separate_bonus(
@@ -1017,7 +1082,7 @@ def test_r7_002_iit_uses_payment_tax_month_not_payroll_period_at_commit(
             org_id=organization.id,
             employee_id=employee_id,
             key="r7-iit-bonus-preview",
-            payment_date=date(2026, 10, 5),
+            payment_date=date(2026, 4, 5),
         )
         bonus = _confirm(
             session,
@@ -1049,13 +1114,15 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
     """The relational IIT policy key wins over an equal frozen JSON snapshot ID."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 个税政策列与快照分离")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 个税政策列与快照分离"
+        )
         employee_id = register_payroll_facts(session, organization)
         regular_preview, regular_tax = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r7-iit-policy-regular",
         )
         bonus_preview = _preview_separate_bonus(
@@ -1067,11 +1134,17 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
         regular_batch = session.get(PayrollBatch, regular_preview.batch_id)
         bonus_batch = session.get(PayrollBatch, bonus_preview.batch_id)
         assert regular_batch is not None and bonus_batch is not None
+        bonus = _confirm(
+            session,
+            org_id=organization.id,
+            preview=bonus_preview,
+            key="r7-iit-policy-bonus-confirm",
+        )
         alternate_policy = PayrollPolicyVersion(
             org_id=organization.id,
             region="R7 个税关联列独立地区",
-            effective_from=date(2025, 1, 1),
-            effective_to=date(2025, 12, 31),
+            effective_from=date(2025, 7, 1),
+            effective_to=date(2026, 6, 30),
             version="r7-iit-relational-policy",
             source_url=regular_batch.policy_snapshot["source_url"],
             parameters=deepcopy(
@@ -1080,14 +1153,6 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
         )
         session.add(alternate_policy)
         session.flush()
-        bonus_batch.policy_version_id = alternate_policy.id
-        session.flush()
-        bonus = _confirm(
-            session,
-            org_id=organization.id,
-            preview=bonus_preview,
-            key="r7-iit-policy-bonus-confirm",
-        )
         _bonus_salary, bonus_tax = _post_full_salary_payment(
             session,
             organization,
@@ -1095,6 +1160,30 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
             accrual_event_id=bonus.event_id,
             key="r7-iit-policy-bonus-salary",
         )
+        organization_id = organization.id
+        alternate_policy_id = alternate_policy.id
+        regular_tax_id = regular_tax.id
+        bonus_tax_id = bonus_tax.id
+        session.commit()
+
+    with Session(postgres_engine) as session:
+        session.execute(
+            sa.text("ALTER TABLE payroll_batches DISABLE TRIGGER immutable_posted_payroll_batch")
+        )
+        session.execute(
+            sa.update(PayrollBatch)
+            .where(PayrollBatch.id == bonus_preview.batch_id)
+            .values(policy_version_id=alternate_policy_id)
+        )
+        session.commit()
+
+    with Session(postgres_engine) as session:
+        session.execute(
+            sa.text("ALTER TABLE payroll_batches ENABLE TRIGGER immutable_posted_payroll_batch")
+        )
+        session.commit()
+
+    with Session(postgres_engine) as session:
         regular_batch = session.get(PayrollBatch, regular_preview.batch_id)
         bonus_batch = session.get(PayrollBatch, bonus_preview.batch_id)
         assert regular_batch is not None and bonus_batch is not None
@@ -1103,6 +1192,10 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
             regular_batch.policy_snapshot["income_tax_policy"]["id"]
             == bonus_batch.policy_snapshot["income_tax_policy"]["id"]
         )
+        regular_tax = session.get(OpenItem, regular_tax_id)
+        bonus_tax = session.get(OpenItem, bonus_tax_id)
+        organization = session.get(Organization, organization_id)
+        assert regular_tax is not None and bonus_tax is not None and organization is not None
         _stage_direct_tax_payment(
             session,
             organization=organization,
@@ -1120,13 +1213,15 @@ def test_r7_007_social_and_housing_accept_same_contribution_policy_and_period(
     """Employer and employee sources from one batch share both contribution keys."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R7 社保公积金兼容正例")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R7 社保公积金兼容正例"
+        )
         employee_id = register_payroll_facts(session, organization)
         preview, source_groups = _regular_statutory_sources(
             session,
             organization=organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r7-contribution-compatible",
         )
         batch = session.get(PayrollBatch, preview.batch_id)
@@ -1153,21 +1248,21 @@ def test_r7_007_social_and_housing_reject_different_payroll_periods(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, name=f"R7 {category} 缴费所属期反例"
+            session, accounting_period_control_enabled=False, name=f"R7 {category} 缴费所属期反例"
         )
         employee_id = register_payroll_facts(session, organization)
         september, september_sources = _regular_statutory_sources(
             session,
             organization=organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key=f"r7-{category}-period-september",
         )
         october, october_sources = _regular_statutory_sources(
             session,
             organization=organization,
             employee_id=employee_id,
-            payroll_period="2026-10",
+            payroll_period="2026-04",
             key=f"r7-{category}-period-october",
         )
         september_batch = session.get(PayrollBatch, september.batch_id)
@@ -1199,26 +1294,45 @@ def test_r7_007_social_and_housing_reject_different_contribution_policies(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, name=f"R7 {category} 缴费政策反例"
+            session, accounting_period_control_enabled=False, name=f"R7 {category} 缴费政策反例"
         )
-        employee_id = register_payroll_facts(session, organization)
         parameters = deepcopy(payroll_parameters())
         income_tax = parameters["income_tax"]
         assert isinstance(income_tax, dict)
         income_tax.update(
             {
-                "version": "test-income-tax-2027",
-                "effective_from": "2027-01-01",
-                "effective_to": "2027-12-31",
+                "version": f"r7-{category}-income-tax-2026-h1",
+                "effective_from": "2026-01-01",
+                "effective_to": "2026-06-30",
+            }
+        )
+        employee_id = _register_payroll_facts_with_initial_policy(
+            session,
+            organization=organization,
+            employee_code=f"R7-{category}-E001",
+            employment_start_date=date(2026, 3, 1),
+            policy_effective_from=date(2026, 1, 1),
+            policy_effective_to=date(2026, 6, 30),
+            policy_version=f"r7-{category}-2026-h1",
+            parameters=parameters,
+        )
+        parameters = deepcopy(payroll_parameters())
+        income_tax = parameters["income_tax"]
+        assert isinstance(income_tax, dict)
+        income_tax.update(
+            {
+                "version": f"r7-{category}-income-tax-2026-h2",
+                "effective_from": "2026-07-01",
+                "effective_to": "2026-12-31",
             }
         )
         registered = FinanceService(session).register_payroll_policy_version(
             RegisterPayrollPolicyVersionRequest(
                 org_id=organization.id,
                 region="测试地区",
-                effective_from=date(2027, 1, 1),
-                effective_to=date(2027, 12, 31),
-                version=f"r7-{category}-2027",
+                effective_from=date(2026, 7, 1),
+                effective_to=date(2026, 12, 31),
+                version=f"r7-{category}-2026-h2",
                 source_url=(
                     "https://www.chinatax.gov.cn/chinatax/n810341/n810765/"
                     "n3359382/201812/c4182700/content.html"
@@ -1231,14 +1345,14 @@ def test_r7_007_social_and_housing_reject_different_contribution_policies(
             session,
             organization=organization,
             employee_id=employee_id,
-            payroll_period="2026-12",
+            payroll_period="2026-06",
             key=f"r7-{category}-policy-december",
         )
         january, january_sources = _regular_statutory_sources(
             session,
             organization=organization,
             employee_id=employee_id,
-            payroll_period="2027-01",
+            payroll_period="2026-07",
             key=f"r7-{category}-policy-january",
         )
         december_batch = session.get(PayrollBatch, december.batch_id)

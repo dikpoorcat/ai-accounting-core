@@ -4,13 +4,30 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from .accounting_periods import china_current_date
 from .coa import get_account_by_code, get_account_by_role
-from .models import AccountingPeriod, BusinessEvent, OpenItem, Voucher, VoucherLine, VoucherSequence
+from .models import (
+    AccountingPeriod,
+    BusinessEvent,
+    OpenItem,
+    Organization,
+    Voucher,
+    VoucherLine,
+    VoucherSequence,
+)
+
+
+class AccountingPeriodError(ValueError):
+    """Stable period-control rejection raised at the common posting boundary."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 @dataclass(frozen=True)
@@ -106,17 +123,57 @@ def create_open_items(
     return open_items
 
 
-def assert_period_open(session: Session, org_id: uuid.UUID, posting_date: date) -> None:
-    closed = session.scalar(
-        select(AccountingPeriod.id).where(
-            AccountingPeriod.org_id == org_id,
-            AccountingPeriod.status == "closed",
-            AccountingPeriod.start_date <= posting_date,
-            AccountingPeriod.end_date >= posting_date,
-        )
+def posting_period_error_code(
+    session: Session,
+    org_id: uuid.UUID,
+    posting_date: date,
+    *,
+    current_date: date | None = None,
+) -> str | None:
+    """Return the stable posting-period error without locks or writes."""
+
+    if posting_date > (current_date or china_current_date()):
+        return "ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"
+    organization = session.get(Organization, org_id)
+    if organization is None:
+        return "ORGANIZATION_NOT_FOUND"
+    periods = list(
+        session.scalars(
+            select(AccountingPeriod).where(
+                AccountingPeriod.org_id == org_id,
+                AccountingPeriod.start_date <= posting_date,
+                AccountingPeriod.end_date >= posting_date,
+            )
+        ).all()
     )
-    if closed is not None:
-        raise ValueError(f"accounting period containing {posting_date.isoformat()} is closed")
+    if any(period.status == "closed" for period in periods):
+        return "ACCOUNTING_PERIOD_CLOSED"
+    if bool(getattr(organization, "accounting_period_control_enabled", False)):
+        control_start = getattr(organization, "accounting_period_control_start_date", None)
+        if control_start is None or posting_date < control_start:
+            return "ACCOUNTING_PERIOD_NOT_GENERATED"
+        if len(periods) != 1 or periods[0].status != "open":
+            return "ACCOUNTING_PERIOD_NOT_GENERATED"
+    return None
+
+
+def assert_period_open(session: Session, org_id: uuid.UUID, posting_date: date) -> None:
+    today = china_current_date()
+    if posting_date > today:
+        raise AccountingPeriodError("ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED")
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(hashtextextended("
+                "'accounting_period:' || CAST(:org_id AS text) || ':' || "
+                "CAST(date_trunc('month', CAST(:posting_date AS date))::date AS text), 0))"
+            ),
+            {"org_id": str(org_id), "posting_date": posting_date},
+        )
+    if code := posting_period_error_code(
+        session, org_id, posting_date, current_date=today
+    ):
+        raise AccountingPeriodError(code)
 
 
 def _next_voucher_number(session: Session, org_id: uuid.UUID, posting_date: date) -> str:

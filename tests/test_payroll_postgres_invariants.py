@@ -11,13 +11,13 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
-from test_payroll_service import preview_and_confirm
 from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.coa import get_account_by_role, seed_organization
 from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
     BusinessEvent,
+    BusinessEventDependency,
     Counterparty,
     Employee,
     EmployeePayrollProfileVersion,
@@ -57,11 +57,11 @@ def postgres_engine() -> Iterator[object]:
             engine.dispose()
 
 
-def _policy(session: Session, org_id: object, *, version: str = "2026.1") -> PayrollPolicyVersion:
+def _policy(session: Session, org_id: object, *, version: str = "2025.1") -> PayrollPolicyVersion:
     policy = PayrollPolicyVersion(
         org_id=org_id,
         region="CN-310000",
-        effective_from=date(2026, 1, 1),
+        effective_from=date(2025, 7, 1),
         version=version,
         source_url="https://www.chinatax.gov.cn/chinatax/n810341/n810765/n3359382/201812/c4182700/content.html",
         parameters={"social_insurance": {}, "housing_fund": {}},
@@ -82,14 +82,14 @@ def _employee_profile(
         counterparty_id=counterparty.id,
         employee_code=code,
         name=f"员工 {code}",
-        employment_start_date=date(2026, 1, 1),
+        employment_start_date=date(2025, 7, 1),
     )
     session.add(employee)
     session.flush()
     profile = EmployeePayrollProfileVersion(
         org_id=org_id,
         employee_id=employee.id,
-        effective_from=date(2026, 1, 1),
+        effective_from=date(2025, 7, 1),
         expense_role="payroll_management_expense",
         social_insurance_base_fen=0,
         housing_fund_base_fen=0,
@@ -124,8 +124,8 @@ def _event(
         status="draft",
         description="工资计提",
         facts={},
-        business_date=date(2026, 8, 31),
-        posting_date=date(2026, 8, 31),
+        business_date=date(2026, 2, 28),
+        posting_date=date(2026, 2, 28),
         rule_trace=[],
     )
     session.add(event)
@@ -143,7 +143,7 @@ def _make_final_batch(
     key: str,
     version: int = 1,
     reversal_of: PayrollBatch | None = None,
-    payroll_period: str = "2026-08",
+    payroll_period: str = "2026-02",
 ) -> PayrollBatch:
     batch = PayrollBatch(
         org_id=org_id,
@@ -158,8 +158,8 @@ def _make_final_batch(
         calculation_trace=[],
         policy_snapshot={"policy_version": policy.version},
         policy_version_id=policy.id,
-        posting_date=date(2026, 8, 31),
-        payment_date=date(2026, 9, 5),
+        posting_date=date(2026, 2, 28),
+        payment_date=date(2026, 3, 5),
         reversal_of_batch_id=reversal_of.id if reversal_of else None,
     )
     session.add(batch)
@@ -192,7 +192,7 @@ def _make_final_batch(
     create_voucher(
         session,
         event=event,
-        posting_date=date(2026, 8, 31),
+        posting_date=date(2026, 2, 28),
         description="工资计提",
         entries=(
             [
@@ -201,8 +201,8 @@ def _make_final_batch(
             ]
             if original_event is not None
             else [
-            Entry(account_role="payroll_management_expense", debit_fen=10_000),
-            Entry(account_role="employee_salary_payable", credit_fen=10_000),
+                Entry(account_role="payroll_management_expense", debit_fen=10_000),
+                Entry(account_role="employee_salary_payable", credit_fen=10_000),
             ]
         ),
         reversal_of=original_voucher,
@@ -243,7 +243,7 @@ def _make_final_withholding_batch(
         org_id=org_id,
         idempotency_key=f"withholding-{key}",
         batch_kind="regular",
-        payroll_period="2026-08",
+        payroll_period="2026-02",
         version=1,
         status="calculated",
         calculation_hash=(key * 64)[:64],
@@ -251,8 +251,8 @@ def _make_final_withholding_batch(
         calculation_trace=[],
         policy_snapshot={},
         policy_version_id=policy.id,
-        posting_date=date(2026, 8, 31),
-        payment_date=date(2026, 9, 5),
+        posting_date=date(2026, 2, 28),
+        payment_date=date(2026, 3, 5),
     )
     session.add(batch)
     session.flush()
@@ -280,13 +280,11 @@ def _make_final_withholding_batch(
             final_batch_id=batch.id,
         )
     )
-    event = _event(
-        session, org_id, f"withholding-event-{key}", event_type="payroll_accrual"
-    )
+    event = _event(session, org_id, f"withholding-event-{key}", event_type="payroll_accrual")
     create_voucher(
         session,
         event=event,
-        posting_date=date(2026, 8, 31),
+        posting_date=date(2026, 2, 28),
         description="工资计提",
         entries=[
             Entry(account_role="payroll_management_expense", debit_fen=10_000),
@@ -311,7 +309,9 @@ def _make_final_withholding_batch(
 
 def test_pay_014_final_payroll_batches_and_lines_are_immutable(postgres_engine: object) -> None:
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="PAY-014 不变量")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="PAY-014 不变量"
+        )
         policy = _policy(session, organization.id)
         employee, profile = _employee_profile(session, organization.id)
         batch = _make_final_batch(session, organization.id, policy, employee, profile, key="a")
@@ -454,8 +454,12 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
     postgres_engine: object,
 ) -> None:
     with Session(postgres_engine) as session:
-        organization_a = seed_organization(session, name="PAY-015 企业 A")
-        organization_b = seed_organization(session, name="PAY-015 企业 B")
+        organization_a = seed_organization(
+            session, accounting_period_control_enabled=False, name="PAY-015 企业 A"
+        )
+        organization_b = seed_organization(
+            session, accounting_period_control_enabled=False, name="PAY-015 企业 B"
+        )
         policy_a = _policy(session, organization_a.id, version="A")
         policy_b = _policy(session, organization_b.id, version="B")
         employee_a, profile_a = _employee_profile(session, organization_a.id, code="A")
@@ -472,7 +476,7 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
             org_id=organization_a_id,
             idempotency_key="cross-policy",
             batch_kind="regular",
-            payroll_period="2026-08",
+            payroll_period="2026-02",
             version=1,
             status="calculated",
             calculation_hash="c" * 64,
@@ -480,8 +484,8 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
             calculation_trace=[],
             policy_snapshot={},
             policy_version_id=policy_b_id,
-            posting_date=date(2026, 8, 31),
-            payment_date=date(2026, 9, 5),
+            posting_date=date(2026, 2, 28),
+            payment_date=date(2026, 3, 5),
         )
         session.add(batch)
         with pytest.raises(IntegrityError):
@@ -492,7 +496,7 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
             org_id=organization_a_id,
             idempotency_key="profile-parent",
             batch_kind="regular",
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             version=1,
             status="calculated",
             calculation_hash="d" * 64,
@@ -500,8 +504,8 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
             calculation_trace=[],
             policy_snapshot={},
             policy_version_id=policy_a_id,
-            posting_date=date(2026, 9, 30),
-            payment_date=date(2026, 10, 5),
+            posting_date=date(2026, 3, 31),
+            payment_date=date(2026, 4, 5),
         )
         session.add(batch)
         session.flush()
@@ -521,7 +525,7 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
             org_id=organization_a_id,
             idempotency_key="missing-event-and-lines",
             batch_kind="regular",
-            payroll_period="2026-10",
+            payroll_period="2026-04",
             version=1,
             status="posted",
             calculation_hash="e" * 64,
@@ -529,8 +533,8 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
             calculation_trace=[],
             policy_snapshot={},
             policy_version_id=policy_a_id,
-            posting_date=date(2026, 10, 31),
-            payment_date=date(2026, 11, 5),
+            posting_date=date(2026, 4, 30),
+            payment_date=date(2026, 5, 5),
         )
         session.add(incomplete)
         with pytest.raises(DBAPIError, match="final payroll batch"):
@@ -541,12 +545,14 @@ def test_pay_016_final_voucher_lines_reject_insert_update_and_delete(
     postgres_engine: object,
 ) -> None:
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="PAY-016 凭证不可变")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="PAY-016 凭证不可变"
+        )
         event = _event(session, organization.id, "pay-016-source")
         voucher = create_voucher(
             session,
             event=event,
-            posting_date=date(2026, 8, 31),
+            posting_date=date(2026, 2, 28),
             description="正式凭证",
             entries=[
                 Entry(account_role="bank", debit_fen=100),
@@ -598,8 +604,12 @@ def test_pay_016_final_voucher_lines_reject_insert_update_and_delete(
 
 def test_pay_017_open_item_settlement_conservation_and_org_links(postgres_engine: object) -> None:
     with Session(postgres_engine) as session:
-        organization_a = seed_organization(session, name="PAY-017 企业 A")
-        organization_b = seed_organization(session, name="PAY-017 企业 B")
+        organization_a = seed_organization(
+            session, accounting_period_control_enabled=False, name="PAY-017 企业 A"
+        )
+        organization_b = seed_organization(
+            session, accounting_period_control_enabled=False, name="PAY-017 企业 B"
+        )
         counterparty_a = Counterparty(org_id=organization_a.id, kind="supplier", name="机构 A")
         counterparty_b = Counterparty(org_id=organization_b.id, kind="supplier", name="机构 B")
         session.add_all([counterparty_a, counterparty_b])
@@ -743,37 +753,52 @@ def test_r3_011_open_item_state_preflight_rejects_pollution_without_partial_upgr
         command.upgrade(config, "0003_payroll_round2_integrity")
         engine = create_engine(url)
         try:
-            with Session(engine) as session:
-                organization = seed_organization(session, name="R3-011")
-                counterparty = Counterparty(
-                    org_id=organization.id, kind="supplier", name="R3-011 supplier"
+            organization_id = uuid.uuid4()
+            counterparty_id = uuid.uuid4()
+            event_id = uuid.uuid4()
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO organizations "
+                        "(id, name, taxpayer_type, filing_cycle, jurisdiction, "
+                        "urban_maintenance_rate, accounting_standard, created_at) VALUES "
+                        "(:id, 'R3-011', 'small_scale', 'quarterly', 'CN', 0.07, "
+                        "'small_enterprise', now())"
+                    ),
+                    {"id": organization_id},
                 )
-                session.add(counterparty)
-                event = BusinessEvent(
-                    org_id=organization.id,
-                    idempotency_key="r3-011-source",
-                    event_type="payroll_accrual",
-                    status="rejected",
-                    description="迁移预检来源",
-                    facts={},
-                    business_date=date(2026, 8, 31),
-                    posting_date=date(2026, 8, 31),
-                    rule_trace=[],
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO counterparties (id, org_id, kind, name) "
+                        "VALUES (:id, :org_id, 'supplier', 'R3-011 supplier')"
+                    ),
+                    {"id": counterparty_id, "org_id": organization_id},
                 )
-                session.add(event)
-                session.flush()
-                session.add(
-                    OpenItem(
-                        org_id=organization.id,
-                        counterparty_id=counterparty.id,
-                        source_event_id=event.id,
-                        item_type="payable",
-                        original_amount_fen=100,
-                        settled_amount_fen=0,
-                        status="open",
-                    )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO business_events "
+                        "(id, org_id, idempotency_key, event_type, status, description, facts, "
+                        "business_date, posting_date, rule_trace, created_at) VALUES "
+                        "(:id, :org_id, 'r3-011-source', 'payroll_accrual', 'rejected', "
+                        "'迁移预检来源', '{}'::jsonb, '2026-02-28', '2026-02-28', "
+                        "'[]'::jsonb, now())"
+                    ),
+                    {"id": event_id, "org_id": organization_id},
                 )
-                session.commit()
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO open_items "
+                        "(id, org_id, counterparty_id, source_event_id, item_type, "
+                        "original_amount_fen, settled_amount_fen, status) VALUES "
+                        "(:id, :org_id, :counterparty_id, :event_id, 'payable', 100, 0, 'open')"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "org_id": organization_id,
+                        "counterparty_id": counterparty_id,
+                        "event_id": event_id,
+                    },
+                )
 
             # 0003 already protects writes.  Simulate a legacy/operator
             # pollution that exists before 0004 is applied, without touching
@@ -821,16 +846,22 @@ def test_r4_004_event_evidence_cross_organization_preflight_keeps_0004() -> None
             second_org_id = uuid.uuid4()
             event_id = uuid.uuid4()
             evidence_id = uuid.uuid4()
-            migration_date = date(2026, 8, 10)
-            with Session(engine) as session:
-                first_org_id = seed_organization(
-                    session, name="R4-004 first organization"
-                ).id
-                second_org_id = seed_organization(
-                    session, name="R4-004 second organization"
-                ).id
-                session.commit()
+            migration_date = date(2026, 2, 10)
             with engine.begin() as connection:
+                for organization_id, name in (
+                    (first_org_id, "R4-004 first organization"),
+                    (second_org_id, "R4-004 second organization"),
+                ):
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO organizations "
+                            "(id, name, taxpayer_type, filing_cycle, jurisdiction, "
+                            "urban_maintenance_rate, accounting_standard, created_at) VALUES "
+                            "(:id, :name, 'small_scale', 'quarterly', 'CN', 0.07, "
+                            "'small_enterprise', now())"
+                        ),
+                        {"id": organization_id, "name": name},
+                    )
                 connection.execute(
                     sa.text(
                         """
@@ -882,8 +913,7 @@ def test_r4_004_event_evidence_cross_organization_preflight_keeps_0004() -> None
                     "0004_payroll_round3_integrity"
                 )
                 assert "org_id" not in {
-                    column["name"]
-                    for column in inspect(engine).get_columns("event_evidence")
+                    column["name"] for column in inspect(engine).get_columns("event_evidence")
                 }
                 assert connection.scalar(sa.text("SELECT COUNT(*) FROM event_evidence")) == 1
         finally:
@@ -900,79 +930,208 @@ def test_r4_011_0004_salary_source_backfill_is_proved_and_downgrade_is_safe() ->
         command.upgrade(config, "0004_payroll_round3_integrity")
         engine = create_engine(url)
         try:
-            with Session(engine) as session:
-                organization = seed_organization(session, name="R4-011 source backfill")
-                service, confirmed = preview_and_confirm(session, organization)
-                salary_item = session.scalar(
-                    select(OpenItem).where(
-                        OpenItem.org_id == organization.id,
-                        OpenItem.source_event_id == confirmed.event_id,
-                        OpenItem.payable_category == "salary",
+            organization_id = uuid.uuid4()
+            counterparty_id = uuid.uuid4()
+            accrual_event_id = uuid.uuid4()
+            salary_payment_id = uuid.uuid4()
+            salary_item_id = uuid.uuid4()
+            policy_id = uuid.uuid4()
+            batch_id = uuid.uuid4()
+            salary_link_id = uuid.uuid4()
+            salary_voucher_id = uuid.uuid4()
+            salary_payable_account_id = uuid.uuid4()
+            bank_account_id = uuid.uuid4()
+            with engine.begin() as connection:
+                connection.execute(sa.text("SET LOCAL session_replication_role = replica"))
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO organizations "
+                        "(id, name, taxpayer_type, filing_cycle, jurisdiction, "
+                        "urban_maintenance_rate, accounting_standard, created_at) VALUES "
+                        "(:id, 'R4-011 source backfill', 'small_scale', 'quarterly', 'CN', "
+                        "0.07, 'small_enterprise', now())"
+                    ),
+                    {"id": organization_id},
+                )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO counterparties (id, org_id, kind, name) VALUES "
+                        "(:id, :org_id, 'employee', 'R4-011 employee')"
+                    ),
+                    {"id": counterparty_id, "org_id": organization_id},
+                )
+                for event_id, key, event_type, status in (
+                    (accrual_event_id, "r4-011-accrual", "payroll_accrual", "draft"),
+                    (salary_payment_id, "r4-011-salary-payment", "salary_payment", "posted"),
+                ):
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO business_events "
+                            "(id, org_id, idempotency_key, event_type, status, description, facts, "
+                            "business_date, posting_date, rule_trace, created_at) VALUES "
+                            "(:id, :org_id, :key, :event_type, :status, '', '{}'::jsonb, "
+                            "'2026-03-05', '2026-03-05', '[]'::jsonb, now())"
+                        ),
+                        {
+                            "id": event_id,
+                            "org_id": organization_id,
+                            "key": key,
+                            "event_type": event_type,
+                            "status": status,
+                        },
                     )
-                )
-                assert salary_item is not None
-                salary_item_id = salary_item.id
-                accrual_link = session.scalar(
-                    select(PayrollEventLink).where(
-                        PayrollEventLink.org_id == organization.id,
-                        PayrollEventLink.event_id == confirmed.event_id,
-                        PayrollEventLink.link_kind == "payroll_accrual",
+                for account_id, code, name, category, normal_side, role in (
+                    (
+                        salary_payable_account_id,
+                        "2211.01",
+                        "应付职工薪酬",
+                        "liability",
+                        "credit",
+                        "employee_salary_payable",
+                    ),
+                    (bank_account_id, "1002", "银行存款", "asset", "debit", "bank"),
+                ):
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO accounts "
+                            "(id, org_id, code, name, category, normal_side, system_role, active) "
+                            "VALUES (:id, :org_id, :code, :name, :category, :normal_side, "
+                            ":role, TRUE)"
+                        ),
+                        {
+                            "id": account_id,
+                            "org_id": organization_id,
+                            "code": code,
+                            "name": name,
+                            "category": category,
+                            "normal_side": normal_side,
+                            "role": role,
+                        },
                     )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO vouchers "
+                        "(id, org_id, event_id, voucher_number, posting_date, description, "
+                        "status, posted_at) VALUES "
+                        "(:id, :org_id, :event_id, 'R4-011-001', '2026-03-05', "
+                        "'0004 历史工资付款', 'posted', now())"
+                    ),
+                    {
+                        "id": salary_voucher_id,
+                        "org_id": organization_id,
+                        "event_id": salary_payment_id,
+                    },
                 )
-                assert accrual_link is not None
-                salary_payment = _event(
-                    session,
-                    organization.id,
-                    "r4-011-historical-salary-payment",
-                    event_type="salary_payment",
-                )
-                create_voucher(
-                    session,
-                    event=salary_payment,
-                    posting_date=date(2026, 9, 5),
-                    description="0004 历史工资付款",
-                    entries=[
-                        Entry(account_role="employee_salary_payable", debit_fen=1_000_000),
-                        Entry(account_role="bank", credit_fen=1_000_000),
-                    ],
-                )
-                # Use reflected 0004 tables for the historical settlement and
-                # provenance rows.  No 0006 column or DDL is present while
-                # this fixture proves the real 0004 -> head upgrade path.
-                historical_metadata = sa.MetaData()
-                historical_settlements = sa.Table(
-                    "settlements", historical_metadata, autoload_with=engine
-                )
-                historical_links = sa.Table(
-                    "payroll_event_links", historical_metadata, autoload_with=engine
-                )
-                salary_link_id = uuid.uuid4()
-                session.execute(
-                    sa.insert(historical_settlements).values(
-                        id=uuid.uuid4(),
-                        org_id=organization.id,
-                        open_item_id=salary_item_id,
-                        payment_event_id=salary_payment.id,
-                        amount_fen=1_000_000,
-                        reversed=False,
+                for line_number, account_id, debit_fen, credit_fen in (
+                    (1, salary_payable_account_id, 1_000_000, 0),
+                    (2, bank_account_id, 0, 1_000_000),
+                ):
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO voucher_lines "
+                            "(id, voucher_id, org_id, line_number, account_id, debit_fen, "
+                            "credit_fen, memo) VALUES "
+                            "(:id, :voucher_id, :org_id, :line_number, :account_id, "
+                            ":debit_fen, :credit_fen, '')"
+                        ),
+                        {
+                            "id": uuid.uuid4(),
+                            "voucher_id": salary_voucher_id,
+                            "org_id": organization_id,
+                            "line_number": line_number,
+                            "account_id": account_id,
+                            "debit_fen": debit_fen,
+                            "credit_fen": credit_fen,
+                        },
                     )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO open_items "
+                        "(id, org_id, counterparty_id, source_event_id, item_type, "
+                        "original_amount_fen, settled_amount_fen, status, payable_category) VALUES "
+                        "(:id, :org_id, :counterparty_id, :source_event_id, 'payable', "
+                        "1000000, 1000000, 'settled', 'salary')"
+                    ),
+                    {
+                        "id": salary_item_id,
+                        "org_id": organization_id,
+                        "counterparty_id": counterparty_id,
+                        "source_event_id": accrual_event_id,
+                    },
                 )
-                session.execute(
-                    sa.insert(historical_links).values(
-                        id=salary_link_id,
-                        org_id=organization.id,
-                        event_id=salary_payment.id,
-                        payroll_batch_id=accrual_link.payroll_batch_id,
-                        source_payment_event_id=None,
-                        source_open_item_id=salary_item_id,
-                        link_kind="salary_payment",
-                        created_at=sa.func.now(),
-                    )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO payroll_policy_versions "
+                        "(id, org_id, region, effective_from, effective_to, version, source_url, "
+                        "parameters, created_at) VALUES "
+                        "(:id, :org_id, 'CN', '2026-01-01', '2026-12-31', 'legacy', "
+                        "'https://www.chinatax.gov.cn/', '{}'::jsonb, now())"
+                    ),
+                    {"id": policy_id, "org_id": organization_id},
                 )
-                salary_item.settled_amount_fen = 1_000_000
-                salary_item.status = "settled"
-                salary_payment.status = "posted"
-                session.commit()
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO payroll_batches "
+                        "(id, org_id, idempotency_key, batch_kind, payroll_period, version, "
+                        "status, calculation_hash, calculation_input, calculation_trace, "
+                        "policy_snapshot, policy_version_id, posting_date, payment_date, "
+                        "business_event_id, created_at) VALUES "
+                        "(:id, :org_id, 'r4-011-batch', 'regular', '2026-03', 1, "
+                        "'calculated', :hash, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, "
+                        ":policy_id, '2026-03-05', '2026-03-05', :event_id, now())"
+                    ),
+                    {
+                        "id": batch_id,
+                        "org_id": organization_id,
+                        "hash": "4" * 64,
+                        "policy_id": policy_id,
+                        "event_id": accrual_event_id,
+                    },
+                )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO payroll_event_links "
+                        "(id, org_id, event_id, payroll_batch_id, source_payment_event_id, "
+                        "source_open_item_id, link_kind, created_at) VALUES "
+                        "(:id, :org_id, :event_id, :batch_id, NULL, NULL, "
+                        "'payroll_accrual', now())"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "org_id": organization_id,
+                        "event_id": accrual_event_id,
+                        "batch_id": batch_id,
+                    },
+                )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO settlements "
+                        "(id, org_id, open_item_id, payment_event_id, amount_fen, reversed) VALUES "
+                        "(:id, :org_id, :open_item_id, :event_id, 1000000, FALSE)"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "org_id": organization_id,
+                        "open_item_id": salary_item_id,
+                        "event_id": salary_payment_id,
+                    },
+                )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO payroll_event_links "
+                        "(id, org_id, event_id, payroll_batch_id, source_payment_event_id, "
+                        "source_open_item_id, link_kind, created_at) VALUES "
+                        "(:id, :org_id, :event_id, :batch_id, NULL, :open_item_id, "
+                        "'salary_payment', now())"
+                    ),
+                    {
+                        "id": salary_link_id,
+                        "org_id": organization_id,
+                        "event_id": salary_payment_id,
+                        "batch_id": batch_id,
+                        "open_item_id": salary_item_id,
+                    },
+                )
 
             # Model the only migration input that can be safely repaired: a
             # pre-R4 final salary edge whose one active settlement still proves
@@ -1012,12 +1171,15 @@ def test_r4_011_0004_salary_source_backfill_is_proved_and_downgrade_is_safe() ->
 
             command.upgrade(config, "head")
             with engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT source_open_item_id FROM payroll_event_links WHERE id = :id"
-                    ),
-                    {"id": salary_link_id},
-                ) == salary_item_id
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT source_open_item_id FROM payroll_event_links WHERE id = :id"
+                        ),
+                        {"id": salary_link_id},
+                    )
+                    == salary_item_id
+                )
 
             with pytest.raises(
                 RuntimeError, match="PAYROLL_DOWNGRADE_UNSAFE: source open-item lineage exists"
@@ -1025,7 +1187,7 @@ def test_r4_011_0004_salary_source_backfill_is_proved_and_downgrade_is_safe() ->
                 command.downgrade(config, "0004_payroll_round3_integrity")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0011_intangible_borrowings"
+                    "0012_accounting_period_close"
                 )
         finally:
             engine.dispose()
@@ -1037,14 +1199,16 @@ def test_r2_003_per_insurance_withholding_cannot_be_reallocated(
     """A direct PostgreSQL write cannot spend the pension entitlement as medical."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R2-003")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R2-003"
+        )
         policy = _policy(session, organization.id, version="r2-003")
         employee, profile = _employee_profile(session, organization.id, code="R2-003")
         batch = PayrollBatch(
             org_id=organization.id,
             idempotency_key="r2-003-batch",
             batch_kind="regular",
-            payroll_period="2026-08",
+            payroll_period="2026-02",
             version=1,
             status="calculated",
             calculation_hash="3" * 64,
@@ -1052,8 +1216,8 @@ def test_r2_003_per_insurance_withholding_cannot_be_reallocated(
             calculation_trace=[],
             policy_snapshot={},
             policy_version_id=policy.id,
-            posting_date=date(2026, 8, 31),
-            payment_date=date(2026, 9, 5),
+            posting_date=date(2026, 2, 28),
+            payment_date=date(2026, 3, 5),
         )
         session.add(batch)
         session.flush()
@@ -1095,7 +1259,9 @@ def test_r3_003_posted_withholding_entitlements_and_allocations_are_append_only(
     """Direct SQL cannot forge a zero-line entitlement or edit an active allocation."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R3-003")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R3-003"
+        )
         policy = _policy(session, organization.id, version="r3-003")
         employee, profile = _employee_profile(session, organization.id, code="R3-003")
         _batch, _line, entitlement = _make_final_withholding_batch(
@@ -1139,7 +1305,7 @@ def test_r3_003_posted_withholding_entitlements_and_allocations_are_append_only(
         create_voucher(
             session,
             event=payment,
-            posting_date=date(2026, 9, 5),
+            posting_date=date(2026, 3, 5),
             description="工资支付",
             entries=[
                 Entry(account_role="employee_salary_payable", debit_fen=80),
@@ -1178,7 +1344,9 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
     """A direct reversed insert fails; refund reversal never rewrites the advance state."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R3-004")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R3-004"
+        )
         direct = BusinessEvent(
             org_id=organization.id,
             idempotency_key="r3-004-direct-reversed",
@@ -1186,8 +1354,8 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
             status="reversed",
             description="非法",
             facts={},
-            business_date=date(2026, 9, 1),
-            posting_date=date(2026, 9, 1),
+            business_date=date(2026, 3, 1),
+            posting_date=date(2026, 3, 1),
             rule_trace=[],
         )
         session.add(direct)
@@ -1195,13 +1363,16 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
             session.flush()
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R3-004-refund")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R3-004-refund"
+        )
         advance = _event(session, organization.id, "r3-004-advance")
         advance.event_type = "customer_advance"
+        advance.facts = {"amounts": {"gross_amount_fen": 100}}
         create_voucher(
             session,
             event=advance,
-            posting_date=date(2026, 9, 1),
+            posting_date=date(2026, 3, 1),
             description="客户预收",
             entries=[
                 Entry(account_role="bank", debit_fen=100),
@@ -1211,17 +1382,30 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
         advance.status = "posted"
         refund = _event(session, organization.id, "r3-004-refund-event")
         refund.event_type = "customer_refund"
-        refund.facts = {"details": {"original_event_id": str(advance.id)}}
+        refund.facts = {
+            "amounts": {"amount_fen": 100},
+            "details": {"original_event_id": str(advance.id), "refund_kind": "advance"},
+        }
         refund_voucher = create_voucher(
             session,
             event=refund,
-            posting_date=date(2026, 9, 2),
+            posting_date=date(2026, 3, 2),
             description="客户退款",
             entries=[
                 Entry(account_role="contract_liability", debit_fen=100),
                 Entry(account_role="bank", credit_fen=100),
             ],
         )
+        session.add(
+            BusinessEventDependency(
+                org_id=organization.id,
+                parent_event_id=advance.id,
+                child_event_id=refund.id,
+                dependency_kind="advance_refund",
+                amount_fen=100,
+            )
+        )
+        session.flush()
         refund.status = "posted"
         refund_reversal = _event(session, organization.id, "r3-004-refund-reversal")
         refund_reversal.event_type = "reversal"
@@ -1229,7 +1413,7 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
         create_voucher(
             session,
             event=refund_reversal,
-            posting_date=date(2026, 9, 3),
+            posting_date=date(2026, 3, 3),
             description="冲正客户退款",
             entries=[
                 Entry(account_role="bank", debit_fen=100),
@@ -1251,7 +1435,9 @@ def test_r3_002_tax_state_slot_rejects_cross_employee_and_arbitrary_mutation(
     """A slot is bound to the posted regular line's employee and payment month."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R3-002")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R3-002"
+        )
         policy = _policy(session, organization.id, version="r3-002")
         employee_a, profile_a = _employee_profile(session, organization.id, code="R3-002-A")
         employee_b, profile_b = _employee_profile(session, organization.id, code="R3-002-B")
@@ -1266,7 +1452,7 @@ def test_r3_002_tax_state_slot_rejects_cross_employee_and_arbitrary_mutation(
             profile_b,
             key="r3-002-b",
             version=2,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
         )
         session.commit()
         organization_id = organization.id
@@ -1325,14 +1511,16 @@ def test_r2_005_final_vouchers_and_business_events_are_database_immutable(
     postgres_engine: object,
 ) -> None:
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R2-005")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R2-005"
+        )
         event = _event(session, organization.id, "r2-005-empty")
         session.add(
             Voucher(
                 org_id=organization.id,
                 event_id=event.id,
-                voucher_number="202608-r2-empty",
-                posting_date=date(2026, 8, 31),
+                voucher_number="202508-r2-empty",
+                posting_date=date(2026, 2, 28),
                 description="empty",
                 status="posted",
             )
@@ -1341,12 +1529,14 @@ def test_r2_005_final_vouchers_and_business_events_are_database_immutable(
             session.commit()
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R2-005-event")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R2-005-event"
+        )
         original = _event(session, organization.id, "r2-005-original")
         original_voucher = create_voucher(
             session,
             event=original,
-            posting_date=date(2026, 8, 31),
+            posting_date=date(2026, 2, 28),
             description="正式事件",
             entries=[
                 Entry(account_role="bank", debit_fen=1),
@@ -1374,7 +1564,7 @@ def test_r2_005_final_vouchers_and_business_events_are_database_immutable(
         create_voucher(
             session,
             event=reversal,
-            posting_date=date(2026, 8, 31),
+            posting_date=date(2026, 2, 28),
             description="正式冲正",
             entries=[
                 Entry(account_role="service_revenue", debit_fen=1),
@@ -1392,23 +1582,27 @@ def test_r2_006_voucher_line_composite_organization_foreign_keys(
     postgres_engine: object,
 ) -> None:
     with Session(postgres_engine) as session:
-        organization_a = seed_organization(session, name="R2-006-A")
-        organization_b = seed_organization(session, name="R2-006-B")
+        organization_a = seed_organization(
+            session, accounting_period_control_enabled=False, name="R2-006-A"
+        )
+        organization_b = seed_organization(
+            session, accounting_period_control_enabled=False, name="R2-006-B"
+        )
         event_a = _event(session, organization_a.id, "r2-006-event-a")
         event_b = _event(session, organization_b.id, "r2-006-event-b")
         voucher_a = Voucher(
             org_id=organization_a.id,
             event_id=event_a.id,
-            voucher_number="202608-r2-006-a",
-            posting_date=date(2026, 8, 31),
+            voucher_number="202508-r2-006-a",
+            posting_date=date(2026, 2, 28),
             description="draft",
             status="draft",
         )
         voucher_b = Voucher(
             org_id=organization_b.id,
             event_id=event_b.id,
-            voucher_number="202608-r2-006-b",
-            posting_date=date(2026, 8, 31),
+            voucher_number="202508-r2-006-b",
+            posting_date=date(2026, 2, 28),
             description="draft",
             status="draft",
         )
@@ -1472,7 +1666,9 @@ def test_r2_010_explicit_version_successors_allow_only_their_own_overlap(
     postgres_engine: object,
 ) -> None:
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R2-010")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R2-010"
+        )
         organization_id = organization.id
         policy = _policy(session, organization.id, version="r2-010-root")
         employee, profile = _employee_profile(session, organization.id, code="R2-010")
@@ -1521,7 +1717,7 @@ def test_r2_010_explicit_version_successors_allow_only_their_own_overlap(
             EmployeePayrollProfileVersion(
                 org_id=organization_id,
                 employee_id=employee.id,
-                effective_from=date(2026, 1, 1),
+                effective_from=date(2025, 7, 1),
                 expense_role="payroll_management_expense",
                 social_insurance_base_fen=0,
                 housing_fund_base_fen=0,
@@ -1573,7 +1769,7 @@ def test_r2_014_postgresql_legacy_settlement_pollution_keeps_revision_0001() -> 
                             id, org_id, idempotency_key, event_type, status, description,
                             facts, business_date, posting_date, rule_trace, created_at
                         ) VALUES (:id, :org_id, 'legacy-r2-014', 'legacy', 'posted', '',
-                                  CAST('{}' AS jsonb), DATE '2026-08-01', DATE '2026-08-01',
+                                  CAST('{}' AS jsonb), DATE '2026-02-01', DATE '2026-02-01',
                                   CAST('[]' AS jsonb), now())
                         """
                     ),

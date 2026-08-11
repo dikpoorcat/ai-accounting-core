@@ -15,6 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from .accounting_period_schemas import (
+    ConfirmAccountingPeriodCloseRequest,
+    GenerateAccountingPeriodRequest,
+    GetAccountingPeriodsRequest,
+    PreviewAccountingPeriodCloseRequest,
+)
 from .bank_import import BankStatementInputError, import_bank_statement
 from .borrowing_schemas import (
     ConfirmBorrowingInterestRequest,
@@ -254,6 +260,14 @@ def _borrowing_service(session: Any) -> Any:
     return BorrowingService(session)
 
 
+def _accounting_period_service(session: Any) -> Any:
+    """Load period control only when one of its typed tools is invoked."""
+
+    from .accounting_period_service import AccountingPeriodService
+
+    return AccountingPeriodService(session)
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_database_error_boundary
 def finance_get_profile(org_id: str) -> dict[str, Any]:
@@ -282,6 +296,14 @@ def finance_get_profile(org_id: str) -> dict[str, Any]:
                 "jurisdiction": organization.jurisdiction,
                 "urban_maintenance_rate": str(organization.urban_maintenance_rate),
                 "accounting_standard": organization.accounting_standard,
+                "accounting_period_control_enabled": (
+                    organization.accounting_period_control_enabled
+                ),
+                "accounting_period_control_start_date": (
+                    organization.accounting_period_control_start_date.isoformat()
+                    if organization.accounting_period_control_start_date
+                    else None
+                ),
             },
             "account_roles": {
                 account.system_role: {"code": account.code, "name": account.name}
@@ -383,6 +405,17 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 ],
                 "generic_event_writer": "not_available",
                 "accrual_entry": "finance_confirm_borrowing_interest",
+            },
+            "accounting_period": {
+                "status": "enabled",
+                "entry_tools": [
+                    "finance_generate_accounting_period",
+                    "finance_preview_accounting_period_close",
+                    "finance_confirm_accounting_period_close",
+                    "finance_get_accounting_periods",
+                ],
+                "generic_event_writer": "controlled_by_period_status",
+                "reopen_entry": "not_available",
             },
         },
         # Return the schema actually advertised by FastMCP, including its strict
@@ -825,6 +858,62 @@ def finance_query_context(
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_generate_accounting_period(
+    request: GenerateAccountingPeriodRequest,
+) -> dict[str, Any]:
+    """显式生成一个自然月会计期间；首次月份由调用方确认，后续必须逐月连续。"""
+    try:
+        with SessionLocal.begin() as session:
+            return _accounting_period_service(session).generate_accounting_period(
+                request
+            ).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_accounting_period_close(
+    request: PreviewAccountingPeriodCloseRequest,
+) -> dict[str, Any]:
+    """只读复核一个已生成自然月，并返回规范关账快照和计算哈希。"""
+    try:
+        with SessionLocal() as session:
+            return _accounting_period_service(session).preview_accounting_period_close(
+                request
+            ).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_accounting_period_close(
+    request: ConfirmAccountingPeriodCloseRequest,
+) -> dict[str, Any]:
+    """用预览哈希、完整复核声明和证据幂等确认关账；不提供重开入口。"""
+    try:
+        with SessionLocal.begin() as session:
+            return _accounting_period_service(session).confirm_accounting_period_close(
+                request
+            ).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_accounting_periods(
+    request: GetAccountingPeriodsRequest,
+) -> dict[str, Any]:
+    """读取企业已显式生成的自然月期间及其开放或关闭状态。"""
+    try:
+        with SessionLocal() as session:
+            return _accounting_period_service(session).get_accounting_periods(
+                request
+            ).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_record_event(request: RecordEventRequest) -> dict[str, Any]:
     """提交结构化业务事实；只在资料完整且规则唯一时原子入账。"""
     try:
@@ -1232,6 +1321,10 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
 
 
 _make_tool_inputs_strict(
+    "finance_generate_accounting_period",
+    "finance_preview_accounting_period_close",
+    "finance_confirm_accounting_period_close",
+    "finance_get_accounting_periods",
     "finance_record_event",
     "finance_calculate_tax_period",
     "finance_confirm_tax_period",

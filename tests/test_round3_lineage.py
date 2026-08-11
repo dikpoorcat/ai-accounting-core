@@ -56,7 +56,7 @@ def _opening_request(
         org_id=org_id,
         employee_id=employee_id,
         tax_year=2026,
-        through_month=8,
+        through_month=2,
         cumulative_income_fen=cumulative_income_fen,
         cumulative_tax_exempt_income_fen=0,
         cumulative_basic_deduction_fen=0,
@@ -84,9 +84,9 @@ def _preview(
                 "org_id": org_id,
                 "idempotency_key": idempotency_key,
                 "batch_kind": "regular",
-                "payroll_period": "2026-09",
-                "posting_date": "2026-09-05",
-                "payment_date": "2026-09-05",
+                "payroll_period": "2026-03",
+                "posting_date": "2026-03-05",
+                "payment_date": "2026-03-05",
                 "evidence_references": evidence_references or [],
                 "employee_items": [
                     {
@@ -144,9 +144,12 @@ def test_r3_005_public_successors_select_leaves_and_preserve_old_draft(
     )
     assert original_profile is not None and original_policy is not None
 
-    assert service.register_payroll_opening_state(
-        _opening_request(organization.id, employee_id, cumulative_income_fen=100_000)
-    )["status"] == "registered"
+    assert (
+        service.register_payroll_opening_state(
+            _opening_request(organization.id, employee_id, cumulative_income_fen=100_000)
+        )["status"]
+        == "registered"
+    )
     original_opening = session.scalar(
         select(PayrollOpeningState).where(
             PayrollOpeningState.org_id == organization.id,
@@ -169,7 +172,7 @@ def test_r3_005_public_successors_select_leaves_and_preserve_old_draft(
         RegisterEmployeePayrollProfileVersionRequest(
             org_id=organization.id,
             employee_id=employee_id,
-            effective_from=date(2026, 9, 1),
+            effective_from=date(2026, 3, 1),
             effective_to=date(2026, 12, 31),
             expense_role="payroll_management_expense",
             social_insurance_base_fen=1_100_000,
@@ -219,13 +222,13 @@ def test_r3_005_public_successors_select_leaves_and_preserve_old_draft(
     assert opening_version is not None and opening_version.supersedes_id == original_opening.id
 
     # Public calculation selection is the observable version-chain query.
-    effective_profile = service._effective_profile(employee_id, date(2026, 9, 5))
-    effective_policy = service._effective_payroll_policy(organization.id, date(2026, 9, 5))
+    effective_profile = service._effective_profile(employee_id, date(2026, 3, 5))
+    effective_policy = service._effective_payroll_policy(organization.id, date(2026, 3, 5))
     assert effective_profile is not None and effective_profile.id == profile_successor_id
     assert effective_policy is not None and effective_policy.id == policy_successor_id
     employee = service._employee_for_org(organization.id, employee_id)
     assert employee is not None
-    prior = service._prior_tax_state(employee, YearMonth(2026, 9))
+    prior = service._prior_tax_state(employee, YearMonth(2026, 3))
     assert prior is not None and prior.cumulative_income_fen == 200_000
 
     new_preview = _preview(

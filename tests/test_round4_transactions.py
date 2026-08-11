@@ -62,7 +62,7 @@ def _bank_transaction(org_id: object, *, amount_fen: int, key: str) -> BankTrans
         org_id=org_id,
         bank_account_code="1002",
         fingerprint=(key * 64)[:64],
-        booking_date=date(2026, 10, 5),
+        booking_date=date(2026, 4, 5),
         amount_fen=amount_fen,
         currency="CNY",
         memo=key,
@@ -77,9 +77,9 @@ def _expense_request(org_id: object, bank_id: object, *, key: str) -> RecordEven
             "idempotency_key": key,
             "event_type": "expense_cash",
             "business_dates": {
-                "business_date": "2026-10-05",
-                "payment_date": "2026-10-05",
-                "posting_date": "2026-10-05",
+                "business_date": "2026-04-05",
+                "payment_date": "2026-04-05",
+                "posting_date": "2026-04-05",
             },
             "amounts": {
                 "gross_amount_fen": 100,
@@ -96,7 +96,7 @@ def _reverse_request(org_id: object, event_id: object, *, key: str) -> ReverseEv
         event_id=event_id,
         idempotency_key=key,
         reason="R4 并发冲正",
-        posting_date=date(2026, 10, 6),
+        posting_date=date(2026, 4, 6),
     )
 
 
@@ -106,7 +106,9 @@ def _post_two_expenses(
     organization_name: str,
     key_prefix: str,
 ) -> tuple[object, list[object], list[object]]:
-    organization = seed_organization(session, name=organization_name)
+    organization = seed_organization(
+        session, accounting_period_control_enabled=False, name=organization_name
+    )
     bank_ids: list[object] = []
     event_ids: list[object] = []
     for index in (1, 2):
@@ -230,14 +232,18 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
     """The database catches non-ancestor version overlap even without the service."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R4-009 version lineage organization")
+        organization = seed_organization(
+            session,
+            accounting_period_control_enabled=False,
+            name="R4-009 version lineage organization",
+        )
         org_id = organization.id
         employee = FinanceService(session).register_employee(
             RegisterEmployeeRequest(
                 org_id=organization.id,
                 employee_code="R4-009-EMPLOYEE",
                 name="版本链员工",
-                employment_start_date=date(2026, 1, 1),
+                employment_start_date=date(2025, 7, 1),
                 status="active",
             )
         )
@@ -247,8 +253,8 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
         profile_a = EmployeePayrollProfileVersion(
             org_id=org_id,
             employee_id=employee_id,
-            effective_from=date(2026, 1, 1),
-            effective_to=date(2026, 6, 30),
+            effective_from=date(2025, 7, 1),
+            effective_to=date(2025, 12, 31),
             expense_role="payroll_management_expense",
             social_insurance_base_fen=100,
             housing_fund_base_fen=100,
@@ -257,8 +263,8 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
         profile_b = EmployeePayrollProfileVersion(
             org_id=org_id,
             employee_id=employee_id,
-            effective_from=date(2026, 7, 1),
-            effective_to=date(2026, 12, 31),
+            effective_from=date(2026, 1, 1),
+            effective_to=date(2026, 6, 30),
             expense_role="payroll_management_expense",
             social_insurance_base_fen=100,
             housing_fund_base_fen=100,
@@ -267,8 +273,8 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
         policy_a = PayrollPolicyVersion(
             org_id=org_id,
             region="R4-009",
-            effective_from=date(2026, 1, 1),
-            effective_to=date(2026, 6, 30),
+            effective_from=date(2025, 7, 1),
+            effective_to=date(2025, 12, 31),
             version="r4-009-policy-a",
             source_url="https://www.chinatax.gov.cn/",
             parameters={},
@@ -276,8 +282,8 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
         policy_b = PayrollPolicyVersion(
             org_id=org_id,
             region="R4-009",
-            effective_from=date(2026, 7, 1),
-            effective_to=date(2026, 12, 31),
+            effective_from=date(2026, 1, 1),
+            effective_to=date(2026, 6, 30),
             version="r4-009-policy-b",
             source_url="https://www.chinatax.gov.cn/",
             parameters={},
@@ -300,8 +306,8 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
                 org_id=org_id,
                 employee_id=employee_id,
                 supersedes_id=profile_a_id,
-                effective_from=date(2026, 1, 1),
-                effective_to=date(2026, 12, 31),
+                effective_from=date(2025, 7, 1),
+                effective_to=date(2026, 6, 30),
                 expense_role="payroll_management_expense",
                 social_insurance_base_fen=101,
                 housing_fund_base_fen=101,
@@ -318,8 +324,8 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
                 org_id=org_id,
                 region="R4-009",
                 supersedes_id=policy_a_id,
-                effective_from=date(2026, 1, 1),
-                effective_to=date(2026, 12, 31),
+                effective_from=date(2025, 7, 1),
+                effective_to=date(2026, 6, 30),
                 version="r4-009-policy-a-successor",
                 source_url="https://www.chinatax.gov.cn/",
                 parameters={},
@@ -353,14 +359,18 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
 
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(session, name="R4-009 successor concurrency organization")
+        organization = seed_organization(
+            session,
+            accounting_period_control_enabled=False,
+            name="R4-009 successor concurrency organization",
+        )
         org_id = organization.id
         employee = FinanceService(session).register_employee(
             RegisterEmployeeRequest(
                 org_id=org_id,
                 employee_code="R4-009-CONCURRENCY",
                 name="并发版本员工",
-                employment_start_date=date(2026, 1, 1),
+                employment_start_date=date(2025, 7, 1),
                 status="active",
             )
         )
@@ -369,8 +379,8 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
         first_predecessor = EmployeePayrollProfileVersion(
             org_id=org_id,
             employee_id=employee_id,
-            effective_from=date(2026, 1, 1),
-            effective_to=date(2026, 12, 31),
+            effective_from=date(2026, 3, 1),
+            effective_to=date(2026, 6, 30),
             expense_role="payroll_management_expense",
             social_insurance_base_fen=100,
             housing_fund_base_fen=100,
@@ -379,8 +389,8 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
         second_predecessor = EmployeePayrollProfileVersion(
             org_id=org_id,
             employee_id=employee_id,
-            effective_from=date(2027, 1, 1),
-            effective_to=date(2027, 12, 31),
+            effective_from=date(2026, 7, 1),
+            effective_to=date(2027, 6, 30),
             expense_role="payroll_management_expense",
             social_insurance_base_fen=100,
             housing_fund_base_fen=100,
@@ -392,11 +402,14 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
         second_predecessor_id = second_predecessor.id
 
     def request(predecessor_id: object, *, social_base: int) -> object:
+        is_first_predecessor = predecessor_id == first_predecessor_id
+        effective_from = date(2026, 3 if is_first_predecessor else 7, 1)
+        effective_to = date(2026, 6, 30) if is_first_predecessor else date(2026, 12, 31)
         return RegisterEmployeePayrollProfileVersionRequest(
             org_id=org_id,
             employee_id=employee_id,
-            effective_from=date(2026 if predecessor_id == first_predecessor_id else 2027, 1, 1),
-            effective_to=date(2026 if predecessor_id == first_predecessor_id else 2027, 12, 31),
+            effective_from=effective_from,
+            effective_to=effective_to,
             expense_role="payroll_management_expense",
             social_insurance_base_fen=social_base,
             housing_fund_base_fen=social_base,

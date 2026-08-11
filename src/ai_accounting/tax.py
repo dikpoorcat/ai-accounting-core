@@ -63,6 +63,7 @@ def _rule_snapshot(rule: TaxRule) -> dict[str, Any]:
 class TaxPeriodResult:
     start_date: date
     end_date: date
+    adjustment_posting_date: date
     filing_cycle: str
     threshold_fen: int
     net_sales_fen: int
@@ -91,6 +92,7 @@ class TaxPeriodResult:
         payload = asdict(self)
         payload["start_date"] = self.start_date.isoformat()
         payload["end_date"] = self.end_date.isoformat()
+        payload["adjustment_posting_date"] = self.adjustment_posting_date.isoformat()
         payload["source_event_snapshots"] = payload["source_events"]
         payload["source_events"] = [row["event_id"] for row in self.source_events]
         return payload
@@ -212,9 +214,15 @@ def _validate_natural_period(
 
 
 def calculate_tax_period(
-    session: Session, organization: Organization, start_date: date, end_date: date
+    session: Session,
+    organization: Organization,
+    start_date: date,
+    end_date: date,
+    adjustment_posting_date: date,
 ) -> TaxPeriodResult:
     _validate_natural_period(organization, start_date, end_date)
+    if adjustment_posting_date < end_date:
+        raise ValueError("TAX_PERIOD_ADJUSTMENT_POSTING_DATE_INVALID")
     rule = _period_rule(
         session,
         organization,
@@ -314,6 +322,7 @@ def calculate_tax_period(
         "period": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
+            "adjustment_posting_date": adjustment_posting_date.isoformat(),
         },
         "vat_rule": vat_snapshot,
         "surtax_rule": surtax_snapshot,
@@ -331,6 +340,7 @@ def calculate_tax_period(
             "threshold_operator": "net_sales_fen < threshold_fen",
             "below_threshold": below_threshold,
             "taxable_event_count": len(taxable_rows),
+            "adjustment_posting_date": adjustment_posting_date.isoformat(),
         },
         {
             "rule": surtax_rule.code,
@@ -344,6 +354,7 @@ def calculate_tax_period(
     return TaxPeriodResult(
         start_date=start_date,
         end_date=end_date,
+        adjustment_posting_date=adjustment_posting_date,
         filing_cycle=organization.filing_cycle,
         **calculation,
         rule_version=f"{rule.version}+{surtax_rule.version}",

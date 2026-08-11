@@ -232,6 +232,8 @@ def test_acquisition_mcp_handler_posts_to_an_isolated_sqlite_database(
     try:
         with factory.begin() as session:
             organization = seed_organization(session, name="MCP fixed asset test")
+            organization.accounting_period_control_enabled = False
+            session.flush()
             evidence = Evidence(
                 org_id=organization.id,
                 sha256="a" * 64,
@@ -291,6 +293,8 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
     try:
         with factory.begin() as session:
             organization = seed_organization(session, name="MCP tax lock test")
+            organization.accounting_period_control_enabled = False
+            session.flush()
             evidence = Evidence(
                 org_id=organization.id,
                 sha256="l" * 64,
@@ -377,6 +381,7 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
             org_id=org_id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
         )
         preview = mcp_server.finance_calculate_tax_period(preview_request)
         assert preview["status"] == "calculated", preview

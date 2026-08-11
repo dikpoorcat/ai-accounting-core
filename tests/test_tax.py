@@ -61,13 +61,17 @@ def test_quarterly_threshold_is_strictly_below(
     session: Session, organization: Organization
 ) -> None:
     add_taxable_event(session, organization, net_fen=29_999_999, vat_fen=300_000)
-    below = calculate_tax_period(session, organization, date(2026, 1, 1), date(2026, 3, 31))
+    below = calculate_tax_period(
+        session, organization, date(2026, 1, 1), date(2026, 3, 31), date(2026, 3, 31)
+    )
     assert below.net_sales_fen == 29_999_999
     assert below.vat_relief_fen == 300_000
     assert below.vat_payable_fen == 0
 
     add_taxable_event(session, organization, net_fen=1, vat_fen=0)
-    reached = calculate_tax_period(session, organization, date(2026, 1, 1), date(2026, 3, 31))
+    reached = calculate_tax_period(
+        session, organization, date(2026, 1, 1), date(2026, 3, 31), date(2026, 3, 31)
+    )
     assert reached.net_sales_fen == 30_000_000
     assert reached.vat_relief_fen == 0
     assert reached.vat_payable_fen == 300_000
@@ -83,7 +87,9 @@ def test_special_invoice_is_not_relieved_below_threshold(
         vat_fen=10_000,
         exemption_eligible=False,
     )
-    result = calculate_tax_period(session, organization, date(2026, 1, 1), date(2026, 3, 31))
+    result = calculate_tax_period(
+        session, organization, date(2026, 1, 1), date(2026, 3, 31), date(2026, 3, 31)
+    )
     assert result.vat_relief_fen == 0
     assert result.vat_payable_fen == 10_000
     assert result.surtax_total_fen > 0
@@ -94,7 +100,7 @@ def test_tax_hash_payload_is_exported_reproducible_and_reload_stable(
 ) -> None:
     add_taxable_event(session, organization, net_fen=1_000_000, vat_fen=10_000)
     first = calculate_tax_period(
-        session, organization, date(2026, 1, 1), date(2026, 3, 31)
+        session, organization, date(2026, 1, 1), date(2026, 3, 31), date(2026, 3, 31)
     )
     decoded = json.loads(first.calculation_hash_payload)
     assert decoded["organization"]["urban_maintenance_rate"] == "0.07000"
@@ -106,7 +112,7 @@ def test_tax_hash_payload_is_exported_reproducible_and_reload_stable(
     session.flush()
     session.expire(organization, ["urban_maintenance_rate"])
     reloaded = calculate_tax_period(
-        session, organization, date(2026, 1, 1), date(2026, 3, 31)
+        session, organization, date(2026, 1, 1), date(2026, 3, 31), date(2026, 3, 31)
     )
     assert reloaded.calculation_hash_payload == first.calculation_hash_payload
     assert reloaded.calculation_hash == first.calculation_hash
@@ -121,6 +127,7 @@ def test_zero_adjustment_rejects_without_confirmation_rows(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
         )
     )
     before_events = session.query(BusinessEvent).count()
@@ -129,6 +136,7 @@ def test_zero_adjustment_rejects_without_confirmation_rows(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
             calculation_hash=preview["calculation_hash"],
             idempotency_key="zero-tax-adjustment",
         )
@@ -151,6 +159,7 @@ def test_tax_period_adjustment_cannot_be_posted_twice(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
         )
     )
     first = service.confirm_tax_period(
@@ -158,6 +167,7 @@ def test_tax_period_adjustment_cannot_be_posted_twice(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
             calculation_hash=preview["calculation_hash"],
             idempotency_key="tax-q1-first",
         )
@@ -176,6 +186,7 @@ def test_tax_period_adjustment_cannot_be_posted_twice(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
             calculation_hash=preview["calculation_hash"],
             idempotency_key="tax-q1-different-key",
         )
@@ -198,6 +209,7 @@ def test_tax_period_adjustment_cannot_be_posted_twice(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
         )
     )
     reposted = service.confirm_tax_period(
@@ -205,6 +217,7 @@ def test_tax_period_adjustment_cannot_be_posted_twice(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
             calculation_hash=refreshed["calculation_hash"],
             idempotency_key="tax-q1-after-reversal",
         )

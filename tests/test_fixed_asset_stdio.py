@@ -95,6 +95,8 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
         organization = seed_organization(database_session, name="固定资产 STDIO 回归企业")
+        organization.accounting_period_control_enabled = False
+        database_session.flush()
         org_id = organization.id
         acquisition_evidence = _evidence(org_id, "a")
         activation_evidence = _evidence(org_id, "b")

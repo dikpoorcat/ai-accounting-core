@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ai_accounting.models import (
-    AccountingPeriod,
     BankTransaction,
     OpenItem,
     Organization,
@@ -161,19 +160,15 @@ def test_idempotency_replays_original_result(session: Session, organization: Org
     assert session.query(Voucher).count() == 1
 
 
-def test_closed_period_rejects_posting(session: Session, organization: Organization) -> None:
-    session.add(
-        AccountingPeriod(
-            org_id=organization.id,
-            start_date=date(2026, 8, 1),
-            end_date=date(2026, 8, 31),
-            status="closed",
-        )
-    )
+def test_enabled_period_control_fails_closed_before_first_generation(
+    session: Session, organization: Organization
+) -> None:
+    organization.accounting_period_control_enabled = True
+    organization.accounting_period_control_start_date = None
     session.flush()
     result = FinanceService(session).record_event(sale_request(organization))
     assert result.status == "rejected"
-    assert "closed" in result.errors[0]
+    assert result.errors == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
 
 
 def test_reversal_swaps_lines_and_keeps_original_voucher(

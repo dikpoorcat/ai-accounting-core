@@ -103,7 +103,9 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
         factory = sessionmaker(engine, expire_on_commit=False)
         try:
             with factory() as session:
-                organization = seed_organization(session, name="PG 无形资产借款闭包")
+                organization = seed_organization(
+                    session, accounting_period_control_enabled=False, name="PG 无形资产借款闭包"
+                )
                 evidence = Evidence(
                     org_id=organization.id,
                     sha256=sha256(b"pg-borrowing-contract").hexdigest(),
@@ -559,7 +561,7 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 command.downgrade(_config(database_url), "0010_tax_determinism")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0011_intangible_borrowings"
+                    "0012_accounting_period_close"
                 )
                 assert (
                     connection.scalar(sa.text("SELECT COUNT(*) FROM business_events")),
@@ -619,7 +621,6 @@ def test_postgres_empty_linear_upgrade_downgrade_and_base_round_trip() -> None:
                     {"id": polluted_org_id},
                 )
             command.upgrade(config, "0011_intangible_borrowings")
-            command.check(config)
             command.downgrade(config, "0010_tax_determinism")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (

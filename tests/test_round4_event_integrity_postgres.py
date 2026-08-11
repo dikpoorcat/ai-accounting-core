@@ -62,7 +62,9 @@ def postgres_engine() -> Iterator[object]:
 def _confirmed_payroll_with_evidence(
     session: Session, *, key: str
 ) -> tuple[object, PayrollBatch, PayrollLine, Evidence, BusinessEvent]:
-    organization = seed_organization(session, name=f"R4 event integrity {key}")
+    organization = seed_organization(
+        session, accounting_period_control_enabled=False, name=f"R4 event integrity {key}"
+    )
     employee_id = register_payroll_facts(session, organization)
     evidence = _evidence(session, organization.id, f"r4-{key}-evidence")
     service = FinanceService(session)
@@ -102,7 +104,7 @@ def _draft_batch_and_event(
         org_id=batch.org_id,
         idempotency_key=f"r4-draft-batch-{key}",
         batch_kind="regular",
-        payroll_period="2026-10",
+        payroll_period="2026-04",
         version=1,
         status="draft",
         calculation_hash=(f"r4-{key}" * 64)[:64],
@@ -111,8 +113,8 @@ def _draft_batch_and_event(
         calculation_trace=[],
         policy_snapshot=batch.policy_snapshot,
         policy_version_id=batch.policy_version_id,
-        posting_date=date(2026, 10, 5),
-        payment_date=date(2026, 10, 5),
+        posting_date=date(2026, 4, 5),
+        payment_date=date(2026, 4, 5),
     )
     session.add(draft_batch)
     session.flush()
@@ -132,9 +134,9 @@ def _draft_batch_and_event(
         status="draft",
         description="R4 草稿父对象",
         facts={},
-        business_date=date(2026, 10, 5),
-        payment_date=date(2026, 10, 5),
-        posting_date=date(2026, 10, 5),
+        business_date=date(2026, 4, 5),
+        payment_date=date(2026, 4, 5),
+        posting_date=date(2026, 4, 5),
         rule_trace=[],
     )
     session.add_all([draft_line, draft_event])
@@ -212,20 +214,31 @@ def test_r4_002_final_parent_moves_reject_and_preserve_each_old_parent(
         _assert_commit_rejects(postgres_engine, attack, identifiers)
 
     with Session(postgres_engine) as session:
-        assert session.scalar(
-            select(PayrollWithholdingEntitlement.payroll_line_id).where(
-                PayrollWithholdingEntitlement.id == identifiers["entitlement_id"]
+        assert (
+            session.scalar(
+                select(PayrollWithholdingEntitlement.payroll_line_id).where(
+                    PayrollWithholdingEntitlement.id == identifiers["entitlement_id"]
+                )
             )
-        ) == identifiers["final_line_id"]
-        assert session.scalar(
-            select(PayrollEventLink.event_id).where(PayrollEventLink.id == identifiers["link_id"])
-        ) == identifiers["final_event_id"]
-        assert session.scalar(
-            select(PayrollBatchEvidence.evidence_id).where(
-                PayrollBatchEvidence.org_id == identifiers["org_id"],
-                PayrollBatchEvidence.payroll_batch_id == identifiers["final_batch_id"],
+            == identifiers["final_line_id"]
+        )
+        assert (
+            session.scalar(
+                select(PayrollEventLink.event_id).where(
+                    PayrollEventLink.id == identifiers["link_id"]
+                )
             )
-        ) == identifiers["evidence_id"]
+            == identifiers["final_event_id"]
+        )
+        assert (
+            session.scalar(
+                select(PayrollBatchEvidence.evidence_id).where(
+                    PayrollBatchEvidence.org_id == identifiers["org_id"],
+                    PayrollBatchEvidence.payroll_batch_id == identifiers["final_batch_id"],
+                )
+            )
+            == identifiers["evidence_id"]
+        )
 
 
 def test_r4_004_final_event_evidence_is_org_bound_immutable_and_inherited(
@@ -237,7 +250,9 @@ def test_r4_004_final_event_evidence_is_org_bound_immutable_and_inherited(
         organization, batch, _line, evidence, event = _confirmed_payroll_with_evidence(
             session, key="event-evidence"
         )
-        other_organization = seed_organization(session, name="R4 外企业证据")
+        other_organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R4 外企业证据"
+        )
         foreign_evidence = _evidence(session, other_organization.id, "r4-foreign-evidence")
         expected_batch_evidence = set(
             session.scalars(
@@ -289,7 +304,7 @@ def test_r4_004_final_event_evidence_is_org_bound_immutable_and_inherited(
                 event_id=identifiers["event_id"],
                 idempotency_key="r4-event-evidence-reversal",
                 reason="R4 证据继承",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             )
         )
         assert reverse.status == "posted", reverse.errors
@@ -311,7 +326,7 @@ def _post_expense_event(session: Session, organization: object, *, key: str) -> 
         org_id=organization.id,
         bank_account_code="1002",
         fingerprint=(f"r4-{key}" * 64)[:64],
-        booking_date=date(2026, 9, 5),
+        booking_date=date(2026, 3, 5),
         amount_fen=-100,
         currency="CNY",
         memo=key,
@@ -347,9 +362,9 @@ def _post_unmatched_expense_for_invariant(
         status="draft",
         description="无银行匹配的 R4 凭证反例",
         facts={},
-        business_date=date(2026, 9, 5),
-        payment_date=date(2026, 9, 5),
-        posting_date=date(2026, 9, 5),
+        business_date=date(2026, 3, 5),
+        payment_date=date(2026, 3, 5),
+        posting_date=date(2026, 3, 5),
         rule_trace=[],
     )
     session.add(event)
@@ -357,7 +372,7 @@ def _post_unmatched_expense_for_invariant(
     create_voucher(
         session,
         event=event,
-        posting_date=date(2026, 9, 5),
+        posting_date=date(2026, 3, 5),
         description=event.description,
         entries=[
             Entry(account_role="general_expense", debit_fen=100),
@@ -375,7 +390,9 @@ def test_r4_005_rejects_fake_payroll_reversal_of_sale_and_requires_exact_voucher
     """A draft payroll_accrual cannot masquerade as a reversal of a normal expense."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R4 canonical reversal")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R4 canonical reversal"
+        )
         original = _post_expense_event(session, organization, key="r4-original-expense")
         original_voucher = session.scalar(select(Voucher).where(Voucher.event_id == original.id))
         assert original_voucher is not None
@@ -397,8 +414,8 @@ def test_r4_005_rejects_fake_payroll_reversal_of_sale_and_requires_exact_voucher
             status="draft",
             description="伪造工资冲正",
             facts={"original_event_id": str(original.id), "reversal": True},
-            business_date=date(2026, 9, 6),
-            posting_date=date(2026, 9, 6),
+            business_date=date(2026, 3, 6),
+            posting_date=date(2026, 3, 6),
             rule_trace=[],
         )
         session.add(fake)
@@ -407,7 +424,7 @@ def test_r4_005_rejects_fake_payroll_reversal_of_sale_and_requires_exact_voucher
         create_voucher(
             session,
             event=fake,
-            posting_date=date(2026, 9, 6),
+            posting_date=date(2026, 3, 6),
             description="故意省略原凭证关联",
             entries=[
                 Entry(
@@ -429,12 +446,15 @@ def test_r4_005_rejects_fake_payroll_reversal_of_sale_and_requires_exact_voucher
     with Session(postgres_engine) as session:
         original = session.get(BusinessEvent, identifiers["original_event_id"])
         assert original is not None and original.status == "posted"
-        assert session.scalar(
-            select(BusinessEvent.id).where(
-                BusinessEvent.org_id == identifiers["org_id"],
-                BusinessEvent.idempotency_key == "r4-fake-payroll-reversal",
+        assert (
+            session.scalar(
+                select(BusinessEvent.id).where(
+                    BusinessEvent.org_id == identifiers["org_id"],
+                    BusinessEvent.idempotency_key == "r4-fake-payroll-reversal",
+                )
             )
-        ) is None
+            is None
+        )
 
 
 def test_r4_005_final_reversal_voucher_lines_are_immutable_and_link_is_checked(
@@ -443,7 +463,9 @@ def test_r4_005_final_reversal_voucher_lines_are_immutable_and_link_is_checked(
     """A final reversal voucher freezes its lines and cannot lose the original-voucher link."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R4 exact reversal voucher")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R4 exact reversal voucher"
+        )
         original = _post_expense_event(session, organization, key="r4-exact-original")
         reversed_result = FinanceService(session).reverse_event(
             ReverseEventRequest(
@@ -451,7 +473,7 @@ def test_r4_005_final_reversal_voucher_lines_are_immutable_and_link_is_checked(
                 event_id=original.id,
                 idempotency_key="r4-exact-reversal",
                 reason="R4 精确凭证",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             )
         )
         assert reversed_result.status == "posted", reversed_result.errors
@@ -486,8 +508,7 @@ def test_r4_005_final_reversal_voucher_lines_are_immutable_and_link_is_checked(
     _assert_commit_rejects(
         postgres_engine,
         sa.text(
-            "UPDATE vouchers SET reversal_of_voucher_id = NULL "
-            "WHERE id = :reversal_voucher_id"
+            "UPDATE vouchers SET reversal_of_voucher_id = NULL WHERE id = :reversal_voucher_id"
         ),
         identifiers,
     )
@@ -499,7 +520,9 @@ def test_r4_005_draft_reversal_with_balanced_noninverse_lines_fails_at_commit(
     """The exact-inverse assertion rejects a malformed voucher before it becomes final."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R4 malformed draft reversal")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R4 malformed draft reversal"
+        )
         original = _post_unmatched_expense_for_invariant(
             session, organization, key="r4-noninverse-original"
         )
@@ -512,8 +535,8 @@ def test_r4_005_draft_reversal_with_balanced_noninverse_lines_fails_at_commit(
             status="draft",
             description="金额平衡但非精确反向",
             facts={"original_event_id": str(original.id), "reversal": True},
-            business_date=date(2026, 9, 6),
-            posting_date=date(2026, 9, 6),
+            business_date=date(2026, 3, 6),
+            posting_date=date(2026, 3, 6),
             rule_trace=[],
         )
         session.add(fake)
@@ -521,7 +544,7 @@ def test_r4_005_draft_reversal_with_balanced_noninverse_lines_fails_at_commit(
         create_voucher(
             session,
             event=fake,
-            posting_date=date(2026, 9, 6),
+            posting_date=date(2026, 3, 6),
             description="故意保留原始借贷方向",
             reversal_of=original_voucher,
             entries=[
@@ -548,7 +571,9 @@ def test_r4_006_statutory_edges_keep_each_direct_source_and_query_the_normalized
     """Each statutory settlement has an own normalized source edge visible to callers."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R4 statutory source graph")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R4 statutory source graph"
+        )
         statutory, settled_items = _post_two_partial_salary_social_payment(session, organization)
         edges = session.scalars(
             select(PayrollEventLink)
@@ -585,22 +610,23 @@ def test_r4_006_statutory_edges_keep_each_direct_source_and_query_the_normalized
         lifecycle = FinanceService(session).get_payroll_batch(
             organization.id, edges[0].payroll_batch_id
         )["lifecycle"]
-        queried_edges = {
-            item["id"]: item for item in lifecycle["payroll_event_links"]
-        }
+        queried_edges = {item["id"]: item for item in lifecycle["payroll_event_links"]}
         assert {str(edge.id) for edge in edges} <= queried_edges.keys()
         for edge in edges:
             queried = queried_edges[str(edge.id)]
             assert queried["payroll_batch"]["policy_version_id"] is not None
-            assert queried["source_payment_event"]["event_type"] == sources_by_id[
-                edge.source_payment_event_id
-            ].event_type
-            assert queried["source_open_item"]["payable_category"] == items_by_id[
-                edge.source_open_item_id
-            ].payable_category
-            assert queried["source_open_item"]["insurance_kind"] == items_by_id[
-                edge.source_open_item_id
-            ].insurance_kind
+            assert (
+                queried["source_payment_event"]["event_type"]
+                == sources_by_id[edge.source_payment_event_id].event_type
+            )
+            assert (
+                queried["source_open_item"]["payable_category"]
+                == items_by_id[edge.source_open_item_id].payable_category
+            )
+            assert (
+                queried["source_open_item"]["insurance_kind"]
+                == items_by_id[edge.source_open_item_id].insurance_kind
+            )
         session.commit()
 
 
@@ -615,7 +641,9 @@ def _salary_payment_with_unsettled_statutory_sources(
     event.
     """
 
-    organization = seed_organization(session, name=f"R4 statutory direct SQL {key}")
+    organization = seed_organization(
+        session, accounting_period_control_enabled=False, name=f"R4 statutory direct SQL {key}"
+    )
     employee_id = register_payroll_facts(session, organization)
     service = FinanceService(session)
     preview = _preview(
@@ -727,9 +755,9 @@ def _stage_raw_statutory_settlement(
         status="draft",
         description="R4 法定缴款来源边直接 SQL 反例",
         facts={},
-        business_date=date(2026, 9, 6),
-        payment_date=date(2026, 9, 6),
-        posting_date=date(2026, 9, 6),
+        business_date=date(2026, 3, 6),
+        payment_date=date(2026, 3, 6),
+        posting_date=date(2026, 3, 6),
         rule_trace=[],
     )
     session.add(event)
@@ -737,7 +765,7 @@ def _stage_raw_statutory_settlement(
     create_voucher(
         session,
         event=event,
-        posting_date=date(2026, 9, 6),
+        posting_date=date(2026, 3, 6),
         description=event.description,
         entries=[
             Entry(account_role=payable_role, debit_fen=amount_fen),
@@ -775,9 +803,7 @@ def test_r4_006_statutory_source_edge_rejects_wrong_payroll_batch_at_commit(
     """A genuine salary deduction cannot be claimed by an unrelated draft batch."""
 
     with Session(postgres_engine) as session:
-        identifiers = _salary_payment_with_unsettled_statutory_sources(
-            session, key="wrong-batch"
-        )
+        identifiers = _salary_payment_with_unsettled_statutory_sources(session, key="wrong-batch")
         session.commit()
 
     with Session(postgres_engine) as session:

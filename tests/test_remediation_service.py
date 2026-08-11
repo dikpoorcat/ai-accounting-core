@@ -62,9 +62,9 @@ def _preview(
                 "org_id": organization.id,
                 "idempotency_key": idempotency_key,
                 "batch_kind": "regular",
-                "payroll_period": "2026-09",
-                "posting_date": "2026-09-05",
-                "payment_date": "2026-09-05",
+                "payroll_period": "2026-03",
+                "posting_date": "2026-03-05",
+                "payment_date": "2026-03-05",
                 "description": description,
                 "evidence_references": evidence_references or [],
                 "employee_items": [
@@ -103,9 +103,9 @@ def _payroll_event(org_id: uuid.UUID, key: str) -> BusinessEvent:
         event_type="expense_cash",
         status="posted",
         facts={"amounts": {"amount_fen": 200}},
-        business_date=date(2026, 9, 5),
-        payment_date=date(2026, 9, 5),
-        posting_date=date(2026, 9, 5),
+        business_date=date(2026, 3, 5),
+        payment_date=date(2026, 3, 5),
+        posting_date=date(2026, 3, 5),
         rule_trace=[],
     )
 
@@ -119,9 +119,9 @@ def _bank_request(
             "idempotency_key": f"bank-request-{uuid.uuid4()}",
             "event_type": "expense_cash",
             "business_dates": {
-                "business_date": "2026-09-05",
-                "payment_date": "2026-09-05",
-                "posting_date": "2026-09-05",
+                "business_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "posting_date": "2026-03-05",
             },
             "amounts": {"amount_fen": amount_fen},
             "bank_transaction_references": references,
@@ -239,7 +239,7 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
     parameters["income_tax"]["effective_from"] = "2028-01-01"
     parameters["income_tax"]["effective_to"] = "2028-12-31"
     parameters["annual_bonus"]["effective_from"] = "2023-01-01"
-    parameters["annual_bonus"]["effective_to"] = "2027-12-31"
+    parameters["annual_bonus"]["effective_to"] = "2027-06-30"
     assert (
         service.register_payroll_policy_version(
             RegisterPayrollPolicyVersionRequest.model_validate(
@@ -421,7 +421,9 @@ def test_r2_013_preview_persists_organization_bound_evidence_for_draft_and_poste
     )
     assert duplicate.errors == ["DUPLICATE_PAYROLL_BATCH_EVIDENCE_REFERENCE"]
 
-    other_organization = seed_organization(session, name="R2-013 证据隔离企业")
+    other_organization = seed_organization(
+        session, accounting_period_control_enabled=False, name="R2-013 证据隔离企业"
+    )
     cross_organization = _preview(
         session,
         other_organization,
@@ -600,7 +602,7 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
             event_id=first.event_id,
             idempotency_key="reverse-partial-salary-one",
             reason="回归测试冲正",
-            posting_date=date(2026, 9, 6),
+            posting_date=date(2026, 3, 6),
         )
     )
     assert reversed_result.status == "posted"
@@ -612,7 +614,7 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
             event_id=first.event_id,
             idempotency_key="reverse-partial-salary-one",
             reason=reversal_event.facts["reason"],
-            posting_date=date(2026, 9, 6),
+            posting_date=date(2026, 3, 6),
         )
     )
     assert reversal_replay.event_id == reversed_result.event_id
@@ -622,7 +624,7 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
             event_id=first.event_id,
             idempotency_key="reverse-partial-salary-one",
             reason="different reversal payload",
-            posting_date=date(2026, 9, 6),
+            posting_date=date(2026, 3, 6),
         )
     )
     assert reversal_mismatch.errors == ["PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"]
@@ -665,7 +667,9 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
         factory = make_session_factory(engine)
         try:
             with factory.begin() as setup:
-                organization = seed_organization(setup, name="PAY-002 并发工资企业")
+                organization = seed_organization(
+                    setup, accounting_period_control_enabled=False, name="PAY-002 并发工资企业"
+                )
                 employee_id = register_payroll_facts(setup, organization)
                 preview = _preview(
                     setup,
@@ -701,9 +705,9 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
                         "idempotency_key": "concurrent-salary-payment-1",
                         "event_type": "salary_payment",
                         "business_dates": {
-                            "business_date": "2026-09-05",
-                            "payment_date": "2026-09-05",
-                            "posting_date": "2026-09-05",
+                            "business_date": "2026-03-05",
+                            "payment_date": "2026-03-05",
+                            "posting_date": "2026-03-05",
                         },
                         "amounts": {"amount_fen": 425_000},
                         "allocations": [{"open_item_id": salary_id, "amount_fen": 500_000}],
@@ -724,9 +728,9 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
                         "idempotency_key": "concurrent-salary-payment-2",
                         "event_type": "salary_payment",
                         "business_dates": {
-                            "business_date": "2026-09-05",
-                            "payment_date": "2026-09-05",
-                            "posting_date": "2026-09-05",
+                            "business_date": "2026-03-05",
+                            "payment_date": "2026-03-05",
+                            "posting_date": "2026-03-05",
                         },
                         "amounts": {"amount_fen": 414_500},
                         "allocations": [{"open_item_id": salary_id, "amount_fen": 500_000}],
@@ -828,7 +832,11 @@ def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connecti
         factory = make_session_factory(engine)
         try:
             with factory.begin() as first_connection:
-                organization = seed_organization(first_connection, name="R2-001 跨月企业")
+                organization = seed_organization(
+                    first_connection,
+                    accounting_period_control_enabled=False,
+                    name="R2-001 跨月企业",
+                )
                 employee_id = register_payroll_facts(first_connection, organization)
                 first_preview = _preview(
                     first_connection,
@@ -851,9 +859,9 @@ def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connecti
                         "org_id": org_id,
                         "idempotency_key": "r2-001-later-preview",
                         "batch_kind": "regular",
-                        "payroll_period": "2026-10",
-                        "posting_date": "2026-10-05",
-                        "payment_date": "2026-10-05",
+                        "payroll_period": "2026-04",
+                        "posting_date": "2026-04-05",
+                        "payment_date": "2026-04-05",
                         "employee_items": [
                             {
                                 "employee_id": employee_id,
@@ -903,7 +911,9 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
         factory = make_session_factory(engine)
         try:
             with factory.begin() as setup:
-                organization = seed_organization(setup, name="PAY-012 并发试算企业")
+                organization = seed_organization(
+                    setup, accounting_period_control_enabled=False, name="PAY-012 并发试算企业"
+                )
                 employee_id = register_payroll_facts(setup, organization)
                 org_id = organization.id
 
@@ -913,9 +923,9 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
                         "org_id": org_id,
                         "idempotency_key": key,
                         "batch_kind": "regular",
-                        "payroll_period": "2026-10",
-                        "posting_date": "2026-10-05",
-                        "payment_date": "2026-10-05",
+                        "payroll_period": "2026-04",
+                        "posting_date": "2026-04-05",
+                        "payment_date": "2026-04-05",
                         "employee_items": [
                             {
                                 "employee_id": employee_id,
@@ -953,7 +963,7 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
                     .where(
                         PayrollBatch.org_id == org_id,
                         PayrollBatch.batch_kind == "regular",
-                        PayrollBatch.payroll_period == "2026-10",
+                        PayrollBatch.payroll_period == "2026-04",
                     )
                     .order_by(PayrollBatch.version)
                 ).all()
@@ -991,9 +1001,9 @@ def test_pay_013_zero_cash_salary_settlement_and_pay_009_lifecycle_query(
                 "idempotency_key": "zero-cash-salary-payment",
                 "event_type": "salary_payment",
                 "business_dates": {
-                    "business_date": "2026-09-05",
-                    "payment_date": "2026-09-05",
-                    "posting_date": "2026-09-05",
+                    "business_date": "2026-03-05",
+                    "payment_date": "2026-03-05",
+                    "posting_date": "2026-03-05",
                 },
                 "amounts": {"amount_fen": 0},
                 "allocations": [{"open_item_id": salary.id, "amount_fen": 150_000}],
@@ -1032,12 +1042,12 @@ def test_pay_013_zero_cash_salary_settlement_and_pay_009_lifecycle_query(
     } <= lifecycle["lifecycle"].keys()
     assert lifecycle["lifecycle"]["payments"] == [
         {
-                "event_id": str(zero_cash.event_id),
-                "event_type": "salary_payment",
-                "bank_transactions": [],
-                "bank_match_history": [],
-            }
-        ]
+            "event_id": str(zero_cash.event_id),
+            "event_type": "salary_payment",
+            "bank_transactions": [],
+            "bank_match_history": [],
+        }
+    ]
     assert FinanceService(session).get_payroll_batch(uuid.uuid4(), preview.batch_id)["errors"] == [
         "PAYROLL_BATCH_NOT_FOUND"
     ]
@@ -1055,7 +1065,7 @@ def test_pay_015_reversal_batch_is_finalized_only_after_copying_payroll_lines(
             event_id=confirmed.event_id,
             idempotency_key="reverse-accrual-with-lines",
             reason="工资计提冲正",
-            posting_date=date(2026, 9, 6),
+            posting_date=date(2026, 3, 6),
         )
     )
     assert reversed_result.status == "posted"

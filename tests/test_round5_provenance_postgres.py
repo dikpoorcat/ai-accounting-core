@@ -94,8 +94,8 @@ def _stage_exact_inverse_reversal(
         status="draft",
         description="R5 直接SQL冲正攻击",
         facts={"original_event_id": str(original.id), "reversal": True},
-        business_date=date(2026, 9, 6),
-        posting_date=date(2026, 9, 6),
+        business_date=date(2026, 3, 6),
+        posting_date=date(2026, 3, 6),
         rule_trace=[],
         rule_version=original.rule_version,
     )
@@ -104,7 +104,7 @@ def _stage_exact_inverse_reversal(
     create_voucher(
         session,
         event=reversal,
-        posting_date=date(2026, 9, 6),
+        posting_date=date(2026, 3, 6),
         description=reversal.description,
         reversal_of=original_voucher,
         entries=[
@@ -123,7 +123,9 @@ def _stage_exact_inverse_reversal(
 def _post_expense_with_supporting_evidence(
     session: Session, *, key: str
 ) -> tuple[object, BusinessEvent]:
-    organization = seed_organization(session, name=f"R5 普通冲正证据 {key}")
+    organization = seed_organization(
+        session, accounting_period_control_enabled=False, name=f"R5 普通冲正证据 {key}"
+    )
     evidence = _evidence(session, organization.id, f"r5-{key}-supporting")
     bank = add_bank_row(session, organization, -100, f"r5-{key}-bank")
     request = payment_request(
@@ -314,7 +316,7 @@ def test_r5_005_event_query_projects_relational_reversal_evidence_chain(
                 event_id=original.id,
                 idempotency_key="r5-event-query-chain-reversal",
                 reason="R5 查询规范冲正链",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             )
         )
         assert reversal.status == "posted", reversal.errors
@@ -346,10 +348,7 @@ def test_r5_005_event_query_projects_relational_reversal_evidence_chain(
     assert by_event_id[str(identifiers["reversal_event_id"])]["reversal_of_event_id"] == str(
         identifiers["original_event_id"]
     )
-    evidence_roles = {
-        (item["event_id"], item["relation_kind"])
-        for item in chain["event_evidence"]
-    }
+    evidence_roles = {(item["event_id"], item["relation_kind"]) for item in chain["event_evidence"]}
     assert (str(identifiers["original_event_id"]), "supporting") in evidence_roles
     assert (str(identifiers["reversal_event_id"]), "inherited") in evidence_roles
 
@@ -398,7 +397,7 @@ def _preview_separate_bonus(
     org_id: object,
     employee_id: object,
     key: str,
-    payment_date: date = date(2026, 9, 5),
+    payment_date: date = date(2026, 3, 5),
 ) -> object:
     result = FinanceService(session).preview_payroll(
         PreviewPayrollRequest.model_validate(
@@ -406,7 +405,7 @@ def _preview_separate_bonus(
                 "org_id": org_id,
                 "idempotency_key": key,
                 "batch_kind": "annual_bonus",
-                "payroll_period": "2026-09",
+                "payroll_period": "2026-03",
                 "posting_date": payment_date.isoformat(),
                 "payment_date": payment_date.isoformat(),
                 "tax_method": "separate",
@@ -540,13 +539,15 @@ def test_r5_007_compatible_multi_batch_tax_payment_keeps_per_source_provenance(
     """
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R5 兼容多批次法定缴款")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 兼容多批次法定缴款"
+        )
         employee_id = register_payroll_facts(session, organization)
         regular_preview = _preview_regular(
             session,
             org_id=organization.id,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r5-multi-regular-preview",
         )
         regular = _confirm(
@@ -608,10 +609,7 @@ def test_r5_007_compatible_multi_batch_tax_payment_keeps_per_source_provenance(
             .order_by(PayrollEventLink.source_open_item_id)
         ).all()
         assert len(edges) == 2
-        assert {
-            (edge.payroll_batch_id, edge.source_open_item_id)
-            for edge in edges
-        } == {
+        assert {(edge.payroll_batch_id, edge.source_open_item_id) for edge in edges} == {
             (regular_preview.batch_id, regular_tax.id),
             (bonus_preview.batch_id, bonus_tax.id),
         }
@@ -637,7 +635,7 @@ def test_r5_007_compatible_multi_batch_tax_payment_keeps_per_source_provenance(
                 event_id=tax_payment.event_id,
                 idempotency_key="r5-compatible-multi-batch-tax-reversal",
                 reason="R5 多批次法定缴款冲正",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             )
         )
         assert reversal.status == "posted", reversal.errors
@@ -664,25 +662,27 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
     """Known cross-period sources are rejected atomically, before partial settlement."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R5 法定缴款期间不兼容")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 法定缴款期间不兼容"
+        )
         employee_id = register_payroll_facts(session, organization)
         september, september_tax = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r5-period-september",
         )
         october, october_tax = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-10",
+            payroll_period="2026-04",
             key="r5-period-october",
         )
         amount_fen = september_tax.original_amount_fen + october_tax.original_amount_fen
         bank = add_bank_row(session, organization, -amount_fen, "r5-period-incompatible-bank")
-        bank.booking_date = date(2026, 10, 5)
+        bank.booking_date = date(2026, 4, 5)
         request = payment_request(
             organization,
             event_type="individual_income_tax_payment",
@@ -698,9 +698,9 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
             update={
                 "business_dates": request.business_dates.model_copy(
                     update={
-                        "business_date": date(2026, 10, 5),
-                        "payment_date": date(2026, 10, 5),
-                        "posting_date": date(2026, 10, 5),
+                        "business_date": date(2026, 4, 5),
+                        "payment_date": date(2026, 4, 5),
+                        "posting_date": date(2026, 4, 5),
                     }
                 )
             }
@@ -711,13 +711,16 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
         for item in (september_tax, october_tax):
             assert item.status == "open"
             assert item.settled_amount_fen == 0
-        assert session.scalar(
-            select(Settlement.id).where(
-                Settlement.org_id == organization.id,
-                Settlement.open_item_id.in_([september_tax.id, october_tax.id]),
-                Settlement.reversed.is_(False),
+        assert (
+            session.scalar(
+                select(Settlement.id).where(
+                    Settlement.org_id == organization.id,
+                    Settlement.open_item_id.in_([september_tax.id, october_tax.id]),
+                    Settlement.reversed.is_(False),
+                )
             )
-        ) is None
+            is None
+        )
         assert september.batch_id != october.batch_id
         session.commit()
 
@@ -728,14 +731,16 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
     """Two same-period sources with different policy/agency snapshots cannot merge."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R5 法定缴款政策机构不兼容")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 法定缴款政策机构不兼容"
+        )
         service = FinanceService(session)
         employee = service.register_employee(
             RegisterEmployeeRequest(
                 org_id=organization.id,
                 employee_code="R5-POLICY-001",
                 name="政策边界员工",
-                employment_start_date=date(2026, 9, 1),
+                employment_start_date=date(2026, 3, 1),
                 status="active",
             )
         )
@@ -745,7 +750,7 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             RegisterEmployeePayrollProfileVersionRequest(
                 org_id=organization.id,
                 employee_id=employee_id,
-                effective_from=date(2026, 9, 1),
+                effective_from=date(2026, 3, 1),
                 expense_role="payroll_management_expense",
                 social_insurance_base_fen=1_000_000,
                 housing_fund_base_fen=1_000_000,
@@ -762,8 +767,8 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             RegisterPayrollPolicyVersionRequest(
                 org_id=organization.id,
                 region="R5 政策边界地区",
-                effective_from=date(2026, 1, 1),
-                effective_to=date(2026, 9, 5),
+                effective_from=date(2025, 7, 1),
+                effective_to=date(2026, 3, 5),
                 version="r5-policy-agency-v1",
                 source_url=(
                     "https://www.chinatax.gov.cn/chinatax/n810341/n810765/n3359382/"
@@ -782,8 +787,8 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             RegisterPayrollPolicyVersionRequest(
                 org_id=organization.id,
                 region="R5 政策边界地区",
-                effective_from=date(2026, 9, 6),
-                effective_to=date(2026, 12, 31),
+                effective_from=date(2026, 3, 6),
+                effective_to=date(2026, 6, 30),
                 version="r5-policy-agency-v2",
                 source_url=(
                     "https://www.chinatax.gov.cn/chinatax/n810341/n810765/n3359382/"
@@ -798,7 +803,7 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r5-policy-agency-regular",
         )
         bonus_preview = _preview_separate_bonus(
@@ -806,7 +811,7 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             org_id=organization.id,
             employee_id=employee_id,
             key="r5-policy-agency-bonus-preview",
-            payment_date=date(2026, 9, 6),
+            payment_date=date(2026, 3, 6),
         )
         bonus = _confirm(
             session,
@@ -824,7 +829,7 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
         assert regular_preview.batch_id != bonus_preview.batch_id
         amount_fen = regular_tax.original_amount_fen + bonus_tax.original_amount_fen
         bank = add_bank_row(session, organization, -amount_fen, "r5-policy-agency-bank")
-        bank.booking_date = date(2026, 9, 6)
+        bank.booking_date = date(2026, 3, 6)
         request = payment_request(
             organization,
             event_type="individual_income_tax_payment",
@@ -840,9 +845,9 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             update={
                 "business_dates": request.business_dates.model_copy(
                     update={
-                        "business_date": date(2026, 9, 6),
-                        "payment_date": date(2026, 9, 6),
-                        "posting_date": date(2026, 9, 6),
+                        "business_date": date(2026, 3, 6),
+                        "payment_date": date(2026, 3, 6),
+                        "posting_date": date(2026, 3, 6),
                     }
                 )
             }
@@ -862,13 +867,15 @@ def test_r5_007_category_and_cross_organization_sources_reject_atomically(
     """Category and organization are compatibility keys, never partial-payment hints."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R5 法定缴款类别隔离")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 法定缴款类别隔离"
+        )
         employee_id = register_payroll_facts(session, organization)
         preview, tax_item = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r5-category-local",
         )
         batch = session.get(PayrollBatch, preview.batch_id)
@@ -906,13 +913,15 @@ def test_r5_007_category_and_cross_organization_sources_reject_atomically(
         assert tax_item.status == social_item.status == "open"
         assert tax_item.settled_amount_fen == social_item.settled_amount_fen == 0
 
-        foreign_organization = seed_organization(session, name="R5 法定缴款跨企业")
+        foreign_organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 法定缴款跨企业"
+        )
         foreign_employee_id = register_payroll_facts(session, foreign_organization)
         _foreign_preview, foreign_tax_item = _post_regular_tax_source(
             session,
             foreign_organization,
             employee_id=foreign_employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r5-category-foreign",
         )
         cross_org_amount = tax_item.original_amount_fen + foreign_tax_item.original_amount_fen

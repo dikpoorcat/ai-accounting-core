@@ -19,15 +19,12 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from test_payroll_service import register_payroll_facts
 from test_round4_event_integrity_postgres import (
     _salary_payment_with_unsettled_statutory_sources,
 )
-from test_round5_provenance_postgres import _confirm, _preview_regular
 from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
-from ai_accounting.models import BusinessEvent, OpenItem, PayrollLine, Settlement
+from ai_accounting.models import BusinessEvent, OpenItem, Settlement
 from ai_accounting.schemas import ReverseEventRequest
 from ai_accounting.service import FinanceService
 from alembic import command
@@ -35,7 +32,7 @@ from alembic import command
 REVISION_0005 = "0005_payroll_round4_integrity"
 REVISION_0007 = "0007_payroll_round6_closure"
 REVISION_0008 = "0008_payroll_r7_tax_closure"
-REVISION_HEAD = "0011_intangible_borrowings"
+REVISION_HEAD = "0012_accounting_period_close"
 
 pytestmark = [
     pytest.mark.postgres,
@@ -167,7 +164,7 @@ def test_r7_004_canonical_service_reversal_marks_exact_settlement_reversal_id(
                 event_id=identifiers["salary_event_id"],
                 idempotency_key="r7-canonical-salary-reversal",
                 reason="R7 规范结算冲正",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             )
         )
         assert result.status == "posted", result.errors
@@ -195,35 +192,66 @@ def test_r7_004_canonical_service_reversal_marks_exact_settlement_reversal_id(
         }
 
 
-def _final_regular_batch(session: Session, *, key: str) -> dict[str, uuid.UUID]:
+def _final_regular_batch(engine: object, *, key: str) -> dict[str, uuid.UUID]:
     """Create a real final regular batch without any post-head fixture data."""
 
-    organization = seed_organization(session, name=f"R7 历史预检 {key}")
-    employee_id = register_payroll_facts(session, organization)
-    preview = _preview_regular(
-        session,
-        org_id=organization.id,
-        employee_id=employee_id,
-        payroll_period="2026-09",
-        key=f"{key}-preview",
-    )
-    confirmed = _confirm(
-        session,
-        org_id=organization.id,
-        preview=preview,
-        key=f"{key}-confirm",
-    )
-    assert confirmed.event_id is not None
-    line = session.scalar(
-        select(PayrollLine).where(PayrollLine.payroll_batch_id == preview.batch_id)
-    )
-    assert line is not None
-    return {
-        "org_id": organization.id,
-        "employee_id": employee_id,
-        "batch_id": preview.batch_id,
-        "profile_id": line.employee_payroll_profile_version_id,
+    ids = {
+        name: uuid.uuid4()
+        for name in (
+            "org_id",
+            "counterparty_id",
+            "employee_id",
+            "profile_id",
+            "policy_id",
+            "batch_id",
+            "line_id",
+        )
     }
+    with engine.begin() as connection:
+        connection.execute(sa.text("SET LOCAL session_replication_role = replica"))
+        connection.execute(
+            sa.text(
+                "INSERT INTO organizations (id, name, taxpayer_type, filing_cycle, jurisdiction, urban_maintenance_rate, accounting_standard, created_at) VALUES (:org_id, :name, 'small_scale', 'quarterly', 'CN', 0.07, 'small_enterprise', now())"  # noqa: E501
+            ),
+            {**ids, "name": f"R7 历史预检 {key}"},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO counterparties (id, org_id, kind, name) VALUES (:counterparty_id, :org_id, 'employee', 'R7 employee')"  # noqa: E501
+            ),
+            ids,
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO employees (id, org_id, counterparty_id, employee_code, name, employment_start_date, status, created_at) VALUES (:employee_id, :org_id, :counterparty_id, :code, 'R7 employee', '2026-01-01', 'active', now())"  # noqa: E501
+            ),
+            {**ids, "code": key},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO employee_payroll_profile_versions (id, org_id, employee_id, supersedes_id, effective_from, effective_to, expense_role, social_insurance_base_fen, housing_fund_base_fen, resident_employee, created_at) VALUES (:profile_id, :org_id, :employee_id, NULL, '2026-01-01', '2026-12-31', 'payroll_management_expense', 1000000, 1000000, TRUE, now())"  # noqa: E501
+            ),
+            ids,
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO payroll_policy_versions (id, org_id, region, supersedes_id, effective_from, effective_to, version, source_url, parameters, created_at) VALUES (:policy_id, :org_id, 'CN', NULL, '2026-01-01', '2026-12-31', :version, 'https://www.chinatax.gov.cn/', '{}'::jsonb, now())"  # noqa: E501
+            ),
+            {**ids, "version": key},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO payroll_batches (id, org_id, idempotency_key, batch_kind, payroll_period, version, status, calculation_hash, calculation_input, calculation_trace, policy_snapshot, policy_version_id, posting_date, payment_date, confirmed_by, confirmed_at, created_at) VALUES (:batch_id, :org_id, :key, 'regular', '2026-03', 1, 'posted', :hash, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, :policy_id, '2026-03-05', '2026-03-05', 'legacy', now(), now())"  # noqa: E501
+            ),
+            {**ids, "key": key, "hash": (key * 64)[:64]},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO payroll_lines (id, org_id, payroll_batch_id, employee_id, employee_payroll_profile_version_id, base_salary_fen, performance_pay_fen, taxable_allowance_fen, tax_exempt_income_fen, attendance_deduction_fen, special_additional_deduction_fen, other_legal_deduction_fen, annual_bonus_fen, employee_social_insurance_fen, employer_social_insurance_fen, employee_housing_fund_fen, employer_housing_fund_fen, employee_social_insurance_items, employer_social_insurance_items, employee_housing_fund_items, employer_housing_fund_items, individual_income_tax_fen, gross_salary_fen, net_salary_fen, calculation_trace) VALUES (:line_id, :org_id, :batch_id, :employee_id, :profile_id, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 0, 100, 100, '[]'::jsonb)"  # noqa: E501
+            ),
+            ids,
+        )
+    return {name: ids[name] for name in ("org_id", "employee_id", "batch_id", "profile_id")}
 
 
 def _preflight_snapshot(engine: object, *, employee_id: uuid.UUID) -> dict[str, object]:
@@ -264,9 +292,7 @@ def test_r7_004_0007_to_0008_preflight_preserves_revision_and_polluted_rows() ->
     """The R7 preflight refuses a historical successor before installing 0008."""
 
     with _postgres_at(REVISION_0007) as (config, engine):
-        with Session(engine) as session:
-            identifiers = _final_regular_batch(session, key="r7-0007-pollution")
-            session.commit()
+        identifiers = _final_regular_batch(engine, key="r7-0007-pollution")
 
         # This is deliberately legacy/direct-SQL pollution.  At 0007 the
         # normal trigger blocks it; disabling that trigger simulates data that
@@ -281,8 +307,8 @@ def test_r7_004_0007_to_0008_preflight_preserves_revision_and_polluted_rows() ->
                     "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
                     "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
                     "resident_employee, created_at) "
-                    "VALUES (:id, :org_id, :employee_id, :profile_id, '2026-09-01', "
-                    "'2026-09-30', 'payroll_management_expense', 1000001, 1000001, TRUE, now())"
+                    "VALUES (:id, :org_id, :employee_id, :profile_id, '2026-03-01', "
+                    "'2026-03-31', 'payroll_management_expense', 1000001, 1000001, TRUE, now())"
                 ),
                 {**identifiers, "id": uuid.uuid4()},
             )

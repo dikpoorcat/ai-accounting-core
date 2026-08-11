@@ -105,6 +105,27 @@ def _bank_row(
     return row
 
 
+def test_fixed_asset_write_preserves_period_control_error(
+    session: Session, organization: Organization
+) -> None:
+    organization.accounting_period_control_enabled = True
+    organization.accounting_period_control_start_date = None
+    evidence = _evidence(session, organization, "period-fixed")
+
+    result = FixedAssetService(session).acquire_fixed_asset(
+        _acquisition_request(
+            organization,
+            evidence,
+            key="fixed-asset-period-not-generated",
+        )
+    )
+
+    assert result.status == "rejected"
+    assert result.errors == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
+    assert result.event_id is None
+    assert result.voucher_id is None
+
+
 def test_acquire_and_activate_fixed_asset_are_normalized_balanced_and_idempotent(
     session: Session, organization: Organization
 ) -> None:
@@ -768,7 +789,7 @@ def test_fixed_asset_sale_flows_into_period_tax_relief_and_special_invoice_exclu
     ordinary = post_sale("FA-TAX-ORDINARY", 500_000, "ordinary")
     assert ordinary.status == "posted"
     ordinary_period = calculate_tax_period(
-        session, organization, date(2026, 1, 1), date(2026, 3, 31)
+        session, organization, date(2026, 1, 1), date(2026, 3, 31), date(2026, 3, 31)
     )
     assert ordinary_period.gross_sales_fen == 500_000
     assert ordinary_period.net_sales_fen == 485_437
@@ -778,7 +799,7 @@ def test_fixed_asset_sale_flows_into_period_tax_relief_and_special_invoice_exclu
     special = post_sale("FA-TAX-SPECIAL", 100_000, "special")
     assert special.status == "posted"
     combined = calculate_tax_period(
-        session, organization, date(2026, 1, 1), date(2026, 3, 31)
+        session, organization, date(2026, 1, 1), date(2026, 3, 31), date(2026, 3, 31)
     )
     assert combined.gross_sales_fen == 600_000
     assert combined.net_sales_fen == 582_524
@@ -819,6 +840,7 @@ def test_fixed_asset_sale_respects_tax_period_date_lock_but_retirement_does_not(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
         )
     )
     confirmed = service.confirm_tax_period(
@@ -826,6 +848,7 @@ def test_fixed_asset_sale_respects_tax_period_date_lock_but_retirement_does_not(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
             calculation_hash=preview["calculation_hash"],
             idempotency_key="fixed-asset-tax-lock-confirm",
         )

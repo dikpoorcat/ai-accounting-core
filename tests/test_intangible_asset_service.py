@@ -90,6 +90,28 @@ def _assert_balanced(session: Session, voucher_id: object) -> None:
     assert sum(line.debit_fen for line in lines) > 0
 
 
+def test_intangible_asset_write_preserves_period_control_error(
+    session: Session, organization: Organization
+) -> None:
+    organization.accounting_period_control_enabled = True
+    organization.accounting_period_control_start_date = None
+    evidence = _evidence(session, organization, "period-ia")
+
+    result = IntangibleAssetService(session).acquire_intangible_asset(
+        _request(
+            organization,
+            evidence,
+            key="intangible-period-not-generated",
+            asset_code="IA-PERIOD",
+        )
+    )
+
+    assert result.status == "rejected"
+    assert result.errors == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
+    assert result.event_id is None
+    assert result.voucher_id is None
+
+
 def test_acquisition_is_normalized_balanced_and_payload_idempotent(
     session: Session, organization: Organization
 ) -> None:

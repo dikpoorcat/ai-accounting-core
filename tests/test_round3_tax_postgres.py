@@ -66,7 +66,7 @@ def _register_payroll_facts(
                 org_id=organization.id,
                 employee_code=f"R3-TAX-{number + 1}",
                 name=f"R3 税务员工 {number + 1}",
-                employment_start_date=date(2026, 1, 1),
+                employment_start_date=date(2026, 3, 1),
                 status="active",
             )
         )
@@ -77,7 +77,7 @@ def _register_payroll_facts(
                 RegisterEmployeePayrollProfileVersionRequest(
                     org_id=organization.id,
                     employee_id=employee_id,
-                    effective_from=date(2026, 1, 1),
+                    effective_from=date(2026, 3, 1),
                     expense_role="payroll_management_expense",
                     social_insurance_base_fen=1_000_000,
                     housing_fund_base_fen=1_000_000,
@@ -92,8 +92,8 @@ def _register_payroll_facts(
                 {
                     "org_id": organization.id,
                     "region": "测试地区",
-                    "effective_from": "2026-01-01",
-                    "effective_to": "2026-12-31",
+                    "effective_from": "2026-03-01",
+                    "effective_to": "2026-07-31",
                     "version": "r3-tax-2026",
                     "source_url": (
                         "https://www.chinatax.gov.cn/chinatax/n810341/n810765/"
@@ -212,13 +212,15 @@ def test_r3_001_january_and_march_confirmations_are_linearized_by_tax_year_guard
 ) -> None:
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
-        organization = seed_organization(setup, name="R3-001 跨月并发企业")
+        organization = seed_organization(
+            setup, accounting_period_control_enabled=False, name="R3-001 跨月并发企业"
+        )
         employee_id = _register_payroll_facts(setup, organization)[0]
         january = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=1, key="r3-001-jan-preview"
+            setup, organization.id, [employee_id], payroll_month=3, key="r3-001-jan-preview"
         )
         march = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=3, key="r3-001-mar-preview"
+            setup, organization.id, [employee_id], payroll_month=5, key="r3-001-mar-preview"
         )
         assert january.status == march.status == "calculated"
         org_id = organization.id
@@ -271,17 +273,19 @@ def test_r3_001_confirmation_and_reversal_cannot_cross_the_same_tax_year_guard(
 ) -> None:
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
-        organization = seed_organization(setup, name="R3-001 确认冲正并发企业")
+        organization = seed_organization(
+            setup, accounting_period_control_enabled=False, name="R3-001 确认冲正并发企业"
+        )
         employee_id = _register_payroll_facts(setup, organization)[0]
         january = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=1, key="r3-001-reverse-jan"
+            setup, organization.id, [employee_id], payroll_month=3, key="r3-001-reverse-jan"
         )
         january_confirmed = FinanceService(setup).confirm_payroll(
             _confirm_request(organization.id, january, "r3-001-reverse-jan-confirm")
         )
         assert january_confirmed.status == "posted", january_confirmed.errors
         march = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=3, key="r3-001-reverse-mar"
+            setup, organization.id, [employee_id], payroll_month=5, key="r3-001-reverse-mar"
         )
         assert march.status == "calculated", march.errors
         org_id = organization.id
@@ -295,7 +299,7 @@ def test_r3_001_confirmation_and_reversal_cannot_cross_the_same_tax_year_guard(
                 event_id=january_confirmed.event_id,
                 idempotency_key="r3-001-reverse-jan-event",
                 reason="并发顺序测试",
-                posting_date=date(2026, 3, 6),
+                posting_date=date(2026, 6, 6),
             )
         ),
         lambda session: FinanceService(session).confirm_payroll(
@@ -315,10 +319,12 @@ def test_r3_001_multi_employee_guards_are_locked_in_employee_id_order(
 ) -> None:
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
-        organization = seed_organization(setup, name="R3-001 多员工锁顺序企业")
+        organization = seed_organization(
+            setup, accounting_period_control_enabled=False, name="R3-001 多员工锁顺序企业"
+        )
         employee_ids = _register_payroll_facts(setup, organization, employee_count=2)
         january = _preview_regular(
-            setup, organization.id, employee_ids, payroll_month=1, key="r3-001-order-jan"
+            setup, organization.id, employee_ids, payroll_month=3, key="r3-001-order-jan"
         )
         # The second client sends the same employees in the opposite business
         # order.  The service must still lock guards by UUID, not request order.
@@ -326,7 +332,7 @@ def test_r3_001_multi_employee_guards_are_locked_in_employee_id_order(
             setup,
             organization.id,
             list(reversed(employee_ids)),
-            payroll_month=3,
+            payroll_month=5,
             key="r3-001-order-mar",
         )
         org_id = organization.id
@@ -344,7 +350,6 @@ def test_r3_001_multi_employee_guards_are_locked_in_employee_id_order(
     assert sum(result.status == "posted" for result in results) == 1
     assert all(
         result.status == "posted"
-        or result.errors
-        in (["LATER_PAYROLL_TAX_STATE_EXISTS"], ["STALE_PAYROLL_CALCULATION"])
+        or result.errors in (["LATER_PAYROLL_TAX_STATE_EXISTS"], ["STALE_PAYROLL_CALCULATION"])
         for result in results
     )

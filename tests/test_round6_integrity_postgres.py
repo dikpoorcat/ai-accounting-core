@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import calendar
+import json
 import shutil
 import threading
 import uuid
@@ -108,9 +109,7 @@ def _postgres_at_0006() -> Iterator[tuple[Config, object]]:
             engine.dispose()
 
 
-def _assert_0006_to_0007_preflight_refusal(
-    config: Config, engine: object, code: str
-) -> None:
+def _assert_0006_to_0007_preflight_refusal(config: Config, engine: object, code: str) -> None:
     with pytest.raises(RuntimeError, match=code):
         command.upgrade(config, "0007_payroll_round6_closure")
     with engine.connect() as connection:
@@ -122,58 +121,73 @@ def _assert_0006_to_0007_preflight_refusal(
 def _historical_0006_final_regular(engine: object, *, key: str) -> dict[str, uuid.UUID]:
     """Create ordinary final facts *before* 0007 exists, without head DDL."""
 
-    with Session(engine) as session:
-        organization = seed_organization(session, name=f"R6 0006 历史 {key}")
-        employee_id = register_payroll_facts(session, organization)
-        opening = FinanceService(session).register_payroll_opening_state(
-            RegisterPayrollOpeningStateRequest(
-                org_id=organization.id,
-                employee_id=employee_id,
-                tax_year=2026,
-                through_month=8,
-                cumulative_income_fen=0,
-                cumulative_tax_exempt_income_fen=0,
-                cumulative_basic_deduction_fen=0,
-                cumulative_employee_social_insurance_fen=0,
-                cumulative_employee_housing_fund_fen=0,
-                cumulative_special_additional_deduction_fen=0,
-                cumulative_other_legal_deduction_fen=0,
-                cumulative_tax_relief_fen=0,
-                cumulative_tax_withheld_fen=0,
-            )
+    ids = {
+        name: uuid.uuid4()
+        for name in (
+            "org_id",
+            "counterparty_id",
+            "employee_id",
+            "profile_id",
+            "policy_id",
+            "opening_id",
+            "batch_id",
+            "line_id",
         )
-        assert opening["status"] == "registered", opening
-        preview = _preview(
-            session,
-            org_id=organization.id,
-            employee_id=employee_id,
-            payroll_period="2026-09",
-            payment_date=date(2026, 9, 5),
-            key=f"{key}-preview",
+    }
+    with engine.begin() as connection:
+        connection.execute(sa.text("SET LOCAL session_replication_role = replica"))
+        connection.execute(
+            sa.text(
+                "INSERT INTO organizations (id, name, taxpayer_type, filing_cycle, jurisdiction, urban_maintenance_rate, accounting_standard, created_at) VALUES (:org_id, :name, 'small_scale', 'quarterly', 'CN', 0.07, 'small_enterprise', now())"  # noqa: E501
+            ),
+            {**ids, "name": f"R6 0006 历史 {key}"},
         )
-        confirmed = FinanceService(session).confirm_payroll(
-            ConfirmPayrollRequest(
-                org_id=organization.id,
-                batch_id=preview.batch_id,
-                calculation_hash=preview.calculation_hash,
-                idempotency_key=f"{key}-confirm",
-                confirmed_by="r6-0006-fixture",
-            )
+        connection.execute(
+            sa.text(
+                "INSERT INTO counterparties (id, org_id, kind, name) VALUES (:counterparty_id, :org_id, 'employee', 'R6 employee')"  # noqa: E501
+            ),
+            ids,
         )
-        assert confirmed.status == "posted", confirmed.errors
-        batch = session.get(PayrollBatch, preview.batch_id)
-        line = session.scalar(
-            select(PayrollLine).where(PayrollLine.payroll_batch_id == preview.batch_id)
+        connection.execute(
+            sa.text(
+                "INSERT INTO employees (id, org_id, counterparty_id, employee_code, name, employment_start_date, status, created_at) VALUES (:employee_id, :org_id, :counterparty_id, :code, 'R6 employee', '2026-01-01', 'active', now())"  # noqa: E501
+            ),
+            {**ids, "code": key},
         )
-        assert batch is not None and line is not None
-        session.commit()
-        return {
-            "org_id": organization.id,
-            "employee_id": employee_id,
-            "profile_id": line.employee_payroll_profile_version_id,
-            "policy_id": batch.policy_version_id,
-            "opening_id": uuid.UUID(opening["opening_state_id"]),
-        }
+        connection.execute(
+            sa.text(
+                "INSERT INTO employee_payroll_profile_versions (id, org_id, employee_id, supersedes_id, effective_from, effective_to, expense_role, social_insurance_base_fen, housing_fund_base_fen, resident_employee, created_at) VALUES (:profile_id, :org_id, :employee_id, NULL, '2026-01-01', '2026-12-31', 'payroll_management_expense', 1000000, 1000000, TRUE, now())"  # noqa: E501
+            ),
+            ids,
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO payroll_policy_versions (id, org_id, region, supersedes_id, effective_from, effective_to, version, source_url, parameters, created_at) VALUES (:policy_id, :org_id, 'CN', NULL, '2026-01-01', '2026-12-31', :version, 'https://www.chinatax.gov.cn/', '{}'::jsonb, now())"  # noqa: E501
+            ),
+            {**ids, "version": key},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO payroll_opening_states (id, org_id, employee_id, supersedes_id, tax_year, through_month, cumulative_income_fen, cumulative_tax_exempt_income_fen, cumulative_basic_deduction_fen, cumulative_employee_social_insurance_fen, cumulative_employee_housing_fund_fen, cumulative_special_additional_deduction_fen, cumulative_other_legal_deduction_fen, cumulative_tax_relief_fen, cumulative_tax_withheld_fen, created_at) VALUES (:opening_id, :org_id, :employee_id, NULL, 2026, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())"  # noqa: E501
+            ),
+            ids,
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO payroll_batches (id, org_id, idempotency_key, batch_kind, payroll_period, version, status, calculation_hash, calculation_input, calculation_trace, policy_snapshot, policy_version_id, posting_date, payment_date, confirmed_by, confirmed_at, created_at) VALUES (:batch_id, :org_id, :key, 'regular', '2026-09', 1, 'posted', :hash, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, :policy_id, '2026-09-05', '2026-09-05', 'legacy', now(), now())"  # noqa: E501
+            ),
+            {**ids, "key": key, "hash": (key * 64)[:64]},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO payroll_lines (id, org_id, payroll_batch_id, employee_id, employee_payroll_profile_version_id, base_salary_fen, performance_pay_fen, taxable_allowance_fen, tax_exempt_income_fen, attendance_deduction_fen, special_additional_deduction_fen, other_legal_deduction_fen, annual_bonus_fen, employee_social_insurance_fen, employer_social_insurance_fen, employee_housing_fund_fen, employer_housing_fund_fen, employee_social_insurance_items, employer_social_insurance_items, employee_housing_fund_items, employer_housing_fund_items, individual_income_tax_fen, gross_salary_fen, net_salary_fen, calculation_trace) VALUES (:line_id, :org_id, :batch_id, :employee_id, :profile_id, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 0, 100, 100, '[]'::jsonb)"  # noqa: E501
+            ),
+            ids,
+        )
+    return {
+        name: ids[name]
+        for name in ("org_id", "employee_id", "profile_id", "policy_id", "opening_id")
+    }
 
 
 def _preview(
@@ -216,7 +230,9 @@ def _preview(
 def _confirmed_cross_month_regular(session: Session, *, key: str) -> tuple[object, object, object]:
     """Final October payroll paid in November: profile uses October month-end."""
 
-    organization = seed_organization(session, name=f"R6 跨月资料 {key}")
+    organization = seed_organization(
+        session, accounting_period_control_enabled=False, name=f"R6 跨月资料 {key}"
+    )
     employee_id = register_payroll_facts(session, organization)
     service = FinanceService(session)
     opening = service.register_payroll_opening_state(
@@ -224,7 +240,7 @@ def _confirmed_cross_month_regular(session: Session, *, key: str) -> tuple[objec
             org_id=organization.id,
             employee_id=employee_id,
             tax_year=2026,
-            through_month=8,
+            through_month=2,
             cumulative_income_fen=0,
             cumulative_tax_exempt_income_fen=0,
             cumulative_basic_deduction_fen=0,
@@ -241,8 +257,8 @@ def _confirmed_cross_month_regular(session: Session, *, key: str) -> tuple[objec
         session,
         org_id=organization.id,
         employee_id=employee_id,
-        payroll_period="2026-10",
-        payment_date=date(2026, 11, 5),
+        payroll_period="2026-04",
+        payment_date=date(2026, 5, 5),
         key=f"{key}-preview",
     )
     confirmed = service.confirm_payroll(
@@ -276,7 +292,7 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 PayrollOpeningState.org_id == organization.id,
                 PayrollOpeningState.employee_id == line.employee_id,
                 PayrollOpeningState.tax_year == 2026,
-                PayrollOpeningState.through_month == 8,
+                PayrollOpeningState.through_month == 2,
             )
         )
         assert batch is not None and line is not None and opening is not None
@@ -302,7 +318,7 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
                 "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
                 "resident_employee, created_at) VALUES "
-                "(:id, :org_id, :employee_id, :profile_id, '2026-10-01', '2026-10-31', "
+                "(:id, :org_id, :employee_id, :profile_id, '2026-04-01', '2026-04-30', "
                 "'payroll_management_expense', 1000001, 1000001, TRUE, now())"
             ),
             "R6_FINAL_PAYROLL_PROFILE_CORRECTION_BLOCKED",
@@ -312,7 +328,7 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 "INSERT INTO payroll_policy_versions "
                 "(id, org_id, region, supersedes_id, effective_from, effective_to, version, "
                 "source_url, parameters, created_at) "
-                "SELECT :id, :org_id, region, :policy_id, '2026-11-01', '2026-11-30', "
+                "SELECT :id, :org_id, region, :policy_id, '2026-05-01', '2026-05-31', "
                 "'r6-direct-policy', source_url, parameters, now() "
                 "FROM payroll_policy_versions WHERE id = :policy_id"
             ),
@@ -351,7 +367,7 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 event_id=ids["event_id"],
                 idempotency_key="r6-direct-successor-reverse",
                 reason="R6 资料更正前冲正",
-                posting_date=date(2026, 11, 6),
+                posting_date=date(2026, 5, 6),
             )
         )
         assert reversed_result.status == "posted", reversed_result.errors
@@ -363,7 +379,7 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
                 "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
                 "resident_employee, created_at) VALUES "
-                "(:id, :org_id, :employee_id, :profile_id, '2026-10-01', '2026-10-31', "
+                "(:id, :org_id, :employee_id, :profile_id, '2026-04-01', '2026-04-30', "
                 "'payroll_management_expense', 1000001, 1000001, TRUE, now())"
             ),
             {**ids, "id": uuid.uuid4()},
@@ -393,8 +409,8 @@ def test_r6_001_public_profile_correction_uses_period_end_not_payment_date(
                 org_id=organization.id,
                 employee_id=line.employee_id,
                 supersedes_profile_version_id=profile.id,
-                effective_from=date(2026, 10, 1),
-                effective_to=date(2026, 10, 31),
+                effective_from=date(2026, 4, 1),
+                effective_to=date(2026, 4, 30),
                 expense_role=profile.expense_role,
                 social_insurance_base_fen=profile.social_insurance_base_fen + 1,
                 housing_fund_base_fen=profile.housing_fund_base_fen,
@@ -496,39 +512,222 @@ def test_r6_004_0006_preflight_rejects_noncanonical_historical_evidence() -> Non
                 ),
                 {"id": uuid.uuid4(), "org_id": org_id, "sha256": "z" * 64},
             )
-        _assert_0006_to_0007_preflight_refusal(
-            config, engine, "R6_EVIDENCE_SHA256_PRECHECK_FAILED"
-        )
+        _assert_0006_to_0007_preflight_refusal(config, engine, "R6_EVIDENCE_SHA256_PRECHECK_FAILED")
 
 
 def test_r6_005_0006_preflight_rejects_cross_period_final_payment_collection() -> None:
     """Historical 0006 statutory PEL collections are checked before 0007 DDL."""
 
     with _postgres_at_0006() as (config, engine):
-        with Session(engine) as session:
-            organization = seed_organization(session, name="R6 0006 跨期法定污染")
-            employee_id = register_payroll_facts(session, organization)
-            _september_preview, september_tax = _post_regular_tax_source(
-                session,
-                organization,
-                employee_id=employee_id,
-                payroll_period="2026-09",
-                key="r6-0006-period-september",
+        org_id = uuid.uuid4()
+        agency_id = uuid.uuid4()
+        policy_id = uuid.uuid4()
+        payment_event_id = uuid.uuid4()
+        bank_transaction_id = uuid.uuid4()
+        policy_snapshot = json.dumps(
+            {
+                "parameters": {
+                    "payment_targets": {"social_insurance": {"agency_code": "SOCIAL-01"}}
+                },
+                "contribution_policy": {"id": "contribution-2026"},
+            }
+        )
+        with engine.begin() as connection:
+            connection.execute(sa.text("SET LOCAL session_replication_role = replica"))
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO organizations (
+                        id, name, taxpayer_type, filing_cycle, jurisdiction,
+                        urban_maintenance_rate, accounting_standard, created_at
+                    ) VALUES (
+                        :id, 'R6 0006 跨期法定污染', 'small_scale', 'quarterly', 'CN',
+                        0.07, 'small_enterprise', now()
+                    )
+                    """
+                ),
+                {"id": org_id},
             )
-            _october_preview, october_tax = _post_regular_tax_source(
-                session,
-                organization,
-                employee_id=employee_id,
-                payroll_period="2026-10",
-                key="r6-0006-period-october",
+            connection.execute(
+                sa.text(
+                    "INSERT INTO counterparties (id, org_id, kind, name, external_ref) "
+                    "VALUES (:id, :org_id, 'other', '社保局', 'SOCIAL-01')"
+                ),
+                {"id": agency_id, "org_id": org_id},
             )
-            _stage_direct_tax_payment(
-                session,
-                organization=organization,
-                source_items=[september_tax, october_tax],
-                key="r6-0006-direct-cross-period",
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO payroll_policy_versions (
+                        id, org_id, region, effective_from, effective_to, version,
+                        source_url, parameters, created_at
+                    ) VALUES (
+                        :id, :org_id, 'CN', '2026-01-01', '2026-12-31', 'legacy-2026',
+                        'https://www.chinatax.gov.cn/', '{}'::jsonb, now()
+                    )
+                    """
+                ),
+                {"id": policy_id, "org_id": org_id},
             )
-            session.commit()
+            source_rows = []
+            for period in ("2026-03", "2026-04"):
+                source_event_id = uuid.uuid4()
+                batch_id = uuid.uuid4()
+                item_id = uuid.uuid4()
+                source_rows.append((source_event_id, batch_id, item_id))
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO business_events (
+                            id, org_id, idempotency_key, event_type, status, description,
+                            facts, business_date, posting_date, rule_trace, created_at
+                        ) VALUES (
+                            :id, :org_id, :key, 'payroll_accrual', 'draft', '',
+                            '{}'::jsonb, :posting_date, :posting_date, '[]'::jsonb, now()
+                        )
+                        """
+                    ),
+                    {
+                        "id": source_event_id,
+                        "org_id": org_id,
+                        "key": f"r6-0006-source-{period}",
+                        "posting_date": date.fromisoformat(f"{period}-05"),
+                    },
+                )
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO payroll_batches (
+                            id, org_id, idempotency_key, batch_kind, payroll_period, version,
+                            status, calculation_hash, calculation_input, calculation_trace,
+                            policy_snapshot, policy_version_id, posting_date, payment_date,
+                            confirmed_by, confirmed_at, created_at
+                        ) VALUES (
+                            :id, :org_id, :key, 'regular', :period, 1, 'posted', :hash,
+                            '{}'::jsonb, '[]'::jsonb, CAST(:snapshot AS jsonb), :policy_id,
+                            :posting_date, :posting_date, 'legacy', now(), now()
+                        )
+                        """
+                    ),
+                    {
+                        "id": batch_id,
+                        "org_id": org_id,
+                        "key": f"r6-0006-batch-{period}",
+                        "period": period,
+                        "hash": period.replace("-", "") * 10 + "0000",
+                        "snapshot": policy_snapshot,
+                        "policy_id": policy_id,
+                        "posting_date": date.fromisoformat(f"{period}-05"),
+                    },
+                )
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO open_items (
+                            id, org_id, counterparty_id, source_event_id, item_type,
+                            original_amount_fen, settled_amount_fen, status, payable_category,
+                            payable_agency_code, insurance_kind
+                        ) VALUES (
+                            :id, :org_id, :agency_id, :source_event_id, 'payable',
+                            100, 100, 'settled', 'employer_social', 'SOCIAL-01', 'pension'
+                        )
+                        """
+                    ),
+                    {
+                        "id": item_id,
+                        "org_id": org_id,
+                        "agency_id": agency_id,
+                        "source_event_id": source_event_id,
+                    },
+                )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO business_events (
+                        id, org_id, idempotency_key, event_type, status, description, facts,
+                        business_date, posting_date, rule_trace, created_at
+                    ) VALUES (
+                        :id, :org_id, 'r6-0006-cross-period-payment',
+                        'social_insurance_payment', 'posted', '', '{}'::jsonb,
+                        '2026-04-06', '2026-04-06', '[]'::jsonb, now()
+                    )
+                    """
+                ),
+                {"id": payment_event_id, "org_id": org_id},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO bank_transactions (
+                        id, org_id, bank_account_code, fingerprint, booking_date, amount_fen,
+                        currency, memo, source_sha256, matched_event_id, imported_at
+                    ) VALUES (
+                        :id, :org_id, '1002', :fingerprint, '2026-04-06', -200,
+                        'CNY', '', :sha256, :event_id, now()
+                    )
+                    """
+                ),
+                {
+                    "id": bank_transaction_id,
+                    "org_id": org_id,
+                    "fingerprint": "b" * 64,
+                    "sha256": "c" * 64,
+                    "event_id": payment_event_id,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO bank_transaction_matches (
+                        id, org_id, bank_transaction_id, event_id, created_at
+                    ) VALUES (:id, :org_id, :bank_id, :event_id, now())
+                    """
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "org_id": org_id,
+                    "bank_id": bank_transaction_id,
+                    "event_id": payment_event_id,
+                },
+            )
+            for source_event_id, batch_id, item_id in source_rows:
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO settlements (
+                            id, org_id, open_item_id, payment_event_id, amount_fen,
+                            reversed, reversed_by_event_id
+                        ) VALUES (:id, :org_id, :item_id, :event_id, 100, FALSE, NULL)
+                        """
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "org_id": org_id,
+                        "item_id": item_id,
+                        "event_id": payment_event_id,
+                    },
+                )
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO payroll_event_links (
+                            id, org_id, event_id, payroll_batch_id,
+                            source_payment_event_id, source_open_item_id, link_kind, created_at
+                        ) VALUES (
+                            :id, :org_id, :event_id, :batch_id,
+                            :source_event_id, :item_id, 'statutory_payment', now()
+                        )
+                        """
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "org_id": org_id,
+                        "event_id": payment_event_id,
+                        "batch_id": batch_id,
+                        "source_event_id": source_event_id,
+                        "item_id": item_id,
+                    },
+                )
         _assert_0006_to_0007_preflight_refusal(
             config, engine, "R6_STATUTORY_PAYMENT_COMPATIBILITY_PRECHECK_FAILED"
         )
@@ -554,13 +753,15 @@ def _unconfirmed_regular_for_correction_race(
     engine: object,
     *,
     key: str,
-    payroll_period: str = "2026-09",
-    payment_date: date = date(2026, 9, 5),
+    payroll_period: str = "2026-03",
+    payment_date: date = date(2026, 3, 5),
 ) -> dict[str, object]:
     """Persist one old-version draft that two isolated sessions can race over."""
 
     with Session(engine, expire_on_commit=False) as session:
-        organization = seed_organization(session, name=f"R6 版本并发 {key}")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name=f"R6 版本并发 {key}"
+        )
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
         opening = service.register_payroll_opening_state(
@@ -568,7 +769,7 @@ def _unconfirmed_regular_for_correction_race(
                 org_id=organization.id,
                 employee_id=employee_id,
                 tax_year=2026,
-                through_month=8,
+                through_month=2,
                 cumulative_income_fen=0,
                 cumulative_tax_exempt_income_fen=0,
                 cumulative_basic_deduction_fen=0,
@@ -646,8 +847,8 @@ def _successor_request(kind: str, facts: dict[str, object], *, key: str) -> obje
             org_id=org_id,
             region=policy.region,
             supersedes_policy_version_id=policy.id,
-            effective_from=date(2026, 9, 1),
-            effective_to=date(2026, 9, 30),
+            effective_from=date(2026, 3, 1),
+            effective_to=date(2026, 3, 31),
             version=f"r6-race-{key}",
             source_url=policy.source_url,
             parameters=policy.parameters,
@@ -697,8 +898,8 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
         # Payroll profile selection is keyed by period-end, deliberately
         # independent of the payment-date tax month.  Run the two profile
         # races across that boundary rather than only in a same-month sample.
-        payroll_period="2026-10" if kind == "profile" else "2026-09",
-        payment_date=date(2026, 11, 5) if kind == "profile" else date(2026, 9, 5),
+        payroll_period="2026-04" if kind == "profile" else "2026-03",
+        payment_date=date(2026, 5, 5) if kind == "profile" else date(2026, 3, 5),
     )
     checked = threading.Event()
     release_correction = threading.Event()
@@ -724,10 +925,7 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
     def paused_entitlements(
         service: FinanceService, batch: PayrollBatch, lines: list[PayrollLine]
     ) -> None:
-        if (
-            not confirmation_commits_first
-            and threading.current_thread().name == "r6-confirmation"
-        ):
+        if not confirmation_commits_first and threading.current_thread().name == "r6-confirmation":
             confirmation_ready.set()
             assert release_confirmation.wait(15), "confirmation barrier was never released"
         original_entitlements(service, batch, lines)
@@ -776,8 +974,7 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
     confirmation = threading.Thread(target=confirmation_worker, name="r6-confirmation")
     correction.start()
     assert checked.wait(15), (
-        "correction did not pass its old public precheck: "
-        f"{outcomes.get('correction_error')!r}"
+        f"correction did not pass its old public precheck: {outcomes.get('correction_error')!r}"
     )
     confirmation.start()
     if confirmation_commits_first:
@@ -801,9 +998,7 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
     if confirmation_commits_first:
         assert confirmation_result.status == "posted", confirmation_result.errors
         assert correction_result["status"] == "rejected"
-        assert correction_result["errors"] == [
-            "PAYROLL_VERSION_CORRECTION_BLOCKED_BY_FINAL_FACTS"
-        ]
+        assert correction_result["errors"] == ["PAYROLL_VERSION_CORRECTION_BLOCKED_BY_FINAL_FACTS"]
     else:
         assert correction_result["status"] == "registered", correction_result
         assert confirmation_result.status == "rejected"
@@ -840,7 +1035,7 @@ def test_r6_001_direct_update_cannot_move_a_draft_successor_over_final_profile_f
                 "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
                 "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
                 "resident_employee, created_at) "
-                "SELECT :successor_id, org_id, employee_id, id, '2027-01-01', '2027-01-31', "
+                "SELECT :successor_id, org_id, employee_id, id, '2026-07-01', '2026-07-31', "
                 "expense_role, social_insurance_base_fen + 1, housing_fund_base_fen, "
                 "resident_employee, now() "
                 "FROM employee_payroll_profile_versions WHERE id = :profile_id"
@@ -852,7 +1047,7 @@ def test_r6_001_direct_update_cannot_move_a_draft_successor_over_final_profile_f
         postgres_engine,
         sa.text(
             "UPDATE employee_payroll_profile_versions "
-            "SET effective_from = '2026-09-01', effective_to = '2026-09-30' "
+            "SET effective_from = '2026-03-01', effective_to = '2026-03-31' "
             "WHERE id = :successor_id"
         ),
         {"successor_id": successor_id},
@@ -924,8 +1119,10 @@ def test_r6_002_r6_004_sealed_evidence_freezes_timestamp_and_requires_lower_hex(
         )
         session.add(draft)
         session.flush()
-        draft.created_at = draft.created_at.replace(year=2027)
-        other_organization = seed_organization(session, name="R6 跨企业摘要")
+        draft.created_at = draft.created_at.replace(year=2026)
+        other_organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R6 跨企业摘要"
+        )
         # The digest identity is enterprise-scoped, so the same canonical
         # content hash remains legitimate in a different enterprise.
         session.add(
@@ -991,10 +1188,7 @@ def test_r6_003_final_settlement_primary_key_is_immutable_but_service_reversal_i
     )
     _commit_rejects(
         postgres_engine,
-        sa.text(
-            "UPDATE settlements SET amount_fen = amount_fen + 1 "
-            "WHERE id = :settlement_id"
-        ),
+        sa.text("UPDATE settlements SET amount_fen = amount_fen + 1 WHERE id = :settlement_id"),
         identifiers,
         "R5_FINAL_PAYROLL_SOURCE_SETTLEMENT_IMMUTABLE",
     )
@@ -1005,7 +1199,7 @@ def test_r6_003_final_settlement_primary_key_is_immutable_but_service_reversal_i
                 event_id=identifiers["salary_event_id"],
                 idempotency_key="r6-settlement-normal-reversal",
                 reason="R6 规范核销冲正",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             )
         )
         assert result.status == "posted", result.errors
@@ -1030,9 +1224,9 @@ def _stage_direct_tax_payment(
         status="draft",
         description="R6 直接构造法定付款集合",
         facts={},
-        business_date=date(2026, 10, 6),
-        payment_date=date(2026, 10, 6),
-        posting_date=date(2026, 10, 6),
+        business_date=date(2026, 4, 6),
+        payment_date=date(2026, 4, 6),
+        posting_date=date(2026, 4, 6),
         rule_trace=[],
     )
     session.add(event)
@@ -1098,20 +1292,22 @@ def test_r6_005_direct_cross_period_statutory_collection_rejects_at_commit(
     """Two otherwise-valid source edges cannot merge September and October tax."""
 
     with Session(postgres_engine) as session:
-        organization = seed_organization(session, name="R6 法定集合跨期")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R6 法定集合跨期"
+        )
         employee_id = register_payroll_facts(session, organization)
         _september_preview, september_tax = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-09",
+            payroll_period="2026-03",
             key="r6-period-september",
         )
         _october_preview, october_tax = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
-            payroll_period="2026-10",
+            payroll_period="2026-04",
             key="r6-period-october",
         )
         event = _stage_direct_tax_payment(

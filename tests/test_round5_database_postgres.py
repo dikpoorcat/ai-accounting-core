@@ -188,7 +188,9 @@ def test_r5_002_sealed_evidence_blocks_every_content_and_identity_mutation(
         organization, _batch, _line, evidence, _event = _confirmed_payroll_with_evidence(
             session, key="r5-evidence-seal"
         )
-        foreign_organization = seed_organization(session, name="R5 密封证据外部企业")
+        foreign_organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 密封证据外部企业"
+        )
         draft_evidence = Evidence(
             org_id=organization.id,
             sha256="d" * 64,
@@ -272,13 +274,15 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
 
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(session, name="R5 版本锁并发企业")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 版本锁并发企业"
+        )
         employee = FinanceService(session).register_employee(
             RegisterEmployeeRequest(
                 org_id=organization.id,
                 employee_code="R5-VERSION-GUARD",
                 name="版本锁员工",
-                employment_start_date=date(2026, 1, 1),
+                employment_start_date=date(2025, 7, 1),
                 status="active",
             )
         )
@@ -294,8 +298,8 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
             lambda variant: EmployeePayrollProfileVersion(
                 org_id=org_id,
                 employee_id=employee_id,
-                effective_from=date(2026, 1, 1),
-                effective_to=date(2026, 12, 31),
+                effective_from=date(2025, 7, 1),
+                effective_to=date(2026, 6, 30),
                 expense_role="payroll_management_expense",
                 social_insurance_base_fen=100 + variant,
                 housing_fund_base_fen=100 + variant,
@@ -308,8 +312,8 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
             lambda variant: PayrollPolicyVersion(
                 org_id=org_id,
                 region="R5-GUARD-REGION",
-                effective_from=date(2026, 1, 1),
-                effective_to=date(2026, 12, 31),
+                effective_from=date(2025, 7, 1),
+                effective_to=date(2026, 6, 30),
                 version=f"r5-guard-policy-{variant}",
                 source_url="https://www.chinatax.gov.cn/",
                 parameters={},
@@ -380,10 +384,21 @@ def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> 
         command.upgrade(config, "0005_payroll_round4_integrity")
         engine = create_engine(database_url)
         try:
+            organization_id = uuid.uuid4()
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO organizations "
+                        "(id, name, taxpayer_type, filing_cycle, jurisdiction, "
+                        "urban_maintenance_rate, accounting_standard, created_at) VALUES "
+                        "(:id, 'R5 旧版污染预检企业', 'small_scale', 'quarterly', 'CN', "
+                        "0.07, 'small_enterprise', now())"
+                    ),
+                    {"id": organization_id},
+                )
             with Session(engine) as session:
-                organization = seed_organization(session, name="R5 旧版污染预检企业")
                 evidence = Evidence(
-                    org_id=organization.id,
+                    org_id=organization_id,
                     sha256="too-short",
                     original_name="legacy.bin",
                     media_type="application/octet-stream",
@@ -393,23 +408,23 @@ def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> 
                     metadata_json={},
                 )
                 counterparty = Counterparty(
-                    org_id=organization.id, kind="supplier", name="R5 旧版供应商"
+                    org_id=organization_id, kind="supplier", name="R5 旧版供应商"
                 )
                 payment = BusinessEvent(
-                    org_id=organization.id,
+                    org_id=organization_id,
                     idempotency_key="r5-legacy-settlement-payment",
                     event_type="expense_cash",
                     status="draft",
                     description="R5 旧版结算污染",
                     facts={},
-                    business_date=date(2026, 1, 1),
-                    posting_date=date(2026, 1, 1),
+                    business_date=date(2025, 7, 1),
+                    posting_date=date(2025, 7, 1),
                     rule_trace=[],
                 )
                 session.add_all([evidence, counterparty, payment])
                 session.flush()
                 open_item = OpenItem(
-                    org_id=organization.id,
+                    org_id=organization_id,
                     counterparty_id=counterparty.id,
                     source_event_id=payment.id,
                     item_type="payable",
@@ -420,7 +435,7 @@ def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> 
                 session.add(open_item)
                 session.commit()
                 identifiers = {
-                    "org_id": organization.id,
+                    "org_id": organization_id,
                     "evidence_id": evidence.id,
                     "payment_id": payment.id,
                     "open_item_id": open_item.id,
@@ -470,7 +485,7 @@ def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> 
                     counterparty_id=employee_counterparty.id,
                     employee_code="R5-LEGACY-VERSION",
                     name="R5 旧版版本员工",
-                    employment_start_date=date(2026, 1, 1),
+                    employment_start_date=date(2025, 7, 1),
                     status="active",
                 )
                 session.add(employee)
@@ -482,8 +497,8 @@ def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> 
                     sa.text("ALTER TABLE employee_payroll_profile_versions DISABLE TRIGGER ALL")
                 )
                 for effective_from, effective_to, base in (
-                    (date(2026, 1, 1), date(2026, 6, 30), 100),
-                    (date(2026, 5, 1), date(2026, 12, 31), 101),
+                    (date(2025, 7, 1), date(2025, 12, 31), 100),
+                    (date(2025, 11, 1), date(2026, 6, 30), 101),
                 ):
                     connection.execute(
                         sa.text(

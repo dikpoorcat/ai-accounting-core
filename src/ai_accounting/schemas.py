@@ -1371,11 +1371,14 @@ class TaxPeriodPreviewRequest(BaseModel):
     org_id: uuid.UUID
     start_date: date
     end_date: date
+    adjustment_posting_date: date
 
     @model_validator(mode="after")
     def valid_range(self) -> TaxPeriodPreviewRequest:
         if self.start_date > self.end_date:
             raise ValueError("start_date must not be after end_date")
+        if self.adjustment_posting_date < self.end_date:
+            raise ValueError("adjustment_posting_date must not precede end_date")
         return self
 
 
@@ -1385,6 +1388,7 @@ class TaxPeriodConfirmRequest(BaseModel):
     org_id: uuid.UUID
     start_date: date
     end_date: date
+    adjustment_posting_date: date
     calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     idempotency_key: str = Field(min_length=1, max_length=200)
 
@@ -1392,6 +1396,8 @@ class TaxPeriodConfirmRequest(BaseModel):
     def valid_range(self) -> TaxPeriodConfirmRequest:
         if self.start_date > self.end_date:
             raise ValueError("start_date must not be after end_date")
+        if self.adjustment_posting_date < self.end_date:
+            raise ValueError("adjustment_posting_date must not precede end_date")
         return self
 
 

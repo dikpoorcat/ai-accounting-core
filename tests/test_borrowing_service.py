@@ -134,6 +134,36 @@ def _roles_for_voucher(session: Session, voucher_id: object) -> list[tuple[str, 
     return [(row.system_role, row.debit_fen, row.credit_fen) for row in rows]
 
 
+def test_borrowing_write_preserves_period_control_error(
+    session: Session, organization: Organization
+) -> None:
+    organization.accounting_period_control_enabled = True
+    organization.accounting_period_control_start_date = None
+    evidence = _evidence(session, organization, "period-loan")
+    bank = _bank_row(
+        session,
+        organization,
+        amount_fen=1_000_000,
+        booking_date=date(2026, 1, 1),
+        seed="period-loan-bank",
+    )
+
+    result = BorrowingService(session).draw_borrowing(
+        _draw_request(
+            organization,
+            evidence,
+            bank,
+            key="borrowing-period-not-generated",
+            borrowing_code="LOAN-PERIOD",
+        )
+    )
+
+    assert result.status == "rejected"
+    assert result.errors == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
+    assert result.event_id is None
+    assert result.voucher_id is None
+
+
 def _confirm_interest(
     service: BorrowingService,
     organization: Organization,
@@ -899,6 +929,8 @@ def test_normalized_rate_and_interest_hash_are_stable_across_sessions(tmp_path) 
     try:
         with factory.begin() as first_session:
             organization = seed_organization(first_session, name="跨会话借款测试组织")
+            organization.accounting_period_control_enabled = False
+            first_session.flush()
             evidence = _evidence(first_session, organization, "cross-session-contract")
             bank = _bank_row(
                 first_session,

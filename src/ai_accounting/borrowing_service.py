@@ -27,7 +27,7 @@ from .borrowings import (
     borrowing_calculation_hash,
     calculate_simple_interest,
 )
-from .ledger import Entry, create_voucher
+from .ledger import AccountingPeriodError, Entry, create_voucher
 from .models import (
     AuditLog,
     BankTransaction,
@@ -326,6 +326,8 @@ class BorrowingService(FinanceService):
                 BorrowingResultStatus.REJECTED,
                 errors=[exc.code],
             )
+        except AccountingPeriodError as exc:
+            return self._result(BorrowingResultStatus.REJECTED, errors=[exc.code])
         except IntegrityError:
             existing = self._idempotent_event(request.org_id, request.idempotency_key)
             if existing is not None:

@@ -83,6 +83,7 @@ def _preview(
             org_id=organization.id,
             start_date=start_date,
             end_date=end_date,
+            adjustment_posting_date=end_date,
         )
     )
 
@@ -101,6 +102,7 @@ def _confirm(
             org_id=organization.id,
             start_date=start_date,
             end_date=end_date,
+            adjustment_posting_date=end_date,
             calculation_hash=calculation_hash,
             idempotency_key=key,
         )
@@ -249,7 +251,11 @@ def test_preview_hash_payload_is_reproducible_and_every_leaf_tamper_is_stale(
         "jurisdiction": "CN",
         "urban_maintenance_rate": "0.07000",
     }
-    assert payload["period"] == {"start_date": "2026-01-01", "end_date": "2026-03-31"}
+    assert payload["period"] == {
+        "start_date": "2026-01-01",
+        "end_date": "2026-03-31",
+        "adjustment_posting_date": "2026-03-31",
+    }
     assert payload["source_events"] == preview["source_event_snapshots"]
     assert _canonical_hash(payload) == preview["calculation_hash"]
     assert hashlib.sha256(payload_text.encode("utf-8")).hexdigest() == preview["calculation_hash"]

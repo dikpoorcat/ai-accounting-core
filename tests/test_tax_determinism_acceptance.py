@@ -73,7 +73,12 @@ def _preview(
     service: FinanceService, organization: Organization, start: date, end: date
 ) -> dict[str, object]:
     return service.preview_tax_period(
-        TaxPeriodPreviewRequest(org_id=organization.id, start_date=start, end_date=end)
+        TaxPeriodPreviewRequest(
+            org_id=organization.id,
+            start_date=start,
+            end_date=end,
+            adjustment_posting_date=end,
+        )
     )
 
 
@@ -90,6 +95,7 @@ def _confirm(
             org_id=organization.id,
             start_date=start,
             end_date=end,
+            adjustment_posting_date=end,
             calculation_hash=calculation_hash,
             idempotency_key=key,
         )

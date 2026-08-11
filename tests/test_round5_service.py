@@ -47,6 +47,8 @@ def test_r5_004_profile_correction_is_blocked_until_final_payroll_is_reversed(
     """A profile replacement cannot reinterpret a final cumulative-payroll chain."""
 
     organization = seed_organization(session, name="R5 profile correction barrier")
+    organization.accounting_period_control_enabled = False
+    session.flush()
     service, confirmed = preview_and_confirm(session, organization)
     batch = session.get(PayrollBatch, confirmed.batch_id)
     line = session.scalar(
@@ -61,8 +63,8 @@ def test_r5_004_profile_correction_is_blocked_until_final_payroll_is_reversed(
     request = RegisterEmployeePayrollProfileVersionRequest(
         org_id=organization.id,
         employee_id=line.employee_id,
-        effective_from=date(2026, 9, 1),
-        effective_to=date(2026, 9, 30),
+        effective_from=date(2026, 3, 1),
+        effective_to=date(2026, 3, 31),
         expense_role=predecessor.expense_role,
         social_insurance_base_fen=predecessor.social_insurance_base_fen + 1,
         housing_fund_base_fen=predecessor.housing_fund_base_fen + 1,
@@ -79,7 +81,7 @@ def test_r5_004_profile_correction_is_blocked_until_final_payroll_is_reversed(
             event_id=confirmed.event_id,
             idempotency_key="r5-profile-correction-reverse",
             reason="更正资料前冲正正式工资",
-            posting_date=date(2026, 9, 6),
+            posting_date=date(2026, 3, 6),
         )
     )
     assert reversed_result.status == "posted", reversed_result.errors
@@ -93,6 +95,8 @@ def test_r5_004_policy_correction_blocks_every_employee_in_the_final_batch(
     """A policy correction exposes the formal batch IDs that must be rebuilt."""
 
     organization = seed_organization(session, name="R5 policy correction barrier")
+    organization.accounting_period_control_enabled = False
+    session.flush()
     _service, confirmed = preview_and_confirm(session, organization)
     batch = session.get(PayrollBatch, confirmed.batch_id)
     assert batch is not None
@@ -103,8 +107,8 @@ def test_r5_004_policy_correction_blocks_every_employee_in_the_final_batch(
         RegisterPayrollPolicyVersionRequest(
             org_id=organization.id,
             region=predecessor.region,
-            effective_from=date(2026, 9, 1),
-            effective_to=date(2026, 9, 30),
+            effective_from=date(2026, 3, 1),
+            effective_to=date(2026, 3, 31),
             version="r5-policy-correction",
             source_url=predecessor.source_url,
             parameters=payroll_parameters(),
@@ -120,13 +124,15 @@ def test_r5_004_opening_correction_blocks_all_later_payroll_kinds(
     """Opening-state replacement is barred by any later final payroll batch."""
 
     organization = seed_organization(session, name="R5 opening correction barrier")
+    organization.accounting_period_control_enabled = False
+    session.flush()
     employee_id = register_payroll_facts(session, organization)
     service = FinanceService(session)
     opening_request = RegisterPayrollOpeningStateRequest(
         org_id=organization.id,
         employee_id=employee_id,
         tax_year=2026,
-        through_month=8,
+        through_month=2,
         cumulative_income_fen=0,
         cumulative_tax_exempt_income_fen=0,
         cumulative_basic_deduction_fen=0,

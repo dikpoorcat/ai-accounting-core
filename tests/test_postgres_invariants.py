@@ -32,7 +32,9 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
         engine = create_engine(url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PostgreSQL 约束测试")
+                organization = seed_organization(
+                    session, accounting_period_control_enabled=False, name="PostgreSQL 约束测试"
+                )
                 event = BusinessEvent(
                     org_id=organization.id,
                     idempotency_key="unbalanced-direct-write",
@@ -72,7 +74,9 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                     session.commit()
 
             with Session(engine) as session:
-                organization = seed_organization(session, name="不可变约束测试")
+                organization = seed_organization(
+                    session, accounting_period_control_enabled=False, name="不可变约束测试"
+                )
                 event = BusinessEvent(
                     org_id=organization.id,
                     idempotency_key="balanced-direct-write",

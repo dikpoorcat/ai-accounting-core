@@ -28,7 +28,7 @@ def _bank_transaction(org_id: object, *, amount_fen: int, key: str) -> BankTrans
         org_id=org_id,
         bank_account_code="1002",
         fingerprint=(key * 64)[:64],
-        booking_date=date(2026, 9, 5),
+        booking_date=date(2026, 3, 5),
         amount_fen=amount_fen,
         currency="CNY",
         memo=key,
@@ -43,9 +43,9 @@ def _expense_request(org_id: object, bank_id: object, *, key: str) -> RecordEven
             "idempotency_key": key,
             "event_type": "expense_cash",
             "business_dates": {
-                "business_date": "2026-09-05",
-                "payment_date": "2026-09-05",
-                "posting_date": "2026-09-05",
+                "business_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "posting_date": "2026-03-05",
             },
             "amounts": {
                 "gross_amount_fen": 100,
@@ -62,7 +62,7 @@ def _reverse_request(org_id: object, event_id: object, *, key: str) -> ReverseEv
         event_id=event_id,
         idempotency_key=key,
         reason="R3 并发冲正",
-        posting_date=date(2026, 9, 6),
+        posting_date=date(2026, 3, 6),
     )
 
 
@@ -78,7 +78,9 @@ def test_r3_008_reversal_replays_after_source_lock_and_r3_009_rebooks_bank_row()
         factory = make_session_factory(engine)
         try:
             with factory.begin() as session:
-                organization = seed_organization(session, name="R3 幂等与银行匹配企业")
+                organization = seed_organization(
+                    session, accounting_period_control_enabled=False, name="R3 幂等与银行匹配企业"
+                )
                 bank = _bank_transaction(organization.id, amount_fen=-100, key="r3-bank-rebook")
                 session.add(bank)
                 session.flush()

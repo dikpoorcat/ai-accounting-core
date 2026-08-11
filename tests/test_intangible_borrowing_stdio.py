@@ -108,6 +108,8 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
         organization = seed_organization(database_session, name="无形资产与借款 STDIO 验收企业")
+        organization.accounting_period_control_enabled = False
+        database_session.flush()
         org_id = organization.id
         intangible_acquisition_evidence = _evidence(org_id, "ia-acquire")
         intangible_retirement_evidence = _evidence(org_id, "ia-retire")
@@ -119,16 +121,16 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
             org_id, amount_fen=-12_000, booking_date=date(2026, 1, 2), seed="ia-bank"
         )
         drawdown_bank = _bank_transaction(
-            org_id, amount_fen=1_000_000, booking_date=date(2026, 1, 1), seed="loan-draw"
+            org_id, amount_fen=1_000_000, booking_date=date(2025, 1, 1), seed="loan-draw"
         )
         first_interest_bank = _bank_transaction(
-            org_id, amount_fen=-18_100, booking_date=date(2026, 7, 1), seed="loan-pay-one"
+            org_id, amount_fen=-18_100, booking_date=date(2025, 7, 1), seed="loan-pay-one"
         )
         second_interest_bank = _bank_transaction(
-            org_id, amount_fen=-18_400, booking_date=date(2027, 1, 1), seed="loan-pay-two"
+            org_id, amount_fen=-18_400, booking_date=date(2026, 1, 1), seed="loan-pay-two"
         )
         principal_bank = _bank_transaction(
-            org_id, amount_fen=-1_000_000, booking_date=date(2027, 1, 1), seed="loan-principal"
+            org_id, amount_fen=-1_000_000, booking_date=date(2026, 1, 1), seed="loan-principal"
         )
         database_session.add_all(
             [
@@ -362,12 +364,12 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                     "lender_is_licensed_financial_institution": True,
                     "currency": "CNY",
                     "principal_fen": 1_000_000,
-                    "drawdown_date": "2026-01-01",
-                    "due_date": "2027-01-01",
-                    "posting_date": "2026-01-01",
+                    "drawdown_date": "2025-01-01",
+                    "due_date": "2026-01-01",
+                    "posting_date": "2025-01-01",
                     "annual_rate_percent": "3.65",
                     "day_count_basis": "actual_365",
-                    "interest_due_dates": ["2026-07-01", "2027-01-01"],
+                    "interest_due_dates": ["2025-07-01", "2026-01-01"],
                     "capitalization_applicable": False,
                     "purpose_description": "仅用于日常经营周转",
                     "term_facts": {
@@ -400,8 +402,8 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 first_period = {
                     "org_id": str(org_id),
                     "borrowing_id": drawn["borrowing_id"],
-                    "period_start": "2026-01-01",
-                    "period_end": "2026-07-01",
+                    "period_start": "2025-01-01",
+                    "period_end": "2025-07-01",
                 }
                 first_preview = await call(
                     client, "finance_preview_borrowing_interest", {"request": first_period}
@@ -429,8 +431,8 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                             "borrowing_id": drawn["borrowing_id"],
                             "accrual_event_id": first_accrual["event_id"],
                             "idempotency_key": "stdio-borrowing-pay-one",
-                            "payment_date": "2026-07-01",
-                            "posting_date": "2026-07-01",
+                            "payment_date": "2025-07-01",
+                            "posting_date": "2025-07-01",
                             "bank_transaction_references": [
                                 {"id": str(ids["first_interest_bank"])}
                             ],
@@ -443,8 +445,8 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 second_period = {
                     "org_id": str(org_id),
                     "borrowing_id": drawn["borrowing_id"],
-                    "period_start": "2026-07-01",
-                    "period_end": "2027-01-01",
+                    "period_start": "2025-07-01",
+                    "period_end": "2026-01-01",
                 }
                 second_preview = await call(
                     client, "finance_preview_borrowing_interest", {"request": second_period}
@@ -472,8 +474,8 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                             "borrowing_id": drawn["borrowing_id"],
                             "accrual_event_id": second_accrual["event_id"],
                             "idempotency_key": "stdio-borrowing-pay-two",
-                            "payment_date": "2027-01-01",
-                            "posting_date": "2027-01-01",
+                            "payment_date": "2026-01-01",
+                            "posting_date": "2026-01-01",
                             "bank_transaction_references": [
                                 {"id": str(ids["second_interest_bank"])}
                             ],
@@ -490,8 +492,8 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                             "org_id": str(org_id),
                             "borrowing_id": drawn["borrowing_id"],
                             "idempotency_key": "stdio-borrowing-repay",
-                            "repayment_date": "2027-01-01",
-                            "posting_date": "2027-01-01",
+                            "repayment_date": "2026-01-01",
+                            "posting_date": "2026-01-01",
                             "bank_transaction_references": [{"id": str(ids["principal_bank"])}],
                             "evidence_references": [str(ids["principal_evidence"])],
                         }
@@ -527,7 +529,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                                 "event_id": event_id,
                                 "idempotency_key": f"stdio-reverse-{label}",
                                 "reason": "STDIO 验收按依赖逆序冲正",
-                                "posting_date": "2027-01-02",
+                                "posting_date": "2026-01-02",
                             }
                         },
                     )

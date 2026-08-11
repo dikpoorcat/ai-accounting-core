@@ -174,6 +174,7 @@ def seed_organization(
     jurisdiction: str = "CN",
     urban_maintenance_rate: Decimal = Decimal("0.07"),
     org_id: uuid.UUID | None = None,
+    accounting_period_control_enabled: bool = True,
 ) -> Organization:
     organization = Organization(
         id=org_id or uuid.uuid4(),
@@ -181,6 +182,7 @@ def seed_organization(
         filing_cycle=filing_cycle,
         jurisdiction=jurisdiction,
         urban_maintenance_rate=urban_maintenance_rate,
+        accounting_period_control_enabled=accounting_period_control_enabled,
     )
     session.add(organization)
     session.flush()

@@ -81,6 +81,7 @@ def _preview(service: FinanceService, org_id: uuid.UUID) -> dict[str, Any]:
             org_id=org_id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
         )
     )
 
@@ -91,6 +92,7 @@ def _confirm(service: FinanceService, org_id: uuid.UUID, calculation_hash: str, 
             org_id=org_id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
             calculation_hash=calculation_hash,
             idempotency_key=key,
         )
@@ -99,7 +101,11 @@ def _confirm(service: FinanceService, org_id: uuid.UUID, calculation_hash: str, 
 
 def _seed_graph(engine: sa.Engine, label: str) -> dict[str, Any]:
     with Session(engine) as session:
-        organization = seed_organization(session, name=f"税务伪造验收-{label}")
+        organization = seed_organization(
+            session,
+            name=f"税务伪造验收-{label}",
+            accounting_period_control_enabled=False,
+        )
         service = FinanceService(session)
         ordinary = service.record_event(
             _sale_request(
@@ -256,13 +262,15 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
         sa.text(
             """
             INSERT INTO tax_periods (
-                id, org_id, start_date, end_date, rule_version, status,
+                id, org_id, start_date, end_date, adjustment_posting_date,
+                rule_version, status,
                 calculation, calculation_hash, calculation_hash_payload,
                 filing_cycle_snapshot, jurisdiction_snapshot,
                 urban_maintenance_rate_snapshot, vat_rule_id, surtax_rule_id,
                 adjustment_event_id, created_at
             ) VALUES (
                 :period_id, :org_id, DATE '2026-01-01', DATE '2026-03-31',
+                DATE '2026-03-31',
                 :rule_version, 'posted', CAST(:calculation AS json), :calculation_hash,
                 :calculation_hash_payload, :filing_cycle, :jurisdiction,
                 :urban_maintenance_rate, :vat_rule_id, :surtax_rule_id,
@@ -410,7 +418,11 @@ def test_direct_sql_forgeries_and_concurrent_confirm_are_closed_at_commit(
                         _insert_graph(connection, graph)
 
             with Session(engine) as session:
-                organization = seed_organization(session, name="双连接税期确认硬化验收")
+                organization = seed_organization(
+                    session,
+                    name="双连接税期确认硬化验收",
+                    accounting_period_control_enabled=False,
+                )
                 service = FinanceService(session)
                 for invoice_type in ("ordinary", "special"):
                     source = service.record_event(

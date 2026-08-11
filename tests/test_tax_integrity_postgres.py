@@ -17,7 +17,6 @@ from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.coa import seed_organization
 from ai_accounting.fixed_asset_service import FixedAssetService
-from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
     BusinessEvent,
     Evidence,
@@ -107,37 +106,117 @@ def _insert_legacy_period_pollution(connection: sa.Connection) -> tuple[uuid.UUI
 
 
 def _insert_orphan_final_tax_relief(engine: sa.Engine) -> uuid.UUID:
-    with Session(engine) as session:
-        organization = seed_organization(session, name="0010孤立税务调整污染")
-        event = BusinessEvent(
-            org_id=organization.id,
-            idempotency_key="orphan-final-tax-relief",
-            request_payload_hash="c" * 64,
-            event_type="tax_relief",
-            status="draft",
-            description="孤立正式税务调整",
-            facts={"tax_period": {"polluted": True}},
-            business_date=date(2026, 3, 31),
-            tax_obligation_date=date(2026, 3, 31),
-            posting_date=date(2026, 3, 31),
-            rule_trace=[{"stage": "polluted"}],
-            rule_version="polluted",
+    org_id = uuid.uuid4()
+    event_id = uuid.uuid4()
+    voucher_id = uuid.uuid4()
+    vat_account_id = uuid.uuid4()
+    relief_account_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO organizations (
+                    id, name, taxpayer_type, filing_cycle, jurisdiction,
+                    urban_maintenance_rate, accounting_standard, created_at
+                ) VALUES (
+                    :org_id, '0010孤立税务调整污染', 'small_scale', 'quarterly', 'CN',
+                    0.07, 'small_enterprise', :created_at
+                )
+                """
+            ),
+            {"org_id": org_id, "created_at": now},
         )
-        session.add(event)
-        session.flush()
-        create_voucher(
-            session,
-            event=event,
-            posting_date=event.posting_date,
-            description=event.description,
-            entries=[
-                Entry(account_role="vat_payable", debit_fen=1),
-                Entry(account_role="tax_relief_income", credit_fen=1),
-            ],
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO accounts (
+                    id, org_id, code, name, category, normal_side, system_role, active
+                ) VALUES
+                    (:vat_id, :org_id, '222101', '应交增值税', 'liability', 'credit',
+                     'vat_payable', true),
+                    (:relief_id, :org_id, '6301', '营业外收入', 'revenue', 'credit',
+                     'tax_relief_income', true)
+                """
+            ),
+            {
+                "vat_id": vat_account_id,
+                "relief_id": relief_account_id,
+                "org_id": org_id,
+            },
         )
-        event.status = "posted"
-        session.commit()
-        return event.id
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO business_events (
+                    id, org_id, idempotency_key, request_payload_hash, event_type, status,
+                    description, facts, business_date, tax_obligation_date, posting_date,
+                    rule_trace, rule_version, created_at
+                ) VALUES (
+                    :event_id, :org_id, 'orphan-final-tax-relief', :request_hash,
+                    'tax_relief', 'draft', '孤立正式税务调整', CAST(:facts AS json),
+                    DATE '2026-03-31', DATE '2026-03-31', DATE '2026-03-31',
+                    CAST(:trace AS json), 'polluted', :created_at
+                )
+                """
+            ),
+            {
+                "event_id": event_id,
+                "org_id": org_id,
+                "request_hash": "c" * 64,
+                "facts": json.dumps({"tax_period": {"polluted": True}}),
+                "trace": json.dumps([{"stage": "polluted"}]),
+                "created_at": now,
+            },
+        )
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO vouchers (
+                    id, org_id, event_id, voucher_number, posting_date, description,
+                    status, posted_at
+                ) VALUES (
+                    :voucher_id, :org_id, :event_id, '202603-POLLUTED', DATE '2026-03-31',
+                    '孤立正式税务调整', 'draft', :created_at
+                )
+                """
+            ),
+            {
+                "voucher_id": voucher_id,
+                "org_id": org_id,
+                "event_id": event_id,
+                "created_at": now,
+            },
+        )
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO voucher_lines (
+                    id, org_id, voucher_id, line_number, account_id,
+                    debit_fen, credit_fen, memo
+                ) VALUES
+                    (:line1, :org_id, :voucher_id, 1, :vat_id, 1, 0, ''),
+                    (:line2, :org_id, :voucher_id, 2, :relief_id, 0, 1, '')
+                """
+            ),
+            {
+                "line1": uuid.uuid4(),
+                "line2": uuid.uuid4(),
+                "org_id": org_id,
+                "voucher_id": voucher_id,
+                "vat_id": vat_account_id,
+                "relief_id": relief_account_id,
+            },
+        )
+        connection.execute(
+            sa.text("UPDATE vouchers SET status = 'posted' WHERE id = :voucher_id"),
+            {"voucher_id": voucher_id},
+        )
+        connection.execute(
+            sa.text("UPDATE business_events SET status = 'posted' WHERE id = :event_id"),
+            {"event_id": event_id},
+        )
+    return event_id
 
 
 def _insert_overlapping_rule_pollution(connection: sa.Connection) -> None:
@@ -202,6 +281,7 @@ def _preview(
             org_id=org_id,
             start_date=start_date,
             end_date=end_date,
+            adjustment_posting_date=end_date,
         )
     )
 
@@ -219,6 +299,7 @@ def _confirm(
             org_id=org_id,
             start_date=start_date,
             end_date=end_date,
+            adjustment_posting_date=end_date,
             calculation_hash=calculation_hash,
             idempotency_key=key,
         )
@@ -329,7 +410,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 command.downgrade(config, "0009_fixed_assets")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0011_intangible_borrowings"
+                    "0012_accounting_period_close"
                 )
             with engine.begin() as connection:
                 connection.execute(sa.text("DROP VIEW external_pgcrypto_dependency"))
@@ -426,7 +507,11 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
             command.check(config)
 
             with Session(engine) as session:
-                organization = seed_organization(session, name="0010 PostgreSQL 门禁")
+                organization = seed_organization(
+                    session,
+                    name="0010 PostgreSQL 门禁",
+                    accounting_period_control_enabled=False,
+                )
                 source = FinanceService(session).record_event(
                     _sale_request(
                         organization.id,
@@ -671,7 +756,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     ) VALUES (
                         :event_id, :org_id, 'invalid-tax-boundary', :hash,
                         'tax_relief', 'draft', 'invalid boundary', CAST('{}' AS json),
-                        DATE '2026-09-30', DATE '2026-09-30', CAST('[]' AS json),
+                            DATE '2026-06-30', DATE '2026-06-30', CAST('[]' AS json),
                         '2026.1+2023.12', :created_at
                     ) RETURNING id
                 )
@@ -680,16 +765,16 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                         calculation, calculation_hash, calculation_hash_payload,
                         filing_cycle_snapshot, jurisdiction_snapshot,
                         urban_maintenance_rate_snapshot, vat_rule_id, surtax_rule_id,
-                        adjustment_event_id, created_at
+                        adjustment_event_id, adjustment_posting_date, created_at
                     )
-                    SELECT :period_id, :org_id, DATE '2026-07-02', DATE '2026-09-30',
+                    SELECT :period_id, :org_id, DATE '2026-04-02', DATE '2026-06-30',
                            '2026.1+2023.12', 'posted', CAST('{}' AS json), :hash, '{}',
                            'quarterly', 'CN', 0.07000,
                            :vat_rule_id,
                        (SELECT id FROM tax_rules
                          WHERE code = 'small_scale_surtax_2023_2027'
                            AND jurisdiction = 'CN'),
-                       adjustment.id, :created_at
+                       adjustment.id, DATE '2026-06-30', :created_at
                   FROM adjustment
                 """,
                 "TAX_PERIOD_INVALID_BOUNDARY",
@@ -892,6 +977,30 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     == 1
                 )
 
+            # Reopen Q2 through the supported adjustment reversal so the same
+            # effective-rule quarter can exercise later lock races without
+            # relying on a future posting date.
+            with Session(engine) as session:
+                active_q2 = session.scalar(
+                    sa.select(TaxPeriod).where(
+                        TaxPeriod.org_id == org_id,
+                        TaxPeriod.start_date == date(2026, 4, 1),
+                        TaxPeriod.end_date == date(2026, 6, 30),
+                        TaxPeriod.status == "posted",
+                    )
+                )
+                reopened_q2 = FinanceService(session).reverse_event(
+                    ReverseEventRequest(
+                        org_id=org_id,
+                        event_id=active_q2.adjustment_event_id,
+                        idempotency_key="tax-integrity-q2-adjustment-reversal",
+                        reason="并发验收前规范冲正税期调整",
+                        posting_date=date(2026, 7, 1),
+                    )
+                )
+                assert reopened_q2.status == "posted", reopened_q2.errors
+                session.commit()
+
             # A source transaction that owns the organization lock must commit
             # before confirmation recalculates, producing a stable stale-hash result.
             with Session(engine) as session:
@@ -899,12 +1008,12 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     _sale_request(
                         org_id,
                         key="tax-integrity-q3-source-before-preview",
-                        business_date=date(2026, 7, 15),
+                        business_date=date(2026, 4, 15),
                     )
                 )
                 assert q3_source.status == "posted", q3_source.errors
                 q3_preview = _preview(
-                    FinanceService(session), org_id, date(2026, 7, 1), date(2026, 9, 30)
+                    FinanceService(session), org_id, date(2026, 4, 1), date(2026, 6, 30)
                 )
                 q3_hash = str(q3_preview["calculation_hash"])
                 session.commit()
@@ -919,7 +1028,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                         _sale_request(
                             org_id,
                             key="tax-integrity-q3-concurrent-source",
-                            business_date=date(2026, 8, 15),
+                            business_date=date(2026, 5, 15),
                         )
                     )
                     session.flush()
@@ -939,8 +1048,8 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     result = _confirm(
                         FinanceService(session),
                         org_id,
-                        date(2026, 7, 1),
-                        date(2026, 9, 30),
+                        date(2026, 4, 1),
+                        date(2026, 6, 30),
                         q3_hash,
                         "tax-integrity-q3-confirm-stale",
                     )
@@ -969,12 +1078,12 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     _sale_request(
                         org_id,
                         key="tax-integrity-q4-source-before-config",
-                        business_date=date(2026, 10, 15),
+                        business_date=date(2026, 6, 15),
                     )
                 )
                 assert q4_source.status == "posted", q4_source.errors
                 q4_preview = _preview(
-                    FinanceService(session), org_id, date(2026, 10, 1), date(2026, 12, 31)
+                    FinanceService(session), org_id, date(2026, 4, 1), date(2026, 6, 30)
                 )
                 q4_hash = str(q4_preview["calculation_hash"])
                 session.commit()
@@ -1009,8 +1118,8 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     result = _confirm(
                         FinanceService(session),
                         org_id,
-                        date(2026, 10, 1),
-                        date(2026, 12, 31),
+                        date(2026, 4, 1),
+                        date(2026, 6, 30),
                         q4_hash,
                         "tax-integrity-q4-confirm-stale-config",
                     )
@@ -1040,6 +1149,24 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     ),
                     {"org_id": org_id},
                 )
+
+            with Session(engine) as session:
+                restored_preview = _preview(
+                    FinanceService(session),
+                    org_id,
+                    date(2026, 4, 1),
+                    date(2026, 6, 30),
+                )
+                restored_q2 = _confirm(
+                    FinanceService(session),
+                    org_id,
+                    date(2026, 4, 1),
+                    date(2026, 6, 30),
+                    str(restored_preview["calculation_hash"]),
+                    "tax-integrity-q2-restored-after-races",
+                )
+                assert restored_q2.status == "posted", restored_q2.errors
+                session.commit()
 
             # Exercise the real fixed-asset service path against a closed Q2:
             # taxable sale is blocked, while a zero-income retirement is allowed.
@@ -1157,7 +1284,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 command.downgrade(config, "0009_fixed_assets")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0011_intangible_borrowings"
+                    "0012_accounting_period_close"
                 )
         finally:
             engine.dispose()

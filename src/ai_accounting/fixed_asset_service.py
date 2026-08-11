@@ -25,7 +25,7 @@ from .fixed_assets import (
     calculate_used_fixed_asset_vat,
     fixed_asset_calculation_hash,
 )
-from .ledger import Entry, create_voucher
+from .ledger import AccountingPeriodError, Entry, create_voucher
 from .models import (
     AuditLog,
     BankTransaction,
@@ -411,6 +411,11 @@ class FixedAssetService(FinanceService):
             return self._store_fixed_asset_nonposted(
                 command,
                 request,
+                status=FixedAssetResultStatus.REJECTED,
+                errors=[exc.code],
+            )
+        except AccountingPeriodError as exc:
+            return FixedAssetResult(
                 status=FixedAssetResultStatus.REJECTED,
                 errors=[exc.code],
             )

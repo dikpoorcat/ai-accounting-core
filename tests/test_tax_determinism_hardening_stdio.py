@@ -59,6 +59,8 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
         organization = seed_organization(database_session, name="税务硬化 STDIO 验收企业")
+        organization.accounting_period_control_enabled = False
+        database_session.flush()
         evidence = Evidence(
             org_id=organization.id,
             sha256="h" * 64,
@@ -174,6 +176,7 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                     "org_id": org_id,
                     "start_date": "2026-01-01",
                     "end_date": "2026-03-31",
+                    "adjustment_posting_date": "2026-03-31",
                 }
                 preview = await call(
                     "finance_calculate_tax_period", {"request": q1_request}
@@ -252,6 +255,7 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                     "org_id": org_id,
                     "start_date": "2026-04-01",
                     "end_date": "2026-06-30",
+                    "adjustment_posting_date": "2026-06-30",
                 }
                 empty_preview = await call(
                     "finance_calculate_tax_period", {"request": q2_request}

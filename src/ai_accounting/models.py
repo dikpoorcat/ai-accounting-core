@@ -76,6 +76,12 @@ class Organization(Base):
     jurisdiction: Mapped[str] = mapped_column(String(100), default="CN")
     urban_maintenance_rate: Mapped[Decimal] = mapped_column(Numeric(6, 5), default=Decimal("0.07"))
     accounting_standard: Mapped[str] = mapped_column(String(50), default="small_enterprise")
+    accounting_period_control_enabled: Mapped[bool] = mapped_column(
+        default=True, server_default="1"
+    )
+    accounting_period_control_start_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
@@ -84,6 +90,11 @@ class Organization(Base):
         CheckConstraint(
             "urban_maintenance_rate IN (0.07, 0.05, 0.01)",
             name="ck_org_urban_rate",
+        ),
+        CheckConstraint(
+            "accounting_period_control_enabled IS TRUE OR "
+            "accounting_period_control_start_date IS NULL",
+            name="ck_org_accounting_period_control",
         ),
     )
 
@@ -775,6 +786,93 @@ class PayrollTaxStateSlot(Base):
     )
 
 
+class AccountingPeriodCalendar(Base):
+    __tablename__ = "accounting_period_calendars"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
+    calendar_year: Mapped[int] = mapped_column(Integer)
+    rule_version: Mapped[str] = mapped_column(String(80))
+    rule_effective_from: Mapped[date] = mapped_column(Date)
+    source_urls: Mapped[list[str]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_accounting_period_calendar_org_id"),
+        UniqueConstraint(
+            "org_id", "calendar_year", name="uq_accounting_period_calendar_org_year"
+        ),
+        CheckConstraint(
+            "calendar_year BETWEEN 1 AND 9999", name="ck_accounting_period_calendar_year"
+        ),
+        CheckConstraint(
+            "length(trim(rule_version)) > 0", name="ck_accounting_period_calendar_rule"
+        ),
+    )
+
+
+class AccountingPeriodAction(Base):
+    __tablename__ = "accounting_period_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(30))
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    request_payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(30))
+    input_facts: Mapped[dict[str, Any]] = mapped_column(JSON)
+    missing_information: Mapped[list[str]] = mapped_column(JSON, default=list)
+    errors: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    confirmed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_accounting_period_action_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_accounting_period_action_idempotency"
+        ),
+        CheckConstraint(
+            "action_type IN ('period_generation','period_close')",
+            name="ck_accounting_period_action_type",
+        ),
+        CheckConstraint(
+            "status IN ('posted','needs_information','rejected')",
+            name="ck_accounting_period_action_status",
+        ),
+        CheckConstraint(
+            "request_payload_hash IS NULL OR length(request_payload_hash) = 64",
+            name="ck_accounting_period_action_hash_length",
+        ),
+    )
+
+
+accounting_period_action_evidence = Table(
+    "accounting_period_action_evidence",
+    Base.metadata,
+    Column("org_id", Uuid, primary_key=True),
+    Column("action_id", Uuid, primary_key=True),
+    Column("evidence_id", Uuid, primary_key=True),
+    Column("created_at", DateTime(timezone=True), nullable=False, default=utcnow),
+    ForeignKeyConstraint(
+        ["org_id", "action_id"],
+        ["accounting_period_actions.org_id", "accounting_period_actions.id"],
+        name="fk_period_action_evidence_org_action",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["org_id", "evidence_id"],
+        ["evidence.org_id", "evidence.id"],
+        name="fk_period_action_evidence_org_evidence",
+        ondelete="RESTRICT",
+    ),
+)
+
+
 class AccountingPeriod(Base):
     __tablename__ = "accounting_periods"
 
@@ -782,15 +880,158 @@ class AccountingPeriod(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
+    calendar_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    generation_action_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    calendar_year: Mapped[int] = mapped_column(Integer)
+    calendar_month: Mapped[int] = mapped_column(Integer)
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(20), default="open")
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "calendar_id"],
+            ["accounting_period_calendars.org_id", "accounting_period_calendars.id"],
+            name="fk_accounting_period_org_calendar",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "generation_action_id"],
+            ["accounting_period_actions.org_id", "accounting_period_actions.id"],
+            name="fk_accounting_period_org_generation_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "close_id"],
+            ["accounting_period_closes.org_id", "accounting_period_closes.id"],
+            name="fk_accounting_period_org_close",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+        UniqueConstraint("org_id", "id", name="uq_accounting_period_org_id"),
+        UniqueConstraint(
+            "org_id", "calendar_year", "calendar_month", name="uq_accounting_period_org_month"
+        ),
         UniqueConstraint("org_id", "start_date", "end_date", name="uq_period_range"),
+        CheckConstraint("calendar_year BETWEEN 1 AND 9999", name="ck_period_year"),
+        CheckConstraint("calendar_month BETWEEN 1 AND 12", name="ck_period_month"),
         CheckConstraint("start_date <= end_date", name="ck_period_dates"),
+        CheckConstraint(
+            "calendar_year = CAST(substr(CAST(start_date AS VARCHAR), 1, 4) AS INTEGER) "
+            "AND calendar_month = CAST(substr(CAST(start_date AS VARCHAR), 6, 2) AS INTEGER) "
+            "AND substr(CAST(start_date AS VARCHAR), 9, 2) = '01' "
+            "AND calendar_year = CAST(substr(CAST(end_date AS VARCHAR), 1, 4) AS INTEGER) "
+            "AND calendar_month = CAST(substr(CAST(end_date AS VARCHAR), 6, 2) AS INTEGER) "
+            "AND CAST(substr(CAST(end_date AS VARCHAR), 9, 2) AS INTEGER) BETWEEN 28 AND 31",
+            name="ck_period_natural_month",
+        ),
         CheckConstraint("status IN ('open','closed')", name="ck_period_status"),
+        CheckConstraint(
+            "(status = 'open' AND closed_at IS NULL AND close_id IS NULL) OR "
+            "(status = 'closed' AND closed_at IS NOT NULL AND close_id IS NOT NULL)",
+            name="ck_period_close_state",
+        ),
+    )
+
+
+class AccountingPeriodClose(Base):
+    __tablename__ = "accounting_period_closes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    calculation: Mapped[dict[str, Any]] = mapped_column(JSON)
+    calculation_payload: Mapped[str] = mapped_column(Text)
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    rule_version: Mapped[str] = mapped_column(String(80))
+    rule_effective_from: Mapped[date] = mapped_column(Date)
+    source_urls: Mapped[list[str]] = mapped_column(JSON)
+    previous_close_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    checker_version: Mapped[str] = mapped_column(String(80))
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    voucher_count: Mapped[int] = mapped_column(Integer)
+    line_count: Mapped[int] = mapped_column(Integer)
+    total_debit_fen: Mapped[int] = mapped_column(BigInteger)
+    total_credit_fen: Mapped[int] = mapped_column(BigInteger)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_accounting_period_close_org_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["accounting_period_actions.org_id", "accounting_period_actions.id"],
+            name="fk_accounting_period_close_org_action",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_accounting_period_close_org_id"),
+        CheckConstraint("length(calculation_payload) > 0", name="ck_period_close_payload"),
+        CheckConstraint("length(calculation_hash) = 64", name="ck_period_close_hash_length"),
+        CheckConstraint(
+            "previous_close_hash IS NULL OR length(previous_close_hash) = 64",
+            name="ck_period_close_previous_hash_length",
+        ),
+        CheckConstraint(
+            "voucher_count >= 0 AND line_count >= 0", name="ck_period_close_counts"
+        ),
+        CheckConstraint(
+            "total_debit_fen >= 0 AND total_debit_fen = total_credit_fen",
+            name="ck_period_close_totals",
+        ),
+    )
+
+
+class AccountingPeriodCloseSource(Base):
+    __tablename__ = "accounting_period_close_sources"
+
+    close_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    voucher_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    voucher_number: Mapped[str] = mapped_column(String(50))
+    posting_date: Mapped[date] = mapped_column(Date)
+    description: Mapped[str] = mapped_column(Text)
+    event_type: Mapped[str] = mapped_column(String(60))
+    event_status_at_close: Mapped[str] = mapped_column(String(30))
+    request_payload_hash_at_close: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    debit_fen: Mapped[int] = mapped_column(BigInteger)
+    credit_fen: Mapped[int] = mapped_column(BigInteger)
+    line_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "close_id"],
+            ["accounting_period_closes.org_id", "accounting_period_closes.id"],
+            name="fk_period_close_source_org_close",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "voucher_id"],
+            ["vouchers.org_id", "vouchers.id"],
+            name="fk_period_close_source_org_voucher",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_period_close_source_org_event",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "event_status_at_close IN ('posted','reversed')",
+            name="ck_period_close_source_event_status",
+        ),
+        CheckConstraint(
+            "debit_fen > 0 AND debit_fen = credit_fen",
+            name="ck_period_close_source_balanced",
+        ),
     )
 
 
@@ -1774,6 +2015,55 @@ class BusinessEvent(Base):
     )
 
 
+class BusinessEventDependency(Base):
+    """Immutable normalized dependency between supported customer events."""
+
+    __tablename__ = "business_event_dependencies"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    parent_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    child_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    dependency_kind: Mapped[str] = mapped_column(String(30))
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "parent_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_business_event_dependency_org_parent",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "child_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_business_event_dependency_org_child",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_business_event_dependency_org_id"),
+        CheckConstraint(
+            "dependency_kind IN ('advance_fulfillment','advance_refund','sale_return')",
+            name="ck_business_event_dependency_kind",
+        ),
+        CheckConstraint("parent_event_id <> child_event_id", name="ck_event_dependency_distinct"),
+        CheckConstraint("amount_fen > 0", name="ck_event_dependency_amount"),
+    )
+
+
+class AccountingPeriodDependencyMigrationAction(Base):
+    """Marks normalized dependency rows proven and backfilled by revision 0012."""
+
+    __tablename__ = "accounting_period_dependency_migration_actions"
+
+    dependency_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("business_event_dependencies.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PayrollEventLink(Base):
     """Normalized origin link from a payroll-related event to its source batch."""
 
@@ -1903,6 +2193,7 @@ class TaxPeriod(Base):
     )
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
+    adjustment_posting_date: Mapped[date] = mapped_column(Date)
     rule_version: Mapped[str] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="posted")
     calculation: Mapped[dict[str, Any]] = mapped_column(JSON)

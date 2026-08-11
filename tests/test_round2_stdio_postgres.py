@@ -70,7 +70,7 @@ def _policy_parameters() -> dict[str, object]:
             },
         ],
         "income_tax": {
-            "version": "r2-stdio-income-tax-2026",
+            "version": "r2-stdio-income-tax-2025",
             "primary_source_url": (
                 "https://www.chinatax.gov.cn/chinatax/n810341/n810765/"
                 "n3359382/201812/c4182700/content.html"
@@ -79,8 +79,8 @@ def _policy_parameters() -> dict[str, object]:
                 "https://www.chinatax.gov.cn/chinatax/n810341/n810765/"
                 "n3359382/201812/c4182700/content.html"
             ),
-            "effective_from": "2026-01-01",
-            "effective_to": "2026-12-31",
+            "effective_from": "2025-07-01",
+            "effective_to": "2026-06-30",
             "monthly_standard_deduction_fen": 500_000,
             "brackets": [
                 {"upper_bound_fen": 3_600_000, "rate": "0.03", "quick_deduction_fen": 0},
@@ -92,10 +92,10 @@ def _policy_parameters() -> dict[str, object]:
             ],
         },
         "annual_bonus": {
-            "version": "r2-stdio-annual-bonus-2026",
+            "version": "r2-stdio-annual-bonus-2025",
             "primary_source_url": "https://m.mof.gov.cn/czxw/202308/t20230828_3904328.htm",
             "effective_from": "2023-01-01",
-            "effective_to": "2027-12-31",
+            "effective_to": "2027-06-30",
             "brackets": [
                 {
                     "upper_monthly_average_fen": 3_000_000,
@@ -147,19 +147,19 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
     statement = tmp_path / "r2-payroll-bank.csv"
     statement.write_text(
         "date,amount,counterparty,memo,reference\n"
-        "2026-09-05,-4250.00,员工,第一笔工资,R2-SALARY-1\n"
-        "2026-09-06,-4145.00,员工,第二笔工资,R2-SALARY-2\n"
-        "2026-09-07,-2400.00,社保局,社保缴纳,R2-SOCIAL\n"
-        "2026-09-07,-1400.00,公积金中心,公积金缴纳,R2-HOUSING\n"
-        "2026-09-07,-105.00,税务局,个税缴纳,R2-IIT\n",
+        "2026-03-05,-4250.00,员工,第一笔工资,R2-SALARY-1\n"
+        "2026-03-06,-4145.00,员工,第二笔工资,R2-SALARY-2\n"
+        "2026-03-07,-2400.00,社保局,社保缴纳,R2-SOCIAL\n"
+        "2026-03-07,-1400.00,公积金中心,公积金缴纳,R2-HOUSING\n"
+        "2026-03-07,-105.00,税务局,个税缴纳,R2-IIT\n",
         encoding="utf-8-sig",
     )
     expected_bank_rows = (
-        (date(2026, 9, 5), -425_000, "员工", "第一笔工资", "R2-SALARY-1"),
-        (date(2026, 9, 6), -414_500, "员工", "第二笔工资", "R2-SALARY-2"),
-        (date(2026, 9, 7), -240_000, "社保局", "社保缴纳", "R2-SOCIAL"),
-        (date(2026, 9, 7), -140_000, "公积金中心", "公积金缴纳", "R2-HOUSING"),
-        (date(2026, 9, 7), -10_500, "税务局", "个税缴纳", "R2-IIT"),
+        (date(2026, 3, 5), -425_000, "员工", "第一笔工资", "R2-SALARY-1"),
+        (date(2026, 3, 6), -414_500, "员工", "第二笔工资", "R2-SALARY-2"),
+        (date(2026, 3, 7), -240_000, "社保局", "社保缴纳", "R2-SOCIAL"),
+        (date(2026, 3, 7), -140_000, "公积金中心", "公积金缴纳", "R2-HOUSING"),
+        (date(2026, 3, 7), -10_500, "税务局", "个税缴纳", "R2-IIT"),
     )
     with PostgresContainer("postgres:17-alpine", driver="psycopg") as postgres:
         database_url = postgres.get_connection_url(driver="psycopg")
@@ -169,7 +169,9 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
         engine = create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="R2 STDIO 全生命周期企业")
+                organization = seed_organization(
+                    session, accounting_period_control_enabled=False, name="R2 STDIO 全生命周期企业"
+                )
                 session.commit()
                 org_id = str(organization.id)
 
@@ -214,9 +216,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 )
                                 assert voucher is not None and voucher.status == "posted"
 
-                        def assert_reversal(
-                            original_event_id: str, reversal_event_id: str
-                        ) -> None:
+                        def assert_reversal(original_event_id: str, reversal_event_id: str) -> None:
                             with Session(engine) as verification:
                                 original = verification.get(
                                     BusinessEvent, uuid.UUID(original_event_id)
@@ -293,7 +293,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 assert employee_row.org_id == uuid.UUID(org_id)
                                 assert employee_row.employee_code == "R2-STDIO-E-001"
                                 assert employee_row.name == "R2 工资员工"
-                                assert employee_row.employment_start_date == date(2026, 9, 1)
+                                assert employee_row.employment_start_date == date(2026, 3, 1)
                                 assert employee_row.status == "active"
 
                         def assert_profile(employee_id: str, profile_version_id: str) -> None:
@@ -307,7 +307,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 )
                                 assert profile is not None
                                 assert str(profile.id) == profile_version_id
-                                assert profile.effective_from == date(2026, 9, 1)
+                                assert profile.effective_from == date(2026, 3, 1)
                                 assert profile.effective_to is None
                                 assert profile.expense_role == "payroll_management_expense"
                                 assert profile.social_insurance_base_fen == 1_000_000
@@ -319,26 +319,27 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 policy = verification.scalar(
                                     select(PayrollPolicyVersion).where(
                                         PayrollPolicyVersion.org_id == uuid.UUID(org_id),
-                                        PayrollPolicyVersion.version == "r2-stdio-2026",
+                                        PayrollPolicyVersion.version == "r2-stdio-2025",
                                     )
                                 )
                                 assert policy is not None
                                 assert str(policy.id) == policy_version_id
                                 assert policy.region == "R2-STDIO"
-                                assert policy.effective_from == date(2026, 1, 1)
-                                assert policy.effective_to == date(2026, 12, 31)
+                                assert policy.effective_from == date(2025, 7, 1)
+                                assert policy.effective_to == date(2026, 6, 30)
                                 assert policy.source_url == (
                                     "https://www.chinatax.gov.cn/chinatax/n810341/"
                                     "n810765/n3359382/201812/c4182700/content.html"
                                 )
-                                assert policy.parameters["payment_targets"] == _policy_parameters()[
-                                    "payment_targets"
-                                ]
+                                assert (
+                                    policy.parameters["payment_targets"]
+                                    == _policy_parameters()["payment_targets"]
+                                )
                                 assert policy.parameters["income_tax"]["version"] == (
-                                    "r2-stdio-income-tax-2026"
+                                    "r2-stdio-income-tax-2025"
                                 )
                                 assert policy.parameters["annual_bonus"]["version"] == (
-                                    "r2-stdio-annual-bonus-2026"
+                                    "r2-stdio-annual-bonus-2025"
                                 )
                                 assert {
                                     (item["code"], item["base_kind"])
@@ -536,12 +537,15 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 assert bank.bank_account_code == "1002"
                                 assert bank.currency == "CNY"
                                 assert bank.matched_event_id is None
-                                assert verification.scalars(
-                                    select(BankTransactionMatch).where(
-                                        BankTransactionMatch.org_id == bank.org_id,
-                                        BankTransactionMatch.bank_transaction_id == bank.id,
-                                    )
-                                ).all() == []
+                                assert (
+                                    verification.scalars(
+                                        select(BankTransactionMatch).where(
+                                            BankTransactionMatch.org_id == bank.org_id,
+                                            BankTransactionMatch.bank_transaction_id == bank.id,
+                                        )
+                                    ).all()
+                                    == []
+                                )
                         bank_ids = iter(imported["imported_ids"])
                         salary_bank_first = next(bank_ids)
                         salary_bank_second = next(bank_ids)
@@ -556,7 +560,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "org_id": org_id,
                                     "employee_code": "R2-STDIO-E-001",
                                     "name": "R2 工资员工",
-                                    "employment_start_date": "2026-09-01",
+                                    "employment_start_date": "2026-03-01",
                                     "status": "active",
                                 }
                             },
@@ -569,7 +573,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 "request": {
                                     "org_id": org_id,
                                     "employee_id": employee_id,
-                                    "effective_from": "2026-09-01",
+                                    "effective_from": "2026-03-01",
                                     "expense_role": "payroll_management_expense",
                                     "social_insurance_base_fen": 1_000_000,
                                     "housing_fund_base_fen": 1_000_000,
@@ -585,9 +589,9 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 "request": {
                                     "org_id": org_id,
                                     "region": "R2-STDIO",
-                                    "effective_from": "2026-01-01",
-                                    "effective_to": "2026-12-31",
-                                    "version": "r2-stdio-2026",
+                                    "effective_from": "2025-07-01",
+                                    "effective_to": "2026-06-30",
+                                    "version": "r2-stdio-2025",
                                     "source_url": (
                                         "https://www.chinatax.gov.cn/chinatax/n810341/"
                                         "n810765/n3359382/201812/c4182700/content.html"
@@ -605,9 +609,9 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "org_id": org_id,
                                     "idempotency_key": "r2-stdio-preview",
                                     "batch_kind": "regular",
-                                    "payroll_period": "2026-09",
-                                    "posting_date": "2026-09-05",
-                                    "payment_date": "2026-09-05",
+                                    "payroll_period": "2026-03",
+                                    "posting_date": "2026-03-05",
+                                    "payment_date": "2026-03-05",
                                     "evidence_references": [evidence["evidence_id"]],
                                     "employee_items": [
                                         {
@@ -629,9 +633,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                         assert len(preview["data"]["lines"]) == 1
                         assert_batch_status(preview["batch_id"], "calculated")
                         with Session(engine) as verification:
-                            batch = verification.get(
-                                PayrollBatch, uuid.UUID(preview["batch_id"])
-                            )
+                            batch = verification.get(PayrollBatch, uuid.UUID(preview["batch_id"]))
                             profile = verification.scalar(
                                 select(EmployeePayrollProfileVersion).where(
                                     EmployeePayrollProfileVersion.org_id == uuid.UUID(org_id),
@@ -642,24 +644,24 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             policy = verification.scalar(
                                 select(PayrollPolicyVersion).where(
                                     PayrollPolicyVersion.org_id == uuid.UUID(org_id),
-                                    PayrollPolicyVersion.version == "r2-stdio-2026",
+                                    PayrollPolicyVersion.version == "r2-stdio-2025",
                                 )
                             )
                             assert batch is not None and profile is not None and policy is not None
                             assert batch.org_id == uuid.UUID(org_id)
                             assert batch.status == "calculated"
                             assert batch.batch_kind == "regular"
-                            assert batch.payroll_period == "2026-09"
-                            assert batch.posting_date == date(2026, 9, 5)
-                            assert batch.payment_date == date(2026, 9, 5)
+                            assert batch.payroll_period == "2026-03"
+                            assert batch.posting_date == date(2026, 3, 5)
+                            assert batch.payment_date == date(2026, 3, 5)
                             assert batch.calculation_hash == preview["calculation_hash"]
                             assert batch.request_payload_hash is not None
                             assert batch.policy_version_id == policy.id
                             assert batch.policy_snapshot["id"] == str(policy.id)
                             assert batch.calculation_trace == preview["trace"]
-                            assert batch.calculation_input["request"][
-                                "evidence_references"
-                            ] == [evidence["evidence_id"]]
+                            assert batch.calculation_input["request"]["evidence_references"] == [
+                                evidence["evidence_id"]
+                            ]
                             lines = verification.scalars(
                                 select(PayrollLine).where(PayrollLine.payroll_batch_id == batch.id)
                             ).all()
@@ -732,9 +734,9 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "idempotency_key": key,
                                     "event_type": "salary_payment",
                                     "business_dates": {
-                                        "business_date": "2026-09-05",
-                                        "posting_date": "2026-09-05",
-                                        "payment_date": "2026-09-05",
+                                        "business_date": "2026-03-05",
+                                        "posting_date": "2026-03-05",
+                                        "payment_date": "2026-03-05",
                                     },
                                     "amounts": {"amount_fen": amount_fen},
                                     "allocations": [
@@ -787,13 +789,11 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "event_id": salary_first["event_id"],
                                     "idempotency_key": "r5-stdio-salary-1-reversal",
                                     "reason": "R5 工资流水纠错",
-                                    "posting_date": "2026-09-06",
+                                    "posting_date": "2026-03-06",
                                 }
                             },
                         )
-                        assert_reversal(
-                            salary_first["event_id"], salary_first_reversal["event_id"]
-                        )
+                        assert_reversal(salary_first["event_id"], salary_first_reversal["event_id"])
                         assert_bank_pointer(salary_bank_first, None)
                         assert_bank_history(
                             salary_bank_first,
@@ -903,9 +903,9 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "idempotency_key": key,
                                     "event_type": event_type,
                                     "business_dates": {
-                                        "business_date": "2026-09-07",
-                                        "posting_date": "2026-09-07",
-                                        "payment_date": "2026-09-07",
+                                        "business_date": "2026-03-07",
+                                        "posting_date": "2026-03-07",
+                                        "payment_date": "2026-03-07",
                                     },
                                     "amounts": {
                                         "amount_fen": sum(
@@ -964,9 +964,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 {"individual_income_tax"},
                             ),
                         )
-                        assert_posted_event(
-                            income_tax["event_id"], "individual_income_tax_payment"
-                        )
+                        assert_posted_event(income_tax["event_id"], "individual_income_tax_payment")
                         assert_bank_pointer(income_tax_bank, income_tax["event_id"])
                         assert_bank_history(
                             income_tax_bank,
@@ -1001,10 +999,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 item["status"] == "settled"
                                 and item["settled_amount_fen"] == item["original_amount_fen"]
                             )
-                            or (
-                                item["status"] == "reversed"
-                                and item["settled_amount_fen"] == 0
-                            )
+                            or (item["status"] == "reversed" and item["settled_amount_fen"] == 0)
                             for item in settled_lifecycle["lifecycle"]["open_items"]
                         )
                         reverse_order = [
@@ -1029,7 +1024,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                         "event_id": item["event_id"],
                                         "idempotency_key": f"r2-stdio-reverse-{index}",
                                         "reason": "R2-008 生命周期冲正",
-                                        "posting_date": "2026-09-08",
+                                        "posting_date": "2026-03-08",
                                     }
                                 },
                             )
@@ -1040,9 +1035,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 None,
                                 {(item["event_id"], reversal["event_id"])},
                             )
-                            assert_payment_reversal_links(
-                                item["event_id"], reversal["event_id"]
-                            )
+                            assert_payment_reversal_links(item["event_id"], reversal["event_id"])
                             reversals.append(reversal)
                         return {
                             "evidence": evidence,
@@ -1182,8 +1175,10 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                     )
                     for item in allocations
                 }
-                assert len(allocations) == len(actual_payment_allocations) == len(
-                    expected_payment_allocations
+                assert (
+                    len(allocations)
+                    == len(actual_payment_allocations)
+                    == len(expected_payment_allocations)
                 )
                 assert actual_payment_allocations == expected_payment_allocations
                 for item in allocations:
@@ -1201,9 +1196,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                     select(BankTransaction).where(BankTransaction.org_id == batch.org_id)
                 ).all()
                 bank_matches = session.scalars(
-                    select(BankTransactionMatch).where(
-                        BankTransactionMatch.org_id == batch.org_id
-                    )
+                    select(BankTransactionMatch).where(BankTransactionMatch.org_id == batch.org_id)
                 ).all()
                 assert len(bank_rows) == 5
                 salary_reuse_row = next(
@@ -1215,12 +1208,10 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                     if match.bank_transaction_id == salary_reuse_row.id
                 ]
                 assert len(salary_reuse_matches) == 2
-                assert str(salary_reuse_row.matched_event_id) == result["salary_reissued"][
-                    "event_id"
-                ]
-                assert {
-                    str(match.event_id) for match in salary_reuse_matches
-                } == {
+                assert (
+                    str(salary_reuse_row.matched_event_id) == result["salary_reissued"]["event_id"]
+                )
+                assert {str(match.event_id) for match in salary_reuse_matches} == {
                     result["salary_first"]["event_id"],
                     result["salary_reissued"]["event_id"],
                 }
@@ -1278,15 +1269,11 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
         "file": "R7_FILE_SENTINEL_" + "Q" * 160,
     }
     invalid_date = tmp_path / "r7-invalid-date.csv"
-    invalid_date.write_text(
-        f"date,amount\n{sentinels['date']},100.00\n", encoding="utf-8"
-    )
+    invalid_date.write_text(f"date,amount\n{sentinels['date']},100.00\n", encoding="utf-8")
     invalid_amount = tmp_path / "r7-invalid-amount.csv"
-    invalid_amount.write_text(
-        f"date,amount\n2026-09-05,{sentinels['amount']}\n", encoding="utf-8"
-    )
+    invalid_amount.write_text(f"date,amount\n2025-09-05,{sentinels['amount']}\n", encoding="utf-8")
     missing_column = tmp_path / "r7-missing-column.csv"
-    missing_column.write_text("date,amount\n2026-09-05,100.00\n", encoding="utf-8")
+    missing_column.write_text("date,amount\n2025-09-05,100.00\n", encoding="utf-8")
     malformed_xlsx = tmp_path / "r7-malformed.xlsx"
     malformed_xlsx.write_bytes(sentinels["file"].encode("utf-8"))
 
@@ -1298,7 +1285,9 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
         engine = create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="R7 STDIO 导入错误企业")
+                organization = seed_organization(
+                    session, accounting_period_control_enabled=False, name="R7 STDIO 导入错误企业"
+                )
                 session.commit()
                 org_id = str(organization.id)
 

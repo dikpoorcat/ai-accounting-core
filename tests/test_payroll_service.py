@@ -3,11 +3,21 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ai_accounting.accounting_period_schemas import (
+    AccountingPeriodReviewFacts,
+    ConfirmAccountingPeriodCloseRequest,
+    GenerateAccountingPeriodRequest,
+    PreviewAccountingPeriodCloseRequest,
+)
+from ai_accounting.accounting_period_service import AccountingPeriodService
+from ai_accounting.coa import seed_organization
 from ai_accounting.models import (
     BankTransaction,
+    Evidence,
     OpenItem,
     Organization,
     PayrollBatch,
@@ -93,7 +103,7 @@ def register_payroll_facts(session: Session, organization: Organization) -> uuid
             org_id=organization.id,
             employee_code="E-001",
             name="张三",
-            employment_start_date=date(2026, 9, 1),
+            employment_start_date=date(2026, 3, 1),
             status="active",
         )
     )
@@ -103,7 +113,7 @@ def register_payroll_facts(session: Session, organization: Organization) -> uuid
             RegisterEmployeePayrollProfileVersionRequest(
                 org_id=organization.id,
                 employee_id=employee_id,
-                effective_from=date(2026, 9, 1),
+                effective_from=date(2026, 3, 1),
                 expense_role="payroll_management_expense",
                 social_insurance_base_fen=1_000_000,
                 housing_fund_base_fen=1_000_000,
@@ -140,9 +150,9 @@ def preview_and_confirm(
                 "org_id": organization.id,
                 "idempotency_key": "payroll-preview-1",
                 "batch_kind": "regular",
-                "payroll_period": "2026-09",
-                "posting_date": "2026-09-05",
-                "payment_date": "2026-09-05",
+                "payroll_period": "2026-03",
+                "posting_date": "2026-03-05",
+                "payment_date": "2026-03-05",
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -172,6 +182,142 @@ def preview_and_confirm(
     return service, confirmed
 
 
+def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("ai_accounting.ledger.china_current_date", lambda: date(2026, 12, 31))
+    organization = seed_organization(session, name="工资预览关闭期间")
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="q" * 64,
+        original_name="payroll-period.txt",
+        source="test",
+        size_bytes=1,
+        storage_path="test/payroll-period.txt",
+    )
+    session.add(evidence)
+    session.flush()
+    period_service = AccountingPeriodService(session, current_date=date(2026, 12, 31))
+    generated = period_service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-09",
+            idempotency_key="payroll-period-generate",
+            confirmed_by="reviewer",
+            confirmation_note="生成工资月份",
+            evidence_references=[evidence.id],
+        )
+    )
+    close_facts = PreviewAccountingPeriodCloseRequest(
+        org_id=organization.id,
+        period_id=generated.period_id,
+        closing_date=date(2026, 9, 30),
+    )
+    close_preview = period_service.preview_accounting_period_close(close_facts)
+    close = period_service.confirm_accounting_period_close(
+        ConfirmAccountingPeriodCloseRequest(
+            **close_facts.model_dump(),
+            calculation_hash=close_preview.calculation_hash,
+            idempotency_key="payroll-period-close",
+            review_facts=AccountingPeriodReviewFacts(
+                voucher_completeness_reviewed=True,
+                bank_reconciliation_reviewed=True,
+                open_items_reviewed=True,
+                payroll_and_statutory_items_reviewed=True,
+                tax_items_reviewed=True,
+                asset_and_borrowing_schedules_reviewed=True,
+            ),
+            confirmed_by="reviewer",
+            confirmation_note="关闭工资月份",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert close.status == "posted"
+    employee_id = register_payroll_facts(session, organization)
+    service = FinanceService(session)
+    preview = service.preview_payroll(
+        PreviewPayrollRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "period-payroll-preview",
+                "batch_kind": "regular",
+                "payroll_period": "2026-09",
+                "posting_date": "2026-09-05",
+                "payment_date": "2026-09-05",
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "base_salary_fen": 1_000_000,
+                        "performance_pay_fen": 0,
+                        "taxable_allowance_fen": 0,
+                        "tax_exempt_income_fen": 0,
+                        "attendance_deduction_fen": 0,
+                        "special_additional_deduction_fen": 0,
+                        "other_legal_deduction_fen": 0,
+                    }
+                ],
+            }
+        )
+    )
+    assert preview.status == "rejected"
+    assert preview.errors == ["ACCOUNTING_PERIOD_CLOSED"]
+    assert preview.batch_id is None
+    assert (
+        session.scalar(
+            select(PayrollBatch).where(
+                PayrollBatch.org_id == organization.id,
+                PayrollBatch.idempotency_key == "period-payroll-preview",
+            )
+        )
+        is None
+    )
+
+
+def test_payroll_preview_preserves_not_generated_error_without_calculated_batch(
+    session: Session,
+) -> None:
+    organization = seed_organization(session, name="工资预览未生成期间")
+    employee_id = register_payroll_facts(session, organization)
+    preview = FinanceService(session).preview_payroll(
+        PreviewPayrollRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "not-generated-payroll-preview",
+                "batch_kind": "regular",
+                "payroll_period": "2026-09",
+                "posting_date": "2026-09-05",
+                "payment_date": "2026-09-05",
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "base_salary_fen": 1_000_000,
+                        "performance_pay_fen": 0,
+                        "taxable_allowance_fen": 0,
+                        "tax_exempt_income_fen": 0,
+                        "attendance_deduction_fen": 0,
+                        "special_additional_deduction_fen": 0,
+                        "other_legal_deduction_fen": 0,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert preview.status == "rejected"
+    assert preview.errors == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
+    assert preview.batch_id is None
+    assert (
+        session.scalar(
+            select(PayrollBatch).where(
+                PayrollBatch.org_id == organization.id,
+                PayrollBatch.idempotency_key == "not-generated-payroll-preview",
+            )
+        )
+        is None
+    )
+
+
 def add_bank_row(
     session: Session, organization: Organization, amount_fen: int, key: str
 ) -> BankTransaction:
@@ -179,7 +325,7 @@ def add_bank_row(
         org_id=organization.id,
         bank_account_code="1002",
         fingerprint=(key * 64)[:64],
-        booking_date=date(2026, 9, 5),
+        booking_date=date(2026, 3, 5),
         amount_fen=amount_fen,
         currency="CNY",
         memo=key,
@@ -206,9 +352,9 @@ def payment_request(
             "idempotency_key": key,
             "event_type": event_type,
             "business_dates": {
-                "business_date": "2026-09-05",
-                "payment_date": "2026-09-05",
-                "posting_date": "2026-09-05",
+                "business_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "posting_date": "2026-03-05",
             },
             "amounts": {
                 "amount_fen": amount_fen,

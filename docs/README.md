@@ -8,6 +8,9 @@
 - [税务事实与期间结算确定性整改验收记录](./tax-determinism-acceptance.md)：前置整改的最终门禁、独立负向审计和稳定错误契约。
 - [无形资产与借款利息第一期开发基线](./intangible-assets-and-borrowing-development-plan.md)：已完成阶段冻结的范围、工具、公式、固定模板、错误码和验收标准。
 - [无形资产与借款利息第一期最终验收记录](./intangible-assets-and-borrowing-acceptance.md)：双模块闭环、0011 提交点、真实 STDIO、独立负向审计和最终质量门禁。
+- [会计期间生成与月结第一期开发基线](./accounting-period-close-development-plan.md)：自然月生成、累计完整性检查、预览哈希确认、单向关闭、后续开放月更正和 0012 提交点契约。
+- [会计期间生成与月结第一期最终验收记录](./accounting-period-close-acceptance.md)：四个专用工具、0012 提交点、并发/历史迁移、真实 STDIO、独立终审和最终门禁。
+- [会计期间与月结产品决策记录](./accounting-period-close-decisions.md)：反结账、启用策略、期间粒度、空月、时区和银行迟到证据等正式产品取舍。
 - [固定资产模块第一期最终验收记录](./fixed-asset-module-acceptance.md)：购置、启用、月折旧、出售/报废和逆序冲正闭环的最终门禁与独立审计结论。
 - [固定资产模块开发基线](./fixed-asset-module-development-plan.md)：已完成阶段的稳定契约、官方依据、边界和验收标准。
 - [工资模块开发基线](./payroll-module-development-plan.md)：当前业务边界、数据模型、工具契约和验收标准。
@@ -21,4 +24,4 @@
 - `payroll-module-acceptance-remediation-round-2.md` 至 `round-6.md`：第二至第六轮整改及当时的阻断项。
 - `记账内核现状与第三轮整改解读_2026-08-09.md`：第三轮时点的非技术解读。
 
-历史文档是审计轨迹，正文中的“待整改”“不通过”和测试数量只代表当时状态；当前结论以固定资产第一期最终验收、工资第七轮最终验收及仓库最新测试结果为准。
+历史文档是审计轨迹，正文中的“待整改”“不通过”和测试数量只代表当时状态；当前结论以税务确定性、固定资产、工资、无形资产与借款、会计期间与月结的最新最终验收记录及仓库最新测试结果为准。

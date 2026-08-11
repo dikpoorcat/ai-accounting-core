@@ -34,6 +34,8 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
     try:
         with factory.begin() as session:
             organization = seed_organization(session, name="性质测试公司")
+            organization.accounting_period_control_enabled = False
+            session.flush()
             service = FinanceService(session)
             sale = service.record_event(
                 RecordEventRequest.model_validate(

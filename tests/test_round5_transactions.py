@@ -82,7 +82,7 @@ def _preview_request(
     employee_id: uuid.UUID,
     *,
     idempotency_key: str,
-    period: str = "2026-09",
+    period: str = "2026-03",
     base_salary_fen: int = 1_000_000,
 ) -> PreviewPayrollRequest:
     month = int(period[-2:])
@@ -160,7 +160,7 @@ def _register_second_employee(session: Session, org_id: uuid.UUID) -> uuid.UUID:
             org_id=org_id,
             employee_code="R5-CONCURRENT-E-002",
             name="R5 并发员工二",
-            employment_start_date=date(2026, 9, 1),
+            employment_start_date=date(2026, 3, 1),
             status="active",
         )
     )
@@ -169,7 +169,7 @@ def _register_second_employee(session: Session, org_id: uuid.UUID) -> uuid.UUID:
         RegisterEmployeePayrollProfileVersionRequest(
             org_id=org_id,
             employee_id=employee_id,
-            effective_from=date(2026, 9, 1),
+            effective_from=date(2026, 3, 1),
             expense_role="payroll_management_expense",
             social_insurance_base_fen=1_000_000,
             housing_fund_base_fen=1_000_000,
@@ -189,7 +189,9 @@ def _prepare_payment_requests(
     """Make two different banks for one still-open canonical payroll payable."""
 
     with factory.begin() as session:
-        organization = seed_organization(session, name=organization_name)
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name=organization_name
+        )
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
         preview = service.preview_payroll(
@@ -302,14 +304,16 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
 
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(session, name="R5 PG correction barrier")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 PG correction barrier"
+        )
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
         opening_request = RegisterPayrollOpeningStateRequest(
             org_id=organization.id,
             employee_id=employee_id,
             tax_year=2026,
-            through_month=8,
+            through_month=2,
             cumulative_income_fen=0,
             cumulative_tax_exempt_income_fen=0,
             cumulative_basic_deduction_fen=0,
@@ -349,8 +353,8 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
         profile_correction = RegisterEmployeePayrollProfileVersionRequest(
             org_id=organization.id,
             employee_id=employee_id,
-            effective_from=date(2026, 9, 1),
-            effective_to=date(2026, 9, 30),
+            effective_from=date(2026, 3, 1),
+            effective_to=date(2026, 3, 31),
             expense_role=profile.expense_role,
             social_insurance_base_fen=profile.social_insurance_base_fen + 1,
             housing_fund_base_fen=profile.housing_fund_base_fen + 1,
@@ -365,8 +369,8 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
                 RegisterPayrollPolicyVersionRequest(
                     org_id=organization.id,
                     region=policy.region,
-                    effective_from=date(2026, 9, 1),
-                    effective_to=date(2026, 9, 30),
+                    effective_from=date(2026, 3, 1),
+                    effective_to=date(2026, 3, 31),
                     version="r5-pg-policy-correction",
                     source_url=policy.source_url,
                     parameters=payroll_parameters(),
@@ -392,7 +396,7 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
                 event_id=confirmed.event_id,
                 idempotency_key="r5-pg-correction-reverse",
                 reason="R5 更正前规范冲正",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             )
         )
         assert reversed_result.status == "posted", reversed_result.errors
@@ -405,7 +409,9 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
 ) -> None:
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(session, name="R5 preview and confirm envelope")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 preview and confirm envelope"
+        )
         employee_id = register_payroll_facts(session, organization)
         org_id = organization.id
 
@@ -442,7 +448,7 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
                 org_id,
                 employee_id,
                 idempotency_key="r5-confirm-different",
-                period="2026-10",
+                period="2026-04",
             )
         )
         assert next_preview.status == "calculated", next_preview.errors
@@ -519,7 +525,9 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
 
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(session, name="R5 shared agency construction")
+        organization = seed_organization(
+            session, accounting_period_control_enabled=False, name="R5 shared agency construction"
+        )
         first_employee_id = register_payroll_facts(session, organization)
         second_employee_id = _register_second_employee(session, organization.id)
         first_preview = FinanceService(session).preview_payroll(
@@ -527,7 +535,7 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
                 organization.id,
                 first_employee_id,
                 idempotency_key="r5-agency-preview-one",
-                period="2026-09",
+                period="2026-03",
             )
         )
         second_preview = FinanceService(session).preview_payroll(
@@ -535,7 +543,7 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
                 organization.id,
                 second_employee_id,
                 idempotency_key="r5-agency-preview-two",
-                period="2026-10",
+                period="2026-04",
             )
         )
         assert first_preview.status == second_preview.status == "calculated"
@@ -620,7 +628,7 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
         event_id=source_event_id,
         idempotency_key="r5-reverse-same",
         reason="R5 同键冲正",
-        posting_date=date(2026, 9, 6),
+        posting_date=date(2026, 3, 6),
     )
     reverse_results = _run_two_connections(
         factory,
@@ -660,14 +668,14 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
                 event_id=other_source.event_id,
                 idempotency_key="r5-reverse-mismatch",
                 reason="R5 原因一",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             ),
             ReverseEventRequest(
                 org_id=other.org_id,
                 event_id=other_source.event_id,
                 idempotency_key="r5-reverse-mismatch",
                 reason="R5 原因二",
-                posting_date=date(2026, 9, 6),
+                posting_date=date(2026, 3, 6),
             ),
         ],
         lambda service, request: service.reverse_event(request),

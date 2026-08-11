@@ -80,6 +80,8 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
         organization = seed_organization(database_session, name="税务 STDIO 验收企业")
+        organization.accounting_period_control_enabled = False
+        database_session.flush()
         org_id = str(organization.id)
     setup_engine.dispose()
 
@@ -104,11 +106,17 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
                 )
                 preview_schema = _request_schema(schemas["finance_calculate_tax_period"])
                 confirm_schema = _request_schema(schemas["finance_confirm_tax_period"])
-                assert set(preview_schema["required"]) == {"org_id", "start_date", "end_date"}
+                assert set(preview_schema["required"]) == {
+                    "org_id",
+                    "start_date",
+                    "end_date",
+                    "adjustment_posting_date",
+                }
                 assert set(confirm_schema["required"]) == {
                     "org_id",
                     "start_date",
                     "end_date",
+                    "adjustment_posting_date",
                     "calculation_hash",
                     "idempotency_key",
                 }
@@ -152,6 +160,7 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
                     "org_id": org_id,
                     "start_date": "2026-01-01",
                     "end_date": "2026-03-31",
+                    "adjustment_posting_date": "2026-03-31",
                 }
                 preview = await call("finance_calculate_tax_period", {"request": preview_request})
                 assert preview["status"] == "calculated", preview

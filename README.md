@@ -19,7 +19,8 @@
 - 外购无形资产的取得、可供使用当月起直线摊销、月末零收入报废和逆序冲正闭环。
 - 持牌金融机构人民币固定利率借款的放款、合同单利计提、付息、到期还本和逆序冲正闭环。
 - 税期试算与计算哈希确认、来源快照封闭和税务事实锁定。
-- 34 个严格参数的本地 STDIO MCP 工具；无聊天 UI、REST API 或模型调用。
+- 自然月会计期间逐月生成、结账前累计完整性检查、计算哈希确认、不可变关闭快照和关闭月写保护。
+- 38 个严格参数的本地 STDIO MCP 工具；无聊天 UI、REST API 或模型调用。
 
 工资、固定资产、无形资产和借款只能通过各自的专用工具登记、试算和确认；通用事件入口不会接受 Agent 自行组织这些分录。存货事件仍会明确返回 `MODULE_NOT_ENABLED`。
 
@@ -53,6 +54,18 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 7. 需要更正时使用 `finance_reverse_event`，不要修改旧凭证。
 
 所有金额均为整数“分”，日期均为 ISO `YYYY-MM-DD`。
+
+### 会计期间与月结专用工作流
+
+产品创建的新企业默认启用期间控制；正式业务必须先生成对应的开放自然月：
+
+1. `finance_generate_accounting_period` 从企业开始记账的任意过去月份起逐月连续生成；不能跳月，也不能生成 Asia/Shanghai 当前月之后的月份。
+2. `finance_preview_accounting_period_close` 只读重算本月凭证、账户发生额、固定资产折旧、无形资产摊销、借款计息、工资批次及人工复核计数，并返回 SHA-256 计算哈希。
+3. `finance_confirm_accounting_period_close` 在税期企业锁和月份锁内复算同一哈希；系统阻断为零、六项人工复核全真且有确认说明和证据时，保存完整不可变快照并单向关闭期间。
+4. `finance_get_accounting_periods` 查询生成、关闭动作和期间状态。空月份不会自动跳过，但允许经过同样的显式复核后关闭。
+5. 一期不支持反结账。关闭月原事实和凭证不改；错误只能在后续已生成开放月通过关联冲正及原专用工作流重记。
+
+所有企业的正式入账日都不得晚于 Asia/Shanghai 当前日期。历史税期更正保留原税务归属期，但调整凭证必须显式记入后续开放会计月。完整边界见[会计期间与月结开发基线](docs/accounting-period-close-development-plan.md)和[产品决策记录](docs/accounting-period-close-decisions.md)。
 
 ### 工资专用工作流
 
@@ -154,6 +167,9 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 - [固定资产模块开发基线](docs/fixed-asset-module-development-plan.md)
 - [无形资产与借款利息第一期最终验收](docs/intangible-assets-and-borrowing-acceptance.md)
 - [无形资产与借款利息第一期开发基线](docs/intangible-assets-and-borrowing-development-plan.md)
+- [会计期间与月结第一期开发基线](docs/accounting-period-close-development-plan.md)
+- [会计期间与月结第一期最终验收](docs/accounting-period-close-acceptance.md)
+- [会计期间与月结产品决策记录](docs/accounting-period-close-decisions.md)
 - [工资模块开发基线](docs/payroll-module-development-plan.md)
 - [工资模块第七轮最终验收](docs/payroll-module-acceptance-remediation-round-7.md)
 - [多 Agent 协作与本地质量验证手册](docs/agent-collaboration-and-local-verification.md)

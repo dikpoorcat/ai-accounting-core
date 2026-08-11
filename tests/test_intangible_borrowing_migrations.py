@@ -200,6 +200,8 @@ def test_borrowing_rate_and_large_interest_round_trip_across_sqlite_sessions(tmp
     try:
         with factory() as session, session.begin():
             organization = seed_organization(session, name="借款利率精度测试")
+            organization.accounting_period_control_enabled = False
+            session.flush()
             evidence = Evidence(
                 org_id=organization.id,
                 sha256="a" * 64,

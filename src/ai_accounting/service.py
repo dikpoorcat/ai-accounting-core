@@ -17,13 +17,23 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session, aliased
 
 from .coa import get_account_by_code
-from .ledger import Entry, OpenItemPlan, account_balance_fen, create_open_items, create_voucher
+from .ledger import (
+    AccountingPeriodError,
+    Entry,
+    OpenItemPlan,
+    account_balance_fen,
+    assert_period_open,
+    create_open_items,
+    create_voucher,
+    posting_period_error_code,
+)
 from .models import (
     AnnualBonusUsage,
     AuditLog,
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
+    BusinessEventDependency,
     Counterparty,
     Employee,
     EmployeePayrollProfileVersion,
@@ -137,6 +147,17 @@ class FinanceService:
         sqlstate, _constraint_name, primary_message = cls._database_error_identity(exc)
         return sqlstate == "P0001" and primary_message == "TAX_PERIOD_SOURCE_LOCKED"
 
+    @classmethod
+    def _accounting_period_database_error_code(cls, exc: DBAPIError) -> str | None:
+        sqlstate, _constraint_name, primary_message = cls._database_error_identity(exc)
+        if (
+            sqlstate == "P0001"
+            and isinstance(primary_message, str)
+            and primary_message.startswith("ACCOUNTING_PERIOD_")
+        ):
+            return primary_message
+        return None
+
     @staticmethod
     def _is_round6_final_dependency_error(exc: DBAPIError) -> bool:
         """Classify only the database closure errors that are safe to expose.
@@ -195,6 +216,23 @@ class FinanceService:
                 "final_payroll_dependency_tax_slot_deferred IMMEDIATE"
             )
         )
+
+    def _assert_unfinished_payroll_period_constraint_now(self) -> None:
+        """Surface the 0012 calculated-batch period guard before API return."""
+
+        if self.session.get_bind().dialect.name != "postgresql":
+            return
+        installed = self.session.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM pg_constraint "
+                "WHERE conname = 'unfinished_payroll_period_invariant_deferred')"
+            )
+        )
+        if installed is not True:
+            return
+        constraint = "unfinished_payroll_period_invariant_deferred"
+        self.session.execute(text(f"SET CONSTRAINTS {constraint} IMMEDIATE"))
+        self.session.execute(text(f"SET CONSTRAINTS {constraint} DEFERRED"))
 
     @staticmethod
     def _payroll_policy_values(
@@ -577,11 +615,20 @@ class FinanceService:
             self._lock_payroll_open_items(request)
         counterparty = self._resolve_counterparty(request)
         facts = request.model_dump(mode="json")
-        self._validate_business_links(request)
+        linked_original = self._validate_business_links(request)
         entries, derived, open_item_type = self._derive_entries(request, counterparty)
         facts["derived"] = derived
 
         trace = [{"stage": "facts_validated", "event_type": request.event_type.value}]
+        if linked_original is not None:
+            trace.append(
+                {
+                    "stage": "business_dependency_validated",
+                    "parent_event_id": str(linked_original.id),
+                    "dependency_kind": self._business_dependency_kind(request),
+                    "amount_fen": self._amount(request),
+                }
+            )
         rule_version: str | None
         if payroll_payment:
             trace.extend(self._payroll_payment_trace(request, derived))
@@ -619,6 +666,19 @@ class FinanceService:
         )
         self.session.add(event)
         self.session.flush()
+        if linked_original is not None:
+            self.session.add(
+                BusinessEventDependency(
+                    org_id=request.org_id,
+                    parent_event_id=linked_original.id,
+                    child_event_id=event.id,
+                    dependency_kind=self._business_dependency_kind(request),
+                    amount_fen=self._amount(request),
+                )
+            )
+            # The dependency is part of the child's canonical fact graph and
+            # must exist before its draft -> posted transition is flushed.
+            self.session.flush()
         self._attach_evidence(event, request.evidence_references)
         self._create_invoices(event, request)
         if request.event_type == EventType.SALARY_PAYMENT:
@@ -1969,7 +2029,7 @@ class FinanceService:
             used_amount = self._linked_usage_fen(request.org_id, original.id)
             if used_amount + self._amount(request) > advance_amount:
                 raise ValueError("fulfillment exceeds the unused customer advance")
-            return None
+            return original
 
         if request.event_type != EventType.CUSTOMER_REFUND:
             return None
@@ -2013,30 +2073,46 @@ class FinanceService:
         except (KeyError, ValueError) as exc:
             raise ValueError("details.original_event_id must be a valid UUID") from exc
         original = self.session.scalar(
-            select(BusinessEvent).where(
+            select(BusinessEvent)
+            .where(
                 BusinessEvent.id == original_id,
                 BusinessEvent.org_id == request.org_id,
             )
+            .with_for_update()
         )
         if original is None:
             raise ValueError("linked original event was not found")
         return original
 
     def _linked_usage_fen(self, org_id: uuid.UUID, original_id: uuid.UUID) -> int:
-        linked_events = self.session.scalars(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == org_id,
-                BusinessEvent.event_type.in_(
-                    [EventType.CUSTOMER_REFUND.value, EventType.SERVICE_FULFILLMENT.value]
-                ),
-                BusinessEvent.status == "posted",
+        return int(
+            self.session.scalar(
+                select(func.coalesce(func.sum(BusinessEventDependency.amount_fen), 0))
+                .join(
+                    BusinessEvent,
+                    (BusinessEvent.org_id == BusinessEventDependency.org_id)
+                    & (BusinessEvent.id == BusinessEventDependency.child_event_id),
+                )
+                .where(
+                    BusinessEventDependency.org_id == org_id,
+                    BusinessEventDependency.parent_event_id == original_id,
+                    BusinessEvent.status == "posted",
+                )
             )
-        ).all()
-        return sum(
-            self._event_amount(event)
-            for event in linked_events
-            if event.facts.get("details", {}).get("original_event_id") == str(original_id)
+            or 0
         )
+
+    @staticmethod
+    def _business_dependency_kind(request: RecordEventRequest) -> str:
+        if request.event_type == EventType.SERVICE_FULFILLMENT:
+            return "advance_fulfillment"
+        if request.event_type == EventType.CUSTOMER_REFUND:
+            return (
+                "advance_refund"
+                if request.details.get("refund_kind") == "advance"
+                else "sale_return"
+            )
+        raise ValueError("BUSINESS_EVENT_DEPENDENCY_INVALID")
 
     @staticmethod
     def _event_advance_amount(event: BusinessEvent) -> int:
@@ -2834,6 +2910,14 @@ class FinanceService:
                 data={"annual_bonus_scenarios": calculation["scenarios"]},
             )
         try:
+            self._lock_tax_period_org(request.org_id)
+            assert_period_open(self.session, request.org_id, request.posting_date)
+        except AccountingPeriodError as exc:
+            return PayrollResult(
+                status=PayrollResultStatus.REJECTED,
+                errors=[exc.code],
+            )
+        try:
             with self.session.begin_nested():
                 version = self._allocate_payroll_batch_version(
                     request.org_id,
@@ -2895,6 +2979,7 @@ class FinanceService:
                 )
                 batch.status = "calculated"
                 self.session.flush()
+                self._assert_unfinished_payroll_period_constraint_now()
         except IntegrityError:
             existing = self.session.scalar(
                 select(PayrollBatch).where(
@@ -2923,6 +3008,13 @@ class FinanceService:
                 status=PayrollResultStatus.REJECTED,
                 errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
             )
+        except DBAPIError as exc:
+            if code := self._accounting_period_database_error_code(exc):
+                return PayrollResult(
+                    status=PayrollResultStatus.REJECTED,
+                    errors=[code],
+                )
+            raise
         return self._payroll_result_for_batch(batch)
 
     def confirm_payroll(self, request: ConfirmPayrollRequest) -> PayrollResult:
@@ -2935,6 +3027,11 @@ class FinanceService:
                 if result.status == PayrollResultStatus.POSTED:
                     self._assert_round6_final_dependency_constraints_now()
                 return result
+        except AccountingPeriodError as exc:
+            return PayrollResult(
+                status=PayrollResultStatus.REJECTED,
+                errors=[exc.code],
+            )
         except IntegrityError:
             existing = self.session.scalar(
                 select(BusinessEvent).where(
@@ -5475,9 +5572,19 @@ class FinanceService:
         organization = self.session.get(Organization, request.org_id)
         if organization is None:
             return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
+        if code := posting_period_error_code(
+            self.session,
+            request.org_id,
+            request.adjustment_posting_date,
+        ):
+            return {"status": "rejected", "errors": [code]}
         try:
             result = calculate_tax_period(
-                self.session, organization, request.start_date, request.end_date
+                self.session,
+                organization,
+                request.start_date,
+                request.end_date,
+                request.adjustment_posting_date,
             )
         except ValueError as exc:
             code = str(exc)
@@ -5494,6 +5601,7 @@ class FinanceService:
                 "org_id": str(request.org_id),
                 "start_date": request.start_date.isoformat(),
                 "end_date": request.end_date.isoformat(),
+                "adjustment_posting_date": request.adjustment_posting_date.isoformat(),
                 "calculation_hash": request.calculation_hash,
             }
         )
@@ -5575,6 +5683,8 @@ class FinanceService:
                     request,
                     request_payload_hash=request_payload_hash,
                 )
+        except AccountingPeriodError as exc:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
         except IntegrityError as exc:
             sqlstate, constraint_name, _primary_message = self._database_error_identity(exc)
             if (sqlstate, constraint_name) == ("23505", "uq_event_org_idempotency"):
@@ -5626,6 +5736,7 @@ class FinanceService:
                 organization,
                 request.start_date,
                 request.end_date,
+                request.adjustment_posting_date,
             )
         except ValueError as exc:
             code = str(exc)
@@ -5682,7 +5793,7 @@ class FinanceService:
             facts={"tax_period": tax_result.to_dict()},
             business_date=request.end_date,
             tax_obligation_date=request.end_date,
-            posting_date=request.end_date,
+            posting_date=request.adjustment_posting_date,
             rule_trace=tax_result.trace,
             rule_version=tax_result.rule_version,
         )
@@ -5691,7 +5802,7 @@ class FinanceService:
         voucher = create_voucher(
             self.session,
             event=event,
-            posting_date=request.end_date,
+            posting_date=request.adjustment_posting_date,
             description=event.description,
             entries=entries,
         )
@@ -5699,6 +5810,7 @@ class FinanceService:
             org_id=request.org_id,
             start_date=request.start_date,
             end_date=request.end_date,
+            adjustment_posting_date=request.adjustment_posting_date,
             rule_version=tax_result.rule_version,
             calculation=tax_result.to_dict(),
             calculation_hash=tax_result.calculation_hash,
@@ -5739,6 +5851,7 @@ class FinanceService:
                     "voucher_id": str(voucher.id),
                     "tax_period_id": str(period_record.id),
                     "calculation_hash": tax_result.calculation_hash,
+                    "adjustment_posting_date": request.adjustment_posting_date.isoformat(),
                 },
             )
         )
@@ -5957,6 +6070,8 @@ class FinanceService:
         try:
             with self.session.begin_nested():
                 return self._reverse_event_write(request)
+        except AccountingPeriodError as exc:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
         except IntegrityError:
             existing = self.session.scalar(
                 select(BusinessEvent).where(
@@ -6018,6 +6133,26 @@ class FinanceService:
             return self._result_for_existing(existing_after_lock)
         if original.status != "posted" or original.reversed_by_event_id:
             return FinanceResult(status=ResultStatus.REJECTED, errors=["EVENT_IS_NOT_REVERSIBLE"])
+        dependent_children = self.session.scalars(
+            select(BusinessEvent)
+            .join(
+                BusinessEventDependency,
+                (BusinessEventDependency.org_id == BusinessEvent.org_id)
+                & (BusinessEventDependency.child_event_id == BusinessEvent.id),
+            )
+            .where(
+                BusinessEventDependency.org_id == request.org_id,
+                BusinessEventDependency.parent_event_id == original.id,
+                BusinessEvent.status == "posted",
+            )
+            .order_by(BusinessEvent.id)
+            .with_for_update()
+        ).all()
+        if dependent_children:
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=["REVERSE_DEPENDENT_EVENTS_FIRST"],
+            )
         locked_tax_source = self.session.scalar(
             select(TaxPeriodSource.source_event_id)
             .join(

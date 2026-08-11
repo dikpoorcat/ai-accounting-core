@@ -63,7 +63,9 @@ def _evidence(session: Session, org_id: uuid.UUID, seed: str) -> Evidence:
 
 
 def _acquire_payable(session: Session, key: str) -> tuple[FixedAsset, BusinessEvent]:
-    organization = seed_organization(session, name=f"PG 固定资产 {key}")
+    organization = seed_organization(
+        session, accounting_period_control_enabled=False, name=f"PG 固定资产 {key}"
+    )
     evidence = _evidence(session, organization.id, key[0])
     result = FixedAssetService(session).acquire_fixed_asset(
         AcquireFixedAssetRequest.model_validate(
@@ -418,7 +420,9 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                     session.commit()
 
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG 银行匹配冲正")
+                organization = seed_organization(
+                    session, accounting_period_control_enabled=False, name="PG 银行匹配冲正"
+                )
                 evidence = _evidence(session, organization.id, "bank-reversal")
                 bank_row = BankTransaction(
                     org_id=organization.id,
@@ -743,7 +747,7 @@ def test_postgres_fixed_asset_upgrade_downgrade_round_trip(
             command.check(config)
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0011_intangible_borrowings"
+                    "0012_accounting_period_close"
                 )
         finally:
             engine.dispose()

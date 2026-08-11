@@ -29,7 +29,7 @@ from .intangible_assets import (
     calculate_straight_line_amortization,
     intangible_asset_calculation_hash,
 )
-from .ledger import Entry, create_voucher
+from .ledger import AccountingPeriodError, Entry, create_voucher
 from .models import (
     AuditLog,
     BankTransaction,
@@ -340,6 +340,11 @@ class IntangibleAssetService(FinanceService):
             return self._persist_nonposted_decision(
                 command,
                 request,
+                status=IntangibleAssetResultStatus.REJECTED,
+                errors=[exc.code],
+            )
+        except AccountingPeriodError as exc:
+            return IntangibleAssetResult(
                 status=IntangibleAssetResultStatus.REJECTED,
                 errors=[exc.code],
             )
