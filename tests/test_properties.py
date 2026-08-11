@@ -48,7 +48,13 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
                         },
                         "counterparty": {"kind": "customer", "name": "性质测试客户"},
                         "amounts": {"gross_amount_fen": original},
-                        "tax_facts": {"taxable": False, "tax_due_on_event": False},
+                        "tax_facts": {
+                            "taxable": False,
+                            "rate_percent": "0",
+                            "invoice_type": "none",
+                            "waive_exemption": False,
+                            "tax_due_on_event": False,
+                        },
                     }
                 )
             )

@@ -16,8 +16,21 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlch
 from sqlalchemy.orm import selectinload
 
 from .bank_import import BankStatementInputError, import_bank_statement
+from .borrowing_schemas import (
+    ConfirmBorrowingInterestRequest,
+    DrawBorrowingRequest,
+    PayBorrowingInterestRequest,
+    PreviewBorrowingInterestRequest,
+    RepayBorrowingPrincipalRequest,
+)
 from .database import SessionLocal
 from .evidence import register_evidence
+from .intangible_asset_schemas import (
+    AcquireIntangibleAssetRequest,
+    ConfirmIntangibleAssetAmortizationRequest,
+    PreviewIntangibleAssetAmortizationRequest,
+    RetireIntangibleAssetRequest,
+)
 from .models import (
     Account,
     AuditLog,
@@ -53,7 +66,8 @@ from .schemas import (
     RegisterPayrollOpeningStateRequest,
     RegisterPayrollPolicyVersionRequest,
     ReverseEventRequest,
-    TaxPeriodRequest,
+    TaxPeriodConfirmRequest,
+    TaxPeriodPreviewRequest,
 )
 from .service import FinanceService
 
@@ -224,6 +238,22 @@ def _fixed_asset_service(session: Any) -> Any:
     return FixedAssetService(session)
 
 
+def _intangible_asset_service(session: Any) -> Any:
+    """Load the specialized intangible-asset workflow only when invoked."""
+
+    from .intangible_asset_service import IntangibleAssetService
+
+    return IntangibleAssetService(session)
+
+
+def _borrowing_service(session: Any) -> Any:
+    """Load the specialized borrowing workflow only when invoked."""
+
+    from .borrowing_service import BorrowingService
+
+    return BorrowingService(session)
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_database_error_boundary
 def finance_get_profile(org_id: str) -> dict[str, Any]:
@@ -284,8 +314,15 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
     # disabled product module, though: payroll has a typed, dedicated workflow
     # below.  Report the legacy sentinel as internal so an MCP client does not
     # conclude incorrectly that payroll is unavailable.
-    disabled = [item.value for item in DISABLED_EVENT_TYPES if item is not EventType.PAYROLL]
-    internal = [item.value for item in INTERNAL_EVENT_TYPES] + [EventType.PAYROLL.value]
+    specialized_sentinels = {
+        EventType.PAYROLL,
+        EventType.INTANGIBLE_ASSET,
+        EventType.LOAN_INTEREST,
+    }
+    disabled = [item.value for item in DISABLED_EVENT_TYPES if item not in specialized_sentinels]
+    internal = [item.value for item in INTERNAL_EVENT_TYPES] + [
+        item.value for item in specialized_sentinels
+    ]
     if event_type and event_type not in {item.value for item in EventType}:
         return {"status": "rejected", "errors": ["UNKNOWN_EVENT_TYPE"]}
     return {
@@ -321,6 +358,31 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 ],
                 "generic_event_writer": "not_available",
                 "accrual_entry": "finance_confirm_fixed_asset_depreciation",
+            },
+            "intangible_asset": {
+                "status": "enabled",
+                "entry_tools": [
+                    "finance_acquire_intangible_asset",
+                    "finance_preview_intangible_asset_amortization",
+                    "finance_confirm_intangible_asset_amortization",
+                    "finance_retire_intangible_asset",
+                    "finance_get_intangible_asset",
+                ],
+                "generic_event_writer": "not_available",
+                "accrual_entry": "finance_confirm_intangible_asset_amortization",
+            },
+            "borrowing": {
+                "status": "enabled",
+                "entry_tools": [
+                    "finance_draw_borrowing",
+                    "finance_preview_borrowing_interest",
+                    "finance_confirm_borrowing_interest",
+                    "finance_pay_borrowing_interest",
+                    "finance_repay_borrowing_principal",
+                    "finance_get_borrowing",
+                ],
+                "generic_event_writer": "not_available",
+                "accrual_entry": "finance_confirm_borrowing_interest",
             },
         },
         # Return the schema actually advertised by FastMCP, including its strict
@@ -516,6 +578,147 @@ def finance_get_fixed_asset(org_id: uuid.UUID, asset_id: uuid.UUID) -> dict[str,
         return _invalid(exc)
 
 
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_acquire_intangible_asset(
+    request: AcquireIntangibleAssetRequest,
+) -> dict[str, Any]:
+    """登记已可供使用的外购无形资产，并按固定模板入账。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _intangible_asset_service(session).acquire_intangible_asset(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_intangible_asset_amortization(
+    request: PreviewIntangibleAssetAmortizationRequest,
+) -> dict[str, Any]:
+    """只读试算无形资产下一个自然月摊销及确认哈希。"""
+    try:
+        with SessionLocal() as session:
+            result = _intangible_asset_service(session).preview_intangible_asset_amortization(
+                request
+            )
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_intangible_asset_amortization(
+    request: ConfirmIntangibleAssetAmortizationRequest,
+) -> dict[str, Any]:
+    """锁内复算并以预览哈希确认一个自然月摊销。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _intangible_asset_service(session).confirm_intangible_asset_amortization(
+                request
+            )
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_retire_intangible_asset(
+    request: RetireIntangibleAssetRequest,
+) -> dict[str, Any]:
+    """在自然月末按零收入、零赔偿边界报废单项无形资产。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _intangible_asset_service(session).retire_intangible_asset(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_intangible_asset(org_id: uuid.UUID, asset_id: uuid.UUID) -> dict[str, Any]:
+    """读取无形资产取得、摊销、报废及冲正历史。"""
+    try:
+        with SessionLocal() as session:
+            result = _intangible_asset_service(session).get_intangible_asset(org_id, asset_id)
+            return result.model_dump(mode="json")
+    except (ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_draw_borrowing(request: DrawBorrowingRequest) -> dict[str, Any]:
+    """登记持牌金融机构人民币固定利率借款的一次全额放款。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _borrowing_service(session).draw_borrowing(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_borrowing_interest(
+    request: PreviewBorrowingInterestRequest,
+) -> dict[str, Any]:
+    """只读试算下一个合同应付息期间的简单利息。"""
+    try:
+        with SessionLocal() as session:
+            result = _borrowing_service(session).preview_borrowing_interest(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_borrowing_interest(
+    request: ConfirmBorrowingInterestRequest,
+) -> dict[str, Any]:
+    """锁内复算并以哈希确认合同应付息日的利息计提。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _borrowing_service(session).confirm_borrowing_interest(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_pay_borrowing_interest(
+    request: PayBorrowingInterestRequest,
+) -> dict[str, Any]:
+    """按唯一计息事件和精确银行流水支付全部应付利息。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _borrowing_service(session).pay_borrowing_interest(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_repay_borrowing_principal(
+    request: RepayBorrowingPrincipalRequest,
+) -> dict[str, Any]:
+    """在合同到期日、全部利息已支付后一次归还全部本金。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _borrowing_service(session).repay_borrowing_principal(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_borrowing(org_id: uuid.UUID, borrowing_id: uuid.UUID) -> dict[str, Any]:
+    """读取借款合同、计息、付息、还本和冲正历史。"""
+    try:
+        with SessionLocal() as session:
+            result = _borrowing_service(session).get_borrowing(org_id, borrowing_id)
+            return result.model_dump(mode="json")
+    except (ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_database_error_boundary
 def finance_query_context(
@@ -641,20 +844,49 @@ def finance_record_event(request: RecordEventRequest) -> dict[str, Any]:
                 "status": "rejected",
                 "errors": ["FIXED_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
             }
+        if request.event_type in {
+            EventType.INTANGIBLE_ASSET,
+            EventType.INTANGIBLE_ASSET_ACQUISITION,
+            EventType.INTANGIBLE_ASSET_AMORTIZATION,
+            EventType.INTANGIBLE_ASSET_RETIREMENT,
+        }:
+            return {
+                "status": "rejected",
+                "errors": ["INTANGIBLE_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
+            }
+        if request.event_type in {
+            EventType.LOAN_INTEREST,
+            EventType.BORROWING_DRAWDOWN,
+            EventType.BORROWING_INTEREST_ACCRUAL,
+            EventType.BORROWING_INTEREST_PAYMENT,
+            EventType.BORROWING_PRINCIPAL_REPAYMENT,
+        }:
+            return {
+                "status": "rejected",
+                "errors": ["BORROWING_REQUIRES_SPECIALIZED_WORKFLOW"],
+            }
         with SessionLocal.begin() as session:
             return FinanceService(session).record_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
 
-@mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_calculate_tax_period(request: dict[str, Any]) -> dict[str, Any]:
-    """试算小规模纳税人增值税与附加税；可选择生成期间调整凭证。"""
+@mcp.tool(annotations=READ_ONLY)
+def finance_calculate_tax_period(request: TaxPeriodPreviewRequest) -> dict[str, Any]:
+    """只读试算一个完整自然申报期，并返回规范来源与计算哈希。"""
     try:
-        parsed = TaxPeriodRequest.model_validate(request)
+        with SessionLocal() as session:
+            return FinanceService(session).preview_tax_period(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_tax_period(request: TaxPeriodConfirmRequest) -> dict[str, Any]:
+    """用预览哈希和幂等键确认税期；预览陈旧时拒绝写入。"""
+    try:
         with SessionLocal.begin() as session:
-            result = FinanceService(session).calculate_tax(parsed)
-            return {"status": "ok", **result}
+            return FinanceService(session).confirm_tax_period(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -664,7 +896,30 @@ def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
     """生成关联冲正凭证；原凭证保持不变。"""
     try:
         with SessionLocal.begin() as session:
-            return _fixed_asset_service(session).reverse_event(request).model_dump(mode="json")
+            event_type = None
+            if hasattr(session, "scalar"):
+                event_type = session.scalar(
+                    select(BusinessEvent.event_type).where(
+                        BusinessEvent.org_id == request.org_id,
+                        BusinessEvent.id == request.event_id,
+                    )
+                )
+            if event_type in {
+                "intangible_asset_acquisition",
+                "intangible_asset_amortization",
+                "intangible_asset_retirement",
+            }:
+                service = _intangible_asset_service(session)
+            elif event_type in {
+                "borrowing_drawdown",
+                "borrowing_interest_accrual",
+                "borrowing_interest_payment",
+                "borrowing_principal_repayment",
+            }:
+                service = _borrowing_service(session)
+            else:
+                service = _fixed_asset_service(session)
+            return service.reverse_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -978,6 +1233,8 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
 
 _make_tool_inputs_strict(
     "finance_record_event",
+    "finance_calculate_tax_period",
+    "finance_confirm_tax_period",
     "finance_reverse_event",
     "finance_register_evidence",
     "finance_import_bank_statement",
@@ -994,6 +1251,17 @@ _make_tool_inputs_strict(
     "finance_confirm_fixed_asset_depreciation",
     "finance_dispose_fixed_asset",
     "finance_get_fixed_asset",
+    "finance_acquire_intangible_asset",
+    "finance_preview_intangible_asset_amortization",
+    "finance_confirm_intangible_asset_amortization",
+    "finance_retire_intangible_asset",
+    "finance_get_intangible_asset",
+    "finance_draw_borrowing",
+    "finance_preview_borrowing_interest",
+    "finance_confirm_borrowing_interest",
+    "finance_pay_borrowing_interest",
+    "finance_repay_borrowing_principal",
+    "finance_get_borrowing",
 )
 _sanitize_tool_errors(
     *(tool.name for tool in mcp._tool_manager.list_tools()),

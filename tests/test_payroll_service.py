@@ -210,7 +210,14 @@ def payment_request(
                 "payment_date": "2026-09-05",
                 "posting_date": "2026-09-05",
             },
-            "amounts": {"amount_fen": amount_fen},
+            "amounts": {
+                "amount_fen": amount_fen,
+                **(
+                    {"expense_account_role": "general_expense"}
+                    if event_type in {"expense_cash", "expense_payable"}
+                    else {}
+                ),
+            },
             "allocations": allocations,
             "salary_withholding_allocations": salary_withholdings or [],
             "bank_transaction_references": [{"id": bank.id}],

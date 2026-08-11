@@ -32,7 +32,10 @@ def test_payable_purchase_and_supplier_payment_workflow(
                     "posting_date": "2026-08-01",
                 },
                 "counterparty": {"kind": "supplier", "name": "甲供应商"},
-                "amounts": {"gross_amount_fen": 30_000},
+                "amounts": {
+                    "gross_amount_fen": 30_000,
+                    "expense_account_role": "general_expense",
+                },
             },
         )
     )
@@ -124,7 +127,10 @@ def test_employee_bank_and_internal_transfer_events_are_balanced(
             "event_type": "employee_reimbursement",
             "business_dates": {"business_date": "2026-08-01", "posting_date": "2026-08-01"},
             "counterparty": {"kind": "employee", "name": "李员工"},
-            "amounts": {"gross_amount_fen": 8_800},
+            "amounts": {
+                "gross_amount_fen": 8_800,
+                "expense_account_role": "general_expense",
+            },
             "details": {"paid_now": False},
         },
         {
@@ -172,7 +178,13 @@ def test_vat_payment_cannot_exceed_posted_liability(
                     "tax_obligation_date": "2026-08-01",
                 },
                 "amounts": {"gross_amount_fen": 101_000},
-                "tax_facts": {"taxable": True, "rate_percent": "1"},
+                "tax_facts": {
+                    "taxable": True,
+                    "rate_percent": "1",
+                    "invoice_type": "ordinary",
+                    "waive_exemption": False,
+                    "tax_due_on_event": True,
+                },
             },
         )
     )
@@ -220,7 +232,13 @@ def test_advance_refund_cannot_exceed_unused_advance(
                 },
                 "counterparty": {"kind": "customer", "name": "丙客户"},
                 "amounts": {"gross_amount_fen": 50_000},
-                "tax_facts": {"taxable": True, "tax_due_on_event": False},
+                "tax_facts": {
+                    "taxable": True,
+                    "rate_percent": "1",
+                    "invoice_type": "none",
+                    "waive_exemption": False,
+                    "tax_due_on_event": False,
+                },
             },
         )
     )

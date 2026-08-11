@@ -743,7 +743,7 @@ def test_postgres_fixed_asset_upgrade_downgrade_round_trip(
             command.check(config)
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0009_fixed_assets"
+                    "0011_intangible_borrowings"
                 )
         finally:
             engine.dispose()

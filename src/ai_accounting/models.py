@@ -1056,6 +1056,561 @@ class FixedAssetDisposal(Base):
     )
 
 
+class IntangibleAsset(Base):
+    __tablename__ = "intangible_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    asset_code: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(50))
+    rights_description: Mapped[str] = mapped_column(Text)
+    other_right_type_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    identifiability_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    supplier_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    acquisition_date: Mapped[date] = mapped_column(Date)
+    available_for_use_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    purchase_price_fen: Mapped[int] = mapped_column(BigInteger)
+    noncreditable_tax_fen: Mapped[int] = mapped_column(BigInteger)
+    directly_attributable_cost_fen: Mapped[int] = mapped_column(BigInteger)
+    cost_fen: Mapped[int] = mapped_column(BigInteger)
+    settlement_method: Mapped[str] = mapped_column(String(20))
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    benefit_area: Mapped[str] = mapped_column(String(30))
+    life_basis: Mapped[str] = mapped_column(String(30))
+    useful_life_months: Mapped[int] = mapped_column(Integer)
+    life_basis_explanation: Mapped[str] = mapped_column(Text)
+    is_available_for_use: Mapped[bool] = mapped_column()
+    claims_creditable_input_vat: Mapped[bool] = mapped_column()
+    acquisition_event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "supplier_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_intangible_asset_org_supplier",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "acquisition_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_intangible_asset_org_acquisition_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_intangible_asset_org_id"),
+        UniqueConstraint("org_id", "asset_code", name="uq_intangible_asset_org_code"),
+        UniqueConstraint(
+            "acquisition_event_id", name="uq_intangible_asset_acquisition_event"
+        ),
+        CheckConstraint(
+            "category IN ('software','patent','trademark','copyright',"
+            "'non_patented_technology','other_identifiable_non_land')",
+            name="ck_intangible_asset_category",
+        ),
+        CheckConstraint(
+            "length(trim(asset_code)) > 0 AND length(trim(name)) > 0",
+            name="ck_intangible_asset_identity_text",
+        ),
+        CheckConstraint(
+            "length(trim(rights_description)) > 0", name="ck_intangible_asset_rights"
+        ),
+        CheckConstraint(
+            "(category = 'other_identifiable_non_land' "
+            "AND length(trim(other_right_type_description)) > 0 "
+            "AND length(trim(identifiability_basis)) > 0) OR "
+            "(category <> 'other_identifiable_non_land' "
+            "AND other_right_type_description IS NULL AND identifiability_basis IS NULL)",
+            name="ck_intangible_asset_other_identifiable",
+        ),
+        CheckConstraint(
+            "available_for_use_date >= acquisition_date",
+            name="ck_intangible_asset_available_date",
+        ),
+        CheckConstraint(
+            "date_trunc('month', acquisition_date)::date = "
+            "date_trunc('month', available_for_use_date)::date AND "
+            "date_trunc('month', acquisition_date)::date = "
+            "date_trunc('month', posting_date)::date",
+            name="ck_intangible_asset_acquisition_month",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "strftime('%Y-%m', acquisition_date) = strftime('%Y-%m', available_for_use_date) "
+            "AND strftime('%Y-%m', acquisition_date) = strftime('%Y-%m', posting_date)",
+            name="ck_intangible_asset_acquisition_month",
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint(
+            "purchase_price_fen >= 0 AND noncreditable_tax_fen >= 0 "
+            "AND directly_attributable_cost_fen >= 0 "
+            "AND purchase_price_fen <= 9223372036854775807 "
+            "AND noncreditable_tax_fen <= 9223372036854775807 "
+            "AND directly_attributable_cost_fen <= 9223372036854775807",
+            name="ck_intangible_asset_cost_components_nonnegative",
+        ),
+        CheckConstraint(
+            "cost_fen = purchase_price_fen + noncreditable_tax_fen "
+            "+ directly_attributable_cost_fen AND cost_fen > 0 "
+            "AND cost_fen <= 9223372036854775807",
+            name="ck_intangible_asset_cost_total",
+        ),
+        CheckConstraint(
+            "settlement_method IN ('bank','payable')",
+            name="ck_intangible_asset_settlement_method",
+        ),
+        CheckConstraint(
+            "(settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL) OR "
+            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL)",
+            name="ck_intangible_asset_settlement_dates",
+        ),
+        CheckConstraint(
+            "benefit_area IN ('management','sales','service_delivery')",
+            name="ck_intangible_asset_benefit_area",
+        ),
+        CheckConstraint(
+            "life_basis IN ('legal_or_contractual','reliably_estimated',"
+            "'not_reliably_estimated')",
+            name="ck_intangible_asset_life_basis",
+        ),
+        CheckConstraint(
+            "useful_life_months > 0 AND useful_life_months <= 119988 "
+            "AND cost_fen >= useful_life_months",
+            name="ck_intangible_asset_life_and_nonzero_amortization",
+        ),
+        CheckConstraint(
+            "life_basis <> 'not_reliably_estimated' OR useful_life_months >= 120",
+            name="ck_intangible_asset_unreliable_life_minimum",
+        ),
+        CheckConstraint(
+            "length(trim(life_basis_explanation)) > 0",
+            name="ck_intangible_asset_life_explanation",
+        ),
+        CheckConstraint(
+            "length(trim(accounting_rule_version)) > 0 "
+            "AND length(trim(accounting_rule_source_url)) > 0",
+            name="ck_intangible_asset_rule_text",
+        ),
+        CheckConstraint(
+            "is_available_for_use IS TRUE",
+            name="ck_intangible_asset_available_for_use",
+        ),
+        CheckConstraint(
+            "claims_creditable_input_vat IS FALSE",
+            name="ck_intangible_asset_no_creditable_vat",
+        ),
+    )
+
+
+class IntangibleAssetAmortization(Base):
+    __tablename__ = "intangible_asset_amortizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    period_start: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    sequence_no: Mapped[int] = mapped_column(Integer)
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    accumulated_after_fen: Mapped[int] = mapped_column(BigInteger)
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "asset_id"],
+            ["intangible_assets.org_id", "intangible_assets.id"],
+            name="fk_intangible_amortization_org_asset",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_intangible_amortization_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_intangible_amortization_org_id"),
+        UniqueConstraint("event_id", name="uq_intangible_amortization_event"),
+        CheckConstraint("sequence_no > 0", name="ck_intangible_amortization_sequence"),
+        CheckConstraint(
+            "amount_fen > 0 AND amount_fen <= 9223372036854775807",
+            name="ck_intangible_amortization_amount",
+        ),
+        CheckConstraint(
+            "accumulated_after_fen >= amount_fen "
+            "AND accumulated_after_fen <= 9223372036854775807",
+            name="ck_intangible_amortization_accumulated",
+        ),
+        CheckConstraint(
+            "length(calculation_hash) = 64",
+            name="ck_intangible_amortization_hash_length",
+        ),
+        CheckConstraint(
+            "length(trim(accounting_rule_version)) > 0 "
+            "AND length(trim(accounting_rule_source_url)) > 0",
+            name="ck_intangible_amortization_rule_text",
+        ),
+        CheckConstraint(
+            "calculation_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_intangible_amortization_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "period_start = date_trunc('month', period_start)::date",
+            name="ck_intangible_amortization_period_month_start",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "date_trunc('month', posting_date)::date = period_start",
+            name="ck_intangible_amortization_posting_month",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "strftime('%d', period_start) = '01'",
+            name="ck_intangible_amortization_period_month_start",
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint(
+            "strftime('%Y-%m', posting_date) = strftime('%Y-%m', period_start)",
+            name="ck_intangible_amortization_posting_month",
+        ).ddl_if(dialect="sqlite"),
+    )
+
+
+class IntangibleAssetRetirement(Base):
+    __tablename__ = "intangible_asset_retirements"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    retirement_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    gross_proceeds_fen: Mapped[int] = mapped_column(BigInteger)
+    compensation_fen: Mapped[int] = mapped_column(BigInteger)
+    taxes_and_fees_fen: Mapped[int] = mapped_column(BigInteger)
+    residual_proceeds_fen: Mapped[int] = mapped_column(BigInteger)
+    accumulated_amortization_fen: Mapped[int] = mapped_column(BigInteger)
+    book_value_fen: Mapped[int] = mapped_column(BigInteger)
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "asset_id"],
+            ["intangible_assets.org_id", "intangible_assets.id"],
+            name="fk_intangible_retirement_org_asset",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_intangible_retirement_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_intangible_retirement_org_id"),
+        UniqueConstraint("event_id", name="uq_intangible_retirement_event"),
+        CheckConstraint(
+            "gross_proceeds_fen = 0 AND compensation_fen = 0 "
+            "AND taxes_and_fees_fen = 0 AND residual_proceeds_fen = 0",
+            name="ck_intangible_retirement_zero_proceeds",
+        ),
+        CheckConstraint(
+            "accumulated_amortization_fen >= 0 AND book_value_fen >= 0 "
+            "AND accumulated_amortization_fen <= 9223372036854775807 "
+            "AND book_value_fen <= 9223372036854775807",
+            name="ck_intangible_retirement_amounts",
+        ),
+        CheckConstraint(
+            "posting_date = retirement_date",
+            name="ck_intangible_retirement_posting_date",
+        ),
+        CheckConstraint(
+            "length(trim(accounting_rule_version)) > 0 "
+            "AND length(trim(accounting_rule_source_url)) > 0",
+            name="ck_intangible_retirement_rule_text",
+        ),
+        CheckConstraint(
+            "retirement_date = (date_trunc('month', retirement_date) "
+            "+ interval '1 month - 1 day')::date",
+            name="ck_intangible_retirement_month_end",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "retirement_date = date(retirement_date, 'start of month', '+1 month', '-1 day')",
+            name="ck_intangible_retirement_month_end",
+        ).ddl_if(dialect="sqlite"),
+    )
+
+
+class Borrowing(Base):
+    __tablename__ = "borrowings"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    borrowing_code: Mapped[str] = mapped_column(String(100))
+    contract_name: Mapped[str] = mapped_column(String(200))
+    lender_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    lender_is_licensed_financial_institution: Mapped[bool] = mapped_column()
+    currency: Mapped[str] = mapped_column(String(3))
+    principal_fen: Mapped[int] = mapped_column(BigInteger)
+    drawdown_date: Mapped[date] = mapped_column(Date)
+    due_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    annual_rate_percent: Mapped[Decimal] = mapped_column(Numeric(9, 6))
+    day_count_basis: Mapped[str] = mapped_column(String(20))
+    interest_due_dates: Mapped[list[str]] = mapped_column(JSON)
+    capitalization_applicable: Mapped[bool] = mapped_column()
+    purpose_description: Mapped[str] = mapped_column(Text)
+    single_drawdown: Mapped[bool] = mapped_column()
+    fixed_rate: Mapped[bool] = mapped_column()
+    simple_interest: Mapped[bool] = mapped_column()
+    bullet_principal_at_maturity: Mapped[bool] = mapped_column()
+    allows_prepayment: Mapped[bool] = mapped_column()
+    allows_extension: Mapped[bool] = mapped_column()
+    has_penalty_interest: Mapped[bool] = mapped_column()
+    has_financing_fees: Mapped[bool] = mapped_column()
+    drawdown_event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "lender_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_borrowing_org_lender",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "drawdown_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_borrowing_org_drawdown_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_borrowing_org_id"),
+        UniqueConstraint("org_id", "borrowing_code", name="uq_borrowing_org_code"),
+        UniqueConstraint("drawdown_event_id", name="uq_borrowing_drawdown_event"),
+        CheckConstraint(
+            "length(trim(borrowing_code)) > 0 AND length(trim(contract_name)) > 0",
+            name="ck_borrowing_identity_text",
+        ),
+        CheckConstraint(
+            "lender_is_licensed_financial_institution IS TRUE",
+            name="ck_borrowing_licensed_lender",
+        ),
+        CheckConstraint("currency = 'CNY'", name="ck_borrowing_currency"),
+        CheckConstraint(
+            "principal_fen > 0 AND principal_fen <= 9223372036854775807",
+            name="ck_borrowing_principal",
+        ),
+        CheckConstraint(
+            "drawdown_date < due_date AND posting_date = drawdown_date",
+            name="ck_borrowing_dates",
+        ),
+        CheckConstraint(
+            "annual_rate_percent > 0 AND annual_rate_percent <= 100 "
+            "AND annual_rate_percent = round(annual_rate_percent, 6)",
+            name="ck_borrowing_annual_rate",
+        ),
+        CheckConstraint(
+            "day_count_basis IN ('actual_360','actual_365')",
+            name="ck_borrowing_day_count_basis",
+        ),
+        CheckConstraint(
+            "capitalization_applicable IS FALSE",
+            name="ck_borrowing_no_capitalization",
+        ),
+        CheckConstraint(
+            "length(trim(purpose_description)) > 0", name="ck_borrowing_purpose"
+        ),
+        CheckConstraint(
+            "length(trim(accounting_rule_version)) > 0 "
+            "AND length(trim(accounting_rule_source_url)) > 0",
+            name="ck_borrowing_rule_text",
+        ),
+        CheckConstraint(
+            "single_drawdown IS TRUE AND fixed_rate IS TRUE AND simple_interest IS TRUE "
+            "AND bullet_principal_at_maturity IS TRUE AND allows_prepayment IS FALSE "
+            "AND allows_extension IS FALSE AND has_penalty_interest IS FALSE "
+            "AND has_financing_fees IS FALSE",
+            name="ck_borrowing_phase_one_terms",
+        ),
+    )
+
+
+class BorrowingInterestAccrual(Base):
+    __tablename__ = "borrowing_interest_accruals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    borrowing_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    sequence_no: Mapped[int] = mapped_column(Integer)
+    principal_fen: Mapped[int] = mapped_column(BigInteger)
+    annual_rate_percent: Mapped[Decimal] = mapped_column(Numeric(9, 6))
+    day_count_basis: Mapped[str] = mapped_column(String(20))
+    actual_days: Mapped[int] = mapped_column(Integer)
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "borrowing_id"],
+            ["borrowings.org_id", "borrowings.id"],
+            name="fk_borrowing_accrual_org_borrowing",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_borrowing_accrual_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_borrowing_accrual_org_id"),
+        UniqueConstraint(
+            "org_id",
+            "borrowing_id",
+            "id",
+            name="uq_borrowing_accrual_org_borrowing_id",
+        ),
+        UniqueConstraint("event_id", name="uq_borrowing_accrual_event"),
+        CheckConstraint("period_start < period_end", name="ck_borrowing_accrual_period"),
+        CheckConstraint("posting_date = period_end", name="ck_borrowing_accrual_posting_date"),
+        CheckConstraint("sequence_no > 0", name="ck_borrowing_accrual_sequence"),
+        CheckConstraint(
+            "principal_fen > 0 AND principal_fen <= 9223372036854775807",
+            name="ck_borrowing_accrual_principal",
+        ),
+        CheckConstraint(
+            "annual_rate_percent > 0 AND annual_rate_percent <= 100 "
+            "AND annual_rate_percent = round(annual_rate_percent, 6)",
+            name="ck_borrowing_accrual_annual_rate",
+        ),
+        CheckConstraint(
+            "day_count_basis IN ('actual_360','actual_365')",
+            name="ck_borrowing_accrual_day_count_basis",
+        ),
+        CheckConstraint("actual_days > 0", name="ck_borrowing_accrual_actual_days"),
+        CheckConstraint(
+            "amount_fen > 0 AND amount_fen <= 9223372036854775807",
+            name="ck_borrowing_accrual_amount",
+        ),
+        CheckConstraint(
+            "length(calculation_hash) = 64",
+            name="ck_borrowing_accrual_hash_length",
+        ),
+        CheckConstraint(
+            "length(trim(accounting_rule_version)) > 0 "
+            "AND length(trim(accounting_rule_source_url)) > 0",
+            name="ck_borrowing_accrual_rule_text",
+        ),
+        CheckConstraint(
+            "calculation_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_borrowing_accrual_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+
+class BorrowingPayment(Base):
+    __tablename__ = "borrowing_payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    borrowing_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    accrual_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    payment_kind: Mapped[str] = mapped_column(String(20))
+    payment_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "borrowing_id"],
+            ["borrowings.org_id", "borrowings.id"],
+            name="fk_borrowing_payment_org_borrowing",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "borrowing_id", "accrual_id"],
+            [
+                "borrowing_interest_accruals.org_id",
+                "borrowing_interest_accruals.borrowing_id",
+                "borrowing_interest_accruals.id",
+            ],
+            name="fk_borrowing_payment_org_accrual",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_borrowing_payment_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_borrowing_payment_org_id"),
+        UniqueConstraint("event_id", name="uq_borrowing_payment_event"),
+        CheckConstraint(
+            "payment_kind IN ('interest','principal')",
+            name="ck_borrowing_payment_kind",
+        ),
+        CheckConstraint(
+            "(payment_kind = 'interest' AND accrual_id IS NOT NULL) OR "
+            "(payment_kind = 'principal' AND accrual_id IS NULL)",
+            name="ck_borrowing_payment_accrual_shape",
+        ),
+        CheckConstraint("posting_date = payment_date", name="ck_borrowing_payment_posting_date"),
+        CheckConstraint(
+            "amount_fen > 0 AND amount_fen <= 9223372036854775807",
+            name="ck_borrowing_payment_amount",
+        ),
+        CheckConstraint(
+            "length(trim(accounting_rule_version)) > 0 "
+            "AND length(trim(accounting_rule_source_url)) > 0",
+            name="ck_borrowing_payment_rule_text",
+        ),
+    )
+
+
+class IntangibleBorrowingAccountMigrationAction(Base):
+    """Ownership ledger for the 0011 default-account backfill."""
+
+    __tablename__ = "intangible_borrowing_account_migration_actions"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action: Mapped[str] = mapped_column(String(20))
+    original_system_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "account_id"],
+            ["accounts.org_id", "accounts.id"],
+            name="fk_intangible_borrowing_account_action_org_account",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "action IN ('created','bound')",
+            name="ck_intangible_borrowing_account_action",
+        ),
+    )
+
+
 class FixedAssetAccountMigrationAction(Base):
     """Migration-owned account adoption ledger used for a reversible downgrade."""
 
@@ -1090,6 +1645,26 @@ class FixedAssetTaxRuleMigrationAction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (CheckConstraint("action = 'created'", name="ck_fixed_asset_tax_rule_action"),)
+
+
+class TaxDeterminismExtensionAction(Base):
+    """Tracks whether 0010 owns each PostgreSQL extension it uses."""
+
+    __tablename__ = "tax_determinism_extension_actions"
+
+    extension_name: Mapped[str] = mapped_column(String(63), primary_key=True)
+    action: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        CheckConstraint(
+            "extension_name IN ('btree_gist','pgcrypto')",
+            name="ck_tax_determinism_extension_name",
+        ),
+        CheckConstraint(
+            "action IN ('created','reused')", name="ck_tax_determinism_extension_action"
+        ),
+    )
 
 
 class TaxRule(Base):
@@ -1331,17 +1906,84 @@ class TaxPeriod(Base):
     rule_version: Mapped[str] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="posted")
     calculation: Mapped[dict[str, Any]] = mapped_column(JSON)
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    calculation_hash_payload: Mapped[str] = mapped_column(Text)
+    filing_cycle_snapshot: Mapped[str] = mapped_column(String(20))
+    jurisdiction_snapshot: Mapped[str] = mapped_column(String(100))
+    urban_maintenance_rate_snapshot: Mapped[Decimal] = mapped_column(Numeric(6, 5))
+    vat_rule_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("tax_rules.id", ondelete="RESTRICT")
+    )
+    surtax_rule_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("tax_rules.id", ondelete="RESTRICT")
+    )
     adjustment_event_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("business_events.id", ondelete="RESTRICT"), unique=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    sources: Mapped[list[TaxPeriodSource]] = relationship(
+        "TaxPeriodSource",
+        back_populates="tax_period",
+        cascade="save-update, merge",
+        lazy="selectin",
+    )
+
     __table_args__ = (
-        UniqueConstraint(
-            "org_id", "start_date", "end_date", "rule_version", name="uq_tax_period_posting"
-        ),
+        UniqueConstraint("org_id", "id", name="uq_tax_period_org_id"),
         CheckConstraint("start_date <= end_date", name="ck_tax_period_dates"),
         CheckConstraint("status IN ('posted','reversed')", name="ck_tax_period_status"),
+        CheckConstraint("length(calculation_hash) = 64", name="ck_tax_period_hash_length"),
+        CheckConstraint(
+            "filing_cycle_snapshot IN ('monthly','quarterly')",
+            name="ck_tax_period_filing_cycle_snapshot",
+        ),
+        CheckConstraint(
+            "urban_maintenance_rate_snapshot IN (0.07, 0.05, 0.01)",
+            name="ck_tax_period_urban_rate_snapshot",
+        ),
+        CheckConstraint(
+            "length(calculation_hash_payload) > 0",
+            name="ck_tax_period_hash_payload_nonempty",
+        ),
+        CheckConstraint(
+            "calculation_hash ~ '^[0-9a-f]{64}$'", name="ck_tax_period_hash_lower_hex"
+        ).ddl_if(dialect="postgresql"),
+    )
+
+
+class TaxPeriodSource(Base):
+    """Organization-bound immutable taxable-event snapshot for a tax period."""
+
+    __tablename__ = "tax_period_sources"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    tax_period_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, index=True)
+    source_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, index=True)
+    gross_fen: Mapped[int] = mapped_column(BigInteger)
+    net_fen: Mapped[int] = mapped_column(BigInteger)
+    vat_fen: Mapped[int] = mapped_column(BigInteger)
+    exemption_eligible: Mapped[bool] = mapped_column()
+
+    tax_period: Mapped[TaxPeriod] = relationship(
+        "TaxPeriod",
+        back_populates="sources",
+        foreign_keys=[org_id, tax_period_id],
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "tax_period_id"],
+            ["tax_periods.org_id", "tax_periods.id"],
+            name="fk_tax_period_source_org_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "source_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_tax_period_source_org_event",
+            ondelete="RESTRICT",
+        ),
     )
 
 

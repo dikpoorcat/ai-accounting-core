@@ -45,7 +45,14 @@ class EventType(StrEnum):
     FIXED_ASSET_DEPRECIATION = "fixed_asset_depreciation"
     FIXED_ASSET_DISPOSAL = "fixed_asset_disposal"
     INTANGIBLE_ASSET = "intangible_asset"
+    INTANGIBLE_ASSET_ACQUISITION = "intangible_asset_acquisition"
+    INTANGIBLE_ASSET_AMORTIZATION = "intangible_asset_amortization"
+    INTANGIBLE_ASSET_RETIREMENT = "intangible_asset_retirement"
     LOAN_INTEREST = "loan_interest"
+    BORROWING_DRAWDOWN = "borrowing_drawdown"
+    BORROWING_INTEREST_ACCRUAL = "borrowing_interest_accrual"
+    BORROWING_INTEREST_PAYMENT = "borrowing_interest_payment"
+    BORROWING_PRINCIPAL_REPAYMENT = "borrowing_principal_repayment"
     INVENTORY = "inventory"
 
 
@@ -63,6 +70,13 @@ INTERNAL_EVENT_TYPES = {
     EventType.FIXED_ASSET_ACTIVATION,
     EventType.FIXED_ASSET_DEPRECIATION,
     EventType.FIXED_ASSET_DISPOSAL,
+    EventType.INTANGIBLE_ASSET_ACQUISITION,
+    EventType.INTANGIBLE_ASSET_AMORTIZATION,
+    EventType.INTANGIBLE_ASSET_RETIREMENT,
+    EventType.BORROWING_DRAWDOWN,
+    EventType.BORROWING_INTEREST_ACCRUAL,
+    EventType.BORROWING_INTEREST_PAYMENT,
+    EventType.BORROWING_PRINCIPAL_REPAYMENT,
 }
 
 
@@ -219,6 +233,33 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     EventType.FIXED_ASSET_DISPOSAL.value: {
         "workflow": "finance_dispose_fixed_asset only",
     },
+    EventType.INTANGIBLE_ASSET.value: {
+        "workflow": "specialized intangible-asset tools only",
+    },
+    EventType.INTANGIBLE_ASSET_ACQUISITION.value: {
+        "workflow": "finance_acquire_intangible_asset only",
+    },
+    EventType.INTANGIBLE_ASSET_AMORTIZATION.value: {
+        "workflow": "finance_preview_intangible_asset_amortization then confirm only",
+    },
+    EventType.INTANGIBLE_ASSET_RETIREMENT.value: {
+        "workflow": "finance_retire_intangible_asset only",
+    },
+    EventType.LOAN_INTEREST.value: {
+        "workflow": "specialized borrowing tools only",
+    },
+    EventType.BORROWING_DRAWDOWN.value: {
+        "workflow": "finance_draw_borrowing only",
+    },
+    EventType.BORROWING_INTEREST_ACCRUAL.value: {
+        "workflow": "finance_preview_borrowing_interest then confirm only",
+    },
+    EventType.BORROWING_INTEREST_PAYMENT.value: {
+        "workflow": "finance_pay_borrowing_interest only",
+    },
+    EventType.BORROWING_PRINCIPAL_REPAYMENT.value: {
+        "workflow": "finance_repay_borrowing_principal only",
+    },
 }
 
 
@@ -262,7 +303,7 @@ class AmountFacts(BaseModel):
     amount_fen: Fen | None = None
     gross_amount_fen: PositiveFen | None = None
     currency: str = "CNY"
-    expense_account_role: str = "general_expense"
+    expense_account_role: str | None = None
 
     @model_validator(mode="after")
     def cny_only(self) -> AmountFacts:
@@ -276,19 +317,31 @@ class AmountFacts(BaseModel):
 class TaxFacts(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    taxable: bool = True
-    rate_percent: Decimal = Field(default=Decimal("1"), ge=0, le=100)
-    invoice_type: str = "none"
-    waive_exemption: bool = False
-    tax_due_on_event: bool = True
+    # These are business facts, not calculator defaults.  Optionality is
+    # deliberate: the service can return ``needs_information`` with an exact
+    # field path instead of turning an omitted fact into a generic schema
+    # failure or silently changing the accounting treatment.
+    taxable: StrictBool | None = None
+    rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    invoice_type: str | None = None
+    waive_exemption: StrictBool | None = None
+    tax_due_on_event: StrictBool | None = None
 
     @model_validator(mode="after")
     def valid_invoice_type(self) -> TaxFacts:
-        if self.invoice_type not in {"ordinary", "special", "none"}:
+        if self.invoice_type is not None and self.invoice_type not in {
+            "ordinary",
+            "special",
+            "none",
+        }:
             raise ValueError("invoice_type must be ordinary, special, or none")
-        if self.rate_percent not in {Decimal("0"), Decimal("1"), Decimal("3")}:
+        if self.rate_percent is not None and self.rate_percent not in {
+            Decimal("0"),
+            Decimal("1"),
+            Decimal("3"),
+        }:
             raise ValueError("phase 1 supports VAT rates 0%, 1%, and 3% only")
-        if not self.taxable and self.waive_exemption:
+        if self.taxable is False and self.waive_exemption is True:
             raise ValueError("a non-taxable event cannot waive exemption")
         return self
 
@@ -1312,19 +1365,33 @@ class ImportBankStatementRequest(BaseModel):
     date_format: str | None = None
 
 
-class TaxPeriodRequest(BaseModel):
+class TaxPeriodPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     org_id: uuid.UUID
     start_date: date
     end_date: date
-    post_adjustment: bool = False
-    idempotency_key: str | None = None
 
     @model_validator(mode="after")
-    def valid_range(self) -> TaxPeriodRequest:
+    def valid_range(self) -> TaxPeriodPreviewRequest:
         if self.start_date > self.end_date:
             raise ValueError("start_date must not be after end_date")
-        if self.post_adjustment and not self.idempotency_key:
-            raise ValueError("idempotency_key is required when post_adjustment=true")
+        return self
+
+
+class TaxPeriodConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    start_date: date
+    end_date: date
+    calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def valid_range(self) -> TaxPeriodConfirmRequest:
+        if self.start_date > self.end_date:
+            raise ValueError("start_date must not be after end_date")
         return self
 
 

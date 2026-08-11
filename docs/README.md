@@ -4,6 +4,10 @@
 
 ## 当前规范与验收
 
+- [税务事实与期间结算确定性整改基线](./tax-determinism-remediation.md)：无形资产与借款利息阶段开始前必须关闭的税务事实、税期快照、税则有效期与 MCP 契约门禁。
+- [税务事实与期间结算确定性整改验收记录](./tax-determinism-acceptance.md)：前置整改的最终门禁、独立负向审计和稳定错误契约。
+- [无形资产与借款利息第一期开发基线](./intangible-assets-and-borrowing-development-plan.md)：已完成阶段冻结的范围、工具、公式、固定模板、错误码和验收标准。
+- [无形资产与借款利息第一期最终验收记录](./intangible-assets-and-borrowing-acceptance.md)：双模块闭环、0011 提交点、真实 STDIO、独立负向审计和最终质量门禁。
 - [固定资产模块第一期最终验收记录](./fixed-asset-module-acceptance.md)：购置、启用、月折旧、出售/报废和逆序冲正闭环的最终门禁与独立审计结论。
 - [固定资产模块开发基线](./fixed-asset-module-development-plan.md)：已完成阶段的稳定契约、官方依据、边界和验收标准。
 - [工资模块开发基线](./payroll-module-development-plan.md)：当前业务边界、数据模型、工具契约和验收标准。

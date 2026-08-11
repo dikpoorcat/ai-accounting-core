@@ -45,6 +45,7 @@ def sale_request(
             "taxable": True,
             "rate_percent": "1",
             "invoice_type": "ordinary",
+            "waive_exemption": False,
             "tax_due_on_event": True,
         },
         "description": "咨询服务",
@@ -257,6 +258,8 @@ def test_customer_advance_cannot_be_fulfilled_twice(
                 "tax_facts": {
                     "taxable": True,
                     "rate_percent": "1",
+                    "invoice_type": "ordinary",
+                    "waive_exemption": False,
                     "tax_due_on_event": True,
                 },
             }
@@ -280,6 +283,8 @@ def test_customer_advance_cannot_be_fulfilled_twice(
                 "tax_facts": {
                     "taxable": True,
                     "rate_percent": "1",
+                    "invoice_type": "ordinary",
+                    "waive_exemption": False,
                     "tax_due_on_event": False,
                 },
                 "details": {

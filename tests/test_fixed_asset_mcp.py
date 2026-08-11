@@ -25,6 +25,8 @@ from ai_accounting.schemas import (
     PreviewFixedAssetDepreciationRequest,
     RecordEventRequest,
     ReverseEventRequest,
+    TaxPeriodConfirmRequest,
+    TaxPeriodPreviewRequest,
 )
 
 ASSET_TOOL_NAMES = {
@@ -276,5 +278,138 @@ def test_acquisition_mcp_handler_posts_to_an_isolated_sqlite_database(
             asset = session.scalar(select(FixedAsset).where(FixedAsset.asset_code == "MCP-FA-001"))
             assert asset is not None
             assert asset.cost_fen == 103_000
+    finally:
+        engine.dispose()
+
+
+def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    try:
+        with factory.begin() as session:
+            organization = seed_organization(session, name="MCP tax lock test")
+            evidence = Evidence(
+                org_id=organization.id,
+                sha256="l" * 64,
+                original_name="tax-lock.pdf",
+                media_type="application/pdf",
+                source="test",
+                size_bytes=1,
+                storage_path="test/tax-lock.pdf",
+            )
+            session.add(evidence)
+            session.flush()
+            org_id = organization.id
+            evidence_id = evidence.id
+        monkeypatch.setattr(mcp_server, "SessionLocal", factory)
+
+        acquired = mcp_server.finance_acquire_fixed_asset(
+            AcquireFixedAssetRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "idempotency_key": "mcp-tax-lock-acquire",
+                    "asset_code": "MCP-TAX-LOCK",
+                    "asset_name": "MCP tax lock device",
+                    "category": "electronic",
+                    "expected_use_over_one_year": True,
+                    "purchase_date": "2026-01-02",
+                    "posting_date": "2026-01-02",
+                    "cost_components": {
+                        "purchase_price_fen": 100_000,
+                        "noncreditable_tax_fen": 3_000,
+                        "transport_and_handling_fen": 0,
+                        "installation_and_direct_cost_fen": 0,
+                    },
+                    "supplier": {"kind": "supplier", "name": "MCP supplier"},
+                    "settlement_method": "payable",
+                    "due_date": "2026-02-02",
+                    "evidence_references": [evidence_id],
+                    "claims_creditable_input_vat": False,
+                }
+            )
+        )
+        assert acquired["status"] == "posted", acquired
+        activated = mcp_server.finance_activate_fixed_asset(
+            ActivateFixedAssetRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "asset_id": acquired["asset_id"],
+                    "idempotency_key": "mcp-tax-lock-activate",
+                    "activation_date": "2026-01-10",
+                    "posting_date": "2026-01-10",
+                    "useful_life_months": 13,
+                    "residual_value_fen": 0,
+                    "benefit_area": "management",
+                    "evidence_references": [evidence_id],
+                }
+            )
+        )
+        assert activated["status"] == "posted", activated
+        source = mcp_server.finance_record_event(
+            RecordEventRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "idempotency_key": "mcp-tax-lock-source",
+                    "event_type": "service_cash_sale",
+                    "business_dates": {
+                        "business_date": "2026-01-15",
+                        "fulfillment_date": "2026-01-15",
+                        "payment_date": "2026-01-15",
+                        "tax_obligation_date": "2026-01-15",
+                        "posting_date": "2026-01-15",
+                    },
+                    "amounts": {"gross_amount_fen": 101_000},
+                    "tax_facts": {
+                        "taxable": True,
+                        "rate_percent": "1",
+                        "invoice_type": "special",
+                        "waive_exemption": False,
+                        "tax_due_on_event": True,
+                    },
+                }
+            )
+        )
+        assert source["status"] == "posted", source
+        preview_request = TaxPeriodPreviewRequest(
+            org_id=org_id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+        )
+        preview = mcp_server.finance_calculate_tax_period(preview_request)
+        assert preview["status"] == "calculated", preview
+        confirmed = mcp_server.finance_confirm_tax_period(
+            TaxPeriodConfirmRequest(
+                **preview_request.model_dump(),
+                calculation_hash=preview["calculation_hash"],
+                idempotency_key="mcp-tax-lock-confirm",
+            )
+        )
+        assert confirmed["status"] == "posted", confirmed
+
+        blocked = mcp_server.finance_dispose_fixed_asset(
+            DisposeFixedAssetRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "asset_id": acquired["asset_id"],
+                    "idempotency_key": "mcp-tax-lock-dispose",
+                    "disposal_date": "2026-01-20",
+                    "posting_date": "2026-01-20",
+                    "disposal_kind": "sale",
+                    "gross_proceeds_fen": 50_000,
+                    "invoice_type": "ordinary",
+                    "waive_exemption": False,
+                    "settlement_method": "receivable",
+                    "customer": {"kind": "customer", "name": "MCP customer"},
+                    "tax_obligation_date": "2026-01-20",
+                    "clearance_cost_fen": 0,
+                    "evidence_references": [evidence_id],
+                }
+            )
+        )
+        assert blocked["status"] == "rejected"
+        assert blocked["errors"] == ["TAX_PERIOD_SOURCE_LOCKED"]
     finally:
         engine.dispose()

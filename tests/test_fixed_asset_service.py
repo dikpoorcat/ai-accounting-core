@@ -28,6 +28,8 @@ from ai_accounting.schemas import (
     PreviewFixedAssetDepreciationRequest,
     RecordEventRequest,
     ReverseEventRequest,
+    TaxPeriodConfirmRequest,
+    TaxPeriodPreviewRequest,
 )
 from ai_accounting.tax import calculate_tax_period
 
@@ -783,3 +785,120 @@ def test_fixed_asset_sale_flows_into_period_tax_relief_and_special_invoice_exclu
     assert combined.vat_accrued_fen == 11_651
     assert combined.vat_relief_fen == 9_709
     assert combined.vat_payable_fen == 1_942
+
+
+def test_fixed_asset_sale_respects_tax_period_date_lock_but_retirement_does_not(
+    session: Session, organization: Organization
+) -> None:
+    service = FixedAssetService(session)
+    evidence = _evidence(session, organization, "tax-lock")
+    session.add(
+        BusinessEvent(
+            org_id=organization.id,
+            idempotency_key="fixed-asset-tax-lock-source",
+            event_type="service_cash_sale",
+            status="posted",
+            description="tax lock source",
+            facts={
+                "derived": {
+                    "taxable_gross_fen": 1_010_000,
+                    "net_sales_fen": 1_000_000,
+                    "vat_fen": 10_000,
+                    "exemption_eligible": False,
+                }
+            },
+            business_date=date(2026, 1, 15),
+            tax_obligation_date=date(2026, 1, 15),
+            posting_date=date(2026, 1, 15),
+            rule_trace=[],
+        )
+    )
+    session.flush()
+    preview = service.preview_tax_period(
+        TaxPeriodPreviewRequest(
+            org_id=organization.id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+        )
+    )
+    confirmed = service.confirm_tax_period(
+        TaxPeriodConfirmRequest(
+            org_id=organization.id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            calculation_hash=preview["calculation_hash"],
+            idempotency_key="fixed-asset-tax-lock-confirm",
+        )
+    )
+    assert confirmed.status == "posted", confirmed.errors
+
+    def acquire_and_activate(asset_code: str) -> object:
+        acquired = service.acquire_fixed_asset(
+            _acquisition_request(
+                organization,
+                evidence,
+                key=f"tax-lock-acquire-{asset_code}",
+            ).model_copy(update={"asset_code": asset_code})
+        )
+        activated = service.activate_fixed_asset(
+            ActivateFixedAssetRequest.model_validate(
+                {
+                    "org_id": organization.id,
+                    "asset_id": acquired.asset_id,
+                    "idempotency_key": f"tax-lock-activate-{asset_code}",
+                    "activation_date": "2026-01-10",
+                    "posting_date": "2026-01-10",
+                    "useful_life_months": 13,
+                    "residual_value_fen": 10_000,
+                    "benefit_area": "management",
+                    "evidence_references": [evidence.id],
+                }
+            )
+        )
+        assert activated.status == "posted", activated.errors
+        return acquired.asset_id
+
+    sale_asset_id = acquire_and_activate("FA-TAX-LOCK-SALE")
+    blocked_sale = service.dispose_fixed_asset(
+        DisposeFixedAssetRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "asset_id": sale_asset_id,
+                "idempotency_key": "tax-lock-dispose-sale",
+                "disposal_date": "2026-01-20",
+                "posting_date": "2026-01-20",
+                "disposal_kind": "sale",
+                "gross_proceeds_fen": 500_000,
+                "invoice_type": "ordinary",
+                "waive_exemption": False,
+                "settlement_method": "receivable",
+                "customer": {"kind": "customer", "name": "税期锁客户"},
+                "tax_obligation_date": "2026-01-20",
+                "clearance_cost_fen": 0,
+                "evidence_references": [evidence.id],
+            }
+        )
+    )
+    assert blocked_sale.status == "rejected"
+    assert blocked_sale.errors == ["TAX_PERIOD_SOURCE_LOCKED"]
+    assert session.scalar(
+        select(FixedAssetDisposal).where(FixedAssetDisposal.asset_id == sale_asset_id)
+    ) is None
+
+    retirement_asset_id = acquire_and_activate("FA-TAX-LOCK-RETIREMENT")
+    retirement = service.dispose_fixed_asset(
+        DisposeFixedAssetRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "asset_id": retirement_asset_id,
+                "idempotency_key": "tax-lock-dispose-retirement",
+                "disposal_date": "2026-01-20",
+                "posting_date": "2026-01-20",
+                "disposal_kind": "retirement",
+                "settlement_method": "none",
+                "clearance_cost_fen": 0,
+                "evidence_references": [evidence.id],
+            }
+        )
+    )
+    assert retirement.status == "posted", retirement.errors

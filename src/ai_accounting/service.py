@@ -44,6 +44,7 @@ from .models import (
     PayrollWithholdingPaymentAllocation,
     Settlement,
     TaxPeriod,
+    TaxPeriodSource,
     Voucher,
     event_evidence,
 )
@@ -91,9 +92,10 @@ from .schemas import (
     RegisterPayrollPolicyVersionRequest,
     ResultStatus,
     ReverseEventRequest,
-    TaxPeriodRequest,
+    TaxPeriodConfirmRequest,
+    TaxPeriodPreviewRequest,
 )
-from .tax import TaxPeriodResult, active_tax_rule, calculate_tax_period, split_tax_inclusive
+from .tax import active_tax_rule, calculate_tax_period, split_tax_inclusive
 
 
 class FinanceService:
@@ -117,6 +119,23 @@ class FinanceService:
     def _request_payload_hash(self, request: Any) -> str:
         """Hash only caller-supplied business facts, before service derivation."""
         return self._canonical_payload_hash(request.model_dump(mode="json"))
+
+    @staticmethod
+    def _database_error_identity(exc: DBAPIError) -> tuple[str | None, str | None, str | None]:
+        """Read bounded driver diagnostics without rendering SQL or parameters."""
+
+        original = getattr(exc, "orig", None)
+        diagnostics = getattr(original, "diag", None)
+        return (
+            getattr(original, "sqlstate", None) or getattr(original, "pgcode", None),
+            getattr(diagnostics, "constraint_name", None),
+            getattr(diagnostics, "message_primary", None),
+        )
+
+    @classmethod
+    def _is_tax_period_source_lock_error(cls, exc: DBAPIError) -> bool:
+        sqlstate, _constraint_name, primary_message = cls._database_error_identity(exc)
+        return sqlstate == "P0001" and primary_message == "TAX_PERIOD_SOURCE_LOCKED"
 
     @staticmethod
     def _is_round6_final_dependency_error(exc: DBAPIError) -> bool:
@@ -402,6 +421,13 @@ class FinanceService:
                 missing=missing,
             )
 
+        if self._tax_period_source_is_locked(request):
+            return self._store_nonposted(
+                request,
+                status=ResultStatus.REJECTED,
+                errors=["TAX_PERIOD_SOURCE_LOCKED"],
+            )
+
         try:
             with self.session.begin_nested():
                 return self._post_event(organization, request)
@@ -429,7 +455,13 @@ class FinanceService:
                 status=ResultStatus.REJECTED,
                 errors=[str(exc)],
             )
-        except IntegrityError:
+        except IntegrityError as exc:
+            if self._is_tax_period_source_lock_error(exc):
+                return self._store_nonposted(
+                    request,
+                    status=ResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_SOURCE_LOCKED"],
+                )
             existing = self.session.scalar(
                 select(BusinessEvent).where(
                     BusinessEvent.org_id == request.org_id,
@@ -463,6 +495,51 @@ class FinanceService:
                 status=ResultStatus.REJECTED,
                 errors=["DATABASE_CONCURRENCY_CONFLICT"],
             )
+        except DBAPIError as exc:
+            if self._is_tax_period_source_lock_error(exc):
+                return self._store_nonposted(
+                    request,
+                    status=ResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_SOURCE_LOCKED"],
+                )
+            raise
+
+    def _tax_period_source_is_locked(self, request: RecordEventRequest) -> bool:
+        """Reject a new taxable source inside an active confirmed snapshot."""
+
+        tax = request.tax_facts
+        if tax is None or tax.taxable is not True or tax.tax_due_on_event is not True:
+            return False
+        taxable_source = request.event_type in {
+            EventType.SERVICE_CASH_SALE,
+            EventType.SERVICE_CREDIT_SALE,
+            EventType.CUSTOMER_ADVANCE,
+        }
+        if request.event_type == EventType.SERVICE_FULFILLMENT:
+            taxable_source = request.details.get("tax_previously_accrued") is False
+        if request.event_type == EventType.CUSTOMER_REFUND:
+            taxable_source = request.details.get("refund_kind") == "sale_return"
+        obligation_date = request.business_dates.tax_obligation_date
+        if not taxable_source or obligation_date is None:
+            return False
+        return self._tax_obligation_date_is_locked(request.org_id, obligation_date)
+
+    def _tax_obligation_date_is_locked(self, org_id: uuid.UUID, obligation_date: date) -> bool:
+        """Return whether an active immutable tax snapshot owns this tax date."""
+
+        return (
+            self.session.scalar(
+                select(
+                    exists().where(
+                        TaxPeriod.org_id == org_id,
+                        TaxPeriod.status == "posted",
+                        TaxPeriod.start_date <= obligation_date,
+                        TaxPeriod.end_date >= obligation_date,
+                    )
+                )
+            )
+            is True
+        )
 
     def _store_nonposted(
         self,
@@ -2012,6 +2089,20 @@ class FinanceService:
         }
         if event_type in sales_events and request.tax_facts is None:
             missing.append("tax_facts")
+        tax_facts_required = event_type in sales_events or (
+            event_type == EventType.CUSTOMER_REFUND
+            and request.details.get("refund_kind") == "sale_return"
+        )
+        if tax_facts_required and request.tax_facts is not None:
+            for field_name in (
+                "taxable",
+                "rate_percent",
+                "invoice_type",
+                "waive_exemption",
+                "tax_due_on_event",
+            ):
+                if getattr(request.tax_facts, field_name) is None:
+                    missing.append(f"tax_facts.{field_name}")
         if (
             request.tax_facts
             and request.tax_facts.taxable
@@ -2109,8 +2200,19 @@ class FinanceService:
             "surtax",
         }:
             missing.append("details.tax_type ('vat' or 'surtax')")
-        if request.amounts.expense_account_role not in {"general_expense", "finance_expense"}:
-            missing.append("a supported amounts.expense_account_role")
+        expense_events = {
+            EventType.EXPENSE_CASH,
+            EventType.EXPENSE_PAYABLE,
+            EventType.EMPLOYEE_REIMBURSEMENT,
+        }
+        if event_type in expense_events:
+            if request.amounts.expense_account_role is None:
+                missing.append("amounts.expense_account_role")
+            elif request.amounts.expense_account_role not in {
+                "general_expense",
+                "finance_expense",
+            }:
+                missing.append("a supported amounts.expense_account_role")
 
         required_dates: dict[EventType, tuple[str, ...]] = {
             EventType.SERVICE_CASH_SALE: ("fulfillment_date", "payment_date"),
@@ -5369,44 +5471,182 @@ class FinanceService:
             "trace": line.calculation_trace,
         }
 
-    def calculate_tax(self, request: TaxPeriodRequest) -> dict[str, Any]:
+    def preview_tax_period(self, request: TaxPeriodPreviewRequest) -> dict[str, Any]:
         organization = self.session.get(Organization, request.org_id)
         if organization is None:
-            raise ValueError("ORGANIZATION_NOT_FOUND")
-        result = calculate_tax_period(
-            self.session, organization, request.start_date, request.end_date
-        )
-        payload = result.to_dict()
-        if request.post_adjustment:
-            posting = self._post_tax_adjustment(request, result)
-            payload["posting"] = posting.model_dump(mode="json")
-        return payload
+            return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
+        try:
+            result = calculate_tax_period(
+                self.session, organization, request.start_date, request.end_date
+            )
+        except ValueError as exc:
+            code = str(exc)
+            if code.startswith("TAX_"):
+                return {"status": "rejected", "errors": [code]}
+            raise
+        return {"status": "calculated", **result.to_dict()}
 
-    def _post_tax_adjustment(
-        self, request: TaxPeriodRequest, tax_result: TaxPeriodResult
-    ) -> FinanceResult:
+    @staticmethod
+    def _tax_period_confirm_payload_hash(request: TaxPeriodConfirmRequest) -> str:
+        return FinanceService._canonical_payload_hash(
+            {
+                "command": "finance_confirm_tax_period",
+                "org_id": str(request.org_id),
+                "start_date": request.start_date.isoformat(),
+                "end_date": request.end_date.isoformat(),
+                "calculation_hash": request.calculation_hash,
+            }
+        )
+
+    def _tax_period_existing_result(self, event: BusinessEvent) -> FinanceResult:
+        result = self._result_for_existing(event)
+        tax_period = self.session.scalar(
+            select(TaxPeriod).where(TaxPeriod.adjustment_event_id == event.id)
+        )
+        if tax_period is not None:
+            result.data = {
+                **result.data,
+                "tax_period_id": str(tax_period.id),
+                "calculation_hash": tax_period.calculation_hash,
+                "idempotent_replay": True,
+            }
+        return result
+
+    def _active_tax_period_conflict(
+        self,
+        request: TaxPeriodConfirmRequest,
+        *,
+        lock: bool,
+    ) -> str | None:
+        query = select(TaxPeriod).where(
+            TaxPeriod.org_id == request.org_id,
+            TaxPeriod.status == "posted",
+            TaxPeriod.start_date <= request.end_date,
+            TaxPeriod.end_date >= request.start_date,
+        )
+        if lock:
+            query = query.with_for_update()
+        active_periods = self.session.scalars(query).all()
+        if any(
+            period.start_date == request.start_date and period.end_date == request.end_date
+            for period in active_periods
+        ):
+            return "TAX_PERIOD_ALREADY_POSTED"
+        if active_periods:
+            return "TAX_PERIOD_OVERLAP"
+        return None
+
+    def _assert_tax_period_range_constraint_now(self) -> None:
+        """Surface the deferred PostgreSQL exclusion constraint in our savepoint."""
+
+        if self.session.get_bind().dialect.name == "postgresql":
+            self.session.execute(text("SET CONSTRAINTS ex_tax_period_posted_range IMMEDIATE"))
+
+    def _lock_tax_period_org(self, org_id: uuid.UUID) -> None:
+        """Serialize a confirmation with taxable-source writes for one organization."""
+
+        if self.session.get_bind().dialect.name == "postgresql":
+            self.session.execute(
+                text(
+                    "SELECT pg_advisory_xact_lock("
+                    "hashtextextended('tax-period-org:' || :org_id, 0))"
+                ),
+                {"org_id": str(org_id)},
+            )
+
+    def confirm_tax_period(self, request: TaxPeriodConfirmRequest) -> FinanceResult:
+        request_payload_hash = self._tax_period_confirm_payload_hash(request)
         existing = self.session.scalar(
             select(BusinessEvent).where(
                 BusinessEvent.org_id == request.org_id,
                 BusinessEvent.idempotency_key == request.idempotency_key,
             )
         )
-        if existing:
-            return self._result_for_existing(existing)
-        period_record = self.session.scalar(
-            select(TaxPeriod).where(
-                TaxPeriod.org_id == request.org_id,
-                TaxPeriod.start_date == request.start_date,
-                TaxPeriod.end_date == request.end_date,
-                TaxPeriod.rule_version == tax_result.rule_version,
-            )
+        if existing is not None:
+            if existing.request_payload_hash != request_payload_hash:
+                return FinanceResult(
+                    status=ResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                )
+            return self._tax_period_existing_result(existing)
+        try:
+            with self.session.begin_nested():
+                return self._confirm_tax_period_write(
+                    request,
+                    request_payload_hash=request_payload_hash,
+                )
+        except IntegrityError as exc:
+            sqlstate, constraint_name, _primary_message = self._database_error_identity(exc)
+            if (sqlstate, constraint_name) == ("23505", "uq_event_org_idempotency"):
+                existing = self.session.scalar(
+                    select(BusinessEvent).where(
+                        BusinessEvent.org_id == request.org_id,
+                        BusinessEvent.idempotency_key == request.idempotency_key,
+                    )
+                )
+                if existing is None:
+                    raise
+                if existing.request_payload_hash != request_payload_hash:
+                    return FinanceResult(
+                        status=ResultStatus.REJECTED,
+                        errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                    )
+                return self._tax_period_existing_result(existing)
+            if (sqlstate, constraint_name) == ("23P01", "ex_tax_period_posted_range"):
+                conflict = self._active_tax_period_conflict(request, lock=False)
+                if conflict is None:
+                    raise
+                return FinanceResult(status=ResultStatus.REJECTED, errors=[conflict])
+            raise
+
+    def _confirm_tax_period_write(
+        self,
+        request: TaxPeriodConfirmRequest,
+        *,
+        request_payload_hash: str,
+    ) -> FinanceResult:
+        # Linearize organization tax configuration with both the confirmed
+        # snapshot and taxable-source writes. Re-read under a row lock so a
+        # previously cached Organization cannot validate a stale preview.
+        self._lock_tax_period_org(request.org_id)
+        organization = self.session.scalar(
+            select(Organization)
+            .where(Organization.id == request.org_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        if period_record and period_record.status == "posted":
+        if organization is None:
             return FinanceResult(
                 status=ResultStatus.REJECTED,
-                errors=["TAX_PERIOD_ALREADY_POSTED"],
+                errors=["ORGANIZATION_NOT_FOUND"],
+            )
+        try:
+            tax_result = calculate_tax_period(
+                self.session,
+                organization,
+                request.start_date,
+                request.end_date,
+            )
+        except ValueError as exc:
+            code = str(exc)
+            if code.startswith("TAX_"):
+                return FinanceResult(status=ResultStatus.REJECTED, errors=[code])
+            raise
+        if request.calculation_hash != tax_result.calculation_hash:
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=["TAX_PERIOD_CALCULATION_STALE"],
+                rule_version=tax_result.rule_version,
+                trace=tax_result.trace,
+            )
+
+        if conflict := self._active_tax_period_conflict(request, lock=True):
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=[conflict],
                 rule_version=tax_result.rule_version,
             )
+
         entries: list[Entry] = []
         if tax_result.vat_relief_fen:
             entries.extend(
@@ -5428,15 +5668,16 @@ class FinanceService:
         if not entries:
             return FinanceResult(
                 status=ResultStatus.REJECTED,
-                errors=["NO_TAX_ADJUSTMENT_TO_POST"],
+                errors=["TAX_PERIOD_NO_ADJUSTMENT"],
                 rule_version=tax_result.rule_version,
                 trace=tax_result.trace,
             )
         event = BusinessEvent(
             org_id=request.org_id,
-            idempotency_key=request.idempotency_key or "",
+            idempotency_key=request.idempotency_key,
+            request_payload_hash=request_payload_hash,
             event_type=EventType.TAX_RELIEF.value,
-            status="posted",
+            status="draft",
             description=f"税务期间结算 {request.start_date} 至 {request.end_date}",
             facts={"tax_period": tax_result.to_dict()},
             business_date=request.end_date,
@@ -5454,28 +5695,55 @@ class FinanceService:
             description=event.description,
             entries=entries,
         )
-        if period_record is None:
-            period_record = TaxPeriod(
-                org_id=request.org_id,
-                start_date=request.start_date,
-                end_date=request.end_date,
-                rule_version=tax_result.rule_version,
-                calculation=tax_result.to_dict(),
-                adjustment_event_id=event.id,
+        period_record = TaxPeriod(
+            org_id=request.org_id,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            rule_version=tax_result.rule_version,
+            calculation=tax_result.to_dict(),
+            calculation_hash=tax_result.calculation_hash,
+            calculation_hash_payload=tax_result.calculation_hash_payload,
+            filing_cycle_snapshot=organization.filing_cycle,
+            jurisdiction_snapshot=organization.jurisdiction,
+            urban_maintenance_rate_snapshot=Decimal(
+                format(organization.urban_maintenance_rate, ".5f")
+            ),
+            vat_rule_id=uuid.UUID(tax_result.vat_rule_id),
+            surtax_rule_id=uuid.UUID(tax_result.surtax_rule_id),
+            adjustment_event_id=event.id,
+        )
+        self.session.add(period_record)
+        self.session.flush()
+        for source in tax_result.source_events:
+            self.session.add(
+                TaxPeriodSource(
+                    org_id=request.org_id,
+                    tax_period_id=period_record.id,
+                    source_event_id=uuid.UUID(source["event_id"]),
+                    gross_fen=source["gross_fen"],
+                    net_fen=source["net_fen"],
+                    vat_fen=source["vat_fen"],
+                    exemption_eligible=source["exemption_eligible"],
+                )
             )
-            self.session.add(period_record)
-        else:
-            period_record.status = "posted"
-            period_record.calculation = tax_result.to_dict()
-            period_record.adjustment_event_id = event.id
+        # Materialize the complete source snapshot while the adjustment event
+        # is still draft. PostgreSQL seals this set when the event is posted.
+        self.session.flush()
+        event.status = "posted"
         self.session.add(
             AuditLog(
                 org_id=request.org_id,
                 event_id=event.id,
                 action="tax_adjustment_posted",
-                details={"voucher_id": str(voucher.id)},
+                details={
+                    "voucher_id": str(voucher.id),
+                    "tax_period_id": str(period_record.id),
+                    "calculation_hash": tax_result.calculation_hash,
+                },
             )
         )
+        self.session.flush()
+        self._assert_tax_period_range_constraint_now()
         return FinanceResult(
             status=ResultStatus.POSTED,
             event_id=event.id,
@@ -5483,6 +5751,11 @@ class FinanceService:
             voucher_number=voucher.voucher_number,
             rule_version=tax_result.rule_version,
             trace=tax_result.trace,
+            data={
+                "tax_period_id": str(period_record.id),
+                "calculation_hash": tax_result.calculation_hash,
+                "idempotent_replay": False,
+            },
         )
 
     def _create_payroll_reversal_batch(
@@ -5641,6 +5914,45 @@ class FinanceService:
     def reverse_event(self, request: ReverseEventRequest) -> FinanceResult:
         """Reverse through the common payroll idempotency/savepoint envelope."""
 
+        # The public Python service is itself an API boundary. Route specialized
+        # lifecycles here as well as in MCP so a caller cannot bypass their
+        # downstream-first reversal dependency checks by instantiating the base
+        # service directly. Subclasses call back into this method after their
+        # own idempotency handling, so dispatch only for the concrete base type.
+        if type(self) is FinanceService:
+            event_type = self.session.scalar(
+                select(BusinessEvent.event_type).where(
+                    BusinessEvent.org_id == request.org_id,
+                    BusinessEvent.id == request.event_id,
+                )
+            )
+            if event_type in {
+                "intangible_asset_acquisition",
+                "intangible_asset_amortization",
+                "intangible_asset_retirement",
+            }:
+                from .intangible_asset_service import IntangibleAssetService
+
+                return IntangibleAssetService(self.session).reverse_event(request)
+            if event_type in {
+                "borrowing_drawdown",
+                "borrowing_interest_accrual",
+                "borrowing_interest_payment",
+                "borrowing_principal_repayment",
+            }:
+                from .borrowing_service import BorrowingService
+
+                return BorrowingService(self.session).reverse_event(request)
+            if event_type in {
+                "fixed_asset_acquisition",
+                "fixed_asset_activation",
+                "fixed_asset_depreciation",
+                "fixed_asset_disposal",
+            }:
+                from .fixed_asset_service import FixedAssetService
+
+                return FixedAssetService(self.session).reverse_event(request)
+
         request_payload_hash = self._request_payload_hash(request)
         try:
             with self.session.begin_nested():
@@ -5706,6 +6018,24 @@ class FinanceService:
             return self._result_for_existing(existing_after_lock)
         if original.status != "posted" or original.reversed_by_event_id:
             return FinanceResult(status=ResultStatus.REJECTED, errors=["EVENT_IS_NOT_REVERSIBLE"])
+        locked_tax_source = self.session.scalar(
+            select(TaxPeriodSource.source_event_id)
+            .join(
+                TaxPeriod,
+                (TaxPeriod.org_id == TaxPeriodSource.org_id)
+                & (TaxPeriod.id == TaxPeriodSource.tax_period_id),
+            )
+            .where(
+                TaxPeriodSource.org_id == request.org_id,
+                TaxPeriodSource.source_event_id == original.id,
+                TaxPeriod.status == "posted",
+            )
+        )
+        if locked_tax_source is not None:
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=["TAX_PERIOD_SOURCE_LOCKED"],
+            )
         original_voucher = self.session.scalar(
             select(Voucher).where(Voucher.event_id == original.id)
         )

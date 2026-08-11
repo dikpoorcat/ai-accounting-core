@@ -16,9 +16,12 @@
 - PostgreSQL 延迟借贷平衡约束及已入账凭证不可改删触发器。
 - 工资、社保、公积金、累计个税和全年一次性奖金的登记、试算、确认、支付与冲正闭环。
 - 固定资产外购、启用、逐月直线折旧、出售/报废、资产卡片和逆序冲正闭环。
-- 22 个严格参数的本地 STDIO MCP 工具；无聊天 UI、REST API 或模型调用。
+- 外购无形资产的取得、可供使用当月起直线摊销、月末零收入报废和逆序冲正闭环。
+- 持牌金融机构人民币固定利率借款的放款、合同单利计提、付息、到期还本和逆序冲正闭环。
+- 税期试算与计算哈希确认、来源快照封闭和税务事实锁定。
+- 34 个严格参数的本地 STDIO MCP 工具；无聊天 UI、REST API 或模型调用。
 
-工资和固定资产只能通过各自的专用工具登记、试算和确认；通用事件入口不会接受 Agent 自行组织这些分录。无形资产、借款利息和存货事件仍会明确返回 `MODULE_NOT_ENABLED`。
+工资、固定资产、无形资产和借款只能通过各自的专用工具登记、试算和确认；通用事件入口不会接受 Agent 自行组织这些分录。存货事件仍会明确返回 `MODULE_NOT_ENABLED`。
 
 ## 本地启动
 
@@ -79,6 +82,32 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 
 房屋建筑物、土地、自建/改建、融资租赁、减值、加速折旧、所得税折旧及税会差异仍不在本阶段范围。完整契约见[固定资产模块开发基线](docs/fixed-asset-module-development-plan.md)。
 
+### 无形资产专用工作流
+
+无形资产一期只支持外购、已可供使用、可单独识别且不含土地权利的单项资产：
+
+1. `finance_acquire_intangible_asset` 登记取得事实、成本组成、供应商、使用寿命、受益区域和证据；银行现付精确匹配流水，挂账生成受控应付开放项。
+2. `finance_preview_intangible_asset_amortization` 从可供使用当月开始试算下一个连续自然月，并返回计算哈希。
+3. `finance_confirm_intangible_asset_amortization` 在锁内复算同一哈希并生成固定摊销模板；最后一个月按整分余数闭合。
+4. `finance_retire_intangible_asset` 只处理自然月末、收入/赔偿/税费/残料均明确为零的报废；当月必须已摊销或此前已经摊足。
+5. `finance_get_intangible_asset` 查询资产、规范事实、凭证、证据、累计摊销和冲正链。
+6. 更正顺序为报废、最新摊销、取得；原资产编号不复用。
+
+研究开发、土地、商誉、后续资本化、减值、出售和税务摊销不在一期范围。完整契约见[无形资产与借款利息开发基线](docs/intangible-assets-and-borrowing-development-plan.md)。
+
+### 借款专用工作流
+
+借款一期只支持中国持牌金融机构、人民币、单次全额放款、固定利率、合同单利、到期一次还本且无需资本化的合同：
+
+1. `finance_draw_borrowing` 冻结合同、贷款人、应付息日、利率、日计数基础、支持边界事实、银行流水和证据。
+2. `finance_preview_borrowing_interest` 按合同下一应付息日及 `[period_start, period_end)` 实际天数试算利息并返回计算哈希。
+3. `finance_confirm_borrowing_interest` 在锁内复算合同和有效计息链后生成财务费用与应付利息凭证。
+4. `finance_pay_borrowing_interest` 只清偿唯一关联的有效计息事件，付款日不得早于计息期末或晚于合同到期日。
+5. `finance_repay_borrowing_principal` 只在到期日、连续计息至到期且全部有效利息已支付后一次归还全部本金。
+6. `finance_get_borrowing` 查询合同、有效余额、规范事实、凭证、证据和冲正链；更正顺序为还本、付息、最新计息、放款。
+
+循环额度、多次提款、浮动利率、复利、罚息、提前或分期还本、展期、外币、非金融企业贷款和借款费用资本化不在一期范围。
+
 ### 10,100 元服务现销示例
 
 ```json
@@ -123,6 +152,8 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 - [文档索引](docs/README.md)
 - [固定资产模块第一期最终验收](docs/fixed-asset-module-acceptance.md)
 - [固定资产模块开发基线](docs/fixed-asset-module-development-plan.md)
+- [无形资产与借款利息第一期最终验收](docs/intangible-assets-and-borrowing-acceptance.md)
+- [无形资产与借款利息第一期开发基线](docs/intangible-assets-and-borrowing-development-plan.md)
 - [工资模块开发基线](docs/payroll-module-development-plan.md)
 - [工资模块第七轮最终验收](docs/payroll-module-acceptance-remediation-round-7.md)
 - [多 Agent 协作与本地质量验证手册](docs/agent-collaboration-and-local-verification.md)

@@ -1,17 +1,28 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from datetime import date
 from decimal import Decimal
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ai_accounting.models import BusinessEvent, Organization
-from ai_accounting.schemas import ReverseEventRequest, TaxPeriodRequest
+from ai_accounting.models import BusinessEvent, Organization, TaxPeriod, TaxPeriodSource, Voucher
+from ai_accounting.schemas import (
+    ReverseEventRequest,
+    TaxPeriodConfirmRequest,
+    TaxPeriodPreviewRequest,
+)
 from ai_accounting.service import FinanceService
-from ai_accounting.tax import calculate_tax_period, split_tax_inclusive
+from ai_accounting.tax import (
+    calculate_tax_period,
+    canonical_tax_calculation_json,
+    split_tax_inclusive,
+)
 
 
 def add_taxable_event(
@@ -78,54 +89,127 @@ def test_special_invoice_is_not_relieved_below_threshold(
     assert result.surtax_total_fen > 0
 
 
+def test_tax_hash_payload_is_exported_reproducible_and_reload_stable(
+    session: Session, organization: Organization
+) -> None:
+    add_taxable_event(session, organization, net_fen=1_000_000, vat_fen=10_000)
+    first = calculate_tax_period(
+        session, organization, date(2026, 1, 1), date(2026, 3, 31)
+    )
+    decoded = json.loads(first.calculation_hash_payload)
+    assert decoded["organization"]["urban_maintenance_rate"] == "0.07000"
+    assert canonical_tax_calculation_json(decoded) == first.calculation_hash_payload
+    assert hashlib.sha256(first.calculation_hash_payload.encode("utf-8")).hexdigest() == (
+        first.calculation_hash
+    )
+
+    session.flush()
+    session.expire(organization, ["urban_maintenance_rate"])
+    reloaded = calculate_tax_period(
+        session, organization, date(2026, 1, 1), date(2026, 3, 31)
+    )
+    assert reloaded.calculation_hash_payload == first.calculation_hash_payload
+    assert reloaded.calculation_hash == first.calculation_hash
+
+
+def test_zero_adjustment_rejects_without_confirmation_rows(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    preview = service.preview_tax_period(
+        TaxPeriodPreviewRequest(
+            org_id=organization.id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+        )
+    )
+    before_events = session.query(BusinessEvent).count()
+    result = service.confirm_tax_period(
+        TaxPeriodConfirmRequest(
+            org_id=organization.id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            calculation_hash=preview["calculation_hash"],
+            idempotency_key="zero-tax-adjustment",
+        )
+    )
+    assert result.status == "rejected"
+    assert result.errors == ["TAX_PERIOD_NO_ADJUSTMENT"]
+    assert session.query(BusinessEvent).count() == before_events
+    assert session.query(Voucher).count() == 0
+    assert session.query(TaxPeriod).count() == 0
+    assert session.query(TaxPeriodSource).count() == 0
+
+
 def test_tax_period_adjustment_cannot_be_posted_twice(
     session: Session, organization: Organization
 ) -> None:
     add_taxable_event(session, organization, net_fen=1_000_000, vat_fen=10_000)
     service = FinanceService(session)
-    first = service.calculate_tax(
-        TaxPeriodRequest(
+    preview = service.preview_tax_period(
+        TaxPeriodPreviewRequest(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
-            post_adjustment=True,
+        )
+    )
+    first = service.confirm_tax_period(
+        TaxPeriodConfirmRequest(
+            org_id=organization.id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            calculation_hash=preview["calculation_hash"],
             idempotency_key="tax-q1-first",
         )
     )
-    assert first["posting"]["status"] == "posted"
+    assert first.status == "posted"
+    period = session.scalar(
+        select(TaxPeriod).where(TaxPeriod.adjustment_event_id == first.event_id)
+    )
+    assert period.calculation_hash_payload == preview["calculation_hash_payload"]
+    assert period.filing_cycle_snapshot == organization.filing_cycle
+    assert period.jurisdiction_snapshot == organization.jurisdiction
+    assert period.urban_maintenance_rate_snapshot == Decimal("0.07000")
 
-    second = service.calculate_tax(
-        TaxPeriodRequest(
+    second = service.confirm_tax_period(
+        TaxPeriodConfirmRequest(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
-            post_adjustment=True,
+            calculation_hash=preview["calculation_hash"],
             idempotency_key="tax-q1-different-key",
         )
     )
-    assert second["posting"]["status"] == "rejected"
-    assert second["posting"]["errors"] == ["TAX_PERIOD_ALREADY_POSTED"]
+    assert second.status == "rejected"
+    assert second.errors == ["TAX_PERIOD_ALREADY_POSTED"]
 
     reversed_result = service.reverse_event(
         ReverseEventRequest(
             org_id=organization.id,
-            event_id=first["posting"]["event_id"],
+            event_id=first.event_id,
             idempotency_key="reverse-tax-q1",
             reason="更正期间税务事实",
             posting_date=date(2026, 4, 1),
         )
     )
     assert reversed_result.status == "posted"
-    reposted = service.calculate_tax(
-        TaxPeriodRequest(
+    refreshed = service.preview_tax_period(
+        TaxPeriodPreviewRequest(
             org_id=organization.id,
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
-            post_adjustment=True,
+        )
+    )
+    reposted = service.confirm_tax_period(
+        TaxPeriodConfirmRequest(
+            org_id=organization.id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            calculation_hash=refreshed["calculation_hash"],
             idempotency_key="tax-q1-after-reversal",
         )
     )
-    assert reposted["posting"]["status"] == "posted"
+    assert reposted.status == "posted"
 
 
 @given(

@@ -80,6 +80,40 @@ DEFAULT_ACCOUNTS = [
     ("1606", "固定资产清理", "asset", "debit", "fixed_asset_clearance"),
     ("630101", "营业外收入—固定资产处置", "revenue", "credit", "fixed_asset_disposal_gain"),
     ("571101", "营业外支出—固定资产处置", "expense", "debit", "fixed_asset_disposal_loss"),
+    ("1701", "无形资产", "asset", "debit", "intangible_asset_cost"),
+    ("1702", "累计摊销", "asset", "credit", "accumulated_amortization"),
+    (
+        "560203",
+        "管理费用—无形资产摊销",
+        "expense",
+        "debit",
+        "management_amortization_expense",
+    ),
+    (
+        "560103",
+        "销售费用—无形资产摊销",
+        "expense",
+        "debit",
+        "sales_amortization_expense",
+    ),
+    (
+        "540103",
+        "主营业务成本—无形资产摊销",
+        "expense",
+        "debit",
+        "service_cost_amortization",
+    ),
+    (
+        "571102",
+        "营业外支出—无形资产报废",
+        "expense",
+        "debit",
+        "intangible_asset_retirement_loss",
+    ),
+    ("2001", "短期借款", "liability", "credit", "short_term_borrowing"),
+    ("2501", "长期借款", "liability", "credit", "long_term_borrowing"),
+    ("2601", "应付利息", "liability", "credit", "interest_payable"),
+    ("560301", "财务费用—利息", "expense", "debit", "borrowing_interest_expense"),
 ]
 
 

@@ -35,7 +35,7 @@ from alembic import command
 REVISION_0005 = "0005_payroll_round4_integrity"
 REVISION_0007 = "0007_payroll_round6_closure"
 REVISION_0008 = "0008_payroll_r7_tax_closure"
-REVISION_0009 = "0009_fixed_assets"
+REVISION_HEAD = "0011_intangible_borrowings"
 
 pytestmark = [
     pytest.mark.postgres,
@@ -330,7 +330,7 @@ def test_r7_004_exact_historical_revision_upgrades_to_head_without_head_fixture(
         command.upgrade(config, "head")
         command.check(config)
 
-        assert _revision(engine) == REVISION_0009
+        assert _revision(engine) == REVISION_HEAD
         with engine.connect() as connection:
             assert (
                 connection.scalar(
@@ -346,11 +346,11 @@ def test_r7_004_empty_head_downgrade_and_reupgrade_remain_revision_exact() -> No
 
     with _postgres_at("head") as (config, engine):
         command.check(config)
-        assert _revision(engine) == REVISION_0009
+        assert _revision(engine) == REVISION_HEAD
 
         command.downgrade(config, REVISION_0007)
         assert _revision(engine) == REVISION_0007
 
         command.upgrade(config, "head")
         command.check(config)
-        assert _revision(engine) == REVISION_0009
+        assert _revision(engine) == REVISION_HEAD

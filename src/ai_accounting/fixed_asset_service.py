@@ -13,7 +13,7 @@ from datetime import date
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from .fixed_assets import (
@@ -414,7 +414,12 @@ class FixedAssetService(FinanceService):
                 status=FixedAssetResultStatus.REJECTED,
                 errors=[exc.code],
             )
-        except IntegrityError:
+        except IntegrityError as exc:
+            if self._is_tax_period_source_lock_error(exc):
+                return FixedAssetResult(
+                    status=FixedAssetResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_SOURCE_LOCKED"],
+                )
             existing = self._fixed_asset_idempotent_event(
                 request.org_id, request.idempotency_key
             )
@@ -429,6 +434,13 @@ class FixedAssetService(FinanceService):
                 status=FixedAssetResultStatus.REJECTED,
                 errors=["FIXED_ASSET_CONCURRENT_WRITE_CONFLICT"],
             )
+        except DBAPIError as exc:
+            if self._is_tax_period_source_lock_error(exc):
+                return FixedAssetResult(
+                    status=FixedAssetResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_SOURCE_LOCKED"],
+                )
+            raise
 
     def _acquire_fixed_asset_write(
         self, request: AcquireFixedAssetRequest
@@ -885,6 +897,10 @@ class FixedAssetService(FinanceService):
         gross_proceeds_fen = request.gross_proceeds_fen or 0
         tax_rule: TaxRule | None = None
         if request.disposal_kind.value == "sale":
+            if self._tax_obligation_date_is_locked(
+                request.org_id, request.tax_obligation_date
+            ):
+                self._reject("TAX_PERIOD_SOURCE_LOCKED")
             customer = self._resolve_fixed_asset_counterparty(
                 request.org_id, request.customer, required_kind="customer"
             )

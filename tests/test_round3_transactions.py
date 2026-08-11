@@ -47,7 +47,10 @@ def _expense_request(org_id: object, bank_id: object, *, key: str) -> RecordEven
                 "payment_date": "2026-09-05",
                 "posting_date": "2026-09-05",
             },
-            "amounts": {"gross_amount_fen": 100},
+            "amounts": {
+                "gross_amount_fen": 100,
+                "expense_account_role": "general_expense",
+            },
             "bank_transaction_references": [{"id": bank_id}],
         }
     )
