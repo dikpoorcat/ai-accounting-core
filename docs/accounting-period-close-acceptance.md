@@ -1,5 +1,6 @@
-# 会计期间生成与月结第一期最终验收记录
+# 历史：会计期间生成与月结第一期最终验收记录
 
+> 文档性质：过去的实现结果。旧迁移编号只代表当时时点，当前数据库仅使用 `0001_baseline`。本文列出的独立验收方式、测试环境、测试矩阵和数量不是当前统一门禁或后续任务要求。
 > 验收日期：2026-08-11
 > 结论：通过；第一期确定性闭环达到已决定范围内的完成定义
 > 上位设计：[会计期间生成与月结第一期开发基线](./accounting-period-close-development-plan.md)
@@ -33,7 +34,7 @@
 
 ## 3. 持久化与 PostgreSQL 提交点
 
-线性迁移 `0012_accounting_period_close` 位于 `0011_intangible_borrowings` 之后，新增或强化：
+当时的线性迁移 `0012_accounting_period_close` 位于 `0011_intangible_borrowings` 之后，新增或强化：
 
 - `AccountingPeriodCalendar`、`AccountingPeriod` 和逐月生成动作；
 - `AccountingPeriodAction`、动作证据、不可变关闭快照及全部来源快照；
@@ -71,8 +72,8 @@ PostgreSQL 17 提交点实际验收覆盖：
 - PostgreSQL 17 全集：`109 passed, 244 deselected`，无失败；包含迁移往返、污染预检、直接 SQL、并发、不可变和真实服务提交点。
 - 完整回归与覆盖率：`353 passed, 19 warnings`，总覆盖率 `86%`；期间 Schema、纯函数和服务覆盖率分别为 `93%`、`95%` 和 `83%`。
 - 真实 FastMCP STDIO 已覆盖期间生成、预览、关闭、查询、未来日期拒绝、关闭月写保护及税期更正链。
-- `ruff check .`、`pip check`、`compileall -q src alembic tests`、`alembic heads` 和 `git diff --check` 全部通过；单一 head 为 `0012_accounting_period_close`。
-- 验收只使用隔离临时 PostgreSQL 17；未写默认 Compose 数据库。验收后已移除三个遗留 Testcontainers PG17 容器，保留默认 `ai-accounting-core-postgres-1`。
+- 当时的 `ruff check .`、`pip check`、`compileall -q src alembic tests`、`alembic heads` 和 `git diff --check` 全部通过；当时单一 head 为 `0012_accounting_period_close`。
+- 当次验收使用了隔离临时 PostgreSQL 17，未写默认 Compose 数据库。验收后已移除三个遗留 Testcontainers PG17 容器，保留默认 `ai-accounting-core-postgres-1`。
 
 19 条告警为 18 次既有 SQLite/Python 3.12 datetime 适配器弃用提示和 1 次既有工资 Pydantic 序列化提示，不改变本阶段会计结果；后续依赖升级时统一清理。
 

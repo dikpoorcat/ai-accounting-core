@@ -165,7 +165,10 @@ def _insert_raw_payroll_batch(
 def test_postgres_period_close_snapshot_and_direct_sql_guards(
     authenticated_zero_bank_scope: object,
 ) -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         config = _config(database_url)
         command.upgrade(config, "head")
@@ -250,9 +253,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                     key="direct-payroll-open-superseded",
                 )
                 connection.execute(
-                    sa.text(
-                        "UPDATE payroll_batches SET status = 'superseded' WHERE id = :id"
-                    ),
+                    sa.text("UPDATE payroll_batches SET status = 'superseded' WHERE id = :id"),
                     {"id": superseded_id},
                 )
 
@@ -403,13 +404,9 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                             )
             with engine.connect() as connection:
                 future_posting_date = connection.scalar(
-                    sa.text(
-                        "SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date"
-                    )
+                    sa.text("SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date")
                 ) + timedelta(days=1)
-            with pytest.raises(
-                DBAPIError, match="ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"
-            ):
+            with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"):
                 with engine.begin() as connection:
                     with Session(bind=connection) as attributed_session:
                         with authority.attributed_call(
@@ -457,12 +454,8 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
             with Session(engine) as session:
                 close = session.get(AccountingPeriodClose, close_id)
                 assert close.voucher_count == 1
-                with authority.attributed_call(
-                    session, tool_name="finance_record_event"
-                ):
-                    rejected = FinanceService(session).record_event(
-                        _sale(org_id, "after-close")
-                    )
+                with authority.attributed_call(session, tool_name="finance_record_event"):
+                    rejected = FinanceService(session).record_event(_sale(org_id, "after-close"))
                 assert rejected.errors == ["ACCOUNTING_PERIOD_CLOSED"]
 
             with Session(engine) as session:
@@ -482,9 +475,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 assert august.status == "posted", august.errors
                 session.commit()
             with Session(engine) as session:
-                with authority.attributed_call(
-                    session, tool_name="finance_reverse_event"
-                ):
+                with authority.attributed_call(session, tool_name="finance_reverse_event"):
                     reversal = FinanceService(session).reverse_event(
                         ReverseEventRequest(
                             org_id=org_id,
@@ -503,154 +494,13 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
             engine.dispose()
 
 
-def test_postgres_0012_empty_round_trip() -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url()
-        config = _config(database_url)
-        command.upgrade(config, "head")
-        command.check(config)
-        command.downgrade(config, "0011_intangible_borrowings")
-        engine = sa.create_engine(database_url)
-        org_id, parent_id, child_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-        try:
-            with engine.begin() as connection:
-                connection.execute(sa.text("SET LOCAL session_replication_role = replica"))
-                connection.execute(
-                    sa.text(
-                        """
-                        INSERT INTO organizations (
-                            id, name, taxpayer_type, filing_cycle, jurisdiction,
-                            urban_maintenance_rate, accounting_standard, created_at
-                        ) VALUES (
-                            :id, 'PG依赖回填', 'small_scale', 'quarterly', 'CN',
-                            0.07, 'small_enterprise', CURRENT_TIMESTAMP
-                        )
-                        """
-                    ),
-                    {"id": org_id},
-                )
-                for event_id, key, event_type, facts in (
-                    (
-                        parent_id,
-                        "legacy-parent",
-                        "customer_advance",
-                        {"amounts": {"gross_amount_fen": 100}},
-                    ),
-                    (
-                        child_id,
-                        "legacy-child",
-                        "customer_refund",
-                        {
-                            "amounts": {"amount_fen": 100},
-                            "details": {
-                                "refund_kind": "advance",
-                                "original_event_id": str(parent_id),
-                            },
-                        },
-                    ),
-                ):
-                    connection.execute(
-                        sa.text(
-                            """
-                            INSERT INTO business_events (
-                                id, org_id, idempotency_key, request_payload_hash,
-                                event_type, status, description, facts, business_date,
-                                fulfillment_date, invoice_date, payment_date,
-                                tax_obligation_date, posting_date, rule_trace,
-                                rule_version, reversed_by_event_id, created_at
-                            ) VALUES (
-                                :id, :org_id, :key, :hash, :event_type, 'posted', '',
-                                CAST(:facts AS jsonb), '2026-03-01', NULL, NULL, NULL,
-                                NULL, '2026-03-01', '[]'::jsonb, NULL, NULL,
-                                CURRENT_TIMESTAMP
-                            )
-                            """
-                        ),
-                        {
-                            "id": event_id,
-                            "org_id": org_id,
-                            "key": key,
-                            "hash": "d" * 64,
-                            "event_type": event_type,
-                            "facts": json.dumps(facts),
-                        },
-                    )
-            command.upgrade(config, "head")
-            with engine.connect() as connection:
-                assert connection.execute(
-                    sa.text("SELECT dependency_kind, amount_fen FROM business_event_dependencies")
-                ).one() == ("advance_refund", 100)
-            command.downgrade(config, "0011_intangible_borrowings")
-            with engine.begin() as connection:
-                connection.execute(sa.text("SET LOCAL session_replication_role = replica"))
-                connection.execute(
-                    sa.text("DELETE FROM business_events WHERE org_id = :org_id"),
-                    {"org_id": org_id},
-                )
-                bad_parent_id, bad_child_id = uuid.uuid4(), uuid.uuid4()
-                for event_id, key, event_type, facts in (
-                    (
-                        bad_parent_id,
-                        "bad-parent",
-                        "service_credit_sale",
-                        {"amounts": {"gross_amount_fen": 100}},
-                    ),
-                    (
-                        bad_child_id,
-                        "bad-child",
-                        "customer_refund",
-                        {
-                            "amounts": {"amount_fen": 100},
-                            "details": {
-                                "refund_kind": "sale_return",
-                                "original_event_id": str(bad_parent_id),
-                            },
-                        },
-                    ),
-                ):
-                    connection.execute(
-                        sa.text(
-                            """
-                            INSERT INTO business_events (
-                                id, org_id, idempotency_key, request_payload_hash,
-                                event_type, status, description, facts, business_date,
-                                fulfillment_date, invoice_date, payment_date,
-                                tax_obligation_date, posting_date, rule_trace,
-                                rule_version, reversed_by_event_id, created_at
-                            ) VALUES (
-                                :id, :org_id, :key, :hash, :event_type, 'posted', '',
-                                CAST(:facts AS jsonb), '2026-03-01', NULL, NULL, NULL,
-                                NULL, '2026-03-01', '[]'::jsonb, NULL, NULL,
-                                CURRENT_TIMESTAMP
-                            )
-                            """
-                        ),
-                        {
-                            "id": event_id,
-                            "org_id": org_id,
-                            "key": key,
-                            "hash": "e" * 64,
-                            "event_type": event_type,
-                            "facts": json.dumps(facts),
-                        },
-                    )
-            with pytest.raises(RuntimeError, match="BUSINESS_EVENT_DEPENDENCY_PRECHECK_FAILED"):
-                command.upgrade(config, "head")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0011_intangible_borrowings"
-                )
-                assert connection.scalar(
-                    sa.text("SELECT to_regclass('public.business_event_dependencies') IS NULL")
-                )
-        finally:
-            engine.dispose()
-
-
 def test_postgres_close_vs_close_is_linearized(
     authenticated_zero_bank_scope: object,
 ) -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -750,7 +600,10 @@ def test_postgres_close_vs_close_is_linearized(
 def test_postgres_close_vs_post_is_linearized(
     authenticated_zero_bank_scope: object,
 ) -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -841,9 +694,7 @@ def test_postgres_close_vs_post_is_linearized(
             def post() -> tuple[str, list[str]]:
                 with Session(engine) as session:
                     barrier.wait()
-                    with authority.attributed_call(
-                        session, tool_name="finance_record_event"
-                    ):
+                    with authority.attributed_call(session, tool_name="finance_record_event"):
                         result = FinanceService(session).record_event(
                             _sale(org_id, "pg-post-close-racing-post")
                         )
@@ -865,7 +716,10 @@ def test_postgres_close_vs_post_is_linearized(
 
 
 def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -1049,18 +903,17 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
                         {"id": forged_action_id, "org_id": org_id, "hash": "f" * 64},
                     )
             with engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT count(*) FROM accounting_period_actions WHERE id = :id"
-                    ),
-                    {"id": forged_action_id},
-                ) == 0
+                assert (
+                    connection.scalar(
+                        sa.text("SELECT count(*) FROM accounting_period_actions WHERE id = :id"),
+                        {"id": forged_action_id},
+                    )
+                    == 0
+                )
 
             with engine.connect() as connection:
                 china_today = connection.scalar(
-                    sa.text(
-                        "SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date"
-                    )
+                    sa.text("SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date")
                 )
                 calendar_id = connection.scalar(
                     sa.text(
@@ -1186,7 +1039,10 @@ def test_postgres_owner_close_vs_raw_payroll_is_linearized(
 ) -> None:
     """Keep the owner-mode close race separate from legacy multi-org guards."""
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -1320,7 +1176,10 @@ def test_postgres_owner_close_vs_raw_payroll_is_linearized(
 
 
 def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -1579,10 +1438,13 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                 generation_results = list(executor.map(generate, ("2026-05", "2026-07")))
             assert [status for status, _ in generation_results].count("posted") == 1
             with engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text("SELECT count(*) FROM accounting_periods WHERE org_id = :org_id"),
-                    {"org_id": second_org_id},
-                ) == 1
+                assert (
+                    connection.scalar(
+                        sa.text("SELECT count(*) FROM accounting_periods WHERE org_id = :org_id"),
+                        {"org_id": second_org_id},
+                    )
+                    == 1
+                )
 
             with Session(engine) as session:
                 direct_org = seed_organization(session, name="PG服务直写锁序")

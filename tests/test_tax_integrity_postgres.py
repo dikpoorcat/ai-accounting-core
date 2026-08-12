@@ -50,204 +50,6 @@ def _config(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Config:
     return config
 
 
-def _insert_legacy_period_pollution(connection: sa.Connection) -> tuple[uuid.UUID, uuid.UUID]:
-    org_id = uuid.uuid4()
-    event_id = uuid.uuid4()
-    now = datetime.now(UTC)
-    connection.execute(
-        sa.text(
-            """
-            INSERT INTO organizations (
-                id, name, taxpayer_type, filing_cycle, jurisdiction,
-                urban_maintenance_rate, accounting_standard, created_at
-            ) VALUES (
-                :org_id, '0010污染预检', 'small_scale', 'quarterly', 'CN',
-                0.07, 'small_enterprise', :created_at
-            )
-            """
-        ),
-        {"org_id": org_id, "created_at": now},
-    )
-    connection.execute(
-        sa.text(
-            """
-            INSERT INTO business_events (
-                id, org_id, idempotency_key, request_payload_hash, event_type, status,
-                description, facts, business_date, posting_date, rule_trace, created_at
-            ) VALUES (
-                :event_id, :org_id, 'legacy-tax-period', NULL, 'tax_relief', 'draft',
-                '无法可信回填的历史税期', CAST('{}' AS json), DATE '2026-03-31',
-                DATE '2026-03-31', CAST('[]' AS json), :created_at
-            )
-            """
-        ),
-        {"event_id": event_id, "org_id": org_id, "created_at": now},
-    )
-    connection.execute(
-        sa.text(
-            """
-            INSERT INTO tax_periods (
-                id, org_id, start_date, end_date, rule_version, status,
-                calculation, adjustment_event_id, created_at
-            ) VALUES (
-                :period_id, :org_id, DATE '2026-01-01', DATE '2026-03-31',
-                '2026.1+2023.12', 'posted', CAST('{}' AS json), :event_id, :created_at
-            )
-            """
-        ),
-        {
-            "period_id": uuid.uuid4(),
-            "org_id": org_id,
-            "event_id": event_id,
-            "created_at": now,
-        },
-    )
-    return org_id, event_id
-
-
-def _insert_orphan_final_tax_relief(engine: sa.Engine) -> uuid.UUID:
-    org_id = uuid.uuid4()
-    event_id = uuid.uuid4()
-    voucher_id = uuid.uuid4()
-    vat_account_id = uuid.uuid4()
-    relief_account_id = uuid.uuid4()
-    now = datetime.now(UTC)
-    with engine.begin() as connection:
-        connection.execute(
-            sa.text(
-                """
-                INSERT INTO organizations (
-                    id, name, taxpayer_type, filing_cycle, jurisdiction,
-                    urban_maintenance_rate, accounting_standard, created_at
-                ) VALUES (
-                    :org_id, '0010孤立税务调整污染', 'small_scale', 'quarterly', 'CN',
-                    0.07, 'small_enterprise', :created_at
-                )
-                """
-            ),
-            {"org_id": org_id, "created_at": now},
-        )
-        connection.execute(
-            sa.text(
-                """
-                INSERT INTO accounts (
-                    id, org_id, code, name, category, normal_side, system_role, active
-                ) VALUES
-                    (:vat_id, :org_id, '222101', '应交增值税', 'liability', 'credit',
-                     'vat_payable', true),
-                    (:relief_id, :org_id, '6301', '营业外收入', 'revenue', 'credit',
-                     'tax_relief_income', true)
-                """
-            ),
-            {
-                "vat_id": vat_account_id,
-                "relief_id": relief_account_id,
-                "org_id": org_id,
-            },
-        )
-        connection.execute(
-            sa.text(
-                """
-                INSERT INTO business_events (
-                    id, org_id, idempotency_key, request_payload_hash, event_type, status,
-                    description, facts, business_date, tax_obligation_date, posting_date,
-                    rule_trace, rule_version, created_at
-                ) VALUES (
-                    :event_id, :org_id, 'orphan-final-tax-relief', :request_hash,
-                    'tax_relief', 'draft', '孤立正式税务调整', CAST(:facts AS json),
-                    DATE '2026-03-31', DATE '2026-03-31', DATE '2026-03-31',
-                    CAST(:trace AS json), 'polluted', :created_at
-                )
-                """
-            ),
-            {
-                "event_id": event_id,
-                "org_id": org_id,
-                "request_hash": "c" * 64,
-                "facts": json.dumps({"tax_period": {"polluted": True}}),
-                "trace": json.dumps([{"stage": "polluted"}]),
-                "created_at": now,
-            },
-        )
-        connection.execute(
-            sa.text(
-                """
-                INSERT INTO vouchers (
-                    id, org_id, event_id, voucher_number, posting_date, description,
-                    status, posted_at
-                ) VALUES (
-                    :voucher_id, :org_id, :event_id, '202603-POLLUTED', DATE '2026-03-31',
-                    '孤立正式税务调整', 'draft', :created_at
-                )
-                """
-            ),
-            {
-                "voucher_id": voucher_id,
-                "org_id": org_id,
-                "event_id": event_id,
-                "created_at": now,
-            },
-        )
-        connection.execute(
-            sa.text(
-                """
-                INSERT INTO voucher_lines (
-                    id, org_id, voucher_id, line_number, account_id,
-                    debit_fen, credit_fen, memo
-                ) VALUES
-                    (:line1, :org_id, :voucher_id, 1, :vat_id, 1, 0, ''),
-                    (:line2, :org_id, :voucher_id, 2, :relief_id, 0, 1, '')
-                """
-            ),
-            {
-                "line1": uuid.uuid4(),
-                "line2": uuid.uuid4(),
-                "org_id": org_id,
-                "voucher_id": voucher_id,
-                "vat_id": vat_account_id,
-                "relief_id": relief_account_id,
-            },
-        )
-        connection.execute(
-            sa.text("UPDATE vouchers SET status = 'posted' WHERE id = :voucher_id"),
-            {"voucher_id": voucher_id},
-        )
-        connection.execute(
-            sa.text("UPDATE business_events SET status = 'posted' WHERE id = :event_id"),
-            {"event_id": event_id},
-        )
-    return event_id
-
-
-def _insert_overlapping_rule_pollution(connection: sa.Connection) -> None:
-    for version, effective_from, effective_to in (
-        ("polluted.1", date(2026, 1, 1), date(2026, 6, 30)),
-        ("polluted.2", date(2026, 6, 30), date(2026, 12, 31)),
-    ):
-        connection.execute(
-            sa.text(
-                """
-                INSERT INTO tax_rules (
-                    id, code, jurisdiction, effective_from, effective_to,
-                    version, source_url, parameters
-                ) VALUES (
-                    :id, 'migration_pollution', 'CN', :effective_from, :effective_to,
-                    :version,
-                    'https://fgk.chinatax.gov.cn/zcfgk/c100012/c5247426/content.html',
-                    CAST(:parameters AS json)
-                )
-                """
-            ),
-            {
-                "id": uuid.uuid4(),
-                "effective_from": effective_from,
-                "effective_to": effective_to,
-                "version": version,
-                "parameters": json.dumps({"test": True}),
-            },
-        )
-
-
 def _sale_request(org_id: uuid.UUID, *, key: str, business_date: date) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
@@ -313,25 +115,23 @@ def _assert_sql_rejected(engine: sa.Engine, sql: str, code: str, **parameters: o
             connection.execute(sa.text(sql), parameters)
 
 
-def test_tax_determinism_migration_commit_guards_and_concurrency(
+def test_tax_determinism_commit_guards_and_concurrency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert len("0010_tax_determinism") <= 32
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = _config(url, monkeypatch)
         engine = sa.create_engine(url)
         try:
-            # Empty 0009 -> head -> 0009 -> head, followed by a true empty-database cycle.
-            command.upgrade(config, "0009_fixed_assets")
             with engine.connect() as connection:
                 preexisting_extensions = set(
                     connection.execute(
                         sa.text(
-                            """
-                            SELECT extname FROM pg_extension
-                             WHERE extname IN ('btree_gist', 'pgcrypto')
-                            """
+                            "SELECT extname FROM pg_extension "
+                            "WHERE extname IN ('btree_gist', 'pgcrypto')"
                         )
                     ).scalars()
                 )
@@ -341,171 +141,16 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 actions = dict(
                     connection.execute(
                         sa.text(
-                            """
-                            SELECT extension_name, action
-                              FROM tax_determinism_extension_actions
-                            """
+                            "SELECT extension_name, action FROM tax_determinism_extension_actions"
                         )
                     ).all()
                 )
-                assert actions == {
-                    extension_name: (
-                        "reused" if extension_name in preexisting_extensions else "created"
-                    )
-                    for extension_name in ("btree_gist", "pgcrypto")
-                }
-            command.downgrade(config, "0009_fixed_assets")
-            with engine.connect() as connection:
-                after_owned_downgrade = set(
-                    connection.execute(
-                        sa.text(
-                            """
-                            SELECT extname FROM pg_extension
-                             WHERE extname IN ('btree_gist', 'pgcrypto')
-                            """
-                        )
-                    ).scalars()
+            assert actions == {
+                extension_name: (
+                    "reused" if extension_name in preexisting_extensions else "created"
                 )
-                assert after_owned_downgrade == preexisting_extensions
-            with engine.begin() as connection:
-                connection.execute(sa.text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
-                connection.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
-            command.upgrade(config, "head")
-            with engine.connect() as connection:
-                assert dict(
-                    connection.execute(
-                        sa.text(
-                            """
-                            SELECT extension_name, action
-                              FROM tax_determinism_extension_actions
-                            """
-                        )
-                    ).all()
-                ) == {"btree_gist": "reused", "pgcrypto": "reused"}
-            command.downgrade(config, "0009_fixed_assets")
-            with engine.connect() as connection:
-                assert set(
-                    connection.execute(
-                        sa.text(
-                            """
-                            SELECT extname FROM pg_extension
-                             WHERE extname IN ('btree_gist', 'pgcrypto')
-                            """
-                        )
-                    ).scalars()
-                ) == {"btree_gist", "pgcrypto"}
-            with engine.begin() as connection:
-                connection.execute(sa.text("DROP EXTENSION pgcrypto RESTRICT"))
-                connection.execute(sa.text("DROP EXTENSION btree_gist RESTRICT"))
-            command.upgrade(config, "head")
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text(
-                        """
-                        CREATE VIEW external_pgcrypto_dependency AS
-                        SELECT encode(digest('external', 'sha256'), 'hex') AS value
-                        """
-                    )
-                )
-            with pytest.raises(DBAPIError):
-                command.downgrade(config, "0009_fixed_assets")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0015_late_bank_evidence"
-                )
-            with engine.begin() as connection:
-                connection.execute(sa.text("DROP VIEW external_pgcrypto_dependency"))
-            command.downgrade(config, "base")
-            command.upgrade(config, "head")
-            command.check(config)
-
-            # A final tax-relief event without a period is equally impossible to backfill.
-            command.downgrade(config, "0009_fixed_assets")
-            orphan_event_id = _insert_orphan_final_tax_relief(engine)
-            with engine.connect() as connection:
-                orphan_before = (
-                    connection.execute(
-                        sa.text(
-                            """
-                        SELECT status, facts, rule_trace, rule_version
-                          FROM business_events WHERE id = :event_id
-                        """
-                        ),
-                        {"event_id": orphan_event_id},
-                    )
-                    .mappings()
-                    .one()
-                )
-                assert connection.scalar(sa.text("SELECT COUNT(*) FROM tax_periods")) == 0
-            with pytest.raises(
-                RuntimeError, match="TAX_DETERMINISM_FINAL_TAX_RELIEF_PRECHECK_FAILED"
-            ):
-                command.upgrade(config, "head")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0009_fixed_assets"
-                )
-                orphan_after = (
-                    connection.execute(
-                        sa.text(
-                            """
-                        SELECT status, facts, rule_trace, rule_version
-                          FROM business_events WHERE id = :event_id
-                        """
-                        ),
-                        {"event_id": orphan_event_id},
-                    )
-                    .mappings()
-                    .one()
-                )
-                assert dict(orphan_after) == dict(orphan_before)
-                assert "calculation_hash" not in {
-                    row["name"] for row in sa.inspect(connection).get_columns("tax_periods")
-                }
-            command.downgrade(config, "base")
-            command.upgrade(config, "0009_fixed_assets")
-
-            # A legacy period cannot be assigned invented rule ids or a hash.
-            with engine.begin() as connection:
-                org_id, event_id = _insert_legacy_period_pollution(connection)
-            with pytest.raises(RuntimeError, match="TAX_DETERMINISM_LEGACY_PERIOD_PRECHECK_FAILED"):
-                command.upgrade(config, "head")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0009_fixed_assets"
-                )
-                assert "calculation_hash" not in {
-                    row["name"] for row in sa.inspect(connection).get_columns("tax_periods")
-                }
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text("DELETE FROM tax_periods WHERE org_id = :org_id"), {"org_id": org_id}
-                )
-                connection.execute(
-                    sa.text("DELETE FROM business_events WHERE id = :event_id"),
-                    {"event_id": event_id},
-                )
-                connection.execute(
-                    sa.text("DELETE FROM organizations WHERE id = :org_id"), {"org_id": org_id}
-                )
-
-            # Rule overlap is also rejected before the first 0010 DDL statement.
-            with engine.begin() as connection:
-                _insert_overlapping_rule_pollution(connection)
-            with pytest.raises(
-                RuntimeError, match="TAX_RULE_EFFECTIVE_RANGE_OVERLAP_PRECHECK_FAILED"
-            ):
-                command.upgrade(config, "head")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0009_fixed_assets"
-                )
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text("DELETE FROM tax_rules WHERE code = 'migration_pollution'")
-                )
-            command.upgrade(config, "head")
-            command.check(config)
+                for extension_name in ("btree_gist", "pgcrypto")
+            }
 
             with Session(engine) as session:
                 organization = seed_organization(
@@ -1281,11 +926,5 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 assert retirement.status == "posted", retirement.errors
                 session.commit()
 
-            with pytest.raises(RuntimeError, match="TAX_DETERMINISM_DOWNGRADE_UNSAFE"):
-                command.downgrade(config, "0009_fixed_assets")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0015_late_bank_evidence"
-                )
         finally:
             engine.dispose()

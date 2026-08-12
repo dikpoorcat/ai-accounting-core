@@ -1,9 +1,10 @@
 # 工资模块第二轮验收整改任务书
 
+> 状态：可选旧整改参考。本文件不构成审计保留义务，也不是当前规范、待办、验证要求或执行指令。
 > 状态：第二轮整改已交付，但独立复验未通过；后续问题转入 [第三轮验收整改任务书](./payroll-module-acceptance-remediation-round-3.md)
 > 复验日期：2026-08-09
 > 适用仓库：`ai-accounting-core`
-> 上位设计：[工资、社保、公积金与个税模块开发基线](./payroll-module-development-plan.md)
+> 上位设计：[工资、社保、公积金与个税模块开发基线](../../payroll-module-development-plan.md)
 > 前轮记录：[工资模块首轮验收整改任务书](./payroll-module-acceptance-remediation.md)
 > 完成定义：本文 R2-001 至 R2-014 全部关闭、所有前轮通过项无回归，并由总设计与验收 Agent 独立复验通过
 

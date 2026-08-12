@@ -205,9 +205,7 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 preview = IntangibleAssetService(session).preview_intangible_asset_amortization(
                     preview_request
                 )
-                amortized = IntangibleAssetService(
-                    session
-                ).confirm_intangible_asset_amortization(
+                amortized = IntangibleAssetService(session).confirm_intangible_asset_amortization(
                     ConfirmIntangibleAssetAmortizationRequest(
                         **preview_request.model_dump(),
                         idempotency_key="pg-intangible-amortization",
@@ -227,16 +225,16 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
             with factory() as session:
                 retired = IntangibleAssetService(session).retire_intangible_asset(
                     RetireIntangibleAssetRequest(
-                            org_id=org_id,
-                            asset_id=acquired_asset_id,
-                            idempotency_key="pg-intangible-retirement",
-                            retirement_date=date(2026, 1, 31),
-                            posting_date=date(2026, 1, 31),
-                            gross_proceeds_fen=0,
-                            compensation_fen=0,
-                            taxes_and_fees_fen=0,
-                            residual_proceeds_fen=0,
-                            evidence_references=[retirement_evidence_id],
+                        org_id=org_id,
+                        asset_id=acquired_asset_id,
+                        idempotency_key="pg-intangible-retirement",
+                        retirement_date=date(2026, 1, 31),
+                        posting_date=date(2026, 1, 31),
+                        gross_proceeds_fen=0,
+                        compensation_fen=0,
+                        taxes_and_fees_fen=0,
+                        residual_proceeds_fen=0,
+                        evidence_references=[retirement_evidence_id],
                     )
                 )
                 assert retired.status == "posted", retired.errors
@@ -253,11 +251,11 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
             with factory() as session:
                 blocked = IntangibleAssetService(session).reverse_event(
                     ReverseEventRequest(
-                            org_id=org_id,
-                            event_id=acquisition_event_id,
-                            idempotency_key="pg-reverse-intangible-blocked",
-                            reason="reverse order must be downstream first",
-                            posting_date=date(2026, 2, 1),
+                        org_id=org_id,
+                        event_id=acquisition_event_id,
+                        idempotency_key="pg-reverse-intangible-blocked",
+                        reason="reverse order must be downstream first",
+                        posting_date=date(2026, 2, 1),
                     )
                 )
                 assert blocked.errors == ["INTANGIBLE_ASSET_OPEN_DEPENDENCIES_EXIST"]
@@ -269,11 +267,11 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 with factory() as session:
                     reversed_result = IntangibleAssetService(session).reverse_event(
                         ReverseEventRequest(
-                                org_id=org_id,
-                                event_id=event_id,
-                                idempotency_key=f"pg-reverse-intangible-{index}",
-                                reason="validated downstream-first reversal",
-                                posting_date=date(2026, 2, index + 1),
+                            org_id=org_id,
+                            event_id=event_id,
+                            idempotency_key=f"pg-reverse-intangible-{index}",
+                            reason="validated downstream-first reversal",
+                            posting_date=date(2026, 2, index + 1),
                         )
                     )
                     assert reversed_result.status == "posted", reversed_result.errors
@@ -551,95 +549,5 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                     == 1
                 )
 
-            with engine.connect() as connection:
-                before_counts = (
-                    connection.scalar(sa.text("SELECT COUNT(*) FROM business_events")),
-                    connection.scalar(sa.text("SELECT COUNT(*) FROM intangible_assets")),
-                    connection.scalar(sa.text("SELECT COUNT(*) FROM borrowings")),
-                )
-            with pytest.raises(RuntimeError, match="DOWNGRADE_UNSAFE"):
-                command.downgrade(_config(database_url), "0010_tax_determinism")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0015_late_bank_evidence"
-                )
-                assert (
-                    connection.scalar(sa.text("SELECT COUNT(*) FROM business_events")),
-                    connection.scalar(sa.text("SELECT COUNT(*) FROM intangible_assets")),
-                    connection.scalar(sa.text("SELECT COUNT(*) FROM borrowings")),
-                ) == before_counts
-        finally:
-            engine.dispose()
-
-
-def test_postgres_empty_linear_upgrade_downgrade_and_base_round_trip() -> None:
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url()
-        config = _config(database_url)
-        command.upgrade(config, "0010_tax_determinism")
-        engine = sa.create_engine(database_url)
-        try:
-            polluted_org_id, polluted_account_id = uuid.uuid4(), uuid.uuid4()
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO organizations ("
-                        "id, name, taxpayer_type, filing_cycle, jurisdiction, "
-                        "urban_maintenance_rate, accounting_standard, created_at"
-                        ") VALUES ("
-                        ":id, 'PG migration pollution', 'small_scale', 'quarterly', 'CN', "
-                        "0.07, 'small_enterprise', CURRENT_TIMESTAMP)"
-                    ),
-                    {"id": polluted_org_id},
-                )
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO accounts ("
-                        "id, org_id, code, name, category, normal_side, system_role, active"
-                        ") VALUES ("
-                        ":id, :org_id, '2601', 'conflicting interest account', "
-                        "'asset', 'debit', NULL, TRUE)"
-                    ),
-                    {"id": polluted_account_id, "org_id": polluted_org_id},
-                )
-            with pytest.raises(RuntimeError, match="ACCOUNT_CODE_CONFLICT"):
-                command.upgrade(config, "0011_intangible_borrowings")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0010_tax_determinism"
-                )
-                assert connection.scalar(
-                    sa.text("SELECT to_regclass('public.intangible_assets') IS NULL")
-                )
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text("DELETE FROM accounts WHERE id = :id"),
-                    {"id": polluted_account_id},
-                )
-                connection.execute(
-                    sa.text("DELETE FROM organizations WHERE id = :id"),
-                    {"id": polluted_org_id},
-                )
-            command.upgrade(config, "0011_intangible_borrowings")
-            command.downgrade(config, "0010_tax_determinism")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0010_tax_determinism"
-                )
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT to_regclass('public.intangible_assets') IS NULL "
-                        "AND to_regclass('public.borrowings') IS NULL"
-                    )
-                )
-            command.upgrade(config, "head")
-            command.downgrade(config, "base")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT COUNT(*) FROM alembic_version")) == 0
-            command.upgrade(config, "head")
-            command.check(config)
         finally:
             engine.dispose()

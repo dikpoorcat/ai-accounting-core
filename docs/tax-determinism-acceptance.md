@@ -1,5 +1,6 @@
-# 税务事实与期间结算确定性整改验收记录
+# 历史：税务事实与期间结算确定性整改验收记录
 
+> 文档性质：过去的实现结果。旧迁移编号只代表当时时点，当前数据库仅使用 `0001_baseline`。本文列出的测试方法、环境和数量不是当前统一门禁或后续任务要求。
 > 验收日期：2026-08-10
 > 结论：通过，可解除“无形资产与借款利息”阶段的税务前置阻断
 > 边界：仍为单企业私有模拟试用内核，不是税务申报、法定账簿或法定结账系统
@@ -40,11 +41,11 @@
 - 非 PostgreSQL 全集：`167 passed, 101 deselected`，仅保留 8 个既有依赖告警；
 - PostgreSQL 17 全集：`101 passed, 167 deselected`，无失败、跳过或告警；
 - 税务提交点与独立硬化联跑：`2 passed`；
-- Alembic 单一 head：`0010_tax_determinism`；覆盖空库、`0009 -> head -> 0009 -> head`、污染预检、扩展创建/复用/安全降级和 `alembic check`；
+- 当时的 Alembic 单一 head：`0010_tax_determinism`；覆盖空库、`0009 -> head -> 0009 -> head`、污染预检、扩展创建/复用/安全降级和 `alembic check`；
 - 真实 FastMCP STDIO：覆盖严格 Schema、哈希陈旧、固定资产来源锁和零调整稳定错误；
 - Ruff、`compileall`、`git diff --check`：通过。
 
-测试只使用显式临时 PostgreSQL 17 容器，未写入默认 compose 数据库。
+当次验收使用了显式临时 PostgreSQL 17 容器，未写入默认 compose 数据库。
 
 ## 5. 最终裁决
 

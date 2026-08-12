@@ -1,10 +1,12 @@
 # AI Accounting Core
 
+> 当前有效约束见[当前保留规则](docs/current-rules.md)。DEC-001 至 DEC-045 已降为历史参考，不再自动生效。
+
 面向中国小规模纳税人服务型企业的确定性记账内核。产品目标是让一位不懂财务的小企业负责人亲自使用：负责人只提供原始凭据并说清发生了什么，AI 负责理解、整理、追问并形成明确的结构化业务事实，确定性内核只负责按冻结规则校验、计算和执行。系统不重复实现属于 AI 的开放式理解或格式转换能力，AI 也不能自由编造借贷分录或推测缺失事实；只有资料完整且规则唯一的业务事件才会原子入账，信息不足时返回 `needs_information`。已确认事实优先于实现规则：不能为了满足规则改写事实；发现历史事实错误时，以追加式更正保留原审计记录并让当前状态反映真实事实。
 
-> 当前版本是单企业私有试用内核，不是法定账簿、财务报表、纳税申报或税务意见。按 DEC-018 A，正式试用入口保留一次离线专业校准和书面证据，但专业人士不进入系统，也不介入日常工作；该校准和其余试用门禁完成前不得据此处理真实资料。
+> 当前版本是单企业私有试用内核，不是法定账簿、财务报表、纳税申报或税务意见。历史试用方案曾包含离线专业校准；是否沿用由用户在启动相应步骤时重新决定。
 
-> 正式试用尚未启动。当前只允许虚构数据和隔离临时数据库验证；在试用前决策、安全、备份恢复和专业复核门禁关闭前，不得导入真实业务资料或部署为生产服务。
+> 正式试用尚未启动。未经用户明确启动相应步骤，不导入真实业务资料，也不部署为生产服务。
 
 ## 已实现
 
@@ -39,6 +41,8 @@ docker compose up -d
 .\.venv\Scripts\finance-bootstrap.exe --name "测试服务公司" --filing-cycle quarterly
 ```
 
+当前 Alembic 只有一个 `0001_baseline`，用于从空数据库直接创建现行结构。旧的 15 段迁移链已移除；项目不再支持从旧 revision 或历史业务库原地升级。
+
 `finance-bootstrap` 会输出企业 `org_id`。后续所有工具调用都必须携带该 ID。
 
 项目包含 `.codex/config.toml`，其命令、工作目录和证据目录按本仓库固定路径 `D:\GitHub\ai-accounting-core` 配置；如果仓库位于其他路径，需要同步修改这三个值。在 Codex 中信任并打开本仓库、确认 PostgreSQL 已启动和迁移完成后，重启 Codex 即可加载 `ai_accounting` MCP。Codex 官方配置说明见 [Model Context Protocol](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
@@ -67,7 +71,7 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 4. `finance_get_accounting_periods` 查询生成、关闭动作和期间状态。空月份不会自动跳过，但允许经过同样的显式复核后关闭。
 5. 一期不支持反结账。关闭月原事实和凭证不改；错误只能在后续已生成开放月通过关联冲正及原专用工作流重记。
 
-所有企业的正式入账日都不得晚于 Asia/Shanghai 当前日期。历史税期更正保留原税务归属期，但调整凭证必须显式记入后续开放会计月。完整边界见[会计期间与月结开发基线](docs/accounting-period-close-development-plan.md)和[产品决策记录](docs/accounting-period-close-decisions.md)。
+所有企业的正式入账日都不得晚于 Asia/Shanghai 当前日期。历史税期更正保留原税务归属期，但调整凭证必须显式记入后续开放会计月。现有实现说明见[会计期间与月结开发记录](docs/accounting-period-close-development-plan.md)；过去的取舍见[历史产品决策](docs/accounting-period-close-decisions.md)。
 
 ### 银行流水与逐账户对账工作流
 
@@ -170,24 +174,14 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 .\.venv\Scripts\ruff.exe check .
 ```
 
-第一条是快速反馈门禁，主要使用内存 SQLite；第二条需要 Docker，并使用隔离的临时 PostgreSQL 17 验证迁移、并发、延迟约束与不可变触发器；第三条运行完整测试并生成覆盖率。迁移往返和污染数据验证只允许连接临时测试库，默认 Compose `finance` 数据库视为用户状态，未经明确授权不得用于破坏性验收。
+以上命令是可选验证入口，不构成固定顺序或统一门禁。每次修改运行哪些检查、是否使用 PostgreSQL、迁移、STDIO 或覆盖率，由用户针对当前步骤决定；不要求每个小改动执行全套验证。测试目标仍须由执行者明确选择，不得破坏未经用户授权的数据。
 
 ## 文档
 
-- [文档索引](docs/README.md)
-- [固定资产模块第一期最终验收](docs/fixed-asset-module-acceptance.md)
-- [固定资产模块开发基线](docs/fixed-asset-module-development-plan.md)
-- [无形资产与借款利息第一期最终验收](docs/intangible-assets-and-borrowing-acceptance.md)
-- [无形资产与借款利息第一期开发基线](docs/intangible-assets-and-borrowing-development-plan.md)
-- [会计期间与月结第一期开发基线](docs/accounting-period-close-development-plan.md)
-- [会计期间与月结第一期最终验收](docs/accounting-period-close-acceptance.md)
-- [会计期间与月结产品决策记录](docs/accounting-period-close-decisions.md)
-- [迟到银行外部证据开发基线](docs/late-bank-evidence-development-plan.md)
-- [正式私有试用前准备度记录](docs/private-pilot-readiness.md)
-- [正式私有试用工程控制基线](docs/private-pilot-engineering-controls.md)
-- [工资模块开发基线](docs/payroll-module-development-plan.md)
-- [工资模块第七轮最终验收](docs/payroll-module-acceptance-remediation-round-7.md)
-- [多 Agent 协作与本地质量验证手册](docs/agent-collaboration-and-local-verification.md)
+- [当前保留规则](docs/current-rules.md)
+- [文档索引与历史资料说明](docs/README.md)
+- [历史：DEC-001 至 DEC-045](docs/accounting-period-close-decisions.md)
+- [历史：工资模块首轮及 R2～R7 整改档案](docs/archive/payroll-remediation/README.md)
 
 ## 当前税务规则边界
 

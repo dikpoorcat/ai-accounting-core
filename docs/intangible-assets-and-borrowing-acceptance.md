@@ -1,5 +1,6 @@
-# 无形资产与借款利息第一期最终验收记录
+# 历史：无形资产与借款利息第一期最终验收记录
 
+> 文档性质：过去的实现结果。旧迁移编号只代表当时时点，当前数据库仅使用 `0001_baseline`。本文列出的独立验收方式、测试环境、测试矩阵和数量不是当前统一门禁或后续任务要求。
 > 验收日期：2026-08-11
 > 结论：通过；第一期确定性闭环达到冻结范围内的完成定义
 > 上位设计：[无形资产与借款利息第一期开发基线](./intangible-assets-and-borrowing-development-plan.md)
@@ -40,7 +41,7 @@
 
 ## 3. 持久化与提交点验收
 
-线性迁移 `0011_intangible_borrowings` 在 `0010_tax_determinism` 之后新增六张规范业务表和迁移账户所有权表，并为新企业及既有企业安全配置十个固定系统角色。
+当时的线性迁移 `0011_intangible_borrowings` 在 `0010_tax_determinism` 之后新增六张规范业务表和迁移账户所有权表，并为新企业及既有企业安全配置十个固定系统角色。
 
 迁移在第一个 0011 DDL 前检查账户冲突和不兼容历史；既有同代码兼容账户只绑定角色，不覆盖其他事实。降级只有在不存在任何规范事实、新事件或已引用的迁移创建账户时才允许，并按 `created` / `bound` 所有权精确删除或恢复。
 
@@ -79,7 +80,7 @@ PostgreSQL 17 提交点实际验收覆盖：
 - 非 PostgreSQL 快速集：`207 passed, 103 deselected`；包含真实 FastMCP STDIO 双模块完整生命周期。
 - PostgreSQL 17 全集：`103 passed, 207 deselected`，无失败；包含迁移往返、污染预检、`alembic check`、直接 SQL、并发和七类事件闭环。
 - 新双模块 PostgreSQL 专项：`2 passed`；新真实 STDIO 专项：`1 passed`。
-- `ruff check .`、`pip check`、`compileall -q src alembic tests`、`alembic heads` 和 `git diff --check` 全部通过；单一 head 为 `0011_intangible_borrowings`。
+- 当时的 `ruff check .`、`pip check`、`compileall -q src alembic tests`、`alembic heads` 和 `git diff --check` 全部通过；当时单一 head 为 `0011_intangible_borrowings`。
 - Git `main` 与 `origin/main` ahead/behind 为 `0/0`；本轮改动未暂存、未提交，也未写入默认 Compose `finance` 数据库。
 
 10 个告警为 9 次既有 SQLite Python 3.12 datetime 适配器弃用提示和 1 次既有工资 Pydantic 序列化提示，不改变本轮会计结果；后续依赖升级时统一清理。

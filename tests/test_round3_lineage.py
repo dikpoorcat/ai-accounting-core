@@ -1,7 +1,7 @@
-"""R3 version-lineage regressions exercised through the public payroll service.
+"""Version-lineage regressions exercised through the public payroll service.
 
 The PostgreSQL-only source-edge and evidence-freeze attacks live beside the
-0004 migration contract.  These tests deliberately keep the three correction
+PostgreSQL lineage tests. These tests deliberately keep the three correction
 requests on the public service boundary: a `supersedes_id` that only exists in
 the database is not a version-chain implementation.
 """

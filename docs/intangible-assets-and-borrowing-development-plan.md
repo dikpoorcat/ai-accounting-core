@@ -1,5 +1,6 @@
-# 无形资产与借款利息第一期开发基线
+# 历史：无形资产与借款利息第一期开发基线
 
+> 文档性质：历史设计与实现记录，不是当前指令或自动生效规则。现行规则只见[当前保留规则](./current-rules.md)。
 > 状态：已完成并通过独立验收（2026-08-11）；税务确定性前置门禁已于 2026-08-10 通过
 > 阶段目标：完成外购无形资产的取得、摊销、零收入报废，以及金融机构人民币固定利率借款的放款、计息、付息、还本闭环
 > 前置基线：[税务事实与期间结算确定性整改基线](./tax-determinism-remediation.md)
@@ -280,24 +281,6 @@ PostgreSQL 提交点至少阻止：跨企业引用、重复资产/借款编号�
 - `BORROWING_INTEREST_PAYMENT_DATE_INVALID`
 - `BORROWING_LENDER_IDENTITY_MISMATCH`
 
-## 14. 实现包与最终门禁
+## 14. 后续修改与验证
 
-- A：无形资产专用 Schema、纯计算器、服务及单元/性质测试；避免修改通用 `service.py`。
-- B：借款专用 Schema、纯计算器、服务及单元/性质测试；避免修改通用 `service.py`。
-- C：单一负责人独占 `models.py`、线性迁移、科目回填、提交点函数及 PostgreSQL 迁移/负向/并发测试。
-- D：单一集成负责人独占 `mcp_server.py`、事件目录、通用冲正路由、真实 STDIO、跨模块回归、README 和验收记录。
-
-两个闭环都必须具备平衡、幂等、换载荷冲突、计算哈希、期间关闭、证据、解释轨迹和逆序冲正覆盖。最终执行：
-
-```powershell
-pytest -ra
-pytest -m postgres -ra
-pytest --cov=ai_accounting --cov-report=term-missing
-ruff check .
-python -m pip check
-python -m compileall -q src alembic tests
-alembic check
-git diff --check
-```
-
-迁移和 PostgreSQL 验证只连接显式唯一命名的临时 PostgreSQL 17；默认 Compose `finance` 数据库保持只读。
+本文件不规定实现包、共享文件负责人、独立验收角色或统一测试门禁。后续修改内容和验证范围由用户针对当前步骤决定；既有单元、PostgreSQL、迁移、STDIO、跨模块回归和覆盖率检查可按需要选用，不要求每个小改动全部执行。

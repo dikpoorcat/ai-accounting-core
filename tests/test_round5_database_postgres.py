@@ -1,4 +1,4 @@
-"""Direct PostgreSQL and migration regressions for R5 database contracts.
+"""Direct PostgreSQL regressions for current database contracts.
 
 Every mutation in this module intentionally bypasses ``FinanceService``.  A
 failure therefore demonstrates the deferred database closure, not a service
@@ -17,12 +17,11 @@ from threading import Barrier
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from test_round4_event_integrity_postgres import (
     _confirmed_payroll_with_evidence,
-    _salary_payment_with_unsettled_statutory_sources,
 )
 from testcontainers.community.postgres import PostgresContainer
 
@@ -31,12 +30,9 @@ from ai_accounting.database import make_session_factory
 from ai_accounting.models import (
     EmployeePayrollProfileVersion,
     Evidence,
-    OpenItem,
-    PayrollBatch,
     PayrollOpeningState,
     PayrollPolicyVersion,
     PayrollVersionGuard,
-    Settlement,
 )
 from ai_accounting.schemas import RegisterEmployeeRequest
 from ai_accounting.service import FinanceService
@@ -58,7 +54,10 @@ def _alembic_config(database_url: str) -> Config:
 def postgres_engine() -> Iterator[object]:
     """A clean current-head database for commit-boundary attacks."""
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = _alembic_config(database_url)
         command.upgrade(config, "head")
@@ -82,98 +81,6 @@ def _assert_commit_rejects(
             session.execute(statement, parameters)
             session.commit()
         session.rollback()
-
-
-def test_r5_001_final_payroll_settlement_rejects_update_delete_and_forged_reversal(
-    postgres_engine: object,
-) -> None:
-    """A final salary PEL loses neither its settlement nor its reversal audit edge."""
-
-    with Session(postgres_engine) as session:
-        identifiers = _salary_payment_with_unsettled_statutory_sources(
-            session, key="r5-settlement-closure"
-        )
-        salary_event_id = session.scalar(
-            select(OpenItem.source_event_id).where(
-                OpenItem.org_id == identifiers["org_id"],
-                OpenItem.id == identifiers["withheld_social_item_id"],
-            )
-        )
-        assert salary_event_id is not None
-        settlement_id = session.scalar(
-            select(Settlement.id).where(
-                Settlement.org_id == identifiers["org_id"],
-                Settlement.payment_event_id == salary_event_id,
-                Settlement.reversed.is_(False),
-            )
-        )
-        assert settlement_id is not None
-        other_event_id = session.scalar(
-            select(PayrollBatch.business_event_id).where(
-                PayrollBatch.id == identifiers["source_batch_id"],
-                PayrollBatch.org_id == identifiers["org_id"],
-            )
-        )
-        assert other_event_id is not None
-        identifiers.update(
-            {
-                "salary_event_id": salary_event_id,
-                "settlement_id": settlement_id,
-                "other_event_id": other_event_id,
-                "other_open_item_id": identifiers["withheld_housing_item_id"],
-            }
-        )
-        session.commit()
-
-    protected_attacks = (
-        sa.text("UPDATE settlements SET amount_fen = amount_fen + 1 WHERE id = :settlement_id"),
-        sa.text(
-            "UPDATE settlements SET payment_event_id = :other_event_id WHERE id = :settlement_id"
-        ),
-        sa.text(
-            "UPDATE settlements SET open_item_id = :other_open_item_id WHERE id = :settlement_id"
-        ),
-        sa.text("DELETE FROM settlements WHERE id = :settlement_id"),
-    )
-    for attack in protected_attacks:
-        _assert_commit_rejects(
-            postgres_engine,
-            attack,
-            identifiers,
-            code="R5_FINAL_PAYROLL_SOURCE_SETTLEMENT_IMMUTABLE",
-        )
-
-    _assert_commit_rejects(
-        postgres_engine,
-        sa.text(
-            "WITH removed AS ("
-            "  DELETE FROM settlements WHERE id = :settlement_id "
-            "  RETURNING org_id, open_item_id, payment_event_id, amount_fen, reversed"
-            ") "
-            "INSERT INTO settlements "
-            "(id, org_id, open_item_id, payment_event_id, amount_fen, reversed) "
-            "SELECT :replacement_id, org_id, open_item_id, payment_event_id, amount_fen, reversed "
-            "FROM removed"
-        ),
-        {**identifiers, "replacement_id": uuid.uuid4()},
-        code="R5_FINAL_PAYROLL_SOURCE_SETTLEMENT_IMMUTABLE",
-    )
-
-    _assert_commit_rejects(
-        postgres_engine,
-        sa.text(
-            "UPDATE settlements SET reversed = TRUE, reversed_by_event_id = :salary_event_id "
-            "WHERE id = :settlement_id"
-        ),
-        identifiers,
-        code="R5_SETTLEMENT_REVERSAL_AUDIT_VIOLATION",
-    )
-
-    with Session(postgres_engine) as session:
-        settlement = session.get(Settlement, settlement_id)
-        assert settlement is not None
-        assert settlement.reversed is False
-        assert settlement.reversed_by_event_id is None
 
 
 def test_r5_002_sealed_evidence_blocks_every_content_and_identity_mutation(
@@ -370,180 +277,3 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
                 )
             ).all()
             assert len(guards) == 1
-
-
-def test_r5_migration_preflights_0005_pollution_without_advancing_revision() -> None:
-    """Each R5 legacy preflight fails before DDL and leaves the database at 0005."""
-
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url(driver="psycopg")
-        config = _alembic_config(database_url)
-        command.upgrade(config, "0005_payroll_round4_integrity")
-        engine = create_engine(database_url)
-        try:
-            organization_id = uuid.uuid4()
-            evidence_id = uuid.uuid4()
-            counterparty_id = uuid.uuid4()
-            payment_id = uuid.uuid4()
-            open_item_id = uuid.uuid4()
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO organizations "
-                        "(id, name, taxpayer_type, filing_cycle, jurisdiction, "
-                        "urban_maintenance_rate, accounting_standard, created_at) VALUES "
-                        "(:id, 'R5 旧版污染预检企业', 'small_scale', 'quarterly', 'CN', "
-                        "0.07, 'small_enterprise', now())"
-                    ),
-                    {"id": organization_id},
-                )
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO evidence "
-                        "(id, org_id, sha256, original_name, media_type, source, size_bytes, "
-                        "storage_path, metadata, created_at) VALUES "
-                        "(:id, :org_id, 'too-short', 'legacy.bin', "
-                        "'application/octet-stream', 'legacy', 1, '/legacy.bin', "
-                        "'{}'::jsonb, now())"
-                    ),
-                    {"id": evidence_id, "org_id": organization_id},
-                )
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO counterparties (id, org_id, kind, name) "
-                        "VALUES (:id, :org_id, 'supplier', 'R5 旧版供应商')"
-                    ),
-                    {"id": counterparty_id, "org_id": organization_id},
-                )
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO business_events "
-                        "(id, org_id, idempotency_key, event_type, status, description, facts, "
-                        "business_date, posting_date, rule_trace, created_at) VALUES "
-                        "(:id, :org_id, 'r5-legacy-settlement-payment', 'expense_cash', "
-                        "'draft', 'R5 旧版结算污染', '{}'::jsonb, '2025-07-01', "
-                        "'2025-07-01', '[]'::jsonb, now())"
-                    ),
-                    {"id": payment_id, "org_id": organization_id},
-                )
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO open_items "
-                        "(id, org_id, counterparty_id, source_event_id, item_type, "
-                        "original_amount_fen, settled_amount_fen, status) VALUES "
-                        "(:id, :org_id, :counterparty_id, :source_event_id, 'payable', "
-                        "100, 0, 'open')"
-                    ),
-                    {
-                        "id": open_item_id,
-                        "org_id": organization_id,
-                        "counterparty_id": counterparty_id,
-                        "source_event_id": payment_id,
-                    },
-                )
-            identifiers = {
-                "org_id": organization_id,
-                "evidence_id": evidence_id,
-                "payment_id": payment_id,
-                "open_item_id": open_item_id,
-            }
-
-            with pytest.raises(
-                RuntimeError, match="R5_EVIDENCE_ORGANIZATION_OR_HASH_PRECHECK_FAILED"
-            ):
-                command.upgrade(config, "0006_payroll_round5_integrity")
-            with engine.connect() as connection:
-                revision = connection.execute(
-                    sa.text("SELECT version_num FROM alembic_version")
-                ).scalar_one()
-                assert revision == "0005_payroll_round4_integrity"
-                assert "reversed_by_event_id" not in {
-                    column["name"] for column in inspect(engine).get_columns("settlements")
-                }
-
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text("UPDATE evidence SET sha256 = :sha256 WHERE id = :evidence_id"),
-                    {"sha256": "e" * 64, "evidence_id": identifiers["evidence_id"]},
-                )
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO settlements "
-                        "(id, org_id, open_item_id, payment_event_id, amount_fen, reversed) "
-                        "VALUES (:id, :org_id, :open_item_id, :payment_id, 10, TRUE)"
-                    ),
-                    {"id": uuid.uuid4(), **identifiers},
-                )
-            with pytest.raises(RuntimeError, match="R5_SETTLEMENT_REVERSAL_PRECHECK_FAILED"):
-                command.upgrade(config, "0006_payroll_round5_integrity")
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text("DELETE FROM settlements WHERE org_id = :org_id"), identifiers
-                )
-
-            employee_counterparty_id = uuid.uuid4()
-            employee_id = uuid.uuid4()
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO counterparties (id, org_id, kind, name) "
-                        "VALUES (:id, :org_id, 'employee', 'R5 旧版版本员工')"
-                    ),
-                    {"id": employee_counterparty_id, "org_id": identifiers["org_id"]},
-                )
-                connection.execute(
-                    sa.text(
-                        "INSERT INTO employees "
-                        "(id, org_id, counterparty_id, employee_code, name, "
-                        "employment_start_date, status, created_at) VALUES "
-                        "(:id, :org_id, :counterparty_id, 'R5-LEGACY-VERSION', "
-                        "'R5 旧版版本员工', '2025-07-01', 'active', now())"
-                    ),
-                    {
-                        "id": employee_id,
-                        "org_id": identifiers["org_id"],
-                        "counterparty_id": employee_counterparty_id,
-                    },
-                )
-            identifiers["employee_id"] = employee_id
-
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text("ALTER TABLE employee_payroll_profile_versions DISABLE TRIGGER ALL")
-                )
-                for effective_from, effective_to, base in (
-                    (date(2025, 7, 1), date(2025, 12, 31), 100),
-                    (date(2025, 11, 1), date(2026, 6, 30), 101),
-                ):
-                    connection.execute(
-                        sa.text(
-                            "INSERT INTO employee_payroll_profile_versions "
-                            "(id, org_id, employee_id, supersedes_id, effective_from, "
-                            "effective_to, "
-                            "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
-                            "resident_employee, created_at) "
-                            "VALUES (:id, :org_id, :employee_id, NULL, :effective_from, "
-                            ":effective_to, "
-                            "'payroll_management_expense', :base, :base, TRUE, now())"
-                        ),
-                        {
-                            "id": uuid.uuid4(),
-                            "org_id": identifiers["org_id"],
-                            "employee_id": identifiers["employee_id"],
-                            "effective_from": effective_from,
-                            "effective_to": effective_to,
-                            "base": base,
-                        },
-                    )
-                connection.execute(
-                    sa.text("ALTER TABLE employee_payroll_profile_versions ENABLE TRIGGER ALL")
-                )
-            with pytest.raises(RuntimeError, match="R5_VERSION_LINEAGE_PRECHECK_FAILED"):
-                command.upgrade(config, "0006_payroll_round5_integrity")
-            with engine.connect() as connection:
-                revision = connection.execute(
-                    sa.text("SELECT version_num FROM alembic_version")
-                ).scalar_one()
-                assert revision == "0005_payroll_round4_integrity"
-        finally:
-            engine.dispose()

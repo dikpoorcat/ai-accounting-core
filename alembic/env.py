@@ -24,9 +24,23 @@ target_metadata = Base.metadata
 
 _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
     "ck_owner_account_password_hash_shape",
+    "ck_owner_account_login_ascii",
+    "ck_owner_recovery_code_lowerhex",
+    "ck_owner_session_secret_lowerhex",
     "ck_execution_attribution_executor_name_ascii",
     "ck_execution_attribution_executor_version_ascii",
     "ck_execution_attribution_tool_name_ascii",
+    "ck_evidence_sha256_lower_hex",
+    "ck_intangible_asset_acquisition_month",
+    "ck_tax_period_hash_lower_hex",
+    "ck_borrowing_accrual_hash_lower_hex",
+    "ck_intangible_amortization_period_month_start",
+    "ck_intangible_amortization_posting_month",
+    "ck_intangible_amortization_hash_lower_hex",
+    "ck_intangible_retirement_month_end",
+    "ck_fixed_asset_depreciation_posting_month",
+    "ck_fixed_asset_depreciation_hash_lower_hex",
+    "ck_fixed_asset_depreciation_period_month_start",
 }
 
 

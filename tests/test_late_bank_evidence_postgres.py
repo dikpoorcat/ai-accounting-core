@@ -9,7 +9,6 @@ from threading import Barrier, Event
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
-from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
@@ -64,7 +63,9 @@ pytestmark = [
     pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
 ]
 
-POSTGRES_IMAGE = "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
+POSTGRES_IMAGE = (
+    "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
+)
 PASSWORD_HASH = (
     "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$"
     "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
@@ -75,66 +76,6 @@ def _config(database_url: str) -> Config:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     return config
-
-
-def _insert_legacy_scope_and_rows(connection: sa.Connection) -> tuple[uuid.UUID, uuid.UUID]:
-    now = datetime.now(UTC)
-    org_id, account_id = uuid.uuid4(), uuid.uuid4()
-    connection.execute(
-        sa.text(
-            """
-            INSERT INTO organizations (
-                id, name, taxpayer_type, filing_cycle, jurisdiction,
-                urban_maintenance_rate, accounting_standard,
-                accounting_period_control_enabled,
-                accounting_period_control_start_date, created_at
-            ) VALUES (
-                :org, 'late bank pg', 'small_scale', 'quarterly', 'CN',
-                0.07, 'small_enterprise', false, NULL, :now
-            )
-            """
-        ),
-        {"org": org_id, "now": now},
-    )
-    connection.execute(
-        sa.text(
-            """
-            INSERT INTO accounts (
-                id, org_id, code, name, category, normal_side, system_role, active
-            ) VALUES (
-                :id, :org, '1002', '银行存款', 'asset', 'debit', 'bank', true
-            )
-            """
-        ),
-        {"id": account_id, "org": org_id},
-    )
-    for ordinal in (1, 2):
-        connection.execute(
-            sa.text(
-                """
-                INSERT INTO bank_transactions (
-                    id, org_id, bank_account_code, fingerprint, external_id,
-                    booking_date, amount_fen, currency, counterparty_name,
-                    memo, source_sha256, matched_event_id, imported_at,
-                    execution_attribution_id
-                ) VALUES (
-                    :id, :org, '1002', :fingerprint, 'same-external-id',
-                    :booking_date, :amount, 'CNY', NULL, '', :source,
-                    NULL, :now, NULL
-                )
-                """
-            ),
-            {
-                "id": uuid.uuid4(),
-                "org": org_id,
-                "fingerprint": str(ordinal) * 64,
-                "booking_date": date(2026, 7, ordinal),
-                "amount": ordinal * 100,
-                "source": str(ordinal + 2) * 64,
-                "now": now,
-            },
-        )
-    return org_id, account_id
 
 
 def _insert_owner_authority(
@@ -219,9 +160,7 @@ def _insert_current_attribution(
         },
     )
     connection.execute(
-        sa.text(
-            "SELECT set_config('finance.execution_attribution_id', :value, true)"
-        ),
+        sa.text("SELECT set_config('finance.execution_attribution_id', :value, true)"),
         {"value": str(attribution_id)},
     )
     return attribution_id
@@ -418,299 +357,10 @@ def _finalize_raw_two_line_event(
     return event_id
 
 
-def test_postgres_0015_preflight_and_downgrade_are_first_ddl_safe() -> None:
-    with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
-        database_url = postgres.get_connection_url()
-        config = _config(database_url)
-        command.upgrade(config, "0014_execution_attribution")
-        engine = sa.create_engine(database_url)
-        try:
-            with engine.begin() as connection:
-                org_id, account_id = _insert_legacy_scope_and_rows(connection)
-
-            with pytest.raises(
-                RuntimeError, match="LATE_BANK_EVIDENCE_MIGRATION_PRECHECK_FAILED"
-            ):
-                command.upgrade(config, "0015_late_bank_evidence")
-            with engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text("SELECT version_num FROM alembic_version")
-                ) == "0014_execution_attribution"
-                assert "requires_bank_reconciliation" not in {
-                    column["name"] for column in inspect(connection).get_columns("accounts")
-                }
-
-            with engine.begin() as connection:
-                connection.execute(sa.text("DELETE FROM bank_transactions"))
-            command.upgrade(config, "0015_late_bank_evidence")
-            with engine.begin() as connection:
-                connection.exec_driver_sql("ALTER TABLE accounts DISABLE TRIGGER USER")
-                connection.execute(
-                    sa.text(
-                        """
-                        UPDATE accounts
-                           SET requires_bank_reconciliation = true,
-                               bank_reconciliation_start_date = DATE '2026-07-01',
-                               bank_reconciliation_configured_at = clock_timestamp()
-                         WHERE org_id = :org AND id = :account
-                        """
-                    ),
-                    {"org": org_id, "account": account_id},
-                )
-                connection.exec_driver_sql("ALTER TABLE accounts ENABLE TRIGGER USER")
-
-            with pytest.raises(
-                RuntimeError, match="LATE_BANK_EVIDENCE_DOWNGRADE_UNSAFE"
-            ):
-                command.downgrade(config, "0014_execution_attribution")
-            with engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text("SELECT version_num FROM alembic_version")
-                ) == "0015_late_bank_evidence"
-                assert "bank_reconciliation_scope_actions" in inspect(
-                    connection
-                ).get_table_names()
-        finally:
-            engine.dispose()
-
-
-def test_postgres_0015_empty_round_trip_restores_legacy_validator() -> None:
-    with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
-        database_url = postgres.get_connection_url()
-        config = _config(database_url)
-        command.upgrade(config, "0014_execution_attribution")
-        engine = sa.create_engine(database_url)
-        try:
-            with engine.connect() as connection:
-                original = connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_accounting_period_close(uuid)'::regprocedure)"
-                    )
-                )
-                original_final_event = connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_final_business_event(uuid)'::regprocedure)"
-                    )
-                )
-                original_mutation_guard = connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_block_final_business_event_mutation()'::regprocedure)"
-                    )
-                )
-                original_module_functions = {
-                    signature: connection.scalar(
-                        sa.text(
-                            "SELECT pg_get_functiondef("
-                            f"'{signature}'::regprocedure)"
-                        )
-                    )
-                    for signature in (
-                        "finance_asset_role_amount(uuid,character varying,character varying)",
-                        "finance_module_role_amount(uuid,character varying,character varying)",
-                        "finance_assert_fixed_asset_event_shape(uuid)",
-                        "finance_assert_intangible_borrowing_event_shape(uuid)",
-                    )
-                }
-            command.upgrade(config, "0015_late_bank_evidence")
-            with engine.connect() as connection:
-                upgraded = connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_accounting_period_close(uuid)'::regprocedure)"
-                    )
-                )
-                assert "accounting_period_close_checker_2026.2" in upgraded
-                assert "match.created_at <= target_close.confirmed_at" in upgraded
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_final_business_event(uuid)'::regprocedure)"
-                    )
-                ) != original_final_event
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_block_final_business_event_mutation()'::regprocedure)"
-                    )
-                ) != original_mutation_guard
-            command.downgrade(config, "0014_execution_attribution")
-            with engine.connect() as connection:
-                restored = connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_accounting_period_close(uuid)'::regprocedure)"
-                    )
-                )
-                assert restored == original
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_final_business_event(uuid)'::regprocedure)"
-                    )
-                ) == original_final_event
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_block_final_business_event_mutation()'::regprocedure)"
-                    )
-                ) == original_mutation_guard
-                for signature, definition in original_module_functions.items():
-                    assert connection.scalar(
-                        sa.text(
-                            "SELECT pg_get_functiondef("
-                            f"'{signature}'::regprocedure)"
-                        )
-                    ) == definition
-            command.upgrade(config, "0015_late_bank_evidence")
-        finally:
-            engine.dispose()
-
-
-def test_postgres_legacy_unattributed_final_event_can_only_gain_current_attribution_on_reversal(
-) -> None:
-    with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
-        database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "0015_late_bank_evidence")
-        engine = sa.create_engine(database_url)
-        try:
-            with engine.begin() as connection:
-                with Session(bind=connection, expire_on_commit=False) as session:
-                    organization = seed_organization(
-                        session, name="PG历史未归因事项反转"
-                    )
-                    session.flush()
-                    org_id = organization.id
-                legacy_evidence_id = _insert_evidence(
-                    connection,
-                    org_id=org_id,
-                    attribution_id=None,
-                        suffix="9",
-                )
-                with Session(bind=connection, expire_on_commit=False) as session:
-                    generated = AccountingPeriodService(
-                        session, current_date=date(2026, 8, 12)
-                    ).generate_accounting_period(
-                        GenerateAccountingPeriodRequest(
-                            org_id=org_id,
-                            period_month="2026-08",
-                            idempotency_key="legacy-unattributed-generate-august",
-                            confirmation_note="生成历史事项所在账期",
-                            evidence_references=[legacy_evidence_id],
-                        )
-                    )
-                    assert generated.status == "posted", generated.errors
-                    session.flush()
-                legacy_event_ids = [
-                    _finalize_raw_two_line_event(
-                        connection,
-                        org_id=org_id,
-                        attribution_id=None,
-                        event_type="service_credit_sale",
-                        idempotency_key=f"legacy-unattributed-{suffix}",
-                        facts={
-                            "event_type": "service_credit_sale",
-                            "business_dates": {
-                                "business_date": "2026-08-10",
-                                "posting_date": "2026-08-10",
-                                "tax_obligation_date": "2026-08-10",
-                            },
-                            "amounts": {
-                                "gross_amount_fen": 100,
-                                "currency": "CNY",
-                            },
-                        },
-                        debit_account_code="1122",
-                        credit_account_code="5001",
-                        amount_fen=100,
-                    )
-                    for suffix in ("reversal", "forbidden-backfill")
-                ]
-                owner_id, session_id = _insert_owner_authority(connection, org_id)
-
-            with pytest.raises(
-                sa.exc.DBAPIError,
-                match="final business events are immutable; create a reversal",
-            ):
-                with engine.begin() as connection:
-                    attribution_id = _insert_current_attribution(
-                        connection,
-                        org_id=org_id,
-                        owner_id=owner_id,
-                        session_id=session_id,
-                        tool_name="finance_reverse_event",
-                    )
-                    connection.execute(
-                        sa.text(
-                            """
-                            UPDATE business_events
-                               SET execution_attribution_id = :attribution
-                             WHERE org_id = :org AND id = :event
-                            """
-                        ),
-                        {
-                            "attribution": attribution_id,
-                            "org": org_id,
-                            "event": legacy_event_ids[1],
-                        },
-                    )
-
-            with engine.begin() as connection:
-                attribution_id = _insert_current_attribution(
-                    connection,
-                    org_id=org_id,
-                    owner_id=owner_id,
-                    session_id=session_id,
-                    tool_name="finance_reverse_event",
-                )
-                with Session(bind=connection, expire_on_commit=False) as session:
-                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution_id
-                    result = FinanceService(session).reverse_event(
-                        ReverseEventRequest(
-                            org_id=org_id,
-                            event_id=legacy_event_ids[0],
-                            idempotency_key="reverse-legacy-unattributed",
-                            reason="历史事项按当前负责人授权执行冲正",
-                            posting_date=date(2026, 8, 11),
-                        )
-                    )
-                    assert result.status == "posted", result.errors
-                    assert result.event_id is not None
-                    session.flush()
-
-                source = connection.execute(
-                    sa.text(
-                        """
-                        SELECT status, reversed_by_event_id,
-                               execution_attribution_id
-                          FROM business_events
-                         WHERE org_id = :org AND id = :event
-                        """
-                    ),
-                    {"org": org_id, "event": legacy_event_ids[0]},
-                ).one()
-                assert source.status == "reversed"
-                assert source.reversed_by_event_id == result.event_id
-                assert source.execution_attribution_id == attribution_id
-                assert connection.scalar(
-                    sa.text(
-                        """
-                        SELECT execution_attribution_id FROM business_events
-                         WHERE org_id = :org AND id = :event
-                        """
-                    ),
-                    {"org": org_id, "event": result.event_id},
-                ) == attribution_id
-        finally:
-            engine.dispose()
-
-
 def test_postgres_scope_confirmation_is_attributed_complete_and_sealed() -> None:
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "0015_late_bank_evidence")
+        command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         org_id, account_id = uuid.uuid4(), uuid.uuid4()
         try:
@@ -786,9 +436,7 @@ def test_postgres_scope_confirmation_is_attributed_complete_and_sealed() -> None
                     "target_account_id": None,
                     "explanation": "老板确认这是唯一实际银行账户。",
                     "scope": scope,
-                    "evidence": [
-                        {"evidence_id": evidence_id, "sha256": "c" * 64}
-                    ],
+                    "evidence": [{"evidence_id": evidence_id, "sha256": "c" * 64}],
                 }
                 calculation_payload = canonical_json(payload)
                 connection.execute(
@@ -947,7 +595,7 @@ def test_postgres_scope_confirmation_is_attributed_complete_and_sealed() -> None
 def test_postgres_scope_confirmation_supports_explicit_zero_accounts() -> None:
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "0015_late_bank_evidence")
+        command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         org_id, action_id = uuid.uuid4(), uuid.uuid4()
         try:
@@ -994,9 +642,7 @@ def test_postgres_scope_confirmation_supports_explicit_zero_accounts() -> None:
                     "target_account_id": None,
                     "explanation": explanation,
                     "scope": [],
-                    "evidence": [
-                        {"evidence_id": evidence_id, "sha256": "b" * 64}
-                    ],
+                    "evidence": [{"evidence_id": evidence_id, "sha256": "b" * 64}],
                 }
                 connection.execute(
                     sa.text(
@@ -1065,26 +711,32 @@ def test_postgres_scope_confirmation_supports_explicit_zero_accounts() -> None:
                     ),
                     {"org": org_id},
                 ).one() == (action_id, True)
-                assert connection.scalar(
-                    sa.text(
-                        """
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            """
                         SELECT count(*) FROM accounts
                          WHERE org_id = :org
                            AND requires_bank_reconciliation IS TRUE
                         """
-                    ),
-                    {"org": org_id},
-                ) == 0
-                assert connection.scalar(
-                    sa.text(
-                        """
+                        ),
+                        {"org": org_id},
+                    )
+                    == 0
+                )
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            """
                         SELECT count(*)
                           FROM account_bank_reconciliation_scope_history
                          WHERE org_id = :org
                         """
-                    ),
-                    {"org": org_id},
-                ) == 0
+                        ),
+                        {"org": org_id},
+                    )
+                    == 0
+                )
         finally:
             engine.dispose()
 
@@ -1092,7 +744,7 @@ def test_postgres_scope_confirmation_supports_explicit_zero_accounts() -> None:
 def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) -> None:
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "0015_late_bank_evidence")
+        command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         org_id, account_id = uuid.uuid4(), uuid.uuid4()
         initial_action_id, change_action_id = uuid.uuid4(), uuid.uuid4()
@@ -1437,16 +1089,19 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                     change_action_id,
                     True,
                 )
-                assert connection.scalar(
-                    sa.text(
-                        """
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            """
                         SELECT count(*)
                           FROM accounting_period_close_bank_reconciliations
                          WHERE close_id = :close
                         """
-                    ),
-                    {"close": close_id},
-                ) == 0
+                        ),
+                        {"close": close_id},
+                    )
+                    == 0
+                )
 
             (tmp_path / "late-july.csv").write_bytes(
                 b"date,amount,reference\n2026-07-20,3.00,LATE-JULY-1\n"
@@ -1477,9 +1132,7 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                             "external_id": "reference",
                         },
                     )
-                    preview = import_service.preview_bank_statement_import(
-                        preview_request
-                    )
+                    preview = import_service.preview_bank_statement_import(preview_request)
                     assert preview.status == "calculated", preview.errors
                     assert preview.calculation_hash is not None
                     assert preview.rows[0].is_late is True
@@ -1525,17 +1178,20 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                     sa.text("SELECT finance_assert_accounting_period_close(:close)"),
                     {"close": close_id},
                 )
-                assert connection.execute(
-                    sa.text(
-                        """
+                assert (
+                    connection.execute(
+                        sa.text(
+                            """
                         SELECT to_jsonb(close_row)::text,
                                encode(convert_to(calculation_payload, 'UTF8'), 'hex')
                           FROM accounting_period_closes AS close_row
                          WHERE id = :close
                         """
-                    ),
-                    {"close": close_id},
-                ).one() == before
+                        ),
+                        {"close": close_id},
+                    ).one()
+                    == before
+                )
         finally:
             engine.dispose()
 
@@ -1543,7 +1199,7 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
 def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "0015_late_bank_evidence")
+        command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         try:
             with Session(engine, expire_on_commit=False) as session:
@@ -1618,9 +1274,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     "target_account_id": None,
                     "explanation": explanation,
                     "scope": scope,
-                    "evidence": [
-                        {"evidence_id": evidence_id, "sha256": "6" * 64}
-                    ],
+                    "evidence": [{"evidence_id": evidence_id, "sha256": "6" * 64}],
                 }
                 connection.execute(
                     sa.text(
@@ -1742,9 +1396,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             "external_id": "reference",
                         },
                     )
-                    preview = import_service.preview_bank_statement_import(
-                        preview_request
-                    )
+                    preview = import_service.preview_bank_statement_import(preview_request)
                     assert preview.status == "calculated", preview.errors
                     assert preview.calculation_hash is not None
                     imported = import_service.confirm_bank_statement_import(
@@ -1776,9 +1428,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             "amounts": {"amount_fen": 100},
                             "direction": "cash_deposit",
                             "bank_account_code": "1002",
-                            "bank_transaction_references": [
-                                {"id": transaction.id}
-                            ],
+                            "bank_transaction_references": [{"id": transaction.id}],
                             "evidence_references": [event_evidence_id],
                         }
                     )
@@ -1806,15 +1456,18 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     ),
                     {"event": posted_event_id},
                 ).all() == [("1002", 100, 0), ("1001", 0, 100)]
-                assert connection.scalar(
-                    sa.text(
-                        """
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            """
                         SELECT count(*) FROM bank_transaction_matches
                          WHERE event_id = :event AND invalidated_at IS NULL
                         """
-                    ),
-                    {"event": posted_event_id},
-                ) == 1
+                        ),
+                        {"event": posted_event_id},
+                    )
+                    == 1
+                )
 
             with engine.begin() as connection:
                 attribution_id = _insert_current_attribution(
@@ -1893,9 +1546,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                                 "external_id": "reference",
                             },
                         )
-                        preview = import_service.preview_bank_statement_import(
-                            preview_request
-                        )
+                        preview = import_service.preview_bank_statement_import(preview_request)
                         assert preview.status == "calculated", preview.errors
                         assert preview.calculation_hash is not None
                         imported = import_service.confirm_bank_statement_import(
@@ -1930,8 +1581,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                                 "source_bank_account_code": "1002",
                                 "destination_bank_account_code": "1003",
                                 "bank_transaction_references": [
-                                    {"id": transaction_id}
-                                    for transaction_id in transaction_ids
+                                    {"id": transaction_id} for transaction_id in transaction_ids
                                 ],
                                 "evidence_references": [event_evidence_id],
                             }
@@ -1960,15 +1610,18 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     ),
                     {"event": internal_event_id},
                 ).all() == [("1003", 200, 0), ("1002", 0, 200)]
-                assert connection.scalar(
-                    sa.text(
-                        """
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            """
                         SELECT count(*) FROM bank_transaction_matches
                          WHERE event_id = :event AND invalidated_at IS NULL
                         """
-                    ),
-                    {"event": internal_event_id},
-                ) == 2
+                        ),
+                        {"event": internal_event_id},
+                    )
+                    == 2
+                )
 
             with engine.begin() as connection:
                 attribution_id = _insert_current_attribution(
@@ -2069,9 +1722,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     tool_name="finance_acquire_fixed_asset",
                 )
                 with Session(bind=connection, expire_on_commit=False) as session:
-                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = (
-                        specialized_attribution_id
-                    )
+                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = specialized_attribution_id
                     fixed = FixedAssetService(session).acquire_fixed_asset(
                         AcquireFixedAssetRequest.model_validate(
                             {
@@ -2104,9 +1755,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     )
                     assert fixed.status == "posted", fixed.errors
                     assert fixed.asset_id is not None
-                    intangible = IntangibleAssetService(
-                        session
-                    ).acquire_intangible_asset(
+                    intangible = IntangibleAssetService(session).acquire_intangible_asset(
                         AcquireIntangibleAssetRequest.model_validate(
                             {
                                 "org_id": org_id,
@@ -2242,9 +1891,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     tool_name="finance_confirm_specialized_bank_lifecycle",
                 )
                 with Session(bind=connection, expire_on_commit=False) as session:
-                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = (
-                        lifecycle_attribution_id
-                    )
+                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = lifecycle_attribution_id
                     fixed_service = FixedAssetService(session)
                     activated = fixed_service.activate_fixed_asset(
                         ActivateFixedAssetRequest.model_validate(
@@ -2354,9 +2001,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     tool_name="finance_confirm_bank_statement_import",
                 )
                 with Session(bind=connection, expire_on_commit=False) as session:
-                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = (
-                        import_attribution_id
-                    )
+                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = import_attribution_id
                     import_service = BankStatementService(
                         session,
                         settings=Settings(finance_bank_import_dir=tmp_path),
@@ -2373,9 +2018,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             "external_id": "reference",
                         },
                     )
-                    import_preview = import_service.preview_bank_statement_import(
-                        import_request
-                    )
+                    import_preview = import_service.preview_bank_statement_import(import_request)
                     assert import_preview.status == "calculated", import_preview.errors
                     imported_wrong_rows = import_service.confirm_bank_statement_import(
                         ConfirmBankStatementFileImportRequest.model_validate(
@@ -2386,9 +2029,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             }
                         )
                     )
-                    assert imported_wrong_rows.status == "posted", (
-                        imported_wrong_rows.errors
-                    )
+                    assert imported_wrong_rows.status == "posted", imported_wrong_rows.errors
                     wrong_rows = {
                         row.external_id: row.id
                         for row in session.scalars(
@@ -2416,9 +2057,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                     tool_name="finance_confirm_specialized_bank_settlement",
                 )
                 with Session(bind=connection, expire_on_commit=False) as session:
-                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = (
-                        settlement_attribution_id
-                    )
+                    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = settlement_attribution_id
                     fixed_service = FixedAssetService(session)
                     disposal_payload = {
                         "org_id": org_id,
@@ -2442,18 +2081,12 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             | {
                                 "idempotency_key": "pg-wrong-ref-fixed-disposal",
                                 "bank_transaction_references": [
-                                    {
-                                        "id": wrong_rows[
-                                            "WRONG-FIXED-DISPOSAL"
-                                        ]
-                                    }
+                                    {"id": wrong_rows["WRONG-FIXED-DISPOSAL"]}
                                 ],
                             }
                         )
                     )
-                    assert wrong_disposal.errors == [
-                        "BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"
-                    ]
+                    assert wrong_disposal.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
                     disposed = fixed_service.dispose_fixed_asset(
                         DisposeFixedAssetRequest.model_validate(
                             disposal_payload
@@ -2481,18 +2114,12 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             | {
                                 "idempotency_key": "pg-wrong-ref-interest-payment",
                                 "bank_transaction_references": [
-                                    {
-                                        "id": wrong_rows[
-                                            "WRONG-BORROWING-INTEREST"
-                                        ]
-                                    }
+                                    {"id": wrong_rows["WRONG-BORROWING-INTEREST"]}
                                 ],
                             }
                         )
                     )
-                    assert wrong_interest.errors == [
-                        "BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"
-                    ]
+                    assert wrong_interest.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
                     paid_interest = borrowing_service.pay_borrowing_interest(
                         PayBorrowingInterestRequest.model_validate(
                             interest_payload
@@ -2518,18 +2145,12 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             | {
                                 "idempotency_key": "pg-wrong-ref-principal-repayment",
                                 "bank_transaction_references": [
-                                    {
-                                        "id": wrong_rows[
-                                            "WRONG-BORROWING-PRINCIPAL"
-                                        ]
-                                    }
+                                    {"id": wrong_rows["WRONG-BORROWING-PRINCIPAL"]}
                                 ],
                             }
                         )
                     )
-                    assert wrong_principal.errors == [
-                        "BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"
-                    ]
+                    assert wrong_principal.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
                     repaid = borrowing_service.repay_borrowing_principal(
                         RepayBorrowingPrincipalRequest.model_validate(
                             principal_payload
@@ -2550,9 +2171,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             posting_date=date(2026, 8, 12),
                         )
                     )
-                    assert reversed_principal.status == "posted", (
-                        reversed_principal.errors
-                    )
+                    assert reversed_principal.status == "posted", reversed_principal.errors
                     reversed_interest = borrowing_service.reverse_event(
                         ReverseEventRequest(
                             org_id=org_id,
@@ -2562,9 +2181,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             posting_date=date(2026, 8, 12),
                         )
                     )
-                    assert reversed_interest.status == "posted", (
-                        reversed_interest.errors
-                    )
+                    assert reversed_interest.status == "posted", reversed_interest.errors
                     reversed_disposal = fixed_service.reverse_event(
                         ReverseEventRequest(
                             org_id=org_id,
@@ -2574,9 +2191,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                             posting_date=date(2026, 8, 12),
                         )
                     )
-                    assert reversed_disposal.status == "posted", (
-                        reversed_disposal.errors
-                    )
+                    assert reversed_disposal.status == "posted", reversed_disposal.errors
                     session.flush()
 
             with pytest.raises(
@@ -2615,9 +2230,7 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                         amount_fen=100,
                     )
 
-            with pytest.raises(
-                sa.exc.DBAPIError, match="CASH_BANK_TRANSFER_VOUCHER_SHAPE_INVALID"
-            ):
+            with pytest.raises(sa.exc.DBAPIError, match="CASH_BANK_TRANSFER_VOUCHER_SHAPE_INVALID"):
                 with engine.begin() as connection:
                     bad_attribution_id = _insert_current_attribution(
                         connection,
@@ -2705,21 +2318,15 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
                         {"org": org_id, "voucher": bad_voucher_id},
                     )
                     connection.execute(
-                        sa.text(
-                            "UPDATE vouchers SET status = 'posted' WHERE id = :voucher"
-                        ),
+                        sa.text("UPDATE vouchers SET status = 'posted' WHERE id = :voucher"),
                         {"voucher": bad_voucher_id},
                     )
                     connection.execute(
-                        sa.text(
-                            "UPDATE business_events SET status = 'posted' WHERE id = :event"
-                        ),
+                        sa.text("UPDATE business_events SET status = 'posted' WHERE id = :event"),
                         {"event": bad_event_id},
                     )
 
-            with pytest.raises(
-                sa.exc.DBAPIError, match="INTERNAL_TRANSFER_VOUCHER_SHAPE_INVALID"
-            ):
+            with pytest.raises(sa.exc.DBAPIError, match="INTERNAL_TRANSFER_VOUCHER_SHAPE_INVALID"):
                 with engine.begin() as connection:
                     bad_attribution_id = _insert_current_attribution(
                         connection,
@@ -2755,7 +2362,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
 
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "0015_late_bank_evidence")
+        command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         try:
             with Session(engine, expire_on_commit=False) as session:
@@ -2764,10 +2371,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                 org_id = organization.id
             with engine.begin() as connection:
                 account = connection.execute(
-                    sa.text(
-                        "SELECT id, name FROM accounts "
-                        "WHERE org_id = :org AND code = '1002'"
-                    ),
+                    sa.text("SELECT id, name FROM accounts WHERE org_id = :org AND code = '1002'"),
                     {"org": org_id},
                 ).one()
                 owner_id, session_id = _insert_owner_authority(connection, org_id)
@@ -2822,9 +2426,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                         period_id=july_period_id,
                         closing_date=date(2026, 7, 31),
                     )
-                    close_preview = period_service.preview_accounting_period_close(
-                        close_request
-                    )
+                    close_preview = period_service.preview_accounting_period_close(close_request)
                     assert close_preview.status == "calculated", close_preview.errors
                     closed = period_service.confirm_accounting_period_close(
                         ConfirmAccountingPeriodCloseRequest(
@@ -2921,9 +2523,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                             "external_id": "reference",
                         },
                     )
-                    import_preview = bank_service.preview_bank_statement_import(
-                        import_request
-                    )
+                    import_preview = bank_service.preview_bank_statement_import(import_request)
                     assert import_preview.status == "calculated", import_preview.errors
                     imported = bank_service.confirm_bank_statement_import(
                         ConfirmBankStatementFileImportRequest.model_validate(
@@ -2961,21 +2561,15 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                     )
                     with Session(bind=connection, expire_on_commit=False) as session:
                         session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution_id
-                        bank_service = BankStatementService(
-                            session, current_date=date(2026, 8, 12)
-                        )
+                        bank_service = BankStatementService(session, current_date=date(2026, 8, 12))
                         database_errors: list[str] = []
-                        original_error_code = (
-                            bank_service._reconciliation_database_error_code
-                        )
+                        original_error_code = bank_service._reconciliation_database_error_code
 
                         def capture_database_error(exc: sa.exc.DBAPIError) -> str:
                             database_errors.append(str(exc.orig))
                             return original_error_code(exc)
 
-                        bank_service._reconciliation_database_error_code = (
-                            capture_database_error
-                        )
+                        bank_service._reconciliation_database_error_code = capture_database_error
                         preview_request = PreviewBankReconciliationRequest.model_validate(
                             {
                                 "org_id": org_id,
@@ -2986,24 +2580,18 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                                 "statement_opening_balance_fen": opening,
                                 "statement_closing_balance_fen": closing,
                                 "statement_import_action_ids": [import_action_id],
-                                "statement_evidence_references": [
-                                    reconciliation_evidence_id
-                                ],
+                                "statement_evidence_references": [reconciliation_evidence_id],
                                 "difference_explanations": [
                                     {
                                         "difference_kind": "statement_to_book",
                                         "amount_fen": difference,
                                         "explanation": "账单与账簿差额已逐笔核对。",
-                                        "evidence_references": [
-                                            reconciliation_evidence_id
-                                        ],
+                                        "evidence_references": [reconciliation_evidence_id],
                                     }
                                 ],
                             }
                         )
-                        preview = bank_service.preview_bank_reconciliation(
-                            preview_request
-                        )
+                        preview = bank_service.preview_bank_reconciliation(preview_request)
                         assert preview.status == "calculated", (
                             preview.errors,
                             preview.missing_information,
@@ -3021,9 +2609,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                             result.errors,
                             database_errors,
                         )
-                        reconciliation_id = uuid.UUID(
-                            str(result.data["reconciliation_id"])
-                        )
+                        reconciliation_id = uuid.UUID(str(result.data["reconciliation_id"]))
                         return (
                             reconciliation_id,
                             int(result.data["version"]),
@@ -3037,9 +2623,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                 difference=500,
             )
             assert version_1 == 1
-            assert {
-                (item["code"], item.get("count")) for item in warnings_1
-            } >= {
+            assert {(item["code"], item.get("count")) for item in warnings_1} >= {
                 ("BANK_RECONCILIATION_UNMATCHED_TRANSACTIONS_REVIEW", 1),
                 ("BANK_RECONCILIATION_PENDING_LATE_EVIDENCE_REVIEW", 1),
             }
@@ -3090,9 +2674,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                         assert event.status == "posted", event.errors
                         assert event.event_id is not None
                         assert event.voucher_id is not None
-                        bank_service = BankStatementService(
-                            session, current_date=date(2026, 8, 12)
-                        )
+                        bank_service = BankStatementService(session, current_date=date(2026, 8, 12))
                         late_request = PreviewLateBankEvidenceRequest(
                             org_id=org_id,
                             bank_transaction_id=late_transaction_id,
@@ -3119,9 +2701,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                         session.flush()
                         return event.event_id, handled.action_id
 
-            first_result_event_id, first_late_action_id = post_omitted_result_and_action(
-                suffix="f"
-            )
+            first_result_event_id, first_late_action_id = post_omitted_result_and_action(suffix="f")
             reconciliation_2, version_2, warnings_2 = confirm_reconciliation(
                 key="late-matrix-reconciliation-2",
                 opening=0,
@@ -3169,9 +2749,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                 and item["count"] == 1
                 for item in warnings_3
             )
-            with pytest.raises(
-                sa.exc.DBAPIError, match="BANK_RECONCILIATION_ALREADY_SEALED"
-            ):
+            with pytest.raises(sa.exc.DBAPIError, match="BANK_RECONCILIATION_ALREADY_SEALED"):
                 with engine.begin() as connection:
                     connection.execute(
                         sa.text(
@@ -3189,9 +2767,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                             "sha": "c" * 64,
                         },
                     )
-            with pytest.raises(
-                sa.exc.DBAPIError, match="BANK_AUDIT_SNAPSHOT_IMMUTABLE"
-            ):
+            with pytest.raises(sa.exc.DBAPIError, match="BANK_AUDIT_SNAPSHOT_IMMUTABLE"):
                 with engine.begin() as connection:
                     connection.execute(
                         sa.text(
@@ -3223,44 +2799,48 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                     assert close_preview.status == "calculated", close_preview.errors
                     calculation = close_preview.data["calculation"]
                     assert (
-                        calculation["checker_version"]
-                        == "accounting_period_close_checker_2026.2"
+                        calculation["checker_version"] == "accounting_period_close_checker_2026.2"
                     )
-                    assert calculation["review_counts"][
-                        "unmatched_bank_transactions"
-                    ] == 1
-                    assert calculation["review_counts"][
-                        "pending_late_bank_transactions"
-                    ] == 1
+                    assert calculation["review_counts"]["unmatched_bank_transactions"] == 1
+                    assert calculation["review_counts"]["pending_late_bank_transactions"] == 1
 
-            _second_result_event_id, second_late_action_id = (
-                post_omitted_result_and_action(suffix="1")
+            _second_result_event_id, second_late_action_id = post_omitted_result_and_action(
+                suffix="1"
             )
             assert second_late_action_id != first_late_action_id
             with engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT count(*) FROM late_bank_evidence_actions "
-                        "WHERE org_id = :org AND bank_transaction_id = :transaction "
-                        "AND status = 'posted'"
-                    ),
-                    {"org": org_id, "transaction": late_transaction_id},
-                ) == 2
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT count(*) FROM bank_reconciliations "
-                        "WHERE org_id = :org AND period_id = :period "
-                        "AND bank_account_code = '1002'"
-                    ),
-                    {"org": org_id, "period": august_period_id},
-                ) == 3
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT count(*) FROM accounting_period_close_bank_reconciliations "
-                        "WHERE close_id = :close"
-                    ),
-                    {"close": july_close_id},
-                ) == 0
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT count(*) FROM late_bank_evidence_actions "
+                            "WHERE org_id = :org AND bank_transaction_id = :transaction "
+                            "AND status = 'posted'"
+                        ),
+                        {"org": org_id, "transaction": late_transaction_id},
+                    )
+                    == 2
+                )
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT count(*) FROM bank_reconciliations "
+                            "WHERE org_id = :org AND period_id = :period "
+                            "AND bank_account_code = '1002'"
+                        ),
+                        {"org": org_id, "period": august_period_id},
+                    )
+                    == 3
+                )
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT count(*) FROM accounting_period_close_bank_reconciliations "
+                            "WHERE close_id = :close"
+                        ),
+                        {"close": july_close_id},
+                    )
+                    == 0
+                )
         finally:
             engine.dispose()
 
@@ -3268,7 +2848,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
 def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> None:
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "0015_late_bank_evidence")
+        command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         try:
             with Session(engine, expire_on_commit=False) as session:
@@ -3277,10 +2857,7 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                 org_id = organization.id
             with engine.begin() as connection:
                 account_name = connection.scalar(
-                    sa.text(
-                        "SELECT name FROM accounts "
-                        "WHERE org_id = :org AND code = '1002'"
-                    ),
+                    sa.text("SELECT name FROM accounts WHERE org_id = :org AND code = '1002'"),
                     {"org": org_id},
                 )
                 assert account_name is not None
@@ -3405,21 +2982,27 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                 if status == "rejected"
             ), results
             with engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT count(*) FROM bank_transactions "
-                        "WHERE org_id = :org AND external_id = 'SAME-SOURCE-ROW'"
-                    ),
-                    {"org": org_id},
-                ) == 1
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT count(DISTINCT row_identity_sha256) "
-                        "FROM bank_transactions WHERE org_id = :org "
-                        "AND external_id = 'SAME-SOURCE-ROW'"
-                    ),
-                    {"org": org_id},
-                ) == 1
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT count(*) FROM bank_transactions "
+                            "WHERE org_id = :org AND external_id = 'SAME-SOURCE-ROW'"
+                        ),
+                        {"org": org_id},
+                    )
+                    == 1
+                )
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT count(DISTINCT row_identity_sha256) "
+                            "FROM bank_transactions WHERE org_id = :org "
+                            "AND external_id = 'SAME-SOURCE-ROW'"
+                        ),
+                        {"org": org_id},
+                    )
+                    == 1
+                )
 
             with engine.connect() as connection:
                 import_action_id = connection.execute(
@@ -3432,8 +3015,12 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                 ).scalar_one()
 
             def confirm_reconciliation(
-                *, period_id: uuid.UUID, action_ids: list[uuid.UUID], key: str,
-                closing_balance: int, difference: int
+                *,
+                period_id: uuid.UUID,
+                action_ids: list[uuid.UUID],
+                key: str,
+                closing_balance: int,
+                difference: int,
             ) -> uuid.UUID:
                 with engine.begin() as connection:
                     attribution_id = _insert_current_attribution(
@@ -3445,9 +3032,7 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                     )
                     with Session(bind=connection, expire_on_commit=False) as session:
                         session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution_id
-                        service = BankStatementService(
-                            session, current_date=date(2026, 10, 1)
-                        )
+                        service = BankStatementService(session, current_date=date(2026, 10, 1))
                         request = PreviewBankReconciliationRequest.model_validate(
                             {
                                 "org_id": org_id,
@@ -3462,8 +3047,7 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                                 ),
                                 "coverage_end_date": session.scalar(
                                     sa.text(
-                                        "SELECT end_date FROM accounting_periods "
-                                        "WHERE id = :period"
+                                        "SELECT end_date FROM accounting_periods WHERE id = :period"
                                     ),
                                     {"period": period_id},
                                 ),
@@ -3478,7 +3062,9 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                                         "explanation": "并发顺序测试差额已复核。",
                                         "evidence_references": [evidence_id],
                                     }
-                                ] if difference else [],
+                                ]
+                                if difference
+                                else [],
                             }
                         )
                         preview = service.preview_bank_reconciliation(request)
@@ -3635,9 +3221,7 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                         settings=Settings(finance_bank_import_dir=tmp_path),
                         current_date=date(2026, 9, 1),
                     )
-                    retry_preview = service.preview_bank_statement_import(
-                        close_wins_import_request
-                    )
+                    retry_preview = service.preview_bank_statement_import(close_wins_import_request)
                     assert retry_preview.status == "calculated", retry_preview.errors
                     assert retry_preview.rows[0].is_late is True
                     retried = service.confirm_bank_statement_import(

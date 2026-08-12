@@ -85,7 +85,7 @@ def _config(database_url: str) -> Config:
 
 def _authority(
     connection: sa.Connection,
-) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     now = datetime.now(UTC)
     org_id, owner_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     connection.execute(
@@ -99,21 +99,6 @@ def _authority(
             """
         ),
         {"org": org_id, "now": now},
-    )
-    legacy_evidence_id = uuid.uuid4()
-    connection.execute(
-        sa.text(
-            """
-            INSERT INTO evidence (
-                id, org_id, sha256, original_name, media_type, source,
-                size_bytes, storage_path, metadata, created_at
-            ) VALUES (
-                :id, :org, :sha, 'legacy.txt', 'text/plain', 'test',
-                1, 'test/legacy.txt', '{}'::jsonb, :now
-            )
-            """
-        ),
-        {"id": legacy_evidence_id, "org": org_id, "sha": "f" * 64, "now": now},
     )
     connection.execute(
         sa.text(
@@ -145,7 +130,7 @@ def _authority(
             "absolute": now + timedelta(hours=8),
         },
     )
-    return org_id, owner_id, session_id, legacy_evidence_id
+    return org_id, owner_id, session_id
 
 
 def _insert_attribution(
@@ -219,7 +204,7 @@ def test_postgres_current_transaction_attribution_and_direct_sql_guards() -> Non
         engine = sa.create_engine(database_url)
         try:
             with engine.begin() as connection:
-                org_id, owner_id, session_id, legacy_evidence_id = _authority(connection)
+                org_id, owner_id, session_id = _authority(connection)
 
             attribution_id = uuid.uuid4()
             with engine.begin() as connection:
@@ -248,18 +233,6 @@ def test_postgres_current_transaction_attribution_and_direct_sql_guards() -> Non
                     attribution_id=attribution_id,
                     suffix="c",
                 )
-                connection.execute(
-                    sa.text(
-                        """
-                        UPDATE evidence
-                           SET storage_path = 'test/legacy-claimed.txt',
-                               execution_attribution_id = :attribution
-                         WHERE id = :id
-                        """
-                    ),
-                    {"attribution": attribution_id, "id": legacy_evidence_id},
-                )
-
             with engine.begin() as connection:
                 connection.execute(
                     sa.text(

@@ -134,7 +134,7 @@ def test_pg_dump_uses_only_password_free_argv_and_sanitized_environment(
     destination = tmp_path / "database.dump"
     adapter.dump(
         destination,
-        DatabaseDumpMetadata("0013_revision", _SOURCE_SYSTEM_IDENTIFIER),
+        DatabaseDumpMetadata("0001_baseline", _SOURCE_SYSTEM_IDENTIFIER),
     )
     assert adapter.list_archive(destination)
     assert verifier.paths == [pgpass.resolve()]
@@ -171,7 +171,7 @@ def test_pgpass_acl_failure_refuses_before_spawning_pg_dump(tmp_path: Path) -> N
     with pytest.raises(BackupIntegrationError, match="BACKUP_PGPASS_ACL_INVALID"):
         adapter.dump(
             tmp_path / "database.dump",
-            DatabaseDumpMetadata("0013_revision", _SOURCE_SYSTEM_IDENTIFIER),
+            DatabaseDumpMetadata("0001_baseline", _SOURCE_SYSTEM_IDENTIFIER),
         )
     assert runner.calls == []
 
@@ -283,7 +283,7 @@ class SnapshotConnection:
         if "pg_control_system()" in normalized:
             return Rows([("170005", _SOURCE_SYSTEM_IDENTIFIER)])
         if "alembic_version" in normalized:
-            return Rows([("0013_local_owner_identity",)])
+            return Rows([("0001_baseline",)])
         if "FROM evidence" in normalized:
             return Rows(
                 [
@@ -394,7 +394,7 @@ class RestoredConnection:
     def execute(self, sql: str) -> Rows:
         normalized = " ".join(sql.split())
         if "FROM alembic_version" in normalized:
-            return Rows([("0014_owner_auth_epoch",)])
+            return Rows([("0001_baseline",)])
         if "FROM evidence" in normalized:
             return Rows([])
         raise AssertionError(normalized)
@@ -468,7 +468,7 @@ def test_restore_drill_lists_and_restores_only_the_leased_verified_copy(
         {
             "backup_directory": complete,
             "backup_id": "one",
-            "schema_revision": "0014_owner_auth_epoch",
+            "schema_revision": "0001_baseline",
             "source_system_identifier": _SOURCE_SYSTEM_IDENTIFIER,
             "database_sha256": digest,
             "database_size_bytes": len(b"verified-local-copy"),
@@ -479,7 +479,7 @@ def test_restore_drill_lists_and_restores_only_the_leased_verified_copy(
     monkeypatch.setattr(
         backup_integration,
         "_single_alembic_head",
-        lambda root: "0014_owner_auth_epoch",
+        lambda root: "0001_baseline",
     )
     monkeypatch.setattr(
         backup_integration,
@@ -523,7 +523,7 @@ def test_evidence_projection_and_dump_snapshot_share_one_read_only_transaction()
     with postgres_backup_snapshot(
         SnapshotProvider(connection), _endpoint(), runtime_role="finance_runtime"
     ) as snapshot:
-        assert snapshot.schema_revision == "0013_local_owner_identity"
+        assert snapshot.schema_revision == "0001_baseline"
         assert snapshot.source_system_identifier == _SOURCE_SYSTEM_IDENTIFIER
         assert snapshot.snapshot_id == "00000003-0000001B-1"
         assert snapshot.evidence[0].sha256 == "a" * 64
@@ -611,7 +611,7 @@ def test_durable_publisher_failure_keeps_partial_and_never_creates_complete(
             ),
         ),
         database=DatabaseDumpMetadata(
-            "0013_local_owner_identity", _SOURCE_SYSTEM_IDENTIFIER
+            "0001_baseline", _SOURCE_SYSTEM_IDENTIFIER
         ),
     )
     root = tmp_path / "media"

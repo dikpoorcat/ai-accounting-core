@@ -1,6 +1,7 @@
-# 本地单负责人身份与 AI 执行归因开发基线
+# 历史：本地单负责人身份与 AI 执行归因开发基线
 
-> 状态：DEC-015 A、DEC-023 A、DEC-024 A、DEC-031 B、DEC-035 A 已决定；身份基础、Windows Credential Manager 会话与执行归因按正式 STDIO 接入。
+> 文档性质：历史设计与实现记录。所引 DEC 不自动生效；现行规则只见[当前保留规则](./current-rules.md)。
+> 历史状态：所列 DEC 当时已决定，身份基础、Windows Credential Manager 会话与执行归因已接入 STDIO；这些决定现在不自动生效。
 > 记录日期：2026-08-11
 > 上位决策：[会计期间与月结产品决策记录](./accounting-period-close-decisions.md)
 
@@ -30,7 +31,7 @@
 
 ## 4. 持久化与审计
 
-`0013_local_owner_identity` 只建四类规范数据：
+历史迁移 `0013_local_owner_identity` 当时加入四类规范数据；当前均由 `0001_baseline` 直接创建：
 
 1. `owner_accounts`：全部署最多一个，唯一绑定一个 `Organization`；保存规范登录名、PHC 哈希、凭据版本、active/disabled、登录/恢复限速和时间。
 2. `owner_sessions`：保存 token 哈希、发行/最后访问/空闲/绝对过期、撤销时间和稳定原因；主体、企业、密钥哈希和发行时间不可改。
@@ -39,9 +40,9 @@
 
 所有身份外键带 `org_id` 复合边界；不能删除已被审计/会话引用的负责人。迁移不猜测负责人或默认密码；zero-owner 是“待初始化”，生产仍关闭。任何身份/会话/恢复/审计历史存在时降级稳定拒绝 `IDENTITY_DOWNGRADE_UNSAFE`。
 
-`0014_execution_attribution` 为每个已认证写调用追加一条不可变归因：负责人、会话、凭据版本、固定服务端 executor、工具名、服务端 correlation ID 与数据库时间。即使调用返回 `needs_information`、`rejected` 或只发生幂等回放，也保留本次调用归因；读调用不创建归因。新业务根在 owner 模式下必须引用同企业且在当前事务创建的归因，既有非空引用不能换绑；迁移前的空引用不猜测回填，只能在合法认证更新时一次性认领。
+历史迁移 `0014_execution_attribution` 当时为每个已认证写调用追加不可变归因；当前结构已合入 `0001_baseline`。归因包含负责人、会话、凭据版本、固定服务端 executor、工具名、服务端 correlation ID 与数据库时间。即使调用返回 `needs_information`、`rejected` 或只发生幂等回放，也保留本次调用归因；读调用不创建归因。
 
-DEC-035 A 已生效。当前 0014 证明正常应用事务没有遗漏归因、没有跨企业或复用旧归因；一期明确只保护 AI、MCP 和公共请求边界，不宣称能够抵抗已取得 runtime 数据库凭据或本机 Windows 账户控制权的人直接构造归因。该边界不需要额外的 `SECURITY DEFINER` 身份层或独立身份数据库账号；若以后扩大到远程、多用户或不可信数据库运行账号，须重新立项。
+当时按 DEC-035 A 采用的实现用于防止正常应用事务遗漏归因、跨企业或复用旧归因；该决定现仅为历史参考。实现边界只覆盖 AI、MCP 和公共请求入口，不宣称能够抵抗已取得 runtime 数据库凭据或本机 Windows 账户控制权的人直接构造归因。
 
 ## 5. 负责人授权与执行者必须分开
 
@@ -57,8 +58,8 @@ DEC-035 A 已生效。当前 0014 证明正常应用事务没有遗漏归因、�
 - 按 DEC-031 B，`finance-login` 在无回显本地控制台中认证，将不透明 session token 存入当前 Windows 账户的 Credential Manager。正式 MCP 启动时只读取一次；启动后登录或换会话必须重启 MCP 才能生效。每次企业工具调用仍在数据库事务起点重新校验账户、凭据版本、过期和撤销。不得回退到命令行、环境变量或 MCP 参数，日志与 schema 也不得出现 token。
 - 正式 MCP 在读取凭据前取得当前 Windows 用户专属的跨进程 service lease，并持有到整个 STDIO 生命周期结束；lease 缺失、ACL 不安全或已被备份进程占用时 fail-closed。
 
-## 7. 最低错误与验收门禁
+## 7. 稳定错误码与后续验证
 
 稳定外部码至少包括：`OWNER_SETUP_REQUIRED`、`OWNER_ALREADY_CONFIGURED`、`IDENTITY_CONFIGURATION_INVALID`、`PASSWORD_TOO_SHORT`、`PASSWORD_TOO_LONG`、`PASSWORD_BLOCKLISTED`、`PASSWORD_CONFIRMATION_MISMATCH`、`AUTHENTICATION_FAILED`、`AUTHENTICATION_THROTTLED`、`AUTHENTICATION_REQUIRED`、`ORGANIZATION_CONTEXT_MISMATCH`、`RECOVERY_AUTHENTICATION_FAILED`、`RECOVERY_AUTHENTICATION_THROTTLED`、`IDENTITY_DOWNGRADE_UNSAFE`。
 
-验收必须覆盖：密码参数与长度/Unicode/blocklist；未知账号等时验证；限速持久化；会话哈希、严格过期、撤销和凭据版本；恢复码一次性与原子轮换；秘密/未知账号不泄露；单 owner、跨企业、不可变与 append-only PostgreSQL 负向；`0012 -> 0013 -> 0014 -> 0013 -> 0012`、`base -> head -> base -> head`、`alembic check`；公开 MCP schema 不出现密码、token、actor、executor 或 `confirmed_by`；真实 STDIO 覆盖无 token、伪 token、错企业和撤销会话。
+本文件不规定统一验收矩阵。后续修改内容和验证范围由用户针对当前步骤决定；PostgreSQL 负向、迁移往返、真实 STDIO 和全量检查均按需要选用，不要求每个小改动全部执行。

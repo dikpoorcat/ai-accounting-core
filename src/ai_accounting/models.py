@@ -2452,7 +2452,7 @@ class BorrowingPayment(Base):
 
 
 class IntangibleBorrowingAccountMigrationAction(Base):
-    """Ownership ledger for the 0011 default-account backfill."""
+    """Ownership ledger for default-account creation."""
 
     __tablename__ = "intangible_borrowing_account_migration_actions"
 
@@ -2499,7 +2499,7 @@ class FixedAssetAccountMigrationAction(Base):
 
 
 class FixedAssetTaxRuleMigrationAction(Base):
-    """Tracks whether 0009 owns the effective-dated fixed-asset tax rule."""
+    """Tracks ownership of the effective-dated fixed-asset tax rule."""
 
     __tablename__ = "fixed_asset_tax_rule_migration_actions"
 
@@ -2513,7 +2513,7 @@ class FixedAssetTaxRuleMigrationAction(Base):
 
 
 class TaxDeterminismExtensionAction(Base):
-    """Tracks whether 0010 owns each PostgreSQL extension it uses."""
+    """Tracks whether the schema baseline owns each PostgreSQL extension it uses."""
 
     __tablename__ = "tax_determinism_extension_actions"
 
@@ -2690,7 +2690,7 @@ class BusinessEventDependency(Base):
 
 
 class AccountingPeriodDependencyMigrationAction(Base):
-    """Marks normalized dependency rows proven and backfilled by revision 0012."""
+    """Marks normalized dependency rows proven by the schema baseline."""
 
     __tablename__ = "accounting_period_dependency_migration_actions"
 
@@ -3975,7 +3975,7 @@ def _enforce_orm_execution_attribution(
 ) -> None:
     """Keep owner-mode ORM writes fail-closed, including direct service calls.
 
-    PostgreSQL receives equivalent guards in revision 0014.  This listener also
+    PostgreSQL receives equivalent guards in the schema baseline. This listener also
     protects SQLite/service tests and automatically attaches the already
     authenticated write-call attribution held in ``Session.info``.
     """

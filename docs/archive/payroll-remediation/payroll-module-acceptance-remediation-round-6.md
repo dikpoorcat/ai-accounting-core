@@ -1,9 +1,10 @@
 # 工资模块第六轮验收整改任务书
 
+> 状态：可选旧整改参考。本文件不构成审计保留义务，也不是当前规范、待办、验证要求或执行指令。
 > 状态：开发已交付；独立验收不通过，转入第七轮整改
 > 复验日期：2026-08-10
 > 适用仓库：`ai-accounting-core`
-> 上位设计：[工资、社保、公积金与个税模块开发基线](./payroll-module-development-plan.md)
+> 上位设计：[工资、社保、公积金与个税模块开发基线](../../payroll-module-development-plan.md)
 > 前轮记录：[工资模块第五轮验收整改任务书](./payroll-module-acceptance-remediation-round-5.md)
 > 完成定义：R6-001 至 R6-005 全部关闭，前五轮通过项无回归，并由总设计与验收 Agent 在独立 PostgreSQL 17 上复验通过
 

@@ -1,10 +1,11 @@
-# 固定资产模块第一期最终验收记录
+# 历史：固定资产模块第一期最终验收记录
 
+> 文档性质：过去的实现结果。旧迁移编号只代表当时时点，当前数据库仅使用 `0001_baseline`。本文列出的独立验收方式、测试环境、测试矩阵和数量不是当前统一门禁或后续任务要求。
 > 状态：独立验收通过
 > 复验日期：2026-08-10
 > 适用仓库：`ai-accounting-core`
 > 上位设计：[固定资产模块开发基线](./fixed-asset-module-development-plan.md)
-> 前置验收：[工资模块第七轮验收整改任务书](./payroll-module-acceptance-remediation-round-7.md)
+> 历史前置验收：[已归档的工资模块第七轮验收整改任务书](./archive/payroll-remediation/payroll-module-acceptance-remediation-round-7.md)
 > 完成定义：固定资产购置、启用、月折旧、出售/报废、查询和关联冲正形成确定性闭环，且专属、跨模块、迁移、PostgreSQL、MCP、真实 STDIO 与全量质量门禁全部通过
 
 > 验收结论：固定资产模块第一期实现通过独立验收，可以作为后续模块的稳定基线；它仍是单企业私有模拟试用内核，不是法定资产卡片、税务申报、企业所得税汇算清缴或税务意见系统
@@ -39,7 +40,7 @@
 
 ## 3. 数据库与不可变性结论
 
-线性迁移 head 为 `0009_fixed_assets`，新增四张规范事实表：
+当时的线性迁移 head 为 `0009_fixed_assets`，新增四张规范事实表：
 
 - `fixed_assets`
 - `fixed_asset_activations`
@@ -75,12 +76,12 @@ PostgreSQL 延迟触发闭包覆盖业务事件、四张资产事实表、凭证
 - 完整覆盖率：`pytest --cov=ai_accounting --cov-report=term-missing`，`240 passed, 8 warnings`，总覆盖率 `86%`；固定资产服务 `88%`，固定资产纯计算器 `91%`。
 - 固定资产 PostgreSQL 专项：`3 passed`，覆盖正向链、数据库直写负向、双连接并发处置和迁移往返。
 - 真实 MCP STDIO：隔离子进程完整执行购置、启用、折旧预览、错误哈希拒绝、确认、查询、出售、事件查询和冲正；父进程用全新 Session 验证事实、平衡凭证、证据、轨迹、税则来源和银行匹配失效。
-- 迁移一致性：临时数据库 `upgrade head` 后执行 `alembic check`，结果为 `No new upgrade operations detected`；`alembic heads` 唯一输出 `0009_fixed_assets (head)`。
+- 当时的迁移一致性：临时数据库 `upgrade head` 后执行 `alembic check`，结果为 `No new upgrade operations detected`；`alembic heads` 唯一输出 `0009_fixed_assets (head)`。
 - `ruff check .`、`python -m pip check`、`python -m compileall -q src alembic tests` 和 `git diff --check` 全部通过。
 
 8 条告警中，7 条来自 Python 3.12 的 SQLite 默认 datetime 适配器弃用提示，1 条来自既有工资政策测试的 Pydantic 序列化提示；均不改变会计结果或数据库约束，记录为后续依赖升级清理项。
 
-迁移测试只使用显式临时数据库，默认 Compose `finance` 数据库未升级、降级或写入。测试创建的临时数据库和 Testcontainers 容器均已清理。
+当次迁移测试使用了显式临时数据库，默认 Compose `finance` 数据库未升级、降级或写入。测试创建的临时数据库和 Testcontainers 容器均已清理。
 
 ## 6. 阶段结论与后续路线
 

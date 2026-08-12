@@ -59,7 +59,7 @@ def _request(
             ),
         ),
         database=DatabaseDumpMetadata(
-            schema_revision="0013_local_owner_identity",
+            schema_revision="0001_baseline",
             source_system_identifier=_SOURCE_SYSTEM_IDENTIFIER,
         ),
     )

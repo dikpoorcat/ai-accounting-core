@@ -1,31 +1,26 @@
 # 项目文档索引
 
-本文档目录同时保留“当前规范”和“历史审计记录”。新 Agent 应优先读取当前规范，只在追溯决策或复现历史问题时加载旧轮文档，避免把已经关闭的整改项误当作当前任务。
+## 当前规则
 
-## 当前规范与验收
+- [当前保留规则](./current-rules.md)：当前有效的协作方式、记账内核底线和项目定位。
 
-- [税务事实与期间结算确定性整改基线](./tax-determinism-remediation.md)：无形资产与借款利息阶段开始前必须关闭的税务事实、税期快照、税则有效期与 MCP 契约门禁。
-- [税务事实与期间结算确定性整改验收记录](./tax-determinism-acceptance.md)：前置整改的最终门禁、独立负向审计和稳定错误契约。
-- [无形资产与借款利息第一期开发基线](./intangible-assets-and-borrowing-development-plan.md)：已完成阶段冻结的范围、工具、公式、固定模板、错误码和验收标准。
-- [无形资产与借款利息第一期最终验收记录](./intangible-assets-and-borrowing-acceptance.md)：双模块闭环、0011 提交点、真实 STDIO、独立负向审计和最终质量门禁。
-- [会计期间生成与月结第一期开发基线](./accounting-period-close-development-plan.md)：自然月生成、累计完整性检查、预览哈希确认、单向关闭、后续开放月更正和 0012 提交点契约。
-- [会计期间生成与月结第一期最终验收记录](./accounting-period-close-acceptance.md)：四个专用工具、0012 提交点、并发/历史迁移、真实 STDIO、独立终审和最终门禁。
-- [会计期间与月结产品决策记录](./accounting-period-close-decisions.md)：反结账、期间、银行迟到证据、单一企业负责人、AI 执行归因和正式试用治理等产品取舍。
-- [迟到银行外部证据开发基线](./late-bank-evidence-development-plan.md)：`DEC-013 B` 的日期、锁序、快照不变、人工身份解析、后续开放月处理和身份前置暂停点。
-- [正式私有试用前准备度记录](./private-pilot-readiness.md)：五个虚构历史月演练证据、正式试用停止线、待决策与上线前置。
-- [本地单负责人身份与 AI 执行归因开发基线](./local-owner-identity-development-plan.md)：单账户密码、服务端会话、一次性恢复码、人类授权与 AI/内核执行者分离。
-- [正式私有试用工程控制基线](./private-pilot-engineering-controls.md)：生产配置、数据库账号分离、文件白名单、CI、本地身份与备份恢复边界。
-- [固定资产模块第一期最终验收记录](./fixed-asset-module-acceptance.md)：购置、启用、月折旧、出售/报废和逆序冲正闭环的最终门禁与独立审计结论。
-- [固定资产模块开发基线](./fixed-asset-module-development-plan.md)：已完成阶段的稳定契约、官方依据、边界和验收标准。
-- [工资模块开发基线](./payroll-module-development-plan.md)：当前业务边界、数据模型、工具契约和验收标准。
-- [工资模块第七轮验收整改任务书](./payroll-module-acceptance-remediation-round-7.md)：当前最终验收记录和门禁结果。
-- [多 Agent 协作与本地质量验证手册](./agent-collaboration-and-local-verification.md)：任务拆分、共享工作区、独立验收、临时数据库和安全审查误判处理经验。
-- [记账引擎选型调研报告](./记账引擎选型调研报告.md)：自研确定性内核的技术选型依据。
+除用户当前明确指令、仓库根目录 `AGENTS.md` 和上述文件外，其他文档均不是自动生效的规则、任务、门禁或开发顺序。
 
-## 历史记录
+数据库当前只有面向空库的 `0001_baseline`。文档中出现的 `0001_initial` 至 `0015_late_bank_evidence` 等编号均为已删除迁移链的历史描述，不代表仍受支持的升级入口。
 
-- `payroll-module-acceptance-remediation.md`：首轮整改。
-- `payroll-module-acceptance-remediation-round-2.md` 至 `round-6.md`：第二至第六轮整改及当时的阻断项。
-- `记账内核现状与第三轮整改解读_2026-08-09.md`：第三轮时点的非技术解读。
+## 实现与历史参考
 
-历史文档是审计轨迹，正文中的“待整改”“不通过”和测试数量只代表当时状态；当前结论以税务确定性、固定资产、工资、无形资产与借款、会计期间与月结的最新最终验收记录及仓库最新测试结果为准。
+- [README](../README.md)：当前功能、接口和本地使用说明。
+- [DEC-001 至 DEC-045](./accounting-period-close-decisions.md)：历史产品决策，不再自动生效。
+- [会计期间与月结开发记录](./accounting-period-close-development-plan.md)与[验收记录](./accounting-period-close-acceptance.md)。
+- [迟到银行外部证据开发记录](./late-bank-evidence-development-plan.md)。
+- [本地负责人身份与执行归因记录](./local-owner-identity-development-plan.md)。
+- [私有试用准备度记录](./private-pilot-readiness.md)、[工程控制方案](./private-pilot-engineering-controls.md)与[Windows 备份恢复方案](./windows-backup-restore-runbook.md)。
+- [税务确定性整改记录](./tax-determinism-remediation.md)与[验收记录](./tax-determinism-acceptance.md)。
+- [固定资产开发记录](./fixed-asset-module-development-plan.md)与[验收记录](./fixed-asset-module-acceptance.md)。
+- [工资模块开发记录](./payroll-module-development-plan.md)。
+- [无形资产与借款开发记录](./intangible-assets-and-borrowing-development-plan.md)与[验收记录](./intangible-assets-and-borrowing-acceptance.md)。
+- [记账引擎选型调研](./记账引擎选型调研报告.md)。
+- [工资模块首轮及 R2～R7 档案](./archive/payroll-remediation/README.md)与[第三轮时点解读](./archive/payroll-remediation/记账内核现状与第三轮整改解读_2026-08-09.md)。
+
+这些资料用于理解现有代码或追溯过去状态，可以按用户指令继续精简或删除。正文中的“必须”“冻结”“待整改”“不通过”、工作包、测试数量和建议顺序均只代表当时语境。

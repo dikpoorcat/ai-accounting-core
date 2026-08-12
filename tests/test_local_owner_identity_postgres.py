@@ -30,10 +30,6 @@ pytestmark = [
     pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
 ]
 
-REVISION_0012 = "0012_accounting_period_close"
-REVISION_0013 = "0013_local_owner_identity"
-REVISION_0014 = "0014_execution_attribution"
-REVISION_HEAD = "0015_late_bank_evidence"
 PASSWORD_HASH = (
     "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$"
     "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
@@ -88,41 +84,11 @@ def _insert_owner(
     )
 
 
-def test_postgres_0013_zero_owner_linear_and_base_round_trip() -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url()
-        config = _config(database_url)
-        engine = sa.create_engine(database_url)
-        try:
-            command.upgrade(config, REVISION_0012)
-            command.upgrade(config, REVISION_0013)
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT COUNT(*) FROM owner_accounts")) == 0
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    REVISION_0013
-                )
-
-            command.downgrade(config, REVISION_0012)
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    REVISION_0012
-                )
-                assert connection.scalar(
-                    sa.text("SELECT to_regclass('public.owner_accounts') IS NULL")
-                )
-
-            command.upgrade(config, "head")
-            command.downgrade(config, "base")
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT COUNT(*) FROM alembic_version")) == 0
-            command.upgrade(config, "head")
-            command.check(config)
-        finally:
-            engine.dispose()
-
-
-def test_postgres_0013_singleton_cross_org_concurrency_and_immutable_history() -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> None:
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         config = _config(database_url)
         command.upgrade(config, "head")
@@ -472,12 +438,6 @@ def test_postgres_0013_singleton_cross_org_concurrency_and_immutable_history() -
                         {"id": owner_id},
                     )
 
-            with pytest.raises(RuntimeError, match="IDENTITY_DOWNGRADE_UNSAFE"):
-                command.downgrade(config, REVISION_0012)
-            with engine.connect() as connection:
-                assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    REVISION_HEAD
-                )
         finally:
             engine.dispose()
 
@@ -491,7 +451,10 @@ def test_postgres_identity_service_commits_password_rotation_atomically() -> Non
             self.value += 1
             return bytes([self.value]) * size
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -538,10 +501,13 @@ def test_postgres_identity_service_commits_password_rotation_atomically() -> Non
                 assert original_session is not None
                 assert original_session.revoke_reason == "credential_changed"
                 assert len(recovery_codes) == 2
-                assert sum(
-                    code.used_at is None and code.invalidated_at is None
-                    for code in recovery_codes
-                ) == 1
+                assert (
+                    sum(
+                        code.used_at is None and code.invalidated_at is None
+                        for code in recovery_codes
+                    )
+                    == 1
+                )
                 current_code = next(
                     code
                     for code in recovery_codes
