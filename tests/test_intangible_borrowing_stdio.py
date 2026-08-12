@@ -100,6 +100,7 @@ def _object_schemas(schema: dict[str, Any]) -> list[dict[str, Any]]:
 
 def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
     tmp_path: Path,
+    authenticated_stdio_bank_scope: Any,
 ) -> None:
     database_path = tmp_path / "stdio-intangible-borrowing.sqlite3"
     database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
@@ -148,6 +149,18 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
             ]
         )
         database_session.flush()
+        stdio_args = authenticated_stdio_bank_scope(
+            database_session,
+            organization,
+            borrowing_contract_evidence.id,
+            [
+                {
+                    "bank_account_code": "1002",
+                    "account_name": "银行存款",
+                    "start_date": "2025-01-01",
+                }
+            ],
+        )
         ids = {
             "intangible_acquisition_evidence": intangible_acquisition_evidence.id,
             "intangible_retirement_evidence": intangible_retirement_evidence.id,
@@ -183,7 +196,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
     )
     parameters = StdioServerParameters(
         command=getattr(sys, "_base_executable", sys.executable),
-        args=["-m", "ai_accounting.mcp_server"],
+        args=stdio_args,
         cwd=Path(__file__).parents[1],
         env=environment,
     )
@@ -273,6 +286,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                         "directly_attributable_cost_fen": 500,
                     },
                     "settlement_method": "bank",
+                    "bank_account_code": "1002",
                     "payment_date": "2026-01-02",
                     "benefit_area": "management",
                     "life_basis": "legal_or_contractual",
@@ -357,6 +371,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 drawing_request = {
                     "org_id": str(org_id),
                     "idempotency_key": "stdio-borrowing-draw",
+                    "bank_account_code": "1002",
                     "borrowing_code": "LOAN-STDIO-001",
                     "contract_name": "STDIO 经营周转借款",
                     "lender": {"name": "STDIO 持牌银行"},
@@ -430,6 +445,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                             "borrowing_id": drawn["borrowing_id"],
                             "accrual_event_id": first_accrual["event_id"],
                             "idempotency_key": "stdio-borrowing-pay-one",
+                            "bank_account_code": "1002",
                             "payment_date": "2025-07-01",
                             "posting_date": "2025-07-01",
                             "bank_transaction_references": [
@@ -473,6 +489,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                             "borrowing_id": drawn["borrowing_id"],
                             "accrual_event_id": second_accrual["event_id"],
                             "idempotency_key": "stdio-borrowing-pay-two",
+                            "bank_account_code": "1002",
                             "payment_date": "2026-01-01",
                             "posting_date": "2026-01-01",
                             "bank_transaction_references": [
@@ -491,6 +508,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                             "org_id": str(org_id),
                             "borrowing_id": drawn["borrowing_id"],
                             "idempotency_key": "stdio-borrowing-repay",
+                            "bank_account_code": "1002",
                             "repayment_date": "2026-01-01",
                             "posting_date": "2026-01-01",
                             "bank_transaction_references": [{"id": str(ids["principal_bank"])}],

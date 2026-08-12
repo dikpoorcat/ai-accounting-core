@@ -115,7 +115,7 @@ def _line(
 
 
 def _event(
-    session: Session, org_id: object, key: str, *, event_type: str = "expense_cash"
+    session: Session, org_id: object, key: str, *, event_type: str = "expense_payable"
 ) -> BusinessEvent:
     event = BusinessEvent(
         org_id=org_id,
@@ -1187,7 +1187,7 @@ def test_r4_011_0004_salary_source_backfill_is_proved_and_downgrade_is_safe() ->
                 command.downgrade(config, "0004_payroll_round3_integrity")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0014_execution_attribution"
+                    "0015_late_bank_evidence"
                 )
         finally:
             engine.dispose()

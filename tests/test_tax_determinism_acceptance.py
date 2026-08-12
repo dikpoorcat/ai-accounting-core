@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+import uuid
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.models import (
     BusinessEvent,
@@ -43,6 +45,7 @@ def _sale_payload(
         "org_id": organization.id,
         "idempotency_key": key,
         "event_type": "service_cash_sale",
+        "bank_account_code": "1002",
         "business_dates": {
             "business_date": business_date,
             "fulfillment_date": business_date,
@@ -181,6 +184,8 @@ def test_expense_account_role_is_required_only_for_expense_events(
         "amounts": {"amount_fen": 1_000},
         **extra,
     }
+    if event_type in {"expense_cash", "employee_reimbursement"}:
+        payload["bank_account_code"] = "1002"
     result = _record(FinanceService(session), payload)
     assert result.status.value == "needs_information"
     assert result.missing_information == ["amounts.expense_account_role"]
@@ -379,6 +384,22 @@ def test_source_correction_requires_reversing_tax_period_first(
         service, organization, start, end, str(preview["calculation_hash"]), "lock-period"
     )
     assert confirmed.status.value == "posted"
+
+    # The legacy service fixture intentionally carries a test-only loaded
+    # scope fact rather than a synthetic immutable scope action.  Tax-period
+    # confirmation expires the identity-map object, so restore that loaded
+    # test fact before exercising the independent source-lock boundary.
+    configured_at = datetime.now(UTC)
+    set_committed_value(
+        organization,
+        "bank_reconciliation_scope_current_action_id",
+        uuid.uuid4(),
+    )
+    set_committed_value(
+        organization,
+        "bank_reconciliation_scope_confirmed_at",
+        configured_at,
+    )
 
     blocked_new_source = _record(
         service,

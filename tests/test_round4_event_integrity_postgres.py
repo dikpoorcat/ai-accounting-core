@@ -20,7 +20,6 @@ from testcontainers.community.postgres import PostgresContainer
 from ai_accounting.coa import seed_organization
 from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
-    BankTransaction,
     BusinessEvent,
     Evidence,
     OpenItem,
@@ -34,7 +33,7 @@ from ai_accounting.models import (
     VoucherLine,
     event_evidence,
 )
-from ai_accounting.schemas import ConfirmPayrollRequest, ReverseEventRequest
+from ai_accounting.schemas import ConfirmPayrollRequest, RecordEventRequest, ReverseEventRequest
 from ai_accounting.service import FinanceService
 from alembic import command
 
@@ -321,26 +320,20 @@ def test_r4_004_final_event_evidence_is_org_bound_immutable_and_inherited(
 
 
 def _post_expense_event(session: Session, organization: object, *, key: str) -> BusinessEvent:
-    bank = BankTransaction(
-        org_id=organization.id,
-        bank_account_code="1002",
-        fingerprint=(f"r4-{key}" * 64)[:64],
-        booking_date=date(2026, 3, 5),
-        amount_fen=-100,
-        currency="CNY",
-        memo=key,
-        source_sha256=(f"r4-source-{key}" * 64)[:64],
-    )
-    session.add(bank)
-    session.flush()
     result = FinanceService(session).record_event(
-        payment_request(
-            organization,
-            event_type="expense_cash",
-            amount_fen=100,
-            allocations=[],
-            bank=bank,
-            key=key,
+        RecordEventRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": key,
+                "event_type": "expense_payable",
+                "business_dates": {
+                    "business_date": "2026-03-05",
+                    "payment_date": "2026-03-05",
+                    "posting_date": "2026-03-05",
+                },
+                "counterparty": {"kind": "supplier", "name": "R4 测试供应商"},
+                "amounts": {"gross_amount_fen": 100, "expense_account_role": "general_expense"},
+            }
         )
     )
     assert result.status == "posted", result.errors
@@ -357,7 +350,7 @@ def _post_unmatched_expense_for_invariant(
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key=key,
-        event_type="expense_cash",
+        event_type="expense_payable",
         status="draft",
         description="无银行匹配的 R4 凭证反例",
         facts={},

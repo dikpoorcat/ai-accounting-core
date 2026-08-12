@@ -732,6 +732,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "org_id": org_id,
                                     "idempotency_key": key,
                                     "event_type": "salary_payment",
+                                    "bank_account_code": "1002",
                                     "business_dates": {
                                         "business_date": "2026-03-05",
                                         "posting_date": "2026-03-05",
@@ -901,6 +902,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "org_id": org_id,
                                     "idempotency_key": key,
                                     "event_type": event_type,
+                                    "bank_account_code": "1002",
                                     "business_dates": {
                                         "business_date": "2026-03-07",
                                         "posting_date": "2026-03-07",

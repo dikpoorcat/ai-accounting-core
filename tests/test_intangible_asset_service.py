@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import uuid
 from calendar import monthrange
-from datetime import date
+from datetime import UTC, date, datetime
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
@@ -15,6 +17,7 @@ from ai_accounting.intangible_asset_schemas import (
 )
 from ai_accounting.intangible_asset_service import IntangibleAssetService
 from ai_accounting.models import (
+    Account,
     BankTransaction,
     BusinessEvent,
     Counterparty,
@@ -28,6 +31,32 @@ from ai_accounting.models import (
 )
 from ai_accounting.schemas import ReverseEventRequest
 from ai_accounting.service import FinanceService
+
+
+@pytest.fixture(autouse=True)
+def confirmed_bank_scope(session: Session, organization: Organization) -> None:
+    account = session.scalar(
+        select(Account).where(Account.org_id == organization.id, Account.code == "1002")
+    )
+    account.requires_bank_reconciliation = True
+    account.bank_reconciliation_start_date = date(2000, 1, 1)
+    account.bank_reconciliation_configured_at = datetime.now(UTC)
+    session.add(
+        Account(
+            org_id=organization.id,
+            code="1003",
+            name="测试银行二户",
+            category="asset",
+            normal_side="debit",
+            active=True,
+            requires_bank_reconciliation=True,
+            bank_reconciliation_start_date=date(2000, 1, 1),
+            bank_reconciliation_configured_at=datetime.now(UTC),
+        )
+    )
+    session.flush()
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", uuid.uuid4())
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", datetime.now(UTC))
 
 
 def _evidence(session: Session, organization: Organization, seed: str) -> Evidence:
@@ -82,10 +111,55 @@ def _request(
     )
 
 
+def test_bank_acquisition_requires_confirmed_scope_without_business_write(
+    session: Session, organization: Organization
+) -> None:
+    evidence = _evidence(session, organization, "scope-intangible")
+    bank = BankTransaction(
+        org_id=organization.id,
+        bank_account_code="1002",
+        fingerprint=("scope-intangible-bank" * 64)[:64],
+        booking_date=date(2026, 1, 2),
+        amount_fen=-12_000,
+        currency="CNY",
+        memo="scope intangible",
+        source_sha256=("scope-intangible-source" * 64)[:64],
+    )
+    session.add(bank)
+    session.flush()
+    payload = _request(
+        organization,
+        evidence,
+        key="scope-intangible-acquisition",
+        asset_code="IA-SCOPE",
+    ).model_dump(mode="python")
+    payload.update(
+        {
+            "settlement_method": "bank",
+            "bank_account_code": "1002",
+            "payment_date": date(2026, 1, 2),
+            "due_date": None,
+            "bank_transaction_references": [{"id": bank.id}],
+        }
+    )
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", None)
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", None)
+
+    result = IntangibleAssetService(session).acquire_intangible_asset(
+        AcquireIntangibleAssetRequest.model_validate(payload)
+    )
+
+    assert result.status == "needs_information"
+    assert result.event_id is None
+    assert result.missing_information[0].fields == ["bank_reconciliation_scope_confirmation"]
+    assert session.scalars(select(BusinessEvent)).all() == []
+    assert session.scalars(select(IntangibleAsset)).all() == []
+    assert session.scalars(select(Counterparty)).all() == []
+    assert bank.matched_event_id is None
+
+
 def _assert_balanced(session: Session, voucher_id: object) -> None:
-    lines = session.scalars(
-        select(VoucherLine).where(VoucherLine.voucher_id == voucher_id)
-    ).all()
+    lines = session.scalars(select(VoucherLine).where(VoucherLine.voucher_id == voucher_id)).all()
     assert sum(line.debit_fen for line in lines) == sum(line.credit_fen for line in lines)
     assert sum(line.debit_fen for line in lines) > 0
 
@@ -176,9 +250,7 @@ def test_missing_readiness_and_unsupported_workflows_are_stable(
     missing_mismatch = service.acquire_intangible_asset(
         missing_request.model_copy(update={"asset_name": "不同载荷"})
     )
-    assert missing_mismatch.errors == [
-        "INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"
-    ]
+    assert missing_mismatch.errors == ["INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
 
     not_ready = service.acquire_intangible_asset(
         _request(
@@ -206,9 +278,7 @@ def test_missing_readiness_and_unsupported_workflows_are_stable(
             asset_code="IA-NOT-READY-CHANGED",
         ).model_copy(update={"is_available_for_use": False})
     )
-    assert not_ready_mismatch.errors == [
-        "INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"
-    ]
+    assert not_ready_mismatch.errors == ["INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
     creditable = service.acquire_intangible_asset(
         _request(
             organization,
@@ -226,7 +296,7 @@ def test_bank_acquisition_requires_exact_outflow_and_matches_it(
     evidence = _evidence(session, organization, "ic")
     bank = BankTransaction(
         org_id=organization.id,
-        bank_account_code="1002",
+        bank_account_code="1003",
         fingerprint=("bank-ia" * 64)[:64],
         booking_date=date(2026, 1, 2),
         amount_fen=-12_000,
@@ -245,18 +315,61 @@ def test_bank_acquisition_requires_exact_outflow_and_matches_it(
     request_payload.update(
         {
             "settlement_method": "bank",
+            "bank_account_code": "1003",
             "payment_date": date(2026, 1, 2),
             "due_date": None,
             "bank_transaction_references": [{"id": bank.id}],
         }
     )
     request = AcquireIntangibleAssetRequest.model_validate(request_payload)
-    posted = IntangibleAssetService(session).acquire_intangible_asset(request)
+    service = IntangibleAssetService(session)
+    missing_payload = {
+        **request_payload,
+        "idempotency_key": "intangible-bank-missing-code",
+        "asset_code": "IA-BANK-MISSING",
+        "bank_account_code": None,
+        "bank_transaction_references": [],
+    }
+    missing = service.acquire_intangible_asset(
+        AcquireIntangibleAssetRequest.model_validate(missing_payload)
+    )
+    assert missing.status == "needs_information"
+    assert "bank_account_code" in missing.missing_information[0].fields
+
+    wrong_bank = BankTransaction(
+        org_id=organization.id,
+        bank_account_code="1002",
+        fingerprint=("wrong-bank-ia" * 64)[:64],
+        booking_date=date(2026, 1, 2),
+        amount_fen=-12_000,
+        currency="CNY",
+        memo="wrong account",
+        source_sha256=("wrong-source-ia" * 64)[:64],
+    )
+    session.add(wrong_bank)
+    session.flush()
+    wrong_payload = {
+        **request_payload,
+        "idempotency_key": "intangible-bank-wrong-account",
+        "asset_code": "IA-BANK-WRONG",
+        "bank_transaction_references": [{"id": wrong_bank.id}],
+    }
+    wrong = service.acquire_intangible_asset(
+        AcquireIntangibleAssetRequest.model_validate(wrong_payload)
+    )
+    assert wrong.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
+
+    posted = service.acquire_intangible_asset(request)
     assert posted.status == "posted", posted.errors
     assert bank.matched_event_id == posted.event_id
-    assert session.scalar(
-        select(OpenItem).where(OpenItem.source_event_id == posted.event_id)
-    ) is None
+    assert session.get(BusinessEvent, posted.event_id).facts["bank_account_code"] == "1003"
+    assert service.acquire_intangible_asset(request).event_id == posted.event_id
+    assert service.acquire_intangible_asset(
+        request.model_copy(update={"bank_account_code": "1002"})
+    ).errors == ["INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert (
+        session.scalar(select(OpenItem).where(OpenItem.source_event_id == posted.event_id)) is None
+    )
     _assert_balanced(session, posted.voucher_id)
 
     foreign_currency = BankTransaction(
@@ -284,6 +397,7 @@ def test_bank_acquisition_requires_exact_outflow_and_matches_it(
     foreign_payload.update(
         {
             "settlement_method": "bank",
+            "bank_account_code": "1002",
             "payment_date": date(2026, 1, 2),
             "due_date": None,
             "bank_transaction_references": [{"id": foreign_currency.id}],
@@ -352,9 +466,7 @@ def test_supplier_identity_cost_sum_and_calendar_bounds_are_strict(
     name_mismatch = service.acquire_intangible_asset(
         AcquireIntangibleAssetRequest.model_validate(name_mismatch_payload)
     )
-    assert name_mismatch.errors == [
-        "INTANGIBLE_ASSET_COUNTERPARTY_IDENTITY_MISMATCH"
-    ]
+    assert name_mismatch.errors == ["INTANGIBLE_ASSET_COUNTERPARTY_IDENTITY_MISMATCH"]
 
     external_mismatch_payload = _request(
         organization,
@@ -370,9 +482,7 @@ def test_supplier_identity_cost_sum_and_calendar_bounds_are_strict(
     external_mismatch = service.acquire_intangible_asset(
         AcquireIntangibleAssetRequest.model_validate(external_mismatch_payload)
     )
-    assert external_mismatch.errors == [
-        "INTANGIBLE_ASSET_COUNTERPARTY_IDENTITY_MISMATCH"
-    ]
+    assert external_mismatch.errors == ["INTANGIBLE_ASSET_COUNTERPARTY_IDENTITY_MISMATCH"]
 
     range_request = _request(
         organization,
@@ -412,9 +522,7 @@ def test_supplier_identity_cost_sum_and_calendar_bounds_are_strict(
     calendar_result = service.acquire_intangible_asset(
         AcquireIntangibleAssetRequest.model_validate(calendar_payload)
     )
-    assert calendar_result.errors == [
-        "INTANGIBLE_ASSET_AMORTIZATION_DATE_OUT_OF_RANGE"
-    ]
+    assert calendar_result.errors == ["INTANGIBLE_ASSET_AMORTIZATION_DATE_OUT_OF_RANGE"]
 
     boundary_payload = dict(calendar_payload)
     boundary_payload.update(
@@ -434,9 +542,7 @@ def test_supplier_identity_cost_sum_and_calendar_bounds_are_strict(
         amortization_period="9999-12",
         posting_date=date(9999, 12, 31),
     )
-    boundary_preview = service.preview_intangible_asset_amortization(
-        boundary_preview_request
-    )
+    boundary_preview = service.preview_intangible_asset_amortization(boundary_preview_request)
     assert boundary_preview.status == "calculated", boundary_preview.errors
     boundary_amortization = service.confirm_intangible_asset_amortization(
         ConfirmIntangibleAssetAmortizationRequest(
@@ -548,9 +654,7 @@ def test_amortization_hash_sequence_retirement_and_reverse_order(
             evidence_references=[retirement_evidence.id],
         )
     )
-    assert nonzero_retirement.errors == [
-        "INTANGIBLE_ASSET_RETIREMENT_ZERO_FACTS_REQUIRED"
-    ]
+    assert nonzero_retirement.errors == ["INTANGIBLE_ASSET_RETIREMENT_ZERO_FACTS_REQUIRED"]
     midmonth_retirement = service.retire_intangible_asset(
         RetireIntangibleAssetRequest(
             org_id=organization.id,

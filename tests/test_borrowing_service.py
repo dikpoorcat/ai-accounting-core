@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+import uuid
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.borrowing_schemas import (
     BorrowingLenderReference,
@@ -36,6 +39,42 @@ from ai_accounting.models import (
 from ai_accounting.schemas import ReverseEventRequest
 
 
+def _confirm_bank_scope(session: Session, organization: Organization) -> None:
+    account = session.scalar(
+        select(Account).where(Account.org_id == organization.id, Account.code == "1002")
+    )
+    account.requires_bank_reconciliation = True
+    account.bank_reconciliation_start_date = date(2000, 1, 1)
+    account.bank_reconciliation_configured_at = datetime.now(UTC)
+    if (
+        session.scalar(
+            select(Account).where(Account.org_id == organization.id, Account.code == "1003")
+        )
+        is None
+    ):
+        session.add(
+            Account(
+                org_id=organization.id,
+                code="1003",
+                name="测试银行二户",
+                category="asset",
+                normal_side="debit",
+                active=True,
+                requires_bank_reconciliation=True,
+                bank_reconciliation_start_date=date(2000, 1, 1),
+                bank_reconciliation_configured_at=datetime.now(UTC),
+            )
+        )
+    session.flush()
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", uuid.uuid4())
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", datetime.now(UTC))
+
+
+@pytest.fixture(autouse=True)
+def confirmed_bank_scope(session: Session, organization: Organization) -> None:
+    _confirm_bank_scope(session, organization)
+
+
 def _evidence(session: Session, organization: Organization, seed: str) -> Evidence:
     row = Evidence(
         org_id=organization.id,
@@ -59,10 +98,11 @@ def _bank_row(
     booking_date: date,
     seed: str,
     currency: str = "CNY",
+    account_code: str = "1002",
 ) -> BankTransaction:
     row = BankTransaction(
         org_id=organization.id,
-        bank_account_code="1002",
+        bank_account_code=account_code,
         fingerprint=(seed * 64)[:64],
         booking_date=booking_date,
         amount_fen=amount_fen,
@@ -117,6 +157,7 @@ def _draw_request(
                 "has_penalty_interest": False,
                 "has_financing_fees": False,
             },
+            "bank_account_code": bank.bank_account_code,
             "bank_transaction_references": [{"id": bank.id}],
             "evidence_references": [evidence.id],
         }
@@ -125,13 +166,51 @@ def _draw_request(
 
 def _roles_for_voucher(session: Session, voucher_id: object) -> list[tuple[str, int, int]]:
     rows = session.execute(
-        select(Account.system_role, VoucherLine.debit_fen, VoucherLine.credit_fen)
+        select(
+            Account.system_role,
+            Account.code,
+            VoucherLine.debit_fen,
+            VoucherLine.credit_fen,
+        )
         .join(VoucherLine, VoucherLine.account_id == Account.id)
         .where(VoucherLine.voucher_id == voucher_id)
         .order_by(VoucherLine.line_number)
     ).all()
     assert sum(row.debit_fen for row in rows) == sum(row.credit_fen for row in rows)
-    return [(row.system_role, row.debit_fen, row.credit_fen) for row in rows]
+    return [(row.system_role or row.code, row.debit_fen, row.credit_fen) for row in rows]
+
+
+def test_bank_draw_requires_confirmed_scope_without_business_write(
+    session: Session, organization: Organization
+) -> None:
+    evidence = _evidence(session, organization, "scope-borrowing")
+    bank = _bank_row(
+        session,
+        organization,
+        amount_fen=1_000_000,
+        booking_date=date(2026, 1, 1),
+        seed="scope-borrowing-bank",
+    )
+    request = _draw_request(
+        organization,
+        evidence,
+        bank,
+        key="scope-borrowing-draw",
+        borrowing_code="LOAN-SCOPE",
+    )
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", None)
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", None)
+
+    result = BorrowingService(session).draw_borrowing(request)
+
+    assert result.status == "needs_information"
+    assert result.event_id is None
+    assert result.missing_information[0].fields == ["bank_reconciliation_scope_confirmation"]
+    assert session.scalars(select(BusinessEvent)).all() == []
+    assert session.scalars(select(Borrowing)).all() == []
+    assert session.scalars(select(Counterparty)).all() == []
+    assert session.scalars(select(VoucherLine)).all() == []
+    assert bank.matched_event_id is None
 
 
 def test_borrowing_write_preserves_period_control_error(
@@ -224,14 +303,52 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         amount_fen=1_000_000,
         booking_date=date(2026, 1, 1),
         seed="draw",
+        account_code="1003",
     )
     request = _draw_request(organization, contract, draw_bank)
+
+    missing_draw_code = service.draw_borrowing(
+        request.model_copy(
+            update={
+                "idempotency_key": "loan-draw-missing-code",
+                "borrowing_code": "LOAN-MISSING-CODE",
+                "bank_account_code": None,
+                "bank_transaction_references": [],
+            }
+        )
+    )
+    assert missing_draw_code.status == "needs_information"
+    assert any(
+        "bank_account_code" in requirement.fields
+        for requirement in missing_draw_code.missing_information
+    )
+
+    wrong_draw_bank = _bank_row(
+        session,
+        organization,
+        amount_fen=1_000_000,
+        booking_date=date(2026, 1, 1),
+        seed="draw-wrong-bank",
+        account_code="1002",
+    )
+    wrong_draw_request = DrawBorrowingRequest.model_validate(
+        request.model_dump(mode="python")
+        | {
+            "idempotency_key": "loan-draw-wrong-bank",
+            "borrowing_code": "LOAN-WRONG-BANK",
+            "bank_transaction_references": [{"id": wrong_draw_bank.id}],
+        }
+    )
+    assert service.draw_borrowing(wrong_draw_request).errors == [
+        "BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"
+    ]
+    assert wrong_draw_bank.matched_event_id is None
 
     drawn = service.draw_borrowing(request)
 
     assert drawn.status == "posted", drawn.errors
     assert _roles_for_voucher(session, drawn.voucher_id) == [
-        ("bank", 1_000_000, 0),
+        ("1003", 1_000_000, 0),
         ("short_term_borrowing", 0, 1_000_000),
     ]
     borrowing = session.get(Borrowing, drawn.borrowing_id)
@@ -246,6 +363,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
     draw_event = session.get(BusinessEvent, drawn.event_id)
     assert draw_event.facts["accounting_rule_version"] == SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION
     assert draw_event.facts["accounting_rule_source_url"] == ACCOUNTING_RULE_SOURCE_URL
+    assert draw_event.facts["bank_account_code"] == "1003"
     assert {item.id for item in draw_event.evidence} == {contract.id}
 
     replay = service.draw_borrowing(request)
@@ -255,6 +373,9 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
     assert replay.data["idempotent_replay"] is True
     changed = request.model_copy(update={"contract_name": "已篡改合同名"})
     assert service.draw_borrowing(changed).errors == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert service.draw_borrowing(
+        request.model_copy(update={"bank_account_code": "1002"})
+    ).errors == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
 
     preview = service.preview_borrowing_interest(
         PreviewBorrowingInterestRequest(
@@ -265,6 +386,8 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         )
     )
     assert preview.status == "calculated"
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", None)
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", None)
     stale = service.confirm_borrowing_interest(
         ConfirmBorrowingInterestRequest(
             org_id=organization.id,
@@ -320,6 +443,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         )
     )
     assert first_row.actual_days == 181
+    _confirm_bank_scope(session, organization)
 
     skipped = service.preview_borrowing_interest(
         PreviewBorrowingInterestRequest(
@@ -338,6 +462,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         amount_fen=-first_row.amount_fen,
         booking_date=date(2026, 6, 30),
         seed="premature",
+        account_code="1003",
     )
     premature = service.pay_borrowing_interest(
         PayBorrowingInterestRequest(
@@ -347,6 +472,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
             idempotency_key="pay-premature",
             payment_date=date(2026, 6, 30),
             posting_date=date(2026, 6, 30),
+            bank_account_code="1003",
             bank_transaction_references=[{"id": premature_bank.id}],
             evidence_references=[pay_evidence.id],
         )
@@ -359,6 +485,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         amount_fen=-first_row.amount_fen,
         booking_date=date(2027, 1, 2),
         seed="late-interest",
+        account_code="1003",
     )
     late = service.pay_borrowing_interest(
         PayBorrowingInterestRequest(
@@ -368,6 +495,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
             idempotency_key="pay-after-maturity",
             payment_date=date(2027, 1, 2),
             posting_date=date(2027, 1, 2),
+            bank_account_code="1003",
             bank_transaction_references=[{"id": late_bank.id}],
             evidence_references=[pay_evidence.id],
         )
@@ -387,32 +515,81 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         amount_fen=-first_row.amount_fen,
         booking_date=date(2026, 7, 1),
         seed="pay-first",
+        account_code="1003",
     )
-    first_payment = service.pay_borrowing_interest(
+    missing_interest_code = service.pay_borrowing_interest(
         PayBorrowingInterestRequest(
             org_id=organization.id,
             borrowing_id=borrowing.id,
             accrual_event_id=first_row.event_id,
-            idempotency_key="pay-first",
+            idempotency_key="pay-first-missing-code",
             payment_date=date(2026, 7, 1),
             posting_date=date(2026, 7, 1),
-            bank_transaction_references=[{"id": pay_bank.id}],
+            bank_transaction_references=[],
             evidence_references=[pay_evidence.id],
         )
     )
+    assert missing_interest_code.status == "needs_information"
+    assert any(
+        "bank_account_code" in requirement.fields
+        for requirement in missing_interest_code.missing_information
+    )
+
+    wrong_interest_bank = _bank_row(
+        session,
+        organization,
+        amount_fen=-first_row.amount_fen,
+        booking_date=date(2026, 7, 1),
+        seed="pay-first-wrong-bank",
+        account_code="1002",
+    )
+    wrong_interest = service.pay_borrowing_interest(
+        PayBorrowingInterestRequest(
+            org_id=organization.id,
+            borrowing_id=borrowing.id,
+            accrual_event_id=first_row.event_id,
+            idempotency_key="pay-first-wrong-bank",
+            payment_date=date(2026, 7, 1),
+            posting_date=date(2026, 7, 1),
+            bank_account_code="1003",
+            bank_transaction_references=[{"id": wrong_interest_bank.id}],
+            evidence_references=[pay_evidence.id],
+        )
+    )
+    assert wrong_interest.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
+    assert wrong_interest_bank.matched_event_id is None
+
+    first_payment_request = PayBorrowingInterestRequest(
+        org_id=organization.id,
+        borrowing_id=borrowing.id,
+        accrual_event_id=first_row.event_id,
+        idempotency_key="pay-first",
+        payment_date=date(2026, 7, 1),
+        posting_date=date(2026, 7, 1),
+        bank_account_code="1003",
+        bank_transaction_references=[{"id": pay_bank.id}],
+        evidence_references=[pay_evidence.id],
+    )
+    first_payment = service.pay_borrowing_interest(first_payment_request)
     assert first_payment.status == "posted"
     assert _roles_for_voucher(session, first_payment.voucher_id) == [
         ("interest_payable", first_row.amount_fen, 0),
-        ("bank", 0, first_row.amount_fen),
+        ("1003", 0, first_row.amount_fen),
     ]
+    assert session.get(BusinessEvent, first_payment.event_id).facts["bank_account_code"] == "1003"
+    assert service.pay_borrowing_interest(first_payment_request).event_id == first_payment.event_id
     assert service.pay_borrowing_interest(
-        first_payment_request := PayBorrowingInterestRequest(
+        first_payment_request.model_copy(update={"bank_account_code": "1002"})
+    ).errors == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert service.pay_borrowing_interest(
+        PayBorrowingInterestRequest(
             org_id=organization.id,
             borrowing_id=borrowing.id,
             accrual_event_id=first_row.event_id,
             idempotency_key="pay-first-again",
             payment_date=date(2026, 7, 1),
             posting_date=date(2026, 7, 1),
+            bank_account_code="1003",
             bank_transaction_references=[{"id": pay_bank.id}],
             evidence_references=[pay_evidence.id],
         )
@@ -440,6 +617,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         amount_fen=-second_row.amount_fen,
         booking_date=date(2027, 1, 1),
         seed="pay-second",
+        account_code="1003",
     )
     second_payment = service.pay_borrowing_interest(
         PayBorrowingInterestRequest(
@@ -449,6 +627,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
             idempotency_key="pay-second",
             payment_date=date(2027, 1, 1),
             posting_date=date(2027, 1, 1),
+            bank_account_code="1003",
             bank_transaction_references=[{"id": second_bank.id}],
             evidence_references=[second_evidence.id],
         )
@@ -461,23 +640,68 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
         amount_fen=-borrowing.principal_fen,
         booking_date=date(2027, 1, 1),
         seed="principal",
+        account_code="1003",
     )
-    repayment = service.repay_borrowing_principal(
+    missing_principal_code = service.repay_borrowing_principal(
         RepayBorrowingPrincipalRequest(
             org_id=organization.id,
             borrowing_id=borrowing.id,
-            idempotency_key="principal",
+            idempotency_key="principal-missing-code",
             repayment_date=date(2027, 1, 1),
             posting_date=date(2027, 1, 1),
-            bank_transaction_references=[{"id": repayment_bank.id}],
             evidence_references=[repayment_evidence.id],
         )
     )
+    assert missing_principal_code.status == "needs_information"
+    assert any(
+        "bank_account_code" in requirement.fields
+        for requirement in missing_principal_code.missing_information
+    )
+
+    wrong_principal_bank = _bank_row(
+        session,
+        organization,
+        amount_fen=-borrowing.principal_fen,
+        booking_date=date(2027, 1, 1),
+        seed="principal-wrong-bank",
+        account_code="1002",
+    )
+    wrong_principal = service.repay_borrowing_principal(
+        RepayBorrowingPrincipalRequest(
+            org_id=organization.id,
+            borrowing_id=borrowing.id,
+            idempotency_key="principal-wrong-bank",
+            repayment_date=date(2027, 1, 1),
+            posting_date=date(2027, 1, 1),
+            bank_account_code="1003",
+            bank_transaction_references=[{"id": wrong_principal_bank.id}],
+            evidence_references=[repayment_evidence.id],
+        )
+    )
+    assert wrong_principal.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
+    assert wrong_principal_bank.matched_event_id is None
+
+    repayment_request = RepayBorrowingPrincipalRequest(
+        org_id=organization.id,
+        borrowing_id=borrowing.id,
+        idempotency_key="principal",
+        repayment_date=date(2027, 1, 1),
+        posting_date=date(2027, 1, 1),
+        bank_account_code="1003",
+        bank_transaction_references=[{"id": repayment_bank.id}],
+        evidence_references=[repayment_evidence.id],
+    )
+    repayment = service.repay_borrowing_principal(repayment_request)
     assert repayment.status == "posted"
     assert _roles_for_voucher(session, repayment.voucher_id) == [
         ("short_term_borrowing", borrowing.principal_fen, 0),
-        ("bank", 0, borrowing.principal_fen),
+        ("1003", 0, borrowing.principal_fen),
     ]
+    assert session.get(BusinessEvent, repayment.event_id).facts["bank_account_code"] == "1003"
+    assert service.repay_borrowing_principal(repayment_request).event_id == repayment.event_id
+    assert service.repay_borrowing_principal(
+        repayment_request.model_copy(update={"bank_account_code": "1002"})
+    ).errors == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
     projection = service.get_borrowing(organization.id, borrowing.id)
     assert projection.data["state"] == "repaid"
     assert projection.data["outstanding_principal_fen"] == 0
@@ -931,6 +1155,7 @@ def test_normalized_rate_and_interest_hash_are_stable_across_sessions(tmp_path) 
             organization = seed_organization(first_session, name="跨会话借款测试组织")
             organization.accounting_period_control_enabled = False
             first_session.flush()
+            _confirm_bank_scope(first_session, organization)
             evidence = _evidence(first_session, organization, "cross-session-contract")
             bank = _bank_row(
                 first_session,

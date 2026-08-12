@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, date, datetime
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_engine, make_session_factory
-from ai_accounting.models import OpenItem
+from ai_accounting.models import Account, OpenItem
 from ai_accounting.schemas import RecordEventRequest
 from ai_accounting.service import FinanceService
 
@@ -35,7 +37,28 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
         with factory.begin() as session:
             organization = seed_organization(session, name="性质测试公司")
             organization.accounting_period_control_enabled = False
+            bank_account = session.scalar(
+                select(Account).where(
+                    Account.org_id == organization.id,
+                    Account.code == "1002",
+                )
+            )
+            assert bank_account is not None
+            configured_at = datetime.now(UTC)
+            bank_account.requires_bank_reconciliation = True
+            bank_account.bank_reconciliation_start_date = date(2020, 1, 1)
+            bank_account.bank_reconciliation_configured_at = configured_at
             session.flush()
+            set_committed_value(
+                organization,
+                "bank_reconciliation_scope_current_action_id",
+                uuid.uuid4(),
+            )
+            set_committed_value(
+                organization,
+                "bank_reconciliation_scope_confirmed_at",
+                configured_at,
+            )
             service = FinanceService(session)
             sale = service.record_event(
                 RecordEventRequest.model_validate(
@@ -68,6 +91,7 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
                             "org_id": organization.id,
                             "idempotency_key": f"receipt-{index}-{uuid.uuid4()}",
                             "event_type": "customer_receipt",
+                            "bank_account_code": "1002",
                             "business_dates": {
                                 "business_date": "2026-08-02",
                                 "posting_date": "2026-08-02",

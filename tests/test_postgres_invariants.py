@@ -38,7 +38,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                 event = BusinessEvent(
                     org_id=organization.id,
                     idempotency_key="unbalanced-direct-write",
-                    event_type="expense_cash",
+                    event_type="expense_payable",
                     status="draft",
                     description="应在提交时失败",
                     facts={},
@@ -80,7 +80,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
                 event = BusinessEvent(
                     org_id=organization.id,
                     idempotency_key="balanced-direct-write",
-                    event_type="expense_cash",
+                    event_type="expense_payable",
                     status="draft",
                     description="合法凭证",
                     facts={},

@@ -253,7 +253,7 @@ def _sale_request(org_id: uuid.UUID, *, key: str, business_date: date) -> Record
         {
             "org_id": org_id,
             "idempotency_key": key,
-            "event_type": "service_cash_sale",
+            "event_type": "service_credit_sale",
             "business_dates": {
                 "business_date": business_date,
                 "fulfillment_date": business_date,
@@ -262,6 +262,7 @@ def _sale_request(org_id: uuid.UUID, *, key: str, business_date: date) -> Record
                 "posting_date": business_date,
             },
             "amounts": {"gross_amount_fen": 10_100},
+            "counterparty": {"kind": "customer", "name": "税务测试客户"},
             "tax_facts": {
                 "taxable": True,
                 "rate_percent": "1",
@@ -410,7 +411,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 command.downgrade(config, "0009_fixed_assets")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0014_execution_attribution"
+                    "0015_late_bank_evidence"
                 )
             with engine.begin() as connection:
                 connection.execute(sa.text("DROP VIEW external_pgcrypto_dependency"))
@@ -724,7 +725,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                     rule_trace, rule_version, created_at
                 ) VALUES (
                     :id, :org_id, 'late-taxable-source', :hash,
-                    'service_cash_sale', 'posted', 'late source',
+                    'service_credit_sale', 'posted', 'late source',
                     CAST(:facts AS json), DATE '2026-02-01', DATE '2026-02-01',
                     DATE '2026-02-01', CAST('[]' AS json), '2026.1', :created_at
                 )
@@ -1284,7 +1285,7 @@ def test_tax_determinism_migration_commit_guards_and_concurrency(
                 command.downgrade(config, "0009_fixed_assets")
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0014_execution_attribution"
+                    "0015_late_bank_evidence"
                 )
         finally:
             engine.dispose()

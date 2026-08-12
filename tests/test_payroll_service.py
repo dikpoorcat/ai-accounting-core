@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.accounting_period_schemas import (
     AccountingPeriodReviewFacts,
@@ -207,6 +208,17 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
             evidence_references=[evidence.id],
         )
     )
+    configured_at = datetime.now(UTC)
+    set_committed_value(
+        organization,
+        "bank_reconciliation_scope_current_action_id",
+        uuid.uuid4(),
+    )
+    set_committed_value(
+        organization,
+        "bank_reconciliation_scope_confirmed_at",
+        configured_at,
+    )
     close_facts = PreviewAccountingPeriodCloseRequest(
         org_id=organization.id,
         period_id=generated.period_id,
@@ -339,7 +351,7 @@ def payment_request(
     event_type: str,
     amount_fen: int,
     allocations: list[dict[str, object]],
-    bank: BankTransaction,
+    bank: BankTransaction | None,
     salary_withholdings: list[dict[str, object]] | None = None,
     key: str,
 ) -> RecordEventRequest:
@@ -348,6 +360,7 @@ def payment_request(
             "org_id": organization.id,
             "idempotency_key": key,
             "event_type": event_type,
+            "bank_account_code": "1002",
             "business_dates": {
                 "business_date": "2026-03-05",
                 "payment_date": "2026-03-05",
@@ -363,7 +376,11 @@ def payment_request(
             },
             "allocations": allocations,
             "salary_withholding_allocations": salary_withholdings or [],
-            "bank_transaction_references": [{"id": bank.id}],
+            **(
+                {"bank_transaction_references": [{"id": bank.id}]}
+                if bank is not None
+                else {}
+            ),
         }
     )
 

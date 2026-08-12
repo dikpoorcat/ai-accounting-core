@@ -59,6 +59,7 @@ def _sale_request(
             "org_id": organization.id,
             "idempotency_key": key,
             "event_type": "service_cash_sale",
+            "bank_account_code": "1002",
             "business_dates": {
                 "business_date": business_date,
                 "fulfillment_date": business_date,

@@ -33,6 +33,7 @@ pytestmark = [
 REVISION_0012 = "0012_accounting_period_close"
 REVISION_0013 = "0013_local_owner_identity"
 REVISION_0014 = "0014_execution_attribution"
+REVISION_HEAD = "0015_late_bank_evidence"
 PASSWORD_HASH = (
     "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$"
     "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
@@ -475,7 +476,7 @@ def test_postgres_0013_singleton_cross_org_concurrency_and_immutable_history() -
                 command.downgrade(config, REVISION_0012)
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    REVISION_0014
+                    REVISION_HEAD
                 )
         finally:
             engine.dispose()

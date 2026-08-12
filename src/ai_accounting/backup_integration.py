@@ -1,9 +1,9 @@
-"""Deployment integration boundaries for DEC-017/025/028/029 backups.
+"""Deployment integration boundaries for DEC-017/025/028/029/035 backups.
 
-The production ``create`` CLI remains fail-closed until DEC-035 freezes a
-non-spoofable machine deployment binding.  Credential management and the
-integration types are available independently.  The types here keep passwords
-out of URLs, argv, process output, manifests, and object reprs.
+DEC-035 A trusts the validated local production configuration, runtime database
+account, and current Windows account.  The types here keep passwords out of
+URLs, argv, process output, manifests, and object reprs while the narrower
+database, service-lease, filesystem, and removable-media gates fail closed.
 """
 
 from __future__ import annotations
@@ -562,11 +562,6 @@ def run_isolated_restore_drill(
         schema_revision=head,
         evidence_count=len(expected),
     )
-
-
-def production_backup_command() -> None:
-    """Stable pause until DEC-035 freezes a non-spoofable deployment binding."""
-    raise BackupIntegrationError("BACKUP_DEC035_DEPLOYMENT_BINDING_UNDECIDED")
 
 
 def _single_alembic_head(repository_root: Path) -> str:

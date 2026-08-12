@@ -8,6 +8,7 @@ import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.borrowing_schemas import (
     ConfirmBorrowingInterestRequest,
@@ -18,6 +19,7 @@ from ai_accounting.borrowing_service import BorrowingService
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_session_factory
 from ai_accounting.models import (
+    Account,
     BankTransaction,
     Borrowing,
     BorrowingInterestAccrual,
@@ -201,7 +203,28 @@ def test_borrowing_rate_and_large_interest_round_trip_across_sqlite_sessions(tmp
         with factory() as session, session.begin():
             organization = seed_organization(session, name="借款利率精度测试")
             organization.accounting_period_control_enabled = False
+            account = session.scalar(
+                sa.select(Account).where(
+                    Account.org_id == organization.id,
+                    Account.code == "1002",
+                )
+            )
+            assert account is not None
+            configured_at = datetime.now(UTC)
+            account.requires_bank_reconciliation = True
+            account.bank_reconciliation_start_date = date(2020, 1, 1)
+            account.bank_reconciliation_configured_at = configured_at
             session.flush()
+            set_committed_value(
+                organization,
+                "bank_reconciliation_scope_current_action_id",
+                uuid.uuid4(),
+            )
+            set_committed_value(
+                organization,
+                "bank_reconciliation_scope_confirmed_at",
+                configured_at,
+            )
             evidence = Evidence(
                 org_id=organization.id,
                 sha256="a" * 64,
@@ -227,6 +250,7 @@ def test_borrowing_rate_and_large_interest_round_trip_across_sqlite_sessions(tmp
                 {
                     "org_id": organization.id,
                     "idempotency_key": "sqlite-rate-draw",
+                    "bank_account_code": "1002",
                     "borrowing_code": "RATE-SQLITE-001",
                     "contract_name": "大额本金精度合同",
                     "lender": {"name": "精度测试银行"},

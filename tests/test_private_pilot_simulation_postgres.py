@@ -13,6 +13,7 @@ import uuid
 from calendar import monthrange
 from datetime import date
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -28,6 +29,13 @@ from ai_accounting.accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
+from ai_accounting.bank_statement_schemas import (
+    ConfirmBankReconciliationRequest,
+    ConfirmBankStatementFileImportRequest,
+    PreviewBankReconciliationRequest,
+    PreviewBankStatementFileImportRequest,
+)
+from ai_accounting.bank_statement_service import BankStatementService
 from ai_accounting.borrowing_schemas import (
     ConfirmBorrowingInterestRequest,
     DrawBorrowingRequest,
@@ -35,6 +43,7 @@ from ai_accounting.borrowing_schemas import (
 )
 from ai_accounting.borrowing_service import BorrowingService
 from ai_accounting.coa import seed_organization
+from ai_accounting.config import Settings
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.intangible_asset_schemas import (
     AcquireIntangibleAssetRequest,
@@ -95,27 +104,101 @@ def _evidence(session: Session, organization: Organization, seed: str) -> Eviden
     return evidence
 
 
-def _bank_row(
+def _import_bank_row(
     session: Session,
     organization: Organization,
     *,
     amount_fen: int,
     booking_date: date,
     seed: str,
-) -> BankTransaction:
-    row = BankTransaction(
+    import_dir: Path,
+) -> tuple[BankTransaction, uuid.UUID]:
+    """Create the fictional draw through the same CSV preview-confirm path."""
+
+    file_name = f"{seed}.csv"
+    amount_text = f"{amount_fen // 100}.{amount_fen % 100:02d}"
+    (import_dir / file_name).write_text(
+        "date,amount,reference,memo\n"
+        f"{booking_date.isoformat()},{amount_text},{seed},fictional pilot {seed}\n",
+        encoding="utf-8",
+    )
+    service = BankStatementService(
+        session,
+        settings=Settings(finance_bank_import_dir=import_dir),
+        current_date=booking_date.replace(day=min(20, booking_date.day)),
+    )
+    request = PreviewBankStatementFileImportRequest(
         org_id=organization.id,
         bank_account_code="1002",
-        fingerprint=(seed * 64)[:64],
-        booking_date=booking_date,
-        amount_fen=amount_fen,
-        currency="CNY",
-        memo=f"fictional pilot {seed}",
-        source_sha256=(f"source-{seed}" * 64)[:64],
+        source_file_name=file_name,
+        file_format="csv",
+        column_mapping={
+            "booking_date": "date",
+            "amount": "amount",
+            "external_id": "reference",
+            "memo": "memo",
+        },
     )
-    session.add(row)
-    session.flush()
-    return row
+    preview = service.preview_bank_statement_import(request)
+    assert preview.status == "calculated", preview.errors
+    assert preview.calculation_hash is not None
+    result = service.confirm_bank_statement_import(
+        ConfirmBankStatementFileImportRequest.model_validate(
+            request.model_dump()
+            | {
+                "calculation_hash": preview.calculation_hash,
+                "idempotency_key": f"pilot-import-{seed}",
+            }
+        )
+    )
+    assert result.status == "posted", result.errors
+    assert result.action_id is not None
+    row = session.scalar(
+        select(BankTransaction).where(
+            BankTransaction.org_id == organization.id,
+            BankTransaction.external_id == seed,
+        )
+    )
+    assert row is not None
+    return row, result.action_id
+
+
+def _reconcile_bank_month(
+    session: Session,
+    organization: Organization,
+    *,
+    period_id: uuid.UUID,
+    month: int,
+    opening_balance_fen: int,
+    closing_balance_fen: int,
+    evidence_id: uuid.UUID,
+    import_action_ids: list[uuid.UUID],
+) -> None:
+    service = BankStatementService(session)
+    request = PreviewBankReconciliationRequest(
+        org_id=organization.id,
+        period_id=period_id,
+        bank_account_code="1002",
+        coverage_start_date=date(2026, month, 1),
+        coverage_end_date=_month_end(month),
+        statement_opening_balance_fen=opening_balance_fen,
+        statement_closing_balance_fen=closing_balance_fen,
+        statement_import_action_ids=import_action_ids,
+        statement_evidence_references=[evidence_id],
+    )
+    preview = service.preview_bank_reconciliation(request)
+    assert preview.status == "calculated", preview.errors
+    assert preview.calculation_hash is not None
+    result = service.confirm_bank_reconciliation(
+        ConfirmBankReconciliationRequest.model_validate(
+            request.model_dump()
+            | {
+                "calculation_hash": preview.calculation_hash,
+                "idempotency_key": f"pilot-reconcile-2026-{month:02d}",
+            }
+        )
+    )
+    assert result.status == "posted", result.errors
 
 
 def _assert_balanced(session: Session, voucher_id: uuid.UUID) -> None:
@@ -313,7 +396,10 @@ def _confirm_intangible_amortization(
     assert result.status == "posted", result.errors
 
 
-def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17() -> None:
+def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
+    authenticated_bank_scope: object,
+    tmp_path: Path,
+) -> None:
     """Exercise the private-pilot path without real data or a Compose database."""
 
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
@@ -330,6 +416,25 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                 org_id, evidence_id = organization.id, evidence.id
 
             with Session(engine) as session:
+                organization = session.get(Organization, org_id)
+                assert organization is not None
+                authority = authenticated_bank_scope(
+                    session,
+                    organization,
+                    evidence_id=evidence_id,
+                    accounts=[
+                        {
+                            "bank_account_code": "1002",
+                            "account_name": "银行存款",
+                            "start_date": date(2026, 1, 1),
+                        }
+                    ],
+                    executor_name="private-pilot-simulation",
+                )
+                write_call = authority.attributed_call(
+                    session, tool_name="finance_private_pilot_rehearsal"
+                )
+                write_call.__enter__()
                 period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
                 finance = FinanceService(session)
                 fixed_assets = FixedAssetService(session)
@@ -342,7 +447,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                         {
                             "org_id": org_id,
                             "idempotency_key": "pilot-fictional-march-sale",
-                            "event_type": "service_cash_sale",
+                            "event_type": "service_credit_sale",
                             "business_dates": {
                                 "business_date": "2026-03-05",
                                 "posting_date": "2026-03-05",
@@ -351,6 +456,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                                 "tax_obligation_date": "2026-03-05",
                             },
                             "amounts": {"gross_amount_fen": 101_000},
+                            "counterparty": {"kind": "customer", "name": "虚构试用客户"},
                             "tax_facts": {
                                 "taxable": True,
                                 "rate_percent": "1",
@@ -513,12 +619,13 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                 )
                 assert intangible.status == "posted", intangible.errors
 
-                draw_bank = _bank_row(
+                draw_bank, march_import_action_id = _import_bank_row(
                     session,
                     session.get(Organization, org_id),
                     amount_fen=1_000_000,
                     booking_date=date(2026, 3, 3),
                     seed="fictional-loan-draw",
+                    import_dir=tmp_path,
                 )
                 borrowing = borrowings.draw_borrowing(
                     DrawBorrowingRequest.model_validate(
@@ -530,8 +637,9 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                             "lender": {"name": "虚构持牌银行"},
                             "lender_is_licensed_financial_institution": True,
                             "currency": "CNY",
-                            "principal_fen": 1_000_000,
-                            "drawdown_date": "2026-03-03",
+                                "principal_fen": 1_000_000,
+                                "bank_account_code": "1002",
+                                "drawdown_date": "2026-03-03",
                             "due_date": "2027-03-03",
                             "posting_date": "2026-03-03",
                             "annual_rate_percent": "3.65",
@@ -592,6 +700,16 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                     )
                 )
                 assert tax.status == "posted", tax.errors
+                _reconcile_bank_month(
+                    session,
+                    session.get(Organization, org_id),
+                    period_id=march_period_id,
+                    month=3,
+                    opening_balance_fen=0,
+                    closing_balance_fen=1_000_000,
+                    evidence_id=evidence_id,
+                    import_action_ids=[march_import_action_id],
+                )
                 march_close_id = _close(period_service, org_id, evidence_id, march_period_id, 3)
                 march_close = session.get(AccountingPeriodClose, march_close_id)
                 march_snapshot = (march_close.calculation_hash, march_close.calculation_payload)
@@ -611,6 +729,16 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                         start=previous_interest_end,
                         end=month_end,
                         key=f"pilot-borrowing-interest-2026-{month:02d}",
+                    )
+                    _reconcile_bank_month(
+                        session,
+                        session.get(Organization, org_id),
+                        period_id=period_id,
+                        month=month,
+                        opening_balance_fen=1_000_000,
+                        closing_balance_fen=1_000_000,
+                        evidence_id=evidence_id,
+                        import_action_ids=[],
                     )
                     _close(period_service, org_id, evidence_id, period_id, month)
                     previous_interest_end = month_end
@@ -660,5 +788,6 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                     is not None
                 )
                 session.commit()
+                write_call.__exit__(None, None, None)
         finally:
             engine.dispose()

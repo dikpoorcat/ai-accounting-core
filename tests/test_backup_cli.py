@@ -4,6 +4,7 @@ import hashlib
 import os
 import sys
 import uuid
+from contextlib import AbstractContextManager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from ai_accounting.backup_credentials import (
     WindowsProtectedPgPassProvider,
 )
 from ai_accounting.backup_integration import PostgresEndpoint
+from ai_accounting.config import Settings
 from ai_accounting.windows_backup import WindowsCurrentUserOnlyAclVerifier
 
 
@@ -42,6 +44,23 @@ def _endpoint() -> PostgresEndpoint:
         database="finance",
         username="finance_backup",
         application_name="finance-backup-test",
+    )
+
+
+def _production_settings(tmp_path: Path) -> Settings:
+    return Settings(
+        finance_environment="production",
+        database_url=(
+            "postgresql+psycopg://runtime:test-runtime-only@127.0.0.1:5432/finance"
+        ),
+        finance_migration_database_url=(
+            "postgresql+psycopg://migration:test-migration-only@127.0.0.1:5432/finance"
+        ),
+        finance_storage_dir=tmp_path,
+        finance_service_lock_file=tmp_path / "service.lock",
+        finance_evidence_dir=tmp_path / "evidence",
+        finance_evidence_import_dir=tmp_path / "evidence-import",
+        finance_bank_import_dir=tmp_path / "bank-import",
     )
 
 
@@ -198,7 +217,7 @@ def test_cli_argument_failure_is_one_stable_code_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_create_cli_is_dec035_paused_before_any_side_effect(
+def test_create_cli_reaches_removable_media_preflight_after_validated_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -206,6 +225,7 @@ def test_create_cli_is_dec035_paused_before_any_side_effect(
     media = tmp_path / "media"
     pg_bin = tmp_path / "pg-bin"
     called: list[str] = []
+    credential_store = InMemoryPasswordStore("not-read-before-preflight")
 
     def unexpected(name: str):  # type: ignore[no-untyped-def]
         def fail(*args: object, **kwargs: object) -> None:
@@ -218,17 +238,24 @@ def test_create_cli_is_dec035_paused_before_any_side_effect(
     monkeypatch.setattr(
         backup_cli,
         "get_settings",
-        unexpected("settings"),
+        lambda: _production_settings(tmp_path),
     )
     monkeypatch.setattr(
         backup_cli,
         "WindowsFinanceBackupCredentialStore",
-        unexpected("credential"),
+        lambda: credential_store,
     )
+    monkeypatch.setattr(backup_cli, "WindowsVolumeInspector", object)
+    monkeypatch.setattr(backup_cli, "WindowsWriteThroughPublisher", object)
+
+    def reject_unencrypted_media(*args: object) -> None:
+        del args
+        called.append("preflight")
+        raise backup_cli.BackupIntegrationError("BACKUP_VOLUME_NOT_ENCRYPTED")
+
+    monkeypatch.setattr(backup_cli, "preflight_windows_backup_root", reject_unencrypted_media)
     monkeypatch.setattr(
-        backup_cli,
-        "preflight_windows_backup_root",
-        unexpected("preflight"),
+        backup_cli, "create_integrated_stopped_backup", unexpected("integrated-backup")
     )
 
     with pytest.raises(SystemExit) as exited:
@@ -249,10 +276,118 @@ def test_create_cli_is_dec035_paused_before_any_side_effect(
     output = capsys.readouterr()
     assert exited.value.code == 1
     assert output.out == ""
-    assert output.err == "BACKUP_DEC035_DEPLOYMENT_BINDING_UNDECIDED\n"
-    assert called == []
+    assert output.err == "BACKUP_VOLUME_NOT_ENCRYPTED\n"
+    assert called == ["preflight"]
     assert not media.exists()
     assert not pg_bin.exists()
+
+
+def test_create_cli_rejects_nonproduction_before_windows_or_credential_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called: list[str] = []
+
+    def unexpected(name: str):  # type: ignore[no-untyped-def]
+        def fail(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            called.append(name)
+            raise AssertionError(name)
+
+        return fail
+
+    monkeypatch.setattr(
+        backup_cli,
+        "get_settings",
+        lambda: SimpleNamespace(finance_environment="development"),
+    )
+    monkeypatch.setattr(
+        backup_cli, "WindowsFinanceBackupCredentialStore", unexpected("credential")
+    )
+    monkeypatch.setattr(
+        backup_cli, "preflight_windows_backup_root", unexpected("preflight")
+    )
+
+    with pytest.raises(SystemExit) as exited:
+        backup_cli.main(
+            (
+                "create",
+                "--backup-root",
+                str(tmp_path / "media"),
+                "--purpose",
+                "daily",
+                "--pg-bin-dir",
+                str(tmp_path / "pg-bin"),
+            )
+        )
+
+    output = capsys.readouterr()
+    assert exited.value.code == 1
+    assert output.out == ""
+    assert output.err == "BACKUP_PRODUCTION_ENVIRONMENT_REQUIRED\n"
+    assert called == []
+
+
+class _BackupLeaseContext(AbstractContextManager[None]):
+    def __init__(self, called: list[str]) -> None:
+        self._called = called
+
+    def __enter__(self) -> None:
+        self._called.append("lease")
+
+    def __exit__(self, *args: object) -> None:
+        del args
+
+
+class _BackupLease:
+    def __init__(self, called: list[str]) -> None:
+        self._called = called
+
+    def acquire_backup_lease(self) -> _BackupLeaseContext:
+        return _BackupLeaseContext(self._called)
+
+
+def test_create_cli_missing_dedicated_credential_fails_after_preflight_and_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called: list[str] = []
+    credential_store = InMemoryPasswordStore(None)
+    lease = _BackupLease(called)
+
+    monkeypatch.setattr(backup_cli, "get_settings", lambda: _production_settings(tmp_path))
+    monkeypatch.setattr(
+        backup_cli, "WindowsFinanceBackupCredentialStore", lambda: credential_store
+    )
+    monkeypatch.setattr(backup_cli, "WindowsVolumeInspector", object)
+    monkeypatch.setattr(backup_cli, "WindowsWriteThroughPublisher", object)
+    monkeypatch.setattr(
+        backup_cli,
+        "preflight_windows_backup_root",
+        lambda *args: called.append("preflight"),
+    )
+    monkeypatch.setattr(backup_cli, "WindowsBackupServiceLease", lambda *args: lease)
+
+    with pytest.raises(SystemExit) as exited:
+        backup_cli.main(
+            (
+                "create",
+                "--backup-root",
+                str(tmp_path / "media"),
+                "--purpose",
+                "daily",
+                "--pg-bin-dir",
+                str(tmp_path / "pg-bin"),
+            )
+        )
+
+    output = capsys.readouterr()
+    assert exited.value.code == 1
+    assert output.out == ""
+    assert output.err == "BACKUP_CREDENTIAL_REQUIRED\n"
+    assert called == ["preflight", "lease"]
 
 
 def test_cli_rejects_nonloopback_runtime_database(

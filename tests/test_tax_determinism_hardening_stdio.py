@@ -152,7 +152,11 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                         "request": {
                             "org_id": org_id,
                             "idempotency_key": "stdio-hardening-tax-source",
-                            "event_type": "service_cash_sale",
+                            "event_type": "service_credit_sale",
+                            "counterparty": {
+                                "kind": "customer",
+                                "name": "税务硬化 STDIO 客户",
+                            },
                             "business_dates": {
                                 "business_date": "2026-01-15",
                                 "fulfillment_date": "2026-01-15",

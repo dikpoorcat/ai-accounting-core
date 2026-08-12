@@ -25,6 +25,17 @@ from .accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from .bank_import import BankStatementInputError, import_bank_statement
+from .bank_statement_schemas import (
+    ConfirmBankReconciliationRequest,
+    ConfirmBankReconciliationScopeRequest,
+    ConfirmBankStatementFileImportRequest,
+    ConfirmLateBankEvidenceRequest,
+    PreviewBankReconciliationRequest,
+    PreviewBankReconciliationScopeRequest,
+    PreviewBankStatementFileImportRequest,
+    PreviewLateBankEvidenceRequest,
+    QueryBankStatementStateRequest,
+)
 from .borrowing_schemas import (
     ConfirmBorrowingInterestRequest,
     DrawBorrowingRequest,
@@ -374,8 +385,7 @@ def _sanitize_tool_errors(*tool_names: str) -> None:
                 source = exc.__cause__ if isinstance(exc, ToolError) and exc.__cause__ else exc
                 if isinstance(source, ValidationError):
                     paths = sorted(
-                        ".".join(str(part) for part in error["loc"])
-                        for error in source.errors()
+                        ".".join(str(part) for part in error["loc"]) for error in source.errors()
                     )
                     raise ToolError(
                         "VALIDATION_ERROR: " + ", ".join(paths or ["request"])
@@ -425,6 +435,14 @@ def _accounting_period_service(session: Any) -> Any:
     from .accounting_period_service import AccountingPeriodService
 
     return AccountingPeriodService(session)
+
+
+def _bank_statement_service(session: Any) -> Any:
+    """Load formal CSV import/reconciliation workflows only when invoked."""
+
+    from .bank_statement_service import BankStatementService
+
+    return BankStatementService(session)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -620,6 +638,148 @@ def finance_import_bank_statement(request: ImportBankStatementRequest) -> dict[s
         if exc.field is not None:
             error["field"] = exc.field
         return {"status": "rejected", "errors": [error]}
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_bank_statement_import(
+    request: PreviewBankStatementFileImportRequest,
+) -> dict[str, Any]:
+    """只读预检受控导入目录内的一份 CSV 银行流水，不写入正式事实。"""
+    try:
+        with SessionLocal() as session:
+            return (
+                _bank_statement_service(session)
+                .preview_bank_statement_import(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_bank_statement_import(
+    request: ConfirmBankStatementFileImportRequest,
+) -> dict[str, Any]:
+    """锁后重算预览哈希，幂等确认 CSV 流水及迟到外部证据。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _bank_statement_service(session)
+                .confirm_bank_statement_import(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_bank_reconciliation_scope(
+    request: PreviewBankReconciliationScopeRequest,
+) -> dict[str, Any]:
+    """只读预检完整银行账户范围；支持明确零账户及受控新增银行科目。"""
+    try:
+        with SessionLocal() as session:
+            return (
+                _bank_statement_service(session)
+                .preview_bank_reconciliation_scope(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_bank_reconciliation_scope(
+    request: ConfirmBankReconciliationScopeRequest,
+) -> dict[str, Any]:
+    """锁后重算并幂等确认完整银行账户范围及其证据。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _bank_statement_service(session)
+                .confirm_bank_reconciliation_scope(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_late_bank_evidence(
+    request: PreviewLateBankEvidenceRequest,
+) -> dict[str, Any]:
+    """只读验证迟到银行流水的证据补充或既有类型化补记结果。"""
+    try:
+        with SessionLocal() as session:
+            return (
+                _bank_statement_service(session)
+                .preview_late_bank_evidence(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_late_bank_evidence(
+    request: ConfirmLateBankEvidenceRequest,
+) -> dict[str, Any]:
+    """幂等追加迟到银行事实处理动作，不改写原月结。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _bank_statement_service(session)
+                .confirm_late_bank_evidence(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_bank_reconciliation(
+    request: PreviewBankReconciliationRequest,
+) -> dict[str, Any]:
+    """只读计算完整月份、单一银行账户的正式对账快照。"""
+    try:
+        with SessionLocal() as session:
+            return (
+                _bank_statement_service(session)
+                .preview_bank_reconciliation(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_bank_reconciliation(
+    request: ConfirmBankReconciliationRequest,
+) -> dict[str, Any]:
+    """锁后重算并幂等追加单账户月度对账版本。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _bank_statement_service(session)
+                .confirm_bank_reconciliation(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_query_bank_statement_state(
+    request: QueryBankStatementStateRequest,
+) -> dict[str, Any]:
+    """按固定筛选查询银行范围、流水、迟到处理和对账的当前投影。"""
+    try:
+        with SessionLocal() as session:
+            return _bank_statement_service(session).get_bank_statement_activity(
+                request
+            )
     except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -1023,9 +1183,11 @@ def finance_generate_accounting_period(
     """显式生成一个自然月会计期间；首次月份由调用方确认，后续必须逐月连续。"""
     try:
         with SessionLocal.begin() as session:
-            return _accounting_period_service(session).generate_accounting_period(
-                request
-            ).model_dump(mode="json")
+            return (
+                _accounting_period_service(session)
+                .generate_accounting_period(request)
+                .model_dump(mode="json")
+            )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -1037,9 +1199,11 @@ def finance_preview_accounting_period_close(
     """只读复核一个已生成自然月，并返回规范关账快照和计算哈希。"""
     try:
         with SessionLocal() as session:
-            return _accounting_period_service(session).preview_accounting_period_close(
-                request
-            ).model_dump(mode="json")
+            return (
+                _accounting_period_service(session)
+                .preview_accounting_period_close(request)
+                .model_dump(mode="json")
+            )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -1051,9 +1215,11 @@ def finance_confirm_accounting_period_close(
     """用预览哈希、完整复核声明和证据幂等确认关账；不提供重开入口。"""
     try:
         with SessionLocal.begin() as session:
-            return _accounting_period_service(session).confirm_accounting_period_close(
-                request
-            ).model_dump(mode="json")
+            return (
+                _accounting_period_service(session)
+                .confirm_accounting_period_close(request)
+                .model_dump(mode="json")
+            )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -1065,9 +1231,11 @@ def finance_get_accounting_periods(
     """读取企业已显式生成的自然月期间及其开放或关闭状态。"""
     try:
         with SessionLocal() as session:
-            return _accounting_period_service(session).get_accounting_periods(
-                request
-            ).model_dump(mode="json")
+            return (
+                _accounting_period_service(session)
+                .get_accounting_periods(request)
+                .model_dump(mode="json")
+            )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -1347,9 +1515,7 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                         "payroll_period": batch.payroll_period,
                         "policy_version_id": str(batch.policy_version_id),
                         "reversal_of_batch_id": (
-                            str(batch.reversal_of_batch_id)
-                            if batch.reversal_of_batch_id
-                            else None
+                            str(batch.reversal_of_batch_id) if batch.reversal_of_batch_id else None
                         ),
                     }
                     if batch is not None
@@ -1489,13 +1655,24 @@ _sanitize_tool_errors(
 def main() -> None:
     settings = get_settings()
     if settings.finance_environment == "production":
-        with acquire_windows_service_lease(
-            settings.finance_service_lock_file,
-            mode="service",
-            access_verifier=WindowsCurrentUserOnlyAclVerifier(),
-        ):
-            _load_startup_session_token()
-            mcp.run(transport="stdio")
+        # The legacy path-based CSV/XLSX writer remains importable for isolated
+        # development regression only.  It must not appear in a formal server's
+        # tool registry after DEC-020/040 introduced preview-confirm CSV input.
+        legacy_bank_tool = mcp._tool_manager._tools.pop("finance_import_bank_statement", None)
+        try:
+            with acquire_windows_service_lease(
+                settings.finance_service_lock_file,
+                mode="service",
+                access_verifier=WindowsCurrentUserOnlyAclVerifier(),
+            ):
+                _load_startup_session_token()
+                mcp.run(transport="stdio")
+        finally:
+            # ``mcp.run`` normally owns the process lifetime.  Restoring only
+            # supports in-process tests or an orderly stopped development host;
+            # the live production registry never contains this legacy tool.
+            if legacy_bank_tool is not None:
+                mcp._tool_manager._tools["finance_import_bank_statement"] = legacy_bank_tool
         return
     _load_startup_session_token()
     mcp.run(transport="stdio")

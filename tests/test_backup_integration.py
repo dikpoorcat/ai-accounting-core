@@ -27,7 +27,6 @@ from ai_accounting.backup_integration import (
     PostgresEndpoint,
     _assert_isolated_restore_target,
     postgres_backup_snapshot,
-    production_backup_command,
 )
 from ai_accounting.windows_backup import (
     WindowsVolumeFacts,
@@ -669,13 +668,6 @@ def test_windows_publisher_api_failure_leaves_partial_unpublished(tmp_path: Path
         publisher.publish(partial, complete, tmp_path)
     assert partial.is_dir()
     assert not complete.exists()
-
-
-def test_production_command_remains_stably_paused() -> None:
-    with pytest.raises(
-        BackupIntegrationError, match="BACKUP_DEC035_DEPLOYMENT_BINDING_UNDECIDED"
-    ):
-        production_backup_command()
 
 
 class FunctionStub:

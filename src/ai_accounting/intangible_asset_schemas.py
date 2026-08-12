@@ -129,9 +129,7 @@ class AcquireIntangibleAssetRequest(BaseModel):
     asset_name: str | None = Field(default=None, min_length=1, max_length=200)
     category: IntangibleAssetCategory | None = None
     rights_description: str | None = Field(default=None, min_length=1, max_length=2000)
-    other_right_type_description: str | None = Field(
-        default=None, min_length=1, max_length=500
-    )
+    other_right_type_description: str | None = Field(default=None, min_length=1, max_length=500)
     identifiability_basis: str | None = Field(default=None, min_length=1, max_length=2000)
     supplier: IntangibleAssetSupplierReference | None = None
     acquisition_date: date | None = None
@@ -141,6 +139,7 @@ class AcquireIntangibleAssetRequest(BaseModel):
         default_factory=IntangibleAssetCostComponents
     )
     settlement_method: IntangibleAssetAcquisitionSettlement | None = None
+    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     payment_date: date | None = None
     due_date: date | None = None
     benefit_area: IntangibleAssetBenefitArea | None = None
@@ -192,6 +191,10 @@ class AcquireIntangibleAssetRequest(BaseModel):
                 "other right type and identifiability basis are only accepted for "
                 "other_identifiable_non_land"
             )
+        if self.settlement_method is IntangibleAssetAcquisitionSettlement.PAYABLE and (
+            self.bank_account_code is not None or self.bank_transaction_references
+        ):
+            raise ValueError("a supplier-payable acquisition must not include bank facts")
         return self
 
     def missing_information(self) -> list[IntangibleAssetInformationRequirement]:
@@ -206,8 +209,7 @@ class AcquireIntangibleAssetRequest(BaseModel):
                 IntangibleAssetInformationRequirement(
                     code="INTANGIBLE_ASSET_IDENTITY_REQUIRED",
                     message=(
-                        "asset code, name, supported category, and rights description "
-                        "are required"
+                        "asset code, name, supported category, and rights description are required"
                     ),
                     fields=identity,
                 )
@@ -266,23 +268,22 @@ class AcquireIntangibleAssetRequest(BaseModel):
                 IntangibleAssetInformationRequirement(
                     code="INTANGIBLE_ASSET_POLICY_FACTS_REQUIRED",
                     message=(
-                        "supplier, settlement, readiness, life, VAT, and benefit facts "
-                        "are required"
+                        "supplier, settlement, readiness, life, VAT, and benefit facts are required"
                     ),
                     fields=required,
                 )
             )
         if self.settlement_method is IntangibleAssetAcquisitionSettlement.BANK:
             fields = []
+            if self.bank_account_code is None:
+                fields.append("bank_account_code")
             if self.payment_date is None:
                 fields.append("payment_date")
-            if not self.bank_transaction_references:
-                fields.append("bank_transaction_references")
             if fields:
                 missing.append(
                     IntangibleAssetInformationRequirement(
                         code="INTANGIBLE_ASSET_BANK_SETTLEMENT_FACTS_REQUIRED",
-                        message="bank settlement requires its payment date and bank transactions",
+                        message="bank settlement requires its account code and payment date",
                         fields=fields,
                     )
                 )
@@ -313,9 +314,7 @@ class PreviewIntangibleAssetAmortizationRequest(BaseModel):
 
     org_id: uuid.UUID
     asset_id: uuid.UUID | None = None
-    amortization_period: str | None = Field(
-        default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$"
-    )
+    amortization_period: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
     posting_date: date | None = None
 
     @field_validator("amortization_period")
@@ -344,9 +343,7 @@ class PreviewIntangibleAssetAmortizationRequest(BaseModel):
         )
 
 
-class ConfirmIntangibleAssetAmortizationRequest(
-    PreviewIntangibleAssetAmortizationRequest
-):
+class ConfirmIntangibleAssetAmortizationRequest(PreviewIntangibleAssetAmortizationRequest):
     idempotency_key: str = Field(min_length=1, max_length=200)
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     confirmation_note: str = Field(default="", max_length=2000)

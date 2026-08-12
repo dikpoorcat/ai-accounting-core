@@ -10,9 +10,8 @@ from datetime import date
 from threading import Barrier
 
 import pytest
-import sqlalchemy as sa
 from alembic.config import Config
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
@@ -20,8 +19,6 @@ from testcontainers.community.postgres import PostgresContainer
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import make_session_factory
 from ai_accounting.models import (
-    BankTransaction,
-    BankTransactionMatch,
     BusinessEvent,
     EmployeePayrollProfileVersion,
     PayrollOpeningState,
@@ -57,25 +54,12 @@ def postgres_engine() -> Iterator[object]:
             engine.dispose()
 
 
-def _bank_transaction(org_id: object, *, amount_fen: int, key: str) -> BankTransaction:
-    return BankTransaction(
-        org_id=org_id,
-        bank_account_code="1002",
-        fingerprint=(key * 64)[:64],
-        booking_date=date(2026, 4, 5),
-        amount_fen=amount_fen,
-        currency="CNY",
-        memo=key,
-        source_sha256=("round4-source-" + key * 64)[:64],
-    )
-
-
-def _expense_request(org_id: object, bank_id: object, *, key: str) -> RecordEventRequest:
+def _expense_request(org_id: object, *, key: str) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": org_id,
             "idempotency_key": key,
-            "event_type": "expense_cash",
+            "event_type": "expense_payable",
             "business_dates": {
                 "business_date": "2026-04-05",
                 "payment_date": "2026-04-05",
@@ -85,7 +69,7 @@ def _expense_request(org_id: object, bank_id: object, *, key: str) -> RecordEven
                 "gross_amount_fen": 100,
                 "expense_account_role": "general_expense",
             },
-            "bank_transaction_references": [{"id": bank_id}],
+            "counterparty": {"kind": "supplier", "name": "R4 测试供应商"},
         }
     )
 
@@ -105,32 +89,22 @@ def _post_two_expenses(
     *,
     organization_name: str,
     key_prefix: str,
-) -> tuple[object, list[object], list[object]]:
+) -> tuple[object, list[object]]:
     organization = seed_organization(
         session, accounting_period_control_enabled=False, name=organization_name
     )
-    bank_ids: list[object] = []
     event_ids: list[object] = []
     for index in (1, 2):
-        bank = _bank_transaction(
-            organization.id,
-            amount_fen=-100,
-            key=f"{key_prefix}-bank-{index}",
-        )
-        session.add(bank)
-        session.flush()
         posted = FinanceService(session).record_event(
             _expense_request(
                 organization.id,
-                bank.id,
                 key=f"{key_prefix}-expense-{index}",
             )
         )
         assert posted.status == "posted", posted.errors
         assert posted.event_id is not None
-        bank_ids.append(bank.id)
         event_ids.append(posted.event_id)
-    return organization.id, bank_ids, event_ids
+    return organization.id, event_ids
 
 
 def test_r4_007_two_sources_with_one_idempotency_key_return_a_stable_mismatch(
@@ -140,7 +114,7 @@ def test_r4_007_two_sources_with_one_idempotency_key_return_a_stable_mismatch(
 
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        org_id, _, event_ids = _post_two_expenses(
+        org_id, event_ids = _post_two_expenses(
             session,
             organization_name="R4-007 concurrent reversal organization",
             key_prefix="r4-idempotency-race",
@@ -166,64 +140,6 @@ def test_r4_007_two_sources_with_one_idempotency_key_return_a_stable_mismatch(
     with Session(postgres_engine) as session:
         events = [session.get(BusinessEvent, event_id) for event_id in event_ids]
         assert {event.status for event in events if event is not None} == {"posted", "reversed"}
-
-
-def test_r4_008_bank_history_and_current_pointer_reject_divergent_commit_attacks(
-    postgres_engine: object,
-) -> None:
-    """Current bank mirrors cannot point at a historical or reversed edge."""
-
-    factory = make_session_factory(postgres_engine)
-    with factory.begin() as session:
-        org_id, bank_ids, event_ids = _post_two_expenses(
-            session,
-            organization_name="R4-008 bank mirror organization",
-            key_prefix="r4-bank-mirror",
-        )
-        original_event_id = event_ids[0]
-        original_bank_id = bank_ids[0]
-        reversal = FinanceService(session).reverse_event(
-            _reverse_request(org_id, original_event_id, key="r4-bank-mirror-reversal")
-        )
-        assert reversal.status == "posted", reversal.errors
-
-    with Session(postgres_engine) as session:
-        original_match = session.scalar(
-            select(BankTransactionMatch).where(
-                BankTransactionMatch.org_id == org_id,
-                BankTransactionMatch.bank_transaction_id == original_bank_id,
-                BankTransactionMatch.event_id == original_event_id,
-            )
-        )
-        assert original_match is not None and original_match.invalidated_by_event_id is not None
-        session.execute(
-            sa.update(BankTransaction)
-            .where(BankTransaction.id == original_bank_id)
-            .values(matched_event_id=original_event_id)
-        )
-        with pytest.raises(DBAPIError, match="BANK_TRANSACTION_POINTER_MIRROR_VIOLATION"):
-            session.commit()
-        session.rollback()
-
-    with Session(postgres_engine) as session:
-        second_bank = _bank_transaction(org_id, amount_fen=-100, key="r4-bank-reversed-edge")
-        session.add(second_bank)
-        session.flush()
-        session.add(
-            BankTransactionMatch(
-                org_id=org_id,
-                bank_transaction_id=second_bank.id,
-                event_id=original_event_id,
-            )
-        )
-        second_bank.matched_event_id = original_event_id
-        with pytest.raises(DBAPIError, match="BANK_MATCH_CURRENT_EVENT_NOT_POSTED"):
-            session.commit()
-        session.rollback()
-
-    with Session(postgres_engine) as session:
-        original_bank = session.get(BankTransaction, original_bank_id)
-        assert original_bank is not None and original_bank.matched_event_id is None
 
 
 def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit(

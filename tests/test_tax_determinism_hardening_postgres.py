@@ -55,7 +55,7 @@ def _sale_request(
         {
             "org_id": org_id,
             "idempotency_key": key,
-            "event_type": "service_cash_sale",
+            "event_type": "service_credit_sale",
             "business_dates": {
                 "business_date": business_date,
                 "fulfillment_date": business_date,
@@ -64,6 +64,7 @@ def _sale_request(
                 "posting_date": business_date,
             },
             "amounts": {"gross_amount_fen": 10_100},
+            "counterparty": {"kind": "customer", "name": "税务测试客户"},
             "tax_facts": {
                 "taxable": True,
                 "rate_percent": "1",

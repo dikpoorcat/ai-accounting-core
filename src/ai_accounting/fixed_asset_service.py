@@ -28,7 +28,6 @@ from .fixed_assets import (
 from .ledger import AccountingPeriodError, Entry, create_voucher
 from .models import (
     AuditLog,
-    BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
     Counterparty,
@@ -58,9 +57,7 @@ from .schemas import (
 )
 from .service import FinanceService
 
-ACCOUNTING_RULE_SOURCE_URL = (
-    "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878.pdf"
-)
+ACCOUNTING_RULE_SOURCE_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878.pdf"
 USED_FIXED_ASSET_VAT_RULE_CODE = "small_scale_used_fixed_asset_vat_2026"
 FIXED_ASSET_EVENT_TYPES = {
     "fixed_asset_acquisition",
@@ -102,9 +99,7 @@ class FixedAssetService(FinanceService):
         if original is None or original.event_type not in FIXED_ASSET_EVENT_TYPES:
             return super().reverse_event(request)
         request_payload_hash = self._request_payload_hash(request)
-        existing = self._fixed_asset_idempotent_event(
-            request.org_id, request.idempotency_key
-        )
+        existing = self._fixed_asset_idempotent_event(request.org_id, request.idempotency_key)
         if existing is not None:
             if existing.request_payload_hash != request_payload_hash:
                 return FinanceResult(
@@ -305,9 +300,7 @@ class FixedAssetService(FinanceService):
                     "purchase_price_fen": asset.purchase_price_fen,
                     "noncreditable_tax_fen": asset.noncreditable_tax_fen,
                     "transport_and_handling_fen": asset.transport_and_handling_fen,
-                    "installation_and_direct_cost_fen": (
-                        asset.installation_and_direct_cost_fen
-                    ),
+                    "installation_and_direct_cost_fen": (asset.installation_and_direct_cost_fen),
                     "accounting_rule_version": asset.accounting_rule_version,
                     "accounting_rule_source_url": asset.accounting_rule_source_url,
                     "event": self._event_audit_projection(asset.acquisition_event_id),
@@ -360,9 +353,7 @@ class FixedAssetService(FinanceService):
                     {
                         **(self._disposal_projection(item) or {}),
                         "posting_date": item.posting_date.isoformat(),
-                        "accumulated_depreciation_fen": (
-                            item.accumulated_depreciation_fen
-                        ),
+                        "accumulated_depreciation_fen": (item.accumulated_depreciation_fen),
                         "accounting_rule_version": item.accounting_rule_version,
                         "accounting_rule_source_url": item.accounting_rule_source_url,
                         "event": self._event_audit_projection(item.event_id),
@@ -387,6 +378,40 @@ class FixedAssetService(FinanceService):
         existing = self._fixed_asset_idempotent_event(request.org_id, request.idempotency_key)
         if existing is not None:
             return self._fixed_asset_existing_result(existing, payload_hash)
+
+        bank_settled = (
+            isinstance(request, AcquireFixedAssetRequest)
+            and request.settlement_method is not None
+            and request.settlement_method.value == "bank"
+        ) or (
+            isinstance(request, DisposeFixedAssetRequest)
+            and (
+                (
+                    request.settlement_method is not None
+                    and request.settlement_method.value == "bank"
+                )
+                or bool(request.clearance_cost_fen)
+            )
+        )
+        if bank_settled and not self._bank_reconciliation_scope_is_confirmed(
+            self.session.get(Organization, request.org_id)
+        ):
+            requirement = FixedAssetInformationRequirement(
+                code="BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
+                message="owner-confirmed bank reconciliation scope is required",
+                fields=["bank_reconciliation_scope_confirmation"],
+            )
+            return FixedAssetResult(
+                status=FixedAssetResultStatus.NEEDS_INFORMATION,
+                missing_information=[requirement],
+                trace=[
+                    {
+                        "stage": "validation",
+                        "status": "needs_information",
+                        "code": requirement.code,
+                    }
+                ],
+            )
 
         missing = request.missing_information()
         if missing:
@@ -425,9 +450,7 @@ class FixedAssetService(FinanceService):
                     status=FixedAssetResultStatus.REJECTED,
                     errors=["TAX_PERIOD_SOURCE_LOCKED"],
                 )
-            existing = self._fixed_asset_idempotent_event(
-                request.org_id, request.idempotency_key
-            )
+            existing = self._fixed_asset_idempotent_event(request.org_id, request.idempotency_key)
             if existing is not None:
                 return self._fixed_asset_existing_result(existing, payload_hash)
             return FixedAssetResult(
@@ -447,9 +470,7 @@ class FixedAssetService(FinanceService):
                 )
             raise
 
-    def _acquire_fixed_asset_write(
-        self, request: AcquireFixedAssetRequest
-    ) -> FixedAssetResult:
+    def _acquire_fixed_asset_write(self, request: AcquireFixedAssetRequest) -> FixedAssetResult:
         if request.expected_use_over_one_year is not True:
             self._reject("MODULE_NOT_ENABLED:fixed_asset_short_term_item")
         if request.claims_creditable_input_vat is not False:
@@ -473,6 +494,10 @@ class FixedAssetService(FinanceService):
             request.org_id, request.supplier, required_kind="supplier"
         )
         settlement_method = request.settlement_method.value
+        if settlement_method == "bank":
+            self._validate_bank_account(
+                request.org_id, request.bank_account_code, request.payment_date
+            )
         trace = [
             {
                 "stage": "facts_validated",
@@ -485,6 +510,7 @@ class FixedAssetService(FinanceService):
                     "installation_and_direct_cost_fen": cost.installation_and_direct_cost_fen,
                     "cost_fen": cost.cost_fen,
                 },
+                "bank_account_code": request.bank_account_code,
             },
             self._accounting_rule_trace(),
         ]
@@ -501,10 +527,11 @@ class FixedAssetService(FinanceService):
         self.session.add(event)
         self.session.flush()
         self._attach_evidence(event, request.evidence_references)
-        if settlement_method == "bank":
+        if settlement_method == "bank" and request.bank_transaction_references:
             self._match_fixed_asset_bank_transactions(
                 event,
                 request.bank_transaction_references,
+                bank_account_code=request.bank_account_code,
                 expected_inflow_fen=0,
                 expected_outflow_fen=cost.cost_fen,
                 expected_date=request.payment_date,
@@ -535,11 +562,11 @@ class FixedAssetService(FinanceService):
         )
         self.session.add(asset)
         self.session.flush()
-        credit_role = "bank" if settlement_method == "bank" else "accounts_payable"
         entries = [
             Entry(account_role="fixed_asset_pending", debit_fen=cost.cost_fen),
             Entry(
-                account_role=credit_role,
+                account_code=(request.bank_account_code if settlement_method == "bank" else None),
+                account_role=(None if settlement_method == "bank" else "accounts_payable"),
                 credit_fen=cost.cost_fen,
                 counterparty_id=supplier.id if settlement_method == "payable" else None,
             ),
@@ -570,9 +597,7 @@ class FixedAssetService(FinanceService):
         self._finalize_fixed_asset_event(event, voucher, asset.id, result_data)
         return self._posted_result(asset.id, event, voucher, data=result_data)
 
-    def _activate_fixed_asset_write(
-        self, request: ActivateFixedAssetRequest
-    ) -> FixedAssetResult:
+    def _activate_fixed_asset_write(self, request: ActivateFixedAssetRequest) -> FixedAssetResult:
         asset = self._get_asset(request.org_id, request.asset_id, lock=True)
         if asset is None:
             self._reject("FIXED_ASSET_NOT_FOUND")
@@ -645,9 +670,7 @@ class FixedAssetService(FinanceService):
             entries=entries,
         )
         trace.append(self._entries_trace(entries))
-        trace.append(
-            {"stage": "normalized_fact_created", "activation_id": str(activation.id)}
-        )
+        trace.append({"stage": "normalized_fact_created", "activation_id": str(activation.id)})
         event.facts = {**event.facts, "asset_id": str(asset.id)}
         event.rule_trace = [dict(item) for item in trace]
         self._finalize_fixed_asset_event(event, voucher, asset.id, {})
@@ -812,9 +835,7 @@ class FixedAssetService(FinanceService):
             entries=entries,
         )
         trace.append(self._entries_trace(entries))
-        trace.append(
-            {"stage": "normalized_fact_created", "depreciation_id": str(depreciation.id)}
-        )
+        trace.append({"stage": "normalized_fact_created", "depreciation_id": str(depreciation.id)})
         event.rule_trace = [dict(item) for item in trace]
         result_data = {
             **snapshot["data"],
@@ -865,9 +886,7 @@ class FixedAssetService(FinanceService):
             query = query.with_for_update()
         return list(self.session.scalars(query).all())
 
-    def _dispose_fixed_asset_write(
-        self, request: DisposeFixedAssetRequest
-    ) -> FixedAssetResult:
+    def _dispose_fixed_asset_write(self, request: DisposeFixedAssetRequest) -> FixedAssetResult:
         asset = self._get_asset(request.org_id, request.asset_id, lock=True)
         if asset is None:
             self._reject("FIXED_ASSET_NOT_FOUND")
@@ -901,9 +920,7 @@ class FixedAssetService(FinanceService):
         gross_proceeds_fen = request.gross_proceeds_fen or 0
         tax_rule: TaxRule | None = None
         if request.disposal_kind.value == "sale":
-            if self._tax_obligation_date_is_locked(
-                request.org_id, request.tax_obligation_date
-            ):
+            if self._tax_obligation_date_is_locked(request.org_id, request.tax_obligation_date):
                 self._reject("TAX_PERIOD_SOURCE_LOCKED")
             customer = self._resolve_fixed_asset_counterparty(
                 request.org_id, request.customer, required_kind="customer"
@@ -916,9 +933,11 @@ class FixedAssetService(FinanceService):
             vat_fen = vat.vat_fen
 
         clearance_cost_fen = request.clearance_cost_fen or 0
-        expected_inflow = (
-            gross_proceeds_fen if request.settlement_method.value == "bank" else 0
-        )
+        expected_inflow = gross_proceeds_fen if request.settlement_method.value == "bank" else 0
+        if expected_inflow or clearance_cost_fen:
+            self._validate_bank_account(
+                request.org_id, request.bank_account_code, request.disposal_date
+            )
         book_value = asset.cost_fen - accumulated
         net_proceeds = gross_proceeds_fen - vat_fen
         clearance_debit = book_value + clearance_cost_fen
@@ -941,6 +960,7 @@ class FixedAssetService(FinanceService):
                 "vat_fen": vat_fen,
                 "gain_fen": gain_fen,
                 "loss_fen": loss_fen,
+                "bank_account_code": request.bank_account_code,
                 "evidence_ids": sorted(map(str, request.evidence_references)),
             },
             self._accounting_rule_trace(),
@@ -993,10 +1013,11 @@ class FixedAssetService(FinanceService):
         self.session.add(event)
         self.session.flush()
         self._attach_evidence(event, request.evidence_references)
-        if request.bank_transaction_references or expected_inflow or clearance_cost_fen:
+        if request.bank_transaction_references:
             self._match_fixed_asset_bank_transactions(
                 event,
                 request.bank_transaction_references,
+                bank_account_code=request.bank_account_code,
                 expected_inflow_fen=expected_inflow,
                 expected_outflow_fen=clearance_cost_fen,
                 expected_date=request.disposal_date,
@@ -1037,6 +1058,7 @@ class FixedAssetService(FinanceService):
             gain_fen=gain_fen,
             loss_fen=loss_fen,
             settlement_method=request.settlement_method.value,
+            bank_account_code=request.bank_account_code,
             customer_id=customer.id if customer else None,
         )
         voucher = create_voucher(
@@ -1272,34 +1294,18 @@ class FixedAssetService(FinanceService):
         event: BusinessEvent,
         references: list[Any],
         *,
+        bank_account_code: str,
         expected_inflow_fen: int,
         expected_outflow_fen: int,
         expected_date: date | None,
     ) -> None:
-        resolved_ids: list[uuid.UUID] = []
-        for reference in references:
-            clauses = [BankTransaction.org_id == event.org_id]
-            if reference.id is not None:
-                clauses.append(BankTransaction.id == reference.id)
-            if reference.fingerprint is not None:
-                clauses.append(BankTransaction.fingerprint == reference.fingerprint)
-            row_id = self.session.scalar(select(BankTransaction.id).where(*clauses))
-            if row_id is None:
-                self._reject("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-            resolved_ids.append(row_id)
-        if len(resolved_ids) != len(set(resolved_ids)):
-            self._reject("DUPLICATE_BANK_TRANSACTION_REFERENCE")
-        rows = self.session.scalars(
-            select(BankTransaction)
-            .where(
-                BankTransaction.org_id == event.org_id,
-                BankTransaction.id.in_(sorted(resolved_ids, key=str)),
-            )
-            .order_by(BankTransaction.id)
-            .with_for_update()
-        ).all()
-        if len(rows) != len(resolved_ids):
-            self._reject("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
+        try:
+            rows = self._resolve_bank_transaction_references(event.org_id, references)
+        except ValueError as exc:
+            self._reject(str(exc))
+        resolved_ids = [row.id for row in rows]
+        if any(row.bank_account_code != bank_account_code for row in rows):
+            self._reject("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
         if expected_date is not None and any(row.booking_date != expected_date for row in rows):
             self._reject("FIXED_ASSET_BANK_TRANSACTION_DATE_MISMATCH")
         inflow = sum(row.amount_fen for row in rows if row.amount_fen > 0)
@@ -1333,9 +1339,7 @@ class FixedAssetService(FinanceService):
     ) -> FixedAsset | None:
         if asset_id is None:
             return None
-        query = select(FixedAsset).where(
-            FixedAsset.org_id == org_id, FixedAsset.id == asset_id
-        )
+        query = select(FixedAsset).where(FixedAsset.org_id == org_id, FixedAsset.id == asset_id)
         if lock:
             query = query.order_by(FixedAsset.id).with_for_update()
         return self.session.scalar(query)
@@ -1433,11 +1437,7 @@ class FixedAssetService(FinanceService):
                 return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
             return None
         if original.event_type == "fixed_asset_acquisition":
-            if (
-                active_activation is not None
-                or active_disposal is not None
-                or active_depreciations
-            ):
+            if active_activation is not None or active_disposal is not None or active_depreciations:
                 return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
         return None
 
@@ -1453,6 +1453,7 @@ class FixedAssetService(FinanceService):
         gain_fen: int,
         loss_fen: int,
         settlement_method: str,
+        bank_account_code: str | None,
         customer_id: uuid.UUID | None,
     ) -> list[Entry]:
         entries: list[Entry] = []
@@ -1469,9 +1470,8 @@ class FixedAssetService(FinanceService):
         if gross_proceeds_fen:
             entries.append(
                 Entry(
-                    account_role=(
-                        "bank" if settlement_method == "bank" else "accounts_receivable"
-                    ),
+                    account_code=bank_account_code if settlement_method == "bank" else None,
+                    account_role=(None if settlement_method == "bank" else "accounts_receivable"),
                     debit_fen=gross_proceeds_fen,
                     counterparty_id=customer_id if settlement_method == "receivable" else None,
                 )
@@ -1488,7 +1488,7 @@ class FixedAssetService(FinanceService):
             entries.extend(
                 [
                     Entry(account_role="fixed_asset_clearance", debit_fen=clearance_cost_fen),
-                    Entry(account_role="bank", credit_fen=clearance_cost_fen),
+                    Entry(account_code=bank_account_code, credit_fen=clearance_cost_fen),
                 ]
             )
         if gain_fen:
@@ -1598,6 +1598,7 @@ class FixedAssetService(FinanceService):
             "template_lines": [
                 {
                     "account_role": line.account_role,
+                    "account_code": line.account_code,
                     "debit_fen": line.debit_fen,
                     "credit_fen": line.credit_fen,
                 }
@@ -1607,9 +1608,7 @@ class FixedAssetService(FinanceService):
             "credit_fen": sum(line.credit_fen for line in entries),
         }
 
-    def _audit_posted(
-        self, event: BusinessEvent, voucher: Voucher, asset_id: uuid.UUID
-    ) -> None:
+    def _audit_posted(self, event: BusinessEvent, voucher: Voucher, asset_id: uuid.UUID) -> None:
         self.session.add(
             AuditLog(
                 org_id=event.org_id,

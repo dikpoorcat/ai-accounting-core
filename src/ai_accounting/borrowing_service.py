@@ -30,7 +30,6 @@ from .borrowings import (
 from .ledger import AccountingPeriodError, Entry, create_voucher
 from .models import (
     AuditLog,
-    BankTransaction,
     BankTransactionMatch,
     Borrowing,
     BorrowingInterestAccrual,
@@ -302,6 +301,31 @@ class BorrowingService(FinanceService):
         existing = self._idempotent_event(request.org_id, request.idempotency_key)
         if existing is not None:
             return self._existing_result(existing, payload_hash)
+        bank_settlement_commands = {
+            "finance_draw_borrowing",
+            "finance_pay_borrowing_interest",
+            "finance_repay_borrowing_principal",
+        }
+        if command in bank_settlement_commands and not self._bank_reconciliation_scope_is_confirmed(
+            self.session.get(Organization, request.org_id)
+        ):
+            return self._result(
+                BorrowingResultStatus.NEEDS_INFORMATION,
+                missing=[
+                    BorrowingInformationRequirement(
+                        code="BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
+                        message="owner-confirmed bank reconciliation scope is required",
+                        fields=["bank_reconciliation_scope_confirmation"],
+                    )
+                ],
+                trace=[
+                    {
+                        "stage": "validation",
+                        "status": "needs_information",
+                        "code": "BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
+                    }
+                ],
+            )
         missing = request.missing_information()
         if missing:
             return self._store_nonposted_safely(
@@ -363,6 +387,9 @@ class BorrowingService(FinanceService):
         ):
             self._reject("BORROWING_CODE_ALREADY_EXISTS")
         lender = self._resolve_lender(request.org_id, request.lender)
+        self._validate_bank_account(
+            request.org_id, request.bank_account_code, request.drawdown_date
+        )
         self._validate_evidence(request.org_id, request.evidence_references)
         trace = [
             {
@@ -371,6 +398,7 @@ class BorrowingService(FinanceService):
                 "borrowing_code": request.borrowing_code,
                 "evidence_ids": sorted(map(str, request.evidence_references)),
                 "interest_due_dates": [d.isoformat() for d in request.interest_due_dates],
+                "bank_account_code": request.bank_account_code,
             },
             self._accounting_rule_trace(),
         ]
@@ -389,6 +417,7 @@ class BorrowingService(FinanceService):
         self._match_bank_transactions(
             event,
             request.bank_transaction_references,
+            bank_account_code=request.bank_account_code,
             expected_inflow_fen=request.principal_fen,
             expected_outflow_fen=0,
             expected_date=request.drawdown_date,
@@ -425,7 +454,7 @@ class BorrowingService(FinanceService):
         self.session.add(borrowing)
         self.session.flush()
         entries = [
-            Entry(account_role="bank", debit_fen=request.principal_fen),
+            Entry(account_code=request.bank_account_code, debit_fen=request.principal_fen),
             Entry(account_role=role, credit_fen=request.principal_fen),
         ]
         voucher = create_voucher(
@@ -645,6 +674,7 @@ class BorrowingService(FinanceService):
             )
         ):
             self._reject("BORROWING_INTEREST_ALREADY_PAID")
+        self._validate_bank_account(request.org_id, request.bank_account_code, request.payment_date)
         self._validate_evidence(request.org_id, request.evidence_references)
         trace = [
             {
@@ -654,6 +684,7 @@ class BorrowingService(FinanceService):
                 "accrual_event_id": str(accrual.event_id),
                 "amount_fen": accrual.amount_fen,
                 "evidence_ids": sorted(map(str, request.evidence_references)),
+                "bank_account_code": request.bank_account_code,
             },
             self._accounting_rule_trace(),
         ]
@@ -672,6 +703,7 @@ class BorrowingService(FinanceService):
         self._match_bank_transactions(
             event,
             request.bank_transaction_references,
+            bank_account_code=request.bank_account_code,
             expected_inflow_fen=0,
             expected_outflow_fen=accrual.amount_fen,
             expected_date=request.payment_date,
@@ -692,7 +724,7 @@ class BorrowingService(FinanceService):
         self.session.flush()
         entries = [
             Entry(account_role="interest_payable", debit_fen=accrual.amount_fen),
-            Entry(account_role="bank", credit_fen=accrual.amount_fen),
+            Entry(account_code=request.bank_account_code, credit_fen=accrual.amount_fen),
         ]
         voucher = create_voucher(
             self.session,
@@ -740,6 +772,9 @@ class BorrowingService(FinanceService):
         ):
             self._reject("BORROWING_PRINCIPAL_NOT_REPAYABLE")
         self._validate_evidence(request.org_id, request.evidence_references)
+        self._validate_bank_account(
+            request.org_id, request.bank_account_code, request.repayment_date
+        )
         role = self._borrowing_role(borrowing.drawdown_date, borrowing.due_date)
         trace = [
             {
@@ -749,6 +784,7 @@ class BorrowingService(FinanceService):
                 "principal_fen": borrowing.principal_fen,
                 "paid_accrual_event_ids": [str(a.event_id) for a in accruals],
                 "evidence_ids": sorted(map(str, request.evidence_references)),
+                "bank_account_code": request.bank_account_code,
             },
             self._accounting_rule_trace(),
         ]
@@ -767,6 +803,7 @@ class BorrowingService(FinanceService):
         self._match_bank_transactions(
             event,
             request.bank_transaction_references,
+            bank_account_code=request.bank_account_code,
             expected_inflow_fen=0,
             expected_outflow_fen=borrowing.principal_fen,
             expected_date=request.repayment_date,
@@ -787,7 +824,7 @@ class BorrowingService(FinanceService):
         self.session.flush()
         entries = [
             Entry(account_role=role, debit_fen=borrowing.principal_fen),
-            Entry(account_role="bank", credit_fen=borrowing.principal_fen),
+            Entry(account_code=request.bank_account_code, credit_fen=borrowing.principal_fen),
         ]
         voucher = create_voucher(
             self.session,
@@ -1015,30 +1052,21 @@ class BorrowingService(FinanceService):
         event: BusinessEvent,
         references: list[Any],
         *,
+        bank_account_code: str,
         expected_inflow_fen: int,
         expected_outflow_fen: int,
         expected_date: date,
     ) -> None:
-        ids = []
-        for reference in references:
-            clauses = [BankTransaction.org_id == event.org_id]
-            if reference.id is not None:
-                clauses.append(BankTransaction.id == reference.id)
-            if reference.fingerprint is not None:
-                clauses.append(BankTransaction.fingerprint == reference.fingerprint)
-            row_id = self.session.scalar(select(BankTransaction.id).where(*clauses))
-            if row_id is None:
-                self._reject("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-            ids.append(row_id)
-        if len(ids) != len(set(ids)):
-            self._reject("DUPLICATE_BANK_TRANSACTION_REFERENCE")
-        rows = self.session.scalars(
-            select(BankTransaction)
-            .where(BankTransaction.org_id == event.org_id, BankTransaction.id.in_(ids))
-            .order_by(BankTransaction.id)
-            .with_for_update()
-        ).all()
-        if len(rows) != len(ids) or any(row.booking_date != expected_date for row in rows):
+        if not references:
+            return
+        try:
+            rows = self._resolve_bank_transaction_references(event.org_id, references)
+        except ValueError as exc:
+            self._reject(str(exc))
+        ids = [row.id for row in rows]
+        if any(row.bank_account_code != bank_account_code for row in rows):
+            self._reject("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
+        if any(row.booking_date != expected_date for row in rows):
             self._reject("BORROWING_BANK_TRANSACTION_DATE_MISMATCH")
         if any(row.currency != "CNY" for row in rows):
             self._reject("BORROWING_BANK_CURRENCY_MISMATCH")
@@ -1155,6 +1183,7 @@ class BorrowingService(FinanceService):
             "template_lines": [
                 {
                     "account_role": item.account_role,
+                    "account_code": item.account_code,
                     "debit_fen": item.debit_fen,
                     "credit_fen": item.credit_fen,
                 }

@@ -25,7 +25,6 @@ from .accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from .accounting_periods import (
-    ACCOUNTING_PERIOD_CLOSE_CHECKER_VERSION,
     ACCOUNTING_PERIOD_CLOSE_EFFECTIVE_FROM,
     ACCOUNTING_PERIOD_CLOSE_RULE_VERSION,
     ACCOUNTING_PERIOD_CLOSE_SOURCE_URLS,
@@ -42,8 +41,11 @@ from .models import (
     AccountingPeriodAction,
     AccountingPeriodCalendar,
     AccountingPeriodClose,
+    AccountingPeriodCloseBankReconciliation,
     AccountingPeriodCloseSource,
+    BankReconciliation,
     BankTransaction,
+    BankTransactionMatch,
     Borrowing,
     BorrowingInterestAccrual,
     BusinessEvent,
@@ -61,6 +63,8 @@ from .models import (
     VoucherLine,
     accounting_period_action_evidence,
 )
+
+_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.2"
 
 
 class _PeriodDecision(ValueError):
@@ -460,7 +464,7 @@ class AccountingPeriodService:
             rule_effective_from=ACCOUNTING_PERIOD_CLOSE_EFFECTIVE_FROM,
             source_urls=list(ACCOUNTING_PERIOD_CLOSE_SOURCE_URLS),
             previous_close_hash=snapshot["previous_close_hash"],
-            checker_version=ACCOUNTING_PERIOD_CLOSE_CHECKER_VERSION,
+            checker_version=_BANK_AWARE_CLOSE_CHECKER_VERSION,
             confirmed_at=datetime.now(UTC),
             voucher_count=len(snapshot["sources"]),
             line_count=sum(len(source["line_snapshot"]) for source in snapshot["sources"]),
@@ -488,6 +492,18 @@ class AccountingPeriodService:
                     line_snapshot=source["line_snapshot"],
                 )
                 for source in snapshot["sources"]
+            ]
+        )
+        self.session.add_all(
+            [
+                AccountingPeriodCloseBankReconciliation(
+                    org_id=request.org_id,
+                    close_id=close.id,
+                    bank_account_code=item.bank_account_code,
+                    reconciliation_id=item.id,
+                    reconciliation_hash_at_close=item.calculation_hash,
+                )
+                for item in snapshot["bank_reconciliations"]
             ]
         )
         self._attach_evidence(action.id, request.org_id, request.evidence_references)
@@ -586,6 +602,23 @@ class AccountingPeriodService:
             if result["blocking"]:
                 self._add_check(checks, blockers, result["code"], False, result["count"])
         account_totals = self._account_totals(request.org_id, period)
+        bank_reconciliations, bank_reconciliation_issues = (
+            self._current_bank_reconciliations(request.org_id, period)
+        )
+        self._add_check(
+            checks,
+            blockers,
+            "ACCOUNTING_PERIOD_BANK_SCOPE_CONFIRMED",
+            org.bank_reconciliation_scope_current_action_id is not None,
+            0 if org.bank_reconciliation_scope_current_action_id is not None else 1,
+        )
+        self._add_check(
+            checks,
+            blockers,
+            "ACCOUNTING_PERIOD_BANK_RECONCILIATIONS_CURRENT",
+            not bank_reconciliation_issues,
+            len(bank_reconciliation_issues),
+        )
         warnings, review_counts = self._review_warnings(request.org_id, period)
         previous = prior[-1] if prior else None
         previous_close_hash = None
@@ -612,6 +645,7 @@ class AccountingPeriodService:
             module_checks=module_checks,
             warnings=warnings,
         )
+        payload["checker_version"] = _BANK_AWARE_CLOSE_CHECKER_VERSION
         calculation_hash = close_calculation_hash(payload)
         return {
             "payload": payload,
@@ -619,6 +653,7 @@ class AccountingPeriodService:
             "blockers": blockers,
             "sources": sources,
             "previous_close_hash": previous_close_hash,
+            "bank_reconciliations": bank_reconciliations,
             "trace": [
                 {"stage": "period_close_snapshot", "period_id": str(period.id)},
                 {"stage": "system_checks_completed", "blocker_codes": blockers},
@@ -931,17 +966,59 @@ class AccountingPeriodService:
             )
             or 0
         )
-        unmatched_bank = (
-            self.session.scalar(
-                select(func.count())
-                .select_from(BankTransaction)
-                .where(
-                    BankTransaction.org_id == org_id,
-                    BankTransaction.booking_date <= period.end_date,
-                    BankTransaction.matched_event_id.is_(None),
-                )
+        ordinary_rows = self.session.scalars(
+            select(BankTransaction).where(
+                BankTransaction.org_id == org_id,
+                BankTransaction.booking_date <= period.end_date,
+                BankTransaction.is_late.is_(False),
             )
-            or 0
+        ).all()
+        active_matches = self.session.scalars(
+            select(BankTransactionMatch).where(
+                BankTransactionMatch.org_id == org_id,
+                BankTransactionMatch.bank_transaction_id.in_(
+                    [item.id for item in ordinary_rows]
+                ),
+                BankTransactionMatch.invalidated_by_event_id.is_(None),
+            )
+        ).all() if ordinary_rows else []
+        active_by_transaction = {
+            item.bank_transaction_id: item for item in active_matches
+        }
+        from .bank_statement_service import BankStatementService
+
+        bank_service = BankStatementService(
+            self.session,
+            current_date=self._today(),
+        )
+        unmatched_bank = 0
+        for transaction in ordinary_rows:
+            try:
+                matched = bank_service._valid_current_match(
+                    transaction,
+                    active_by_transaction.get(transaction.id),
+                )
+            except ValueError:
+                matched = False
+            if not matched:
+                unmatched_bank += 1
+        pending_late_bank = 0
+        late_rows = self.session.scalars(
+            select(BankTransaction).where(
+                BankTransaction.org_id == org_id,
+                BankTransaction.is_late.is_(True),
+            )
+        ).all()
+        for transaction in late_rows:
+            original = self.session.get(AccountingPeriod, transaction.original_period_id)
+            if (
+                original is not None
+                and original.end_date < period.start_date
+                and bank_service._current_late_action(transaction) is None
+            ):
+                pending_late_bank += 1
+        historical_scope_corrections = len(
+            bank_service._historical_scope_corrections(org_id)
         )
         tax_events = (
             self.session.scalar(
@@ -956,21 +1033,120 @@ class AccountingPeriodService:
             or 0
         )
         counts = {
+            "historical_bank_scope_corrections_pending": int(
+                historical_scope_corrections
+            ),
             "open_items": int(open_items),
-            "unmatched_bank_transactions": int(unmatched_bank),
+            "pending_late_bank_transactions": int(pending_late_bank),
             "tax_items_to_review": int(tax_events),
+            "unmatched_bank_transactions": int(unmatched_bank),
         }
         return (
             [
                 {"code": "ACCOUNTING_PERIOD_OPEN_ITEMS_REVIEW", "count": counts["open_items"]},
+                {"code": "ACCOUNTING_PERIOD_TAX_REVIEW", "count": counts["tax_items_to_review"]},
                 {
                     "code": "ACCOUNTING_PERIOD_UNMATCHED_BANK_REVIEW",
                     "count": counts["unmatched_bank_transactions"],
                 },
-                {"code": "ACCOUNTING_PERIOD_TAX_REVIEW", "count": counts["tax_items_to_review"]},
+                {
+                    "code": "ACCOUNTING_PERIOD_PENDING_LATE_BANK_REVIEW",
+                    "count": counts["pending_late_bank_transactions"],
+                },
+                {
+                    "code": "ACCOUNTING_PERIOD_HISTORICAL_BANK_SCOPE_CORRECTION_PENDING",
+                    "count": counts["historical_bank_scope_corrections_pending"],
+                },
             ],
             counts,
         )
+
+    def _current_bank_reconciliations(
+        self,
+        org_id: uuid.UUID,
+        period: AccountingPeriod,
+    ) -> tuple[list[BankReconciliation], list[str]]:
+        organization = self.session.get(Organization, org_id)
+        if (
+            organization is None
+            or organization.bank_reconciliation_scope_current_action_id is None
+        ):
+            return [], ["BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED"]
+        accounts = self.session.scalars(
+            select(Account)
+            .where(
+                Account.org_id == org_id,
+                Account.requires_bank_reconciliation.is_(True),
+                Account.bank_reconciliation_start_date <= period.end_date,
+                (
+                    Account.bank_reconciliation_end_date.is_(None)
+                    | (Account.bank_reconciliation_end_date >= period.end_date)
+                ),
+            )
+            .order_by(Account.code, Account.id)
+        ).all()
+        from .bank_statement_schemas import PreviewBankReconciliationRequest
+        from .bank_statement_service import BankStatementService
+
+        service = BankStatementService(
+            self.session,
+            current_date=self._today(),
+        )
+        current: list[BankReconciliation] = []
+        issues: list[str] = []
+        for account in accounts:
+            reconciliation = self.session.scalar(
+                select(BankReconciliation)
+                .where(
+                    BankReconciliation.org_id == org_id,
+                    BankReconciliation.period_id == period.id,
+                    BankReconciliation.bank_account_code == account.code,
+                )
+                .order_by(BankReconciliation.version.desc(), BankReconciliation.id.desc())
+                .limit(1)
+            )
+            if reconciliation is None:
+                issues.append(
+                    f"BANK_RECONCILIATION_MISSING:{account.code}"
+                )
+                continue
+            calculation = reconciliation.calculation
+            preview_request = PreviewBankReconciliationRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "period_id": period.id,
+                    "bank_account_code": account.code,
+                    "coverage_start_date": calculation["coverage_start_date"],
+                    "coverage_end_date": calculation["coverage_end_date"],
+                    "statement_opening_balance_fen": calculation[
+                        "statement_opening_balance_fen"
+                    ],
+                    "statement_closing_balance_fen": calculation[
+                        "statement_closing_balance_fen"
+                    ],
+                    "statement_import_action_ids": [
+                        item["action_id"] for item in calculation["import_actions"]
+                    ],
+                    "statement_evidence_references": [
+                        item["evidence_id"]
+                        for item in calculation["statement_evidence"]
+                    ],
+                    "difference_explanations": calculation[
+                        "difference_explanations"
+                    ],
+                }
+            )
+            preview = service.preview_bank_reconciliation(preview_request)
+            if (
+                preview.status != "calculated"
+                or preview.calculation_hash != reconciliation.calculation_hash
+            ):
+                issues.append(
+                    f"BANK_RECONCILIATION_STALE:{account.code}"
+                )
+                continue
+            current.append(reconciliation)
+        return current, issues
 
     def _legacy_data_exists(self, org_id: uuid.UUID) -> bool:
         return any(

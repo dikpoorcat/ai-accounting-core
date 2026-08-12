@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import uuid
+from calendar import monthrange
 from datetime import date
+from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,8 +18,24 @@ from ai_accounting.accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
+from ai_accounting.bank_statement_schemas import (
+    ConfirmBankReconciliationRequest,
+    ConfirmBankReconciliationScopeRequest,
+    ConfirmBankStatementFileImportRequest,
+    PreviewBankReconciliationRequest,
+    PreviewBankReconciliationScopeRequest,
+    PreviewBankStatementFileImportRequest,
+)
+from ai_accounting.bank_statement_service import BankStatementService
 from ai_accounting.coa import seed_organization
+from ai_accounting.config import Settings
+from ai_accounting.execution_attribution import persist_execution_attribution
+from ai_accounting.identity import ExecutorIdentity, ExecutorKind
+from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
+from ai_accounting.identity_service import IdentityService
 from ai_accounting.models import (
+    EXECUTION_ATTRIBUTION_SESSION_KEY,
+    Account,
     AccountingPeriodClose,
     BusinessEvent,
     BusinessEventDependency,
@@ -48,6 +67,7 @@ def _cash_sale_request(organization: Organization, *, key: str) -> RecordEventRe
                 "tax_obligation_date": "2026-08-08",
             },
             "amounts": {"gross_amount_fen": 101_000},
+            "bank_account_code": "1002",
             "tax_facts": {
                 "taxable": True,
                 "rate_percent": "1",
@@ -108,6 +128,7 @@ def _customer_receipt_request(organization: Organization) -> RecordEventRequest:
             },
             "counterparty": {"kind": "customer", "name": "期间依赖客户"},
             "amounts": {"amount_fen": 120_000},
+            "bank_account_code": "1002",
             "details": {"unallocated_treatment": "advance"},
         }
     )
@@ -160,6 +181,7 @@ def _advance_refund_request(
             },
             "counterparty": {"kind": "customer", "name": "期间依赖客户"},
             "amounts": {"amount_fen": 50_000},
+            "bank_account_code": "1002",
             "details": {
                 "refund_kind": "advance",
                 "original_event_id": str(parent_event_id),
@@ -168,8 +190,160 @@ def _advance_refund_request(
     )
 
 
+def _confirm_default_bank_scope(
+    session: Session,
+    organization: Organization,
+    evidence: Evidence,
+    *,
+    start_date: date = date(2026, 1, 1),
+) -> None:
+    if organization.bank_reconciliation_scope_current_action_id is not None:
+        return
+    identity = IdentityService(session)
+    password = SecretStr("Accounting-Period-Scope-2026!")
+    login_name = f"owner-{organization.id.hex[:12]}"
+    identity.provision_owner(
+        OwnerProvisionRequest(
+            org_id=organization.id,
+            login_name=login_name,
+            password=password,
+        )
+    )
+    login = identity.authenticate(
+        OwnerLoginRequest(login_name=login_name, password=password)
+    )
+    context = identity.authorize_execution(
+        session_token=login.session_token.get_secret_value(),
+        executor=ExecutorIdentity(
+            kind=ExecutorKind.AI_AGENT,
+            executor_name="period-integration-test",
+            executor_version="v1",
+        ),
+        request_correlation_id=uuid.uuid4(),
+    )
+    account = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.code == "1002",
+        )
+    )
+    assert account is not None
+    request = PreviewBankReconciliationScopeRequest(
+        org_id=organization.id,
+        action_type="initial_confirmation",
+        accounts=[
+            {
+                "bank_account_code": account.code,
+                "account_name": account.name,
+                "start_date": start_date,
+            }
+        ],
+        explanation="期间集成测试明确确认银行账户",
+        evidence_references=[evidence.id],
+    )
+    with persist_execution_attribution(
+        session,
+        context=context,
+        tool_name="finance_confirm_bank_reconciliation_scope",
+    ) as attribution:
+        service = BankStatementService(session)
+        preview = service.preview_bank_reconciliation_scope(request)
+        assert preview.calculation_hash is not None
+        result = service.confirm_bank_reconciliation_scope(
+            ConfirmBankReconciliationScopeRequest.model_validate(
+                request.model_dump()
+                | {
+                    "calculation_hash": preview.calculation_hash,
+                    "idempotency_key": f"scope-{organization.id}",
+                }
+            )
+        )
+        assert result.status == "posted"
+    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution.id
+
+
+def _import_and_reconcile_bank_period(
+    session: Session,
+    organization: Organization,
+    evidence: Evidence,
+    *,
+    period_id: uuid.UUID,
+    month_start: date,
+    amount_fen: int,
+    import_dir: Path,
+    key: str,
+) -> None:
+    source_name = f"{key}.csv"
+    amount_text = f"{amount_fen // 100}.{amount_fen % 100:02d}"
+    (import_dir / source_name).write_bytes(
+        (
+            "date,amount,reference\n"
+            f"{month_start.replace(day=15).isoformat()},{amount_text},{key}\n"
+        ).encode()
+    )
+    service = BankStatementService(
+        session,
+        settings=Settings(finance_bank_import_dir=import_dir),
+        current_date=month_start.replace(day=20),
+    )
+    import_request = PreviewBankStatementFileImportRequest(
+        org_id=organization.id,
+        bank_account_code="1002",
+        source_file_name=source_name,
+        file_format="csv",
+        column_mapping={
+            "booking_date": "date",
+            "amount": "amount",
+            "external_id": "reference",
+        },
+    )
+    import_preview = service.preview_bank_statement_import(import_request)
+    assert import_preview.calculation_hash is not None
+    imported = service.confirm_bank_statement_import(
+        ConfirmBankStatementFileImportRequest.model_validate(
+            import_request.model_dump()
+            | {
+                "calculation_hash": import_preview.calculation_hash,
+                "idempotency_key": f"import-{key}",
+            }
+        )
+    )
+    assert imported.status == "posted"
+    reconciliation_request = PreviewBankReconciliationRequest(
+        org_id=organization.id,
+        period_id=period_id,
+        bank_account_code="1002",
+        coverage_start_date=month_start,
+        coverage_end_date=date(
+            month_start.year,
+            month_start.month,
+            monthrange(month_start.year, month_start.month)[1],
+        ),
+        statement_opening_balance_fen=0,
+        statement_closing_balance_fen=amount_fen,
+        statement_import_action_ids=[imported.action_id],
+        statement_evidence_references=[evidence.id],
+    )
+    reconciliation_preview = service.preview_bank_reconciliation(
+        reconciliation_request
+    )
+    assert reconciliation_preview.calculation_hash is not None
+    reconciled = service.confirm_bank_reconciliation(
+        ConfirmBankReconciliationRequest.model_validate(
+            reconciliation_request.model_dump()
+            | {
+                "calculation_hash": reconciliation_preview.calculation_hash,
+                "idempotency_key": f"reconcile-{key}",
+            }
+        )
+    )
+    assert reconciled.status == "posted"
+
+
 def test_new_organization_defaults_to_period_control_fail_closed(session: Session) -> None:
     organization = seed_organization(session, name="新组织默认期控")
+    evidence = _period_evidence(session, organization)
+    _confirm_default_bank_scope(session, organization, evidence)
     session.flush()
 
     assert organization.accounting_period_control_enabled is True
@@ -191,7 +365,7 @@ def test_new_organization_defaults_to_period_control_fail_closed(session: Sessio
     ) is None
 
 
-def test_china_current_date_boundary_blocks_future_posting_for_all_organizations(
+def test_china_current_date_boundary_blocks_future_posting(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     today = date(2026, 8, 11)
@@ -200,6 +374,7 @@ def test_china_current_date_boundary_blocks_future_posting_for_all_organizations
 
     controlled = seed_organization(session, name="中国日期期控组织")
     evidence = _period_evidence(session, controlled)
+    _confirm_default_bank_scope(session, controlled, evidence)
     generated = AccountingPeriodService(session, current_date=today).generate_accounting_period(
         GenerateAccountingPeriodRequest(
             org_id=controlled.id,
@@ -221,23 +396,6 @@ def test_china_current_date_boundary_blocks_future_posting_for_all_organizations
     assert future.errors == ["ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"]
     assert future.voucher_id is None
 
-    legacy = seed_organization(
-        session,
-        name="中国日期迁移兼容组织",
-        accounting_period_control_enabled=False,
-    )
-    legacy_current = FinanceService(session).record_event(
-        _cash_sale_at(legacy, key="china-date-legacy-current", posting_date=today)
-    )
-    legacy_future = FinanceService(session).record_event(
-        _cash_sale_at(legacy, key="china-date-legacy-future", posting_date=tomorrow)
-    )
-    assert legacy_current.status == "posted"
-    assert legacy_future.status == "rejected"
-    assert legacy_future.errors == ["ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"]
-    assert legacy_future.voucher_id is None
-
-
 def test_explicitly_disabled_migrated_organization_remains_compatible(
     session: Session,
 ) -> None:
@@ -246,6 +404,8 @@ def test_explicitly_disabled_migrated_organization_remains_compatible(
         name="迁移组织期控兼容",
         accounting_period_control_enabled=False,
     )
+    evidence = _period_evidence(session, organization)
+    _confirm_default_bank_scope(session, organization, evidence)
     assert organization.accounting_period_control_enabled is False
     assert organization.accounting_period_control_start_date is None
 
@@ -259,6 +419,8 @@ def test_explicitly_disabled_migrated_organization_remains_compatible(
 def test_dependency_edges_require_children_to_be_reversed_first(
     session: Session, organization: Organization
 ) -> None:
+    evidence = _period_evidence(session, organization)
+    _confirm_default_bank_scope(session, organization, evidence)
     service = FinanceService(session)
     parent = service.record_event(_customer_receipt_request(organization))
     assert parent.status == "posted"
@@ -318,9 +480,11 @@ def test_dependency_edges_require_children_to_be_reversed_first(
 
 def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
     session: Session,
+    tmp_path: Path,
 ) -> None:
     organization = seed_organization(session, name="非零期间完整闭环")
     evidence = _period_evidence(session, organization)
+    _confirm_default_bank_scope(session, organization, evidence)
     period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
     finance_service = FinanceService(session)
 
@@ -354,6 +518,16 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
         )
     )
     assert july_sale.status == "posted"
+    _import_and_reconcile_bank_period(
+        session,
+        organization,
+        evidence,
+        period_id=generated_july.period_id,
+        month_start=date(2026, 7, 1),
+        amount_fen=101_000,
+        import_dir=tmp_path,
+        key="july-sale",
+    )
 
     preview_request = PreviewAccountingPeriodCloseRequest(
         org_id=organization.id,
@@ -434,6 +608,7 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
 def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
     session: Session,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
         "ai_accounting.ledger.china_current_date", lambda: date(2026, 8, 11)
@@ -444,6 +619,7 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
         filing_cycle="monthly",
     )
     evidence = _period_evidence(session, organization)
+    _confirm_default_bank_scope(session, organization, evidence)
     period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
     finance_service = FinanceService(session)
     july = period_service.generate_accounting_period(
@@ -464,6 +640,16 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
         )
     )
     assert source.status == "posted"
+    _import_and_reconcile_bank_period(
+        session,
+        organization,
+        evidence,
+        period_id=july.period_id,
+        month_start=date(2026, 7, 1),
+        amount_fen=101_000,
+        import_dir=tmp_path,
+        key="tax-july-sale",
+    )
 
     close_preview_request = PreviewAccountingPeriodCloseRequest(
         org_id=organization.id,

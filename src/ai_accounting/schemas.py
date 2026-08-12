@@ -41,6 +41,7 @@ class EventType(StrEnum):
     OWNER_REPAYMENT = "owner_repayment"
     BANK_FEE = "bank_fee"
     INTERNAL_TRANSFER = "internal_transfer"
+    CASH_BANK_TRANSFER = "cash_bank_transfer"
     TAX_PAYMENT = "tax_payment"
     TAX_RELIEF = "tax_relief"
     SALARY_PAYMENT = "salary_payment"
@@ -89,6 +90,12 @@ INTERNAL_EVENT_TYPES = {
 }
 
 
+BANK_TRANSACTION_REFERENCES_OPTIONAL = (
+    "optional; if provided, every row must belong to the selected bank account and its signed "
+    "total must exactly match the typed settlement amount and direction"
+)
+
+
 EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     EventType.SERVICE_CASH_SALE.value: {
         "amount": "gross_amount_fen",
@@ -101,6 +108,8 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         ],
         "tax_facts": "required",
         "counterparty": "optional",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.SERVICE_CREDIT_SALE.value: {
         "amount": "gross_amount_fen",
@@ -130,23 +139,31 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "customer required",
         "required_choice": "allocations, or details.unallocated_treatment=advance",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.CUSTOMER_ADVANCE.value: {
         "amount": "gross_amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "customer required",
         "tax_facts": "required; set tax_due_on_event explicitly",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.CUSTOMER_REFUND.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "customer required",
         "required_details": ["refund_kind=advance|sale_return", "original_event_id"],
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.EXPENSE_CASH.value: {
         "amount": "gross_amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "purchase_vat": "included in expense; no input credit",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.EXPENSE_PAYABLE.value: {
         "amount": "gross_amount_fen",
@@ -159,43 +176,76 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "supplier required",
         "allocations": "required and total must equal payment",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.EMPLOYEE_REIMBURSEMENT.value: {
         "amount": "gross_amount_fen",
         "required_dates": ["business_date", "posting_date"],
         "counterparty": "employee required",
         "required_details": ["paid_now"],
+        "conditional_required_fields": {
+            "when details.paid_now=true": ["bank_account_code"],
+        },
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.OWNER_LOAN_RECEIVED.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "owner required",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.OWNER_CONTRIBUTION_RECEIVED.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "owner required",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.OWNER_REPAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "owner required",
         "constraint": "cannot exceed this owner's payable balance",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.BANK_FEE.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.INTERNAL_TRANSFER.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "posting_date"],
-        "required_details": ["source_account_code", "destination_account_code"],
+        "required_fields": [
+            "source_bank_account_code",
+            "destination_bank_account_code",
+        ],
+        "bank_transaction_references": (
+            "optional; if provided, rows may belong only to the source or destination account; "
+            "source rows must total -amount_fen and destination rows +amount_fen"
+        ),
+    },
+    EventType.CASH_BANK_TRANSFER.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "posting_date"],
+        "required_fields": ["direction", "bank_account_code"],
+        "direction": "cash_deposit|cash_withdrawal",
+        "bank_transaction_references": (
+            "optional; if provided, every row must belong to bank_account_code and total "
+            "+amount_fen for cash_deposit or -amount_fen for cash_withdrawal"
+        ),
     },
     EventType.TAX_PAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "required_details": ["tax_type=vat|surtax"],
         "constraint": "cannot exceed posted tax payable balance",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.SALARY_PAYMENT.value: {
         "amount": "amount_fen",
@@ -206,32 +256,40 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "salary_withholding_allocations": (
             "required; classified employee deductions per salary open item"
         ),
-        "bank_transactions": "required; outflow total must equal payment",
+        "conditional_required_fields": {"when amount_fen > 0": ["bank_account_code"]},
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
         "creates": "withheld statutory payroll payables internally",
     },
     EventType.SOCIAL_INSURANCE_PAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "allocations": "required; social-insurance payables only; total must equal payment",
-        "bank_transactions": "required; outflow total must equal payment",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.HOUSING_FUND_PAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "allocations": "required; housing-fund payables only; total must equal payment",
-        "bank_transactions": "required; outflow total must equal payment",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.INDIVIDUAL_INCOME_TAX_PAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "allocations": "required; individual-income-tax payables only; total must equal payment",
-        "bank_transactions": "required; outflow total must equal payment",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.FIXED_ASSET.value: {
         "workflow": "specialized fixed-asset tools only",
     },
     EventType.FIXED_ASSET_ACQUISITION.value: {
         "workflow": "finance_acquire_fixed_asset only",
+        "conditional_required_fields": {
+            "when settlement_method=bank": ["bank_account_code"],
+        },
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.FIXED_ASSET_ACTIVATION.value: {
         "workflow": "finance_activate_fixed_asset only",
@@ -241,12 +299,20 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     },
     EventType.FIXED_ASSET_DISPOSAL.value: {
         "workflow": "finance_dispose_fixed_asset only",
+        "conditional_required_fields": {
+            "when bank sale or clearance_cost_fen > 0": ["bank_account_code"],
+        },
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.INTANGIBLE_ASSET.value: {
         "workflow": "specialized intangible-asset tools only",
     },
     EventType.INTANGIBLE_ASSET_ACQUISITION.value: {
         "workflow": "finance_acquire_intangible_asset only",
+        "conditional_required_fields": {
+            "when settlement_method=bank": ["bank_account_code"],
+        },
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.INTANGIBLE_ASSET_AMORTIZATION.value: {
         "workflow": "finance_preview_intangible_asset_amortization then confirm only",
@@ -259,15 +325,21 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     },
     EventType.BORROWING_DRAWDOWN.value: {
         "workflow": "finance_draw_borrowing only",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.BORROWING_INTEREST_ACCRUAL.value: {
         "workflow": "finance_preview_borrowing_interest then confirm only",
     },
     EventType.BORROWING_INTEREST_PAYMENT.value: {
         "workflow": "finance_pay_borrowing_interest only",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.BORROWING_PRINCIPAL_REPAYMENT.value: {
         "workflow": "finance_repay_borrowing_principal only",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
 }
 
@@ -423,27 +495,10 @@ class EventDetails(BaseModel):
     tax_previously_accrued: bool | None = None
     refund_kind: Literal["advance", "sale_return"] | None = None
     paid_now: bool | None = None
-    source_account: str | None = Field(default=None, min_length=1, max_length=50)
-    destination_account: str | None = Field(default=None, min_length=1, max_length=50)
     tax_type: Literal["vat", "surtax"] | None = None
     original_event_id: uuid.UUID | None = None
     unallocated_treatment: Literal["advance"] | None = None
     recognition_source: Literal["contract_liability"] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def accept_legacy_internal_transfer_names(cls, value: Any) -> Any:
-        """Map pre-contract names without advertising account-code entry fields."""
-        if not isinstance(value, dict):
-            return value
-        normalized = dict(value)
-        if "source_account_code" in normalized:
-            normalized.setdefault("source_account", normalized["source_account_code"])
-            normalized.pop("source_account_code")
-        if "destination_account_code" in normalized:
-            normalized.setdefault("destination_account", normalized["destination_account_code"])
-            normalized.pop("destination_account_code")
-        return normalized
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
@@ -836,6 +891,7 @@ class AcquireFixedAssetRequest(BaseModel):
     cost_components: FixedAssetCostComponents = Field(default_factory=FixedAssetCostComponents)
     supplier: CounterpartyRef | None = None
     settlement_method: FixedAssetAcquisitionSettlementKind | None = None
+    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     payment_date: date | None = None
     due_date: date | None = None
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
@@ -849,6 +905,10 @@ class AcquireFixedAssetRequest(BaseModel):
             raise ValueError("posting_date must not precede purchase_date")
         if self.due_date and self.purchase_date and self.due_date < self.purchase_date:
             raise ValueError("due_date must not precede purchase_date")
+        if self.settlement_method is FixedAssetAcquisitionSettlementKind.PAYABLE and (
+            self.bank_account_code is not None or self.bank_transaction_references
+        ):
+            raise ValueError("a supplier-payable acquisition must not include bank facts")
         return self
 
     def missing_information(self) -> list[FixedAssetInformationRequirement]:
@@ -920,20 +980,20 @@ class AcquireFixedAssetRequest(BaseModel):
                 )
             )
         elif self.settlement_method is FixedAssetAcquisitionSettlementKind.BANK:
+            if self.bank_account_code is None:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_BANK_ACCOUNT_REQUIRED",
+                        message="a bank-paid acquisition requires its bank account code",
+                        fields=["bank_account_code"],
+                    )
+                )
             if self.payment_date is None:
                 missing.append(
                     FixedAssetInformationRequirement(
                         code="FIXED_ASSET_PAYMENT_DATE_REQUIRED",
                         message="a bank-paid acquisition requires its payment date",
                         fields=["payment_date"],
-                    )
-                )
-            if not self.bank_transaction_references:
-                missing.append(
-                    FixedAssetInformationRequirement(
-                        code="FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED",
-                        message="a bank-paid acquisition requires bank transaction references",
-                        fields=["bank_transaction_references"],
                     )
                 )
         elif self.due_date is None:
@@ -1021,9 +1081,7 @@ class PreviewFixedAssetDepreciationRequest(BaseModel):
 
     org_id: uuid.UUID
     asset_id: uuid.UUID | None = None
-    depreciation_period: str | None = Field(
-        default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"
-    )
+    depreciation_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     posting_date: date | None = None
 
     def missing_information(self) -> list[FixedAssetInformationRequirement]:
@@ -1081,6 +1139,7 @@ class DisposeFixedAssetRequest(BaseModel):
     invoice_type: Literal["ordinary", "special", "none"] | None = None
     waive_exemption: StrictBool | None = None
     settlement_method: FixedAssetDisposalSettlementKind | None = None
+    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     customer: CounterpartyRef | None = None
     tax_obligation_date: date | None = None
     clearance_cost_fen: Fen | None = None
@@ -1112,6 +1171,18 @@ class DisposeFixedAssetRequest(BaseModel):
             and self.settlement_method is FixedAssetDisposalSettlementKind.NONE
         ):
             raise ValueError("a sale must use bank or receivable settlement")
+        bank_settled = (
+            self.disposal_kind is FixedAssetDisposalKind.SALE
+            and self.settlement_method is FixedAssetDisposalSettlementKind.BANK
+        ) or bool(self.clearance_cost_fen)
+        if (
+            self.disposal_kind is not None
+            and self.settlement_method is not None
+            and self.clearance_cost_fen is not None
+            and not bank_settled
+            and (self.bank_account_code is not None or self.bank_transaction_references)
+        ):
+            raise ValueError("a disposal without bank settlement must not include bank facts")
         return self
 
     def missing_information(self) -> list[FixedAssetInformationRequirement]:
@@ -1165,15 +1236,14 @@ class DisposeFixedAssetRequest(BaseModel):
             self.disposal_kind is FixedAssetDisposalKind.SALE
             and self.settlement_method is FixedAssetDisposalSettlementKind.BANK
         ) or bool(self.clearance_cost_fen)
-        if requires_bank_references and not self.bank_transaction_references:
+        if requires_bank_references and self.bank_account_code is None:
             missing.append(
                 FixedAssetInformationRequirement(
-                    code="FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED",
+                    code="FIXED_ASSET_BANK_ACCOUNT_REQUIRED",
                     message=(
-                        "bank-settled disposal or clearance cost requires bank transaction "
-                        "references"
+                        "bank-settled disposal or clearance cost requires its bank account code"
                     ),
-                    fields=["bank_transaction_references"],
+                    fields=["bank_account_code"],
                 )
             )
         if self.disposal_kind is FixedAssetDisposalKind.RETIREMENT:
@@ -1233,6 +1303,10 @@ class RecordEventRequest(BaseModel):
     amounts: AmountFacts
     tax_facts: TaxFacts | None = None
     invoice_references: list[InvoiceReference] = Field(default_factory=list)
+    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
+    source_bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
+    destination_bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
+    direction: Literal["cash_deposit", "cash_withdrawal"] | None = None
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     allocations: list[Allocation] = Field(default_factory=list)
@@ -1248,6 +1322,53 @@ class RecordEventRequest(BaseModel):
             raise ValueError("zero amount_fen is only available for salary payment withholding")
         if self.amounts.gross_amount_fen is not None:
             raise ValueError("zero-cash salary payment must use amount_fen only")
+        return self
+
+    @model_validator(mode="after")
+    def bank_account_fields_follow_the_typed_settlement_branch(self) -> RecordEventRequest:
+        """Keep public bank selection explicit without opening a free-account API."""
+
+        if self.event_type is EventType.INTERNAL_TRANSFER:
+            if self.bank_account_code is not None:
+                raise ValueError("internal transfer must not provide bank_account_code")
+            if self.direction is not None:
+                raise ValueError("internal transfer must not provide a cash transfer direction")
+            return self
+        if (
+            self.source_bank_account_code is not None
+            or self.destination_bank_account_code is not None
+        ):
+            raise ValueError(
+                "source/destination bank account codes are only accepted for internal transfer"
+            )
+        if self.event_type is not EventType.CASH_BANK_TRANSFER and self.direction is not None:
+            raise ValueError("direction is only accepted for cash_bank_transfer")
+
+        bank_settled = self.event_type in {
+            EventType.SERVICE_CASH_SALE,
+            EventType.CUSTOMER_RECEIPT,
+            EventType.CUSTOMER_ADVANCE,
+            EventType.CUSTOMER_REFUND,
+            EventType.EXPENSE_CASH,
+            EventType.SUPPLIER_PAYMENT,
+            EventType.OWNER_LOAN_RECEIVED,
+            EventType.OWNER_CONTRIBUTION_RECEIVED,
+            EventType.OWNER_REPAYMENT,
+            EventType.BANK_FEE,
+            EventType.TAX_PAYMENT,
+            EventType.SOCIAL_INSURANCE_PAYMENT,
+            EventType.HOUSING_FUND_PAYMENT,
+            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
+            EventType.CASH_BANK_TRANSFER,
+        }
+        if self.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
+            bank_settled = self.details.paid_now is True
+        if self.event_type is EventType.SALARY_PAYMENT:
+            bank_settled = self.amounts.amount_fen != 0
+        if not bank_settled and (
+            self.bank_account_code is not None or self.bank_transaction_references
+        ):
+            raise ValueError("a non-bank settlement must not include bank account facts")
         return self
 
 
@@ -1316,9 +1437,7 @@ class RegisterEvidenceRequest(BaseModel):
         return self
 
     @classmethod
-    def __get_pydantic_json_schema__(
-        cls, core_schema: Any, handler: Any
-    ) -> dict[str, Any]:
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> dict[str, Any]:
         """Publish the same mutually-exclusive content rule enforced at runtime."""
 
         schema = handler(core_schema)
@@ -1362,9 +1481,7 @@ class BankStatementColumnMapping(BaseModel):
         return self
 
     @classmethod
-    def __get_pydantic_json_schema__(
-        cls, core_schema: Any, handler: Any
-    ) -> dict[str, Any]:
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> dict[str, Any]:
         """Expose the conditional amount mapping requirement to MCP clients."""
 
         schema = handler(core_schema)

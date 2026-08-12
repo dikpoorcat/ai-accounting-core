@@ -16,7 +16,6 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session, aliased
 
-from .coa import get_account_by_code
 from .ledger import (
     AccountingPeriodError,
     Entry,
@@ -28,6 +27,7 @@ from .ledger import (
     posting_period_error_code,
 )
 from .models import (
+    Account,
     AnnualBonusUsage,
     AuditLog,
     BankTransaction,
@@ -129,6 +129,128 @@ class FinanceService:
     def _request_payload_hash(self, request: Any) -> str:
         """Hash only caller-supplied business facts, before service derivation."""
         return self._canonical_payload_hash(request.model_dump(mode="json"))
+
+    @staticmethod
+    def _uses_bank_settlement(request: RecordEventRequest) -> bool:
+        if request.event_type is EventType.INTERNAL_TRANSFER:
+            return True
+        if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
+            return request.details.paid_now is True
+        if request.event_type is EventType.SALARY_PAYMENT:
+            return request.amounts.amount_fen != 0
+        return request.event_type in {
+            EventType.SERVICE_CASH_SALE,
+            EventType.CUSTOMER_RECEIPT,
+            EventType.CUSTOMER_ADVANCE,
+            EventType.CUSTOMER_REFUND,
+            EventType.EXPENSE_CASH,
+            EventType.SUPPLIER_PAYMENT,
+            EventType.OWNER_LOAN_RECEIVED,
+            EventType.OWNER_CONTRIBUTION_RECEIVED,
+            EventType.OWNER_REPAYMENT,
+            EventType.BANK_FEE,
+            EventType.TAX_PAYMENT,
+            EventType.SOCIAL_INSURANCE_PAYMENT,
+            EventType.HOUSING_FUND_PAYMENT,
+            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
+            EventType.CASH_BANK_TRANSFER,
+        }
+
+    @classmethod
+    def _bank_account_selections(cls, request: RecordEventRequest) -> list[tuple[str, str | None]]:
+        if request.event_type is EventType.INTERNAL_TRANSFER:
+            return [
+                ("source", request.source_bank_account_code),
+                ("destination", request.destination_bank_account_code),
+            ]
+        if cls._uses_bank_settlement(request):
+            return [("settlement", request.bank_account_code)]
+        return []
+
+    @staticmethod
+    def _bank_settlement_date(request: RecordEventRequest) -> date:
+        if request.event_type is EventType.INTERNAL_TRANSFER:
+            return request.business_dates.business_date
+        return request.business_dates.payment_date or request.business_dates.business_date
+
+    def _validate_bank_account(
+        self, org_id: uuid.UUID, account_code: str, settlement_date: date
+    ) -> Account:
+        """Validate one already-configured real bank account without inferring a default."""
+
+        account = self.session.scalar(
+            select(Account).where(Account.org_id == org_id, Account.code == account_code)
+        )
+        if account is None:
+            raise ValueError("BANK_ACCOUNT_NOT_CONFIRMED_FOR_RECONCILIATION")
+        if (
+            account.active is not True
+            or account.category != "asset"
+            or account.normal_side != "debit"
+            or account.requires_bank_reconciliation is not True
+            or account.bank_reconciliation_configured_at is None
+        ):
+            raise ValueError("BANK_ACCOUNT_NOT_CONFIRMED_FOR_RECONCILIATION")
+        start_date = account.bank_reconciliation_start_date
+        end_date = account.bank_reconciliation_end_date
+        if (
+            start_date is None
+            or settlement_date < start_date
+            or (end_date is not None and settlement_date > end_date)
+        ):
+            raise ValueError("BANK_ACCOUNT_RECONCILIATION_SCOPE_NOT_EFFECTIVE")
+        return account
+
+    @staticmethod
+    def _bank_reconciliation_scope_is_confirmed(organization: Organization) -> bool:
+        return (
+            organization.bank_reconciliation_scope_current_action_id is not None
+            and organization.bank_reconciliation_scope_confirmed_at is not None
+        )
+
+    def _resolve_bank_transaction_references(
+        self, org_id: uuid.UUID, references: list[Any]
+    ) -> list[BankTransaction]:
+        """Resolve references deterministically; ambiguous fingerprints require an id."""
+
+        resolved: list[BankTransaction] = []
+        for reference in references:
+            if reference.id is not None:
+                row = self.session.scalar(
+                    select(BankTransaction)
+                    .where(
+                        BankTransaction.org_id == org_id,
+                        BankTransaction.id == reference.id,
+                    )
+                    .with_for_update()
+                )
+                if row is None:
+                    raise ValueError("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
+                if reference.fingerprint is not None and row.fingerprint != reference.fingerprint:
+                    raise ValueError("BANK_TRANSACTION_REFERENCE_CONFLICT")
+            else:
+                matches = list(
+                    self.session.scalars(
+                        select(BankTransaction)
+                        .where(
+                            BankTransaction.org_id == org_id,
+                            BankTransaction.fingerprint == reference.fingerprint,
+                        )
+                        .order_by(BankTransaction.id)
+                        .limit(2)
+                        .with_for_update()
+                    ).all()
+                )
+                if not matches:
+                    raise ValueError("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
+                if len(matches) > 1:
+                    raise ValueError("BANK_TRANSACTION_FINGERPRINT_AMBIGUOUS_USE_ID")
+                row = matches[0]
+            resolved.append(row)
+        ids = [row.id for row in resolved]
+        if len(ids) != len(set(ids)):
+            raise ValueError("DUPLICATE_BANK_TRANSACTION_REFERENCE")
+        return resolved
 
     @staticmethod
     def _database_error_identity(exc: DBAPIError) -> tuple[str | None, str | None, str | None]:
@@ -326,9 +448,7 @@ class FinanceService:
                     org_id=org_id,
                     employee_id=employee_id,
                     tax_year=tax_year,
-                ).on_conflict_do_nothing(
-                    index_elements=["org_id", "employee_id", "tax_year"]
-                )
+                ).on_conflict_do_nothing(index_elements=["org_id", "employee_id", "tax_year"])
             )
         guards = self.session.scalars(
             select(PayrollTaxYearGuard)
@@ -436,6 +556,21 @@ class FinanceService:
             ):
                 return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
             return self._result_for_existing(existing)
+
+        if self._uses_bank_settlement(request) and not self._bank_reconciliation_scope_is_confirmed(
+            organization
+        ):
+            return FinanceResult(
+                status=ResultStatus.NEEDS_INFORMATION,
+                missing_information=["bank_reconciliation_scope_confirmation"],
+                trace=[
+                    {
+                        "stage": "validation",
+                        "status": "needs_information",
+                        "code": "BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
+                    }
+                ],
+            )
 
         if request.event_type in DISABLED_EVENT_TYPES:
             return self._store_nonposted(
@@ -620,6 +755,18 @@ class FinanceService:
         facts["derived"] = derived
 
         trace = [{"stage": "facts_validated", "event_type": request.event_type.value}]
+        bank_accounts = [
+            {"side": side, "account_code": code}
+            for side, code in self._bank_account_selections(request)
+        ]
+        if bank_accounts:
+            trace.append(
+                {
+                    "stage": "bank_accounts_validated",
+                    "settlement_date": self._bank_settlement_date(request).isoformat(),
+                    "accounts": bank_accounts,
+                }
+            )
         if linked_original is not None:
             trace.append(
                 {
@@ -780,10 +927,19 @@ class FinanceService:
             EventType.SERVICE_CREDIT_SALE,
         }:
             net, vat, taxable = self._sales_split(request, amount)
-            debit_role = (
-                "bank" if event_type == EventType.SERVICE_CASH_SALE else "accounts_receivable"
-            )
-            entries = [Entry(account_role=debit_role, debit_fen=amount, counterparty_id=cp_id)]
+            entries = [
+                Entry(
+                    account_code=request.bank_account_code,
+                    debit_fen=amount,
+                    counterparty_id=cp_id,
+                )
+                if event_type == EventType.SERVICE_CASH_SALE
+                else Entry(
+                    account_role="accounts_receivable",
+                    debit_fen=amount,
+                    counterparty_id=cp_id,
+                )
+            ]
             entries.append(
                 Entry(account_role="service_revenue", credit_fen=net, counterparty_id=cp_id)
             )
@@ -823,7 +979,11 @@ class FinanceService:
             if tax_due:
                 net, vat, taxable = self._sales_split(request, amount)
                 entries = [
-                    Entry(account_role="bank", debit_fen=amount, counterparty_id=cp_id),
+                    Entry(
+                        account_code=request.bank_account_code,
+                        debit_fen=amount,
+                        counterparty_id=cp_id,
+                    ),
                     Entry(account_role="contract_liability", credit_fen=net, counterparty_id=cp_id),
                 ]
                 if vat:
@@ -831,7 +991,11 @@ class FinanceService:
                 derived = self._sales_derived(request, amount, net, vat, taxable)
             else:
                 entries = [
-                    Entry(account_role="bank", debit_fen=amount, counterparty_id=cp_id),
+                    Entry(
+                        account_code=request.bank_account_code,
+                        debit_fen=amount,
+                        counterparty_id=cp_id,
+                    ),
                     Entry(
                         account_role="contract_liability", credit_fen=amount, counterparty_id=cp_id
                     ),
@@ -840,7 +1004,11 @@ class FinanceService:
         elif event_type == EventType.CUSTOMER_RECEIPT:
             allocated = sum(item.amount_fen for item in request.allocations)
             excess = amount - allocated
-            entries = [Entry(account_role="bank", debit_fen=amount, counterparty_id=cp_id)]
+            entries = [
+                Entry(
+                    account_code=request.bank_account_code, debit_fen=amount, counterparty_id=cp_id
+                )
+            ]
             if allocated:
                 entries.append(
                     Entry(
@@ -864,13 +1032,21 @@ class FinanceService:
                     Entry(
                         account_role="contract_liability", debit_fen=amount, counterparty_id=cp_id
                     ),
-                    Entry(account_role="bank", credit_fen=amount, counterparty_id=cp_id),
+                    Entry(
+                        account_code=request.bank_account_code,
+                        credit_fen=amount,
+                        counterparty_id=cp_id,
+                    ),
                 ]
             else:
                 net, vat, _ = self._sales_split(request, amount)
                 entries = [
                     Entry(account_role="service_revenue", debit_fen=net, counterparty_id=cp_id),
-                    Entry(account_role="bank", credit_fen=amount, counterparty_id=cp_id),
+                    Entry(
+                        account_code=request.bank_account_code,
+                        credit_fen=amount,
+                        counterparty_id=cp_id,
+                    ),
                 ]
                 if vat:
                     entries.insert(1, Entry(account_role="vat_payable", debit_fen=vat))
@@ -887,10 +1063,19 @@ class FinanceService:
 
         elif event_type in {EventType.EXPENSE_CASH, EventType.EXPENSE_PAYABLE}:
             expense_role = request.amounts.expense_account_role
-            credit_role = "bank" if event_type == EventType.EXPENSE_CASH else "accounts_payable"
             entries = [
                 Entry(account_role=expense_role, debit_fen=amount, counterparty_id=cp_id),
-                Entry(account_role=credit_role, credit_fen=amount, counterparty_id=cp_id),
+                Entry(
+                    account_code=request.bank_account_code,
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                )
+                if event_type == EventType.EXPENSE_CASH
+                else Entry(
+                    account_role="accounts_payable",
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
             ]
             if event_type == EventType.EXPENSE_PAYABLE:
                 open_item_type = "payable"
@@ -899,7 +1084,9 @@ class FinanceService:
         elif event_type == EventType.SUPPLIER_PAYMENT:
             entries = [
                 Entry(account_role="accounts_payable", debit_fen=amount, counterparty_id=cp_id),
-                Entry(account_role="bank", credit_fen=amount, counterparty_id=cp_id),
+                Entry(
+                    account_code=request.bank_account_code, credit_fen=amount, counterparty_id=cp_id
+                ),
             ]
             derived = {"allocated_fen": sum(item.amount_fen for item in request.allocations)}
 
@@ -912,7 +1099,8 @@ class FinanceService:
                     counterparty_id=cp_id,
                 ),
                 Entry(
-                    account_role="bank" if paid_now else "employee_payable",
+                    account_code=request.bank_account_code if paid_now else None,
+                    account_role=None if paid_now else "employee_payable",
                     credit_fen=amount,
                     counterparty_id=cp_id,
                 ),
@@ -920,33 +1108,51 @@ class FinanceService:
 
         elif event_type == EventType.OWNER_LOAN_RECEIVED:
             entries = [
-                Entry(account_role="bank", debit_fen=amount, counterparty_id=cp_id),
+                Entry(
+                    account_code=request.bank_account_code, debit_fen=amount, counterparty_id=cp_id
+                ),
                 Entry(account_role="owner_payable", credit_fen=amount, counterparty_id=cp_id),
             ]
 
         elif event_type == EventType.OWNER_CONTRIBUTION_RECEIVED:
             entries = [
-                Entry(account_role="bank", debit_fen=amount, counterparty_id=cp_id),
+                Entry(
+                    account_code=request.bank_account_code, debit_fen=amount, counterparty_id=cp_id
+                ),
                 Entry(account_role="paid_in_capital", credit_fen=amount, counterparty_id=cp_id),
             ]
 
         elif event_type == EventType.OWNER_REPAYMENT:
             entries = [
                 Entry(account_role="owner_payable", debit_fen=amount, counterparty_id=cp_id),
-                Entry(account_role="bank", credit_fen=amount, counterparty_id=cp_id),
+                Entry(
+                    account_code=request.bank_account_code, credit_fen=amount, counterparty_id=cp_id
+                ),
             ]
 
         elif event_type == EventType.BANK_FEE:
             entries = [
                 Entry(account_role="finance_expense", debit_fen=amount),
-                Entry(account_role="bank", credit_fen=amount),
+                Entry(account_code=request.bank_account_code, credit_fen=amount),
             ]
 
         elif event_type == EventType.INTERNAL_TRANSFER:
             entries = [
-                Entry(account_code=request.details["destination_account"], debit_fen=amount),
-                Entry(account_code=request.details["source_account"], credit_fen=amount),
+                Entry(account_code=request.destination_bank_account_code, debit_fen=amount),
+                Entry(account_code=request.source_bank_account_code, credit_fen=amount),
             ]
+
+        elif event_type == EventType.CASH_BANK_TRANSFER:
+            if request.direction == "cash_deposit":
+                entries = [
+                    Entry(account_code=request.bank_account_code, debit_fen=amount),
+                    Entry(account_role="cash", credit_fen=amount),
+                ]
+            else:
+                entries = [
+                    Entry(account_role="cash", debit_fen=amount),
+                    Entry(account_code=request.bank_account_code, credit_fen=amount),
+                ]
 
         elif event_type == EventType.TAX_PAYMENT:
             tax_role = {
@@ -955,7 +1161,7 @@ class FinanceService:
             }[request.details["tax_type"]]
             entries = [
                 Entry(account_role=tax_role, debit_fen=amount),
-                Entry(account_role="bank", credit_fen=amount),
+                Entry(account_code=request.bank_account_code, credit_fen=amount),
             ]
 
         elif event_type == EventType.SALARY_PAYMENT:
@@ -967,7 +1173,7 @@ class FinanceService:
                 ),
             ]
             if amount:
-                entries.append(Entry(account_role="bank", credit_fen=amount))
+                entries.append(Entry(account_code=request.bank_account_code, credit_fen=amount))
             for role, field_name in (
                 ("withheld_employee_social_payable", "employee_social_insurance_fen"),
                 ("withheld_employee_housing_fund_payable", "employee_housing_fund_fen"),
@@ -1005,7 +1211,7 @@ class FinanceService:
                 )
                 for _ in range(category_amounts["withheld_employee_social"] > 0)
             )
-            entries.append(Entry(account_role="bank", credit_fen=amount))
+            entries.append(Entry(account_code=request.bank_account_code, credit_fen=amount))
             derived = {"payable_categories": sorted(category_amounts), "allocated_fen": amount}
 
         elif event_type == EventType.HOUSING_FUND_PAYMENT:
@@ -1026,14 +1232,14 @@ class FinanceService:
                 )
                 for _ in range(category_amounts["withheld_employee_housing"] > 0)
             )
-            entries.append(Entry(account_role="bank", credit_fen=amount))
+            entries.append(Entry(account_code=request.bank_account_code, credit_fen=amount))
             derived = {"payable_categories": sorted(category_amounts), "allocated_fen": amount}
 
         elif event_type == EventType.INDIVIDUAL_INCOME_TAX_PAYMENT:
             self._payroll_payment_allocations(request, {"individual_income_tax"})
             entries = [
                 Entry(account_role="individual_income_tax_payable", debit_fen=amount),
-                Entry(account_role="bank", credit_fen=amount),
+                Entry(account_code=request.bank_account_code, credit_fen=amount),
             ]
             derived = {"payable_categories": ["individual_income_tax"], "allocated_fen": amount}
 
@@ -1826,51 +2032,10 @@ class FinanceService:
             )
 
     def _match_bank_transactions(self, event: BusinessEvent, request: RecordEventRequest) -> None:
-        matched_by_id: dict[uuid.UUID, BankTransaction] = {}
-        for reference in request.bank_transaction_references:
-            by_id = None
-            by_fingerprint = None
-            if reference.id is not None:
-                by_id = self.session.scalar(
-                    select(BankTransaction)
-                    .where(
-                        BankTransaction.org_id == request.org_id,
-                        BankTransaction.id == reference.id,
-                    )
-                    .with_for_update()
-                )
-                if by_id is None:
-                    exists_elsewhere = self.session.scalar(
-                        select(BankTransaction.id).where(BankTransaction.id == reference.id)
-                    )
-                    if exists_elsewhere is not None:
-                        raise ValueError("BANK_TRANSACTION_ORGANIZATION_MISMATCH")
-                    raise ValueError("BANK_TRANSACTION_ID_NOT_FOUND")
-            if reference.fingerprint is not None:
-                by_fingerprint = self.session.scalar(
-                    select(BankTransaction)
-                    .where(
-                        BankTransaction.org_id == request.org_id,
-                        BankTransaction.fingerprint == reference.fingerprint,
-                    )
-                    .with_for_update()
-                )
-                if by_fingerprint is None:
-                    exists_elsewhere = self.session.scalar(
-                        select(BankTransaction.id).where(
-                            BankTransaction.fingerprint == reference.fingerprint
-                        )
-                    )
-                    if exists_elsewhere is not None:
-                        raise ValueError("BANK_TRANSACTION_ORGANIZATION_MISMATCH")
-                    raise ValueError("BANK_TRANSACTION_FINGERPRINT_NOT_FOUND")
-            if by_id is not None and by_fingerprint is not None and by_id.id != by_fingerprint.id:
-                raise ValueError("BANK_TRANSACTION_REFERENCE_CONFLICT")
-            transaction = by_id or by_fingerprint
-            if transaction is None:  # pragma: no cover - schema rejects an empty reference.
-                raise ValueError("BANK_TRANSACTION_REFERENCE_REQUIRED")
-            if transaction.id in matched_by_id:
-                raise ValueError("DUPLICATE_BANK_TRANSACTION_REFERENCE")
+        matched = self._resolve_bank_transaction_references(
+            request.org_id, request.bank_transaction_references
+        )
+        for transaction in matched:
             active_match = self.session.scalar(
                 select(BankTransactionMatch)
                 .where(
@@ -1891,11 +2056,7 @@ class FinanceService:
                 and transaction.matched_event_id != event.id
             ):
                 raise ValueError("BANK_TRANSACTION_ALREADY_MATCHED")
-            matched_by_id[transaction.id] = transaction
-        matched = list(matched_by_id.values())
         if not matched:
-            if request.event_type == EventType.SALARY_PAYMENT and self._amount(request) == 0:
-                return
             return
 
         inflows = {
@@ -1909,6 +2070,7 @@ class FinanceService:
             EventType.CUSTOMER_REFUND,
             EventType.EXPENSE_CASH,
             EventType.SUPPLIER_PAYMENT,
+            EventType.EMPLOYEE_REIMBURSEMENT,
             EventType.OWNER_REPAYMENT,
             EventType.BANK_FEE,
             EventType.TAX_PAYMENT,
@@ -1918,7 +2080,43 @@ class FinanceService:
             EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
         }
         amount = self._amount(request)
-        bank_total = sum(transaction.amount_fen for transaction in matched)
+        if request.event_type == EventType.INTERNAL_TRANSFER:
+            source_code = request.source_bank_account_code
+            destination_code = request.destination_bank_account_code
+            if any(
+                transaction.bank_account_code not in {source_code, destination_code}
+                for transaction in matched
+            ):
+                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
+            source_total = sum(
+                transaction.amount_fen
+                for transaction in matched
+                if transaction.bank_account_code == source_code
+            )
+            destination_total = sum(
+                transaction.amount_fen
+                for transaction in matched
+                if transaction.bank_account_code == destination_code
+            )
+            if source_total != -amount or destination_total != amount:
+                raise ValueError("INTERNAL_TRANSFER_BANK_TRANSACTION_AMOUNT_MISMATCH")
+        elif request.event_type == EventType.CASH_BANK_TRANSFER:
+            if any(
+                transaction.bank_account_code != request.bank_account_code
+                for transaction in matched
+            ):
+                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
+            bank_total = sum(transaction.amount_fen for transaction in matched)
+            expected = amount if request.direction == "cash_deposit" else -amount
+            if bank_total != expected:
+                raise ValueError("CASH_BANK_TRANSFER_BANK_TRANSACTION_AMOUNT_MISMATCH")
+        else:
+            if any(
+                transaction.bank_account_code != request.bank_account_code
+                for transaction in matched
+            ):
+                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
+            bank_total = sum(transaction.amount_fen for transaction in matched)
         if request.event_type in inflows and bank_total != amount:
             raise ValueError(
                 f"bank inflow total does not match event amount: bank={bank_total}, event={amount}"
@@ -1927,16 +2125,14 @@ class FinanceService:
             raise ValueError(
                 f"bank outflow total does not match event amount: bank={bank_total}, event={amount}"
             )
-        if request.event_type == EventType.INTERNAL_TRANSFER:
-            if (
-                len(matched) != 2
-                or bank_total != 0
-                or any(abs(transaction.amount_fen) != amount for transaction in matched)
-            ):
-                raise ValueError(
-                    "internal transfer requires one equal inflow and one equal outflow bank row"
-                )
-        elif request.event_type not in inflows | outflows:
+        if (
+            request.event_type
+            not in {
+                EventType.INTERNAL_TRANSFER,
+                EventType.CASH_BANK_TRANSFER,
+            }
+            and request.event_type not in inflows | outflows
+        ):
             raise ValueError("this event type must not match bank transactions")
         for transaction in matched:
             self.session.add(
@@ -1980,11 +2176,12 @@ class FinanceService:
         return counterparty
 
     def _validate_business_links(self, request: RecordEventRequest) -> BusinessEvent | None:
+        settlement_date = self._bank_settlement_date(request)
+        for _side, account_code in self._bank_account_selections(request):
+            if account_code is not None:
+                self._validate_bank_account(request.org_id, account_code, settlement_date)
+
         if request.event_type == EventType.INTERNAL_TRANSFER:
-            for key in ("source_account", "destination_account"):
-                account = get_account_by_code(self.session, request.org_id, request.details[key])
-                if account.system_role not in {"bank", "cash"}:
-                    raise ValueError("internal transfers are limited to bank and cash accounts")
             return None
 
         if request.event_type == EventType.TAX_PAYMENT:
@@ -2141,6 +2338,21 @@ class FinanceService:
         if amount is None:
             missing.append("amounts.amount_fen or amounts.gross_amount_fen")
 
+        if request.event_type is EventType.INTERNAL_TRANSFER:
+            if request.source_bank_account_code is None:
+                missing.append("source_bank_account_code")
+            if request.destination_bank_account_code is None:
+                missing.append("destination_bank_account_code")
+            if (
+                request.source_bank_account_code is not None
+                and request.source_bank_account_code == request.destination_bank_account_code
+            ):
+                missing.append("different source and destination bank accounts")
+        elif self._uses_bank_settlement(request) and request.bank_account_code is None:
+            missing.append("bank_account_code")
+        if request.event_type is EventType.CASH_BANK_TRANSFER and request.direction is None:
+            missing.append("direction")
+
         counterparty_events = {
             EventType.SERVICE_CREDIT_SALE,
             EventType.SERVICE_FULFILLMENT,
@@ -2239,10 +2451,6 @@ class FinanceService:
                     )
                 elif amount and allocated < amount:
                     missing.append("salary allocations exceed cash payment after withholdings")
-            if amount == 0 and request.event_type == EventType.SALARY_PAYMENT:
-                pass
-            elif not request.bank_transaction_references:
-                missing.append("bank_transaction_references")
 
         if event_type == EventType.SERVICE_FULFILLMENT:
             if request.details.get("recognition_source") != "contract_liability":
@@ -2262,15 +2470,6 @@ class FinanceService:
 
         if event_type == EventType.EMPLOYEE_REIMBURSEMENT and "paid_now" not in request.details:
             missing.append("details.paid_now")
-        if event_type == EventType.INTERNAL_TRANSFER:
-            if not request.details.get("source_account"):
-                missing.append("details.source_account_code")
-            if not request.details.get("destination_account"):
-                missing.append("details.destination_account_code")
-            if request.details.get("source_account") == request.details.get(
-                "destination_account"
-            ) and request.details.get("source_account"):
-                missing.append("different source and destination accounts")
         if event_type == EventType.TAX_PAYMENT and request.details.get("tax_type") not in {
             "vat",
             "surtax",
@@ -3040,9 +3239,7 @@ class FinanceService:
                 )
             )
             if existing is not None:
-                if error := self._idempotency_error(
-                    existing, payload_hash, payroll_envelope=True
-                ):
+                if error := self._idempotency_error(existing, payload_hash, payroll_envelope=True):
                     return PayrollResult(status=PayrollResultStatus.REJECTED, errors=[error])
                 if existing.event_type == "payroll_accrual":
                     linked_batch_id = self.session.scalar(
@@ -3085,7 +3282,7 @@ class FinanceService:
         if batch is None:
             return PayrollResult(
                 status=PayrollResultStatus.REJECTED, errors=["PAYROLL_BATCH_NOT_FOUND"]
-        )
+            )
         confirm_payload_hash = self._request_payload_hash(request)
         existing_event = self.session.scalar(
             select(BusinessEvent).where(
@@ -3346,22 +3543,26 @@ class FinanceService:
             for event in events
             if event.reversed_by_event_id is not None
         }
-        event_evidence_rows = self.session.execute(
-            select(
-                event_evidence.c.event_id,
-                event_evidence.c.evidence_id,
-                event_evidence.c.relation_kind,
-            )
-            .where(
-                event_evidence.c.org_id == org_id,
-                event_evidence.c.event_id.in_([event.id for event in events]),
-            )
-            .order_by(
-                event_evidence.c.event_id,
-                event_evidence.c.relation_kind,
-                event_evidence.c.evidence_id,
-            )
-        ).all() if events else []
+        event_evidence_rows = (
+            self.session.execute(
+                select(
+                    event_evidence.c.event_id,
+                    event_evidence.c.evidence_id,
+                    event_evidence.c.relation_kind,
+                )
+                .where(
+                    event_evidence.c.org_id == org_id,
+                    event_evidence.c.event_id.in_([event.id for event in events]),
+                )
+                .order_by(
+                    event_evidence.c.event_id,
+                    event_evidence.c.relation_kind,
+                    event_evidence.c.evidence_id,
+                )
+            ).all()
+            if events
+            else []
+        )
         vouchers = (
             self.session.scalars(
                 select(Voucher)
@@ -3454,43 +3655,55 @@ class FinanceService:
             else []
         )
         linked_batch_ids = {link.payroll_batch_id for link in payroll_event_links}
-        linked_batches = {
-            linked_batch.id: linked_batch
-            for linked_batch in self.session.scalars(
-                select(PayrollBatch).where(
-                    PayrollBatch.org_id == org_id,
-                    PayrollBatch.id.in_(linked_batch_ids),
-                )
-            ).all()
-        } if linked_batch_ids else {}
+        linked_batches = (
+            {
+                linked_batch.id: linked_batch
+                for linked_batch in self.session.scalars(
+                    select(PayrollBatch).where(
+                        PayrollBatch.org_id == org_id,
+                        PayrollBatch.id.in_(linked_batch_ids),
+                    )
+                ).all()
+            }
+            if linked_batch_ids
+            else {}
+        )
         link_source_item_ids = {
             link.source_open_item_id
             for link in payroll_event_links
             if link.source_open_item_id is not None
         }
-        link_source_items = {
-            item.id: item
-            for item in self.session.scalars(
-                select(OpenItem).where(
-                    OpenItem.org_id == org_id,
-                    OpenItem.id.in_(link_source_item_ids),
-                )
-            ).all()
-        } if link_source_item_ids else {}
+        link_source_items = (
+            {
+                item.id: item
+                for item in self.session.scalars(
+                    select(OpenItem).where(
+                        OpenItem.org_id == org_id,
+                        OpenItem.id.in_(link_source_item_ids),
+                    )
+                ).all()
+            }
+            if link_source_item_ids
+            else {}
+        )
         link_source_event_ids = {
             link.source_payment_event_id
             for link in payroll_event_links
             if link.source_payment_event_id is not None
         }
-        link_source_events = {
-            source_event.id: source_event
-            for source_event in self.session.scalars(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == org_id,
-                    BusinessEvent.id.in_(link_source_event_ids),
-                )
-            ).all()
-        } if link_source_event_ids else {}
+        link_source_events = (
+            {
+                source_event.id: source_event
+                for source_event in self.session.scalars(
+                    select(BusinessEvent).where(
+                        BusinessEvent.org_id == org_id,
+                        BusinessEvent.id.in_(link_source_event_ids),
+                    )
+                ).all()
+            }
+            if link_source_event_ids
+            else {}
+        )
         payroll_links_by_event_id: dict[uuid.UUID, list[PayrollEventLink]] = {}
         for link in payroll_event_links:
             payroll_links_by_event_id.setdefault(link.event_id, []).append(link)
@@ -3744,18 +3957,14 @@ class FinanceService:
                     if link.payroll_batch_id in linked_batches
                     else None,
                     "source_payment_event_id": (
-                        str(link.source_payment_event_id)
-                        if link.source_payment_event_id
-                        else None
+                        str(link.source_payment_event_id) if link.source_payment_event_id else None
                     ),
                     "source_payment_event": (
                         {
                             "event_type": link_source_events[
                                 link.source_payment_event_id
                             ].event_type,
-                            "status": link_source_events[
-                                link.source_payment_event_id
-                            ].status,
+                            "status": link_source_events[link.source_payment_event_id].status,
                             "reversed_by_event_id": (
                                 str(
                                     link_source_events[
@@ -4022,9 +4231,7 @@ class FinanceService:
             ),
         }
         snapshot_parameters = {
-            "contribution_rules": deepcopy(
-                contribution_parameters.get("contribution_rules", [])
-            ),
+            "contribution_rules": deepcopy(contribution_parameters.get("contribution_rules", [])),
             "income_tax": deepcopy(tax_parameters["income_tax"]),
             "annual_bonus": deepcopy(tax_parameters.get("annual_bonus")),
             "payment_targets": merged_payment_targets,
@@ -4060,9 +4267,7 @@ class FinanceService:
                     "version": bonus_policy.version,
                     "effective_from": bonus_policy.effective_from.isoformat(),
                     "effective_to": (
-                        bonus_policy.effective_to.isoformat()
-                        if bonus_policy.effective_to
-                        else None
+                        bonus_policy.effective_to.isoformat() if bonus_policy.effective_to else None
                     ),
                     "primary_source_url": bonus_policy.primary_source_url,
                 }
@@ -4770,12 +4975,8 @@ class FinanceService:
             and self._effective_date_ranges_overlap(
                 effective_from,
                 effective_to,
-                YearMonth(
-                    int(batch.payroll_period[:4]), int(batch.payroll_period[5:])
-                ).end_date,
-                YearMonth(
-                    int(batch.payroll_period[:4]), int(batch.payroll_period[5:])
-                ).end_date,
+                YearMonth(int(batch.payroll_period[:4]), int(batch.payroll_period[5:])).end_date,
+                YearMonth(int(batch.payroll_period[:4]), int(batch.payroll_period[5:])).end_date,
             )
         ]
         return self._tax_downstream_closure(rows, direct)
@@ -6009,9 +6210,7 @@ class FinanceService:
             self.session.add(
                 PayrollWithholdingEntitlement(
                     org_id=original_batch.org_id,
-                    payroll_line_id=reversal_line_by_source_id[
-                        entitlement.payroll_line_id
-                    ].id,
+                    payroll_line_id=reversal_line_by_source_id[entitlement.payroll_line_id].id,
                     contribution_group=entitlement.contribution_group,
                     insurance_kind=entitlement.insurance_kind,
                     amount_fen=entitlement.amount_fen,

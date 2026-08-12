@@ -215,6 +215,7 @@ def _draw_payload() -> dict[str, object]:
     return {
         "org_id": str(uuid.uuid4()),
         "idempotency_key": "loan-1",
+        "bank_account_code": "1002",
         "borrowing_code": "LOAN-001",
         "contract_name": "working capital loan",
         "lender": {"name": "Licensed Bank"},

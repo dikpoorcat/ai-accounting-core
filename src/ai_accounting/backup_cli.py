@@ -1,4 +1,4 @@
-"""Credential CLI plus a DEC-035-paused Windows backup command boundary."""
+"""Credential CLI plus the fail-closed Windows backup command boundary."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from .backup_integration import (
     PgDumpAdapter,
     PostgresEndpoint,
     create_integrated_stopped_backup,
-    production_backup_command,
 )
 from .config import SettingsConfigurationError, get_settings
 from .service_lease import ServiceLeaseError, WindowsBackupServiceLease
@@ -112,10 +111,9 @@ def _credential_set() -> None:
 
 
 def _create(args: argparse.Namespace) -> None:
-    # DEC-035 has not frozen a machine-bound deployment configuration source.
-    # This gate must remain first: environment/.env values cannot authorize any
-    # credential, volume, lease, database, or filesystem side effect.
-    production_backup_command()
+    # DEC-035 A trusts the validated local production Settings, runtime database
+    # account, and current Windows account.  Every narrower deployment gate below
+    # remains fail-closed and is checked before the backup can be published.
     settings = _load_production_settings()
     backup_root = _absolute_required(args.backup_root, "BACKUP_ROOT_ABSOLUTE_PATH_REQUIRED")
     pg_bin_dir = _absolute_required(args.pg_bin_dir, "BACKUP_PG_BIN_ABSOLUTE_PATH_REQUIRED")

@@ -33,7 +33,7 @@ def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
     )
     assert "debit_fen" not in schema_text
     assert "credit_fen" not in schema_text
-    assert "account_code" not in schema_text
+    assert "'account_code'" not in schema_text
 
 
 def test_query_context_exposes_payroll_payable_target_metadata(

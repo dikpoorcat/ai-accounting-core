@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import SecretStr
 
 from ai_accounting import mcp_server
 from ai_accounting.accounting_period_schemas import (
@@ -19,8 +20,14 @@ from ai_accounting.accounting_period_schemas import (
     GetAccountingPeriodsRequest,
     PreviewAccountingPeriodCloseRequest,
 )
+from ai_accounting.bank_statement_schemas import (
+    ConfirmBankReconciliationScopeRequest,
+    PreviewBankReconciliationScopeRequest,
+)
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_engine, make_session_factory
+from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
+from ai_accounting.identity_service import IdentityService
 from ai_accounting.models import Evidence
 from ai_accounting.schemas import RecordEventRequest
 
@@ -50,6 +57,12 @@ class _SessionFactory:
 
 def _listed_tools() -> dict[str, Any]:
     return {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
+
+
+def _call_registered_tool(name: str, request: object) -> dict[str, Any]:
+    tool = mcp_server.mcp._tool_manager.get_tool(name)
+    assert tool is not None
+    return tool.fn(request=request)
 
 
 def test_accounting_period_tools_publish_strict_typed_contracts() -> None:
@@ -200,11 +213,53 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             )
             session.add(evidence)
             session.flush()
+            identity = IdentityService(session)
+            password = SecretStr("Accounting-Period-MCP-2026!")
+            identity.provision_owner(
+                OwnerProvisionRequest(
+                    org_id=organization.id,
+                    login_name="period-mcp-owner",
+                    password=password,
+                )
+            )
+            login = identity.authenticate(
+                OwnerLoginRequest(login_name="period-mcp-owner", password=password)
+            )
             org_id = organization.id
             evidence_id = evidence.id
-        monkeypatch.setattr(mcp_server, "SessionLocal", factory)
+        monkeypatch.setattr(
+            mcp_server,
+            "SessionLocal",
+            mcp_server._ContextAwareSessionFactory(factory),
+        )
+        mcp_server._set_mcp_session_token_for_tests(login.session_token)
 
-        generated = mcp_server.finance_generate_accounting_period(
+        scope_request = PreviewBankReconciliationScopeRequest(
+            org_id=org_id,
+            action_type="initial_confirmation",
+            accounts=[],
+            confirm_zero_accounts=True,
+            explanation="MCP 期间测试明确确认当前没有银行账户",
+            evidence_references=[evidence_id],
+        )
+        scope_preview = _call_registered_tool(
+            "finance_preview_bank_reconciliation_scope", scope_request
+        )
+        assert scope_preview["status"] == "calculated", scope_preview
+        scope_confirm = _call_registered_tool(
+            "finance_confirm_bank_reconciliation_scope",
+            ConfirmBankReconciliationScopeRequest.model_validate(
+                scope_request.model_dump()
+                | {
+                    "calculation_hash": scope_preview["calculation_hash"],
+                    "idempotency_key": "mcp-period-zero-bank-scope",
+                }
+            )
+        )
+        assert scope_confirm["status"] == "posted", scope_confirm
+
+        generated = _call_registered_tool(
+            "finance_generate_accounting_period",
             GenerateAccountingPeriodRequest(
                 org_id=org_id,
                 period_month="2026-07",
@@ -214,7 +269,8 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             )
         )
         assert generated["status"] == "posted", generated
-        periods = mcp_server.finance_get_accounting_periods(
+        periods = _call_registered_tool(
+            "finance_get_accounting_periods",
             GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-07")
         )
         assert periods["status"] == "calculated"
@@ -225,10 +281,13 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             period_id=uuid.UUID(generated["period_id"]),
             closing_date=date(2026, 7, 31),
         )
-        preview = mcp_server.finance_preview_accounting_period_close(preview_request)
+        preview = _call_registered_tool(
+            "finance_preview_accounting_period_close", preview_request
+        )
         assert preview["status"] == "calculated", preview
         assert preview["data"]["calculation"]["voucher_sources"] == []
-        confirmed = mcp_server.finance_confirm_accounting_period_close(
+        confirmed = _call_registered_tool(
+            "finance_confirm_accounting_period_close",
             ConfirmAccountingPeriodCloseRequest(
                 **preview_request.model_dump(),
                 calculation_hash=preview["calculation_hash"],
@@ -247,11 +306,13 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
         )
         assert confirmed["status"] == "posted", confirmed
         assert confirmed["data"]["calculation"]["voucher_sources"] == []
-        closed = mcp_server.finance_get_accounting_periods(
+        closed = _call_registered_tool(
+            "finance_get_accounting_periods",
             GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-07")
         )
         assert closed["data"]["periods"][0]["status"] == "closed"
     finally:
+        mcp_server._set_mcp_session_token_for_tests(None)
         engine.dispose()
 
 
@@ -281,10 +342,56 @@ def test_mcp_posting_uses_china_current_date_boundary(
             )
             session.add(evidence)
             session.flush()
+            identity = IdentityService(session)
+            password = SecretStr("Accounting-Period-Date-2026!")
+            identity.provision_owner(
+                OwnerProvisionRequest(
+                    org_id=organization.id,
+                    login_name="period-date-owner",
+                    password=password,
+                )
+            )
+            login = identity.authenticate(
+                OwnerLoginRequest(login_name="period-date-owner", password=password)
+            )
             org_id = organization.id
             evidence_id = evidence.id
-        monkeypatch.setattr(mcp_server, "SessionLocal", factory)
-        generated = mcp_server.finance_generate_accounting_period(
+        monkeypatch.setattr(
+            mcp_server,
+            "SessionLocal",
+            mcp_server._ContextAwareSessionFactory(factory),
+        )
+        mcp_server._set_mcp_session_token_for_tests(login.session_token)
+        scope_request = PreviewBankReconciliationScopeRequest(
+            org_id=org_id,
+            action_type="initial_confirmation",
+            accounts=[
+                {
+                    "bank_account_code": "1002",
+                    "account_name": "银行存款",
+                    "start_date": "2026-08-01",
+                }
+            ],
+            explanation="MCP 日期边界测试明确确认银行账户",
+            evidence_references=[evidence_id],
+        )
+        scope_preview = _call_registered_tool(
+            "finance_preview_bank_reconciliation_scope", scope_request
+        )
+        assert scope_preview["status"] == "calculated", scope_preview
+        scope_confirm = _call_registered_tool(
+            "finance_confirm_bank_reconciliation_scope",
+            ConfirmBankReconciliationScopeRequest.model_validate(
+                scope_request.model_dump()
+                | {
+                    "calculation_hash": scope_preview["calculation_hash"],
+                    "idempotency_key": "mcp-china-date-bank-scope",
+                }
+            )
+        )
+        assert scope_confirm["status"] == "posted", scope_confirm
+        generated = _call_registered_tool(
+            "finance_generate_accounting_period",
             GenerateAccountingPeriodRequest(
                 org_id=org_id,
                 period_month="2026-08",
@@ -302,6 +409,7 @@ def test_mcp_posting_uses_china_current_date_boundary(
                     "org_id": org_id,
                     "idempotency_key": key,
                     "event_type": "service_cash_sale",
+                    "bank_account_code": "1002",
                     "business_dates": {
                         "business_date": value,
                         "posting_date": value,
@@ -320,15 +428,16 @@ def test_mcp_posting_uses_china_current_date_boundary(
                 }
             )
 
-        current = mcp_server.finance_record_event(
-            sale_request("mcp-china-date-current", today)
+        current = _call_registered_tool(
+            "finance_record_event", sale_request("mcp-china-date-current", today)
         )
-        future = mcp_server.finance_record_event(
-            sale_request("mcp-china-date-future", tomorrow)
+        future = _call_registered_tool(
+            "finance_record_event", sale_request("mcp-china-date-future", tomorrow)
         )
         assert current["status"] == "posted"
         assert future["status"] == "rejected"
         assert future["errors"] == ["ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"]
         assert future["voucher_id"] is None
     finally:
+        mcp_server._set_mcp_session_token_for_tests(None)
         engine.dispose()

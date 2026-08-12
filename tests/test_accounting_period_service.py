@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ from ai_accounting.models import (
     AccountingPeriod,
     AccountingPeriodAction,
     AccountingPeriodClose,
+    BankReconciliationScopeAction,
     Borrowing,
     BorrowingInterestAccrual,
     BusinessEvent,
@@ -54,6 +56,60 @@ def _organization_and_evidence(session: Session) -> tuple[Organization, Evidence
     session.add(evidence)
     session.flush()
     return organization, evidence
+
+
+class _WarningRows:
+    def __init__(self, values: list[object]) -> None:
+        self._values = values
+
+    def all(self) -> list[object]:
+        return self._values
+
+
+class _LateWarningSession:
+    def __init__(self, *, direct_event_status: str | None = None) -> None:
+        self.original_period = SimpleNamespace(
+            id=uuid.uuid4(),
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 31),
+        )
+        self.transaction = SimpleNamespace(
+            id=uuid.uuid4(),
+            org_id=uuid.uuid4(),
+            is_late=True,
+            original_period_id=self.original_period.id,
+        )
+        self.direct_event_status = direct_event_status
+        self.action = SimpleNamespace(
+            id=uuid.uuid4(),
+            action_type="evidence_only",
+            target_event_id=uuid.uuid4(),
+            result_event_id=None,
+            created_at=datetime(2026, 4, 5, tzinfo=UTC),
+        )
+
+    def scalar(self, statement: object) -> object:
+        rendered = str(statement)
+        if "SELECT business_events.status" in rendered:
+            return self.direct_event_status
+        return 0
+
+    def scalars(self, statement: object) -> _WarningRows:
+        rendered = str(statement)
+        if "FROM bank_transactions" in rendered:
+            if "bank_transactions.is_late IS true" in rendered:
+                return _WarningRows([self.transaction])
+            return _WarningRows([])
+        if "FROM late_bank_evidence_actions" in rendered:
+            return _WarningRows(
+                [self.action] if self.direct_event_status is not None else []
+            )
+        return _WarningRows([])
+
+    def get(self, model: type[object], identity: object) -> object | None:
+        if model is AccountingPeriod and identity == self.original_period.id:
+            return self.original_period
+        return None
 
 
 def test_generation_is_one_month_contiguous_and_idempotent() -> None:
@@ -117,6 +173,44 @@ def test_generation_rejects_future_month_with_injected_current_date() -> None:
     assert future.errors == ["ACCOUNTING_PERIOD_FUTURE_GENERATION_NOT_ALLOWED"]
 
 
+def test_pending_late_bank_warning_continues_each_later_month_and_direct_reversal_restores_it(
+) -> None:
+    session = _LateWarningSession()
+    service = AccountingPeriodService(  # type: ignore[arg-type]
+        session,
+        current_date=date(2026, 6, 1),
+    )
+    april = SimpleNamespace(start_date=date(2026, 4, 1), end_date=date(2026, 4, 30))
+    may = SimpleNamespace(start_date=date(2026, 5, 1), end_date=date(2026, 5, 31))
+
+    april_warnings, april_counts = service._review_warnings(
+        session.transaction.org_id,
+        april,
+    )
+    may_warnings, may_counts = service._review_warnings(
+        session.transaction.org_id,
+        may,
+    )
+
+    assert april_counts["pending_late_bank_transactions"] == 1
+    assert may_counts["pending_late_bank_transactions"] == 1
+    assert [item["code"] for item in april_warnings] == [
+        "ACCOUNTING_PERIOD_OPEN_ITEMS_REVIEW",
+        "ACCOUNTING_PERIOD_TAX_REVIEW",
+        "ACCOUNTING_PERIOD_UNMATCHED_BANK_REVIEW",
+        "ACCOUNTING_PERIOD_PENDING_LATE_BANK_REVIEW",
+        "ACCOUNTING_PERIOD_HISTORICAL_BANK_SCOPE_CORRECTION_PENDING",
+    ]
+
+    session.direct_event_status = "posted"
+    _, handled_counts = service._review_warnings(session.transaction.org_id, may)
+    assert handled_counts["pending_late_bank_transactions"] == 0
+
+    session.direct_event_status = "reversed"
+    _, reversed_counts = service._review_warnings(session.transaction.org_id, may)
+    assert reversed_counts["pending_late_bank_transactions"] == 1
+
+
 def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> None:
     session = _session()
     organization, evidence = _organization_and_evidence(session)
@@ -169,6 +263,23 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
 def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     session = _session()
     organization, evidence = _organization_and_evidence(session)
+    scope_action = BankReconciliationScopeAction(
+        org_id=organization.id,
+        action_type="initial_confirmation",
+        idempotency_key="scope-zero",
+        request_payload_hash="b" * 64,
+        calculation_payload="{}",
+        calculation_hash="c" * 64,
+        scope_snapshot=[],
+        status="posted",
+        explanation="明确确认没有实际银行账户",
+        error_count=0,
+        execution_attribution_id=uuid.uuid4(),
+    )
+    session.add(scope_action)
+    session.flush()
+    organization.bank_reconciliation_scope_current_action_id = scope_action.id
+    organization.bank_reconciliation_scope_confirmed_at = datetime.now(UTC)
     service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
     generated = service.generate_accounting_period(
         GenerateAccountingPeriodRequest(
@@ -211,6 +322,23 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert preview.status is AccountingPeriodResultStatus.CALCULATED
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
+    assert closed.data["calculation"]["checker_version"] == (
+        "accounting_period_close_checker_2026.2"
+    )
+    assert list(closed.data["calculation"]["review_counts"]) == [
+        "historical_bank_scope_corrections_pending",
+        "open_items",
+        "pending_late_bank_transactions",
+        "tax_items_to_review",
+        "unmatched_bank_transactions",
+    ]
+    assert [item["code"] for item in closed.data["calculation"]["warnings"]] == [
+        "ACCOUNTING_PERIOD_HISTORICAL_BANK_SCOPE_CORRECTION_PENDING",
+        "ACCOUNTING_PERIOD_OPEN_ITEMS_REVIEW",
+        "ACCOUNTING_PERIOD_PENDING_LATE_BANK_REVIEW",
+        "ACCOUNTING_PERIOD_TAX_REVIEW",
+        "ACCOUNTING_PERIOD_UNMATCHED_BANK_REVIEW",
+    ]
     assert close is not None
     assert (
         close.voucher_count,

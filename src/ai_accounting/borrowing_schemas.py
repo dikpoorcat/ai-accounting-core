@@ -158,6 +158,7 @@ class DrawBorrowingRequest(BaseModel):
     capitalization_applicable: StrictBool | None = None
     purpose_description: str | None = Field(default=None, min_length=1, max_length=2000)
     term_facts: BorrowingTermFacts = Field(default_factory=BorrowingTermFacts)
+    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     description: str = Field(default="", max_length=2000)
@@ -215,6 +216,8 @@ class DrawBorrowingRequest(BaseModel):
             if getattr(self, name) is None
         ]
         fields.extend(f"term_facts.{name}" for name in self.term_facts.missing_fields())
+        if self.bank_account_code is None:
+            fields.append("bank_account_code")
         result = []
         if fields:
             result.append(
@@ -225,14 +228,6 @@ class DrawBorrowingRequest(BaseModel):
                         "and term facts are required"
                     ),
                     fields=fields,
-                )
-            )
-        if not self.bank_transaction_references:
-            result.append(
-                BorrowingInformationRequirement(
-                    code="BORROWING_BANK_TRANSACTIONS_REQUIRED",
-                    message="drawdown requires its bank transaction evidence",
-                    fields=["bank_transaction_references"],
                 )
             )
         if not self.evidence_references:
@@ -305,6 +300,7 @@ class PayBorrowingInterestRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
     payment_date: date | None = None
     posting_date: date | None = None
+    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     description: str = Field(default="", max_length=2000)
@@ -318,7 +314,13 @@ class PayBorrowingInterestRequest(BaseModel):
     def missing_information(self) -> list[BorrowingInformationRequirement]:
         missing = [
             name
-            for name in ("borrowing_id", "accrual_event_id", "payment_date", "posting_date")
+            for name in (
+                "borrowing_id",
+                "accrual_event_id",
+                "payment_date",
+                "posting_date",
+                "bank_account_code",
+            )
             if getattr(self, name) is None
         ]
         result = (
@@ -332,14 +334,6 @@ class PayBorrowingInterestRequest(BaseModel):
                 )
             ]
         )
-        if not self.bank_transaction_references:
-            result.append(
-                BorrowingInformationRequirement(
-                    code="BORROWING_BANK_TRANSACTIONS_REQUIRED",
-                    message="payment bank evidence is required",
-                    fields=["bank_transaction_references"],
-                )
-            )
         if not self.evidence_references:
             result.append(
                 BorrowingInformationRequirement(
@@ -359,6 +353,7 @@ class RepayBorrowingPrincipalRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
     repayment_date: date | None = None
     posting_date: date | None = None
+    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     description: str = Field(default="", max_length=2000)
@@ -372,7 +367,12 @@ class RepayBorrowingPrincipalRequest(BaseModel):
     def missing_information(self) -> list[BorrowingInformationRequirement]:
         missing = [
             name
-            for name in ("borrowing_id", "repayment_date", "posting_date")
+            for name in (
+                "borrowing_id",
+                "repayment_date",
+                "posting_date",
+                "bank_account_code",
+            )
             if getattr(self, name) is None
         ]
         result = (
@@ -386,14 +386,6 @@ class RepayBorrowingPrincipalRequest(BaseModel):
                 )
             ]
         )
-        if not self.bank_transaction_references:
-            result.append(
-                BorrowingInformationRequirement(
-                    code="BORROWING_BANK_TRANSACTIONS_REQUIRED",
-                    message="repayment bank evidence is required",
-                    fields=["bank_transaction_references"],
-                )
-            )
         if not self.evidence_references:
             result.append(
                 BorrowingInformationRequirement(

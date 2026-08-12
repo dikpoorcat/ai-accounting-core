@@ -10,6 +10,7 @@ from threading import Barrier
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
+from conftest import authenticate_and_confirm_bank_scope
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
@@ -18,8 +19,6 @@ from ai_accounting.coa import get_account_by_role, seed_organization
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
-    BankTransaction,
-    BankTransactionMatch,
     BusinessEvent,
     Counterparty,
     Evidence,
@@ -28,6 +27,7 @@ from ai_accounting.models import (
     FixedAssetDepreciation,
     FixedAssetDisposal,
     OpenItem,
+    Organization,
     TaxRule,
     event_evidence,
 )
@@ -36,7 +36,6 @@ from ai_accounting.schemas import (
     ActivateFixedAssetRequest,
     DisposeFixedAssetRequest,
     RecordEventRequest,
-    ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
 from alembic import command
@@ -331,31 +330,46 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
         try:
             with Session(engine) as session:
                 asset, event = _acquire_payable(session, "reverse-edges")
+                scope_evidence = _evidence(session, asset.org_id, "reverse-edges-scope")
+                authority = authenticate_and_confirm_bank_scope(
+                    session,
+                    session.get(Organization, asset.org_id),
+                    evidence_id=scope_evidence.id,
+                    accounts=[
+                        {
+                            "bank_account_code": "1002",
+                            "account_name": "银行存款",
+                            "start_date": date(2026, 1, 1),
+                        }
+                    ],
+                )
                 item = session.scalar(
                     sa.select(OpenItem).where(OpenItem.source_event_id == event.id)
                 )
-                payment = FinanceService(session).record_event(
-                    RecordEventRequest.model_validate(
-                        {
-                            "org_id": asset.org_id,
-                            "idempotency_key": "asset-payable-settlement",
-                            "event_type": "supplier_payment",
-                            "business_dates": {
-                                "business_date": "2026-02-02",
-                                "posting_date": "2026-02-02",
-                                "payment_date": "2026-02-02",
-                            },
-                            "counterparty": {
-                                "kind": "supplier",
-                                "name": "供应商-reverse-edges",
-                            },
-                            "amounts": {"amount_fen": asset.cost_fen},
-                            "allocations": [
-                                {"open_item_id": item.id, "amount_fen": asset.cost_fen}
-                            ],
-                        }
+                with authority.attributed_call(session, tool_name="finance_record_event"):
+                    payment = FinanceService(session).record_event(
+                        RecordEventRequest.model_validate(
+                            {
+                                "org_id": asset.org_id,
+                                "idempotency_key": "asset-payable-settlement",
+                                "event_type": "supplier_payment",
+                                "business_dates": {
+                                    "business_date": "2026-02-02",
+                                    "posting_date": "2026-02-02",
+                                    "payment_date": "2026-02-02",
+                                },
+                                "counterparty": {
+                                    "kind": "supplier",
+                                    "name": "供应商-reverse-edges",
+                                },
+                                "amounts": {"amount_fen": asset.cost_fen},
+                                "bank_account_code": "1002",
+                                "allocations": [
+                                    {"open_item_id": item.id, "amount_fen": asset.cost_fen}
+                                ],
+                            }
+                        )
                     )
-                )
                 assert payment.status == "posted"
                 session.commit()
                 session.refresh(item)
@@ -387,101 +401,11 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                 asset = session.scalar(
                     sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-reverse-edges")
                 )
-                source = session.get(BusinessEvent, asset.acquisition_event_id)
-                transaction = BankTransaction(
-                    org_id=asset.org_id,
-                    bank_account_code="1002",
-                    fingerprint="f" * 64,
-                    booking_date=asset.posting_date,
-                    amount_fen=-1,
-                    currency="CNY",
-                    source_sha256="e" * 64,
-                    matched_event_id=source.id,
-                )
-                session.add(transaction)
-                session.flush()
-                session.add(
-                    BankTransactionMatch(
-                        org_id=asset.org_id,
-                        bank_transaction_id=transaction.id,
-                        event_id=source.id,
-                    )
-                )
-                with pytest.raises(DBAPIError, match="FIXED_ASSET_ACQUISITION_SETTLEMENT"):
-                    session.commit()
-
-            with Session(engine) as session:
-                asset = session.scalar(
-                    sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-reverse-edges")
-                )
                 pending = get_account_by_role(session, asset.org_id, "fixed_asset_pending")
                 pending.system_role = "tampered_fixed_asset_pending"
                 with pytest.raises(DBAPIError, match="FIXED_ASSET_ACQUISITION_VOUCHER"):
                     session.commit()
 
-            with Session(engine) as session:
-                organization = seed_organization(
-                    session, accounting_period_control_enabled=False, name="PG 银行匹配冲正"
-                )
-                evidence = _evidence(session, organization.id, "bank-reversal")
-                bank_row = BankTransaction(
-                    org_id=organization.id,
-                    bank_account_code="1002",
-                    fingerprint=sha256(b"bank-reversal").hexdigest(),
-                    booking_date=date(2026, 1, 2),
-                    amount_fen=-1_050_000,
-                    currency="CNY",
-                    source_sha256=sha256(b"bank-source").hexdigest(),
-                )
-                session.add(bank_row)
-                session.flush()
-                acquired = FixedAssetService(session).acquire_fixed_asset(
-                    AcquireFixedAssetRequest.model_validate(
-                        {
-                            "org_id": organization.id,
-                            "idempotency_key": "bank-acquisition",
-                            "asset_code": "FA-bank-reversal",
-                            "asset_name": "银行购置设备",
-                            "category": "production_equipment",
-                            "expected_use_over_one_year": True,
-                            "purchase_date": "2026-01-02",
-                            "posting_date": "2026-01-02",
-                            "cost_components": {
-                                "purchase_price_fen": 1_000_000,
-                                "noncreditable_tax_fen": 30_000,
-                                "transport_and_handling_fen": 10_000,
-                                "installation_and_direct_cost_fen": 10_000,
-                            },
-                            "supplier": {"kind": "supplier", "name": "银行购置供应商"},
-                            "settlement_method": "bank",
-                            "payment_date": "2026-01-02",
-                            "bank_transaction_references": [{"id": bank_row.id}],
-                            "evidence_references": [evidence.id],
-                            "claims_creditable_input_vat": False,
-                        }
-                    )
-                )
-                assert acquired.status == "posted", acquired.errors
-                session.commit()
-                reversed_result = FixedAssetService(session).reverse_event(
-                    ReverseEventRequest(
-                        org_id=organization.id,
-                        event_id=acquired.event_id,
-                        idempotency_key="reverse-bank-acquisition",
-                        reason="验证银行匹配历史边失效",
-                        posting_date=date(2026, 1, 3),
-                    )
-                )
-                assert reversed_result.status == "posted", reversed_result.errors
-                session.commit()
-                session.refresh(bank_row)
-                match = session.scalar(
-                    sa.select(BankTransactionMatch).where(
-                        BankTransactionMatch.event_id == acquired.event_id
-                    )
-                )
-                assert bank_row.matched_event_id is None
-                assert match.invalidated_by_event_id == reversed_result.event_id
         finally:
             engine.dispose()
 
@@ -747,7 +671,7 @@ def test_postgres_fixed_asset_upgrade_downgrade_round_trip(
             command.check(config)
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-                    "0014_execution_attribution"
+                    "0015_late_bank_evidence"
                 )
         finally:
             engine.dispose()

@@ -136,7 +136,8 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
                         "request": {
                             "org_id": org_id,
                             "idempotency_key": "stdio-tax-source",
-                            "event_type": "service_cash_sale",
+                            "event_type": "service_credit_sale",
+                            "counterparty": {"kind": "customer", "name": "税务 STDIO 客户"},
                             "business_dates": {
                                 "business_date": "2026-01-15",
                                 "fulfillment_date": "2026-01-15",

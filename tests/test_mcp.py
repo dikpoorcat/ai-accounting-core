@@ -22,6 +22,15 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_get_event_schema",
         "finance_register_evidence",
         "finance_import_bank_statement",
+        "finance_preview_bank_statement_import",
+        "finance_confirm_bank_statement_import",
+        "finance_preview_bank_reconciliation_scope",
+        "finance_confirm_bank_reconciliation_scope",
+        "finance_preview_late_bank_evidence",
+        "finance_confirm_late_bank_evidence",
+        "finance_preview_bank_reconciliation",
+        "finance_confirm_bank_reconciliation",
+        "finance_query_bank_statement_state",
         "finance_register_employee",
         "finance_register_employee_profile_version",
         "finance_register_payroll_policy_version",
@@ -176,7 +185,7 @@ def test_stdio_server_initializes_and_lists_tools() -> None:
 
 
 def test_production_real_stdio_keeps_schema_public_and_data_tools_fail_closed() -> None:
-    async def run() -> tuple[object, object]:
+    async def run() -> tuple[object, object, set[str], dict[str, object]]:
         repository_root = Path(__file__).parents[1]
         site_packages = Path(sys.prefix) / "Lib" / "site-packages"
         environment = os.environ.copy()
@@ -225,15 +234,35 @@ mcp_server.main()
                     "finance_get_profile",
                     {"org_id": str(uuid.uuid4())},
                 )
-                return schema, data
+                tools = await session.list_tools()
+                by_name = {tool.name: tool for tool in tools.tools}
+                return (
+                    schema,
+                    data,
+                    set(by_name),
+                    by_name["finance_preview_bank_statement_import"].inputSchema,
+                )
 
-    schema, data = asyncio.run(run())
+    schema, data, names, import_schema = asyncio.run(run())
     assert schema.isError is False
     assert data.isError is False
     assert data.structuredContent == {
         "status": "rejected",
         "errors": ["AUTHENTICATION_REQUIRED"],
     }
+    assert "finance_import_bank_statement" not in names
+    assert {
+        "finance_preview_bank_statement_import",
+        "finance_confirm_bank_statement_import",
+        "finance_query_bank_statement_state",
+    } <= names
+    assert import_schema["additionalProperties"] is False
+    request_schema = import_schema["$defs"]["PreviewBankStatementFileImportRequest"]
+    assert request_schema["additionalProperties"] is False
+    assert request_schema["properties"]["file_format"]["const"] == "csv"
+    assert "sheet_name" not in request_schema["properties"]
+    assert "file_path" not in request_schema["properties"]
+    assert "statement_bytes" not in request_schema["properties"]
 
 
 def test_formal_server_starts_without_token_inside_service_lease(

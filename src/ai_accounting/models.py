@@ -85,6 +85,12 @@ class Organization(Base):
     accounting_period_control_start_date: Mapped[date | None] = mapped_column(
         Date, nullable=True
     )
+    bank_reconciliation_scope_current_action_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True
+    )
+    bank_reconciliation_scope_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
@@ -98,6 +104,20 @@ class Organization(Base):
             "accounting_period_control_enabled IS TRUE OR "
             "accounting_period_control_start_date IS NULL",
             name="ck_org_accounting_period_control",
+        ),
+        ForeignKeyConstraint(
+            ["id", "bank_reconciliation_scope_current_action_id"],
+            ["bank_reconciliation_scope_actions.org_id", "bank_reconciliation_scope_actions.id"],
+            name="fk_org_bank_reconciliation_scope_current_action",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+        CheckConstraint(
+            "(bank_reconciliation_scope_current_action_id IS NULL "
+            "AND bank_reconciliation_scope_confirmed_at IS NULL) OR "
+            "(bank_reconciliation_scope_current_action_id IS NOT NULL "
+            "AND bank_reconciliation_scope_confirmed_at IS NOT NULL)",
+            name="ck_org_bank_reconciliation_scope_confirmation",
         ),
     )
 
@@ -461,12 +481,225 @@ class Account(Base):
     normal_side: Mapped[str] = mapped_column(String(10))
     system_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
     active: Mapped[bool] = mapped_column(default=True)
+    requires_bank_reconciliation: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default="0"
+    )
+    bank_reconciliation_start_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )
+    bank_reconciliation_end_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True
+    )
+    bank_reconciliation_configured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         UniqueConstraint("org_id", "code", name="uq_account_org_code"),
         UniqueConstraint("org_id", "system_role", name="uq_account_org_role"),
         UniqueConstraint("org_id", "id", name="uq_account_org_id"),
         CheckConstraint("normal_side IN ('debit', 'credit')", name="ck_account_normal_side"),
+        CheckConstraint(
+            "(requires_bank_reconciliation IS FALSE "
+            "AND bank_reconciliation_start_date IS NULL "
+            "AND bank_reconciliation_end_date IS NULL) OR "
+            "(requires_bank_reconciliation IS TRUE "
+            "AND bank_reconciliation_start_date IS NOT NULL "
+            "AND bank_reconciliation_configured_at IS NOT NULL)",
+            name="ck_account_bank_reconciliation_scope",
+        ),
+        CheckConstraint(
+            "bank_reconciliation_start_date IS NULL OR "
+            "substr(CAST(bank_reconciliation_start_date AS VARCHAR), 9, 2) = '01'",
+            name="ck_account_bank_reconciliation_start_month",
+        ),
+        CheckConstraint(
+            "bank_reconciliation_end_date IS NULL OR "
+            "CAST(substr(CAST(bank_reconciliation_end_date AS VARCHAR), 9, 2) "
+            "AS INTEGER) BETWEEN 28 AND 31",
+            name="ck_account_bank_reconciliation_end_month",
+        ),
+        CheckConstraint(
+            "bank_reconciliation_end_date IS NULL OR "
+            "bank_reconciliation_start_date <= bank_reconciliation_end_date",
+            name="ck_account_bank_reconciliation_dates",
+        ),
+        CheckConstraint(
+            "requires_bank_reconciliation IS FALSE OR "
+            "(active IS TRUE AND category = 'asset' AND normal_side = 'debit')",
+            name="ck_account_bank_reconciliation_account_shape",
+        ),
+    )
+
+
+class BankReconciliationScopeAction(Base):
+    """Immutable owner-confirmed bank-account scope snapshot (DEC-038 A)."""
+
+    __tablename__ = "bank_reconciliation_scope_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    action_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    previous_action_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    target_account_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calculation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scope_snapshot: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_field_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    execution_attribution_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_bank_scope_action_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "previous_action_id"],
+            ["bank_reconciliation_scope_actions.org_id", "bank_reconciliation_scope_actions.id"],
+            name="fk_bank_scope_action_previous",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "target_account_id"],
+            ["accounts.org_id", "accounts.id"],
+            name="fk_bank_scope_action_target_account",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_bank_scope_action_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_bank_scope_action_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_bank_scope_action_idempotency"
+        ),
+        CheckConstraint(
+            "status IN ('posted','rejected')", name="ck_bank_scope_action_status"
+        ),
+        CheckConstraint(
+            "action_type IS NULL OR action_type IN ('initial_confirmation','scope_change')",
+            name="ck_bank_scope_action_type",
+        ),
+        CheckConstraint(
+            "(status = 'posted' AND action_type IS NOT NULL "
+            "AND calculation_payload IS NOT NULL AND calculation_hash IS NOT NULL "
+            "AND scope_snapshot IS NOT NULL AND explanation IS NOT NULL "
+            "AND length(trim(explanation)) BETWEEN 1 AND 2000 "
+            "AND error_code IS NULL AND error_field_path IS NULL AND error_count = 0) OR "
+            "(status = 'rejected' AND action_type IS NULL "
+            "AND previous_action_id IS NULL AND target_account_id IS NULL "
+            "AND calculation_payload IS NULL AND calculation_hash IS NULL "
+            "AND scope_snapshot IS NULL AND explanation IS NULL "
+            "AND error_code IS NOT NULL AND error_count > 0)",
+            name="ck_bank_scope_action_payload_shape",
+        ),
+        CheckConstraint(
+            "status <> 'posted' OR "
+            "(action_type = 'initial_confirmation' AND previous_action_id IS NULL "
+            "AND target_account_id IS NULL) OR "
+            "(action_type = 'scope_change' AND previous_action_id IS NOT NULL "
+            "AND target_account_id IS NOT NULL)",
+            name="ck_bank_scope_action_lineage",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64 AND "
+            "(calculation_payload IS NULL OR length(calculation_payload) > 0) AND "
+            "(calculation_hash IS NULL OR length(calculation_hash) = 64)",
+            name="ck_bank_scope_action_hashes",
+        ),
+    )
+
+
+class BankReconciliationScopeActionEvidence(Base):
+    __tablename__ = "bank_reconciliation_scope_action_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_sha256_at_action: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["bank_reconciliation_scope_actions.org_id", "bank_reconciliation_scope_actions.id"],
+            name="fk_bank_scope_action_evidence_org_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_bank_scope_action_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "length(evidence_sha256_at_action) = 64",
+            name="ck_bank_scope_action_evidence_hash",
+        ),
+    )
+
+
+class AccountBankReconciliationScopeHistory(Base):
+    """Append-only audit of changes to current Account reconciliation fields."""
+
+    __tablename__ = "account_bank_reconciliation_scope_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    scope_action_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    old_required: Mapped[bool] = mapped_column(nullable=False)
+    old_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    old_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    new_required: Mapped[bool] = mapped_column(nullable=False)
+    new_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    new_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "account_id"],
+            ["accounts.org_id", "accounts.id"],
+            name="fk_account_bank_scope_history_org_account",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_account_bank_scope_history_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "scope_action_id"],
+            ["bank_reconciliation_scope_actions.org_id", "bank_reconciliation_scope_actions.id"],
+            name="fk_account_bank_scope_history_org_action",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "org_id", "id", name="uq_account_bank_scope_history_org_id"
+        ),
     )
 
 
@@ -2683,6 +2916,172 @@ class TaxPeriodSource(Base):
     )
 
 
+class BankStatementImportAction(Base):
+    """Immutable audit root for one formal bank-statement confirmation."""
+
+    __tablename__ = "bank_statement_import_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    bank_account_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parser_request_fingerprint_sha256: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    calculation_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calculation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    file_format: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    column_mapping: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    normalized_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    valid_row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    imported_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    duplicate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    late_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "bank_account_code"],
+            ["accounts.org_id", "accounts.code"],
+            name="fk_bank_import_action_org_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_bank_import_action_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_bank_import_action_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_bank_import_action_idempotency"
+        ),
+        CheckConstraint(
+            "status IN ('posted','partially_posted','rejected')",
+            name="ck_bank_import_action_status",
+        ),
+        CheckConstraint(
+            "row_count >= 0 AND valid_row_count >= 0 AND imported_count >= 0 "
+            "AND duplicate_count >= 0 AND late_count >= 0 AND error_count >= 0 "
+            "AND valid_row_count <= row_count "
+            "AND imported_count + duplicate_count = valid_row_count "
+            "AND late_count <= imported_count",
+            name="ck_bank_import_action_counts",
+        ),
+        CheckConstraint(
+            "(status = 'posted' AND error_count = 0 "
+            "AND row_count = valid_row_count) OR "
+            "(status = 'partially_posted' AND error_count > 0 "
+            "AND row_count = valid_row_count + error_count) OR "
+            "(status = 'rejected' AND error_count > 0 AND imported_count = 0 "
+            "AND duplicate_count = 0 AND late_count = 0 AND valid_row_count = 0)",
+            name="ck_bank_import_action_result_counts",
+        ),
+        CheckConstraint(
+            "(status IN ('posted','partially_posted') "
+            "AND calculation_payload IS NOT NULL AND calculation_hash IS NOT NULL "
+            "AND source_sha256 IS NOT NULL "
+            "AND parser_request_fingerprint_sha256 IS NOT NULL "
+            "AND file_format IS NOT NULL AND column_mapping IS NOT NULL "
+            "AND normalized_result IS NOT NULL) OR "
+            "(status = 'rejected' AND calculation_payload IS NULL "
+            "AND calculation_hash IS NULL AND file_format IS NULL "
+            "AND column_mapping IS NULL AND normalized_result IS NULL)",
+            name="ck_bank_import_action_payload_shape",
+        ),
+        CheckConstraint(
+            "file_format IS NULL OR file_format = 'csv'",
+            name="ck_bank_import_action_file_format",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64 "
+            "AND (source_sha256 IS NULL OR length(source_sha256) = 64) "
+            "AND (parser_request_fingerprint_sha256 IS NULL "
+            "OR length(parser_request_fingerprint_sha256) = 64) "
+            "AND ((source_sha256 IS NULL) = "
+            "(parser_request_fingerprint_sha256 IS NULL)) "
+            "AND (calculation_payload IS NULL OR length(calculation_payload) > 0) "
+            "AND (calculation_hash IS NULL OR length(calculation_hash) = 64)",
+            name="ck_bank_import_action_hash_lengths",
+        ),
+    )
+
+
+class BankStatementImportFailure(Base):
+    """Minimal, value-free row error retained only for a formal confirmation."""
+
+    __tablename__ = "bank_statement_import_failures"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    error_ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
+    row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    field_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["bank_statement_import_actions.org_id", "bank_statement_import_actions.id"],
+            name="fk_bank_import_failure_org_action",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("error_ordinal >= 1", name="ck_bank_import_failure_ordinal"),
+        CheckConstraint(
+            "row_number IS NULL OR row_number >= 2",
+            name="ck_bank_import_failure_row_number",
+        ),
+        CheckConstraint(
+            "length(code) BETWEEN 1 AND 100",
+            name="ck_bank_import_failure_code",
+        ),
+    )
+
+
+class BankStatementImportActionEvidence(Base):
+    """Organization-bound evidence frozen for manual row identity resolution."""
+
+    __tablename__ = "bank_statement_import_action_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_sha256_at_import: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["bank_statement_import_actions.org_id", "bank_statement_import_actions.id"],
+            name="fk_bank_import_evidence_org_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_bank_import_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "length(evidence_sha256_at_import) = 64",
+            name="ck_bank_import_evidence_hash_length",
+        ),
+    )
+
+
 class BankTransaction(Base):
     __tablename__ = "bank_transactions"
 
@@ -2702,8 +3101,20 @@ class BankTransaction(Base):
     matched_event_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("business_events.id", ondelete="RESTRICT"), nullable=True
     )
+    import_action_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    import_row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    row_identity_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    original_period_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    is_late: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="0")
+    original_close_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    original_close_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    original_closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -2712,10 +3123,554 @@ class BankTransaction(Base):
             name="fk_bank_transaction_execution_attribution",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint("org_id", "fingerprint", name="uq_bank_transaction_fingerprint"),
+        ForeignKeyConstraint(
+            ["org_id", "matched_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_bank_transaction_org_matched_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "import_action_id"],
+            ["bank_statement_import_actions.org_id", "bank_statement_import_actions.id"],
+            name="fk_bank_transaction_org_import_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "original_period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_bank_transaction_org_original_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "original_close_id"],
+            ["accounting_period_closes.org_id", "accounting_period_closes.id"],
+            name="fk_bank_transaction_org_original_close",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "id", name="uq_bank_transaction_org_id"),
         CheckConstraint("amount_fen <> 0", name="ck_bank_transaction_nonzero"),
         CheckConstraint("currency = 'CNY'", name="ck_bank_transaction_cny"),
+        CheckConstraint(
+            "(import_action_id IS NULL AND import_row_number IS NULL "
+            "AND row_identity_sha256 IS NULL AND original_period_id IS NULL) OR "
+            "(import_action_id IS NOT NULL AND import_row_number >= 2 "
+            "AND row_identity_sha256 IS NOT NULL AND original_period_id IS NOT NULL)",
+            name="ck_bank_transaction_import_origin",
+        ),
+        CheckConstraint(
+            "row_identity_sha256 IS NULL OR length(row_identity_sha256) = 64",
+            name="ck_bank_transaction_row_identity_hash",
+        ),
+        CheckConstraint(
+            "(is_late IS FALSE AND original_close_id IS NULL "
+            "AND original_close_hash IS NULL AND original_closed_at IS NULL) OR "
+            "(is_late IS TRUE AND original_close_id IS NOT NULL "
+            "AND original_close_hash IS NOT NULL AND original_closed_at IS NOT NULL)",
+            name="ck_bank_transaction_late_origin",
+        ),
+        CheckConstraint(
+            "original_close_hash IS NULL OR length(original_close_hash) = 64",
+            name="ck_bank_transaction_original_close_hash",
+        ),
+    )
+
+
+Index(
+    "ix_bank_transaction_account_fingerprint",
+    BankTransaction.org_id,
+    BankTransaction.bank_account_code,
+    BankTransaction.fingerprint,
+)
+Index(
+    "uq_bank_transaction_account_external_id",
+    BankTransaction.org_id,
+    BankTransaction.bank_account_code,
+    BankTransaction.external_id,
+    unique=True,
+    postgresql_where=BankTransaction.external_id.is_not(None),
+    sqlite_where=BankTransaction.external_id.is_not(None),
+)
+Index(
+    "uq_bank_transaction_account_source_row",
+    BankTransaction.org_id,
+    BankTransaction.bank_account_code,
+    BankTransaction.row_identity_sha256,
+    unique=True,
+    postgresql_where=BankTransaction.row_identity_sha256.is_not(None),
+    sqlite_where=BankTransaction.row_identity_sha256.is_not(None),
+)
+Index(
+    "ix_bank_transaction_original_period_pending_late",
+    BankTransaction.org_id,
+    BankTransaction.original_period_id,
+    BankTransaction.id,
+    postgresql_where=BankTransaction.is_late.is_(True),
+    sqlite_where=BankTransaction.is_late.is_(True),
+)
+
+
+class LateBankEvidenceAction(Base):
+    """Append-only handling history for a late external bank fact."""
+
+    __tablename__ = "late_bank_evidence_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    bank_transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    action_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calculation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    handling_period_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    original_close_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    original_close_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    target_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    result_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    result_voucher_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    workflow_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_field_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    execution_attribution_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "bank_transaction_id"],
+            ["bank_transactions.org_id", "bank_transactions.id"],
+            name="fk_late_bank_action_org_transaction",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "handling_period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_late_bank_action_org_handling_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "original_close_id"],
+            ["accounting_period_closes.org_id", "accounting_period_closes.id"],
+            name="fk_late_bank_action_org_original_close",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "target_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_late_bank_action_org_target_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "result_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_late_bank_action_org_result_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "result_voucher_id"],
+            ["vouchers.org_id", "vouchers.id"],
+            name="fk_late_bank_action_org_result_voucher",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_late_bank_action_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_late_bank_action_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_late_bank_action_idempotency"
+        ),
+        CheckConstraint(
+            "status IN ('posted','rejected')",
+            name="ck_late_bank_action_status",
+        ),
+        CheckConstraint(
+            "action_type IS NULL OR action_type IN ('evidence_only','omitted_entry')",
+            name="ck_late_bank_action_type",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64 AND "
+            "(calculation_payload IS NULL OR length(calculation_payload) > 0) AND "
+            "(calculation_hash IS NULL OR length(calculation_hash) = 64) AND "
+            "(original_close_hash IS NULL OR length(original_close_hash) = 64)",
+            name="ck_late_bank_action_hash_lengths",
+        ),
+        CheckConstraint(
+            "(status = 'posted' AND action_type IS NOT NULL "
+            "AND calculation_payload IS NOT NULL AND calculation_hash IS NOT NULL "
+            "AND handling_period_id IS NOT NULL "
+            "AND original_close_id IS NOT NULL AND original_close_hash IS NOT NULL "
+            "AND explanation IS NOT NULL AND length(trim(explanation)) BETWEEN 1 AND 2000 "
+            "AND error_code IS NULL AND error_field_path IS NULL AND error_count = 0) OR "
+            "(status = 'rejected' AND action_type IS NULL "
+            "AND calculation_payload IS NULL AND calculation_hash IS NULL "
+            "AND handling_period_id IS NULL "
+            "AND original_close_id IS NULL AND original_close_hash IS NULL "
+            "AND target_event_id IS NULL AND result_event_id IS NULL "
+            "AND result_voucher_id IS NULL AND workflow_name IS NULL "
+            "AND explanation IS NULL AND error_code IS NOT NULL AND error_count > 0)",
+            name="ck_late_bank_action_payload_shape",
+        ),
+        CheckConstraint(
+            "status <> 'posted' OR "
+            "(action_type = 'evidence_only' AND target_event_id IS NOT NULL "
+            "AND result_event_id IS NULL AND result_voucher_id IS NULL "
+            "AND workflow_name IS NULL) OR "
+            "(action_type = 'omitted_entry' AND target_event_id IS NULL "
+            "AND result_event_id IS NOT NULL AND result_voucher_id IS NOT NULL "
+            "AND workflow_name IS NOT NULL AND length(trim(workflow_name)) > 0)",
+            name="ck_late_bank_action_result_shape",
+        ),
+    )
+
+
+class LateBankEvidenceActionEvidence(Base):
+    __tablename__ = "late_bank_evidence_action_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_sha256_at_action: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["late_bank_evidence_actions.org_id", "late_bank_evidence_actions.id"],
+            name="fk_late_bank_evidence_org_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_late_bank_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "length(evidence_sha256_at_action) = 64",
+            name="ck_late_bank_evidence_hash_length",
+        ),
+    )
+
+
+Index(
+    "ix_late_bank_action_pending_projection",
+    LateBankEvidenceAction.org_id,
+    LateBankEvidenceAction.handling_period_id,
+    LateBankEvidenceAction.bank_transaction_id,
+)
+
+
+class BankReconciliationAction(Base):
+    """Immutable formal confirmation attempt; rejected rows retain no balances."""
+
+    __tablename__ = "bank_reconciliation_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bank_account_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    execution_attribution_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_bank_reconciliation_action_org_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "bank_account_code"],
+            ["accounts.org_id", "accounts.code"],
+            name="fk_bank_reconciliation_action_org_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_bank_reconciliation_action_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_bank_reconciliation_action_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_bank_reconciliation_action_idempotency"
+        ),
+        CheckConstraint(
+            "status IN ('posted','rejected')",
+            name="ck_bank_reconciliation_action_status",
+        ),
+        CheckConstraint(
+            "(status = 'posted' AND calculation_hash IS NOT NULL AND error_count = 0) OR "
+            "(status = 'rejected' AND calculation_hash IS NULL AND error_count > 0)",
+            name="ck_bank_reconciliation_action_result",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64 AND "
+            "(calculation_hash IS NULL OR length(calculation_hash) = 64)",
+            name="ck_bank_reconciliation_action_hash_lengths",
+        ),
+    )
+
+
+class BankReconciliationFailure(Base):
+    __tablename__ = "bank_reconciliation_failures"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    error_ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
+    field_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["bank_reconciliation_actions.org_id", "bank_reconciliation_actions.id"],
+            name="fk_bank_reconciliation_failure_org_action",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "error_ordinal >= 1", name="ck_bank_reconciliation_failure_ordinal"
+        ),
+        CheckConstraint(
+            "length(code) BETWEEN 1 AND 100",
+            name="ck_bank_reconciliation_failure_code",
+        ),
+    )
+
+
+class BankReconciliation(Base):
+    """One immutable, explicit bank-account reconciliation snapshot."""
+
+    __tablename__ = "bank_reconciliations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bank_account_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    calculation: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    calculation_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    coverage_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    coverage_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    statement_opening_balance_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    statement_closing_balance_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    statement_movement_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    statement_integrity_difference_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    book_closing_balance_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    statement_to_book_difference_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    statement_transaction_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unmatched_transaction_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    pending_late_transaction_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    warnings: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["bank_reconciliation_actions.org_id", "bank_reconciliation_actions.id"],
+            name="fk_bank_reconciliation_org_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_bank_reconciliation_org_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "bank_account_code"],
+            ["accounts.org_id", "accounts.code"],
+            name="fk_bank_reconciliation_org_account",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_bank_reconciliation_org_id"),
+        UniqueConstraint(
+            "org_id",
+            "period_id",
+            "bank_account_code",
+            "version",
+            name="uq_bank_reconciliation_period_account_version",
+        ),
+        CheckConstraint("version >= 1", name="ck_bank_reconciliation_version"),
+        CheckConstraint(
+            "coverage_start_date <= coverage_end_date",
+            name="ck_bank_reconciliation_coverage",
+        ),
+        CheckConstraint(
+            "statement_integrity_difference_fen = 0",
+            name="ck_bank_reconciliation_statement_integrity",
+        ),
+        CheckConstraint(
+            "statement_transaction_count >= 0 AND unmatched_transaction_count >= 0 "
+            "AND pending_late_transaction_count >= 0",
+            name="ck_bank_reconciliation_counts",
+        ),
+        CheckConstraint(
+            "length(calculation_payload) > 0 AND length(calculation_hash) = 64",
+            name="ck_bank_reconciliation_hash",
+        ),
+    )
+
+
+Index(
+    "ix_bank_reconciliation_period_account",
+    BankReconciliation.org_id,
+    BankReconciliation.period_id,
+    BankReconciliation.bank_account_code,
+    BankReconciliation.version,
+)
+
+
+class BankReconciliationEvidence(Base):
+    __tablename__ = "bank_reconciliation_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    reconciliation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_sha256_at_confirm: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "reconciliation_id"],
+            ["bank_reconciliations.org_id", "bank_reconciliations.id"],
+            name="fk_bank_reconciliation_evidence_org_reconciliation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_bank_reconciliation_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "length(evidence_sha256_at_confirm) = 64",
+            name="ck_bank_reconciliation_evidence_hash",
+        ),
+    )
+
+
+class BankReconciliationImportAction(Base):
+    __tablename__ = "bank_reconciliation_import_actions"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    reconciliation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    import_action_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    request_payload_hash_at_confirm: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_hash_at_confirm: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "reconciliation_id"],
+            ["bank_reconciliations.org_id", "bank_reconciliations.id"],
+            name="fk_bank_reconciliation_import_org_reconciliation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "import_action_id"],
+            ["bank_statement_import_actions.org_id", "bank_statement_import_actions.id"],
+            name="fk_bank_reconciliation_import_org_action",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash_at_confirm) = 64 "
+            "AND length(calculation_hash_at_confirm) = 64",
+            name="ck_bank_reconciliation_import_hashes",
+        ),
+    )
+
+
+class BankReconciliationTransaction(Base):
+    __tablename__ = "bank_reconciliation_transactions"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    reconciliation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    bank_transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    booking_date_at_confirm: Mapped[date] = mapped_column(Date, nullable=False)
+    amount_fen_at_confirm: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "reconciliation_id"],
+            ["bank_reconciliations.org_id", "bank_reconciliations.id"],
+            name="fk_bank_reconciliation_transaction_org_reconciliation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "bank_transaction_id"],
+            ["bank_transactions.org_id", "bank_transactions.id"],
+            name="fk_bank_reconciliation_transaction_org_transaction",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "amount_fen_at_confirm <> 0",
+            name="ck_bank_reconciliation_transaction_nonzero",
+        ),
+    )
+
+
+class AccountingPeriodCloseBankReconciliation(Base):
+    """Append-only edge freezing which explicit reconciliation a close used."""
+
+    __tablename__ = "accounting_period_close_bank_reconciliations"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    close_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    bank_account_code: Mapped[str] = mapped_column(String(30), primary_key=True)
+    reconciliation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    reconciliation_hash_at_close: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "close_id"],
+            ["accounting_period_closes.org_id", "accounting_period_closes.id"],
+            name="fk_period_close_bank_reconciliation_org_close",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "reconciliation_id"],
+            ["bank_reconciliations.org_id", "bank_reconciliations.id"],
+            name="fk_period_close_bank_reconciliation_org_reconciliation",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "length(reconciliation_hash_at_close) = 64",
+            name="ck_period_close_bank_reconciliation_hash",
+        ),
     )
 
 

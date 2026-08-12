@@ -1,6 +1,6 @@
 # 正式私有试用工程控制基线
 
-> 状态：工程基线；不是发布授权。DEC-015、DEC-018、DEC-023 至 DEC-031 已决定；本地单负责人身份、执行归因与供应链门禁已实现。备份恢复集成已实现但正式创建命令受 DEC-035 门禁暂停；DEC-032 至 DEC-035 的其余受影响实现同样保持暂停。
+> 状态：工程基线；不是发布授权。DEC-015、DEC-018、DEC-023 至 DEC-035 已决定；本地单负责人身份、执行归因与供应链门禁已实现。DEC-035 A 的本机信任边界已接入备份正式入口；其余已决定事项是否实现以对应验收记录为准。
 
 ## 启动模式与数据库账户
 
@@ -25,15 +25,16 @@ Compose 账户。不得把该文件中的 `finance:finance` 凭据、相对目�
 不允许符号链接或 Windows junction/reparse point。证据内容寻址存储目录也拒绝该类重解析点。
 Base64 证据同样只能写入安全的证据存储目录。
 
-`FINANCE_BANK_IMPORT_DIR` 与 `FINANCE_MAX_BANK_IMPORT_BYTES` 已作为生产配置边界保留。银行导入
-调用点的接入不在本次受限改动范围内，不能据此宣称银行导入白名单已完成；在该接入完成并有
-独立验收前，生产试用不得使用文件路径银行导入。
+`FINANCE_BANK_IMPORT_DIR` 与 `FINANCE_MAX_BANK_IMPORT_BYTES` 已接入正式 CSV 银行导入。公共请求只接受
+不含路径分隔符的文件名；服务固定从批准目录取得稳定普通文件句柄，执行大小、根路径、reparse point
+与读前读后身份复核，并以同一次读取的字节完成解析和 SHA-256。请求不接受任意路径、文件字节、XLSX
+工作表或调用方自报的迟到/关闭信息。
 
 DEC-023/024 的本地单负责人身份已经接入正式 MCP：除公开事件 schema 外，所有企业数据工具都必须在
 同一事务内验证由 Windows Credential Manager 提供的不透明 session，并校验请求企业与会话企业一致；
-请求不能自报负责人或执行者。旧的直接银行导入函数在生产模式稳定返回
-`BANK_STATEMENT_PREVIEW_CONFIRM_REQUIRED`。这只是银行写入口的安全暂停，不代表新的预检、确认、
-迟到证据或对账写流程已经可用。
+请求不能自报负责人或执行者。旧的直接银行导入函数只在开发回归中注册；生产 MCP 只公开严格的
+CSV 预览/确认、银行范围确认、迟到证据处理、逐账户对账和状态查询工具。所有正式确认动作与业务写入
+共享同一负责人会话和执行归因提交点。
 
 ## CI 基线
 
@@ -55,7 +56,8 @@ DEC-027 A 已落实为 `uv.lock`、Action SHA 和 PostgreSQL 17 镜像 digest �
 DEC-025 A 已固定为本地 Windows 单机、系统卷静态加密和独立加密移动备份介质，不上云。
 仓库已经实现停服 lease、BitLocker/可移动介质前置检查、数据库与证据一致快照、可验证清单、30 天
 保留候选和隔离 PostgreSQL 17 恢复演练，并为独立 `finance_backup` 账户提供最小权限部署 SQL。
-正式 `finance-backup create` 仍在任何配置、凭据或文件访问前稳定返回
-`BACKUP_DEC035_DEPLOYMENT_BINDING_UNDECIDED`；只有 DEC-035 生效并完成同一机器配置来源接入后才能解除。
+DEC-035 A 已落实：正式 `finance-backup create` 信任经过生产模式校验的本机 Settings、应用运行
+数据库账号和当前 Windows 账户，并依次执行 loopback、独立凭据、停服 lease、专用 cluster、ACL、
+BitLocker 可移动介质和 TOCTOU 门禁；控制这些本机账号的人不在一期防护边界内。
 此外，正式试用前仍须在实际启用 BitLocker 的独立移动介质上完成一次停服备份与隔离恢复，并记录书面结果；
 仓库测试或 Testcontainers 演练不能代替这项物理部署验收。

@@ -8,6 +8,7 @@ from datetime import date
 from threading import Barrier
 
 import pytest
+from conftest import authenticate_and_confirm_bank_scope
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_payroll_service import (
@@ -99,7 +100,7 @@ def _payroll_event(org_id: uuid.UUID, key: str) -> BusinessEvent:
     return BusinessEvent(
         org_id=org_id,
         idempotency_key=key,
-        event_type="expense_cash",
+        event_type="expense_payable",
         status="posted",
         facts={"amounts": {"amount_fen": 200}},
         business_date=date(2026, 3, 5),
@@ -117,6 +118,7 @@ def _bank_request(
             "org_id": org_id,
             "idempotency_key": f"bank-request-{uuid.uuid4()}",
             "event_type": "expense_cash",
+            "bank_account_code": "1002",
             "business_dates": {
                 "business_date": "2026-03-05",
                 "payment_date": "2026-03-05",
@@ -663,7 +665,7 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
         engine = create_engine(url)
         factory = make_session_factory(engine)
         try:
-            with factory.begin() as setup:
+            with factory() as setup:
                 organization = seed_organization(
                     setup, accounting_period_control_enabled=False, name="PAY-002 并发工资企业"
                 )
@@ -688,12 +690,33 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
                     )
                 )
                 assert salary is not None
-                first_bank = add_bank_row(setup, organization, -425_000, "concurrent-salary-1")
-                second_bank = add_bank_row(setup, organization, -414_500, "concurrent-salary-2")
                 org_id = organization.id
                 salary_id = salary.id
-                first_bank_id = first_bank.id
-                second_bank_id = second_bank.id
+                setup.commit()
+                scope_evidence = Evidence(
+                    org_id=org_id,
+                    sha256="2" * 64,
+                    original_name="pay-002-bank-scope.txt",
+                    media_type="text/plain",
+                    source="test",
+                    size_bytes=1,
+                    storage_path="test/pay-002-bank-scope.txt",
+                )
+                setup.add(scope_evidence)
+                setup.flush()
+                authority = authenticate_and_confirm_bank_scope(
+                    setup,
+                    organization,
+                    evidence_id=scope_evidence.id,
+                    accounts=[
+                        {
+                            "bank_account_code": "1002",
+                            "account_name": "银行存款",
+                            "start_date": date(2026, 3, 1),
+                        }
+                    ],
+                )
+                setup.commit()
 
             requests = [
                 RecordEventRequest.model_validate(
@@ -701,6 +724,7 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
                         "org_id": org_id,
                         "idempotency_key": "concurrent-salary-payment-1",
                         "event_type": "salary_payment",
+                        "bank_account_code": "1002",
                         "business_dates": {
                             "business_date": "2026-03-05",
                             "payment_date": "2026-03-05",
@@ -716,7 +740,6 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
                                 "individual_income_tax_fen": 0,
                             }
                         ],
-                        "bank_transaction_references": [{"id": first_bank_id}],
                     }
                 ),
                 RecordEventRequest.model_validate(
@@ -724,6 +747,7 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
                         "org_id": org_id,
                         "idempotency_key": "concurrent-salary-payment-2",
                         "event_type": "salary_payment",
+                        "bank_account_code": "1002",
                         "business_dates": {
                             "business_date": "2026-03-05",
                             "payment_date": "2026-03-05",
@@ -739,7 +763,6 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
                                 "individual_income_tax_fen": 10_500,
                             }
                         ],
-                        "bank_transaction_references": [{"id": second_bank_id}],
                     }
                 ),
             ]
@@ -748,7 +771,8 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
             def post(request: RecordEventRequest) -> object:
                 barrier.wait(timeout=10)
                 with factory.begin() as worker:
-                    return FinanceService(worker).record_event(request)
+                    with authority.attributed_call(worker, tool_name="finance_record_event"):
+                        return FinanceService(worker).record_event(request)
 
             with ThreadPoolExecutor(max_workers=2) as executor:
                 results = list(executor.map(post, requests))

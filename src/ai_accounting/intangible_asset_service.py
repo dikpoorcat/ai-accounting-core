@@ -32,7 +32,6 @@ from .intangible_assets import (
 from .ledger import AccountingPeriodError, Entry, create_voucher
 from .models import (
     AuditLog,
-    BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
     Counterparty,
@@ -48,10 +47,7 @@ from .models import (
 from .schemas import FinanceResult, ResultStatus, ReverseEventRequest
 from .service import FinanceService
 
-ACCOUNTING_RULE_SOURCE_URL = (
-    "https://kjs.mof.gov.cn/zhengcefabu/201111/"
-    "P020111118325852319878.pdf"
-)
+ACCOUNTING_RULE_SOURCE_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878.pdf"
 INTANGIBLE_ASSET_EVENT_TYPES = {
     "intangible_asset_acquisition",
     "intangible_asset_amortization",
@@ -143,9 +139,7 @@ class IntangibleAssetService(FinanceService):
             lambda: self._retire_intangible_asset_write(request),
         )
 
-    def get_intangible_asset(
-        self, org_id: uuid.UUID, asset_id: uuid.UUID
-    ) -> IntangibleAssetResult:
+    def get_intangible_asset(self, org_id: uuid.UUID, asset_id: uuid.UUID) -> IntangibleAssetResult:
         if self.session.get(Organization, org_id) is None:
             return IntangibleAssetResult(
                 status=IntangibleAssetResultStatus.REJECTED,
@@ -164,9 +158,7 @@ class IntangibleAssetService(FinanceService):
         retirement_history = self._retirement_history(asset.id)
         acquisition_reversed = acquisition is not None and acquisition.status == "reversed"
         accumulated = (
-            0
-            if acquisition_reversed
-            else sum(item.amount_fen for item in active_amortizations)
+            0 if acquisition_reversed else sum(item.amount_fen for item in active_amortizations)
         )
         book_value = 0 if acquisition_reversed else asset.cost_fen - accumulated
         on_book = not acquisition_reversed and retirement is None
@@ -220,9 +212,7 @@ class IntangibleAssetService(FinanceService):
                         "event_id": str(retirement.event_id),
                         "retirement_date": retirement.retirement_date.isoformat(),
                         "posting_date": retirement.posting_date.isoformat(),
-                        "accumulated_amortization_fen": (
-                            retirement.accumulated_amortization_fen
-                        ),
+                        "accumulated_amortization_fen": (retirement.accumulated_amortization_fen),
                         "book_value_fen": retirement.book_value_fen,
                         "event": self._event_projection(
                             self.session.get(BusinessEvent, retirement.event_id)
@@ -237,9 +227,7 @@ class IntangibleAssetService(FinanceService):
                         "event_id": str(item.event_id),
                         "retirement_date": item.retirement_date.isoformat(),
                         "posting_date": item.posting_date.isoformat(),
-                        "accumulated_amortization_fen": (
-                            item.accumulated_amortization_fen
-                        ),
+                        "accumulated_amortization_fen": (item.accumulated_amortization_fen),
                         "book_value_fen": item.book_value_fen,
                         "active": (
                             self.session.get(BusinessEvent, item.event_id).status == "posted"
@@ -318,6 +306,30 @@ class IntangibleAssetService(FinanceService):
         existing = self._idempotent_event(request.org_id, request.idempotency_key)
         if existing is not None:
             return self._existing_result(existing, payload_hash)
+        if (
+            isinstance(request, AcquireIntangibleAssetRequest)
+            and request.settlement_method is not None
+            and request.settlement_method.value == "bank"
+            and not self._bank_reconciliation_scope_is_confirmed(
+                self.session.get(Organization, request.org_id)
+            )
+        ):
+            requirement = IntangibleAssetInformationRequirement(
+                code="BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
+                message="owner-confirmed bank reconciliation scope is required",
+                fields=["bank_reconciliation_scope_confirmation"],
+            )
+            return IntangibleAssetResult(
+                status=IntangibleAssetResultStatus.NEEDS_INFORMATION,
+                missing_information=[requirement],
+                trace=[
+                    {
+                        "stage": "validation",
+                        "status": "needs_information",
+                        "code": requirement.code,
+                    }
+                ],
+            )
         if missing := request.missing_information():
             return self._persist_nonposted_decision(
                 command,
@@ -374,9 +386,7 @@ class IntangibleAssetService(FinanceService):
         payload_hash = self._intangible_request_hash(command, request)
         try:
             with self.session.begin_nested():
-                existing = self._idempotent_event(
-                    request.org_id, request.idempotency_key
-                )
+                existing = self._idempotent_event(request.org_id, request.idempotency_key)
                 if existing is not None:
                     return self._existing_result(existing, payload_hash)
                 return self._store_nonposted(
@@ -413,9 +423,7 @@ class IntangibleAssetService(FinanceService):
             self._reject("INTANGIBLE_ASSET_OTHER_RIGHT_FACTS_REQUIRED")
         if self._month_start(request.acquisition_date) != self._month_start(
             request.available_for_use_date
-        ) or self._month_start(request.acquisition_date) != self._month_start(
-            request.posting_date
-        ):
+        ) or self._month_start(request.acquisition_date) != self._month_start(request.posting_date):
             self._reject("INTANGIBLE_ASSET_ACQUISITION_DATES_INVALID")
         if request.available_for_use_date < request.acquisition_date:
             self._reject("INTANGIBLE_ASSET_ACQUISITION_DATES_INVALID")
@@ -448,8 +456,15 @@ class IntangibleAssetService(FinanceService):
         if settlement == "bank":
             if request.due_date is not None:
                 self._reject("INTANGIBLE_ASSET_BANK_SETTLEMENT_FORBIDS_DUE_DATE")
+            self._validate_bank_account(
+                request.org_id, request.bank_account_code, request.payment_date
+            )
         else:
-            if request.payment_date is not None or request.bank_transaction_references:
+            if (
+                request.payment_date is not None
+                or request.bank_account_code is not None
+                or request.bank_transaction_references
+            ):
                 self._reject("INTANGIBLE_ASSET_PAYABLE_FORBIDS_BANK_FACTS")
         self._validate_evidence(request.org_id, request.evidence_references)
         trace = [
@@ -461,6 +476,7 @@ class IntangibleAssetService(FinanceService):
                 "residual_value_fen": 0,
                 "life_basis": request.life_basis.value,
                 "useful_life_months": request.useful_life_months,
+                "bank_account_code": request.bank_account_code,
             },
             self._rule_trace(),
         ]
@@ -476,10 +492,11 @@ class IntangibleAssetService(FinanceService):
         self.session.add(event)
         self.session.flush()
         self._attach_evidence(event, request.evidence_references)
-        if settlement == "bank":
+        if settlement == "bank" and request.bank_transaction_references:
             self._match_bank_transactions(
                 event,
                 request.bank_transaction_references,
+                bank_account_code=request.bank_account_code,
                 expected_outflow_fen=calculation.cost_fen,
                 expected_date=request.payment_date,
             )
@@ -517,7 +534,8 @@ class IntangibleAssetService(FinanceService):
         entries = [
             Entry(account_role="intangible_asset_cost", debit_fen=calculation.cost_fen),
             Entry(
-                account_role="bank" if settlement == "bank" else "accounts_payable",
+                account_code=request.bank_account_code if settlement == "bank" else None,
+                account_role=None if settlement == "bank" else "accounts_payable",
                 credit_fen=calculation.cost_fen,
                 counterparty_id=supplier.id if settlement == "payable" else None,
             ),
@@ -552,9 +570,9 @@ class IntangibleAssetService(FinanceService):
             "cost_fen": calculation.cost_fen,
             "residual_value_fen": 0,
             "useful_life_months": asset.useful_life_months,
-            "next_amortization_period": self._month_start(
-                asset.available_for_use_date
-            ).strftime("%Y-%m"),
+            "next_amortization_period": self._month_start(asset.available_for_use_date).strftime(
+                "%Y-%m"
+            ),
         }
         self._finalize_event(event, voucher, asset.id, data)
         return self._posted_result(asset.id, event, voucher, data=data)
@@ -820,9 +838,7 @@ class IntangibleAssetService(FinanceService):
         self.session.add(row)
         entries: list[Entry] = []
         if accumulated:
-            entries.append(
-                Entry(account_role="accumulated_amortization", debit_fen=accumulated)
-            )
+            entries.append(Entry(account_role="accumulated_amortization", debit_fen=accumulated))
         if book_value:
             entries.append(
                 Entry(account_role="intangible_asset_retirement_loss", debit_fen=book_value)
@@ -860,9 +876,7 @@ class IntangibleAssetService(FinanceService):
             {"command": command, "request": request.model_dump(mode="json")}
         )
 
-    def _idempotent_event(
-        self, org_id: uuid.UUID, idempotency_key: str
-    ) -> BusinessEvent | None:
+    def _idempotent_event(self, org_id: uuid.UUID, idempotency_key: str) -> BusinessEvent | None:
         return self.session.scalar(
             select(BusinessEvent).where(
                 BusinessEvent.org_id == org_id,
@@ -916,9 +930,7 @@ class IntangibleAssetService(FinanceService):
         errors = errors or []
         event_type = {
             "finance_acquire_intangible_asset": "intangible_asset_acquisition",
-            "finance_confirm_intangible_asset_amortization": (
-                "intangible_asset_amortization"
-            ),
+            "finance_confirm_intangible_asset_amortization": ("intangible_asset_amortization"),
             "finance_retire_intangible_asset": "intangible_asset_retirement",
         }[command]
         business_date, posting_date = self._request_dates(request)
@@ -984,9 +996,7 @@ class IntangibleAssetService(FinanceService):
     ) -> BusinessEvent:
         facts = request.model_dump(mode="json")
         facts["_command"] = command
-        facts["accounting_rule_version"] = (
-            SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION
-        )
+        facts["accounting_rule_version"] = SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION
         facts["accounting_rule_source_url"] = ACCOUNTING_RULE_SOURCE_URL
         return BusinessEvent(
             org_id=request.org_id,
@@ -1049,9 +1059,7 @@ class IntangibleAssetService(FinanceService):
             )
         )
 
-    def _amortization_history(
-        self, asset_id: uuid.UUID
-    ) -> list[IntangibleAssetAmortization]:
+    def _amortization_history(self, asset_id: uuid.UUID) -> list[IntangibleAssetAmortization]:
         return list(
             self.session.scalars(
                 select(IntangibleAssetAmortization)
@@ -1063,9 +1071,7 @@ class IntangibleAssetService(FinanceService):
             ).all()
         )
 
-    def _retirement_history(
-        self, asset_id: uuid.UUID
-    ) -> list[IntangibleAssetRetirement]:
+    def _retirement_history(self, asset_id: uuid.UUID) -> list[IntangibleAssetRetirement]:
         return list(
             self.session.scalars(
                 select(IntangibleAssetRetirement)
@@ -1107,10 +1113,7 @@ class IntangibleAssetService(FinanceService):
             )
         )
         if row is not None:
-            if (
-                reference.external_ref is not None
-                and reference.external_ref != row.external_ref
-            ):
+            if reference.external_ref is not None and reference.external_ref != row.external_ref:
                 self._reject("INTANGIBLE_ASSET_COUNTERPARTY_IDENTITY_MISMATCH")
             return row
         if reference.external_ref is not None:
@@ -1145,9 +1148,7 @@ class IntangibleAssetService(FinanceService):
             )
         ).all()
         if len(found) != len(evidence_ids):
-            self._reject(
-                "INTANGIBLE_ASSET_EVIDENCE_NOT_FOUND_OR_ORGANIZATION_MISMATCH"
-            )
+            self._reject("INTANGIBLE_ASSET_EVIDENCE_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
 
     def _event_evidence_ids(self, event_id: uuid.UUID) -> list[uuid.UUID]:
         return list(
@@ -1163,33 +1164,17 @@ class IntangibleAssetService(FinanceService):
         event: BusinessEvent,
         references: list[Any],
         *,
+        bank_account_code: str,
         expected_outflow_fen: int,
         expected_date: date,
     ) -> None:
-        resolved_ids: list[uuid.UUID] = []
-        for reference in references:
-            clauses = [BankTransaction.org_id == event.org_id]
-            if reference.id is not None:
-                clauses.append(BankTransaction.id == reference.id)
-            if reference.fingerprint is not None:
-                clauses.append(BankTransaction.fingerprint == reference.fingerprint)
-            row_id = self.session.scalar(select(BankTransaction.id).where(*clauses))
-            if row_id is None:
-                self._reject("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-            resolved_ids.append(row_id)
-        if len(resolved_ids) != len(set(resolved_ids)):
-            self._reject("DUPLICATE_BANK_TRANSACTION_REFERENCE")
-        rows = self.session.scalars(
-            select(BankTransaction)
-            .where(
-                BankTransaction.org_id == event.org_id,
-                BankTransaction.id.in_(sorted(resolved_ids, key=str)),
-            )
-            .order_by(BankTransaction.id)
-            .with_for_update()
-        ).all()
-        if len(rows) != len(resolved_ids):
-            self._reject("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
+        try:
+            rows = self._resolve_bank_transaction_references(event.org_id, references)
+        except ValueError as exc:
+            self._reject(str(exc))
+        resolved_ids = [row.id for row in rows]
+        if any(row.bank_account_code != bank_account_code for row in rows):
+            self._reject("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
         if any(row.currency != "CNY" for row in rows):
             self._reject("INTANGIBLE_ASSET_BANK_TRANSACTION_CURRENCY_MISMATCH")
         if any(row.booking_date != expected_date for row in rows):
@@ -1360,6 +1345,7 @@ class IntangibleAssetService(FinanceService):
             "template_lines": [
                 {
                     "account_role": line.account_role,
+                    "account_code": line.account_code,
                     "debit_fen": line.debit_fen,
                     "credit_fen": line.credit_fen,
                 }

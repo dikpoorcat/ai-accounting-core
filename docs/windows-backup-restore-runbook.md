@@ -1,10 +1,10 @@
 # Windows 停服备份与隔离恢复演练边界
 
-> 状态：DEC-035 待决的集成边界草案，不是私有试用发布授权。仓库仅开放
-> `finance-backup credential-set/credential-delete`；`finance-backup create` 在任何配置读取、凭据访问、
-> 卷预检或文件副作用前稳定拒绝 `BACKUP_DEC035_DEPLOYMENT_BINDING_UNDECIDED`。环境变量和 `.env`
-> 可被调用进程伪造，不能证明数据库、存储目录与服务锁属于获准的本机部署。在 DEC-035 冻结不可伪造的
-> 机器配置来源前，不得启用正式备份命令或计划任务，也不得把本草案描述为已完成的正式备份门禁。
+> 状态：DEC-035 A 已落实的本地单机技术边界，不是私有试用发布授权。`finance-backup create`
+> 信任经过生产模式校验的本机 Settings、应用运行数据库账号和当前 Windows 账户；取得这些账号或
+> 当前 Windows 账户控制权的人不在一期防护边界内。命令仍会逐项检查独立备份凭据、停服 lease、
+> 专用数据库 cluster、加密可移动介质、ACL 和完整性。正式试用前必须完成实际介质上的备份与隔离恢复
+> 验收；目前不得创建计划任务，也不得把代码门禁通过视为发布授权。
 
 ## 已冻结的安全边界
 
@@ -46,24 +46,26 @@
    决定完整备份权限；不得自行授予 `BYPASSRLS`。
 5. 为运行账户、迁移账户和 `finance_backup` 使用三个不同凭据。介质恢复码由企业负责人脱离电脑
    单独保管。
-6. DEC-035 冻结后，确认正式 MCP 和未来启用的 `finance-backup create` 使用同一个由机器绑定配置
-   给出的 service lock。备份与 MCP 都持
+6. 确认正式 MCP 和 `finance-backup create` 使用同一份经过生产模式校验的本机 Settings，并由其中的
+   `FINANCE_SERVICE_LOCK_FILE` 给出同一个绝对路径 service lock。备份与 MCP 都持
    Windows `LockFileEx` 独占锁，不需要也不接受 Windows 服务名；MCP 未退出时备份稳定拒绝，备份
    发布 `.complete` 前 MCP 也不能重新取得锁。
-7. 当前不得执行正式 `create`。DEC-035 冻结并完成实现后，还必须在实际加密移动介质执行一次备份和
-   一次隔离恢复演练并保存结果，随后才可另行评估是否启用计划任务。
+7. 代码已经允许 `create` 进入正式门禁，但这不授权在当前开发验收中访问真实凭据或实际介质。正式
+   试用前，部署负责人必须在实际加密移动介质执行一次停服备份和一次隔离恢复演练并保存结果，随后
+   才可另行评估是否启用计划任务。
 
 ## 每日及升级前顺序
 
-以下仅保留未来命令形状，不是当前可执行操作。当前运行它只会得到 DEC-035 稳定拒绝，不会读取
-`DATABASE_URL`、Credential Manager 或介质。数据库和运行账户最终从何种机器绑定来源取得，须由
-DEC-035 决定，不能继续以 environment/`.env` 冒充部署证明：
+以下是完成首次配置与物理验收后使用的命令形状。它会读取经过生产模式校验的本机 Settings，使用其中
+的 loopback 数据库目标、运行账号和 service lock；再从当前 Windows 账户的 Credential Manager
+取得独立 `finance_backup` 密码并检查实际介质。不得在开发验证、默认 Compose、真实数据导入或尚未
+完成首次物理验收时运行：
 
 ```powershell
 finance-backup create --backup-root E:\FinanceBackups --purpose daily --pg-bin-dir 'C:\Program Files\PostgreSQL\17\bin'
 ```
 
-DEC-035 完成后的预期执行顺序如下：
+执行顺序如下：
 
 1. 连接并解锁独立加密移动介质，执行只读卷状态检查及 durable publish preflight。
 2. 正常退出正式 MCP；备份必须成功取得与 MCP 共用的跨进程独占 lease，不能只相信操作者声明。

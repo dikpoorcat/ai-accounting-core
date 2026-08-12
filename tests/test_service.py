@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.models import (
+    Account,
     BankTransaction,
     OpenItem,
     Organization,
@@ -19,6 +22,19 @@ from ai_accounting.schemas import (
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
+
+
+@pytest.fixture(autouse=True)
+def confirmed_bank_scope(session: Session, organization: Organization) -> None:
+    account = session.scalar(
+        select(Account).where(Account.org_id == organization.id, Account.code == "1002")
+    )
+    account.requires_bank_reconciliation = True
+    account.bank_reconciliation_start_date = date(2000, 1, 1)
+    account.bank_reconciliation_configured_at = datetime.now(UTC)
+    session.flush()
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", uuid.uuid4())
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", datetime.now(UTC))
 
 
 def sale_request(
@@ -51,6 +67,8 @@ def sale_request(
     }
     if event_type == "service_credit_sale":
         payload["counterparty"] = {"kind": "customer", "name": "甲客户"}
+    else:
+        payload["bank_account_code"] = "1002"
     return RecordEventRequest.model_validate(payload)
 
 
@@ -87,6 +105,7 @@ def test_unclassified_receipt_never_credits_receivable(
                 "payment_date": "2026-08-08",
             },
             "counterparty": {"kind": "customer", "name": "未知客户"},
+            "bank_account_code": "1002",
             "amounts": {"amount_fen": 29_849_401},
             "description": "银行收到款项，性质未确认",
         }
@@ -119,6 +138,7 @@ def test_credit_sale_partial_settlement_and_oversettlement_rejected(
                 "payment_date": "2026-08-09",
             },
             "counterparty": {"kind": "customer", "name": "甲客户"},
+            "bank_account_code": "1002",
             "amounts": {"amount_fen": 40_000},
             "allocations": [{"open_item_id": item.id, "amount_fen": 40_000}],
         }
@@ -138,6 +158,7 @@ def test_credit_sale_partial_settlement_and_oversettlement_rejected(
                 "payment_date": "2026-08-10",
             },
             "counterparty": {"kind": "customer", "name": "甲客户"},
+            "bank_account_code": "1002",
             "amounts": {"amount_fen": 70_000},
             "allocations": [{"open_item_id": item.id, "amount_fen": 70_000}],
         }
@@ -214,6 +235,7 @@ def test_small_taxpayer_purchase_is_gross_expense(
                 "invoice_date": "2026-08-08",
             },
             "amounts": {"gross_amount_fen": 10_300, "expense_account_role": "general_expense"},
+            "bank_account_code": "1002",
             "invoice_references": [
                 {
                     "number": "IN-001",
@@ -249,6 +271,7 @@ def test_customer_advance_cannot_be_fulfilled_twice(
                     "tax_obligation_date": "2026-08-01",
                 },
                 "counterparty": {"kind": "customer", "name": "乙客户"},
+                "bank_account_code": "1002",
                 "amounts": {"gross_amount_fen": 101_000},
                 "tax_facts": {
                     "taxable": True,

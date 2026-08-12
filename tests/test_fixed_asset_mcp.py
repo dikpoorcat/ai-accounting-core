@@ -73,7 +73,7 @@ def test_fixed_asset_tools_publish_strict_typed_contracts_without_free_entries()
     schema_text = json.dumps(schemas, ensure_ascii=False)
     assert "debit_fen" not in schema_text
     assert "credit_fen" not in schema_text
-    assert "account_code" not in schema_text
+    assert '"account_code"' not in schema_text
 
 
 def test_fixed_asset_capability_is_discoverable_and_generic_event_is_rejected() -> None:
@@ -357,7 +357,7 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
                 {
                     "org_id": org_id,
                     "idempotency_key": "mcp-tax-lock-source",
-                    "event_type": "service_cash_sale",
+                    "event_type": "service_credit_sale",
                     "business_dates": {
                         "business_date": "2026-01-15",
                         "fulfillment_date": "2026-01-15",
@@ -366,6 +366,7 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
                         "posting_date": "2026-01-15",
                     },
                     "amounts": {"gross_amount_fen": 101_000},
+                    "counterparty": {"kind": "customer", "name": "MCP tax customer"},
                     "tax_facts": {
                         "taxable": True,
                         "rate_percent": "1",

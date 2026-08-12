@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.accounting_period_schemas import (
     AccountingPeriodReviewFacts,
@@ -154,6 +155,7 @@ async def _call(
 
 def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
     tmp_path: Path,
+    authenticated_stdio_bank_scope: Any,
 ) -> None:
     database_path = tmp_path / "accounting-period-stdio.sqlite3"
     database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
@@ -175,13 +177,19 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
         )
         database_session.add(evidence)
         database_session.flush()
+        stdio_args = authenticated_stdio_bank_scope(
+            database_session,
+            organization,
+            evidence.id,
+            [],
+        )
         org_id = str(organization.id)
         evidence_id = str(evidence.id)
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
         command=getattr(sys, "_base_executable", sys.executable),
-        args=["-m", "ai_accounting.mcp_server"],
+        args=stdio_args,
         cwd=Path(__file__).parents[1],
         env=_environment(database_url, tmp_path / "evidence"),
     )
@@ -225,7 +233,8 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                     {
                         "org_id": org_id,
                         "idempotency_key": "stdio-period-before-control-start",
-                        "event_type": "service_cash_sale",
+                        "event_type": "service_credit_sale",
+                        "counterparty": {"kind": "customer", "name": "期间测试客户"},
                         "business_dates": {
                             "business_date": "2026-06-30",
                             "posting_date": "2026-06-30",
@@ -250,7 +259,8 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                 sale_request = {
                     "org_id": org_id,
                     "idempotency_key": "stdio-period-july-sale",
-                    "event_type": "service_cash_sale",
+                    "event_type": "service_credit_sale",
+                    "counterparty": {"kind": "customer", "name": "期间测试客户"},
                     "business_dates": {
                         "business_date": "2026-07-15",
                         "posting_date": "2026-07-15",
@@ -477,7 +487,10 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
         verification_engine.dispose()
 
 
-def test_zero_voucher_month_closes_through_real_stdio(tmp_path: Path) -> None:
+def test_zero_voucher_month_closes_through_real_stdio(
+    tmp_path: Path,
+    authenticated_stdio_bank_scope: Any,
+) -> None:
     database_path = tmp_path / "accounting-period-zero-stdio.sqlite3"
     database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
     setup_engine = make_engine(database_url)
@@ -496,13 +509,19 @@ def test_zero_voucher_month_closes_through_real_stdio(tmp_path: Path) -> None:
         )
         database_session.add(evidence)
         database_session.flush()
+        stdio_args = authenticated_stdio_bank_scope(
+            database_session,
+            organization,
+            evidence.id,
+            [],
+        )
         org_id = str(organization.id)
         evidence_id = str(evidence.id)
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
         command=getattr(sys, "_base_executable", sys.executable),
-        args=["-m", "ai_accounting.mcp_server"],
+        args=stdio_args,
         cwd=Path(__file__).parents[1],
         env=_environment(database_url, tmp_path / "zero-evidence"),
     )
@@ -630,7 +649,8 @@ def test_real_stdio_uses_china_current_date_for_posting_boundary(tmp_path: Path)
                     return {
                         "org_id": org_id,
                         "idempotency_key": key,
-                        "event_type": "service_cash_sale",
+                        "event_type": "service_credit_sale",
+                        "counterparty": {"kind": "customer", "name": "日期边界客户"},
                         "business_dates": {
                             "business_date": posting_date,
                             "posting_date": posting_date,
@@ -703,6 +723,17 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
                 confirmation_note="生成工资测试七月",
                 evidence_references=[evidence.id],
             )
+        )
+        configured_at = datetime.now(ZoneInfo("UTC"))
+        set_committed_value(
+            closed_org,
+            "bank_reconciliation_scope_current_action_id",
+            uuid.uuid4(),
+        )
+        set_committed_value(
+            closed_org,
+            "bank_reconciliation_scope_confirmed_at",
+            configured_at,
         )
         close_facts = PreviewAccountingPeriodCloseRequest(
             org_id=closed_org.id,

@@ -43,6 +43,7 @@ def _acquisition_payload() -> dict[str, object]:
         },
         "supplier": {"kind": "supplier", "name": "Supplier"},
         "settlement_method": "bank",
+        "bank_account_code": "1002",
         "payment_date": "2026-01-10",
         "evidence_references": [_id()],
         "bank_transaction_references": [{"id": _id()}],
@@ -89,21 +90,19 @@ def test_acquisition_schema_requires_explicit_facts_without_defaulting_treatment
     }
 
 
-def test_bank_acquisition_requires_payment_and_bank_reference_but_payable_requires_due_date(
-) -> None:
+def test_bank_acquisition_requires_payment_and_account_but_payable_requires_due_date() -> None:
     bank_payload = _acquisition_payload()
     bank_payload.pop("payment_date")
     bank_payload["bank_transaction_references"] = []
     bank = AcquireFixedAssetRequest.model_validate(bank_payload)
     bank_codes = {item.code for item in bank.missing_information()}
-    assert {
-        "FIXED_ASSET_PAYMENT_DATE_REQUIRED",
-        "FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED",
-    } <= bank_codes
+    assert "FIXED_ASSET_PAYMENT_DATE_REQUIRED" in bank_codes
+    assert "FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED" not in bank_codes
 
     payable_payload = _acquisition_payload()
     payable_payload["settlement_method"] = "payable"
     payable_payload.pop("payment_date")
+    payable_payload.pop("bank_account_code")
     payable_payload["bank_transaction_references"] = []
     payable = AcquireFixedAssetRequest.model_validate(payable_payload)
     assert "FIXED_ASSET_DUE_DATE_REQUIRED" in {item.code for item in payable.missing_information()}
@@ -223,7 +222,7 @@ def test_disposal_schema_enforces_sale_and_retirement_boundaries() -> None:
         )
 
 
-def test_bank_receipt_or_bank_clearance_requires_bank_references() -> None:
+def test_bank_receipt_or_bank_clearance_requires_bank_account() -> None:
     sale = DisposeFixedAssetRequest.model_validate(
         {
             "org_id": _id(),
@@ -243,7 +242,7 @@ def test_bank_receipt_or_bank_clearance_requires_bank_references() -> None:
         }
     )
     requirements = sale.missing_information()
-    assert [item.code for item in requirements].count("FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED") == 1
+    assert [item.code for item in requirements].count("FIXED_ASSET_BANK_ACCOUNT_REQUIRED") == 1
 
 
 def test_retirement_settlement_requirement_is_not_hidden_by_clearance_cost() -> None:
@@ -256,12 +255,12 @@ def test_retirement_settlement_requirement_is_not_hidden_by_clearance_cost() -> 
             "posting_date": "2026-03-31",
             "disposal_kind": "retirement",
             "clearance_cost_fen": 100,
+            "bank_account_code": "1002",
             "evidence_references": [_id()],
         }
     )
 
     assert [item.code for item in retirement.missing_information()] == [
-        "FIXED_ASSET_BANK_TRANSACTIONS_REQUIRED",
         "FIXED_ASSET_RETIREMENT_SETTLEMENT_REQUIRED",
     ]
 
@@ -279,5 +278,5 @@ def test_public_fixed_asset_schema_has_no_free_entry_fields() -> None:
     )
     assert "debit_fen" not in schema_text
     assert "credit_fen" not in schema_text
-    assert "account_code" not in schema_text
+    assert '"account_code":' not in schema_text
     assert date.today().isoformat() not in schema_text

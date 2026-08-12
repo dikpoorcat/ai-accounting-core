@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from datetime import date
+import uuid
+from datetime import UTC, date, datetime
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.models import (
+    Account,
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
@@ -32,6 +36,32 @@ from ai_accounting.schemas import (
     TaxPeriodPreviewRequest,
 )
 from ai_accounting.tax import calculate_tax_period
+
+
+@pytest.fixture(autouse=True)
+def confirmed_bank_scope(session: Session, organization: Organization) -> None:
+    account = session.scalar(
+        select(Account).where(Account.org_id == organization.id, Account.code == "1002")
+    )
+    account.requires_bank_reconciliation = True
+    account.bank_reconciliation_start_date = date(2000, 1, 1)
+    account.bank_reconciliation_configured_at = datetime.now(UTC)
+    session.add(
+        Account(
+            org_id=organization.id,
+            code="1003",
+            name="测试银行二户",
+            category="asset",
+            normal_side="debit",
+            active=True,
+            requires_bank_reconciliation=True,
+            bank_reconciliation_start_date=date(2000, 1, 1),
+            bank_reconciliation_configured_at=datetime.now(UTC),
+        )
+    )
+    session.flush()
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", uuid.uuid4())
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", datetime.now(UTC))
 
 
 def _evidence(session: Session, organization: Organization, seed: str) -> Evidence:
@@ -77,6 +107,46 @@ def _acquisition_request(
     )
 
 
+def test_bank_acquisition_requires_confirmed_scope_without_business_write(
+    session: Session, organization: Organization
+) -> None:
+    evidence = _evidence(session, organization, "scope-fixed")
+    bank = _bank_row(
+        session,
+        organization,
+        amount_fen=-1_050_000,
+        booking_date=date(2026, 1, 2),
+        seed="scope-fixed-bank",
+    )
+    payload = _acquisition_request(
+        organization, evidence, key="scope-fixed-acquisition"
+    ).model_dump(mode="python")
+    payload.update(
+        {
+            "settlement_method": "bank",
+            "bank_account_code": "1002",
+            "payment_date": date(2026, 1, 2),
+            "due_date": None,
+            "bank_transaction_references": [{"id": bank.id}],
+        }
+    )
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", None)
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", None)
+
+    result = FixedAssetService(session).acquire_fixed_asset(
+        AcquireFixedAssetRequest.model_validate(payload)
+    )
+
+    assert result.status == "needs_information"
+    assert result.event_id is None
+    assert result.missing_information[0].fields == ["bank_reconciliation_scope_confirmation"]
+    assert session.scalars(select(BusinessEvent)).all() == []
+    assert session.scalars(select(FixedAsset)).all() == []
+    assert session.scalars(select(Voucher)).all() == []
+    assert session.scalars(select(BankTransactionMatch)).all() == []
+    assert bank.matched_event_id is None
+
+
 def _assert_balanced(session: Session, voucher_id: object) -> None:
     lines = session.scalars(select(VoucherLine).where(VoucherLine.voucher_id == voucher_id)).all()
     assert sum(line.debit_fen for line in lines) == sum(line.credit_fen for line in lines)
@@ -89,10 +159,11 @@ def _bank_row(
     amount_fen: int,
     booking_date: date,
     seed: str,
+    account_code: str = "1002",
 ) -> BankTransaction:
     row = BankTransaction(
         org_id=organization.id,
-        bank_account_code="1002",
+        bank_account_code=account_code,
         fingerprint=(seed * 64)[:64],
         booking_date=booking_date,
         amount_fen=amount_fen,
@@ -222,7 +293,7 @@ def test_fixed_asset_missing_facts_and_invalid_depreciation_policy_are_stable(
     assert rejected.errors == ["FIXED_ASSET_INVALID_DEPRECIATION_POLICY"]
 
 
-def test_bank_acquisition_and_retirement_match_exact_bank_rows(
+def test_second_bank_acquisition_and_sale_clearance_freeze_account_and_reverse(
     session: Session, organization: Organization
 ) -> None:
     service = FixedAssetService(session)
@@ -233,6 +304,7 @@ def test_bank_acquisition_and_retirement_match_exact_bank_rows(
         amount_fen=-1_050_000,
         booking_date=date(2026, 1, 2),
         seed="bank-acquire",
+        account_code="1003",
     )
     request_data = _acquisition_request(
         organization, evidence, key="asset-bank-acquire"
@@ -241,13 +313,59 @@ def test_bank_acquisition_and_retirement_match_exact_bank_rows(
         {
             "asset_code": "FA-BANK",
             "settlement_method": "bank",
+            "bank_account_code": "1003",
             "payment_date": date(2026, 1, 2),
             "due_date": None,
             "bank_transaction_references": [{"id": acquisition_bank.id}],
         }
     )
+    missing_code_data = {
+        **request_data,
+        "idempotency_key": "asset-bank-missing-code",
+        "asset_code": "FA-BANK-MISSING",
+        "bank_account_code": None,
+        "bank_transaction_references": [],
+    }
+    missing_code = service.acquire_fixed_asset(
+        AcquireFixedAssetRequest.model_validate(missing_code_data)
+    )
+    assert missing_code.status == "needs_information"
+    assert missing_code.missing_information[0].code == "FIXED_ASSET_BANK_ACCOUNT_REQUIRED"
+
+    wrong_account_bank = _bank_row(
+        session,
+        organization,
+        amount_fen=-1_050_000,
+        booking_date=date(2026, 1, 2),
+        seed="bank-acquire-wrong-account",
+        account_code="1002",
+    )
+    wrong_account_data = {
+        **request_data,
+        "idempotency_key": "asset-bank-wrong-account",
+        "asset_code": "FA-BANK-WRONG",
+        "bank_transaction_references": [{"id": wrong_account_bank.id}],
+    }
+    wrong_account = service.acquire_fixed_asset(
+        AcquireFixedAssetRequest.model_validate(wrong_account_data)
+    )
+    assert wrong_account.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
+    assert wrong_account_bank.matched_event_id is None
+
     acquired = service.acquire_fixed_asset(AcquireFixedAssetRequest.model_validate(request_data))
     assert acquired.status == "posted", acquired.errors
+    acquired_event = session.get(BusinessEvent, acquired.event_id)
+    assert acquired_event.facts["bank_account_code"] == "1003"
+    assert (
+        service.acquire_fixed_asset(AcquireFixedAssetRequest.model_validate(request_data)).event_id
+        == acquired.event_id
+    )
+    changed_account = AcquireFixedAssetRequest.model_validate(request_data).model_copy(
+        update={"bank_account_code": "1002"}
+    )
+    assert service.acquire_fixed_asset(changed_account).errors == [
+        "FIXED_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"
+    ]
     match = session.scalar(
         select(BankTransactionMatch).where(
             BankTransactionMatch.bank_transaction_id == acquisition_bank.id
@@ -276,26 +394,98 @@ def test_bank_acquisition_and_retirement_match_exact_bank_rows(
         amount_fen=-5_000,
         booking_date=date(2026, 1, 20),
         seed="retirement-cost",
+        account_code="1003",
     )
-    retired = service.dispose_fixed_asset(
+    proceeds_bank = _bank_row(
+        session,
+        organization,
+        amount_fen=103_000,
+        booking_date=date(2026, 1, 20),
+        seed="sale-proceeds",
+        account_code="1003",
+    )
+    disposal_payload = {
+        "org_id": organization.id,
+        "asset_id": acquired.asset_id,
+        "idempotency_key": "asset-sale",
+        "disposal_date": "2026-01-20",
+        "posting_date": "2026-01-20",
+        "disposal_kind": "sale",
+        "settlement_method": "bank",
+        "gross_proceeds_fen": 103_000,
+        "invoice_type": "ordinary",
+        "waive_exemption": False,
+        "customer": {"kind": "customer", "name": "资产买方"},
+        "tax_obligation_date": "2026-01-20",
+        "clearance_cost_fen": 5_000,
+        "evidence_references": [evidence.id],
+        "bank_transaction_references": [
+            {"id": clearance_bank.id},
+            {"id": proceeds_bank.id},
+        ],
+        "bank_account_code": "1003",
+    }
+    missing_disposal_code = service.dispose_fixed_asset(
         DisposeFixedAssetRequest.model_validate(
-            {
-                "org_id": organization.id,
-                "asset_id": acquired.asset_id,
-                "idempotency_key": "asset-retire",
-                "disposal_date": "2026-01-20",
-                "posting_date": "2026-01-20",
-                "disposal_kind": "retirement",
-                "settlement_method": "none",
-                "clearance_cost_fen": 5_000,
-                "evidence_references": [evidence.id],
-                "bank_transaction_references": [{"id": clearance_bank.id}],
+            disposal_payload
+            | {
+                "idempotency_key": "asset-sale-missing-code",
+                "bank_account_code": None,
+                "bank_transaction_references": [],
             }
         )
     )
-    assert retired.status == "posted", retired.errors
-    assert retired.data["loss_fen"] == 1_055_000
-    _assert_balanced(session, retired.voucher_id)
+    assert missing_disposal_code.status == "needs_information"
+    assert any(
+        "bank_account_code" in requirement.fields
+        for requirement in missing_disposal_code.missing_information
+    )
+
+    wrong_disposal_bank = _bank_row(
+        session,
+        organization,
+        amount_fen=103_000,
+        booking_date=date(2026, 1, 20),
+        seed="sale-proceeds-wrong-account",
+        account_code="1002",
+    )
+    wrong_disposal = service.dispose_fixed_asset(
+        DisposeFixedAssetRequest.model_validate(
+            disposal_payload
+            | {
+                "idempotency_key": "asset-sale-wrong-account",
+                "bank_transaction_references": [
+                    {"id": clearance_bank.id},
+                    {"id": wrong_disposal_bank.id},
+                ],
+            }
+        )
+    )
+    assert wrong_disposal.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
+    assert clearance_bank.matched_event_id is None
+    assert wrong_disposal_bank.matched_event_id is None
+
+    disposal_request = DisposeFixedAssetRequest.model_validate(disposal_payload)
+    disposed = service.dispose_fixed_asset(disposal_request)
+    assert disposed.status == "posted", disposed.errors
+    assert session.get(BusinessEvent, disposed.event_id).facts["bank_account_code"] == "1003"
+    _assert_balanced(session, disposed.voucher_id)
+    assert service.dispose_fixed_asset(disposal_request).event_id == disposed.event_id
+    assert service.dispose_fixed_asset(
+        disposal_request.model_copy(update={"bank_account_code": "1002"})
+    ).errors == ["FIXED_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    reversed_disposal = service.reverse_event(
+        ReverseEventRequest(
+            org_id=organization.id,
+            event_id=disposed.event_id,
+            idempotency_key="reverse-second-bank-sale",
+            reason="测试第二银行账户处置冲正",
+            posting_date=date(2026, 1, 21),
+        )
+    )
+    assert reversed_disposal.status == "posted"
+    assert clearance_bank.matched_event_id is None
+    assert proceeds_bank.matched_event_id is None
 
 
 def test_settled_acquisition_payable_uses_common_reversal_dependency_error(
@@ -306,9 +496,7 @@ def test_settled_acquisition_payable_uses_common_reversal_dependency_error(
     acquired = service.acquire_fixed_asset(
         _acquisition_request(organization, evidence, key="asset-payable-acquire")
     )
-    payable = session.scalar(
-        select(OpenItem).where(OpenItem.source_event_id == acquired.event_id)
-    )
+    payable = session.scalar(select(OpenItem).where(OpenItem.source_event_id == acquired.event_id))
     bank = _bank_row(
         session,
         organization,
@@ -329,6 +517,7 @@ def test_settled_acquisition_payable_uses_common_reversal_dependency_error(
                 },
                 "counterparty": {"id": payable.counterparty_id},
                 "amounts": {"amount_fen": payable.original_amount_fen},
+                "bank_account_code": "1002",
                 "bank_transaction_references": [{"id": bank.id}],
                 "allocations": [
                     {
@@ -530,9 +719,7 @@ def test_depreciation_preview_confirm_hash_and_sequence(
         select(FixedAssetDisposal).where(FixedAssetDisposal.event_id == disposed.event_id)
     )
     assert disposal.activation_id == session.scalar(
-        select(FixedAssetActivation.id).where(
-            FixedAssetActivation.event_id == activated.event_id
-        )
+        select(FixedAssetActivation.id).where(FixedAssetActivation.event_id == activated.event_id)
     )
     receivable = session.scalar(
         select(OpenItem).where(OpenItem.source_event_id == disposed.event_id)
@@ -650,9 +837,7 @@ def test_depreciation_preview_confirm_hash_and_sequence(
     )
     assert confirmed_b.status == "posted", confirmed_b.errors
     old_fact = session.scalar(
-        select(FixedAssetDepreciation).where(
-            FixedAssetDepreciation.event_id == confirmed.event_id
-        )
+        select(FixedAssetDepreciation).where(FixedAssetDepreciation.event_id == confirmed.event_id)
     )
     new_fact = session.scalar(
         select(FixedAssetDepreciation).where(
@@ -668,9 +853,7 @@ def test_depreciation_preview_confirm_hash_and_sequence(
     )
     projected_b = service.get_fixed_asset(organization.id, acquired.asset_id)
     assert projected_b.data["activation"]["benefit_area"] == "sales"
-    assert projected_b.data["depreciations"][0]["activation_id"] == str(
-        new_fact.activation_id
-    )
+    assert projected_b.data["depreciations"][0]["activation_id"] == str(new_fact.activation_id)
     assert len(projected_b.data["activation_history"]) == 2
     assert len(projected_b.data["depreciation_history"]) == 2
     assert len(projected_b.data["disposal_history"]) == 1
@@ -901,9 +1084,12 @@ def test_fixed_asset_sale_respects_tax_period_date_lock_but_retirement_does_not(
     )
     assert blocked_sale.status == "rejected"
     assert blocked_sale.errors == ["TAX_PERIOD_SOURCE_LOCKED"]
-    assert session.scalar(
-        select(FixedAssetDisposal).where(FixedAssetDisposal.asset_id == sale_asset_id)
-    ) is None
+    assert (
+        session.scalar(
+            select(FixedAssetDisposal).where(FixedAssetDisposal.asset_id == sale_asset_id)
+        )
+        is None
+    )
 
     retirement_asset_id = acquire_and_activate("FA-TAX-LOCK-RETIREMENT")
     retirement = service.dispose_fixed_asset(

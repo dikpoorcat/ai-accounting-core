@@ -87,7 +87,10 @@ def _object_schemas(schema: dict[str, Any]) -> list[dict[str, Any]]:
     return objects
 
 
-def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path) -> None:
+def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(
+    tmp_path: Path,
+    authenticated_stdio_bank_scope: Any,
+) -> None:
     database_path = tmp_path / "stdio-fixed-assets.sqlite3"
     database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
     setup_engine = make_engine(database_url)
@@ -123,6 +126,18 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
             ]
         )
         database_session.flush()
+        stdio_args = authenticated_stdio_bank_scope(
+            database_session,
+            organization,
+            acquisition_evidence.id,
+            [
+                {
+                    "bank_account_code": "1002",
+                    "account_name": "银行存款",
+                    "start_date": "2026-01-01",
+                }
+            ],
+        )
         acquisition_evidence_id = acquisition_evidence.id
         activation_evidence_id = activation_evidence.id
         disposal_evidence_id = disposal_evidence.id
@@ -151,7 +166,7 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
         )
         parameters = StdioServerParameters(
             command=getattr(sys, "_base_executable", sys.executable),
-            args=["-m", "ai_accounting.mcp_server"],
+            args=stdio_args,
             cwd=Path(__file__).parents[1],
             env=environment,
         )
@@ -165,7 +180,7 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
                 schema_text = json.dumps(schemas, ensure_ascii=False)
                 assert "debit_fen" not in schema_text
                 assert "credit_fen" not in schema_text
-                assert "account_code" not in schema_text
+                assert '"account_code"' not in schema_text
                 assert all(
                     object_schema.get("additionalProperties") is False
                     for schema in schemas.values()
@@ -198,6 +213,7 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
                             },
                             "supplier": {"kind": "supplier", "name": "STDIO 供应商"},
                             "settlement_method": "bank",
+                            "bank_account_code": "1002",
                             "payment_date": "2026-01-02",
                             "evidence_references": [str(acquisition_evidence_id)],
                             "bank_transaction_references": [{"id": str(acquisition_bank_id)}],
@@ -291,6 +307,7 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(tmp_path: Path)
                             "invoice_type": "ordinary",
                             "waive_exemption": False,
                             "settlement_method": "bank",
+                            "bank_account_code": "1002",
                             "customer": {"kind": "customer", "name": "STDIO 资产客户"},
                             "tax_obligation_date": "2026-02-28",
                             "clearance_cost_fen": 0,

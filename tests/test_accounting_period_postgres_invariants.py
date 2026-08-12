@@ -28,7 +28,7 @@ from ai_accounting.accounting_periods import (
     canonical_sha256,
 )
 from ai_accounting.coa import seed_organization
-from ai_accounting.models import AccountingPeriodClose, Evidence
+from ai_accounting.models import AccountingPeriodClose, Evidence, Organization
 from ai_accounting.schemas import RecordEventRequest, ReverseEventRequest
 from ai_accounting.service import FinanceService
 from alembic import command
@@ -50,7 +50,8 @@ def _sale(org_id: object, key: str) -> RecordEventRequest:
         {
             "org_id": org_id,
             "idempotency_key": key,
-            "event_type": "service_cash_sale",
+            "event_type": "service_credit_sale",
+            "counterparty": {"kind": "customer", "name": "期间测试客户"},
             "business_dates": {
                 "business_date": "2026-07-15",
                 "posting_date": "2026-07-15",
@@ -80,6 +81,7 @@ def _insert_raw_event(
     event_type: str = "service_cash_sale",
     facts: dict[str, object] | None = None,
     event_id: uuid.UUID | None = None,
+    execution_attribution_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     event_id = event_id or uuid.uuid4()
     connection.execute(
@@ -90,12 +92,12 @@ def _insert_raw_event(
                 event_type, status, description, facts, business_date,
                 fulfillment_date, invoice_date, payment_date,
                 tax_obligation_date, posting_date, rule_trace,
-                rule_version, reversed_by_event_id, created_at
+                rule_version, reversed_by_event_id, execution_attribution_id, created_at
             ) VALUES (
                 :event_id, :org_id, :key, :hash,
                 :event_type, :status, '', CAST(:facts AS jsonb), :posting_date,
                 NULL, NULL, NULL, NULL, :posting_date, '[]'::jsonb,
-                NULL, NULL, CURRENT_TIMESTAMP
+                NULL, NULL, :execution_attribution_id, CURRENT_TIMESTAMP
             )
             """
         ),
@@ -108,6 +110,7 @@ def _insert_raw_event(
             "status": status,
             "facts": json.dumps(facts or {}),
             "posting_date": posting_date,
+            "execution_attribution_id": execution_attribution_id,
         },
     )
     return event_id
@@ -122,6 +125,7 @@ def _insert_raw_payroll_batch(
     key: str,
     status: str = "calculated",
     version: int = 1,
+    execution_attribution_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     batch_id = uuid.uuid4()
     connection.execute(
@@ -133,12 +137,12 @@ def _insert_raw_payroll_batch(
                 calculation_input, calculation_trace, policy_snapshot,
                 policy_version_id, posting_date, payment_date, tax_method,
                 confirmed_by, confirmation_note, confirmed_at,
-                business_event_id, reversal_of_batch_id, created_at
+                business_event_id, reversal_of_batch_id, execution_attribution_id, created_at
             ) VALUES (
                 :id, :org_id, :key, 'regular', :payroll_period,
                 :version, :status, :hash, NULL, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb,
                 :policy_id, :posting_date, :posting_date, NULL,
-                NULL, NULL, NULL, NULL, NULL, CURRENT_TIMESTAMP
+                NULL, NULL, NULL, NULL, NULL, :execution_attribution_id, CURRENT_TIMESTAMP
             )
             """
         ),
@@ -152,12 +156,15 @@ def _insert_raw_payroll_batch(
             "hash": uuid.uuid5(uuid.NAMESPACE_URL, key).hex * 2,
             "policy_id": policy_id,
             "posting_date": posting_date,
+            "execution_attribution_id": execution_attribution_id,
         },
     )
     return batch_id
 
 
-def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
+def test_postgres_period_close_snapshot_and_direct_sql_guards(
+    authenticated_zero_bank_scope: object,
+) -> None:
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         config = _config(database_url)
@@ -178,6 +185,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                     storage_path="test/period.txt",
                 )
                 session.add(evidence)
+                session.flush()
                 session.commit()
                 org_id, evidence_id = organization.id, evidence.id
             policy_id = uuid.uuid4()
@@ -292,6 +300,13 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                 sale_event_id = sale.event_id
 
             with Session(engine) as session:
+                organization = session.get(Organization, org_id)
+                assert organization is not None
+                authority = authenticated_zero_bank_scope(
+                    session,
+                    organization,
+                    evidence_id=evidence_id,
+                )
                 period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
                 preview_request = PreviewAccountingPeriodCloseRequest(
                     org_id=org_id,
@@ -299,23 +314,26 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                     closing_date=date(2026, 7, 31),
                 )
                 preview = period_service.preview_accounting_period_close(preview_request)
-                confirmed = period_service.confirm_accounting_period_close(
-                    ConfirmAccountingPeriodCloseRequest(
-                        **preview_request.model_dump(),
-                        calculation_hash=preview.calculation_hash,
-                        idempotency_key="pg-close-july",
-                        review_facts=AccountingPeriodReviewFacts(
-                            voucher_completeness_reviewed=True,
-                            bank_reconciliation_reviewed=True,
-                            open_items_reviewed=True,
-                            payroll_and_statutory_items_reviewed=True,
-                            tax_items_reviewed=True,
-                            asset_and_borrowing_schedules_reviewed=True,
-                        ),
-                        confirmation_note="PG月结",
-                        evidence_references=[evidence_id],
+                with authority.attributed_call(
+                    session, tool_name="finance_confirm_accounting_period_close"
+                ):
+                    confirmed = period_service.confirm_accounting_period_close(
+                        ConfirmAccountingPeriodCloseRequest(
+                            **preview_request.model_dump(),
+                            calculation_hash=preview.calculation_hash,
+                            idempotency_key="pg-close-july",
+                            review_facts=AccountingPeriodReviewFacts(
+                                voucher_completeness_reviewed=True,
+                                bank_reconciliation_reviewed=True,
+                                open_items_reviewed=True,
+                                payroll_and_statutory_items_reviewed=True,
+                                tax_items_reviewed=True,
+                                asset_and_borrowing_schedules_reviewed=True,
+                            ),
+                            confirmation_note="PG月结",
+                            evidence_references=[evidence_id],
+                        )
                     )
-                )
                 assert confirmed.status == "posted", confirmed.errors
                 session.commit()
                 close_id = confirmed.close_id
@@ -324,46 +342,65 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
 
             with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_CLOSED"):
                 with engine.begin() as connection:
-                    _insert_raw_event(
-                        connection,
-                        org_id=org_id,
-                        posting_date=date(2026, 7, 20),
-                        status="draft",
-                        key="direct-draft-closed",
-                    )
-            with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_CLOSED"):
-                with engine.begin() as connection:
-                    audit_event_id = _insert_raw_event(
-                        connection,
-                        org_id=org_id,
-                        posting_date=date(2026, 7, 20),
-                        status="needs_information",
-                        key="direct-draft-voucher-event",
-                    )
-                    connection.execute(
-                        sa.text(
-                            """
-                            INSERT INTO vouchers (
-                                id, org_id, event_id, voucher_number, posting_date,
-                                description, status, reversal_of_voucher_id, posted_at
-                            ) VALUES (
-                                :id, :org_id, :event_id, 'DIRECT-DRAFT-CLOSED',
-                                '2026-07-20', '', 'draft', NULL, CURRENT_TIMESTAMP
+                    with Session(bind=connection) as attributed_session:
+                        with authority.attributed_call(
+                            attributed_session, tool_name="finance_record_event"
+                        ) as attribution:
+                            _insert_raw_event(
+                                connection,
+                                org_id=org_id,
+                                posting_date=date(2026, 7, 20),
+                                status="draft",
+                                key="direct-draft-closed",
+                                execution_attribution_id=attribution.id,
                             )
-                            """
-                        ),
-                        {"id": uuid.uuid4(), "org_id": org_id, "event_id": audit_event_id},
-                    )
             with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_CLOSED"):
                 with engine.begin() as connection:
-                    _insert_raw_payroll_batch(
-                        connection,
-                        org_id=org_id,
-                        policy_id=policy_id,
-                        posting_date=date(2026, 7, 20),
-                        key="direct-payroll-closed",
-                        version=2,
-                    )
+                    with Session(bind=connection) as attributed_session:
+                        with authority.attributed_call(
+                            attributed_session, tool_name="finance_record_event"
+                        ) as attribution:
+                            audit_event_id = _insert_raw_event(
+                                connection,
+                                org_id=org_id,
+                                posting_date=date(2026, 7, 20),
+                                status="needs_information",
+                                key="direct-draft-voucher-event",
+                                execution_attribution_id=attribution.id,
+                            )
+                            connection.execute(
+                                sa.text(
+                                    """
+                                    INSERT INTO vouchers (
+                                        id, org_id, event_id, voucher_number, posting_date,
+                                        description, status, reversal_of_voucher_id, posted_at
+                                    ) VALUES (
+                                        :id, :org_id, :event_id, 'DIRECT-DRAFT-CLOSED',
+                                        '2026-07-20', '', 'draft', NULL, CURRENT_TIMESTAMP
+                                    )
+                                    """
+                                ),
+                                {
+                                    "id": uuid.uuid4(),
+                                    "org_id": org_id,
+                                    "event_id": audit_event_id,
+                                },
+                            )
+            with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_CLOSED"):
+                with engine.begin() as connection:
+                    with Session(bind=connection) as attributed_session:
+                        with authority.attributed_call(
+                            attributed_session, tool_name="finance_confirm_payroll"
+                        ) as attribution:
+                            _insert_raw_payroll_batch(
+                                connection,
+                                org_id=org_id,
+                                policy_id=policy_id,
+                                posting_date=date(2026, 7, 20),
+                                key="direct-payroll-closed",
+                                version=2,
+                                execution_attribution_id=attribution.id,
+                            )
             with engine.connect() as connection:
                 future_posting_date = connection.scalar(
                     sa.text(
@@ -374,28 +411,39 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
                 DBAPIError, match="ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"
             ):
                 with engine.begin() as connection:
-                    _insert_raw_event(
-                        connection,
-                        org_id=org_id,
-                        posting_date=future_posting_date,
-                        status="draft",
-                        key="direct-draft-future",
-                    )
+                    with Session(bind=connection) as attributed_session:
+                        with authority.attributed_call(
+                            attributed_session, tool_name="finance_record_event"
+                        ) as attribution:
+                            _insert_raw_event(
+                                connection,
+                                org_id=org_id,
+                                posting_date=future_posting_date,
+                                status="draft",
+                                key="direct-draft-future",
+                                execution_attribution_id=attribution.id,
+                            )
             with engine.begin() as connection:
-                _insert_raw_event(
-                    connection,
-                    org_id=org_id,
-                    posting_date=future_posting_date,
-                    status="needs_information",
-                    key="audit-needs-information-future",
-                )
-                _insert_raw_event(
-                    connection,
-                    org_id=org_id,
-                    posting_date=future_posting_date,
-                    status="rejected",
-                    key="audit-rejected-future",
-                )
+                with Session(bind=connection) as attributed_session:
+                    with authority.attributed_call(
+                        attributed_session, tool_name="finance_record_event"
+                    ) as attribution:
+                        _insert_raw_event(
+                            connection,
+                            org_id=org_id,
+                            posting_date=future_posting_date,
+                            status="needs_information",
+                            key="audit-needs-information-future",
+                            execution_attribution_id=attribution.id,
+                        )
+                        _insert_raw_event(
+                            connection,
+                            org_id=org_id,
+                            posting_date=future_posting_date,
+                            status="rejected",
+                            key="audit-rejected-future",
+                            execution_attribution_id=attribution.id,
+                        )
 
             with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_SNAPSHOT_IMMUTABLE"):
                 with engine.begin() as connection:
@@ -409,32 +457,43 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards() -> None:
             with Session(engine) as session:
                 close = session.get(AccountingPeriodClose, close_id)
                 assert close.voucher_count == 1
-                rejected = FinanceService(session).record_event(_sale(org_id, "after-close"))
+                with authority.attributed_call(
+                    session, tool_name="finance_record_event"
+                ):
+                    rejected = FinanceService(session).record_event(
+                        _sale(org_id, "after-close")
+                    )
                 assert rejected.errors == ["ACCOUNTING_PERIOD_CLOSED"]
 
             with Session(engine) as session:
                 period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
-                august = period_service.generate_accounting_period(
-                    GenerateAccountingPeriodRequest(
-                        org_id=org_id,
-                        period_month="2026-08",
-                        idempotency_key="pg-generate-august",
-                        confirmation_note="PG连续生成八月",
-                        evidence_references=[evidence_id],
+                with authority.attributed_call(
+                    session, tool_name="finance_generate_accounting_period"
+                ):
+                    august = period_service.generate_accounting_period(
+                        GenerateAccountingPeriodRequest(
+                            org_id=org_id,
+                            period_month="2026-08",
+                            idempotency_key="pg-generate-august",
+                            confirmation_note="PG连续生成八月",
+                            evidence_references=[evidence_id],
+                        )
                     )
-                )
                 assert august.status == "posted", august.errors
                 session.commit()
             with Session(engine) as session:
-                reversal = FinanceService(session).reverse_event(
-                    ReverseEventRequest(
-                        org_id=org_id,
-                        event_id=sale_event_id,
-                        idempotency_key="pg-reverse-july-in-august",
-                        reason="后续开放月更正",
-                        posting_date=date(2026, 8, 1),
+                with authority.attributed_call(
+                    session, tool_name="finance_reverse_event"
+                ):
+                    reversal = FinanceService(session).reverse_event(
+                        ReverseEventRequest(
+                            org_id=org_id,
+                            event_id=sale_event_id,
+                            idempotency_key="pg-reverse-july-in-august",
+                            reason="后续开放月更正",
+                            posting_date=date(2026, 8, 1),
+                        )
                     )
-                )
                 assert reversal.status == "posted", reversal.errors
                 session.commit()
                 close = session.get(AccountingPeriodClose, close_id)
@@ -588,7 +647,9 @@ def test_postgres_0012_empty_round_trip() -> None:
             engine.dispose()
 
 
-def test_postgres_close_vs_close_is_linearized() -> None:
+def test_postgres_close_vs_close_is_linearized(
+    authenticated_zero_bank_scope: object,
+) -> None:
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
@@ -629,6 +690,16 @@ def test_postgres_close_vs_close_is_linearized() -> None:
                 closing_date=date(2026, 7, 31),
             )
             with Session(engine) as session:
+                organization = session.get(Organization, org_id)
+                assert organization is not None
+                authority = authenticated_zero_bank_scope(
+                    session,
+                    organization,
+                    evidence_id=evidence_id,
+                    executor_name="postgres-close-linearization",
+                )
+                session.commit()
+            with Session(engine) as session:
                 preview = AccountingPeriodService(
                     session, current_date=date(2026, 8, 11)
                 ).preview_accounting_period_close(preview_request)
@@ -638,25 +709,28 @@ def test_postgres_close_vs_close_is_linearized() -> None:
             def close(key: str) -> tuple[str, list[str]]:
                 with Session(engine) as session:
                     barrier.wait()
-                    result = AccountingPeriodService(
-                        session, current_date=date(2026, 8, 11)
-                    ).confirm_accounting_period_close(
-                        ConfirmAccountingPeriodCloseRequest(
-                            **preview_request.model_dump(),
-                            calculation_hash=preview.calculation_hash,
-                            idempotency_key=key,
-                            review_facts=AccountingPeriodReviewFacts(
-                                voucher_completeness_reviewed=True,
-                                bank_reconciliation_reviewed=True,
-                                open_items_reviewed=True,
-                                payroll_and_statutory_items_reviewed=True,
-                                tax_items_reviewed=True,
-                                asset_and_borrowing_schedules_reviewed=True,
-                            ),
-                            confirmation_note="显式确认空月无业务并关闭",
-                            evidence_references=[evidence_id],
+                    with authority.attributed_call(
+                        session, tool_name="finance_confirm_accounting_period_close"
+                    ):
+                        result = AccountingPeriodService(
+                            session, current_date=date(2026, 8, 11)
+                        ).confirm_accounting_period_close(
+                            ConfirmAccountingPeriodCloseRequest(
+                                **preview_request.model_dump(),
+                                calculation_hash=preview.calculation_hash,
+                                idempotency_key=key,
+                                review_facts=AccountingPeriodReviewFacts(
+                                    voucher_completeness_reviewed=True,
+                                    bank_reconciliation_reviewed=True,
+                                    open_items_reviewed=True,
+                                    payroll_and_statutory_items_reviewed=True,
+                                    tax_items_reviewed=True,
+                                    asset_and_borrowing_schedules_reviewed=True,
+                                ),
+                                confirmation_note="显式确认空月无业务并关闭",
+                                evidence_references=[evidence_id],
+                            )
                         )
-                    )
                     session.commit()
                     return str(result.status), result.errors
 
@@ -673,7 +747,9 @@ def test_postgres_close_vs_close_is_linearized() -> None:
             engine.dispose()
 
 
-def test_postgres_close_vs_post_is_linearized() -> None:
+def test_postgres_close_vs_post_is_linearized(
+    authenticated_zero_bank_scope: object,
+) -> None:
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
@@ -713,6 +789,16 @@ def test_postgres_close_vs_post_is_linearized() -> None:
                 )
                 assert baseline.status == "posted"
                 session.commit()
+            with Session(engine) as session:
+                organization = session.get(Organization, org_id)
+                assert organization is not None
+                authority = authenticated_zero_bank_scope(
+                    session,
+                    organization,
+                    evidence_id=evidence_id,
+                    executor_name="postgres-close-post-linearization",
+                )
+                session.commit()
             preview_request = PreviewAccountingPeriodCloseRequest(
                 org_id=org_id,
                 period_id=period_id,
@@ -727,34 +813,40 @@ def test_postgres_close_vs_post_is_linearized() -> None:
             def close() -> tuple[str, list[str]]:
                 with Session(engine) as session:
                     barrier.wait()
-                    result = AccountingPeriodService(
-                        session, current_date=date(2026, 8, 11)
-                    ).confirm_accounting_period_close(
-                        ConfirmAccountingPeriodCloseRequest(
-                            **preview_request.model_dump(),
-                            calculation_hash=preview.calculation_hash,
-                            idempotency_key="pg-post-close-close",
-                            review_facts=AccountingPeriodReviewFacts(
-                                voucher_completeness_reviewed=True,
-                                bank_reconciliation_reviewed=True,
-                                open_items_reviewed=True,
-                                payroll_and_statutory_items_reviewed=True,
-                                tax_items_reviewed=True,
-                                asset_and_borrowing_schedules_reviewed=True,
-                            ),
-                            confirmation_note="并发关闭",
-                            evidence_references=[evidence_id],
+                    with authority.attributed_call(
+                        session, tool_name="finance_confirm_accounting_period_close"
+                    ):
+                        result = AccountingPeriodService(
+                            session, current_date=date(2026, 8, 11)
+                        ).confirm_accounting_period_close(
+                            ConfirmAccountingPeriodCloseRequest(
+                                **preview_request.model_dump(),
+                                calculation_hash=preview.calculation_hash,
+                                idempotency_key="pg-post-close-close",
+                                review_facts=AccountingPeriodReviewFacts(
+                                    voucher_completeness_reviewed=True,
+                                    bank_reconciliation_reviewed=True,
+                                    open_items_reviewed=True,
+                                    payroll_and_statutory_items_reviewed=True,
+                                    tax_items_reviewed=True,
+                                    asset_and_borrowing_schedules_reviewed=True,
+                                ),
+                                confirmation_note="并发关闭",
+                                evidence_references=[evidence_id],
+                            )
                         )
-                    )
                     session.commit()
                     return str(result.status), result.errors
 
             def post() -> tuple[str, list[str]]:
                 with Session(engine) as session:
                     barrier.wait()
-                    result = FinanceService(session).record_event(
-                        _sale(org_id, "pg-post-close-racing-post")
-                    )
+                    with authority.attributed_call(
+                        session, tool_name="finance_record_event"
+                    ):
+                        result = FinanceService(session).record_event(
+                            _sale(org_id, "pg-post-close-racing-post")
+                        )
                     session.commit()
                     return str(result.status), result.errors
 
@@ -1085,6 +1177,144 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
                                 "end_date": future_end,
                             },
                         )
+        finally:
+            engine.dispose()
+
+
+def test_postgres_owner_close_vs_raw_payroll_is_linearized(
+    authenticated_zero_bank_scope: object,
+) -> None:
+    """Keep the owner-mode close race separate from legacy multi-org guards."""
+
+    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+        database_url = postgres.get_connection_url()
+        command.upgrade(_config(database_url), "head")
+        engine = sa.create_engine(database_url)
+        try:
+            with Session(engine) as session:
+                organization = seed_organization(session, name="PG owner月结工资并发")
+                evidence = Evidence(
+                    org_id=organization.id,
+                    sha256="1" * 64,
+                    original_name="owner-close-payroll.txt",
+                    media_type="text/plain",
+                    source="test",
+                    size_bytes=1,
+                    storage_path="test/owner-close-payroll.txt",
+                )
+                session.add(evidence)
+                session.commit()
+                org_id, evidence_id = organization.id, evidence.id
+            policy_id = uuid.uuid4()
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO payroll_policy_versions (
+                            id, org_id, region, supersedes_id, effective_from,
+                            effective_to, version, source_url, parameters, created_at
+                        ) VALUES (
+                            :id, :org_id, 'owner并发门禁', NULL, '2026-01-01',
+                            '2026-12-31', 'owner-concurrent-v1',
+                            'https://www.chinatax.gov.cn/', '{}'::jsonb, CURRENT_TIMESTAMP
+                        )
+                        """
+                    ),
+                    {"id": policy_id, "org_id": org_id},
+                )
+            with Session(engine) as session:
+                period = AccountingPeriodService(
+                    session, current_date=date(2026, 8, 11)
+                ).generate_accounting_period(
+                    GenerateAccountingPeriodRequest(
+                        org_id=org_id,
+                        period_month="2026-07",
+                        idempotency_key="owner-close-payroll-generate",
+                        confirmation_note="owner 并发月结期间",
+                        evidence_references=[evidence_id],
+                    )
+                )
+                assert period.status == "posted", period.errors
+                session.commit()
+                period_id = period.period_id
+            with Session(engine) as session:
+                organization = session.get(Organization, org_id)
+                assert organization is not None
+                authority = authenticated_zero_bank_scope(
+                    session,
+                    organization,
+                    evidence_id=evidence_id,
+                    executor_name="postgres-close-payroll-linearization",
+                )
+                session.commit()
+            request = PreviewAccountingPeriodCloseRequest(
+                org_id=org_id, period_id=period_id, closing_date=date(2026, 7, 31)
+            )
+            with Session(engine) as session:
+                preview = AccountingPeriodService(
+                    session, current_date=date(2026, 8, 11)
+                ).preview_accounting_period_close(request)
+            barrier = Barrier(2)
+
+            def close() -> tuple[str, list[str]]:
+                with Session(engine) as session:
+                    barrier.wait()
+                    with authority.attributed_call(
+                        session, tool_name="finance_confirm_accounting_period_close"
+                    ):
+                        result = AccountingPeriodService(
+                            session, current_date=date(2026, 8, 11)
+                        ).confirm_accounting_period_close(
+                            ConfirmAccountingPeriodCloseRequest(
+                                **request.model_dump(),
+                                calculation_hash=preview.calculation_hash,
+                                idempotency_key="owner-close-payroll-close",
+                                review_facts=AccountingPeriodReviewFacts(
+                                    voucher_completeness_reviewed=True,
+                                    bank_reconciliation_reviewed=True,
+                                    open_items_reviewed=True,
+                                    payroll_and_statutory_items_reviewed=True,
+                                    tax_items_reviewed=True,
+                                    asset_and_borrowing_schedules_reviewed=True,
+                                ),
+                                confirmation_note="owner 并发月结",
+                                evidence_references=[evidence_id],
+                            )
+                        )
+                    session.commit()
+                    return str(result.status), result.errors
+
+            def payroll() -> tuple[str, str]:
+                barrier.wait()
+                try:
+                    with engine.begin() as connection:
+                        with Session(bind=connection) as session:
+                            with authority.attributed_call(
+                                session, tool_name="finance_confirm_payroll"
+                            ) as attribution:
+                                _insert_raw_payroll_batch(
+                                    connection,
+                                    org_id=org_id,
+                                    policy_id=policy_id,
+                                    posting_date=date(2026, 7, 20),
+                                    key="owner-close-payroll-racing-payroll",
+                                    execution_attribution_id=attribution.id,
+                                )
+                    return "posted", ""
+                except DBAPIError as exc:
+                    return "rejected", str(exc)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                close_future = executor.submit(close)
+                payroll_future = executor.submit(payroll)
+                close_status = close_future.result()
+                payroll_status = payroll_future.result()
+            assert [close_status[0], payroll_status[0]].count("posted") == 1
+            if close_status[0] == "posted":
+                assert "ACCOUNTING_PERIOD_CLOSED" in payroll_status[1]
+            else:
+                assert payroll_status[0] == "posted"
+                assert close_status[1] == ["ACCOUNTING_PERIOD_CALCULATION_STALE"]
         finally:
             engine.dispose()
 

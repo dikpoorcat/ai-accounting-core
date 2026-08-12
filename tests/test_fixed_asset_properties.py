@@ -44,6 +44,7 @@ def test_fixed_asset_disposal_template_is_balanced_and_gain_loss_is_conserved(
         gain_fen=gain_fen,
         loss_fen=loss_fen,
         settlement_method="bank" if gross_fen else "none",
+        bank_account_code="1002" if gross_fen or clearance_cost_fen else None,
         customer_id=None,
     )
 

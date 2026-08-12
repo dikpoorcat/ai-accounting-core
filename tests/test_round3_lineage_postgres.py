@@ -11,10 +11,11 @@ from datetime import date
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
+from conftest import authenticate_and_confirm_bank_scope
 from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
-from test_payroll_service import add_bank_row, payment_request, register_payroll_facts
+from test_payroll_service import payment_request, register_payroll_facts
 from test_round3_lineage import _preview
 from testcontainers.community.postgres import PostgresContainer
 
@@ -150,6 +151,19 @@ def _post_two_partial_salary_social_payment(
         )
     )
     assert salary_item is not None
+    scope_evidence = _evidence(session, organization.id, "r3-pg-bank-scope")
+    authority = authenticate_and_confirm_bank_scope(
+        session,
+        organization,
+        evidence_id=scope_evidence.id,
+        accounts=[
+            {
+                "bank_account_code": "1002",
+                "account_name": "银行存款",
+                "start_date": date(2026, 3, 1),
+            }
+        ],
+    )
 
     for key, cash, tax in (("one", 425_000, 0), ("two", 414_500, 10_500)):
         request = payment_request(
@@ -165,10 +179,11 @@ def _post_two_partial_salary_social_payment(
                     "individual_income_tax_fen": tax,
                 }
             ],
-            bank=add_bank_row(session, organization, -cash, f"r3-pg-source-salary-{key}"),
+            bank=None,
             key=f"r3-pg-source-salary-{key}",
         )
-        payment = service.record_event(request)
+        with authority.attributed_call(session, tool_name="finance_record_event"):
+            payment = service.record_event(request)
         assert payment.status == "posted", payment.errors
 
     statutory_items = session.scalars(
@@ -186,15 +201,11 @@ def _post_two_partial_salary_social_payment(
             {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
             for item in statutory_items
         ],
-        bank=add_bank_row(
-            session,
-            organization,
-            -sum(item.original_amount_fen for item in statutory_items),
-            "r3-pg-source-statutory",
-        ),
+        bank=None,
         key="r3-pg-source-statutory",
     )
-    statutory = service.record_event(request)
+    with authority.attributed_call(session, tool_name="finance_record_event"):
+        statutory = service.record_event(request)
     assert statutory.status == "posted", statutory.errors
     return statutory, statutory_items
 

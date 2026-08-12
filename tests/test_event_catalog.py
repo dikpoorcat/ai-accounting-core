@@ -1,11 +1,43 @@
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, date, datetime
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
-from ai_accounting.models import OpenItem, Organization, VoucherLine
+from ai_accounting.models import Account, OpenItem, Organization, VoucherLine
 from ai_accounting.schemas import RecordEventRequest
 from ai_accounting.service import FinanceService
+
+
+@pytest.fixture(autouse=True)
+def confirmed_bank_scope(session: Session, organization: Organization) -> None:
+    configured_at = datetime.now(UTC)
+    primary = session.scalar(
+        select(Account).where(Account.org_id == organization.id, Account.code == "1002")
+    )
+    primary.requires_bank_reconciliation = True
+    primary.bank_reconciliation_start_date = date(2000, 1, 1)
+    primary.bank_reconciliation_configured_at = configured_at
+    session.add(
+        Account(
+            org_id=organization.id,
+            code="1003",
+            name="事件目录测试银行二户",
+            category="asset",
+            normal_side="debit",
+            active=True,
+            requires_bank_reconciliation=True,
+            bank_reconciliation_start_date=date(2000, 1, 1),
+            bank_reconciliation_configured_at=configured_at,
+        )
+    )
+    session.flush()
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", uuid.uuid4())
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", configured_at)
 
 
 def request(organization: Organization, payload: dict) -> RecordEventRequest:
@@ -53,6 +85,7 @@ def test_payable_purchase_and_supplier_payment_workflow(
                 },
                 "counterparty": {"kind": "supplier", "name": "甲供应商"},
                 "amounts": {"amount_fen": 30_000},
+                "bank_account_code": "1002",
                 "allocations": [{"open_item_id": item.id, "amount_fen": 30_000}],
             },
         )
@@ -79,6 +112,7 @@ def test_owner_loan_repayment_is_limited_by_counterparty_balance(
                 },
                 "counterparty": {"kind": "owner", "name": "张股东"},
                 "amounts": {"amount_fen": 100_000},
+                "bank_account_code": "1002",
             },
         )
     )
@@ -91,6 +125,7 @@ def test_owner_loan_repayment_is_limited_by_counterparty_balance(
             "payment_date": "2026-08-02",
         },
         "counterparty": {"kind": "owner", "name": "张股东"},
+        "bank_account_code": "1002",
     }
     partial = service.record_event(
         request(
@@ -142,16 +177,23 @@ def test_employee_bank_and_internal_transfer_events_are_balanced(
                 "payment_date": "2026-08-01",
             },
             "amounts": {"amount_fen": 100},
+            "bank_account_code": "1002",
         },
         {
-            "idempotency_key": "cash-withdrawal",
+            "idempotency_key": "bank-to-bank-transfer",
             "event_type": "internal_transfer",
             "business_dates": {"business_date": "2026-08-01", "posting_date": "2026-08-01"},
             "amounts": {"amount_fen": 10_000},
-            "details": {
-                "source_account_code": "1002",
-                "destination_account_code": "1001",
-            },
+            "source_bank_account_code": "1002",
+            "destination_bank_account_code": "1003",
+        },
+        {
+            "idempotency_key": "cash-withdrawal",
+            "event_type": "cash_bank_transfer",
+            "business_dates": {"business_date": "2026-08-01", "posting_date": "2026-08-01"},
+            "amounts": {"amount_fen": 10_000},
+            "direction": "cash_withdrawal",
+            "bank_account_code": "1002",
         },
     ]
     for payload in payloads:
@@ -177,6 +219,7 @@ def test_vat_payment_cannot_exceed_posted_liability(
                     "payment_date": "2026-08-01",
                     "tax_obligation_date": "2026-08-01",
                 },
+                "bank_account_code": "1002",
                 "amounts": {"gross_amount_fen": 101_000},
                 "tax_facts": {
                     "taxable": True,
@@ -198,6 +241,7 @@ def test_vat_payment_cannot_exceed_posted_liability(
             "payment_date": "2026-08-02",
         },
         "details": {"tax_type": "vat"},
+        "bank_account_code": "1002",
     }
     paid = service.record_event(
         request(
@@ -231,6 +275,7 @@ def test_advance_refund_cannot_exceed_unused_advance(
                     "payment_date": "2026-08-01",
                 },
                 "counterparty": {"kind": "customer", "name": "丙客户"},
+                "bank_account_code": "1002",
                 "amounts": {"gross_amount_fen": 50_000},
                 "tax_facts": {
                     "taxable": True,
@@ -251,6 +296,7 @@ def test_advance_refund_cannot_exceed_unused_advance(
         },
         "counterparty": {"kind": "customer", "name": "丙客户"},
         "details": {"refund_kind": "advance", "original_event_id": str(advance.event_id)},
+        "bank_account_code": "1002",
     }
     partial = service.record_event(
         request(
