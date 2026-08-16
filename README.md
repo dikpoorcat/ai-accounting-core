@@ -1,6 +1,6 @@
 # AI Accounting Core
 
-> 当前有效约束见[当前保留规则](docs/current-rules.md)。
+> 当前有效约束见 [AGENTS.md](AGENTS.md)。
 
 面向中国小规模纳税人服务型企业的确定性记账内核。产品目标是让一位不懂财务的小企业负责人亲自使用：负责人只提供原始凭据并说清发生了什么，AI 负责理解、整理、追问并形成明确的结构化业务事实，确定性内核只负责按冻结规则校验、计算和执行。系统不重复实现属于 AI 的开放式理解或格式转换能力，AI 也不能自由编造借贷分录或推测缺失事实；只有资料完整且规则唯一的业务事件才会原子入账，信息不足时返回 `needs_information`。已确认事实优先于实现规则：不能为了满足规则改写事实；发现历史事实错误时，以追加式更正保留原审计记录并让当前状态反映真实事实。
 
@@ -43,7 +43,19 @@ docker compose up -d
 
 当前 Alembic 只有一个 `0001_baseline`，用于从空数据库直接创建现行结构。旧的 15 段迁移链已移除；项目不再支持从旧 revision 或历史业务库原地升级。
 
+启动私有试用前，请完成[空库私有试用启动检查单](docs/private-pilot-empty-db-startup-checklist.md)。
+
 `finance-bootstrap` 会输出企业 `org_id`。后续所有工具调用都必须携带该 ID。
+
+首次试用还需创建唯一的本地负责人账号并登录。密码和一次性恢复码只在本地交互窗口中处理，不得通过命令行参数、环境变量或聊天传递：
+
+```powershell
+$trialOrgId = "将 finance-bootstrap 输出的 org_id 粘贴到这里"
+.\.venv\Scripts\python.exe -m ai_accounting.identity_cli setup --org-id $trialOrgId --login-name owner
+.\.venv\Scripts\python.exe -m ai_accounting.identity_cli login --login-name owner
+```
+
+妥善保存设置时显示的一次性恢复码。登录成功后必须重启 Codex，MCP 才会读取本地会话令牌。
 
 项目包含 `.codex/config.toml`，其命令、工作目录和证据目录按本仓库固定路径 `D:\GitHub\ai-accounting-core` 配置；如果仓库位于其他路径，需要同步修改这三个值。在 Codex 中信任并打开本仓库、确认 PostgreSQL 已启动和迁移完成后，重启 Codex 即可加载 `ai_accounting` MCP。Codex 官方配置说明见 [Model Context Protocol](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
@@ -175,10 +187,6 @@ Docker Compose 中的数据库账号仅用于本机开发，不得复用于共�
 ```
 
 以上命令是可选验证入口，不构成固定顺序或统一门禁。每次修改运行哪些检查、是否使用 PostgreSQL、迁移、STDIO 或覆盖率，由用户针对当前步骤决定；不要求每个小改动执行全套验证。测试目标仍须由执行者明确选择，不得破坏未经用户授权的数据。
-
-## 文档
-
-- [当前保留规则](docs/current-rules.md)
 
 ## 当前税务规则边界
 

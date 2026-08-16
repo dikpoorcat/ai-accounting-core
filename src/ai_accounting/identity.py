@@ -30,22 +30,8 @@ ARGON2_HASH_LEN = 32
 ARGON2_SALT_LEN = 16
 SESSION_TOKEN_BYTES = 32
 RECOVERY_CODE_BYTES = 16
-
-# A small, explicit blocklist catches the passwords an inexperienced owner is
-# most likely to choose.  It is checked after NFC normalisation and case-folding
-# so visually identical input cannot bypass it.
-BLOCKED_PASSWORDS = frozenset(
-    {
-        "123456789012345",
-        "111111111111111",
-        "abcdefghijklmno",
-        "letmeinletmein1",
-        "passwordpassword",
-        "qwertyuiopasdfg",
-        "welcome12345678",
-        "iloveyouiloveyou",
-    }
-)
+PASSWORD_MIN_LENGTH = 6
+PASSWORD_MAX_LENGTH = 128
 
 
 class IdentityError(ValueError):
@@ -129,32 +115,29 @@ def normalized_login_key(value: str) -> str:
 
 
 def normalize_password(value: str) -> str:
-    """Apply new-password policy including the explicit weak-password blocklist."""
+    """Apply the length-only policy used when setting a password."""
 
-    normalized = normalize_authentication_password(value)
-    if normalized.casefold() in BLOCKED_PASSWORDS:
-        raise IdentityError("IDENTITY_PASSWORD_POLICY_REJECTED")
-    return normalized
+    return normalize_authentication_password(value)
 
 
 def normalize_authentication_password(value: str) -> str:
-    """NFC-normalize existing credentials without applying mutable new-password policy."""
+    """NFC-normalize a credential and enforce the shared input bounds."""
 
     if not isinstance(value, str):
         raise IdentityError("IDENTITY_PASSWORD_POLICY_REJECTED")
     normalized = unicodedata.normalize("NFC", value)
-    if not 15 <= len(normalized) <= 128 or "\x00" in normalized:
+    if not PASSWORD_MIN_LENGTH <= len(normalized) <= PASSWORD_MAX_LENGTH or "\x00" in normalized:
         raise IdentityError("IDENTITY_PASSWORD_POLICY_REJECTED")
     return normalized
 
 
 def validate_password_for_login(*, password: str, login_name: str) -> str:
-    """Validate password policy without retaining or echoing the secret."""
+    """Validate the length-only password policy without echoing the secret."""
 
-    normalized_password = normalize_password(password)
-    if normalized_password.casefold() == normalized_login_key(login_name):
-        raise IdentityError("IDENTITY_PASSWORD_POLICY_REJECTED")
-    return normalized_password
+    # Keep login_name in this boundary's stable interface even though password
+    # strength is deliberately independent of the account name.
+    del login_name
+    return normalize_password(password)
 
 
 def password_hasher() -> PasswordHasher:

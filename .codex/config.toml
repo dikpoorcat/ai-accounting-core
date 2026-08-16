@@ -7,6 +7,5 @@ tool_timeout_sec = 60
 default_tools_approval_mode = "writes"
 
 [mcp_servers.ai_accounting.env]
-DATABASE_URL = "postgresql+psycopg://finance:finance@localhost:5432/finance"
+DATABASE_URL = "postgresql+psycopg://finance:finance@127.0.0.1:5432/finance"
 FINANCE_EVIDENCE_DIR = "D:/GitHub/ai-accounting-core/data/evidence"
-

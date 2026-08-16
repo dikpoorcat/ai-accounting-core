@@ -74,6 +74,20 @@ def test_cli_failed_login_commits_throttle_and_fixed_audit_across_sessions(
         engine.dispose()
 
 
+def test_cli_setup_surfaces_password_policy_as_stable_identity_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(identity_cli, "_secret_prompt", lambda _prompt: "12345")
+
+    with pytest.raises(IdentityError, match="IDENTITY_PASSWORD_POLICY_REJECTED"):
+        identity_cli._setup(
+            Namespace(
+                org_id=uuid.uuid4(),
+                login_name="owner",
+            )
+        )
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Credential Manager only")
 def test_windows_credential_store_abi_and_unique_target_round_trip() -> None:
     _assert_windows_credential_layout()

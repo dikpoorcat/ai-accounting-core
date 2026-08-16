@@ -12,7 +12,7 @@ from pydantic import SecretStr
 
 from .credential_store import WindowsCredentialStore
 from .database import SessionLocal
-from .identity import IdentityError
+from .identity import IdentityError, validate_password_for_login
 from .identity_schemas import (
     OwnerLoginRequest,
     OwnerPasswordChangeRequest,
@@ -61,7 +61,10 @@ def main() -> None:
 
 
 def _setup(args: argparse.Namespace) -> None:
-    password = _new_password()
+    password = validate_password_for_login(
+        password=_new_password(),
+        login_name=args.login_name,
+    )
     with SessionLocal.begin() as session:
         result = IdentityService(session).provision_owner(
             OwnerProvisionRequest(

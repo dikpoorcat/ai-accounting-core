@@ -16,7 +16,8 @@ from ai_accounting.identity import (
     ARGON2_PARALLELISM,
     ARGON2_SALT_LEN,
     ARGON2_TIME_COST,
-    BLOCKED_PASSWORDS,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
     ExecutorIdentity,
     ExecutorKind,
     IdentityError,
@@ -29,6 +30,7 @@ from ai_accounting.identity import (
     recovery_code_matches,
     recovery_code_sha256,
     token_sha256,
+    validate_password_for_login,
     verify_password,
 )
 from ai_accounting.identity_schemas import (
@@ -70,17 +72,26 @@ def test_argon2id_parameters_and_password_verification_are_fixed() -> None:
 @pytest.mark.parametrize(
     "password",
     [
-        "short-password",
+        "12345",
         "x" * 129,
-        "passwordpassword",
-        "PASSWORDPASSWORD",
+        "12345\x00",
     ],
 )
-def test_password_policy_rejects_bounds_and_blocklist(password: str) -> None:
+def test_password_policy_rejects_only_invalid_input_bounds(password: str) -> None:
     with pytest.raises(IdentityError, match="IDENTITY_PASSWORD_POLICY_REJECTED"):
         normalize_password(password)
 
-    assert "passwordpassword" in BLOCKED_PASSWORDS
+    assert PASSWORD_MIN_LENGTH == 6
+    assert PASSWORD_MAX_LENGTH == 128
+
+
+@pytest.mark.parametrize("password", ["123456", "passwordpassword", "owner-owner"])
+def test_password_policy_accepts_any_six_or_more_character_password(password: str) -> None:
+    assert normalize_password(password) == password
+
+
+def test_password_policy_allows_six_character_password_matching_login_name() -> None:
+    assert validate_password_for_login(password="123456", login_name="123456") == "123456"
 
 
 def test_password_policy_normalizes_nfc_without_echoing_secret() -> None:
@@ -91,10 +102,9 @@ def test_password_policy_normalizes_nfc_without_echoing_secret() -> None:
     assert normalized == "Café-Correct-Horse-2026!"
 
 
-def test_login_normalization_does_not_apply_the_mutable_new_password_blocklist() -> None:
+def test_login_and_new_password_normalization_use_the_same_length_policy() -> None:
     assert normalize_authentication_password("passwordpassword") == "passwordpassword"
-    with pytest.raises(IdentityError, match="IDENTITY_PASSWORD_POLICY_REJECTED"):
-        normalize_password("passwordpassword")
+    assert normalize_password("passwordpassword") == "passwordpassword"
 
 
 def test_session_token_is_deterministic_with_injected_csprng_and_only_hashes_for_storage() -> None:
@@ -169,6 +179,18 @@ def _owner_request(
 
 def _service(session: Session, clock: _Clock) -> IdentityService:
     return IdentityService(session, now=clock.now, randbytes=_SequenceRng().bytes)
+
+
+def test_six_character_password_can_provision_and_authenticate(session: Session) -> None:
+    organization = seed_organization(session, name="六位密码登录")
+    service = _service(session, _Clock())
+
+    provisioned = service.provision_owner(_owner_request(organization.id, password="123456"))
+    authenticated = service.authenticate(
+        OwnerLoginRequest(login_name="owner", password=SecretStr("123456"))
+    )
+
+    assert authenticated.owner_account_id == provisioned.owner_account_id
 
 
 def test_sqlite_owner_login_stores_only_hashes_and_separates_execution_attribution(
