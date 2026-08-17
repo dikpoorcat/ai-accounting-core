@@ -14,15 +14,18 @@ def _config(database_url: str) -> Config:
     return config
 
 
-def test_single_sqlite_baseline_round_trip(tmp_path) -> None:
+def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     database_url = f"sqlite+pysqlite:///{(tmp_path / 'baseline.db').as_posix()}"
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0001_baseline"]
-    assert [revision.revision for revision in scripts.walk_revisions()] == ["0001_baseline"]
+    assert scripts.get_heads() == ["0002_pilot_events"]
+    assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0002_pilot_events",
+        "0001_baseline",
+    ]
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0001_baseline")
     engine = create_engine(database_url)
     try:
         tables = set(inspect(engine).get_table_names())
@@ -38,6 +41,9 @@ def test_single_sqlite_baseline_round_trip(tmp_path) -> None:
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
                 == "0001_baseline"
             )
+            assert "reimbursing_employee_id" not in {
+                column["name"] for column in inspect(connection).get_columns("fixed_assets")
+            }
             assert (
                 connection.scalar(
                     sa.text(
@@ -47,6 +53,15 @@ def test_single_sqlite_baseline_round_trip(tmp_path) -> None:
                 )
                 == 1
             )
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+                == "0002_pilot_events"
+            )
+            assert "reimbursing_employee_id" in {
+                column["name"] for column in inspect(connection).get_columns("fixed_assets")
+            }
         command.check(config)
 
         command.downgrade(config, "base")
@@ -56,7 +71,7 @@ def test_single_sqlite_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0001_baseline"
+                == "0002_pilot_events"
             )
     finally:
         engine.dispose()

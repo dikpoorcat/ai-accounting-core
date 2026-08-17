@@ -494,6 +494,11 @@ class FixedAssetService(FinanceService):
             request.org_id, request.supplier, required_kind="supplier"
         )
         settlement_method = request.settlement_method.value
+        reimbursing_employee = None
+        if settlement_method == "employee_payable":
+            reimbursing_employee = self._resolve_fixed_asset_counterparty(
+                request.org_id, request.reimbursing_employee, required_kind="employee"
+            )
         if settlement_method == "bank":
             self._validate_bank_account(
                 request.org_id, request.bank_account_code, request.payment_date
@@ -553,9 +558,16 @@ class FixedAssetService(FinanceService):
             installation_and_direct_cost_fen=cost.installation_and_direct_cost_fen,
             cost_fen=cost.cost_fen,
             supplier_id=supplier.id,
+            reimbursing_employee_id=(
+                reimbursing_employee.id if reimbursing_employee is not None else None
+            ),
             settlement_method=settlement_method,
             payment_date=request.payment_date if settlement_method == "bank" else None,
-            due_date=request.due_date if settlement_method == "payable" else None,
+            due_date=(
+                request.due_date
+                if settlement_method in {"payable", "employee_payable"}
+                else None
+            ),
             acquisition_event_id=event.id,
             accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
             accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
@@ -566,9 +578,21 @@ class FixedAssetService(FinanceService):
             Entry(account_role="fixed_asset_pending", debit_fen=cost.cost_fen),
             Entry(
                 account_code=(request.bank_account_code if settlement_method == "bank" else None),
-                account_role=(None if settlement_method == "bank" else "accounts_payable"),
+                account_role=(
+                    None
+                    if settlement_method == "bank"
+                    else (
+                        "employee_payable"
+                        if settlement_method == "employee_payable"
+                        else "accounts_payable"
+                    )
+                ),
                 credit_fen=cost.cost_fen,
-                counterparty_id=supplier.id if settlement_method == "payable" else None,
+                counterparty_id=(
+                    reimbursing_employee.id
+                    if reimbursing_employee is not None
+                    else (supplier.id if settlement_method == "payable" else None)
+                ),
             ),
         ]
         voucher = create_voucher(
@@ -578,11 +602,14 @@ class FixedAssetService(FinanceService):
             description=request.description or f"购置固定资产 {request.asset_code}",
             entries=entries,
         )
-        if settlement_method == "payable":
+        if settlement_method in {"payable", "employee_payable"}:
+            payable_counterparty = (
+                reimbursing_employee if reimbursing_employee is not None else supplier
+            )
             self.session.add(
                 OpenItem(
                     org_id=request.org_id,
-                    counterparty_id=supplier.id,
+                    counterparty_id=payable_counterparty.id,
                     source_event_id=event.id,
                     item_type="payable",
                     original_amount_fen=cost.cost_fen,

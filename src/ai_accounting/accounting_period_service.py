@@ -49,16 +49,21 @@ from .models import (
     Borrowing,
     BorrowingInterestAccrual,
     BusinessEvent,
+    Counterparty,
+    Employee,
     Evidence,
+    FixedAsset,
     FixedAssetActivation,
     FixedAssetDepreciation,
     FixedAssetDisposal,
     IntangibleAsset,
     IntangibleAssetAmortization,
     IntangibleAssetRetirement,
+    Invoice,
     OpenItem,
     Organization,
     PayrollBatch,
+    TaxPeriod,
     Voucher,
     VoucherLine,
     accounting_period_action_evidence,
@@ -620,6 +625,15 @@ class AccountingPeriodService:
             len(bank_reconciliation_issues),
         )
         warnings, review_counts = self._review_warnings(request.org_id, period)
+        assistant_review_checklist = self._assistant_review_checklist(
+            request.org_id,
+            period,
+            voucher_sources=sources,
+            bank_reconciliation_count=len(bank_reconciliations),
+            bank_reconciliation_issue_count=len(bank_reconciliation_issues),
+            module_checks=module_checks,
+            review_counts=review_counts,
+        )
         previous = prior[-1] if prior else None
         previous_close_hash = None
         if previous is not None and previous.close_id is not None:
@@ -659,7 +673,425 @@ class AccountingPeriodService:
                 {"stage": "system_checks_completed", "blocker_codes": blockers},
                 {"stage": "calculation_hashed", "calculation_hash": calculation_hash},
             ],
-            "data": {"calculation": payload, "blocker_codes": blockers},
+            "data": {
+                "calculation": payload,
+                "blocker_codes": blockers,
+                "assistant_review_checklist": assistant_review_checklist,
+            },
+        }
+
+    def _assistant_review_checklist(
+        self,
+        org_id: uuid.UUID,
+        period: AccountingPeriod,
+        *,
+        voucher_sources: list[dict[str, Any]],
+        bank_reconciliation_count: int,
+        bank_reconciliation_issue_count: int,
+        module_checks: dict[str, dict[str, Any]],
+        review_counts: dict[str, int],
+    ) -> dict[str, Any]:
+        """Return AI-facing prompts without treating absent records as proof of no activity."""
+
+        period_month = f"{period.calendar_year:04d}-{period.calendar_month:02d}"
+        organization = self.session.get(Organization, org_id)
+        filing_cycle = organization.filing_cycle if organization is not None else "monthly"
+        event_type_counts: dict[str, int] = {}
+        for source in voucher_sources:
+            event_type = str(source["event_type"])
+            event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+
+        invoice_rows = self.session.execute(
+            select(Invoice.direction, func.count(Invoice.id))
+            .where(
+                Invoice.org_id == org_id,
+                Invoice.issue_date.between(period.start_date, period.end_date),
+            )
+            .group_by(Invoice.direction)
+        ).all()
+        invoice_counts = {direction: int(count) for direction, count in invoice_rows}
+
+        open_item_rows = self.session.execute(
+            select(
+                OpenItem.item_type,
+                func.count(OpenItem.id),
+                func.coalesce(
+                    func.sum(OpenItem.original_amount_fen - OpenItem.settled_amount_fen),
+                    0,
+                ),
+            )
+            .where(
+                OpenItem.org_id == org_id,
+                OpenItem.status.in_(("open", "partial")),
+            )
+            .group_by(OpenItem.item_type)
+        ).all()
+        open_item_counts = {
+            item_type: {"count": int(count), "remaining_fen": int(remaining)}
+            for item_type, count, remaining in open_item_rows
+        }
+
+        assets = list(
+            self.session.scalars(
+                select(FixedAsset)
+                .join(BusinessEvent, BusinessEvent.id == FixedAsset.acquisition_event_id)
+                .where(
+                    FixedAsset.org_id == org_id,
+                    FixedAsset.posting_date <= period.end_date,
+                    BusinessEvent.status == "posted",
+                )
+                .order_by(FixedAsset.asset_code, FixedAsset.id)
+            )
+        )
+        activated_asset_ids = set(
+            self.session.scalars(
+                select(FixedAssetActivation.asset_id)
+                .join(BusinessEvent, BusinessEvent.id == FixedAssetActivation.event_id)
+                .where(
+                    FixedAssetActivation.org_id == org_id,
+                    FixedAssetActivation.in_service_date <= period.end_date,
+                    BusinessEvent.status == "posted",
+                )
+            )
+        )
+        pending_assets = [asset for asset in assets if asset.id not in activated_asset_ids]
+        acquired_in_period = [
+            asset
+            for asset in assets
+            if period.start_date <= asset.posting_date <= period.end_date
+        ]
+
+        employee_counterparties = list(
+            self.session.scalars(
+                select(Counterparty)
+                .where(Counterparty.org_id == org_id, Counterparty.kind == "employee")
+                .order_by(Counterparty.name, Counterparty.id)
+            )
+        )
+        active_employees = list(
+            self.session.scalars(
+                select(Employee).where(
+                    Employee.org_id == org_id,
+                    Employee.employment_start_date <= period.end_date,
+                    (
+                        Employee.employment_end_date.is_(None)
+                        | (Employee.employment_end_date >= period.start_date)
+                    ),
+                    Employee.status.in_(("active", "inactive", "terminated")),
+                )
+            )
+        )
+        hires_in_period = [
+            employee
+            for employee in active_employees
+            if period.start_date <= employee.employment_start_date <= period.end_date
+        ]
+        payroll_batches = list(
+            self.session.scalars(
+                select(PayrollBatch).where(
+                    PayrollBatch.org_id == org_id,
+                    PayrollBatch.payroll_period == period_month,
+                    PayrollBatch.status.not_in(("reversed", "superseded")),
+                )
+            )
+        )
+        regular_payroll_batches = [
+            batch for batch in payroll_batches if batch.batch_kind == "regular"
+        ]
+        payroll_payment_event_count = sum(
+            event_type_counts.get(event_type, 0)
+            for event_type in (
+                "salary_payment",
+                "social_insurance_payment",
+                "housing_fund_payment",
+                "individual_income_tax_payment",
+            )
+        )
+
+        tax_calculation_due = filing_cycle == "monthly" or period.calendar_month % 3 == 0
+        tax_period_start = (
+            period.start_date
+            if filing_cycle == "monthly"
+            else date(
+                period.calendar_year,
+                ((period.calendar_month - 1) // 3) * 3 + 1,
+                1,
+            )
+        )
+        tax_period_count = (
+            int(
+                self.session.scalar(
+                    select(func.count())
+                    .select_from(TaxPeriod)
+                    .where(
+                        TaxPeriod.org_id == org_id,
+                        TaxPeriod.start_date == tax_period_start,
+                        TaxPeriod.end_date == period.end_date,
+                        TaxPeriod.status == "posted",
+                    )
+                )
+                or 0
+            )
+            if tax_calculation_due
+            else 0
+        )
+        borrowing_count = int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(Borrowing)
+                .join(BusinessEvent, BusinessEvent.id == Borrowing.drawdown_event_id)
+                .where(
+                    Borrowing.org_id == org_id,
+                    Borrowing.drawdown_date <= period.end_date,
+                    BusinessEvent.status == "posted",
+                )
+            )
+            or 0
+        )
+
+        bank_attention = (
+            bank_reconciliation_issue_count > 0
+            or review_counts["unmatched_bank_transactions"] > 0
+            or review_counts["pending_late_bank_transactions"] > 0
+            or review_counts["historical_bank_scope_corrections_pending"] > 0
+        )
+        fixed_asset_attention = bool(
+            pending_assets or module_checks["fixed_assets"]["count"]
+        )
+        active_employee_counterparty_ids = {
+            employee.counterparty_id for employee in active_employees
+        }
+        employee_master_gaps = [
+            counterparty
+            for counterparty in employee_counterparties
+            if counterparty.id not in active_employee_counterparty_ids
+        ]
+        payroll_attention = bool(
+            employee_master_gaps
+            or (active_employees and not regular_payroll_batches)
+            or module_checks["payroll"]["count"]
+        )
+        open_item_total_count = sum(item["count"] for item in open_item_counts.values())
+
+        items = [
+            {
+                "code": "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION",
+                "topic": "未交材料和账外业务",
+                "state": "owner_confirmation_required",
+                "completed": False,
+                "summary": (
+                    f"系统本月已有 {len(voucher_sources)} 张正式凭证；"
+                    "但数据库没有记录不能证明业务不存在。"
+                ),
+                "system_facts": {
+                    "posted_voucher_count": len(voucher_sources),
+                    "event_type_counts": event_type_counts,
+                    "input_invoice_count": invoice_counts.get("input", 0),
+                    "output_invoice_count": invoice_counts.get("output", 0),
+                },
+                "owner_questions": [
+                    "本月是否还有未提供的公司收付款、现金或个人代付事项？",
+                    "本月是否有已开票或未开票收入、已收票费用、合同履约或退款？",
+                ],
+            },
+            {
+                "code": "MONTH_END_BANK_RECONCILIATION",
+                "topic": "银行账户与流水",
+                "state": "needs_attention" if bank_attention else "completed",
+                "completed": not bank_attention,
+                "summary": (
+                    "银行范围、流水匹配、迟到流水和逐账户对账仍有待处理项。"
+                    if bank_attention
+                    else "当前已登记银行范围内的流水匹配和逐账户对账检查通过。"
+                ),
+                "system_facts": {
+                    "reconciliation_count": bank_reconciliation_count,
+                    "reconciliation_issue_count": bank_reconciliation_issue_count,
+                    "unmatched_transaction_count": review_counts[
+                        "unmatched_bank_transactions"
+                    ],
+                    "pending_late_transaction_count": review_counts[
+                        "pending_late_bank_transactions"
+                    ],
+                    "historical_scope_correction_count": review_counts[
+                        "historical_bank_scope_corrections_pending"
+                    ],
+                },
+                "owner_questions": (
+                    []
+                    if not bank_attention
+                    else ["请先处理列出的银行异常，并确认是否还有未登记的公司资金账户。"]
+                ),
+            },
+            {
+                "code": "MONTH_END_OPEN_ITEMS",
+                "topic": "应收、应付和报销余额",
+                "state": "needs_attention" if open_item_total_count else "completed",
+                "completed": open_item_total_count == 0,
+                "summary": (
+                    f"系统有 {open_item_total_count} 个未结清应收或应付项目，"
+                    "需要逐项确认余额和后续结算。"
+                    if open_item_total_count
+                    else "系统没有未结清的应收或应付开放项。"
+                ),
+                "system_facts": {"open_items": open_item_counts},
+                "owner_questions": (
+                    ["这些应收、应付或员工报销余额是否真实，是否有已结算但尚未入账的款项？"]
+                    if open_item_total_count
+                    else []
+                ),
+            },
+            {
+                "code": "MONTH_END_FIXED_ASSETS",
+                "topic": "固定资产、启用和折旧",
+                "state": (
+                    "needs_attention"
+                    if fixed_asset_attention
+                    else ("completed" if assets else "owner_confirmation_required")
+                ),
+                "completed": bool(assets) and not fixed_asset_attention,
+                "summary": (
+                    f"已登记 {len(assets)} 项固定资产，其中 {len(pending_assets)} 项"
+                    "在月末仍待确认投入使用；"
+                    f"本月新增 {len(acquired_in_period)} 项。"
+                    if assets
+                    else "系统未发现固定资产记录，需由负责人确认本月确实没有购置或投入使用的资产。"
+                ),
+                "system_facts": {
+                    "recorded_asset_count": len(assets),
+                    "acquired_in_period_count": len(acquired_in_period),
+                    "pending_activation_count": len(pending_assets),
+                    "pending_activation_cost_fen": sum(
+                        asset.cost_fen for asset in pending_assets
+                    ),
+                    "depreciation_schedule_issue_count": module_checks["fixed_assets"][
+                        "count"
+                    ],
+                    "pending_assets": [
+                        {
+                            "asset_code": asset.asset_code,
+                            "asset_name": asset.name,
+                            "cost_fen": asset.cost_fen,
+                        }
+                        for asset in pending_assets
+                    ],
+                },
+                "owner_questions": (
+                    [
+                        "这些待启用资产最早从哪一天达到可使用状态？",
+                        "确认启用时还需提供预计使用年限、预计残值和受益部门；折旧从启用次月检查。",
+                    ]
+                    if pending_assets
+                    else ["本月是否有尚未交给系统的资产购置或资产投入使用？"]
+                ),
+            },
+            {
+                "code": "MONTH_END_PEOPLE_PAYROLL_STATUTORY",
+                "topic": "新入职、工资、社保公积金和个税",
+                "state": (
+                    "needs_attention"
+                    if payroll_attention
+                    else (
+                        "completed"
+                        if active_employees and payroll_batches
+                        else "owner_confirmation_required"
+                    )
+                ),
+                "completed": (
+                    bool(active_employees and regular_payroll_batches)
+                    and not payroll_attention
+                ),
+                "summary": (
+                    f"系统有 {len(employee_counterparties)} 个员工类往来对象、"
+                    f"{len(active_employees)} 份当月有效员工档案、"
+                    f"{len(hires_in_period)} 名当月入职、{len(payroll_batches)} 个工资批次。"
+                ),
+                "system_facts": {
+                    "employee_counterparty_count": len(employee_counterparties),
+                    "active_employee_record_count": len(active_employees),
+                    "employee_master_gap_count": len(employee_master_gaps),
+                    "employee_master_gap_names": [
+                        counterparty.name for counterparty in employee_master_gaps
+                    ],
+                    "hire_count": len(hires_in_period),
+                    "payroll_batch_count": len(payroll_batches),
+                    "regular_payroll_batch_count": len(regular_payroll_batches),
+                    "payroll_or_statutory_payment_event_count": payroll_payment_event_count,
+                    "unfinished_payroll_batch_count": module_checks["payroll"]["count"],
+                },
+                "owner_questions": [
+                    "本月是否有人新入职、离职或开始形成劳动关系？股东或联合创始人身份不自动等于员工。",
+                    "本月是否应发工资、奖金，或应缴社保、公积金、个人所得税？即使尚未付款也要确认。",
+                ],
+            },
+            {
+                "code": "MONTH_END_TAX_AND_FILING",
+                "topic": "发票、税额计算和外部申报",
+                "state": (
+                    "needs_attention"
+                    if tax_calculation_due and tax_period_count == 0
+                    else "owner_confirmation_required"
+                ),
+                "completed": False,
+                "summary": (
+                    "系统尚未形成本申报期税额计算记录；零税额也不能仅凭空记录推断。"
+                    if tax_calculation_due and tax_period_count == 0
+                    else (
+                        "系统已有税期计算记录，但私有试用内核不替代税务系统中的实际申报。"
+                        if tax_period_count
+                        else "本月不是季度申报期末，但仍需确认当月发票和涉税业务。"
+                    )
+                ),
+                "system_facts": {
+                    "filing_cycle": filing_cycle,
+                    "tax_calculation_due": tax_calculation_due,
+                    "tax_period_count": tax_period_count,
+                    "taxable_event_count": review_counts["tax_items_to_review"],
+                    "input_invoice_count": invoice_counts.get("input", 0),
+                    "output_invoice_count": invoice_counts.get("output", 0),
+                },
+                "owner_questions": [
+                    "本月是否有开票、无票收入、红冲、进项票或其他需要纳税申报的事项？",
+                    "税额复核后，是否已在外部电子税务局完成当期申报；如为零申报也需确认外部状态？",
+                ],
+            },
+            {
+                "code": "MONTH_END_BORROWINGS_AND_CAPITAL",
+                "topic": "借款、股东往来和投入款",
+                "state": (
+                    "needs_attention"
+                    if module_checks["borrowings"]["count"]
+                    else "owner_confirmation_required"
+                ),
+                "completed": False,
+                "summary": (
+                    f"系统截至月末有 {borrowing_count} 笔已登记借款；"
+                    f"有 {module_checks['borrowings']['count']} 笔利息计划异常。"
+                ),
+                "system_facts": {
+                    "recorded_borrowing_count": borrowing_count,
+                    "interest_schedule_issue_count": module_checks["borrowings"]["count"],
+                },
+                "owner_questions": [
+                    "本月是否有未通过已登记银行流水体现的借款、股东垫款、投入款或还款？",
+                ],
+            },
+        ]
+        return {
+            "version": "month_end_assistant_review_v1",
+            "period_month": period_month,
+            "semantics": {
+                "completed": "系统记录足以证明该项已完成检查",
+                "needs_attention": "系统已发现待处理或待解释项目",
+                "owner_confirmation_required": "系统没有足够事实；不得把空记录推断为没有业务",
+            },
+            "ai_instruction": (
+                "在确认月结前，逐项向负责人展示所有非 completed 项并记录回答；"
+                "不得仅因数据库无记录而代填没有员工、工资、税务、资产或其他业务。"
+            ),
+            "completed_count": sum(item["completed"] for item in items),
+            "pending_count": sum(not item["completed"] for item in items),
+            "items": items,
         }
 
     @staticmethod

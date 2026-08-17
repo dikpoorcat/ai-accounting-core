@@ -374,10 +374,82 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                         )
                     )
                 assert payment.status == "posted"
+                with authority.attributed_call(
+                    session, tool_name="finance_acquire_fixed_asset"
+                ):
+                    employee_evidence = _evidence(
+                        session, asset.org_id, "employee-advanced"
+                    )
+                    employee_asset = FixedAssetService(session).acquire_fixed_asset(
+                        AcquireFixedAssetRequest.model_validate(
+                            {
+                                "org_id": asset.org_id,
+                                "idempotency_key": "employee-advanced-acquisition",
+                                "asset_code": "FA-employee-advanced",
+                                "asset_name": "员工垫付设备",
+                                "category": "tools_furniture",
+                                "expected_use_over_one_year": True,
+                                "purchase_date": "2026-02-02",
+                                "posting_date": "2026-02-02",
+                                "cost_components": {
+                                    "purchase_price_fen": 50_000,
+                                    "noncreditable_tax_fen": 0,
+                                    "transport_and_handling_fen": 0,
+                                    "installation_and_direct_cost_fen": 0,
+                                },
+                                "supplier": {
+                                    "kind": "supplier",
+                                    "name": "家具供应商",
+                                },
+                                "reimbursing_employee": {
+                                    "kind": "employee",
+                                    "name": "测试员工乙",
+                                },
+                                "settlement_method": "employee_payable",
+                                "due_date": "2026-02-03",
+                                "evidence_references": [employee_evidence.id],
+                                "claims_creditable_input_vat": False,
+                            }
+                        )
+                    )
+                assert employee_asset.status == "posted", employee_asset.errors
+                employee_item = session.scalar(
+                    sa.select(OpenItem).where(
+                        OpenItem.source_event_id == employee_asset.event_id
+                    )
+                )
+                employee_counterparty = session.get(
+                    Counterparty,
+                    session.get(FixedAsset, employee_asset.asset_id).reimbursing_employee_id,
+                )
+                with authority.attributed_call(session, tool_name="finance_record_event"):
+                    employee_payment = FinanceService(session).record_event(
+                        RecordEventRequest.model_validate(
+                            {
+                                "org_id": asset.org_id,
+                                "idempotency_key": "employee-advanced-payment",
+                                "event_type": "employee_reimbursement_payment",
+                                "business_dates": {
+                                    "business_date": "2026-02-03",
+                                    "posting_date": "2026-02-03",
+                                    "payment_date": "2026-02-03",
+                                },
+                                "counterparty": {"id": employee_counterparty.id},
+                                "amounts": {"amount_fen": 50_000},
+                                "bank_account_code": "1002",
+                                "allocations": [
+                                    {"open_item_id": employee_item.id, "amount_fen": 50_000}
+                                ],
+                            }
+                        )
+                    )
+                assert employee_payment.status == "posted", employee_payment.errors
                 session.commit()
                 session.refresh(item)
                 assert item.status == "settled"
                 assert item.settled_amount_fen == asset.cost_fen
+                session.refresh(employee_item)
+                assert employee_item.status == "settled"
 
             with Session(engine) as session:
                 asset = session.scalar(

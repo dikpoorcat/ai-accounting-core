@@ -8,7 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
-from ai_accounting.models import Account, OpenItem, Organization, VoucherLine
+from ai_accounting.models import (
+    Account,
+    BankTransaction,
+    OpenItem,
+    Organization,
+    Settlement,
+    VoucherLine,
+)
 from ai_accounting.schemas import RecordEventRequest
 from ai_accounting.service import FinanceService
 
@@ -200,6 +207,101 @@ def test_employee_bank_and_internal_transfer_events_are_balanced(
         result = service.record_event(request(organization, payload))
         assert result.status == "posted"
         assert_balanced(session, result.voucher_id)
+
+
+def test_employee_reimbursement_claims_create_payables_and_one_payment_settles_them(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    employee = {"kind": "employee", "name": "测试员工甲"}
+    expense = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "employee-expense-claim",
+                "event_type": "employee_reimbursement",
+                "business_dates": {
+                    "business_date": "2026-04-10",
+                    "posting_date": "2026-04-10",
+                },
+                "counterparty": employee,
+                "amounts": {
+                    "gross_amount_fen": 1_234_500,
+                    "expense_account_role": "general_expense",
+                },
+                "details": {"paid_now": False, "reimbursement_kind": "expense"},
+            },
+        )
+    )
+    deposit = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "employee-deposit-claim",
+                "event_type": "employee_reimbursement",
+                "business_dates": {
+                    "business_date": "2026-04-10",
+                    "posting_date": "2026-04-10",
+                },
+                "counterparty": employee,
+                "deposit_holder": {"kind": "other", "name": "出租方"},
+                "amounts": {"gross_amount_fen": 345_600},
+                "details": {
+                    "paid_now": False,
+                    "reimbursement_kind": "refundable_deposit",
+                },
+            },
+        )
+    )
+    assert expense.status == deposit.status == "posted"
+    claims = session.scalars(
+        select(OpenItem)
+        .where(OpenItem.source_event_id.in_([expense.event_id, deposit.event_id]))
+        .order_by(OpenItem.original_amount_fen)
+    ).all()
+    assert [item.original_amount_fen for item in claims] == [345_600, 1_234_500]
+    assert all(item.status == "open" for item in claims)
+
+    bank = BankTransaction(
+        org_id=organization.id,
+        bank_account_code="1002",
+        fingerprint="e" * 64,
+        booking_date=date(2026, 4, 10),
+        amount_fen=-1_580_100,
+        currency="CNY",
+        memo="员工报销",
+        source_sha256="f" * 64,
+    )
+    session.add(bank)
+    session.flush()
+    payment = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "employee-payment",
+                "event_type": "employee_reimbursement_payment",
+                "business_dates": {
+                    "business_date": "2026-04-10",
+                    "posting_date": "2026-04-10",
+                    "payment_date": "2026-04-10",
+                },
+                "counterparty": employee,
+                "amounts": {"amount_fen": 1_580_100},
+                "bank_account_code": "1002",
+                "bank_transaction_references": [{"id": bank.id}],
+                "allocations": [
+                    {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
+                    for item in claims
+                ],
+            },
+        )
+    )
+
+    assert payment.status == "posted"
+    assert_balanced(session, payment.voucher_id)
+    assert bank.matched_event_id == payment.event_id
+    assert all(item.status == "settled" for item in claims)
+    assert session.query(Settlement).filter_by(payment_event_id=payment.event_id).count() == 2
 
 
 def test_vat_payment_cannot_exceed_posted_liability(

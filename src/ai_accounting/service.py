@@ -145,9 +145,11 @@ class FinanceService:
             EventType.CUSTOMER_REFUND,
             EventType.EXPENSE_CASH,
             EventType.SUPPLIER_PAYMENT,
+            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_LOAN_RECEIVED,
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
+            EventType.OTHER_INCOME_RECEIVED,
             EventType.BANK_FEE,
             EventType.TAX_PAYMENT,
             EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -749,9 +751,25 @@ class FinanceService:
         if payroll_payment:
             self._lock_payroll_open_items(request)
         counterparty = self._resolve_counterparty(request)
+        deposit_holder = self._resolve_counterparty_reference(
+            request.org_id, request.deposit_holder
+        )
+        if request.event_type in {
+            EventType.EMPLOYEE_REIMBURSEMENT,
+            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
+        } and (counterparty is None or counterparty.kind != "employee"):
+            raise ValueError("employee reimbursement requires an employee counterparty")
+        if request.event_type is EventType.OTHER_INCOME_RECEIVED and (
+            counterparty is None or counterparty.kind != "other"
+        ):
+            raise ValueError("other income requires an other counterparty")
+        if deposit_holder is not None and deposit_holder.kind not in {"supplier", "other"}:
+            raise ValueError("a refundable deposit holder must be a supplier or other counterparty")
         facts = request.model_dump(mode="json")
         linked_original = self._validate_business_links(request)
-        entries, derived, open_item_type = self._derive_entries(request, counterparty)
+        entries, derived, open_item_type = self._derive_entries(
+            request, counterparty, deposit_holder
+        )
         facts["derived"] = derived
 
         trace = [{"stage": "facts_validated", "event_type": request.event_type.value}]
@@ -914,7 +932,10 @@ class FinanceService:
             raise ValueError("PAYROLL_OPEN_ITEM_NOT_FOUND")
 
     def _derive_entries(
-        self, request: RecordEventRequest, counterparty: Counterparty | None
+        self,
+        request: RecordEventRequest,
+        counterparty: Counterparty | None,
+        deposit_holder: Counterparty | None = None,
     ) -> tuple[list[Entry], dict[str, Any], str | None]:
         event_type = request.event_type
         amount = self._amount(request)
@@ -1092,12 +1113,33 @@ class FinanceService:
 
         elif event_type == EventType.EMPLOYEE_REIMBURSEMENT:
             paid_now = bool(request.details["paid_now"])
-            entries = [
-                Entry(
+            reimbursement_kind = request.details.reimbursement_kind or "expense"
+            if reimbursement_kind == "refundable_deposit":
+                if deposit_holder is None:
+                    raise ValueError("deposit_holder is required for a refundable deposit")
+                debit_entry = Entry(
+                    account_role="employee_receivable",
+                    debit_fen=amount,
+                    counterparty_id=deposit_holder.id,
+                )
+                derived = {
+                    "reimbursement_kind": reimbursement_kind,
+                    "refundable_deposit_fen": amount,
+                    "deposit_holder_id": str(deposit_holder.id),
+                }
+            else:
+                debit_entry = Entry(
                     account_role=request.amounts.expense_account_role,
                     debit_fen=amount,
                     counterparty_id=cp_id,
-                ),
+                )
+                derived = {
+                    "reimbursement_kind": reimbursement_kind,
+                    "purchase_tax_treatment": "gross_to_expense",
+                    "expense_fen": amount,
+                }
+            entries = [
+                debit_entry,
                 Entry(
                     account_code=request.bank_account_code if paid_now else None,
                     account_role=None if paid_now else "employee_payable",
@@ -1105,6 +1147,8 @@ class FinanceService:
                     counterparty_id=cp_id,
                 ),
             ]
+            if not paid_now:
+                open_item_type = "payable"
 
         elif event_type == EventType.OWNER_LOAN_RECEIVED:
             entries = [
@@ -1129,6 +1173,38 @@ class FinanceService:
                     account_code=request.bank_account_code, credit_fen=amount, counterparty_id=cp_id
                 ),
             ]
+
+        elif event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
+            allocated = sum(item.amount_fen for item in request.allocations)
+            entries = [
+                Entry(account_role="employee_payable", debit_fen=amount, counterparty_id=cp_id),
+                Entry(
+                    account_code=request.bank_account_code,
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
+            ]
+            derived = {"allocated_fen": allocated}
+
+        elif event_type == EventType.OTHER_INCOME_RECEIVED:
+            entries = [
+                Entry(
+                    account_code=request.bank_account_code,
+                    debit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
+                # The baseline role predates this public event and maps to the
+                # organization's fixed general non-operating-income account.
+                Entry(
+                    account_role="tax_relief_income",
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
+            ]
+            derived = {
+                "other_income_kind": request.details["other_income_kind"],
+                "non_operating_income_fen": amount,
+            }
 
         elif event_type == EventType.BANK_FEE:
             entries = [
@@ -1282,6 +1358,9 @@ class FinanceService:
     ) -> None:
         if not request.allocations:
             return
+        allocation_ids = [item.open_item_id for item in request.allocations]
+        if len(allocation_ids) != len(set(allocation_ids)):
+            raise ValueError("duplicate open item allocation")
         expected_type = (
             "receivable" if request.event_type == EventType.CUSTOMER_RECEIPT else "payable"
         )
@@ -1320,6 +1399,20 @@ class FinanceService:
                 counterparty is None or item.counterparty_id != counterparty.id
             ):
                 raise ValueError(f"open item belongs to a different counterparty: {item.id}")
+            if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
+                source_type = self.session.scalar(
+                    select(BusinessEvent.event_type).where(
+                        BusinessEvent.org_id == request.org_id,
+                        BusinessEvent.id == item.source_event_id,
+                    )
+                )
+                if source_type not in {
+                    EventType.EMPLOYEE_REIMBURSEMENT.value,
+                    EventType.FIXED_ASSET_ACQUISITION.value,
+                }:
+                    raise ValueError(
+                        f"open item is not an employee reimbursement payable: {item.id}"
+                    )
             available = item.original_amount_fen - item.settled_amount_fen
             if allocation.amount_fen > available:
                 raise ValueError(
@@ -2065,12 +2158,14 @@ class FinanceService:
             EventType.CUSTOMER_ADVANCE,
             EventType.OWNER_LOAN_RECEIVED,
             EventType.OWNER_CONTRIBUTION_RECEIVED,
+            EventType.OTHER_INCOME_RECEIVED,
         }
         outflows = {
             EventType.CUSTOMER_REFUND,
             EventType.EXPENSE_CASH,
             EventType.SUPPLIER_PAYMENT,
             EventType.EMPLOYEE_REIMBURSEMENT,
+            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_REPAYMENT,
             EventType.BANK_FEE,
             EventType.TAX_PAYMENT,
@@ -2144,14 +2239,15 @@ class FinanceService:
             )
             transaction.matched_event_id = event.id
 
-    def _resolve_counterparty(self, request: RecordEventRequest) -> Counterparty | None:
-        reference = request.counterparty
+    def _resolve_counterparty_reference(
+        self, org_id: uuid.UUID, reference: Any | None
+    ) -> Counterparty | None:
         if reference is None:
             return None
         if reference.id:
             counterparty = self.session.scalar(
                 select(Counterparty).where(
-                    Counterparty.id == reference.id, Counterparty.org_id == request.org_id
+                    Counterparty.id == reference.id, Counterparty.org_id == org_id
                 )
             )
             if counterparty is None:
@@ -2159,14 +2255,14 @@ class FinanceService:
             return counterparty
         counterparty = self.session.scalar(
             select(Counterparty).where(
-                Counterparty.org_id == request.org_id,
+                Counterparty.org_id == org_id,
                 Counterparty.kind == reference.kind,
                 Counterparty.name == reference.name,
             )
         )
         if counterparty is None:
             counterparty = Counterparty(
-                org_id=request.org_id,
+                org_id=org_id,
                 kind=reference.kind or "other",
                 name=reference.name or "",
                 external_ref=reference.external_ref,
@@ -2174,6 +2270,9 @@ class FinanceService:
             self.session.add(counterparty)
             self.session.flush()
         return counterparty
+
+    def _resolve_counterparty(self, request: RecordEventRequest) -> Counterparty | None:
+        return self._resolve_counterparty_reference(request.org_id, request.counterparty)
 
     def _validate_business_links(self, request: RecordEventRequest) -> BusinessEvent | None:
         settlement_date = self._bank_settlement_date(request)
@@ -2362,12 +2461,32 @@ class FinanceService:
             EventType.EXPENSE_PAYABLE,
             EventType.SUPPLIER_PAYMENT,
             EventType.EMPLOYEE_REIMBURSEMENT,
+            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_LOAN_RECEIVED,
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
+            EventType.OTHER_INCOME_RECEIVED,
         }
         if event_type in counterparty_events and request.counterparty is None:
             missing.append("counterparty")
+        if (
+            event_type == EventType.EMPLOYEE_REIMBURSEMENT
+            and request.details.reimbursement_kind == "refundable_deposit"
+            and request.deposit_holder is None
+        ):
+            missing.append("deposit_holder")
+
+        if event_type == EventType.OTHER_INCOME_RECEIVED:
+            if request.details.other_income_kind != "retained_verification_payment":
+                missing.append(
+                    "details.other_income_kind='retained_verification_payment'"
+                )
+            if not request.bank_transaction_references:
+                missing.append("bank_transaction_references")
+            if not request.evidence_references:
+                missing.append("evidence_references")
+            if not request.description.strip():
+                missing.append("description")
 
         sales_events = {
             EventType.SERVICE_CASH_SALE,
@@ -2425,7 +2544,10 @@ class FinanceService:
             if amount and allocated > amount:
                 missing.append("allocations whose total does not exceed the receipt")
 
-        if event_type == EventType.SUPPLIER_PAYMENT:
+        if event_type in {
+            EventType.SUPPLIER_PAYMENT,
+            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
+        }:
             allocated = sum(item.amount_fen for item in request.allocations)
             if not request.allocations:
                 missing.append("allocations")
@@ -2478,8 +2600,12 @@ class FinanceService:
         expense_events = {
             EventType.EXPENSE_CASH,
             EventType.EXPENSE_PAYABLE,
-            EventType.EMPLOYEE_REIMBURSEMENT,
         }
+        if (
+            event_type == EventType.EMPLOYEE_REIMBURSEMENT
+            and request.details.reimbursement_kind in {None, "expense"}
+        ):
+            expense_events.add(EventType.EMPLOYEE_REIMBURSEMENT)
         if event_type in expense_events:
             if request.amounts.expense_account_role is None:
                 missing.append("amounts.expense_account_role")
@@ -2498,9 +2624,11 @@ class FinanceService:
             EventType.CUSTOMER_REFUND: ("payment_date",),
             EventType.EXPENSE_CASH: ("payment_date",),
             EventType.SUPPLIER_PAYMENT: ("payment_date",),
+            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT: ("payment_date",),
             EventType.OWNER_LOAN_RECEIVED: ("payment_date",),
             EventType.OWNER_CONTRIBUTION_RECEIVED: ("payment_date",),
             EventType.OWNER_REPAYMENT: ("payment_date",),
+            EventType.OTHER_INCOME_RECEIVED: ("payment_date",),
             EventType.BANK_FEE: ("payment_date",),
             EventType.TAX_PAYMENT: ("payment_date",),
             EventType.SALARY_PAYMENT: ("payment_date",),

@@ -140,6 +140,7 @@ def test_public_event_requirements_publish_explicit_bank_selection_and_late_evid
         EventType.OWNER_LOAN_RECEIVED,
         EventType.OWNER_CONTRIBUTION_RECEIVED,
         EventType.OWNER_REPAYMENT,
+        EventType.OTHER_INCOME_RECEIVED,
         EventType.BANK_FEE,
         EventType.TAX_PAYMENT,
         EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -157,6 +158,7 @@ def test_public_event_requirements_publish_explicit_bank_selection_and_late_evid
         EventType.INTANGIBLE_ASSET_ACQUISITION,
     }
     special_bank_events = {EventType.INTERNAL_TRANSFER, EventType.CASH_BANK_TRANSFER}
+    required_bank_match_events = {EventType.OTHER_INCOME_RECEIVED}
 
     for event_type in unconditional_bank_events:
         requirements = EVENT_REQUIREMENTS[event_type.value]
@@ -167,10 +169,18 @@ def test_public_event_requirements_publish_explicit_bank_selection_and_late_evid
             "bank_account_code" in fields
             for fields in requirements["conditional_required_fields"].values()
         )
-    for event_type in unconditional_bank_events | conditional_bank_events | special_bank_events:
+    for event_type in (
+        unconditional_bank_events
+        | conditional_bank_events
+        | special_bank_events
+    ) - required_bank_match_events:
         references = EVENT_REQUIREMENTS[event_type.value]["bank_transaction_references"]
         assert references.startswith("optional;")
         assert "provided" in references
+    for event_type in required_bank_match_events:
+        references = EVENT_REQUIREMENTS[event_type.value]["bank_transaction_references"]
+        assert references.startswith("required;")
+        assert "exactly match" in references
 
     assert EVENT_REQUIREMENTS[EventType.INTERNAL_TRANSFER.value]["required_fields"] == [
         "source_bank_account_code",
@@ -209,6 +219,103 @@ def test_unconfirmed_scope_returns_needs_information_without_any_write(
     assert session.scalar(select(func.count()).select_from(Voucher)) == 0
     assert session.scalar(select(func.count()).select_from(Counterparty)) == 0
     assert session.scalar(select(func.count()).select_from(BankTransactionMatch)) == 0
+
+
+def test_retained_verification_payment_requires_and_freezes_exact_sources(
+    session: Session, organization: Organization
+) -> None:
+    _confirm_scope(session, organization)
+    service = FinanceService(session)
+    incomplete = RecordEventRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "idempotency_key": "verification-income-incomplete",
+            "event_type": "other_income_received",
+            "business_dates": {
+                "business_date": "2026-08-08",
+                "posting_date": "2026-08-08",
+                "payment_date": "2026-08-08",
+            },
+            "counterparty": {"kind": "other", "name": "验证平台"},
+            "amounts": {"amount_fen": 1},
+            "bank_account_code": "1002",
+        }
+    )
+    needs_information = service.record_event(incomplete)
+    assert needs_information.status == "needs_information"
+    assert needs_information.missing_information == [
+        "details.other_income_kind='retained_verification_payment'",
+        "bank_transaction_references",
+        "evidence_references",
+        "description",
+    ]
+
+    bank = _bank_row(
+        session,
+        organization,
+        account_code="1002",
+        amount_fen=1,
+        seed="retained-verification-payment",
+    )
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="e" * 64,
+        original_name="verification.txt",
+        media_type="text/plain",
+        source="test",
+        size_bytes=1,
+        storage_path="test/verification.txt",
+    )
+    session.add(evidence)
+    session.flush()
+    wrong_kind = RecordEventRequest.model_validate(
+        incomplete.model_dump(mode="python")
+        | {
+            "idempotency_key": "verification-income-wrong-counterparty-kind",
+            "counterparty": {"kind": "supplier", "name": "测试供应方"},
+            "bank_transaction_references": [{"id": bank.id}],
+            "evidence_references": [evidence.id],
+            "description": "无需退回且未抵扣的测试验证款",
+            "details": {"other_income_kind": "retained_verification_payment"},
+        }
+    )
+    rejected_kind = service.record_event(wrong_kind)
+    assert rejected_kind.status == "rejected"
+    assert rejected_kind.errors == ["other income requires an other counterparty"]
+    assert bank.matched_event_id is None
+
+    complete = RecordEventRequest.model_validate(
+        incomplete.model_dump(mode="python")
+        | {
+            "idempotency_key": "verification-income-complete",
+            "bank_transaction_references": [{"id": bank.id}],
+            "evidence_references": [evidence.id],
+            "description": "无需退回且未抵扣的商户验证款",
+            "details": {"other_income_kind": "retained_verification_payment"},
+        }
+    )
+    posted = service.record_event(complete)
+
+    assert posted.status == "posted", posted.errors
+    assert _voucher_lines(session, posted.voucher_id) == [
+        ("1002", 1, 0),
+        ("6301", 0, 1),
+    ]
+    assert posted.data["derived"] == {
+        "other_income_kind": "retained_verification_payment",
+        "non_operating_income_fen": 1,
+    }
+    assert bank.matched_event_id == posted.event_id
+    assert session.scalar(
+        select(func.count())
+        .select_from(BankTransactionMatch)
+        .where(BankTransactionMatch.event_id == posted.event_id)
+    ) == 1
+    assert session.scalar(
+        select(func.count())
+        .select_from(event_evidence)
+        .where(event_evidence.c.event_id == posted.event_id)
+    ) == 1
 
 
 def test_general_bank_events_freeze_selected_account_and_reject_cross_account_refs(

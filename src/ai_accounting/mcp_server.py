@@ -1196,7 +1196,7 @@ def finance_generate_accounting_period(
 def finance_preview_accounting_period_close(
     request: PreviewAccountingPeriodCloseRequest,
 ) -> dict[str, Any]:
-    """只读复核一个已生成自然月，并返回规范关账快照和计算哈希。"""
+    """只读复核自然月；另返回AI必须逐项提示负责人的月末建议清单和关账哈希。"""
     try:
         with SessionLocal() as session:
             return (

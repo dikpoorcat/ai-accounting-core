@@ -1678,6 +1678,7 @@ class FixedAsset(Base):
     installation_and_direct_cost_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     cost_fen: Mapped[int] = mapped_column(BigInteger)
     supplier_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    reimbursing_employee_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     settlement_method: Mapped[str] = mapped_column(String(20))
     payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -1691,6 +1692,12 @@ class FixedAsset(Base):
             ["org_id", "supplier_id"],
             ["counterparties.org_id", "counterparties.id"],
             name="fk_fixed_asset_org_supplier",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "reimbursing_employee_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_fixed_asset_org_reimbursing_employee",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -1720,11 +1727,16 @@ class FixedAsset(Base):
             name="ck_fixed_asset_cost_components_total",
         ),
         CheckConstraint(
-            "settlement_method IN ('bank','payable')", name="ck_fixed_asset_settlement_method"
+            "settlement_method IN ('bank','payable','employee_payable')",
+            name="ck_fixed_asset_settlement_method",
         ),
         CheckConstraint(
-            "(settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL) OR "
-            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL)",
+            "(settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL "
+            "AND reimbursing_employee_id IS NULL) OR "
+            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL "
+            "AND reimbursing_employee_id IS NULL) OR "
+            "(settlement_method = 'employee_payable' AND payment_date IS NULL "
+            "AND due_date IS NOT NULL AND reimbursing_employee_id IS NOT NULL)",
             name="ck_fixed_asset_settlement_dates",
         ),
     )

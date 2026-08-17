@@ -239,6 +239,30 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     )
 
     assert preview.status is AccountingPeriodResultStatus.CALCULATED
+    checklist = preview.data["assistant_review_checklist"]
+    assert checklist["version"] == "month_end_assistant_review_v1"
+    assert checklist["period_month"] == "2026-03"
+    assert [item["code"] for item in checklist["items"]] == [
+        "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION",
+        "MONTH_END_BANK_RECONCILIATION",
+        "MONTH_END_OPEN_ITEMS",
+        "MONTH_END_FIXED_ASSETS",
+        "MONTH_END_PEOPLE_PAYROLL_STATUTORY",
+        "MONTH_END_TAX_AND_FILING",
+        "MONTH_END_BORROWINGS_AND_CAPITAL",
+    ]
+    item_by_code = {item["code"]: item for item in checklist["items"]}
+    assert item_by_code["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"]["state"] == (
+        "owner_confirmation_required"
+    )
+    assert item_by_code["MONTH_END_FIXED_ASSETS"]["state"] == (
+        "owner_confirmation_required"
+    )
+    assert item_by_code["MONTH_END_PEOPLE_PAYROLL_STATUTORY"]["state"] == (
+        "owner_confirmation_required"
+    )
+    assert item_by_code["MONTH_END_TAX_AND_FILING"]["state"] == "needs_attention"
+    assert "不得仅因数据库无记录" in checklist["ai_instruction"]
     assert missing.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
     assert "review_facts.voucher_completeness_reviewed" in missing.missing_information[0].fields
     action = session.get(AccountingPeriodAction, missing.action_id)
@@ -320,6 +344,13 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     close = session.get(AccountingPeriodClose, closed.close_id)
 
     assert preview.status is AccountingPeriodResultStatus.CALCULATED
+    checklist_items = {
+        item["code"]: item for item in preview.data["assistant_review_checklist"]["items"]
+    }
+    assert checklist_items["MONTH_END_BANK_RECONCILIATION"]["state"] == "completed"
+    assert checklist_items["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"][
+        "completed"
+    ] is False
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
     assert closed.data["calculation"]["checker_version"] == (

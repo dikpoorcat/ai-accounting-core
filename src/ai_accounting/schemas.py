@@ -36,9 +36,11 @@ class EventType(StrEnum):
     EXPENSE_PAYABLE = "expense_payable"
     SUPPLIER_PAYMENT = "supplier_payment"
     EMPLOYEE_REIMBURSEMENT = "employee_reimbursement"
+    EMPLOYEE_REIMBURSEMENT_PAYMENT = "employee_reimbursement_payment"
     OWNER_LOAN_RECEIVED = "owner_loan_received"
     OWNER_CONTRIBUTION_RECEIVED = "owner_contribution_received"
     OWNER_REPAYMENT = "owner_repayment"
+    OTHER_INCOME_RECEIVED = "other_income_received"
     BANK_FEE = "bank_fee"
     INTERNAL_TRANSFER = "internal_transfer"
     CASH_BANK_TRANSFER = "cash_bank_transfer"
@@ -93,6 +95,11 @@ INTERNAL_EVENT_TYPES = {
 BANK_TRANSACTION_REFERENCES_OPTIONAL = (
     "optional; if provided, every row must belong to the selected bank account and its signed "
     "total must exactly match the typed settlement amount and direction"
+)
+
+BANK_TRANSACTION_REFERENCES_REQUIRED = (
+    "required; every row must belong to the selected bank account and its signed total must "
+    "exactly match the typed receipt amount"
 )
 
 
@@ -210,6 +217,32 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "constraint": "cannot exceed this owner's payable balance",
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
+    },
+    EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "counterparty": "employee required",
+        "allocations": "required and total must equal payment",
+        "required_fields": ["bank_account_code"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
+    },
+    EventType.OTHER_INCOME_RECEIVED.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "counterparty": "other required",
+        "required_details": ["other_income_kind=retained_verification_payment"],
+        "required_fields": [
+            "bank_account_code",
+            "bank_transaction_references",
+            "evidence_references",
+            "description",
+        ],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_REQUIRED,
+        "posting_template": "debit selected bank account; credit non-operating income",
+        "accounting_basis_url": (
+            "https://kjs.mof.gov.cn/zhengcefabu/201111/"
+            "P020111118325852734144.pdf"
+        ),
     },
     EventType.BANK_FEE.value: {
         "amount": "amount_fen",
@@ -495,10 +528,12 @@ class EventDetails(BaseModel):
     tax_previously_accrued: bool | None = None
     refund_kind: Literal["advance", "sale_return"] | None = None
     paid_now: bool | None = None
+    reimbursement_kind: Literal["expense", "refundable_deposit"] | None = None
     tax_type: Literal["vat", "surtax"] | None = None
     original_event_id: uuid.UUID | None = None
     unallocated_treatment: Literal["advance"] | None = None
     recognition_source: Literal["contract_liability"] | None = None
+    other_income_kind: Literal["retained_verification_payment"] | None = None
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
@@ -825,6 +860,7 @@ class FixedAssetBenefitArea(StrEnum):
 class FixedAssetAcquisitionSettlementKind(StrEnum):
     BANK = "bank"
     PAYABLE = "payable"
+    EMPLOYEE_PAYABLE = "employee_payable"
 
 
 class FixedAssetDepreciationMethod(StrEnum):
@@ -890,6 +926,7 @@ class AcquireFixedAssetRequest(BaseModel):
     posting_date: date | None = None
     cost_components: FixedAssetCostComponents = Field(default_factory=FixedAssetCostComponents)
     supplier: CounterpartyRef | None = None
+    reimbursing_employee: CounterpartyRef | None = None
     settlement_method: FixedAssetAcquisitionSettlementKind | None = None
     bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     payment_date: date | None = None
@@ -905,10 +942,20 @@ class AcquireFixedAssetRequest(BaseModel):
             raise ValueError("posting_date must not precede purchase_date")
         if self.due_date and self.purchase_date and self.due_date < self.purchase_date:
             raise ValueError("due_date must not precede purchase_date")
-        if self.settlement_method is FixedAssetAcquisitionSettlementKind.PAYABLE and (
+        if self.settlement_method in {
+            FixedAssetAcquisitionSettlementKind.PAYABLE,
+            FixedAssetAcquisitionSettlementKind.EMPLOYEE_PAYABLE,
+        } and (
             self.bank_account_code is not None or self.bank_transaction_references
         ):
-            raise ValueError("a supplier-payable acquisition must not include bank facts")
+            raise ValueError("a payable acquisition must not include bank facts")
+        if (
+            self.settlement_method is not FixedAssetAcquisitionSettlementKind.EMPLOYEE_PAYABLE
+            and self.reimbursing_employee is not None
+        ):
+            raise ValueError(
+                "reimbursing_employee is only accepted for employee-payable acquisition"
+            )
         return self
 
     def missing_information(self) -> list[FixedAssetInformationRequirement]:
@@ -994,6 +1041,23 @@ class AcquireFixedAssetRequest(BaseModel):
                         code="FIXED_ASSET_PAYMENT_DATE_REQUIRED",
                         message="a bank-paid acquisition requires its payment date",
                         fields=["payment_date"],
+                    )
+                )
+        elif self.settlement_method is FixedAssetAcquisitionSettlementKind.EMPLOYEE_PAYABLE:
+            if self.reimbursing_employee is None:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_REIMBURSING_EMPLOYEE_REQUIRED",
+                        message="an employee-payable acquisition requires its reimbursing employee",
+                        fields=["reimbursing_employee"],
+                    )
+                )
+            if self.due_date is None:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_DUE_DATE_REQUIRED",
+                        message="an employee-payable acquisition requires its due date",
+                        fields=["due_date"],
                     )
                 )
         elif self.due_date is None:
@@ -1300,6 +1364,7 @@ class RecordEventRequest(BaseModel):
     event_type: EventType
     business_dates: BusinessDates
     counterparty: CounterpartyRef | None = None
+    deposit_holder: CounterpartyRef | None = None
     amounts: AmountFacts
     tax_facts: TaxFacts | None = None
     invoice_references: list[InvoiceReference] = Field(default_factory=list)
@@ -1351,9 +1416,11 @@ class RecordEventRequest(BaseModel):
             EventType.CUSTOMER_REFUND,
             EventType.EXPENSE_CASH,
             EventType.SUPPLIER_PAYMENT,
+            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_LOAN_RECEIVED,
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
+            EventType.OTHER_INCOME_RECEIVED,
             EventType.BANK_FEE,
             EventType.TAX_PAYMENT,
             EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -1369,6 +1436,48 @@ class RecordEventRequest(BaseModel):
             self.bank_account_code is not None or self.bank_transaction_references
         ):
             raise ValueError("a non-bank settlement must not include bank account facts")
+        return self
+
+    @model_validator(mode="after")
+    def reimbursement_fields_follow_the_typed_branch(self) -> RecordEventRequest:
+        if self.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
+            if self.details.reimbursement_kind == "refundable_deposit":
+                if self.amounts.expense_account_role is not None:
+                    raise ValueError(
+                        "a refundable-deposit reimbursement does not accept an expense role"
+                    )
+            elif self.deposit_holder is not None:
+                raise ValueError("deposit_holder is only accepted for a refundable deposit")
+            return self
+        if self.deposit_holder is not None:
+            raise ValueError("deposit_holder is only accepted for employee reimbursement")
+        if self.details.reimbursement_kind is not None:
+            raise ValueError("reimbursement_kind is only accepted for employee reimbursement")
+        if self.event_type is EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
+            if self.amounts.gross_amount_fen is not None:
+                raise ValueError("employee reimbursement payment must use amount_fen")
+            if self.amounts.expense_account_role is not None:
+                raise ValueError("employee reimbursement payment does not accept an expense role")
+            if self.tax_facts is not None or self.invoice_references:
+                raise ValueError(
+                    "employee reimbursement payment does not accept tax or invoice facts"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def other_income_received_uses_only_its_fixed_fact_shape(self) -> RecordEventRequest:
+        if self.event_type is not EventType.OTHER_INCOME_RECEIVED:
+            return self
+        if self.amounts.gross_amount_fen is not None:
+            raise ValueError("other_income_received must use amount_fen")
+        if self.amounts.expense_account_role is not None:
+            raise ValueError("other_income_received does not accept an expense account role")
+        if self.tax_facts is not None:
+            raise ValueError("other_income_received does not accept tax_facts")
+        if self.invoice_references:
+            raise ValueError("other_income_received does not accept invoice references")
+        if self.allocations or self.salary_withholding_allocations:
+            raise ValueError("other_income_received does not accept allocations")
         return self
 
 

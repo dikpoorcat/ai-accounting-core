@@ -59,7 +59,7 @@ def _request(
             ),
         ),
         database=DatabaseDumpMetadata(
-            schema_revision="0001_baseline",
+            schema_revision="0002_pilot_events",
             source_system_identifier=_SOURCE_SYSTEM_IDENTIFIER,
         ),
     )

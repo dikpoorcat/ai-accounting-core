@@ -14,6 +14,7 @@ from ai_accounting.models import (
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
+    Counterparty,
     Evidence,
     FixedAsset,
     FixedAssetActivation,
@@ -254,6 +255,37 @@ def test_acquire_and_activate_fixed_asset_are_normalized_balanced_and_idempotent
     assert activation.useful_life_months == 13
     assert session.get(BusinessEvent, activated.event_id).status == "posted"
     assert session.get(Voucher, activated.voucher_id).status == "posted"
+
+
+def test_employee_advanced_fixed_asset_creates_employee_payable_without_losing_supplier(
+    session: Session, organization: Organization
+) -> None:
+    evidence = _evidence(session, organization, "employee-asset")
+    payload = _acquisition_request(
+        organization, evidence, key="employee-advanced-asset"
+    ).model_dump(mode="python")
+    payload.update(
+        {
+            "settlement_method": "employee_payable",
+            "reimbursing_employee": {"kind": "employee", "name": "测试员工乙"},
+        }
+    )
+
+    acquired = FixedAssetService(session).acquire_fixed_asset(
+        AcquireFixedAssetRequest.model_validate(payload)
+    )
+
+    assert acquired.status == "posted"
+    asset = session.get(FixedAsset, acquired.asset_id)
+    supplier = session.get(Counterparty, asset.supplier_id)
+    employee = session.get(Counterparty, asset.reimbursing_employee_id)
+    payable = session.scalar(select(OpenItem).where(OpenItem.source_event_id == acquired.event_id))
+    assert asset.settlement_method == "employee_payable"
+    assert supplier.kind == "supplier"
+    assert employee.kind == "employee"
+    assert payable.counterparty_id == employee.id
+    assert payable.original_amount_fen == asset.cost_fen
+    _assert_balanced(session, acquired.voucher_id)
 
 
 def test_fixed_asset_missing_facts_and_invalid_depreciation_policy_are_stable(
