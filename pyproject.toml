@@ -37,6 +37,7 @@ finance-mcp = "ai_accounting.mcp_server:main"
 finance-bootstrap = "ai_accounting.bootstrap:main"
 finance-login = "ai_accounting.identity_cli:main"
 finance-backup = "ai_accounting.backup_cli:main"
+finance-overview = "ai_accounting.overview_server:main"
 
 [tool.uv]
 # Keep local and CI lock-file resolution on the same audited uv release.

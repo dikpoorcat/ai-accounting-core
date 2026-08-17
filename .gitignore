@@ -5,6 +5,8 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 .coverage
+.codex/spreadsheets/
+.playwright-cli/
 htmlcov/
 .mypy_cache/
 .ruff_cache/

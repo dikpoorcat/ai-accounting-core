@@ -1,0 +1,1464 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>老板经营概览</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page-bg: light-dark(#f2f5f1, #0c120f);
+      --surface: light-dark(#ffffff, #151e19);
+      --surface-soft: light-dark(#e9eee9, #202a24);
+      --text: light-dark(#17201a, #f0f6f2);
+      --muted: light-dark(#647168, #a8b6ad);
+      --border: light-dark(#d6ded8, #344239);
+      --green: light-dark(#176b45, #7addaa);
+      --green-soft: light-dark(#e2f3e9, #173a29);
+      --blue: light-dark(#245f91, #7abaf0);
+      --blue-soft: light-dark(#e5eff8, #17334a);
+      --amber: light-dark(#8b5a10, #f2c572);
+      --amber-soft: light-dark(#fff2d8, #3b2b14);
+      --red: light-dark(#a43b32, #ff9b91);
+      --shadow: light-dark(0 10px 30px rgba(31, 51, 39, .06), none);
+      font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+    }
+    :root[data-theme="light"] { color-scheme: light; }
+    :root[data-theme="dark"] { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--page-bg);
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    button, select { font: inherit; }
+    button { color: inherit; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2, h3, strong, button, summary { font-weight: 600; }
+    .app-shell { min-height: 100vh; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 15px max(20px, calc((100vw - 1120px) / 2));
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      backdrop-filter: blur(12px);
+    }
+    .brand, .period-tools, .row, .title-row, .actions, .check, .activity-label,
+    .event-main, .event-meta, .voucher-summary, .voucher-lines-heading {
+      display: flex;
+      align-items: center;
+    }
+    .brand { gap: 11px; min-width: 0; }
+    .brand > div { min-width: 0; }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 auto;
+      border-radius: 10px;
+      background: var(--green-soft);
+      color: var(--green);
+    }
+    .brand-name {
+      display: block;
+      max-width: 540px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .kicker, .note, .muted, footer { color: var(--muted); }
+    .period-tools { gap: 8px; flex: 0 0 auto; }
+    .control, .action {
+      min-height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+    }
+    select.control { padding: 7px 34px 7px 10px; }
+    button.control, .action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 7px 11px;
+      cursor: pointer;
+    }
+    button, select, summary { transition: background-color .16s ease, border-color .16s ease, color .16s ease; }
+    button:focus-visible, select:focus-visible, summary:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--blue) 45%, transparent);
+      outline-offset: 3px;
+    }
+    button.control:hover, .action:hover { background: var(--surface-soft); }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+      white-space: nowrap;
+    }
+    .status.open { background: var(--amber-soft); color: var(--amber); }
+    .status.cash-out { background: var(--amber-soft); color: var(--amber); }
+    main {
+      display: grid;
+      gap: 20px;
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 28px 0 22px;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 18px;
+      padding: 22px 24px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--green-soft) 58%, var(--surface)) 0%,
+        var(--surface) 54%,
+        color-mix(in srgb, var(--blue-soft) 45%, var(--surface)) 100%
+      );
+      box-shadow: var(--shadow);
+    }
+    .hero-copy { display: grid; gap: 8px; }
+    .hero h1 { font-size: clamp(28px, 3vw, 38px); line-height: 1.2; letter-spacing: -.035em; }
+    .takeaway {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-top: 5px;
+      padding-top: 13px;
+      border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    }
+    .takeaway-label {
+      flex: 0 0 auto;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .takeaway p { line-height: 1.65; }
+    .proof-chip {
+      padding: 10px 13px;
+      border-radius: 11px;
+      background: var(--green-soft);
+      color: var(--green);
+      white-space: nowrap;
+    }
+    .proof-chip.warning { background: var(--amber-soft); color: var(--amber); }
+    .proof-chip[hidden] { display: none; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .card, .panel, .detail {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .card { display: grid; gap: 14px; padding: 17px; }
+    .stat-card {
+      position: relative;
+      overflow: hidden;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+    }
+    .stat-card.actionable {
+      appearance: none;
+      cursor: pointer;
+      text-align: left;
+    }
+    .stat-card.actionable .note:last-child::after {
+      margin-left: 5px;
+      color: var(--blue);
+      content: "查看明细 ›";
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .stat-card::before {
+      position: absolute;
+      inset: 0 0 auto;
+      height: 3px;
+      background: var(--green);
+      content: "";
+    }
+    .stat-card.bank::before { background: var(--blue); }
+    .stat-card.result.loss-card::before { background: var(--red); }
+    .stat-card.payable.attention-card::before { background: var(--amber); }
+    .stat-value { overflow-wrap: anywhere; font-size: clamp(22px, 2.35vw, 29px); letter-spacing: -.025em; }
+    .loss { color: var(--red); }
+    .attention { color: var(--amber); }
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .panel { padding: 19px; }
+    .title-row { justify-content: space-between; gap: 13px; margin-bottom: 17px; }
+    .flow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+    }
+    .flow-node { display: grid; gap: 5px; min-width: 0; padding: 14px; border-radius: 12px; }
+    .inflow { background: var(--blue-soft); color: var(--blue); }
+    .outflow { background: var(--amber-soft); color: var(--amber); }
+    .flow-arrow { color: var(--muted); }
+    .net {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .stack {
+      display: flex;
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--surface-soft);
+    }
+    .stack span { min-width: 0; }
+    .stack-bank { background: var(--blue); }
+    .stack-fixed { background: var(--green); }
+    .stack-other { background: var(--amber); }
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+      margin-top: 12px;
+    }
+    .legend-item { display: grid; gap: 3px; min-width: 0; }
+    .legend-item.bank { color: var(--blue); }
+    .legend-item.fixed { color: var(--green); }
+    .legend-item.other { color: var(--amber); }
+    .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 5px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .equation {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 12px;
+      background: var(--surface-soft);
+    }
+    .section { display: grid; gap: 12px; }
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .view-switch {
+      display: inline-flex;
+      gap: 2px;
+      padding: 3px;
+      border-radius: 10px;
+      background: var(--surface-soft);
+    }
+    .view-choice {
+      padding: 7px 11px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .view-choice[aria-pressed="true"] {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 1px 4px color-mix(in srgb, var(--text) 10%, transparent);
+    }
+    .activity-view { display: grid; gap: 12px; }
+    .activity-view[hidden], .detail[hidden], .voucher-detail[hidden],
+    .lifecycle[hidden] { display: none; }
+    .activity-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      background: var(--border);
+    }
+    .activity {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+      padding: 15px;
+      border: 0;
+      background: var(--surface);
+      cursor: pointer;
+      text-align: left;
+    }
+    .activity[aria-expanded="true"] { background: var(--green-soft); color: var(--green); }
+    .activity-label { gap: 7px; color: var(--muted); }
+    .chevron { margin-left: auto; transition: transform .16s ease; }
+    .activity[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+    .detail { display: grid; gap: 13px; padding: 19px; }
+    .lifecycle {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      padding: 3px 0 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .lifecycle-item {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+      padding-left: 12px;
+      border-left: 3px solid var(--border);
+    }
+    .lifecycle-item:nth-child(1) { border-color: var(--blue); }
+    .lifecycle-item:nth-child(2) { border-color: var(--green); }
+    .lifecycle-item:nth-child(3) { border-color: var(--amber); }
+    .event-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+    .event-row {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .event-row:last-child { border-bottom: 0; }
+    .event-main { align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .event-copy { display: grid; gap: 4px; min-width: 0; }
+    .event-amount { white-space: nowrap; }
+    .event-meta { flex-wrap: wrap; gap: 6px 12px; color: var(--muted); }
+    .event-state { color: var(--green); }
+    details.disclosure {
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+    }
+    details.disclosure summary { color: var(--text); cursor: pointer; }
+    .evidence-list { display: grid; gap: 5px; margin: 8px 0 0; padding-left: 20px; }
+    .voucher-summary { justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .voucher-list {
+      display: grid;
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      background: var(--border);
+    }
+    .voucher-date { padding: 9px 12px; background: var(--surface-soft); color: var(--muted); }
+    .voucher-row {
+      display: grid;
+      grid-template-columns: minmax(105px, .8fr) minmax(90px, .65fr)
+        minmax(0, 2.7fr) minmax(105px, .8fr) auto;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      padding: 12px;
+      border: 0;
+      background: var(--surface);
+      cursor: pointer;
+      text-align: left;
+    }
+    .voucher-row[aria-expanded="true"] { background: var(--green-soft); color: var(--green); }
+    .voucher-row-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .voucher-row-amount { text-align: right; white-space: nowrap; }
+    .voucher-toggle { color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .voucher-detail { display: grid; gap: 14px; padding: 17px; background: var(--surface); }
+    .voucher-detail-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1.65fr) minmax(250px, .85fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+    .voucher-description {
+      display: grid;
+      gap: 5px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--surface-soft);
+    }
+    .voucher-balance {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid color-mix(in srgb, var(--green) 28%, var(--border));
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--green-soft) 58%, var(--surface));
+    }
+    .balance-side { display: grid; gap: 3px; min-width: 0; }
+    .balance-side:last-child { text-align: right; }
+    .balance-side strong { overflow-wrap: anywhere; }
+    .balance-mark { color: var(--green); font-weight: 700; }
+    .voucher-lines-heading { justify-content: space-between; gap: 10px; }
+    .voucher-table-wrap {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+    }
+    .voucher-ledger { table-layout: fixed; }
+    .voucher-ledger .account-column { width: 46%; }
+    .voucher-ledger .amount-column { width: 17%; }
+    .voucher-ledger .party-column { width: 20%; }
+    .voucher-ledger.has-line-memo .account-column { width: 30%; }
+    .voucher-ledger.has-line-memo .memo-column { width: 28%; }
+    .voucher-ledger.has-line-memo .amount-column { width: 14%; }
+    .voucher-ledger.has-line-memo .party-column { width: 14%; }
+    .voucher-detail th { padding: 9px 10px; background: var(--surface-soft); font-size: 13px; }
+    .voucher-detail td { padding: 11px 10px; }
+    .voucher-detail tbody tr:last-child td { border-bottom: 0; }
+    .account-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .account-code {
+      flex: 0 0 auto;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-family: ui-monospace, "Cascadia Mono", monospace;
+      font-size: 12px;
+    }
+    .party-pill {
+      display: inline-flex;
+      max-width: 100%;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      overflow-wrap: anywhere;
+    }
+    .debit-value { color: var(--blue); }
+    .credit-value { color: var(--green); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 9px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--muted); }
+    .number { text-align: right; white-space: nowrap; }
+    .validation-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .close-summary { display: grid; gap: 12px; }
+    .check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .check {
+      gap: 8px;
+      min-width: 0;
+      padding: 10px;
+      border-radius: 10px;
+      background: var(--green-soft);
+      color: var(--green);
+    }
+    .warning-box {
+      display: grid;
+      align-content: center;
+      gap: 8px;
+      padding: 16px;
+      border-radius: 12px;
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+    .actions { flex-wrap: wrap; gap: 10px; }
+    .action[aria-expanded="true"] {
+      border-color: var(--green);
+      background: var(--green-soft);
+      color: var(--green);
+    }
+    @media (hover: hover) {
+      .stat-card:hover { transform: translateY(-2px); box-shadow: 0 14px 34px color-mix(in srgb, var(--text) 9%, transparent); }
+      .activity:not([aria-expanded="true"]):hover, .voucher-row:not([aria-expanded="true"]):hover {
+        background: var(--surface-soft);
+      }
+    }
+    .group-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .open-item-categories { display: grid; gap: 16px; }
+    .open-item-category { display: grid; gap: 10px; }
+    .open-item-category + .open-item-category {
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .open-item-category-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .group-item { display: grid; gap: 4px; padding: 12px; border-radius: 10px; background: var(--surface-soft); }
+    .proof-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+    .proof-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .proof-list li:last-child { border-bottom: 0; }
+    .empty {
+      display: grid;
+      justify-items: center;
+      gap: 12px;
+      padding: 28px 18px;
+      text-align: center;
+    }
+    footer {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 0 0 24px;
+      text-align: center;
+    }
+    @media (max-width: 840px) {
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .two-col, .validation-grid { grid-template-columns: minmax(0, 1fr); }
+      .activity-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .topbar { position: static; align-items: flex-start; flex-direction: column; padding: 14px 16px; }
+      .brand { width: 100%; }
+      .period-tools { width: 100%; flex-wrap: wrap; }
+      .period-tools select { flex: 1 1 150px; }
+      main, footer { width: min(100% - 28px, 1120px); }
+      main { padding-top: 18px; }
+      .hero, .section-heading { display: flex; align-items: flex-start; flex-direction: column; }
+      .hero { padding: 18px; }
+      .takeaway { align-items: flex-start; flex-direction: column; }
+      .proof-chip { white-space: normal; }
+      .stats, .legend, .activity-grid, .group-grid, .lifecycle {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .flow { grid-template-columns: minmax(0, 1fr); }
+      .flow-arrow { transform: rotate(90deg); justify-self: center; }
+      .net, .title-row, .event-main, .open-item-category-heading {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .view-switch { width: 100%; }
+      .view-choice { flex: 1 1 0; }
+      .voucher-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+      .voucher-row > strong:first-child { grid-column: 1; grid-row: 1; }
+      .voucher-row > .muted { grid-column: 2; grid-row: 1; }
+      .voucher-row-summary { grid-column: 1 / 3; grid-row: 2; white-space: normal; }
+      .voucher-row-amount { grid-column: 3; grid-row: 2; }
+      .voucher-toggle { grid-column: 3; grid-row: 1; }
+      .voucher-detail-top { grid-template-columns: minmax(0, 1fr); }
+      .voucher-lines-heading { align-items: baseline; }
+      table, tbody, tr, td { display: block; width: 100%; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      tr {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      td { padding: 0; border: 0; }
+      td:first-child { grid-column: 1 / -1; }
+      .voucher-detail td[data-label="分录摘要"], .voucher-detail td:last-child { grid-column: 1 / -1; }
+      .voucher-detail tbody { display: grid; gap: 8px; padding: 8px; }
+      .voucher-detail tbody tr {
+        padding: 11px;
+        border: 0;
+        border-radius: 9px;
+        background: var(--surface-soft);
+      }
+      .voucher-detail tbody tr:last-child { border: 0; }
+      td::before { content: attr(data-label); display: block; color: var(--muted); }
+      .number { text-align: left; white-space: normal; }
+      .proof-list li { align-items: flex-start; flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">账</span>
+        <div>
+          <p class="kicker">老板经营概览</p>
+          <strong id="company-name" class="brand-name"></strong>
+        </div>
+      </div>
+      <div class="period-tools">
+        <select id="period-select" class="control" aria-label="查看月份" title="悬停后滚动鼠标滚轮切换月份"></select>
+        <span id="period-status" class="status" role="status"></span>
+        <button id="refresh-button" class="control" type="button" aria-label="刷新页面数据">刷新数据</button>
+        <button id="theme-button" class="control" type="button" aria-label="切换明暗外观">切换外观</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="main-title">
+        <div class="hero-copy">
+          <p id="source-note" class="kicker">当前新库 · 本地只读</p>
+          <h1 id="main-title"></h1>
+          <p id="hero-note" class="muted"></p>
+          <div class="takeaway" aria-label="本月一句话">
+            <span class="takeaway-label">本月一句话</span>
+            <p id="owner-takeaway"></p>
+          </div>
+        </div>
+        <div id="reconciliation-status" class="proof-chip warning" role="alert" hidden></div>
+      </section>
+
+      <section class="stats" aria-label="本月核心指标">
+        <article class="card stat-card bank"><p class="note">账面银行余额</p><h2 id="bank-balance" class="stat-value"></h2><p id="bank-context" class="note"></p></article>
+        <article id="result-card" class="card stat-card result"><p class="note">本月收入费用差额</p><h2 id="month-result" class="stat-value"></h2><p id="result-context" class="note"></p></article>
+        <button id="fixed-assets-card" class="card stat-card asset actionable" type="button" aria-label="查看固定资产业务明细" aria-controls="activity-detail" aria-expanded="false"><span class="note">固定资产</span><span id="fixed-assets-value" class="stat-value"></span><span id="fixed-assets-context" class="note"></span></button>
+        <button id="open-items-card" class="card stat-card payable actionable" type="button" aria-label="查看期末待付员工款明细" aria-controls="open-items-detail" aria-expanded="false"><span class="note">期末待付员工款</span><span id="open-items-value" class="stat-value"></span><span id="open-items-context" class="note"></span></button>
+      </section>
+
+      <section class="two-col" aria-label="资金与财务位置">
+        <article class="panel">
+          <div class="title-row"><div><p class="kicker">钱从哪里来，到哪里去</p><h2>资金概览</h2></div><span id="cash-direction" class="status"></span></div>
+          <div class="flow">
+            <div class="flow-node inflow"><span>流入</span><strong id="cash-inflow"></strong><span>银行流水</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-node outflow"><span>流出</span><strong id="cash-outflow"></strong><span>银行流水</span></div>
+          </div>
+          <div class="net"><span class="muted">流入 − 流出</span><strong id="cash-net"></strong></div>
+        </article>
+        <article class="panel">
+          <div class="title-row"><div><p class="kicker">公司目前有什么、欠什么</p><h2>财务位置</h2></div><strong id="asset-total"></strong></div>
+          <div class="stack" role="img" aria-label="资产构成">
+            <span id="stack-bank" class="stack-bank"></span>
+            <span id="stack-fixed" class="stack-fixed"></span>
+            <span id="stack-other" class="stack-other"></span>
+          </div>
+          <div class="legend">
+            <div class="legend-item bank"><span><span class="dot"></span>银行存款</span><strong id="legend-bank"></strong></div>
+            <div class="legend-item fixed"><span><span class="dot"></span>固定资产</span><strong id="legend-fixed"></strong></div>
+            <div class="legend-item other"><span><span class="dot"></span>其他资产</span><strong id="legend-other"></strong></div>
+          </div>
+          <div id="equation" class="equation"></div>
+        </article>
+      </section>
+
+      <section class="section" aria-labelledby="activity-title">
+        <div class="section-heading">
+          <div><p id="activity-kicker" class="kicker"></p><h2 id="activity-title">本月发生了什么</h2></div>
+          <div class="view-switch" role="group" aria-label="本月发生查看方式">
+            <button class="view-choice" type="button" aria-pressed="true" data-view="business">按业务看</button>
+            <button class="view-choice" type="button" aria-pressed="false" data-view="voucher">按凭证看</button>
+          </div>
+        </div>
+        <div id="business-view" class="activity-view">
+          <p class="note">先按业务看结果；需要核对科目和借贷时，再切到凭证视图。</p>
+          <div id="activity-grid" class="activity-grid"></div>
+          <section id="activity-detail" class="detail" tabindex="-1" hidden>
+            <div class="title-row"><div><p class="kicker">业务明细</p><h2 id="activity-detail-title"></h2></div><strong id="activity-detail-summary"></strong></div>
+            <div id="activity-lifecycle" class="lifecycle" hidden></div>
+            <ul id="activity-detail-list" class="event-list"></ul>
+            <p class="note">姓名、凭证号和金额直接展示；凭据文件按行展开。</p>
+          </section>
+        </div>
+        <div id="voucher-view" class="activity-view" hidden>
+          <div class="voucher-summary"><p class="note">列表显示精简摘要；点开后查看完整摘要和借贷分录。</p><strong id="voucher-summary"></strong></div>
+          <div id="voucher-list" class="voucher-list"></div>
+        </div>
+      </section>
+
+      <section class="panel validation-grid" aria-labelledby="validation-title">
+        <div class="close-summary">
+          <div><p class="kicker">当前数据是否站得住</p><h2 id="validation-title"></h2></div>
+          <strong id="validation-summary"></strong>
+          <div id="check-grid" class="check-grid"></div>
+        </div>
+        <aside class="warning-box"><strong id="attention-title"></strong><p id="attention-note"></p></aside>
+      </section>
+
+      <div class="actions">
+        <button class="action" type="button" aria-expanded="false" aria-controls="open-items-detail" data-detail="open-items-detail">查看待结事项</button>
+        <button class="action" type="button" aria-expanded="false" aria-controls="proof-detail" data-detail="proof-detail">查看校验依据</button>
+      </div>
+
+      <section id="open-items-detail" class="detail" tabindex="-1" hidden>
+        <div class="title-row"><div><p class="kicker">应收与应付分开展示，不互相抵销</p><h2>期末往来事项</h2></div><strong id="open-items-total"></strong></div>
+        <div id="open-item-categories" class="open-item-categories"></div>
+      </section>
+
+      <section id="proof-detail" class="detail" hidden>
+        <div class="title-row"><div><p class="kicker">刷新页面时重新读取当前数据库</p><h2>校验依据</h2></div><span id="proof-status" class="status"></span></div>
+        <ul id="proof-list" class="proof-list"></ul>
+      </section>
+    </main>
+    <footer id="disclaimer"></footer>
+  </div>
+
+  <script id="overview-data" type="application/json">__OVERVIEW_DATA__</script>
+  <script>
+    (() => {
+      "use strict";
+      const payload = JSON.parse(document.getElementById("overview-data").textContent);
+      const byId = (id) => document.getElementById(id);
+      const money = (fen) => "¥" + (Number(fen || 0) / 100).toLocaleString("zh-CN", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+      const signedMoney = (fen) => Number(fen || 0) < 0 ? "−" + money(-Number(fen)) : money(fen);
+      const cell = (label, text, className) => {
+        const item = document.createElement("td");
+        item.dataset.label = label;
+        item.textContent = text;
+        if (className) item.className = className;
+        return item;
+      };
+      const make = (tag, className, text) => {
+        const item = document.createElement(tag);
+        if (className) item.className = className;
+        if (text !== undefined) item.textContent = text;
+        return item;
+      };
+      const formatDate = (value) => {
+        if (!value) return "";
+        const parts = value.slice(0, 10).split("-");
+        return Number(parts[1]) + " 月 " + Number(parts[2]) + " 日";
+      };
+      const statusLabel = (status) => status === "closed" ? "已关账" : "开放中";
+      const openItemStateLabel = (item) => {
+        if (item.item_type === "receivable") {
+          return item.status === "partial" ? "部分收回" : "待收回";
+        }
+        return item.status === "partial" ? "部分支付" : "尚未支付";
+      };
+
+      const ownerTakeaway = (month) => {
+        const net = month.cash.net_fen;
+        let cashText = net > 0
+          ? "银行净增 " + money(net)
+          : (net < 0 ? "银行净流出 " + money(-net) : "银行本月无净变动");
+        const ownerContribution = month.activity.owner_contribution.total_fen;
+        if (
+          month.cash.inflow_fen > 0 &&
+          ownerContribution * 100 >= month.cash.inflow_fen * 70
+        ) {
+          cashText += "，主要来自股东投入";
+        }
+        const resultText = "本月差额 " + signedMoney(month.position.month_result_fen);
+        const employeePayables = month.open_items.employee_payables;
+        const deposits = month.open_items.refundable_deposit_receivables;
+        const pendingText = employeePayables.outstanding_fen > 0
+          ? "待付员工款 " + money(employeePayables.outstanding_fen)
+          : "员工款已结清";
+        const depositText = deposits.outstanding_fen > 0
+          ? "待收回保证金 " + money(deposits.outstanding_fen)
+          : "";
+        return [cashText, resultText, pendingText, depositText].filter(Boolean).join("；") + "。";
+      };
+
+      const cashMovement = (netFen) => {
+        if (netFen > 0) return { label: "净流入", text: "净流入 " + money(netFen) };
+        if (netFen < 0) return { label: "净流出", text: "净流出 " + money(-netFen) };
+        return { label: "无净变动", text: "净变动 " + money(0) };
+      };
+
+      let currentMonth = null;
+      let openActivityKey = null;
+      const periodSelect = byId("period-select");
+      payload.months.forEach((month) => {
+        const option = document.createElement("option");
+        option.value = month.key;
+        option.textContent = month.label;
+        periodSelect.append(option);
+      });
+      byId("company-name").textContent = payload.company;
+      byId("disclaimer").textContent = payload.disclaimer;
+      periodSelect.value = payload.default_period || "";
+
+      const closeDetails = () => {
+        document.querySelectorAll("[data-detail]").forEach((button) => {
+          button.setAttribute("aria-expanded", "false");
+        });
+        document.querySelectorAll(".detail").forEach((panel) => {
+          panel.hidden = true;
+        });
+        document.querySelectorAll(".activity").forEach((button) => {
+          button.setAttribute("aria-expanded", "false");
+        });
+        document.querySelectorAll(".voucher-row").forEach((button) => {
+          button.setAttribute("aria-expanded", "false");
+          const toggle = button.querySelector(".voucher-toggle");
+          if (toggle) toggle.textContent = "展开";
+        });
+        document.querySelectorAll(".voucher-detail").forEach((panel) => panel.remove());
+        document.querySelectorAll(".stat-card.actionable").forEach((button) => {
+          button.setAttribute("aria-expanded", "false");
+        });
+        openActivityKey = null;
+      };
+
+      const renderMonth = (month) => {
+        currentMonth = month;
+        closeDetails();
+        const closed = month.status === "closed";
+        const status = byId("period-status");
+        status.textContent = statusLabel(month.status);
+        status.classList.toggle("open", !closed);
+        byId("main-title").textContent = month.short_label + "经营概览";
+        byId("hero-note").textContent = closed
+          ? ((month.closed_at ? new Date(month.closed_at).toLocaleString("zh-CN") : "") +
+            " 完成关账 · 已形成不可变结果。")
+          : "当前期间仍可补录或更正；凭证与分录数量在下方校验区查看。";
+        byId("owner-takeaway").textContent = ownerTakeaway(month);
+        const valid = month.checks.balanced && month.position.equation_valid;
+        const proof = byId("reconciliation-status");
+        proof.hidden = valid;
+        proof.textContent = valid ? "" : "数据需要复核";
+
+        byId("bank-balance").textContent = money(month.position.bank_fen);
+        const cashMove = cashMovement(month.cash.net_fen);
+        byId("bank-context").textContent = "本月" + cashMove.text;
+        const monthResult = byId("month-result");
+        monthResult.textContent = signedMoney(month.position.month_result_fen);
+        monthResult.classList.toggle("loss", month.position.month_result_fen < 0);
+        byId("result-card").classList.toggle(
+          "loss-card",
+          month.position.month_result_fen < 0
+        );
+        byId("result-context").textContent =
+          "收入 " + money(month.position.month_revenue_fen) +
+          " · 费用 " + money(month.position.month_expense_fen);
+        byId("fixed-assets-value").textContent = money(month.fixed_assets.active_cost_fen);
+        byId("fixed-assets-context").textContent =
+          month.fixed_assets.active_count + " 项已确认可用";
+        const employeePayables = month.open_items.employee_payables;
+        const openValue = byId("open-items-value");
+        openValue.textContent = money(employeePayables.outstanding_fen);
+        openValue.classList.toggle("attention", employeePayables.outstanding_fen > 0);
+        byId("open-items-card").classList.toggle(
+          "attention-card",
+          employeePayables.outstanding_fen > 0
+        );
+        byId("open-items-context").textContent =
+          employeePayables.count + " 笔未完全结清";
+
+        byId("cash-inflow").textContent = money(month.cash.inflow_fen);
+        byId("cash-outflow").textContent = money(month.cash.outflow_fen);
+        byId("cash-net").textContent = cashMove.text;
+        const cashDirection = byId("cash-direction");
+        cashDirection.textContent = cashMove.label;
+        cashDirection.classList.toggle("cash-out", month.cash.net_fen < 0);
+        byId("asset-total").textContent = "资产 " + money(month.position.assets_fen);
+        byId("legend-bank").textContent = money(month.position.bank_fen);
+        byId("legend-fixed").textContent = money(month.position.fixed_asset_fen);
+        const otherAssets = month.position.assets_fen -
+          month.position.bank_fen - month.position.fixed_asset_fen;
+        byId("legend-other").textContent = money(otherAssets);
+        const totalAssets = Math.max(Math.abs(month.position.assets_fen), 1);
+        byId("stack-bank").style.width =
+          Math.max(0, month.position.bank_fen / totalAssets * 100) + "%";
+        byId("stack-fixed").style.width =
+          Math.max(0, month.position.fixed_asset_fen / totalAssets * 100) + "%";
+        byId("stack-other").style.width =
+          Math.max(0, otherAssets / totalAssets * 100) + "%";
+        const equation = byId("equation");
+        equation.replaceChildren(
+          make("span", "", "资产 " + money(month.position.assets_fen)),
+          make("span", "", "="),
+          make("span", "", "负债 " + money(month.position.liabilities_fen)),
+          make("span", "", "+"),
+          make("span", "", "实收资本 " + money(month.position.capital_fen)),
+          make("span", "", month.position.cumulative_result_fen < 0 ? "−" : "+"),
+          make("span", month.position.cumulative_result_fen < 0 ? "loss" : "",
+            "累计差额 " + money(Math.abs(month.position.cumulative_result_fen)))
+        );
+
+        byId("activity-kicker").textContent =
+          month.voucher_count + " 张复式凭证对应的业务动作";
+        renderActivityCards(month);
+        renderVoucherList(month);
+        renderValidation(month);
+        renderOpenItems(month);
+        renderProof(month);
+        document.querySelectorAll("[data-view]").forEach((button) => {
+          const business = button.dataset.view === "business";
+          button.setAttribute("aria-pressed", String(business));
+        });
+        byId("business-view").hidden = false;
+        byId("voucher-view").hidden = true;
+      };
+
+      const activityConfigs = [
+        { key: "owner_contribution", label: "股东投入" },
+        { key: "employee_advance", label: "员工垫付与报销" },
+        { key: "refundable_deposit", label: "可退保证金" },
+        { key: "fixed_assets", label: "固定资产" },
+        { key: "other_income", label: "营业外收入" }
+      ];
+
+      const activityValue = (key, data) => {
+        if (key === "employee_advance") return "确认 " + money(data.confirmed_fen);
+        if (key === "refundable_deposit") {
+          return "增加 " + data.added_count + " 笔 · " + money(data.added_fen);
+        }
+        return (data.count || 0) + (key === "fixed_assets" ? " 项 · " : " 笔 · ") +
+          money(data.total_fen);
+      };
+
+      const activityNote = (key, data) => {
+        if (key === "employee_advance") {
+          return "已付 " + money(data.paid_fen) + " · 待付 " + money(data.outstanding_fen);
+        }
+        if (key === "refundable_deposit") {
+          return "退回 " + money(data.returned_fen) + " · 待收回 " +
+            money(data.outstanding_fen);
+        }
+        if (key === "fixed_assets") return "购置时可直接确认可用";
+        return "";
+      };
+
+      const renderActivityCards = (month) => {
+        const grid = byId("activity-grid");
+        grid.replaceChildren();
+        activityConfigs.forEach((config) => {
+          const data = month.activity[config.key];
+          const button = make("button", "activity");
+          button.type = "button";
+          button.dataset.activity = config.key;
+          button.setAttribute("aria-expanded", "false");
+          button.setAttribute("aria-controls", "activity-detail");
+          const label = make("div", "activity-label");
+          label.append(make("span", "", config.label), make("span", "chevron", "›"));
+          button.append(label, make("h3", "", activityValue(config.key, data)));
+          const note = activityNote(config.key, data);
+          if (note) button.append(make("span", "note", note));
+          button.addEventListener("click", () => {
+            const opening = openActivityKey !== config.key;
+            closeDetails();
+            if (opening) {
+              openActivityKey = config.key;
+              button.setAttribute("aria-expanded", "true");
+              renderActivityDetail(config.key, config.label, data);
+              byId("activity-detail").hidden = false;
+            }
+          });
+          grid.append(button);
+        });
+      };
+
+      const renderActivityDetail = (key, label, data) => {
+        byId("activity-detail-title").textContent = label;
+        byId("activity-detail-summary").textContent =
+          key === "employee_advance"
+            ? "本月确认 " + money(data.confirmed_fen)
+            : (key === "refundable_deposit"
+              ? "期末待收回 " + money(data.outstanding_fen)
+              : activityValue(key, data));
+        const lifecycle = byId("activity-lifecycle");
+        lifecycle.replaceChildren();
+        lifecycle.hidden = !["employee_advance", "refundable_deposit"].includes(key);
+        if (key === "employee_advance") {
+          [
+            ["本月确认员工垫付", data.confirmed_fen, "费用、押金及固定资产"],
+            ["本月已偿还", data.paid_fen, "银行付款"],
+            ["期末仍待付", data.outstanding_fen, "未完全结清事项"]
+          ].forEach((item) => {
+            const block = make("div", "lifecycle-item");
+            block.append(
+              make("span", "muted", item[0]),
+              make("strong", "", money(item[1])),
+              make("span", "note", item[2])
+            );
+            lifecycle.append(block);
+          });
+        }
+        if (key === "refundable_deposit") {
+          [
+            ["本月增加", data.added_fen,
+              "公对公 " + money(data.direct_paid_fen) +
+              " · 员工垫付 " + money(data.employee_advanced_fen)],
+            ["本月退回", data.returned_fen,
+              data.returned_count + " 笔已收回"],
+            ["期末待收回", data.outstanding_fen,
+              data.outstanding_count + " 个往来对象"]
+          ].forEach((item) => {
+            const block = make("div", "lifecycle-item");
+            block.append(
+              make("span", "muted", item[0]),
+              make("strong", "", money(item[1])),
+              make("span", "note", item[2])
+            );
+            lifecycle.append(block);
+          });
+        }
+        const list = byId("activity-detail-list");
+        list.replaceChildren();
+        if (!data.rows.length) {
+          const emptyText = key === "refundable_deposit" && data.outstanding_fen > 0
+            ? "本月没有保证金收付，但期末仍有待收回余额。"
+            : "本月没有这一类业务。";
+          list.append(make("li", "empty muted", emptyText));
+          return;
+        }
+        data.rows.forEach((item) => {
+          const row = make("li", "event-row");
+          const main = make("div", "event-main");
+          const copy = make("div", "event-copy");
+          const reference = [formatDate(item.date), item.reference].filter(Boolean).join(" · ");
+          copy.append(
+            make("span", "kicker", reference),
+            make("strong", "", item.title)
+          );
+          if (key === "employee_advance") {
+            copy.append(make("span", "",
+              "本月确认 " + money(item.confirmed_fen) +
+              " · 已付 " + money(item.paid_fen) +
+              " · 期末待付 " + money(item.outstanding_fen) + "。"
+            ));
+          } else {
+            copy.append(make("span", "", item.description));
+          }
+          main.append(copy, make("strong", "event-amount",
+            key === "employee_advance" && item.outstanding_fen === 0
+              ? "已结清"
+              : money(item.amount_fen)
+          ));
+          const meta = make("div", "event-meta");
+          meta.append(
+            make("span", "event-state", item.state),
+            make("span", "", item.party || "无往来对象")
+          );
+          row.append(main, meta);
+          if (item.evidence && item.evidence.length) {
+            row.append(makeEvidenceDisclosure(item.evidence));
+          }
+          list.append(row);
+        });
+      };
+
+      const makeEvidenceDisclosure = (items) => {
+        const details = make("details", "disclosure");
+        details.append(make("summary", "", "查看 " + items.length + " 份关联凭据"));
+        const list = make("ul", "evidence-list");
+        items.forEach((name) => list.append(make("li", "", name)));
+        details.append(list);
+        return details;
+      };
+
+      const renderVoucherList = (month) => {
+        byId("voucher-summary").textContent =
+          month.voucher_count + " 张凭证 · " + month.line_count + " 行分录";
+        const list = byId("voucher-list");
+        list.replaceChildren();
+        if (!month.vouchers.length) {
+          list.append(make("div", "empty muted", "本月没有凭证。"));
+          return;
+        }
+        let previousDate = "";
+        month.vouchers.forEach((voucher) => {
+          if (voucher.date !== previousDate) {
+            list.append(make("div", "voucher-date", formatDate(voucher.date)));
+            previousDate = voucher.date;
+          }
+          const button = make("button", "voucher-row");
+          button.type = "button";
+          button.setAttribute("aria-expanded", "false");
+          const toggle = make("span", "voucher-toggle", "展开");
+          button.append(
+            make("strong", "", voucher.number),
+            make("span", "muted", voucher.type),
+            make("span", "voucher-row-summary", voucher.list_summary || voucher.summary),
+            make("strong", "voucher-row-amount", money(voucher.amount_fen)),
+            toggle
+          );
+          button.addEventListener("click", () => {
+            const opening = button.getAttribute("aria-expanded") !== "true";
+            closeDetails();
+            if (opening) {
+              button.setAttribute("aria-expanded", "true");
+              toggle.textContent = "收起";
+              button.after(makeVoucherDetail(voucher));
+            }
+          });
+          list.append(button);
+        });
+      };
+
+      const makeVoucherDetail = (voucher) => {
+        const detail = make("section", "voucher-detail");
+        detail.setAttribute("aria-label", voucher.number + " 凭证明细");
+        const top = make("div", "voucher-detail-top");
+        const description = make("div", "voucher-description");
+        description.append(
+          make("span", "kicker", "凭证摘要"),
+          make("p", "", voucher.summary)
+        );
+        const balance = make("div", "voucher-balance");
+        const debitTotal = make("div", "balance-side");
+        debitTotal.append(
+          make("span", "muted", "借方合计"),
+          make("strong", "debit-value", money(voucher.amount_fen))
+        );
+        const creditTotal = make("div", "balance-side");
+        creditTotal.append(
+          make("span", "muted", "贷方合计"),
+          make("strong", "credit-value", money(voucher.amount_fen))
+        );
+        balance.append(debitTotal, make("span", "balance-mark", "="), creditTotal);
+        top.append(description, balance);
+        detail.append(top);
+        const showLineMemo = voucher.lines.some((line) => line.memo !== voucher.summary);
+        const linesHeading = make("div", "voucher-lines-heading");
+        linesHeading.append(
+          make("strong", "", "分录明细"),
+          make("span", "muted", voucher.lines.length + " 行 · 借贷平衡")
+        );
+        detail.append(linesHeading);
+        const tableWrap = make("div", "voucher-table-wrap");
+        const table = make("table", "voucher-ledger" + (showLineMemo ? " has-line-memo" : ""));
+        table.setAttribute("aria-label", voucher.number + " 复式分录");
+        const colgroup = make("colgroup");
+        colgroup.append(make("col", "account-column"));
+        if (showLineMemo) colgroup.append(make("col", "memo-column"));
+        colgroup.append(
+          make("col", "amount-column"),
+          make("col", "amount-column"),
+          make("col", "party-column")
+        );
+        const thead = make("thead");
+        const heading = make("tr");
+        const columnNames = [
+          "科目",
+          ...(showLineMemo ? ["分录摘要"] : []),
+          "借方",
+          "贷方",
+          "往来对象"
+        ];
+        columnNames.forEach((name) => {
+          heading.append(make("th", name === "借方" || name === "贷方" ? "number" : "", name));
+        });
+        thead.append(heading);
+        const tbody = make("tbody");
+        voucher.lines.forEach((line) => {
+          const row = make("tr");
+          const account = make("td", "");
+          account.dataset.label = "科目";
+          const accountContent = make("div", "account-cell");
+          accountContent.append(
+            make("span", "account-code", line.code),
+            make("strong", "", line.account)
+          );
+          account.append(accountContent);
+          row.append(account);
+          if (showLineMemo) row.append(cell("分录摘要", line.memo));
+          row.append(
+            cell(
+              "借方",
+              line.debit_fen ? money(line.debit_fen) : "—",
+              line.debit_fen ? "number debit-value" : "number muted"
+            ),
+            cell(
+              "贷方",
+              line.credit_fen ? money(line.credit_fen) : "—",
+              line.credit_fen ? "number credit-value" : "number muted"
+            )
+          );
+          const party = make("td", "");
+          party.dataset.label = "往来对象";
+          party.append(make("span", line.party ? "party-pill" : "muted", line.party || "—"));
+          row.append(party);
+          tbody.append(row);
+        });
+        table.append(colgroup, thead, tbody);
+        tableWrap.append(table);
+        detail.append(tableWrap);
+        if (voucher.evidence.length) detail.append(makeEvidenceDisclosure(voucher.evidence));
+        return detail;
+      };
+
+      const openItemCategoryConfigs = [
+        {
+          key: "employee_payables",
+          title: "待付员工款",
+          partyLabel: "员工",
+          amountLabel: "待付金额",
+          direction: "payable"
+        },
+        {
+          key: "refundable_deposit_receivables",
+          title: "待收回保证金",
+          partyLabel: "保证金对方",
+          amountLabel: "待收回金额",
+          direction: "receivable"
+        },
+        {
+          key: "other_receivables",
+          title: "其他应收事项",
+          partyLabel: "往来对象",
+          amountLabel: "待收金额",
+          direction: "receivable"
+        },
+        {
+          key: "other_payables",
+          title: "其他应付事项",
+          partyLabel: "往来对象",
+          amountLabel: "待付金额",
+          direction: "payable"
+        }
+      ];
+
+      const openItemDirectionCounts = (month) => {
+        const receivable = openItemCategoryConfigs
+          .filter((config) => config.direction === "receivable")
+          .reduce((sum, config) => sum + month.open_items[config.key].count, 0);
+        const payable = openItemCategoryConfigs
+          .filter((config) => config.direction === "payable")
+          .reduce((sum, config) => sum + month.open_items[config.key].count, 0);
+        return { receivable, payable };
+      };
+
+      const renderValidation = (month) => {
+        const valid = month.checks.balanced && month.position.equation_valid;
+        byId("validation-title").textContent = valid ? "当前账务校验通过" : "当前账务需要复核";
+        byId("validation-summary").textContent =
+          month.voucher_count + " 张凭证 · " + month.line_count +
+          " 行分录 · " + (month.checks.balanced ? "借贷平衡" : "借贷不平");
+        const checks = [
+          "银行流水 " + (month.checks.bank_rows - month.checks.bank_unmatched) +
+            " / " + month.checks.bank_rows + " 已匹配",
+          "迟到流水 " + month.checks.late_bank_rows,
+          month.voucher_count + " / " + month.voucher_count + " 凭证已检查",
+          month.checks.active_fixed_assets + " 项资产已确认可用"
+        ];
+        const grid = byId("check-grid");
+        grid.replaceChildren();
+        checks.forEach((item) => {
+          const check = make("div", "check");
+          check.append(make("span", "", "✓"), make("span", "", item));
+          grid.append(check);
+        });
+        byId("attention-title").textContent =
+          month.status === "closed" ? "本月已锁定" : month.short_label + "尚未关账";
+        const pending = openItemCategoryConfigs
+          .map((config) => ({ config, data: month.open_items[config.key] }))
+          .filter((item) => item.data.count > 0)
+          .map((item) => item.config.title + " " + item.data.count + " 笔 · " +
+            money(item.data.outstanding_fen));
+        if (pending.length) {
+          const identified = pending.join("；");
+          byId("attention-note").textContent = month.status === "closed"
+            ? (identified + "。这些期末往来余额已纳入关账复核，并非关账失败。")
+            : (identified + "。已识别待收、待付方向，正式关账前仍需最终复核。");
+        } else {
+          byId("attention-note").textContent = month.status === "closed"
+            ? "关账时没有未完全结清的应收或应付事项。"
+            : "当前没有未完全结清的应收或应付事项。";
+        }
+      };
+
+      const renderOpenItems = (month) => {
+        const counts = openItemDirectionCounts(month);
+        byId("open-items-total").textContent =
+          "待收 " + counts.receivable + " 笔 · 待付 " + counts.payable + " 笔";
+        const categories = byId("open-item-categories");
+        categories.replaceChildren();
+        const active = openItemCategoryConfigs.filter(
+          (config) => month.open_items[config.key].count > 0
+        );
+        if (!active.length) {
+          categories.append(make("div", "empty muted", "期末没有待收或待付事项。"));
+          return;
+        }
+        active.forEach((config) => {
+          const data = month.open_items[config.key];
+          const section = make("section", "open-item-category");
+          section.id = "open-item-category-" + config.key;
+          section.tabIndex = -1;
+          const heading = make("div", "open-item-category-heading");
+          heading.append(
+            make("strong", "", config.title),
+            make("strong", "", data.count + " 笔 · " + money(data.outstanding_fen))
+          );
+          const groups = make("div", "group-grid");
+          data.groups.forEach((group) => {
+            const item = make("article", "group-item");
+            const state = config.direction === "receivable"
+              ? group.count + " 项待收回"
+              : group.partial_count + " 笔部分支付 · " +
+                group.open_count + " 笔尚未支付";
+            item.append(
+              make("span", "muted", group.party),
+              make("strong", "", money(group.outstanding_fen)),
+              make("span", "", state)
+            );
+            groups.append(item);
+          });
+          const disclosure = make("details", "disclosure");
+          disclosure.append(make("summary", "", "展开 " + data.count + " 笔明细"));
+          const table = make("table");
+          table.setAttribute("aria-label", config.title + "明细");
+          const thead = make("thead");
+          const header = make("tr");
+          ["凭证", config.partyLabel, "事项", "状态", config.amountLabel]
+            .forEach((label, index) => header.append(
+              make("th", index === 4 ? "number" : "", label)
+            ));
+          thead.append(header);
+          const tbody = make("tbody");
+          data.items.forEach((item) => {
+            const row = make("tr");
+            row.append(
+              cell("凭证", item.voucher),
+              cell(config.partyLabel, item.party),
+              cell("事项", item.description),
+              cell("状态", openItemStateLabel(item)),
+              cell(config.amountLabel, money(item.outstanding_fen), "number")
+            );
+            tbody.append(row);
+          });
+          table.append(thead, tbody);
+          disclosure.append(table);
+          section.append(heading, groups, disclosure);
+          categories.append(section);
+        });
+      };
+
+      const renderProof = (month) => {
+        const status = byId("proof-status");
+        status.textContent = statusLabel(month.status);
+        status.classList.toggle("open", month.status !== "closed");
+        const openItemCounts = openItemDirectionCounts(month);
+        const items = [
+          ["借方合计 / 贷方合计",
+            money(month.total_debit_fen) + " / " + money(month.total_credit_fen)],
+          ["银行流水匹配",
+            (month.cash.transaction_count - month.cash.unmatched_count) + " / " +
+            month.cash.transaction_count + "，未匹配 " + month.cash.unmatched_count],
+          ["固定资产处理",
+            month.fixed_assets.active_count + " 项已确认可用"],
+          ["未结事项识别",
+            "待收 " + openItemCounts.receivable + " 笔 · 待付 " +
+              openItemCounts.payable + " 笔"],
+          ["本月期间状态",
+            month.status === "closed" ? "已形成不可变关账快照" : "开放中，尚未形成关账快照"]
+        ];
+        const list = byId("proof-list");
+        list.replaceChildren();
+        items.forEach((item) => {
+          const row = make("li");
+          row.append(make("span", "", item[0]), make("strong", "", item[1]));
+          list.append(row);
+        });
+      };
+
+      document.querySelectorAll("[data-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          closeDetails();
+          const vouchers = button.dataset.view === "voucher";
+          document.querySelectorAll("[data-view]").forEach((choice) => {
+            choice.setAttribute("aria-pressed", String(choice === button));
+          });
+          byId("business-view").hidden = vouchers;
+          byId("voucher-view").hidden = !vouchers;
+        });
+      });
+      document.querySelectorAll("[data-detail]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const panel = byId(button.dataset.detail);
+          const opening = button.getAttribute("aria-expanded") !== "true";
+          closeDetails();
+          if (opening) {
+            button.setAttribute("aria-expanded", "true");
+            panel.hidden = false;
+          }
+        });
+      });
+      const focusDetail = (target) => {
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({
+          behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          block: "start"
+        });
+      };
+      byId("fixed-assets-card").addEventListener("click", () => {
+        const businessChoice = document.querySelector('[data-view="business"]');
+        if (businessChoice.getAttribute("aria-pressed") !== "true") {
+          businessChoice.click();
+        } else {
+          closeDetails();
+        }
+        const activityButton = document.querySelector('[data-activity="fixed_assets"]');
+        activityButton.click();
+        byId("fixed-assets-card").setAttribute("aria-expanded", "true");
+        focusDetail(byId("activity-detail"));
+      });
+      byId("open-items-card").addEventListener("click", () => {
+        closeDetails();
+        const detailButton = document.querySelector('[data-detail="open-items-detail"]');
+        detailButton.setAttribute("aria-expanded", "true");
+        byId("open-items-card").setAttribute("aria-expanded", "true");
+        byId("open-items-detail").hidden = false;
+        const employeeCategory = byId("open-item-category-employee_payables");
+        focusDetail(employeeCategory || byId("open-items-detail"));
+      });
+      periodSelect.addEventListener("change", () => {
+        const month = payload.months.find((item) => item.key === periodSelect.value);
+        if (month) renderMonth(month);
+      });
+      let lastPeriodWheelChange = 0;
+      periodSelect.addEventListener("wheel", (event) => {
+        if (!event.deltaY) return;
+        event.preventDefault();
+        const now = performance.now();
+        if (now - lastPeriodWheelChange < 180) return;
+        const direction = event.deltaY > 0 ? 1 : -1;
+        const currentIndex = periodSelect.selectedIndex;
+        const nextIndex = Math.max(
+          0,
+          Math.min(periodSelect.options.length - 1, currentIndex + direction)
+        );
+        if (nextIndex === currentIndex) return;
+        lastPeriodWheelChange = now;
+        setTimeout(() => {
+          periodSelect.selectedIndex = nextIndex;
+          periodSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      }, { passive: false });
+      byId("refresh-button").addEventListener("click", () => location.reload());
+      byId("theme-button").addEventListener("click", () => {
+        const root = document.documentElement;
+        const next = root.dataset.theme === "dark" ? "light" : "dark";
+        root.dataset.theme = next;
+        localStorage.setItem("finance-overview-theme", next);
+      });
+      const savedTheme = localStorage.getItem("finance-overview-theme");
+      if (savedTheme === "light" || savedTheme === "dark") {
+        document.documentElement.dataset.theme = savedTheme;
+      }
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeDetails();
+      });
+      const initial = payload.months.find((item) => item.key === periodSelect.value);
+      if (initial) renderMonth(initial);
+    })();
+  </script>
+</body>
+</html>

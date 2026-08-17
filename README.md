@@ -61,6 +61,25 @@ $trialOrgId = "将 finance-bootstrap 输出的 org_id 粘贴到这里"
 
 Docker Compose 中的数据库账号仅用于本机开发，不得复用于共享或生产环境。数据库端口只绑定到 `127.0.0.1`。
 
+### 本地老板经营概览
+
+数据库启动并完成迁移后，可在本机打开只读经营概览：
+
+```powershell
+.\.venv\Scripts\finance-overview.exe
+```
+
+命令只监听 `127.0.0.1:8765`，启动后自动打开
+`http://127.0.0.1:8765/`。页面每次刷新都会重新读取当前数据库，支持切换已生成月份、
+查看业务闭环、复式凭证、关联凭据文件名和待结事项。页面没有写账操作，也不新增对外
+REST API；停止服务可在启动窗口按 `Ctrl+C`。
+
+若本地库包含多个企业，必须显式指定企业：
+
+```powershell
+.\.venv\Scripts\finance-overview.exe --org-id $trialOrgId
+```
+
 ## MCP 工作流
 
 1. `finance_get_profile`：读取企业、科目和税务政策。
