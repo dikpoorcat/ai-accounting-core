@@ -36,11 +36,13 @@ from .accounting_periods import (
     natural_month,
 )
 from .models import (
+    EXECUTION_ATTRIBUTION_SESSION_KEY,
     Account,
     AccountingPeriod,
     AccountingPeriodAction,
     AccountingPeriodCalendar,
     AccountingPeriodClose,
+    AccountingPeriodCloseApproval,
     AccountingPeriodCloseBankReconciliation,
     AccountingPeriodCloseSource,
     BankReconciliation,
@@ -52,6 +54,7 @@ from .models import (
     Counterparty,
     Employee,
     Evidence,
+    ExecutionAttribution,
     FixedAsset,
     FixedAssetActivation,
     FixedAssetDepreciation,
@@ -62,6 +65,7 @@ from .models import (
     Invoice,
     OpenItem,
     Organization,
+    OwnerAccount,
     PayrollBatch,
     TaxPeriod,
     Voucher,
@@ -70,6 +74,20 @@ from .models import (
 )
 
 _BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.2"
+_PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
+_PERIODIC_REVIEW_SOURCE_URLS = {
+    "vat_filing_period": (
+        "https://shanghai.chinatax.gov.cn/tax/zcfw/zcfgk/zzs/202412/t474694.html"
+    ),
+    "enterprise_income_tax": "https://12366.chinatax.gov.cn/bzds/050/050-4-1.html",
+    "business_annual_report": (
+        "https://www.samr.gov.cn/xyjgs/flfg/art/2024/"
+        "art_be55c2e3a54a43e5ab12794c9dc87600.html"
+    ),
+    "zhejiang_stamp_duty_period": (
+        "https://zhejiang.chinatax.gov.cn/art/2024/2/6/art_13314_609717.html"
+    ),
+}
 
 
 class _PeriodDecision(ValueError):
@@ -216,6 +234,28 @@ class AccountingPeriodService:
                 AccountingPeriodResultStatus.REJECTED,
                 errors=["ACCOUNTING_PERIOD_REVIEW_INCOMPLETE"],
                 field_paths=[f"review_facts.{field}" for field in false_fields],
+                period_id=request.period_id,
+            )
+        if (
+            self._owner_close_approval_required(request.org_id)
+            and request.owner_approval_id is None
+        ):
+            return self._failure_action(
+                request.org_id,
+                "period_close",
+                request.idempotency_key,
+                payload_hash,
+                AccountingPeriodResultStatus.NEEDS_INFORMATION,
+                missing=[
+                    AccountingPeriodInformationRequirement(
+                        code="ACCOUNTING_PERIOD_OWNER_APPROVAL_REQUIRED",
+                        message=(
+                            "the owner must approve this exact close preview through the "
+                            "local password prompt"
+                        ),
+                        fields=["owner_approval_id"],
+                    )
+                ],
                 period_id=request.period_id,
             )
         try:
@@ -448,6 +488,17 @@ class AccountingPeriodService:
                 errors=["ACCOUNTING_PERIOD_CLOSE_BLOCKED"],
                 period_id=period.id,
             )
+        approval = self._validated_owner_close_approval(request, period)
+        if self._owner_close_approval_required(request.org_id) and approval is None:
+            return self._failure_action(
+                request.org_id,
+                "period_close",
+                request.idempotency_key,
+                payload_hash,
+                AccountingPeriodResultStatus.REJECTED,
+                errors=["ACCOUNTING_PERIOD_OWNER_APPROVAL_INVALID"],
+                period_id=period.id,
+            )
         action = self._new_action(
             request.org_id,
             "period_close",
@@ -459,10 +510,14 @@ class AccountingPeriodService:
         )
         self.session.add(action)
         self.session.flush()
+        confirmed_at = datetime.now(UTC)
+        if approval is not None:
+            approval.consumed_at = confirmed_at
         close = AccountingPeriodClose(
             org_id=request.org_id,
             period_id=period.id,
             action_id=action.id,
+            owner_approval_id=approval.id if approval is not None else None,
             calculation_payload=canonical_json(snapshot["payload"]),
             calculation_hash=snapshot["calculation_hash"],
             rule_version=ACCOUNTING_PERIOD_CLOSE_RULE_VERSION,
@@ -470,7 +525,7 @@ class AccountingPeriodService:
             source_urls=list(ACCOUNTING_PERIOD_CLOSE_SOURCE_URLS),
             previous_close_hash=snapshot["previous_close_hash"],
             checker_version=_BANK_AWARE_CLOSE_CHECKER_VERSION,
-            confirmed_at=datetime.now(UTC),
+            confirmed_at=confirmed_at,
             voucher_count=len(snapshot["sources"]),
             line_count=sum(len(source["line_snapshot"]) for source in snapshot["sources"]),
             calculation=snapshot["payload"],
@@ -525,6 +580,56 @@ class AccountingPeriodService:
             trace=snapshot["trace"] + [{"stage": "period_close_posted", "close_id": str(close.id)}],
             data=snapshot["data"],
         )
+
+    def _owner_close_approval_required(self, org_id: uuid.UUID) -> bool:
+        return (
+            self.session.scalar(
+                select(OwnerAccount.id).where(OwnerAccount.org_id == org_id).limit(1)
+            )
+            is not None
+        )
+
+    def _validated_owner_close_approval(
+        self,
+        request: ConfirmAccountingPeriodCloseRequest,
+        period: AccountingPeriod,
+    ) -> AccountingPeriodCloseApproval | None:
+        if not self._owner_close_approval_required(request.org_id):
+            return None
+        if request.owner_approval_id is None:
+            return None
+        attribution_id = self.session.info.get(EXECUTION_ATTRIBUTION_SESSION_KEY)
+        if attribution_id is None:
+            return None
+        attribution = self.session.get(ExecutionAttribution, attribution_id)
+        if attribution is None or attribution.org_id != request.org_id:
+            return None
+        approval = self.session.scalar(
+            select(AccountingPeriodCloseApproval)
+            .where(
+                AccountingPeriodCloseApproval.org_id == request.org_id,
+                AccountingPeriodCloseApproval.id == request.owner_approval_id,
+            )
+            .with_for_update()
+        )
+        now = datetime.now(UTC)
+        approval_expires_at = approval.expires_at if approval is not None else None
+        if approval_expires_at is not None and approval_expires_at.tzinfo is None:
+            approval_expires_at = approval_expires_at.replace(tzinfo=UTC)
+        if (
+            approval is None
+            or approval.period_id != period.id
+            or approval.calculation_hash != request.calculation_hash
+            or approval.confirmation_method != "local_password_reauthentication"
+            or approval.consumed_at is not None
+            or approval_expires_at is None
+            or approval_expires_at <= now
+            or approval.owner_account_id != attribution.owner_account_id
+            or approval.owner_session_id != attribution.owner_session_id
+            or approval.owner_credential_version != attribution.owner_credential_version
+        ):
+            return None
+        return approval
 
     def _close_snapshot(
         self,
@@ -835,6 +940,8 @@ class AccountingPeriodService:
             if tax_calculation_due
             else 0
         )
+        annual_reporting_checkpoint_due = period.calendar_month == 5
+        year_end_checkpoint_due = period.calendar_month == 12
         borrowing_count = int(
             self.session.scalar(
                 select(func.count())
@@ -890,7 +997,7 @@ class AccountingPeriodService:
                     "output_invoice_count": invoice_counts.get("output", 0),
                 },
                 "owner_questions": [
-                    "本月是否还有未提供的公司收付款、现金或个人代付事项？",
+                    "本月是否还有未提供的公司收付款、现金，或公司已确认承担但尚未报销入账的个人垫付款？",
                     "本月是否有已开票或未开票收入、已收票费用、合同履约或退款？",
                 ],
             },
@@ -1026,20 +1133,27 @@ class AccountingPeriodService:
             },
             {
                 "code": "MONTH_END_TAX_AND_FILING",
-                "topic": "发票、税额计算和外部申报",
+                "topic": "到期税额计算和外部申报",
+                "cadence": filing_cycle,
+                "due_now": tax_calculation_due,
                 "state": (
-                    "needs_attention"
-                    if tax_calculation_due and tax_period_count == 0
-                    else "owner_confirmation_required"
-                ),
-                "completed": False,
-                "summary": (
-                    "系统尚未形成本申报期税额计算记录；零税额也不能仅凭空记录推断。"
-                    if tax_calculation_due and tax_period_count == 0
+                    "not_due"
+                    if not tax_calculation_due
                     else (
-                        "系统已有税期计算记录，但私有试用内核不替代税务系统中的实际申报。"
-                        if tax_period_count
-                        else "本月不是季度申报期末，但仍需确认当月发票和涉税业务。"
+                        "needs_attention"
+                        if tax_period_count == 0
+                        else "owner_confirmation_required"
+                    )
+                ),
+                "completed": not tax_calculation_due,
+                "summary": (
+                    "本月不是企业申报周期的期末，本项尚未到期；"
+                    "当月发票和涉税业务只需在业务完整性检查中确认，不重复追问外部申报。"
+                    if not tax_calculation_due
+                    else (
+                        "系统尚未形成本申报期税额计算记录；零税额也不能仅凭空记录推断。"
+                        if tax_period_count == 0
+                        else "系统已有税期计算记录，但私有试用内核不替代税务系统中的实际申报。"
                     )
                 ),
                 "system_facts": {
@@ -1050,10 +1164,14 @@ class AccountingPeriodService:
                     "input_invoice_count": invoice_counts.get("input", 0),
                     "output_invoice_count": invoice_counts.get("output", 0),
                 },
-                "owner_questions": [
-                    "本月是否有开票、无票收入、红冲、进项票或其他需要纳税申报的事项？",
-                    "税额复核后，是否已在外部电子税务局完成当期申报；如为零申报也需确认外部状态？",
-                ],
+                "owner_questions": (
+                    []
+                    if not tax_calculation_due
+                    else [
+                        "本申报期是否有开票、无票收入、红冲、进项票或其他需要纳税申报的事项？",
+                        "税额复核后，是否已在外部电子税务局完成本申报期申报；如为零申报也需确认外部状态？",
+                    ]
+                ),
             },
             {
                 "code": "MONTH_END_BORROWINGS_AND_CAPITAL",
@@ -1077,17 +1195,115 @@ class AccountingPeriodService:
                 ],
             },
         ]
+        if annual_reporting_checkpoint_due:
+            items.append(
+                {
+                    "code": "ANNUAL_REPORTING_AND_SETTLEMENT",
+                    "topic": "上年度汇算清缴和工商年报",
+                    "cadence": "annual",
+                    "due_now": True,
+                    "state": "owner_confirmation_required",
+                    "completed": False,
+                    "summary": (
+                        "年度检查点每年只在 5 月月结时提示一次：企业所得税汇算清缴"
+                        "应在年度终了后五个月内完成，上一年度工商年报应在 6 月 30 日前报送；"
+                        "当年新设企业自下一年起报送工商年报。"
+                    ),
+                    "system_facts": {
+                        "reporting_year": period.calendar_year - 1,
+                        "enterprise_income_tax_deadline": f"{period.calendar_year}-05-31",
+                        "business_annual_report_deadline": f"{period.calendar_year}-06-30",
+                        "source_urls": {
+                            "enterprise_income_tax": _PERIODIC_REVIEW_SOURCE_URLS[
+                                "enterprise_income_tax"
+                            ],
+                            "business_annual_report": _PERIODIC_REVIEW_SOURCE_URLS[
+                                "business_annual_report"
+                            ],
+                        },
+                    },
+                    "owner_questions": [
+                        "如企业上一年度已经登记成立，上一年度企业所得税汇算清缴是否已完成？",
+                        (
+                            "如企业上一年度已经登记成立，上一年度工商年报是否已报送，"
+                            "或已安排在 6 月 30 日前报送？"
+                        ),
+                    ],
+                }
+            )
+        if year_end_checkpoint_due:
+            items.append(
+                {
+                    "code": "YEAR_END_STATUTORY_CHECKPOINT",
+                    "topic": "年度税费与年末事项",
+                    "cadence": "annual",
+                    "due_now": True,
+                    "state": "owner_confirmation_required",
+                    "completed": False,
+                    "summary": (
+                        "本月为年末，只在 12 月集中检查按年计征或需要年度结转的事项；"
+                        "不在普通月份重复询问。"
+                    ),
+                    "system_facts": {
+                        "reporting_year": period.calendar_year,
+                        "source_urls": {
+                            "zhejiang_stamp_duty_period": _PERIODIC_REVIEW_SOURCE_URLS[
+                                "zhejiang_stamp_duty_period"
+                            ]
+                        },
+                    },
+                    "owner_questions": [
+                        "本年度按年计征的营业账簿印花税及其他年度税费是否已计算并安排申报？",
+                        "年末资产、负债、权益和损益是否还有只在年度结转时处理的调整事项？",
+                    ],
+                }
+            )
         return {
-            "version": "month_end_assistant_review_v1",
+            "version": "periodic_assistant_review_v2",
             "period_month": period_month,
             "semantics": {
                 "completed": "系统记录足以证明该项已完成检查",
                 "needs_attention": "系统已发现待处理或待解释项目",
                 "owner_confirmation_required": "系统没有足够事实；不得把空记录推断为没有业务",
+                "not_due": "本事项尚未到法定或企业核定检查周期；本月不向负责人重复提问",
+            },
+            "schedule": {
+                "version": _PERIODIC_REVIEW_SCHEDULE_VERSION,
+                "filing_cycle": filing_cycle,
+                "rules": [
+                    {
+                        "code": "PERIODIC_TAX_FILING",
+                        "cadence": filing_cycle,
+                        "trigger_months": (
+                            list(range(1, 13))
+                            if filing_cycle == "monthly"
+                            else [3, 6, 9, 12]
+                        ),
+                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS["vat_filing_period"],
+                    },
+                    {
+                        "code": "ANNUAL_REPORTING_AND_SETTLEMENT",
+                        "cadence": "annual",
+                        "trigger_months": [5],
+                        "source_urls": [
+                            _PERIODIC_REVIEW_SOURCE_URLS["enterprise_income_tax"],
+                            _PERIODIC_REVIEW_SOURCE_URLS["business_annual_report"],
+                        ],
+                    },
+                    {
+                        "code": "YEAR_END_STATUTORY_CHECKPOINT",
+                        "cadence": "annual",
+                        "trigger_months": [12],
+                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS[
+                            "zhejiang_stamp_duty_period"
+                        ],
+                    },
+                ],
             },
             "ai_instruction": (
                 "在确认月结前，逐项向负责人展示所有非 completed 项并记录回答；"
-                "不得仅因数据库无记录而代填没有员工、工资、税务、资产或其他业务。"
+                "不得仅因数据库无记录而代填没有员工、工资、税务、资产或其他业务；"
+                "不得向负责人展示 not_due 项的问题，季度和年度事项只在 schedule 指定月份触发。"
             ),
             "completed_count": sum(item["completed"] for item in items),
             "pending_count": sum(not item["completed"] for item in items),

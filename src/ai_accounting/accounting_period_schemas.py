@@ -117,6 +117,7 @@ class PreviewAccountingPeriodCloseRequest(BaseModel):
 
 class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    owner_approval_id: uuid.UUID | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
     review_facts: AccountingPeriodReviewFacts = Field(default_factory=AccountingPeriodReviewFacts)
     confirmation_note: str | None = Field(default=None, min_length=1, max_length=2000)

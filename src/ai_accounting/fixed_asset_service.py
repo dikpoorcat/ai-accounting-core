@@ -574,8 +574,35 @@ class FixedAssetService(FinanceService):
         )
         self.session.add(asset)
         self.session.flush()
+        activation = None
+        if request.ready_for_use is not None:
+            ready = request.ready_for_use
+            if ready.residual_value_fen >= cost.cost_fen:
+                self._reject("FIXED_ASSET_INVALID_RESIDUAL_VALUE")
+            if cost.cost_fen - ready.residual_value_fen < ready.useful_life_months:
+                self._reject("FIXED_ASSET_INVALID_DEPRECIATION_POLICY")
+            activation = FixedAssetActivation(
+                org_id=request.org_id,
+                asset_id=asset.id,
+                event_id=event.id,
+                in_service_date=ready.in_service_date,
+                posting_date=request.posting_date,
+                depreciation_method=ready.depreciation_method.value,
+                useful_life_months=ready.useful_life_months,
+                residual_value_fen=ready.residual_value_fen,
+                benefit_area=ready.benefit_area.value,
+                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            self.session.add(activation)
+            self.session.flush()
         entries = [
-            Entry(account_role="fixed_asset_pending", debit_fen=cost.cost_fen),
+            Entry(
+                account_role=(
+                    "fixed_asset_cost" if activation is not None else "fixed_asset_pending"
+                ),
+                debit_fen=cost.cost_fen,
+            ),
             Entry(
                 account_code=(request.bank_account_code if settlement_method == "bank" else None),
                 account_role=(
@@ -599,7 +626,12 @@ class FixedAssetService(FinanceService):
             self.session,
             event=event,
             posting_date=request.posting_date,
-            description=request.description or f"购置固定资产 {request.asset_code}",
+            description=request.description
+            or (
+                f"购置并启用固定资产 {request.asset_code}"
+                if activation is not None
+                else f"购置待启用固定资产 {request.asset_code}"
+            ),
             entries=entries,
         )
         if settlement_method in {"payable", "employee_payable"}:
@@ -618,9 +650,21 @@ class FixedAssetService(FinanceService):
             )
         trace.append(self._entries_trace(entries))
         trace.append({"stage": "normalized_fact_created", "asset_id": str(asset.id)})
+        if activation is not None:
+            trace.append(
+                {
+                    "stage": "normalized_fact_created",
+                    "activation_id": str(activation.id),
+                    "combined_with_acquisition": True,
+                }
+            )
         event.facts = {**event.facts, "asset_id": str(asset.id)}
         event.rule_trace = [dict(item) for item in trace]
-        result_data = {"cost_fen": cost.cost_fen}
+        result_data = {
+            "cost_fen": cost.cost_fen,
+            "state": "active" if activation is not None else "acquired",
+            "activation_id": str(activation.id) if activation is not None else None,
+        }
         self._finalize_fixed_asset_event(event, voucher, asset.id, result_data)
         return self._posted_result(asset.id, event, voucher, data=result_data)
 
@@ -1464,7 +1508,10 @@ class FixedAssetService(FinanceService):
                 return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
             return None
         if original.event_type == "fixed_asset_acquisition":
-            if active_activation is not None or active_disposal is not None or active_depreciations:
+            has_separate_activation = (
+                active_activation is not None and active_activation.event_id != original.id
+            )
+            if has_separate_activation or active_disposal is not None or active_depreciations:
                 return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
         return None
 

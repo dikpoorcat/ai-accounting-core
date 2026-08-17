@@ -11,7 +11,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from calendar import monthrange
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 
@@ -52,9 +52,12 @@ from ai_accounting.intangible_asset_schemas import (
 )
 from ai_accounting.intangible_asset_service import IntangibleAssetService
 from ai_accounting.models import (
+    EXECUTION_ATTRIBUTION_SESSION_KEY,
     AccountingPeriodClose,
+    AccountingPeriodCloseApproval,
     BankTransaction,
     Evidence,
+    ExecutionAttribution,
     Organization,
     Voucher,
     VoucherLine,
@@ -315,10 +318,29 @@ def _close(
     )
     preview = service.preview_accounting_period_close(preview_request)
     assert preview.status == "calculated", preview.errors
+    attribution_id = service.session.info.get(EXECUTION_ATTRIBUTION_SESSION_KEY)
+    assert attribution_id is not None
+    attribution = service.session.get(ExecutionAttribution, attribution_id)
+    assert attribution is not None
+    now = datetime.now(UTC)
+    approval = AccountingPeriodCloseApproval(
+        org_id=org_id,
+        period_id=period_id,
+        owner_account_id=attribution.owner_account_id,
+        owner_session_id=attribution.owner_session_id,
+        owner_credential_version=attribution.owner_credential_version,
+        calculation_hash=preview.calculation_hash,
+        confirmation_method="local_password_reauthentication",
+        confirmed_at=now,
+        expires_at=now + timedelta(minutes=30),
+    )
+    service.session.add(approval)
+    service.session.flush()
     result = service.confirm_accounting_period_close(
         ConfirmAccountingPeriodCloseRequest(
             **preview_request.model_dump(),
             calculation_hash=preview.calculation_hash,
+            owner_approval_id=approval.id,
             idempotency_key=f"pilot-close-2026-{month:02d}",
             review_facts=_review_facts(),
             confirmation_note=f"虚构试用逐月关闭 2026-{month:02d}",

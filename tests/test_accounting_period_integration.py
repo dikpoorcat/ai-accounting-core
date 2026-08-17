@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from calendar import monthrange
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -37,9 +37,11 @@ from ai_accounting.models import (
     EXECUTION_ATTRIBUTION_SESSION_KEY,
     Account,
     AccountingPeriodClose,
+    AccountingPeriodCloseApproval,
     BusinessEvent,
     BusinessEventDependency,
     Evidence,
+    ExecutionAttribution,
     Organization,
     TaxPeriod,
     Voucher,
@@ -260,6 +262,34 @@ def _confirm_default_bank_scope(
         )
         assert result.status == "posted"
     session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution.id
+
+
+def _approve_accounting_period_close(
+    session: Session,
+    organization: Organization,
+    *,
+    period_id: uuid.UUID,
+    calculation_hash: str,
+) -> uuid.UUID:
+    attribution_id = session.info.get(EXECUTION_ATTRIBUTION_SESSION_KEY)
+    assert attribution_id is not None
+    attribution = session.get(ExecutionAttribution, attribution_id)
+    assert attribution is not None
+    now = datetime.now(UTC)
+    approval = AccountingPeriodCloseApproval(
+        org_id=organization.id,
+        period_id=period_id,
+        owner_account_id=attribution.owner_account_id,
+        owner_session_id=attribution.owner_session_id,
+        owner_credential_version=attribution.owner_credential_version,
+        calculation_hash=calculation_hash,
+        confirmation_method="local_password_reauthentication",
+        confirmed_at=now,
+        expires_at=now + timedelta(minutes=30),
+    )
+    session.add(approval)
+    session.flush()
+    return approval.id
 
 
 def _import_and_reconcile_bank_period(
@@ -536,10 +566,17 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
     )
     preview = period_service.preview_accounting_period_close(preview_request)
     assert preview.status == "calculated"
+    owner_approval_id = _approve_accounting_period_close(
+        session,
+        organization,
+        period_id=generated_july.period_id,
+        calculation_hash=preview.calculation_hash,
+    )
     confirmed = period_service.confirm_accounting_period_close(
         ConfirmAccountingPeriodCloseRequest(
             **preview_request.model_dump(),
             calculation_hash=preview.calculation_hash,
+            owner_approval_id=owner_approval_id,
             idempotency_key="close-2026-07",
             review_facts=AccountingPeriodReviewFacts(
                 voucher_completeness_reviewed=True,
@@ -657,10 +694,17 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
         closing_date=date(2026, 7, 31),
     )
     close_preview = period_service.preview_accounting_period_close(close_preview_request)
+    owner_approval_id = _approve_accounting_period_close(
+        session,
+        organization,
+        period_id=july.period_id,
+        calculation_hash=close_preview.calculation_hash,
+    )
     close_result = period_service.confirm_accounting_period_close(
         ConfirmAccountingPeriodCloseRequest(
             **close_preview_request.model_dump(),
             calculation_hash=close_preview.calculation_hash,
+            owner_approval_id=owner_approval_id,
             idempotency_key="tax-close-2026-07",
             review_facts=AccountingPeriodReviewFacts(
                 voucher_completeness_reviewed=True,

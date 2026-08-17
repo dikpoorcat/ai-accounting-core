@@ -862,7 +862,7 @@ def finance_get_payroll_batch(org_id: uuid.UUID, batch_id: uuid.UUID) -> dict[st
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_acquire_fixed_asset(request: AcquireFixedAssetRequest) -> dict[str, Any]:
-    """登记外购待启用资产；只接受固定业务事实，不接受自由分录。"""
+    """登记外购资产；已交付可用时可在同一次请求中直接启用。"""
     try:
         with SessionLocal.begin() as session:
             result = _fixed_asset_service(session).acquire_fixed_asset(request)

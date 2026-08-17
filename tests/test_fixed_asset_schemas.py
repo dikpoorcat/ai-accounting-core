@@ -112,6 +112,27 @@ def test_bank_acquisition_requires_payment_and_account_but_payable_requires_due_
     assert "FIXED_ASSET_DUE_DATE_REQUIRED" in {item.code for item in payable.missing_information()}
 
 
+def test_ready_for_use_allows_same_month_confirmation_but_not_cross_month_backdating() -> None:
+    payload = _acquisition_payload()
+    payload["ready_for_use"] = {
+        "in_service_date": "2026-01-31",
+        "useful_life_months": 60,
+        "residual_value_fen": 5_000,
+        "benefit_area": "management",
+    }
+    request = AcquireFixedAssetRequest.model_validate(payload)
+    assert request.posting_date == date(2026, 1, 10)
+    assert request.ready_for_use is not None
+    assert request.ready_for_use.in_service_date == date(2026, 1, 31)
+
+    payload["ready_for_use"] = {
+        **payload["ready_for_use"],
+        "in_service_date": "2026-02-01",
+    }
+    with pytest.raises(ValidationError, match="same calendar month"):
+        AcquireFixedAssetRequest.model_validate(payload)
+
+
 def test_fixed_asset_schemas_forbid_extra_fields_and_float_money() -> None:
     payload = _acquisition_payload()
     payload["cost_components"] = {**payload["cost_components"], "purchase_price_fen": 1.5}

@@ -240,7 +240,7 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
 
     assert preview.status is AccountingPeriodResultStatus.CALCULATED
     checklist = preview.data["assistant_review_checklist"]
-    assert checklist["version"] == "month_end_assistant_review_v1"
+    assert checklist["version"] == "periodic_assistant_review_v2"
     assert checklist["period_month"] == "2026-03"
     assert [item["code"] for item in checklist["items"]] == [
         "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION",
@@ -262,7 +262,12 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
         "owner_confirmation_required"
     )
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["state"] == "needs_attention"
+    assert item_by_code["MONTH_END_TAX_AND_FILING"]["due_now"] is True
+    assert "公司已确认承担" in item_by_code[
+        "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"
+    ]["owner_questions"][0]
     assert "不得仅因数据库无记录" in checklist["ai_instruction"]
+    assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
     assert missing.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
     assert "review_facts.voucher_completeness_reviewed" in missing.missing_information[0].fields
     action = session.get(AccountingPeriodAction, missing.action_id)
@@ -282,6 +287,104 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
             "field_paths": action.missing_information,
         }
     ]
+
+
+def test_quarterly_tax_filing_is_not_asked_before_quarter_end() -> None:
+    session = _session()
+    organization, evidence = _organization_and_evidence(session)
+    service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
+    generated = service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-02",
+            idempotency_key="period-generation-quarterly-not-due",
+            confirmation_note="核对按季申报非季末提示",
+            evidence_references=[evidence.id],
+        )
+    )
+    preview = service.preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            closing_date=date(2026, 2, 28),
+        )
+    )
+
+    checklist = preview.data["assistant_review_checklist"]
+    item_by_code = {item["code"]: item for item in checklist["items"]}
+    tax_item = item_by_code["MONTH_END_TAX_AND_FILING"]
+
+    assert checklist["schedule"]["filing_cycle"] == "quarterly"
+    assert checklist["schedule"]["rules"][0]["trigger_months"] == [3, 6, 9, 12]
+    assert tax_item["state"] == "not_due"
+    assert tax_item["due_now"] is False
+    assert tax_item["completed"] is True
+    assert tax_item["owner_questions"] == []
+    assert "ANNUAL_REPORTING_AND_SETTLEMENT" not in item_by_code
+    assert "YEAR_END_STATUTORY_CHECKPOINT" not in item_by_code
+
+
+def test_annual_checkpoints_are_scheduled_without_monthly_repetition() -> None:
+    may_session = _session()
+    may_organization, may_evidence = _organization_and_evidence(may_session)
+    may_service = AccountingPeriodService(may_session, current_date=date(2026, 8, 11))
+    may_period = may_service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=may_organization.id,
+            period_month="2026-05",
+            idempotency_key="period-generation-annual-may",
+            confirmation_note="核对年度申报提醒",
+            evidence_references=[may_evidence.id],
+        )
+    )
+    may_preview = may_service.preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=may_organization.id,
+            period_id=may_period.period_id,
+            closing_date=date(2026, 5, 31),
+        )
+    )
+    may_items = {
+        item["code"]: item
+        for item in may_preview.data["assistant_review_checklist"]["items"]
+    }
+
+    assert "ANNUAL_REPORTING_AND_SETTLEMENT" in may_items
+    assert may_items["ANNUAL_REPORTING_AND_SETTLEMENT"]["cadence"] == "annual"
+    assert "工商年报" in may_items["ANNUAL_REPORTING_AND_SETTLEMENT"]["topic"]
+    assert "YEAR_END_STATUTORY_CHECKPOINT" not in may_items
+
+    december_session = _session()
+    december_organization, december_evidence = _organization_and_evidence(
+        december_session
+    )
+    december_service = AccountingPeriodService(
+        december_session, current_date=date(2027, 1, 11)
+    )
+    december_period = december_service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=december_organization.id,
+            period_month="2026-12",
+            idempotency_key="period-generation-annual-december",
+            confirmation_note="核对年末提醒",
+            evidence_references=[december_evidence.id],
+        )
+    )
+    december_preview = december_service.preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=december_organization.id,
+            period_id=december_period.period_id,
+            closing_date=date(2026, 12, 31),
+        )
+    )
+    december_items = {
+        item["code"]: item
+        for item in december_preview.data["assistant_review_checklist"]["items"]
+    }
+
+    assert "YEAR_END_STATUTORY_CHECKPOINT" in december_items
+    assert december_items["YEAR_END_STATUTORY_CHECKPOINT"]["cadence"] == "annual"
+    assert "ANNUAL_REPORTING_AND_SETTLEMENT" not in december_items
 
 
 def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:

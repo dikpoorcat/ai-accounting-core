@@ -14,7 +14,15 @@ from ai_accounting import mcp_server
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.mcp_server import mcp
-from ai_accounting.models import Evidence, FixedAsset
+from ai_accounting.models import (
+    Account,
+    BusinessEvent,
+    Evidence,
+    FixedAsset,
+    FixedAssetActivation,
+    Voucher,
+    VoucherLine,
+)
 from ai_accounting.schemas import (
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
@@ -280,6 +288,109 @@ def test_acquisition_mcp_handler_posts_to_an_isolated_sqlite_database(
             asset = session.scalar(select(FixedAsset).where(FixedAsset.asset_code == "MCP-FA-001"))
             assert asset is not None
             assert asset.cost_fen == 103_000
+    finally:
+        engine.dispose()
+
+
+def test_ready_for_use_acquisition_posts_one_voucher_and_starts_depreciation_next_month(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    try:
+        with factory.begin() as session:
+            organization = seed_organization(session, name="Direct fixed asset test")
+            organization.accounting_period_control_enabled = False
+            evidence = Evidence(
+                org_id=organization.id,
+                sha256="r" * 64,
+                original_name="ready-for-use.pdf",
+                media_type="application/pdf",
+                source="test",
+                size_bytes=1,
+                storage_path="test/ready-for-use.pdf",
+            )
+            session.add(evidence)
+            session.flush()
+            org_id = organization.id
+            evidence_id = evidence.id
+        monkeypatch.setattr(mcp_server, "SessionLocal", factory)
+
+        acquired = mcp_server.finance_acquire_fixed_asset(
+            AcquireFixedAssetRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "idempotency_key": "ready-for-use-acquisition",
+                    "asset_code": "DIRECT-FA-001",
+                    "asset_name": "Ready device",
+                    "category": "electronic",
+                    "expected_use_over_one_year": True,
+                    "purchase_date": "2026-02-09",
+                    "posting_date": "2026-02-09",
+                    "cost_components": {
+                        "purchase_price_fen": 120_000,
+                        "noncreditable_tax_fen": 0,
+                        "transport_and_handling_fen": 0,
+                        "installation_and_direct_cost_fen": 0,
+                    },
+                    "supplier": {"kind": "supplier", "name": "Direct supplier"},
+                    "settlement_method": "payable",
+                    "due_date": "2026-03-09",
+                    "evidence_references": [evidence_id],
+                    "claims_creditable_input_vat": False,
+                    "ready_for_use": {
+                        "in_service_date": "2026-02-09",
+                        "useful_life_months": 60,
+                        "residual_value_fen": 0,
+                        "benefit_area": "management",
+                    },
+                }
+            )
+        )
+
+        assert acquired["status"] == "posted", acquired
+        assert acquired["data"]["state"] == "active"
+        asset_id = uuid.UUID(acquired["asset_id"])
+        event_id = uuid.UUID(acquired["event_id"])
+        with factory() as session:
+            asset = session.get(FixedAsset, asset_id)
+            activation = session.scalar(
+                select(FixedAssetActivation).where(
+                    FixedAssetActivation.asset_id == asset_id
+                )
+            )
+            assert asset is not None
+            assert activation is not None
+            assert activation.event_id == event_id == asset.acquisition_event_id
+            assert session.scalar(
+                select(BusinessEvent).where(BusinessEvent.id == event_id)
+            ) is not None
+            assert len(
+                session.scalars(select(Voucher).where(Voucher.event_id == event_id)).all()
+            ) == 1
+            debit_role = session.scalar(
+                select(Account.system_role)
+                .join(VoucherLine, VoucherLine.account_id == Account.id)
+                .where(
+                    VoucherLine.voucher_id == uuid.UUID(acquired["voucher_id"]),
+                    VoucherLine.debit_fen == 120_000,
+                )
+            )
+            assert debit_role == "fixed_asset_cost"
+
+        preview = mcp_server.finance_preview_fixed_asset_depreciation(
+            PreviewFixedAssetDepreciationRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "asset_id": asset_id,
+                    "depreciation_period": "2026-03",
+                    "posting_date": "2026-03-31",
+                }
+            )
+        )
+        assert preview["status"] == "calculated", preview
+        assert preview["data"]["amount_fen"] == 2_000
     finally:
         engine.dispose()
 

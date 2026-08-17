@@ -911,8 +911,38 @@ class FixedAssetInformationRequirement(BaseModel):
     fields: list[str]
 
 
+class FixedAssetReadyForUseFacts(BaseModel):
+    """Depreciation facts for an acquired asset that is already ready for use."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    in_service_date: date | None = None
+    depreciation_method: FixedAssetDepreciationMethod = (
+        FixedAssetDepreciationMethod.STRAIGHT_LINE
+    )
+    useful_life_months: Annotated[StrictInt, Field(ge=13)] | None = None
+    residual_value_fen: Fen | None = None
+    benefit_area: FixedAssetBenefitArea | None = None
+
+    def missing_fields(self) -> list[str]:
+        return [
+            field_name
+            for field_name in (
+                "in_service_date",
+                "useful_life_months",
+                "residual_value_fen",
+                "benefit_area",
+            )
+            if getattr(self, field_name) is None
+        ]
+
+
 class AcquireFixedAssetRequest(BaseModel):
-    """Facts for one externally acquired, not-yet-enabled fixed asset."""
+    """Facts for one externally acquired fixed asset.
+
+    ``ready_for_use`` records acquisition and activation in one deterministic
+    event.  Omitting it retains the construction/not-yet-ready workflow.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -934,6 +964,7 @@ class AcquireFixedAssetRequest(BaseModel):
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     claims_creditable_input_vat: StrictBool | None = None
+    ready_for_use: FixedAssetReadyForUseFacts | None = None
     description: str = Field(default="", max_length=2000)
 
     @model_validator(mode="after")
@@ -942,6 +973,24 @@ class AcquireFixedAssetRequest(BaseModel):
             raise ValueError("posting_date must not precede purchase_date")
         if self.due_date and self.purchase_date and self.due_date < self.purchase_date:
             raise ValueError("due_date must not precede purchase_date")
+        if self.ready_for_use is not None:
+            if (
+                self.purchase_date
+                and self.ready_for_use.in_service_date
+                and self.ready_for_use.in_service_date < self.purchase_date
+            ):
+                raise ValueError("ready_for_use.in_service_date must not precede purchase_date")
+            if (
+                self.posting_date
+                and self.ready_for_use.in_service_date
+                and self.posting_date < self.ready_for_use.in_service_date
+                and self.posting_date.replace(day=1)
+                != self.ready_for_use.in_service_date.replace(day=1)
+            ):
+                raise ValueError(
+                    "posting_date may precede ready_for_use.in_service_date only within "
+                    "the same calendar month"
+                )
         if self.settlement_method in {
             FixedAssetAcquisitionSettlementKind.PAYABLE,
             FixedAssetAcquisitionSettlementKind.EMPLOYEE_PAYABLE,
@@ -1076,6 +1125,18 @@ class AcquireFixedAssetRequest(BaseModel):
                     fields=["evidence_references"],
                 )
             )
+        if self.ready_for_use is not None:
+            if ready_fields := self.ready_for_use.missing_fields():
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_READY_FOR_USE_FACTS_REQUIRED",
+                        message=(
+                            "an asset recorded as ready for use requires its in-service date, "
+                            "life, residual value, and benefit area"
+                        ),
+                        fields=[f"ready_for_use.{item}" for item in ready_fields],
+                    )
+                )
         return missing
 
 

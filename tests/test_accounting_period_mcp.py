@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -28,7 +28,7 @@ from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
 from ai_accounting.identity_service import IdentityService
-from ai_accounting.models import Evidence
+from ai_accounting.models import AccountingPeriodCloseApproval, Evidence, OwnerAccount
 from ai_accounting.schemas import RecordEventRequest
 
 PERIOD_TOOL_NAMES = {
@@ -286,11 +286,52 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
         )
         assert preview["status"] == "calculated", preview
         assert preview["data"]["calculation"]["voucher_sources"] == []
+        missing_owner_approval = _call_registered_tool(
+            "finance_confirm_accounting_period_close",
+            ConfirmAccountingPeriodCloseRequest(
+                **preview_request.model_dump(),
+                calculation_hash=preview["calculation_hash"],
+                idempotency_key="mcp-close-2026-07-without-owner-approval",
+                review_facts=AccountingPeriodReviewFacts(
+                    voucher_completeness_reviewed=True,
+                    bank_reconciliation_reviewed=True,
+                    open_items_reviewed=True,
+                    payroll_and_statutory_items_reviewed=True,
+                    tax_items_reviewed=True,
+                    asset_and_borrowing_schedules_reviewed=True,
+                ),
+                confirmation_note="MCP不得自行确认七月关账",
+                evidence_references=[evidence_id],
+            ),
+        )
+        assert missing_owner_approval["status"] == "needs_information"
+        assert missing_owner_approval["missing_information"][0]["code"] == (
+            "ACCOUNTING_PERIOD_OWNER_APPROVAL_REQUIRED"
+        )
+        with factory.begin() as session:
+            account = session.get(OwnerAccount, login.owner_account_id)
+            assert account is not None
+            now = datetime.now(UTC)
+            approval = AccountingPeriodCloseApproval(
+                org_id=org_id,
+                period_id=preview_request.period_id,
+                owner_account_id=account.id,
+                owner_session_id=login.session_id,
+                owner_credential_version=account.credential_version,
+                calculation_hash=preview["calculation_hash"],
+                confirmation_method="local_password_reauthentication",
+                confirmed_at=now,
+                expires_at=now + timedelta(minutes=30),
+            )
+            session.add(approval)
+            session.flush()
+            owner_approval_id = approval.id
         confirmed = _call_registered_tool(
             "finance_confirm_accounting_period_close",
             ConfirmAccountingPeriodCloseRequest(
                 **preview_request.model_dump(),
                 calculation_hash=preview["calculation_hash"],
+                owner_approval_id=owner_approval_id,
                 idempotency_key="mcp-close-2026-07",
                 review_facts=AccountingPeriodReviewFacts(
                     voucher_completeness_reviewed=True,

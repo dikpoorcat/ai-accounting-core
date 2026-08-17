@@ -19,8 +19,11 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0002_pilot_events"]
+    assert scripts.get_heads() == ["0005_ready_fixed_asset"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0005_ready_fixed_asset",
+        "0004_close_approval_width",
+        "0003_owner_close_approval",
         "0002_pilot_events",
         "0001_baseline",
     ]
@@ -57,11 +60,18 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0002_pilot_events"
+                == "0005_ready_fixed_asset"
             )
             assert "reimbursing_employee_id" in {
                 column["name"] for column in inspect(connection).get_columns("fixed_assets")
             }
+            assert "owner_approval_id" in {
+                column["name"]
+                for column in inspect(connection).get_columns("accounting_period_closes")
+            }
+            assert "accounting_period_close_approvals" in set(
+                inspect(connection).get_table_names()
+            )
         command.check(config)
 
         command.downgrade(config, "base")
@@ -71,7 +81,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0002_pilot_events"
+                == "0005_ready_fixed_asset"
             )
     finally:
         engine.dispose()

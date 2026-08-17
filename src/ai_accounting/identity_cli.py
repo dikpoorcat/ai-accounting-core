@@ -7,9 +7,13 @@ import getpass
 import sys
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from pydantic import SecretStr
+from sqlalchemy import select
 
+from .accounting_period_schemas import PreviewAccountingPeriodCloseRequest
+from .accounting_period_service import AccountingPeriodService
 from .credential_store import WindowsCredentialStore
 from .database import SessionLocal
 from .identity import IdentityError, validate_password_for_login
@@ -22,6 +26,7 @@ from .identity_schemas import (
     OwnerSessionRevokeRequest,
 )
 from .identity_service import IdentityService
+from .models import AccountingPeriod, AccountingPeriodCloseApproval, OwnerAccount
 
 
 def main() -> None:
@@ -36,6 +41,14 @@ def main() -> None:
     recover.add_argument("--login-name", required=True)
     commands.add_parser("change-password", help="change password for the local session")
     commands.add_parser("replace-recovery-code", help="replace the one recovery code")
+    approve_close = commands.add_parser(
+        "approve-close",
+        help="reauthenticate and approve one exact accounting-period close preview",
+    )
+    approve_close.add_argument("--org-id", required=True, type=uuid.UUID)
+    approve_close.add_argument("--period-id", required=True, type=uuid.UUID)
+    approve_close.add_argument("--calculation-hash", required=True)
+    approve_close.add_argument("--login-name", required=True)
     commands.add_parser("logout", help="revoke and remove the local session")
     args = parser.parse_args()
 
@@ -50,6 +63,8 @@ def main() -> None:
             _change_password()
         elif args.command == "replace-recovery-code":
             _replace_recovery_code()
+        elif args.command == "approve-close":
+            _approve_close(args)
         else:
             _logout()
     except Exception as exc:
@@ -146,6 +161,102 @@ def _replace_recovery_code() -> None:
         )
     )
     _print_recovery_code(result.recovery_code)
+
+
+def _approve_close(args: argparse.Namespace) -> None:
+    if len(args.calculation_hash) != 64 or any(
+        character not in "0123456789abcdef" for character in args.calculation_hash
+    ):
+        raise IdentityError("ACCOUNTING_PERIOD_CALCULATION_HASH_INVALID")
+    with SessionLocal() as session:
+        period = session.scalar(
+            select(AccountingPeriod).where(
+                AccountingPeriod.org_id == args.org_id,
+                AccountingPeriod.id == args.period_id,
+            )
+        )
+        if period is None or period.status != "open":
+            raise IdentityError("ACCOUNTING_PERIOD_NOT_OPEN")
+        preview = AccountingPeriodService(session).preview_accounting_period_close(
+            PreviewAccountingPeriodCloseRequest(
+                org_id=args.org_id,
+                period_id=args.period_id,
+                closing_date=period.end_date,
+            )
+        )
+        if (
+            preview.status.value != "calculated"
+            or preview.calculation_hash != args.calculation_hash
+        ):
+            raise IdentityError("ACCOUNTING_PERIOD_CALCULATION_STALE")
+        period_month = f"{period.calendar_year:04d}-{period.calendar_month:02d}"
+    print(f"CLOSE_APPROVAL_PERIOD={period_month}")
+    print(f"CLOSE_APPROVAL_HASH={args.calculation_hash}")
+    print("请核对以上关账月份和预览哈希，然后输入负责人密码确认。")
+    password = _secret_prompt("Password: ")
+    store = WindowsCredentialStore()
+    previous_token = store.load_session_token()
+    new_token: SecretStr | None = None
+    approval: AccountingPeriodCloseApproval | None = None
+    try:
+        with SessionLocal.begin() as session:
+            identity = IdentityService(session).authenticate(
+                OwnerLoginRequest(
+                    login_name=args.login_name,
+                    password=SecretStr(password),
+                )
+            )
+            if identity.owner_account_id is None:
+                raise IdentityError("IDENTITY_AUTHENTICATION_FAILED")
+            period = session.scalar(
+                select(AccountingPeriod)
+                .where(
+                    AccountingPeriod.org_id == args.org_id,
+                    AccountingPeriod.id == args.period_id,
+                )
+                .with_for_update()
+            )
+            if period is None or period.status != "open":
+                raise IdentityError("ACCOUNTING_PERIOD_NOT_OPEN")
+            preview = AccountingPeriodService(session).preview_accounting_period_close(
+                PreviewAccountingPeriodCloseRequest(
+                    org_id=args.org_id,
+                    period_id=args.period_id,
+                    closing_date=period.end_date,
+                )
+            )
+            if (
+                preview.status.value != "calculated"
+                or preview.calculation_hash != args.calculation_hash
+            ):
+                raise IdentityError("ACCOUNTING_PERIOD_CALCULATION_STALE")
+            account = session.get(OwnerAccount, identity.owner_account_id)
+            if account is None or account.org_id != args.org_id:
+                raise IdentityError("ORGANIZATION_CONTEXT_MISMATCH")
+            now = datetime.now(UTC)
+            approval = AccountingPeriodCloseApproval(
+                org_id=args.org_id,
+                period_id=period.id,
+                owner_account_id=identity.owner_account_id,
+                owner_session_id=identity.session_id,
+                owner_credential_version=account.credential_version,
+                calculation_hash=args.calculation_hash,
+                confirmation_method="local_password_reauthentication",
+                confirmed_at=now,
+                expires_at=now + timedelta(minutes=30),
+            )
+            session.add(approval)
+            session.flush()
+            new_token = identity.session_token
+        assert approval is not None and new_token is not None
+        store.save_session_token(new_token)
+    except Exception:
+        _restore_previous_token(store, previous_token)
+        raise
+    print("CLOSE_APPROVAL_CREATED")
+    print(f"CLOSE_APPROVAL_ID={approval.id}")
+    print(f"CLOSE_APPROVAL_PERIOD={period_month}")
+    print(f"CLOSE_APPROVAL_EXPIRES_AT={approval.expires_at.isoformat()}")
 
 
 def _logout() -> None:

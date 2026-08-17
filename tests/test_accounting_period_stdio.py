@@ -27,8 +27,10 @@ from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.models import (
     AccountingPeriod,
     AccountingPeriodClose,
+    AccountingPeriodCloseApproval,
     BusinessEvent,
     Evidence,
+    OwnerSession,
     PayrollBatch,
     Voucher,
 )
@@ -45,6 +47,45 @@ PERIOD_TOOLS = {
     "finance_confirm_accounting_period_close",
     "finance_get_accounting_periods",
 }
+
+
+def _approve_accounting_period_close(
+    database_url: str,
+    *,
+    org_id: str,
+    period_id: str,
+    calculation_hash: str,
+) -> str:
+    engine = make_engine(database_url)
+    session_factory = make_session_factory(engine)
+    try:
+        with session_factory.begin() as session:
+            owner_session = session.scalar(
+                select(OwnerSession)
+                .where(
+                    OwnerSession.org_id == uuid.UUID(org_id),
+                    OwnerSession.revoked_at.is_(None),
+                )
+                .order_by(OwnerSession.created_at.desc())
+            )
+            assert owner_session is not None
+            now = datetime.now(ZoneInfo("UTC"))
+            approval = AccountingPeriodCloseApproval(
+                org_id=uuid.UUID(org_id),
+                period_id=uuid.UUID(period_id),
+                owner_account_id=owner_session.owner_account_id,
+                owner_session_id=owner_session.id,
+                owner_credential_version=owner_session.credential_version,
+                calculation_hash=calculation_hash,
+                confirmation_method="local_password_reauthentication",
+                confirmed_at=now,
+                expires_at=now + timedelta(minutes=30),
+            )
+            session.add(approval)
+            session.flush()
+            return str(approval.id)
+    finally:
+        engine.dispose()
 
 
 def _payroll_parameters() -> dict[str, Any]:
@@ -314,12 +355,19 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                     client, "finance_preview_accounting_period_close", close_facts
                 )
                 assert preview["status"] == "calculated", preview
+                owner_approval_id = _approve_accounting_period_close(
+                    database_url,
+                    org_id=org_id,
+                    period_id=generated["period_id"],
+                    calculation_hash=preview["calculation_hash"],
+                )
                 confirmed = await _call(
                     client,
                     "finance_confirm_accounting_period_close",
                     {
                         **close_facts,
                         "calculation_hash": preview["calculation_hash"],
+                        "owner_approval_id": owner_approval_id,
                         "idempotency_key": "stdio-period-close-july",
                         "review_facts": {
                             "voucher_completeness_reviewed": True,
@@ -551,12 +599,19 @@ def test_zero_voucher_month_closes_through_real_stdio(
                     client, "finance_preview_accounting_period_close", close_facts
                 )
                 assert preview["data"]["calculation"]["voucher_sources"] == []
+                owner_approval_id = _approve_accounting_period_close(
+                    database_url,
+                    org_id=org_id,
+                    period_id=generated["period_id"],
+                    calculation_hash=preview["calculation_hash"],
+                )
                 confirmed = await _call(
                     client,
                     "finance_confirm_accounting_period_close",
                     {
                         **close_facts,
                         "calculation_hash": preview["calculation_hash"],
+                        "owner_approval_id": owner_approval_id,
                         "idempotency_key": "stdio-zero-close-june",
                         "review_facts": {
                             "voucher_completeness_reviewed": True,

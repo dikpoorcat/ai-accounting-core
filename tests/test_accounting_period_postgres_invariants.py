@@ -4,7 +4,7 @@ import json
 import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from threading import Barrier
 
 import pytest
@@ -28,7 +28,13 @@ from ai_accounting.accounting_periods import (
     canonical_sha256,
 )
 from ai_accounting.coa import seed_organization
-from ai_accounting.models import AccountingPeriodClose, Evidence, Organization
+from ai_accounting.models import (
+    AccountingPeriodClose,
+    AccountingPeriodCloseApproval,
+    Evidence,
+    ExecutionAttribution,
+    Organization,
+)
 from ai_accounting.schemas import RecordEventRequest, ReverseEventRequest
 from ai_accounting.service import FinanceService
 from alembic import command
@@ -43,6 +49,30 @@ def _config(database_url: str) -> Config:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     return config
+
+
+def _approve_close(
+    session: Session,
+    attribution: ExecutionAttribution,
+    *,
+    period_id: uuid.UUID,
+    calculation_hash: str,
+) -> uuid.UUID:
+    now = datetime.now(UTC)
+    approval = AccountingPeriodCloseApproval(
+        org_id=attribution.org_id,
+        period_id=period_id,
+        owner_account_id=attribution.owner_account_id,
+        owner_session_id=attribution.owner_session_id,
+        owner_credential_version=attribution.owner_credential_version,
+        calculation_hash=calculation_hash,
+        confirmation_method="local_password_reauthentication",
+        confirmed_at=now,
+        expires_at=now + timedelta(minutes=30),
+    )
+    session.add(approval)
+    session.flush()
+    return approval.id
 
 
 def _sale(org_id: object, key: str) -> RecordEventRequest:
@@ -317,11 +347,18 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 preview = period_service.preview_accounting_period_close(preview_request)
                 with authority.attributed_call(
                     session, tool_name="finance_confirm_accounting_period_close"
-                ):
+                ) as attribution:
+                    owner_approval_id = _approve_close(
+                        session,
+                        attribution,
+                        period_id=period_id,
+                        calculation_hash=preview.calculation_hash,
+                    )
                     confirmed = period_service.confirm_accounting_period_close(
                         ConfirmAccountingPeriodCloseRequest(
                             **preview_request.model_dump(),
                             calculation_hash=preview.calculation_hash,
+                            owner_approval_id=owner_approval_id,
                             idempotency_key="pg-close-july",
                             review_facts=AccountingPeriodReviewFacts(
                                 voucher_completeness_reviewed=True,
@@ -561,13 +598,20 @@ def test_postgres_close_vs_close_is_linearized(
                     barrier.wait()
                     with authority.attributed_call(
                         session, tool_name="finance_confirm_accounting_period_close"
-                    ):
+                    ) as attribution:
+                        owner_approval_id = _approve_close(
+                            session,
+                            attribution,
+                            period_id=period_id,
+                            calculation_hash=preview.calculation_hash,
+                        )
                         result = AccountingPeriodService(
                             session, current_date=date(2026, 8, 11)
                         ).confirm_accounting_period_close(
                             ConfirmAccountingPeriodCloseRequest(
                                 **preview_request.model_dump(),
                                 calculation_hash=preview.calculation_hash,
+                                owner_approval_id=owner_approval_id,
                                 idempotency_key=key,
                                 review_facts=AccountingPeriodReviewFacts(
                                     voucher_completeness_reviewed=True,
@@ -668,13 +712,20 @@ def test_postgres_close_vs_post_is_linearized(
                     barrier.wait()
                     with authority.attributed_call(
                         session, tool_name="finance_confirm_accounting_period_close"
-                    ):
+                    ) as attribution:
+                        owner_approval_id = _approve_close(
+                            session,
+                            attribution,
+                            period_id=period_id,
+                            calculation_hash=preview.calculation_hash,
+                        )
                         result = AccountingPeriodService(
                             session, current_date=date(2026, 8, 11)
                         ).confirm_accounting_period_close(
                             ConfirmAccountingPeriodCloseRequest(
                                 **preview_request.model_dump(),
                                 calculation_hash=preview.calculation_hash,
+                                owner_approval_id=owner_approval_id,
                                 idempotency_key="pg-post-close-close",
                                 review_facts=AccountingPeriodReviewFacts(
                                     voucher_completeness_reviewed=True,
@@ -1117,13 +1168,20 @@ def test_postgres_owner_close_vs_raw_payroll_is_linearized(
                     barrier.wait()
                     with authority.attributed_call(
                         session, tool_name="finance_confirm_accounting_period_close"
-                    ):
+                    ) as attribution:
+                        owner_approval_id = _approve_close(
+                            session,
+                            attribution,
+                            period_id=period_id,
+                            calculation_hash=preview.calculation_hash,
+                        )
                         result = AccountingPeriodService(
                             session, current_date=date(2026, 8, 11)
                         ).confirm_accounting_period_close(
                             ConfirmAccountingPeriodCloseRequest(
                                 **request.model_dump(),
                                 calculation_hash=preview.calculation_hash,
+                                owner_approval_id=owner_approval_id,
                                 idempotency_key="owner-close-payroll-close",
                                 review_facts=AccountingPeriodReviewFacts(
                                     voucher_completeness_reviewed=True,

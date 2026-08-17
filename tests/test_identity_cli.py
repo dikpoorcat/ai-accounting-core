@@ -3,12 +3,18 @@ from __future__ import annotations
 import sys
 import uuid
 from argparse import Namespace
+from datetime import date
 
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import func, select
 
 from ai_accounting import identity_cli
+from ai_accounting.accounting_period_schemas import (
+    GenerateAccountingPeriodRequest,
+    PreviewAccountingPeriodCloseRequest,
+)
+from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.credential_store import (
     InMemoryCredentialStore,
@@ -19,7 +25,12 @@ from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.identity import IdentityError
 from ai_accounting.identity_schemas import OwnerProvisionRequest
 from ai_accounting.identity_service import IdentityService
-from ai_accounting.models import IdentityAuditEvent, OwnerAccount
+from ai_accounting.models import (
+    AccountingPeriodCloseApproval,
+    Evidence,
+    IdentityAuditEvent,
+    OwnerAccount,
+)
 
 
 def test_cli_failed_login_commits_throttle_and_fixed_audit_across_sessions(
@@ -86,6 +97,82 @@ def test_cli_setup_surfaces_password_policy_as_stable_identity_error(
                 login_name="owner",
             )
         )
+
+
+def test_cli_approve_close_reauthenticates_and_binds_exact_preview_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = make_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    store = InMemoryCredentialStore()
+    password = "Owner-Explicit-Close-Approval-2026!"
+    try:
+        with factory.begin() as session:
+            organization = seed_organization(session, name="CLI owner close approval")
+            evidence = Evidence(
+                org_id=organization.id,
+                sha256="c" * 64,
+                original_name="period-generation.txt",
+                media_type="text/plain",
+                source="test",
+                size_bytes=1,
+                storage_path="test/period-generation.txt",
+            )
+            session.add(evidence)
+            session.flush()
+            generated = AccountingPeriodService(session).generate_accounting_period(
+                GenerateAccountingPeriodRequest(
+                    org_id=organization.id,
+                    period_month="2026-07",
+                    idempotency_key="generate-close-approval-test",
+                    confirmation_note="test period",
+                    evidence_references=[evidence.id],
+                )
+            )
+            assert generated.status.value == "posted"
+            IdentityService(session).provision_owner(
+                OwnerProvisionRequest(
+                    org_id=organization.id,
+                    login_name="close-owner",
+                    password=SecretStr(password),
+                )
+            )
+            org_id = organization.id
+            period_id = generated.period_id
+        assert period_id is not None
+        with factory() as session:
+            preview = AccountingPeriodService(session).preview_accounting_period_close(
+                PreviewAccountingPeriodCloseRequest(
+                    org_id=org_id,
+                    period_id=period_id,
+                    closing_date=date(2026, 7, 31),
+                )
+            )
+        assert preview.calculation_hash is not None
+        monkeypatch.setattr(identity_cli, "SessionLocal", factory)
+        monkeypatch.setattr(identity_cli, "WindowsCredentialStore", lambda: store)
+        monkeypatch.setattr(identity_cli, "_secret_prompt", lambda _prompt: password)
+
+        identity_cli._approve_close(
+            Namespace(
+                org_id=org_id,
+                period_id=period_id,
+                calculation_hash=preview.calculation_hash,
+                login_name="close-owner",
+            )
+        )
+
+        with factory() as session:
+            approval = session.scalar(select(AccountingPeriodCloseApproval))
+            assert approval is not None
+            assert approval.period_id == period_id
+            assert approval.calculation_hash == preview.calculation_hash
+            assert approval.confirmation_method == "local_password_reauthentication"
+            assert approval.consumed_at is None
+        assert store.load_session_token() is not None
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Credential Manager only")

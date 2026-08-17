@@ -1567,6 +1567,9 @@ class AccountingPeriodClose(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     action_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    owner_approval_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True, unique=True
+    )
     calculation: Mapped[dict[str, Any]] = mapped_column(JSON)
     calculation_payload: Mapped[str] = mapped_column(Text)
     calculation_hash: Mapped[str] = mapped_column(String(64))
@@ -1594,6 +1597,13 @@ class AccountingPeriodClose(Base):
             name="fk_accounting_period_close_org_action",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["org_id", "owner_approval_id"],
+            ["accounting_period_close_approvals.org_id", "accounting_period_close_approvals.id"],
+            name="fk_accounting_period_close_org_owner_approval",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
         UniqueConstraint("org_id", "id", name="uq_accounting_period_close_org_id"),
         CheckConstraint("length(calculation_payload) > 0", name="ck_period_close_payload"),
         CheckConstraint("length(calculation_hash) = 64", name="ck_period_close_hash_length"),
@@ -1607,6 +1617,71 @@ class AccountingPeriodClose(Base):
         CheckConstraint(
             "total_debit_fen >= 0 AND total_debit_fen = total_credit_fen",
             name="ck_period_close_totals",
+        ),
+    )
+
+
+class AccountingPeriodCloseApproval(Base):
+    """Password-reauthenticated owner approval bound to one close preview hash."""
+
+    __tablename__ = "accounting_period_close_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_credential_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_method: Mapped[str] = mapped_column(String(40), nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_period_close_approval_org_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "owner_account_id"],
+            ["owner_accounts.org_id", "owner_accounts.id"],
+            name="fk_period_close_approval_org_owner",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "owner_account_id", "owner_session_id", "owner_credential_version"],
+            [
+                "owner_sessions.org_id",
+                "owner_sessions.owner_account_id",
+                "owner_sessions.id",
+                "owner_sessions.credential_version",
+            ],
+            name="fk_period_close_approval_owner_session",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_period_close_approval_org_id"),
+        CheckConstraint(
+            "owner_credential_version >= 1",
+            name="ck_period_close_approval_credential_version",
+        ),
+        CheckConstraint(
+            "length(calculation_hash) = 64",
+            name="ck_period_close_approval_hash_length",
+        ),
+        CheckConstraint(
+            "confirmation_method = 'local_password_reauthentication'",
+            name="ck_period_close_approval_method",
+        ),
+        CheckConstraint(
+            "expires_at > confirmed_at",
+            name="ck_period_close_approval_expiry",
+        ),
+        CheckConstraint(
+            "consumed_at IS NULL OR consumed_at >= confirmed_at",
+            name="ck_period_close_approval_consumed_at",
         ),
     )
 

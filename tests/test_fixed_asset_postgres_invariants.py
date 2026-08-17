@@ -19,6 +19,7 @@ from ai_accounting.coa import get_account_by_role, seed_organization
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
+    Account,
     BusinessEvent,
     Counterparty,
     Evidence,
@@ -29,13 +30,16 @@ from ai_accounting.models import (
     OpenItem,
     Organization,
     TaxRule,
+    VoucherLine,
     event_evidence,
 )
 from ai_accounting.schemas import (
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
     DisposeFixedAssetRequest,
+    PreviewFixedAssetDepreciationRequest,
     RecordEventRequest,
+    ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
 from alembic import command
@@ -333,6 +337,67 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
         try:
             with Session(engine) as session:
                 asset, event = _acquire_payable(session, "reverse-edges")
+                direct_evidence = _evidence(session, asset.org_id, "direct-ready")
+                direct = FixedAssetService(session).acquire_fixed_asset(
+                    AcquireFixedAssetRequest.model_validate(
+                        {
+                            "org_id": asset.org_id,
+                            "idempotency_key": "direct-ready-acquisition",
+                            "asset_code": "FA-direct-ready",
+                            "asset_name": "已交付设备",
+                            "category": "electronic",
+                            "expected_use_over_one_year": True,
+                            "purchase_date": "2026-01-31",
+                            "posting_date": "2026-01-31",
+                            "cost_components": {
+                                "purchase_price_fen": 120_000,
+                                "noncreditable_tax_fen": 0,
+                                "transport_and_handling_fen": 0,
+                                "installation_and_direct_cost_fen": 0,
+                            },
+                            "supplier": {"kind": "supplier", "name": "直接交付供应商"},
+                            "settlement_method": "payable",
+                            "due_date": "2026-02-28",
+                            "evidence_references": [direct_evidence.id],
+                            "claims_creditable_input_vat": False,
+                            "ready_for_use": {
+                                "in_service_date": "2026-01-31",
+                                "useful_life_months": 60,
+                                "residual_value_fen": 0,
+                                "benefit_area": "management",
+                            },
+                        }
+                    )
+                )
+                assert direct.status == "posted", direct.errors
+                session.commit()
+                direct_activation = session.scalar(
+                    sa.select(FixedAssetActivation).where(
+                        FixedAssetActivation.asset_id == direct.asset_id
+                    )
+                )
+                assert direct_activation.event_id == direct.event_id
+                assert (
+                    session.scalar(
+                        sa.select(Account.system_role)
+                        .join(VoucherLine, VoucherLine.account_id == Account.id)
+                        .where(
+                            VoucherLine.voucher_id == direct.voucher_id,
+                            VoucherLine.debit_fen == 120_000,
+                        )
+                    )
+                    == "fixed_asset_cost"
+                )
+                direct_preview = FixedAssetService(session).preview_fixed_asset_depreciation(
+                    PreviewFixedAssetDepreciationRequest(
+                        org_id=asset.org_id,
+                        asset_id=direct.asset_id,
+                        depreciation_period="2026-02",
+                        posting_date=date(2026, 2, 28),
+                    )
+                )
+                assert direct_preview.status == "calculated"
+                assert direct_preview.data["amount_fen"] == 2_000
                 scope_evidence = _evidence(session, asset.org_id, "reverse-edges-scope")
                 authority = authenticate_and_confirm_bank_scope(
                     session,
@@ -346,6 +411,19 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                         }
                     ],
                 )
+                with authority.attributed_call(session, tool_name="finance_reverse_event"):
+                    reversed_direct = FixedAssetService(session).reverse_event(
+                        ReverseEventRequest(
+                            org_id=asset.org_id,
+                            event_id=direct.event_id,
+                            idempotency_key="reverse-direct-ready-acquisition",
+                            reason="验证合并购置启用事件可整体冲正",
+                            posting_date=date(2026, 2, 1),
+                        )
+                    )
+                assert reversed_direct.status == "posted", reversed_direct.errors
+                session.commit()
+                assert session.get(BusinessEvent, direct.event_id).status == "reversed"
                 item = session.scalar(
                     sa.select(OpenItem).where(OpenItem.source_event_id == event.id)
                 )
