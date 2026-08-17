@@ -21,6 +21,7 @@ from ai_accounting.models import (
     TaxPeriodSource,
     TaxRule,
     Voucher,
+    ZeroTaxPeriodConfirmation,
 )
 from ai_accounting.schemas import (
     AcquireFixedAssetRequest,
@@ -440,7 +441,7 @@ def test_fixed_asset_sale_is_locked_by_posted_period_but_retirement_is_not(
     assert retirement_event.facts["derived"]["taxable_gross_fen"] == 0
 
 
-def test_zero_adjustment_period_has_stable_code_and_no_confirmation_side_effects(
+def test_zero_adjustment_period_has_immutable_confirmation_without_ledger_side_effects(
     session: Session, organization: Organization
 ) -> None:
     service = FinanceService(session)
@@ -454,14 +455,23 @@ def test_zero_adjustment_period_has_stable_code_and_no_confirmation_side_effects
         Voucher: _count(session, Voucher),
         TaxPeriod: _count(session, TaxPeriod),
         TaxPeriodSource: _count(session, TaxPeriodSource),
+        ZeroTaxPeriodConfirmation: _count(session, ZeroTaxPeriodConfirmation),
     }
 
-    rejected = _confirm(
+    confirmed = _confirm(
         service,
         organization,
         str(preview["calculation_hash"]),
         key="zero-adjustment-confirm",
     )
-    assert rejected.status.value == "rejected"
-    assert rejected.errors == ["TAX_PERIOD_NO_ADJUSTMENT"]
-    assert {model: _count(session, model) for model in before} == before
+    assert confirmed.status.value == "posted"
+    assert confirmed.event_id is None
+    assert confirmed.voucher_id is None
+    assert confirmed.data["no_accounting_adjustment"] is True
+    assert _count(session, BusinessEvent) == before[BusinessEvent]
+    assert _count(session, Voucher) == before[Voucher]
+    assert _count(session, TaxPeriod) == before[TaxPeriod]
+    assert _count(session, TaxPeriodSource) == before[TaxPeriodSource]
+    assert _count(session, ZeroTaxPeriodConfirmation) == (
+        before[ZeroTaxPeriodConfirmation] + 1
+    )

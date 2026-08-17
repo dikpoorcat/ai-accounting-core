@@ -29,6 +29,7 @@ from ai_accounting.accounting_periods import (
 )
 from ai_accounting.coa import seed_organization
 from ai_accounting.models import (
+    AccountingPeriod,
     AccountingPeriodClose,
     AccountingPeriodCloseApproval,
     Evidence,
@@ -75,7 +76,12 @@ def _approve_close(
     return approval.id
 
 
-def _sale(org_id: object, key: str) -> RecordEventRequest:
+def _sale(
+    org_id: object,
+    key: str,
+    *,
+    business_date: date = date(2026, 7, 15),
+) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": org_id,
@@ -83,11 +89,11 @@ def _sale(org_id: object, key: str) -> RecordEventRequest:
             "event_type": "service_credit_sale",
             "counterparty": {"kind": "customer", "name": "期间测试客户"},
             "business_dates": {
-                "business_date": "2026-07-15",
-                "posting_date": "2026-07-15",
-                "fulfillment_date": "2026-07-15",
-                "payment_date": "2026-07-15",
-                "tax_obligation_date": "2026-07-15",
+                "business_date": business_date,
+                "posting_date": business_date,
+                "fulfillment_date": business_date,
+                "payment_date": business_date,
+                "tax_obligation_date": business_date,
             },
             "amounts": {"gross_amount_fen": 101_000},
             "tax_facts": {
@@ -331,6 +337,29 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 sale_event_id = sale.event_id
 
             with Session(engine) as session:
+                period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
+                august = period_service.generate_accounting_period(
+                    GenerateAccountingPeriodRequest(
+                        org_id=org_id,
+                        period_month="2026-08",
+                        idempotency_key="pg-generate-august",
+                        confirmation_note="PG连续生成八月",
+                        evidence_references=[evidence_id],
+                    )
+                )
+                assert august.status == "posted", august.errors
+                future_sale = FinanceService(session).record_event(
+                    _sale(
+                        org_id,
+                        "pg-august-sale-before-july-close",
+                        business_date=date(2026, 8, 1),
+                    )
+                )
+                assert future_sale.status == "posted", future_sale.errors
+                session.commit()
+                august_period_id = august.period_id
+
+            with Session(engine) as session:
                 organization = session.get(Organization, org_id)
                 assert organization is not None
                 authority = authenticated_zero_bank_scope(
@@ -345,6 +374,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                     closing_date=date(2026, 7, 31),
                 )
                 preview = period_service.preview_accounting_period_close(preview_request)
+                assert preview.data["calculation"]["review_counts"]["open_items"] == 1
                 with authority.attributed_call(
                     session, tool_name="finance_confirm_accounting_period_close"
                 ) as attribution:
@@ -496,21 +526,8 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 assert rejected.errors == ["ACCOUNTING_PERIOD_CLOSED"]
 
             with Session(engine) as session:
-                period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
-                with authority.attributed_call(
-                    session, tool_name="finance_generate_accounting_period"
-                ):
-                    august = period_service.generate_accounting_period(
-                        GenerateAccountingPeriodRequest(
-                            org_id=org_id,
-                            period_month="2026-08",
-                            idempotency_key="pg-generate-august",
-                            confirmation_note="PG连续生成八月",
-                            evidence_references=[evidence_id],
-                        )
-                    )
-                assert august.status == "posted", august.errors
-                session.commit()
+                august = session.get(AccountingPeriod, august_period_id)
+                assert august is not None and august.status == "open"
             with Session(engine) as session:
                 with authority.attributed_call(session, tool_name="finance_reverse_event"):
                     reversal = FinanceService(session).reverse_event(

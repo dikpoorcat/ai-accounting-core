@@ -26,6 +26,7 @@ from ai_accounting.models import (
     FixedAsset,
     FixedAssetActivation,
     FixedAssetDepreciation,
+    FixedAssetDepreciationBatch,
     FixedAssetDisposal,
     OpenItem,
     Organization,
@@ -36,7 +37,9 @@ from ai_accounting.models import (
 from ai_accounting.schemas import (
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
+    ConfirmFixedAssetDepreciationBatchRequest,
     DisposeFixedAssetRequest,
+    PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
     RecordEventRequest,
     ReverseEventRequest,
@@ -322,6 +325,101 @@ def _add_duplicate_disposal_attempt(
     session.flush()
 
 
+def test_postgres_monthly_depreciation_batch_is_one_final_voucher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
+        url = postgres.get_connection_url(driver="psycopg")
+        monkeypatch.setenv("DATABASE_URL", url)
+        command.upgrade(Config("alembic.ini"), "head")
+        engine = sa.create_engine(url)
+        try:
+            with Session(engine) as session:
+                first, _ = _acquire_payable(session, "batch-pg")
+                _activate(session, first, "batch-pg")
+                evidence = _evidence(session, first.org_id, "batch-pg-second")
+                second = FixedAssetService(session).acquire_fixed_asset(
+                    AcquireFixedAssetRequest.model_validate(
+                        {
+                            "org_id": first.org_id,
+                            "idempotency_key": "batch-pg-second-acquire",
+                            "asset_code": "FA-BATCH-PG-002",
+                            "asset_name": "第二项设备",
+                            "category": "electronic",
+                            "expected_use_over_one_year": True,
+                            "purchase_date": "2026-01-02",
+                            "posting_date": "2026-01-02",
+                            "cost_components": {
+                                "purchase_price_fen": 100_006,
+                                "noncreditable_tax_fen": 0,
+                                "transport_and_handling_fen": 0,
+                                "installation_and_direct_cost_fen": 0,
+                            },
+                            "supplier": {"kind": "supplier", "name": "第二供应商"},
+                            "settlement_method": "payable",
+                            "due_date": "2026-02-02",
+                            "evidence_references": [evidence.id],
+                            "claims_creditable_input_vat": False,
+                            "ready_for_use": {
+                                "in_service_date": "2026-01-02",
+                                "useful_life_months": 13,
+                                "residual_value_fen": 0,
+                                "benefit_area": "management",
+                            },
+                        }
+                    )
+                )
+                assert second.status == "posted", second.errors
+                preview_request = PreviewFixedAssetDepreciationBatchRequest(
+                    org_id=first.org_id,
+                    depreciation_period="2026-02",
+                    posting_date=date(2026, 2, 28),
+                )
+                service = FixedAssetService(session)
+                preview = service.preview_fixed_asset_depreciation_batch(preview_request)
+                assert preview.data["total_amount_fen"] == 87_693
+                confirmed = service.confirm_fixed_asset_depreciation_batch(
+                    ConfirmFixedAssetDepreciationBatchRequest(
+                        **preview_request.model_dump(),
+                        idempotency_key="batch-pg-2026-02",
+                        calculation_hash=preview.calculation_hash,
+                    )
+                )
+                assert confirmed.status == "posted", confirmed.errors
+                session.commit()
+
+                batch = session.scalar(
+                    sa.select(FixedAssetDepreciationBatch).where(
+                        FixedAssetDepreciationBatch.event_id == confirmed.event_id
+                    )
+                )
+                details = session.scalars(
+                    sa.select(FixedAssetDepreciation).where(
+                        FixedAssetDepreciation.event_id == confirmed.event_id
+                    )
+                ).all()
+                assert batch.asset_count == len(details) == 2
+                assert batch.total_amount_fen == 87_693
+                assert (
+                    len(
+                        session.scalars(
+                            sa.select(VoucherLine).where(
+                                VoucherLine.voucher_id == confirmed.voucher_id
+                            )
+                        ).all()
+                    )
+                    == 2
+                )
+                with pytest.raises(DBAPIError, match="final fixed-asset facts"):
+                    batch.total_amount_fen += 1
+                    session.commit()
+        finally:
+            engine.dispose()
+
+
 def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -452,12 +550,8 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                         )
                     )
                 assert payment.status == "posted"
-                with authority.attributed_call(
-                    session, tool_name="finance_acquire_fixed_asset"
-                ):
-                    employee_evidence = _evidence(
-                        session, asset.org_id, "employee-advanced"
-                    )
+                with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
+                    employee_evidence = _evidence(session, asset.org_id, "employee-advanced")
                     employee_asset = FixedAssetService(session).acquire_fixed_asset(
                         AcquireFixedAssetRequest.model_validate(
                             {
@@ -492,9 +586,7 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                     )
                 assert employee_asset.status == "posted", employee_asset.errors
                 employee_item = session.scalar(
-                    sa.select(OpenItem).where(
-                        OpenItem.source_event_id == employee_asset.event_id
-                    )
+                    sa.select(OpenItem).where(OpenItem.source_event_id == employee_asset.event_id)
                 )
                 employee_counterparty = session.get(
                     Counterparty,

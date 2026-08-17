@@ -18,7 +18,9 @@ from ai_accounting.models import (
     Evidence,
     FixedAsset,
     FixedAssetActivation,
+    FixedAssetCostSource,
     FixedAssetDepreciation,
+    FixedAssetDepreciationBatch,
     FixedAssetDisposal,
     OpenItem,
     Organization,
@@ -28,8 +30,10 @@ from ai_accounting.models import (
 from ai_accounting.schemas import (
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
+    ConfirmFixedAssetDepreciationBatchRequest,
     ConfirmFixedAssetDepreciationRequest,
     DisposeFixedAssetRequest,
+    PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
     RecordEventRequest,
     ReverseEventRequest,
@@ -285,6 +289,61 @@ def test_employee_advanced_fixed_asset_creates_employee_payable_without_losing_s
     assert employee.kind == "employee"
     assert payable.counterparty_id == employee.id
     assert payable.original_amount_fen == asset.cost_fen
+    _assert_balanced(session, acquired.voucher_id)
+
+
+def test_canonical_asset_keeps_employee_cost_sources_below_one_asset_card(
+    session: Session, organization: Organization
+) -> None:
+    evidence = _evidence(session, organization, "canonical-asset")
+    payload = _acquisition_request(
+        organization, evidence, key="canonical-asset-acquisition"
+    ).model_dump(mode="python")
+    payload.update(
+        {
+            "settlement_method": "allocated_employee_payables",
+            "due_date": None,
+            "employee_cost_sources": [
+                {
+                    "source_key": "founder-a-computer",
+                    "amount_fen": 700_000,
+                    "reimbursing_employee": {
+                        "kind": "employee",
+                        "name": "联合创始人甲",
+                    },
+                    "due_date": "2026-02-28",
+                    "description": "电脑成本来源甲",
+                },
+                {
+                    "source_key": "founder-b-computer",
+                    "amount_fen": 350_000,
+                    "reimbursing_employee": {
+                        "kind": "employee",
+                        "name": "联合创始人乙",
+                    },
+                    "due_date": "2026-03-01",
+                    "description": "电脑成本来源乙",
+                },
+            ],
+        }
+    )
+
+    acquired = FixedAssetService(session).acquire_fixed_asset(
+        AcquireFixedAssetRequest.model_validate(payload)
+    )
+
+    assert acquired.status == "posted", acquired.errors
+    assert len(session.scalars(select(FixedAsset)).all()) == 1
+    sources = session.scalars(
+        select(FixedAssetCostSource).where(FixedAssetCostSource.asset_id == acquired.asset_id)
+    ).all()
+    assert len(sources) == 2
+    assert sum(item.amount_fen for item in sources) == 1_050_000
+    open_items = session.scalars(
+        select(OpenItem).where(OpenItem.source_event_id == acquired.event_id)
+    ).all()
+    assert len(open_items) == 2
+    assert {item.counterparty_id for item in open_items} == {item.employee_id for item in sources}
     _assert_balanced(session, acquired.voucher_id)
 
 
@@ -632,6 +691,96 @@ def test_fixed_asset_posting_dates_follow_lifecycle_order(
     assert early_disposal.errors == ["FIXED_ASSET_POSTING_DATE_OUT_OF_SEQUENCE"]
 
 
+def test_monthly_depreciation_batch_keeps_two_details_and_one_summary_voucher(
+    session: Session, organization: Organization
+) -> None:
+    evidence = _evidence(session, organization, "depreciation-batch")
+    service = FixedAssetService(session)
+    first_payload = _acquisition_request(organization, evidence, key="batch-asset-one").model_dump(
+        mode="python"
+    )
+    first_payload.update(
+        {
+            "asset_code": "FA-BATCH-001",
+            "ready_for_use": {
+                "in_service_date": "2026-01-02",
+                "useful_life_months": 13,
+                "residual_value_fen": 10_000,
+                "benefit_area": "management",
+            },
+        }
+    )
+    first = service.acquire_fixed_asset(AcquireFixedAssetRequest.model_validate(first_payload))
+    second_payload = _acquisition_request(organization, evidence, key="batch-asset-two").model_dump(
+        mode="python"
+    )
+    second_payload.update(
+        {
+            "asset_code": "FA-BATCH-002",
+            "asset_name": "第二项测试设备",
+            "cost_components": {
+                "purchase_price_fen": 100_006,
+                "noncreditable_tax_fen": 0,
+                "transport_and_handling_fen": 0,
+                "installation_and_direct_cost_fen": 0,
+            },
+            "ready_for_use": {
+                "in_service_date": "2026-01-02",
+                "useful_life_months": 13,
+                "residual_value_fen": 0,
+                "benefit_area": "management",
+            },
+        }
+    )
+    second = service.acquire_fixed_asset(AcquireFixedAssetRequest.model_validate(second_payload))
+    assert first.status == second.status == "posted"
+
+    preview_request = PreviewFixedAssetDepreciationBatchRequest(
+        org_id=organization.id,
+        depreciation_period="2026-02",
+        posting_date=date(2026, 2, 28),
+    )
+    preview = service.preview_fixed_asset_depreciation_batch(preview_request)
+
+    assert preview.status == "calculated", preview.errors
+    assert preview.data["asset_count"] == 2
+    assert [item["current_depreciation_fen"] for item in preview.data["items"]] == [80_000, 7_693]
+    assert preview.data["total_amount_fen"] == 87_693
+    confirmed = service.confirm_fixed_asset_depreciation_batch(
+        ConfirmFixedAssetDepreciationBatchRequest(
+            **preview_request.model_dump(),
+            idempotency_key="batch-depreciation-2026-02",
+            calculation_hash=preview.calculation_hash,
+        )
+    )
+    assert confirmed.status == "posted", confirmed.errors
+    batch = session.scalar(
+        select(FixedAssetDepreciationBatch).where(
+            FixedAssetDepreciationBatch.event_id == confirmed.event_id
+        )
+    )
+    details = session.scalars(
+        select(FixedAssetDepreciation)
+        .where(FixedAssetDepreciation.event_id == confirmed.event_id)
+        .order_by(FixedAssetDepreciation.asset_id)
+    ).all()
+    assert batch.asset_count == 2
+    assert batch.total_amount_fen == 87_693
+    assert len(details) == 2
+    assert {item.batch_id for item in details} == {batch.id}
+    assert {item.event_id for item in details} == {confirmed.event_id}
+    vouchers = session.scalars(select(Voucher).where(Voucher.event_id == confirmed.event_id)).all()
+    assert len(vouchers) == 1
+    lines = session.scalars(
+        select(VoucherLine)
+        .where(VoucherLine.voucher_id == confirmed.voucher_id)
+        .order_by(VoucherLine.line_number)
+    ).all()
+    assert len(lines) == 2
+    assert sum(item.debit_fen for item in lines) == 87_693
+    assert sum(item.credit_fen for item in lines) == 87_693
+
+
 def test_depreciation_preview_confirm_hash_and_sequence(
     session: Session, organization: Organization
 ) -> None:
@@ -750,6 +899,7 @@ def test_depreciation_preview_confirm_hash_and_sequence(
     disposal = session.scalar(
         select(FixedAssetDisposal).where(FixedAssetDisposal.event_id == disposed.event_id)
     )
+
     assert disposal.activation_id == session.scalar(
         select(FixedAssetActivation.id).where(FixedAssetActivation.event_id == activated.event_id)
     )
@@ -948,6 +1098,95 @@ def test_depreciation_preview_confirm_hash_and_sequence(
     assert acquisition_lines_after == acquisition_lines_before
     assert session.get(FixedAssetDepreciation, old_fact.id).activation_id == old_fact.activation_id
     assert session.get(FixedAssetDepreciation, new_fact.id).activation_id == new_fact.activation_id
+
+
+def test_grouped_depreciation_rounds_book_card_before_component_allocation(
+    session: Session, organization: Organization
+) -> None:
+    evidence = _evidence(session, organization, "grouped-depreciation")
+    service = FixedAssetService(session)
+
+    def acquire_component(asset_code: str, key: str) -> object:
+        payload = _acquisition_request(organization, evidence, key=key).model_dump(mode="python")
+        payload.update(
+            {
+                "asset_code": asset_code,
+                "cost_components": {
+                    "purchase_price_fen": 995,
+                    "noncreditable_tax_fen": 0,
+                    "transport_and_handling_fen": 0,
+                    "installation_and_direct_cost_fen": 0,
+                },
+                "ready_for_use": {
+                    "in_service_date": date(2026, 1, 10),
+                    "useful_life_months": 13,
+                    "residual_value_fen": 0,
+                    "benefit_area": "management",
+                    "depreciation_group_code": "BOOK-CARD-001",
+                    "depreciation_rounding_policy": "round_half_up_group_v1",
+                },
+            }
+        )
+        result = service.acquire_fixed_asset(AcquireFixedAssetRequest.model_validate(payload))
+        assert result.status == "posted", result.errors
+        return result
+
+    component_a = acquire_component("FA-GROUP-A", "grouped-depreciation-a")
+    component_b = acquire_component("FA-GROUP-B", "grouped-depreciation-b")
+    preview_requests = [
+        PreviewFixedAssetDepreciationRequest(
+            org_id=organization.id,
+            asset_id=component.asset_id,
+            depreciation_period="2026-02",
+            posting_date=date(2026, 2, 28),
+        )
+        for component in (component_a, component_b)
+    ]
+    previews = [service.preview_fixed_asset_depreciation(item) for item in preview_requests]
+
+    assert [item.data["depreciation_fen"] for item in previews] == [77, 76]
+    assert sum(item.data["depreciation_fen"] for item in previews) == 153
+    assert all(
+        item.data["depreciation_group"]["group_base_monthly_fen"] == 153 for item in previews
+    )
+
+    for index, (preview_request, preview) in enumerate(
+        zip(preview_requests, previews, strict=True), start=1
+    ):
+        confirmed = service.confirm_fixed_asset_depreciation(
+            ConfirmFixedAssetDepreciationRequest(
+                **preview_request.model_dump(),
+                idempotency_key=f"grouped-depreciation-confirm-{index}",
+                calculation_hash=preview.calculation_hash,
+            )
+        )
+        assert confirmed.status == "posted", confirmed.errors
+        _assert_balanced(session, confirmed.voucher_id)
+
+    locked_payload = _acquisition_request(
+        organization, evidence, key="grouped-depreciation-locked"
+    ).model_dump(mode="python")
+    locked_payload.update(
+        {
+            "asset_code": "FA-GROUP-C",
+            "cost_components": {
+                "purchase_price_fen": 995,
+                "noncreditable_tax_fen": 0,
+                "transport_and_handling_fen": 0,
+                "installation_and_direct_cost_fen": 0,
+            },
+            "ready_for_use": {
+                "in_service_date": date(2026, 1, 10),
+                "useful_life_months": 13,
+                "residual_value_fen": 0,
+                "benefit_area": "management",
+                "depreciation_group_code": "BOOK-CARD-001",
+                "depreciation_rounding_policy": "round_half_up_group_v1",
+            },
+        }
+    )
+    locked = service.acquire_fixed_asset(AcquireFixedAssetRequest.model_validate(locked_payload))
+    assert locked.errors == ["FIXED_ASSET_DEPRECIATION_GROUP_LOCKED"]
 
 
 def test_fixed_asset_sale_flows_into_period_tax_relief_and_special_invoice_exclusion(

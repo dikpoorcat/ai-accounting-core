@@ -56,6 +56,7 @@ from .models import (
     TaxPeriod,
     TaxPeriodSource,
     Voucher,
+    ZeroTaxPeriodConfirmation,
     event_evidence,
 )
 from .payroll import (
@@ -150,6 +151,9 @@ class FinanceService:
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
             EventType.OTHER_INCOME_RECEIVED,
+            EventType.BANK_INTEREST_RECEIVED,
+            EventType.REFUNDABLE_DEPOSIT_PAID,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
             EventType.BANK_FEE,
             EventType.TAX_PAYMENT,
             EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -763,6 +767,13 @@ class FinanceService:
             counterparty is None or counterparty.kind != "other"
         ):
             raise ValueError("other income requires an other counterparty")
+        if request.event_type in {
+            EventType.REFUNDABLE_DEPOSIT_PAID,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
+        } and (counterparty is None or counterparty.kind not in {"supplier", "other"}):
+            raise ValueError(
+                "refundable deposit requires a supplier or other counterparty"
+            )
         if deposit_holder is not None and deposit_holder.kind not in {"supplier", "other"}:
             raise ValueError("a refundable deposit holder must be a supplier or other counterparty")
         facts = request.model_dump(mode="json")
@@ -1206,6 +1217,47 @@ class FinanceService:
                 "non_operating_income_fen": amount,
             }
 
+        elif event_type == EventType.BANK_INTEREST_RECEIVED:
+            entries = [
+                Entry(account_code=request.bank_account_code, debit_fen=amount),
+                Entry(account_role="finance_expense", credit_fen=amount),
+            ]
+            derived = {"bank_interest_income_fen": amount}
+
+        elif event_type == EventType.REFUNDABLE_DEPOSIT_PAID:
+            entries = [
+                Entry(
+                    account_role="employee_receivable",
+                    debit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
+                Entry(
+                    account_code=request.bank_account_code,
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
+            ]
+            open_item_type = "receivable"
+            derived = {"refundable_deposit_paid_fen": amount}
+
+        elif event_type == EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED:
+            entries = [
+                Entry(
+                    account_code=request.bank_account_code,
+                    debit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
+                Entry(
+                    account_role="employee_receivable",
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                ),
+            ]
+            derived = {
+                "refundable_deposit_return_fen": amount,
+                "allocated_fen": sum(item.amount_fen for item in request.allocations),
+            }
+
         elif event_type == EventType.BANK_FEE:
             entries = [
                 Entry(account_role="finance_expense", debit_fen=amount),
@@ -1362,7 +1414,13 @@ class FinanceService:
         if len(allocation_ids) != len(set(allocation_ids)):
             raise ValueError("duplicate open item allocation")
         expected_type = (
-            "receivable" if request.event_type == EventType.CUSTOMER_RECEIPT else "payable"
+            "receivable"
+            if request.event_type
+            in {
+                EventType.CUSTOMER_RECEIPT,
+                EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
+            }
+            else "payable"
         )
         payroll_categories = self._payroll_payment_categories(request.event_type)
         for allocation in request.allocations:
@@ -1412,6 +1470,17 @@ class FinanceService:
                 }:
                     raise ValueError(
                         f"open item is not an employee reimbursement payable: {item.id}"
+                    )
+            if request.event_type is EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED:
+                source_type = self.session.scalar(
+                    select(BusinessEvent.event_type).where(
+                        BusinessEvent.org_id == request.org_id,
+                        BusinessEvent.id == item.source_event_id,
+                    )
+                )
+                if source_type != EventType.REFUNDABLE_DEPOSIT_PAID.value:
+                    raise ValueError(
+                        f"open item is not a refundable deposit receivable: {item.id}"
                     )
             available = item.original_amount_fen - item.settled_amount_fen
             if allocation.amount_fen > available:
@@ -2159,6 +2228,8 @@ class FinanceService:
             EventType.OWNER_LOAN_RECEIVED,
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OTHER_INCOME_RECEIVED,
+            EventType.BANK_INTEREST_RECEIVED,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
         }
         outflows = {
             EventType.CUSTOMER_REFUND,
@@ -2168,6 +2239,7 @@ class FinanceService:
             EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_REPAYMENT,
             EventType.BANK_FEE,
+            EventType.REFUNDABLE_DEPOSIT_PAID,
             EventType.TAX_PAYMENT,
             EventType.SALARY_PAYMENT,
             EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -2466,6 +2538,8 @@ class FinanceService:
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
             EventType.OTHER_INCOME_RECEIVED,
+            EventType.REFUNDABLE_DEPOSIT_PAID,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
         }
         if event_type in counterparty_events and request.counterparty is None:
             missing.append("counterparty")
@@ -2481,6 +2555,25 @@ class FinanceService:
                 missing.append(
                     "details.other_income_kind='retained_verification_payment'"
                 )
+            if not request.bank_transaction_references:
+                missing.append("bank_transaction_references")
+            if not request.evidence_references:
+                missing.append("evidence_references")
+            if not request.description.strip():
+                missing.append("description")
+
+        if event_type == EventType.BANK_INTEREST_RECEIVED:
+            if not request.bank_transaction_references:
+                missing.append("bank_transaction_references")
+            if not request.evidence_references:
+                missing.append("evidence_references")
+            if not request.description.strip():
+                missing.append("description")
+
+        if event_type in {
+            EventType.REFUNDABLE_DEPOSIT_PAID,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
+        }:
             if not request.bank_transaction_references:
                 missing.append("bank_transaction_references")
             if not request.evidence_references:
@@ -2547,6 +2640,7 @@ class FinanceService:
         if event_type in {
             EventType.SUPPLIER_PAYMENT,
             EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
         }:
             allocated = sum(item.amount_fen for item in request.allocations)
             if not request.allocations:
@@ -2629,6 +2723,9 @@ class FinanceService:
             EventType.OWNER_CONTRIBUTION_RECEIVED: ("payment_date",),
             EventType.OWNER_REPAYMENT: ("payment_date",),
             EventType.OTHER_INCOME_RECEIVED: ("payment_date",),
+            EventType.BANK_INTEREST_RECEIVED: ("payment_date",),
+            EventType.REFUNDABLE_DEPOSIT_PAID: ("payment_date",),
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED: ("payment_date",),
             EventType.BANK_FEE: ("payment_date",),
             EventType.TAX_PAYMENT: ("payment_date",),
             EventType.SALARY_PAYMENT: ("payment_date",),
@@ -5949,6 +6046,24 @@ class FinanceService:
             }
         return result
 
+    @staticmethod
+    def _zero_tax_period_existing_result(
+        confirmation: ZeroTaxPeriodConfirmation,
+        *,
+        idempotent_replay: bool,
+    ) -> FinanceResult:
+        return FinanceResult(
+            status=ResultStatus.POSTED,
+            rule_version=confirmation.rule_version,
+            trace=list(confirmation.calculation.get("trace", [])),
+            data={
+                "zero_tax_period_confirmation_id": str(confirmation.id),
+                "calculation_hash": confirmation.calculation_hash,
+                "no_accounting_adjustment": True,
+                "idempotent_replay": idempotent_replay,
+            },
+        )
+
     def _active_tax_period_conflict(
         self,
         request: TaxPeriodConfirmRequest,
@@ -5993,6 +6108,22 @@ class FinanceService:
 
     def confirm_tax_period(self, request: TaxPeriodConfirmRequest) -> FinanceResult:
         request_payload_hash = self._tax_period_confirm_payload_hash(request)
+        existing_zero = self.session.scalar(
+            select(ZeroTaxPeriodConfirmation).where(
+                ZeroTaxPeriodConfirmation.org_id == request.org_id,
+                ZeroTaxPeriodConfirmation.idempotency_key == request.idempotency_key,
+            )
+        )
+        if existing_zero is not None:
+            if existing_zero.request_payload_hash != request_payload_hash:
+                return FinanceResult(
+                    status=ResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                )
+            return self._zero_tax_period_existing_result(
+                existing_zero,
+                idempotent_replay=True,
+            )
         existing = self.session.scalar(
             select(BusinessEvent).where(
                 BusinessEvent.org_id == request.org_id,
@@ -6016,6 +6147,24 @@ class FinanceService:
             return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
         except IntegrityError as exc:
             sqlstate, constraint_name, _primary_message = self._database_error_identity(exc)
+            if constraint_name == "uq_zero_tax_confirmation_idempotency":
+                existing_zero = self.session.scalar(
+                    select(ZeroTaxPeriodConfirmation).where(
+                        ZeroTaxPeriodConfirmation.org_id == request.org_id,
+                        ZeroTaxPeriodConfirmation.idempotency_key == request.idempotency_key,
+                    )
+                )
+                if existing_zero is None:
+                    raise
+                if existing_zero.request_payload_hash != request_payload_hash:
+                    return FinanceResult(
+                        status=ResultStatus.REJECTED,
+                        errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                    )
+                return self._zero_tax_period_existing_result(
+                    existing_zero,
+                    idempotent_replay=True,
+                )
             if (sqlstate, constraint_name) == ("23505", "uq_event_org_idempotency"):
                 existing = self.session.scalar(
                     select(BusinessEvent).where(
@@ -6048,6 +6197,35 @@ class FinanceService:
         # snapshot and taxable-source writes. Re-read under a row lock so a
         # previously cached Organization cannot validate a stale preview.
         self._lock_tax_period_org(request.org_id)
+        existing_zero = self.session.scalar(
+            select(ZeroTaxPeriodConfirmation).where(
+                ZeroTaxPeriodConfirmation.org_id == request.org_id,
+                ZeroTaxPeriodConfirmation.idempotency_key == request.idempotency_key,
+            )
+        )
+        if existing_zero is not None:
+            if existing_zero.request_payload_hash != request_payload_hash:
+                return FinanceResult(
+                    status=ResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                )
+            return self._zero_tax_period_existing_result(
+                existing_zero,
+                idempotent_replay=True,
+            )
+        existing_event = self.session.scalar(
+            select(BusinessEvent).where(
+                BusinessEvent.org_id == request.org_id,
+                BusinessEvent.idempotency_key == request.idempotency_key,
+            )
+        )
+        if existing_event is not None:
+            if existing_event.request_payload_hash != request_payload_hash:
+                return FinanceResult(
+                    status=ResultStatus.REJECTED,
+                    errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                )
+            return self._tax_period_existing_result(existing_event)
         organization = self.session.scalar(
             select(Organization)
             .where(Organization.id == request.org_id)
@@ -6106,11 +6284,30 @@ class FinanceService:
                 ]
             )
         if not entries:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["TAX_PERIOD_NO_ADJUSTMENT"],
+            confirmation = ZeroTaxPeriodConfirmation(
+                org_id=request.org_id,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                adjustment_posting_date=request.adjustment_posting_date,
+                idempotency_key=request.idempotency_key,
+                request_payload_hash=request_payload_hash,
                 rule_version=tax_result.rule_version,
-                trace=tax_result.trace,
+                calculation=tax_result.to_dict(),
+                calculation_hash=tax_result.calculation_hash,
+                calculation_hash_payload=tax_result.calculation_hash_payload,
+                filing_cycle_snapshot=organization.filing_cycle,
+                jurisdiction_snapshot=organization.jurisdiction,
+                urban_maintenance_rate_snapshot=Decimal(
+                    format(organization.urban_maintenance_rate, ".5f")
+                ),
+                vat_rule_id=uuid.UUID(tax_result.vat_rule_id),
+                surtax_rule_id=uuid.UUID(tax_result.surtax_rule_id),
+            )
+            self.session.add(confirmation)
+            self.session.flush()
+            return self._zero_tax_period_existing_result(
+                confirmation,
+                idempotent_replay=False,
             )
         event = BusinessEvent(
             org_id=request.org_id,

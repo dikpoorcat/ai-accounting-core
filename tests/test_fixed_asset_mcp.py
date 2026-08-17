@@ -42,6 +42,8 @@ ASSET_TOOL_NAMES = {
     "finance_activate_fixed_asset",
     "finance_preview_fixed_asset_depreciation",
     "finance_confirm_fixed_asset_depreciation",
+    "finance_preview_fixed_asset_depreciation_batch",
+    "finance_confirm_fixed_asset_depreciation_batch",
     "finance_dispose_fixed_asset",
     "finance_get_fixed_asset",
 }
@@ -94,13 +96,13 @@ def test_fixed_asset_capability_is_discoverable_and_generic_event_is_rejected() 
         "entry_tools": [
             "finance_acquire_fixed_asset",
             "finance_activate_fixed_asset",
-            "finance_preview_fixed_asset_depreciation",
-            "finance_confirm_fixed_asset_depreciation",
+            "finance_preview_fixed_asset_depreciation_batch",
+            "finance_confirm_fixed_asset_depreciation_batch",
             "finance_dispose_fixed_asset",
             "finance_get_fixed_asset",
         ],
         "generic_event_writer": "not_available",
-        "accrual_entry": "finance_confirm_fixed_asset_depreciation",
+        "accrual_entry": "finance_confirm_fixed_asset_depreciation_batch",
     }
     request = RecordEventRequest.model_validate(
         {

@@ -82,9 +82,7 @@ class Organization(Base):
     accounting_period_control_enabled: Mapped[bool] = mapped_column(
         default=True, server_default="1"
     )
-    accounting_period_control_start_date: Mapped[date | None] = mapped_column(
-        Date, nullable=True
-    )
+    accounting_period_control_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     bank_reconciliation_scope_current_action_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, nullable=True
     )
@@ -146,9 +144,7 @@ class OwnerAccount(Base):
     last_authenticated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    password_changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow
-    )
+    password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -173,8 +169,7 @@ class OwnerAccount(Base):
             name="ck_owner_account_login_normalized",
         ),
         CheckConstraint(
-            "length(password_hash) = 97 AND "
-            "password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=4$%'",
+            "length(password_hash) = 97 AND password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=4$%'",
             name="ck_owner_account_password_hash",
         ),
         CheckConstraint(
@@ -194,12 +189,8 @@ class OwnerAccount(Base):
         ).ddl_if(dialect="postgresql"),
         CheckConstraint("status IN ('active','disabled')", name="ck_owner_account_status"),
         CheckConstraint("credential_version >= 1", name="ck_owner_account_credential_version"),
-        CheckConstraint(
-            "password_failed_attempts >= 0", name="ck_owner_account_password_failures"
-        ),
-        CheckConstraint(
-            "recovery_failed_attempts >= 0", name="ck_owner_account_recovery_failures"
-        ),
+        CheckConstraint("password_failed_attempts >= 0", name="ck_owner_account_password_failures"),
+        CheckConstraint("recovery_failed_attempts >= 0", name="ck_owner_account_recovery_failures"),
     )
 
 
@@ -295,9 +286,7 @@ class OwnerRecoveryCode(Base):
         ),
         UniqueConstraint("code_sha256", name="uq_owner_recovery_code_sha256"),
         UniqueConstraint("org_id", "id", name="uq_owner_recovery_code_org_id"),
-        CheckConstraint(
-            "length(code_sha256) = 64", name="ck_owner_recovery_code_sha256"
-        ),
+        CheckConstraint("length(code_sha256) = 64", name="ck_owner_recovery_code_sha256"),
         CheckConstraint(
             "code_sha256 ~ '^[0-9a-f]{64}$'",
             name="ck_owner_recovery_code_lowerhex",
@@ -462,9 +451,7 @@ Index(
     postgresql_where=(
         OwnerRecoveryCode.used_at.is_(None) & OwnerRecoveryCode.invalidated_at.is_(None)
     ),
-    sqlite_where=(
-        OwnerRecoveryCode.used_at.is_(None) & OwnerRecoveryCode.invalidated_at.is_(None)
-    ),
+    sqlite_where=(OwnerRecoveryCode.used_at.is_(None) & OwnerRecoveryCode.invalidated_at.is_(None)),
 )
 
 
@@ -484,12 +471,8 @@ class Account(Base):
     requires_bank_reconciliation: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default="0"
     )
-    bank_reconciliation_start_date: Mapped[date | None] = mapped_column(
-        Date, nullable=True
-    )
-    bank_reconciliation_end_date: Mapped[date | None] = mapped_column(
-        Date, nullable=True
-    )
+    bank_reconciliation_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    bank_reconciliation_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     bank_reconciliation_configured_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -585,12 +568,8 @@ class BankReconciliationScopeAction(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_bank_scope_action_org_id"),
-        UniqueConstraint(
-            "org_id", "idempotency_key", name="uq_bank_scope_action_idempotency"
-        ),
-        CheckConstraint(
-            "status IN ('posted','rejected')", name="ck_bank_scope_action_status"
-        ),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_bank_scope_action_idempotency"),
+        CheckConstraint("status IN ('posted','rejected')", name="ck_bank_scope_action_status"),
         CheckConstraint(
             "action_type IS NULL OR action_type IN ('initial_confirmation','scope_change')",
             name="ck_bank_scope_action_type",
@@ -697,9 +676,7 @@ class AccountBankReconciliationScopeHistory(Base):
             name="fk_account_bank_scope_history_org_action",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint(
-            "org_id", "id", name="uq_account_bank_scope_history_org_id"
-        ),
+        UniqueConstraint("org_id", "id", name="uq_account_bank_scope_history_org_id"),
     )
 
 
@@ -1418,9 +1395,7 @@ class AccountingPeriodCalendar(Base):
 
     __table_args__ = (
         UniqueConstraint("org_id", "id", name="uq_accounting_period_calendar_org_id"),
-        UniqueConstraint(
-            "org_id", "calendar_year", name="uq_accounting_period_calendar_org_year"
-        ),
+        UniqueConstraint("org_id", "calendar_year", name="uq_accounting_period_calendar_org_year"),
         CheckConstraint(
             "calendar_year BETWEEN 1 AND 9999", name="ck_accounting_period_calendar_year"
         ),
@@ -1567,9 +1542,7 @@ class AccountingPeriodClose(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     action_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
-    owner_approval_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, nullable=True, unique=True
-    )
+    owner_approval_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
     calculation: Mapped[dict[str, Any]] = mapped_column(JSON)
     calculation_payload: Mapped[str] = mapped_column(Text)
     calculation_hash: Mapped[str] = mapped_column(String(64))
@@ -1611,9 +1584,7 @@ class AccountingPeriodClose(Base):
             "previous_close_hash IS NULL OR length(previous_close_hash) = 64",
             name="ck_period_close_previous_hash_length",
         ),
-        CheckConstraint(
-            "voucher_count >= 0 AND line_count >= 0", name="ck_period_close_counts"
-        ),
+        CheckConstraint("voucher_count >= 0 AND line_count >= 0", name="ck_period_close_counts"),
         CheckConstraint(
             "total_debit_fen >= 0 AND total_debit_fen = total_credit_fen",
             name="ck_period_close_totals",
@@ -1754,7 +1725,7 @@ class FixedAsset(Base):
     cost_fen: Mapped[int] = mapped_column(BigInteger)
     supplier_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     reimbursing_employee_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    settlement_method: Mapped[str] = mapped_column(String(20))
+    settlement_method: Mapped[str] = mapped_column(String(40))
     payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     acquisition_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
@@ -1802,7 +1773,8 @@ class FixedAsset(Base):
             name="ck_fixed_asset_cost_components_total",
         ),
         CheckConstraint(
-            "settlement_method IN ('bank','payable','employee_payable')",
+            "settlement_method IN "
+            "('bank','payable','employee_payable','allocated_employee_payables')",
             name="ck_fixed_asset_settlement_method",
         ),
         CheckConstraint(
@@ -1811,8 +1783,63 @@ class FixedAsset(Base):
             "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL "
             "AND reimbursing_employee_id IS NULL) OR "
             "(settlement_method = 'employee_payable' AND payment_date IS NULL "
-            "AND due_date IS NOT NULL AND reimbursing_employee_id IS NOT NULL)",
+            "AND due_date IS NOT NULL AND reimbursing_employee_id IS NOT NULL) OR "
+            "(settlement_method = 'allocated_employee_payables' "
+            "AND payment_date IS NULL AND due_date IS NULL "
+            "AND reimbursing_employee_id IS NULL)",
             name="ck_fixed_asset_settlement_dates",
+        ),
+    )
+
+
+class FixedAssetCostSource(Base):
+    __tablename__ = "fixed_asset_cost_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    open_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    source_key: Mapped[str] = mapped_column(String(200))
+    employee_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    due_date: Mapped[date] = mapped_column(Date)
+    description: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "asset_id"],
+            ["fixed_assets.org_id", "fixed_assets.id"],
+            name="fk_fixed_asset_cost_source_org_asset",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_fixed_asset_cost_source_org_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "employee_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_fixed_asset_cost_source_org_employee",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "open_item_id"],
+            ["open_items.org_id", "open_items.id"],
+            name="fk_fixed_asset_cost_source_org_open_item",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "org_id", "event_id", "source_key", name="uq_fixed_asset_cost_source_event_key"
+        ),
+        UniqueConstraint("org_id", "id", name="uq_fixed_asset_cost_source_org_id"),
+        CheckConstraint("amount_fen > 0", name="ck_fixed_asset_cost_source_amount"),
+        CheckConstraint("length(trim(source_key)) > 0", name="ck_fixed_asset_cost_source_key"),
+        CheckConstraint(
+            "length(trim(description)) > 0", name="ck_fixed_asset_cost_source_description"
         ),
     )
 
@@ -1830,6 +1857,10 @@ class FixedAssetActivation(Base):
     useful_life_months: Mapped[int] = mapped_column(Integer)
     residual_value_fen: Mapped[int] = mapped_column(BigInteger)
     benefit_area: Mapped[str] = mapped_column(String(30))
+    depreciation_group_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    depreciation_rounding_policy: Mapped[str] = mapped_column(
+        String(50), default="round_half_up_card_v1"
+    )
     accounting_rule_version: Mapped[str] = mapped_column(String(50))
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -1855,6 +1886,69 @@ class FixedAssetActivation(Base):
             "benefit_area IN ('management','sales','service_delivery')",
             name="ck_asset_activation_benefit_area",
         ),
+        CheckConstraint(
+            "depreciation_rounding_policy IN "
+            "('floor_final_remainder_v1','round_half_up_card_v1',"
+            "'round_half_up_group_v1')",
+            name="ck_asset_activation_rounding_policy",
+        ),
+        CheckConstraint(
+            "depreciation_group_code IS NULL OR length(trim(depreciation_group_code)) > 0",
+            name="ck_asset_activation_group_code",
+        ),
+        Index(
+            "ix_fixed_asset_activation_org_group",
+            "org_id",
+            "depreciation_group_code",
+        ),
+    )
+
+
+class FixedAssetDepreciationBatch(Base):
+    __tablename__ = "fixed_asset_depreciation_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    period_start: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    asset_count: Mapped[int] = mapped_column(Integer)
+    total_amount_fen: Mapped[int] = mapped_column(BigInteger)
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    accounting_rule_version: Mapped[str] = mapped_column(String(50))
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_fixed_asset_depreciation_batch_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_fixed_asset_depreciation_batch_org_id"),
+        CheckConstraint("asset_count > 0", name="ck_fixed_asset_depreciation_batch_count"),
+        CheckConstraint("total_amount_fen > 0", name="ck_fixed_asset_depreciation_batch_amount"),
+        CheckConstraint(
+            "length(calculation_hash) = 64",
+            name="ck_fixed_asset_depreciation_batch_hash_length",
+        ),
+        CheckConstraint(
+            "period_start = date_trunc('month', period_start)::date",
+            name="ck_fixed_asset_depreciation_batch_period_month_start",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "date_trunc('month', posting_date)::date = period_start",
+            name="ck_fixed_asset_depreciation_batch_posting_month",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "strftime('%Y-%m', posting_date) = strftime('%Y-%m', period_start)",
+            name="ck_fixed_asset_depreciation_batch_posting_month",
+        ).ddl_if(dialect="sqlite"),
+        CheckConstraint(
+            "calculation_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_fixed_asset_depreciation_batch_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
     )
 
 
@@ -1865,7 +1959,8 @@ class FixedAssetDepreciation(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
-    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
     period_start: Mapped[date] = mapped_column(Date)
     posting_date: Mapped[date] = mapped_column(Date)
     sequence_no: Mapped[int] = mapped_column(Integer)
@@ -1895,7 +1990,16 @@ class FixedAssetDepreciation(Base):
             name="fk_fixed_asset_depreciation_org_event",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["org_id", "batch_id"],
+            ["fixed_asset_depreciation_batches.org_id", "fixed_asset_depreciation_batches.id"],
+            name="fk_fixed_asset_depreciation_org_batch",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "id", name="uq_fixed_asset_depreciation_org_id"),
+        UniqueConstraint(
+            "org_id", "event_id", "asset_id", name="uq_fixed_asset_depreciation_event_asset"
+        ),
         CheckConstraint("sequence_no > 0", name="ck_fixed_asset_depreciation_sequence"),
         CheckConstraint("amount_fen > 0", name="ck_fixed_asset_depreciation_amount"),
         CheckConstraint(
@@ -2058,9 +2162,7 @@ class IntangibleAsset(Base):
         ),
         UniqueConstraint("org_id", "id", name="uq_intangible_asset_org_id"),
         UniqueConstraint("org_id", "asset_code", name="uq_intangible_asset_org_code"),
-        UniqueConstraint(
-            "acquisition_event_id", name="uq_intangible_asset_acquisition_event"
-        ),
+        UniqueConstraint("acquisition_event_id", name="uq_intangible_asset_acquisition_event"),
         CheckConstraint(
             "category IN ('software','patent','trademark','copyright',"
             "'non_patented_technology','other_identifiable_non_land')",
@@ -2070,9 +2172,7 @@ class IntangibleAsset(Base):
             "length(trim(asset_code)) > 0 AND length(trim(name)) > 0",
             name="ck_intangible_asset_identity_text",
         ),
-        CheckConstraint(
-            "length(trim(rights_description)) > 0", name="ck_intangible_asset_rights"
-        ),
+        CheckConstraint("length(trim(rights_description)) > 0", name="ck_intangible_asset_rights"),
         CheckConstraint(
             "(category = 'other_identifiable_non_land' "
             "AND length(trim(other_right_type_description)) > 0 "
@@ -2125,8 +2225,7 @@ class IntangibleAsset(Base):
             name="ck_intangible_asset_benefit_area",
         ),
         CheckConstraint(
-            "life_basis IN ('legal_or_contractual','reliably_estimated',"
-            "'not_reliably_estimated')",
+            "life_basis IN ('legal_or_contractual','reliably_estimated','not_reliably_estimated')",
             name="ck_intangible_asset_life_basis",
         ),
         CheckConstraint(
@@ -2196,8 +2295,7 @@ class IntangibleAssetAmortization(Base):
             name="ck_intangible_amortization_amount",
         ),
         CheckConstraint(
-            "accumulated_after_fen >= amount_fen "
-            "AND accumulated_after_fen <= 9223372036854775807",
+            "accumulated_after_fen >= amount_fen AND accumulated_after_fen <= 9223372036854775807",
             name="ck_intangible_amortization_accumulated",
         ),
         CheckConstraint(
@@ -2378,9 +2476,7 @@ class Borrowing(Base):
             "capitalization_applicable IS FALSE",
             name="ck_borrowing_no_capitalization",
         ),
-        CheckConstraint(
-            "length(trim(purpose_description)) > 0", name="ck_borrowing_purpose"
-        ),
+        CheckConstraint("length(trim(purpose_description)) > 0", name="ck_borrowing_purpose"),
         CheckConstraint(
             "length(trim(accounting_rule_version)) > 0 "
             "AND length(trim(accounting_rule_source_url)) > 0",
@@ -2968,6 +3064,110 @@ class TaxPeriod(Base):
     )
 
 
+class ZeroTaxPeriodConfirmation(Base):
+    """Immutable confirmation of a deterministic all-zero VAT/surtax period.
+
+    A zero calculation has no accounting adjustment and therefore must not
+    create a zero-value voucher.  This append-only control record preserves
+    the calculation hash and authenticated execution attribution instead.
+    """
+
+    __tablename__ = "zero_tax_period_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    adjustment_posting_date: Mapped[date] = mapped_column(Date, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    calculation: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_hash_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    filing_cycle_snapshot: Mapped[str] = mapped_column(String(20), nullable=False)
+    jurisdiction_snapshot: Mapped[str] = mapped_column(String(100), nullable=False)
+    urban_maintenance_rate_snapshot: Mapped[Decimal] = mapped_column(
+        Numeric(6, 5), nullable=False
+    )
+    vat_rule_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    surtax_rule_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_zero_tax_confirmation_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["vat_rule_id"],
+            ["tax_rules.id"],
+            name="fk_zero_tax_confirmation_vat_rule",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["surtax_rule_id"],
+            ["tax_rules.id"],
+            name="fk_zero_tax_confirmation_surtax_rule",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_zero_tax_confirmation_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_zero_tax_confirmation_org_id"),
+        UniqueConstraint(
+            "org_id",
+            "idempotency_key",
+            name="uq_zero_tax_confirmation_idempotency",
+        ),
+        CheckConstraint("start_date <= end_date", name="ck_zero_tax_confirmation_dates"),
+        CheckConstraint(
+            "adjustment_posting_date >= end_date",
+            name="ck_zero_tax_confirmation_posting_date",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) BETWEEN 1 AND 200",
+            name="ck_zero_tax_confirmation_idempotency_length",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64",
+            name="ck_zero_tax_confirmation_request_hash_length",
+        ),
+        CheckConstraint(
+            "length(calculation_hash) = 64",
+            name="ck_zero_tax_confirmation_hash_length",
+        ),
+        CheckConstraint(
+            "length(calculation_hash_payload) > 0",
+            name="ck_zero_tax_confirmation_hash_payload_nonempty",
+        ),
+        CheckConstraint(
+            "filing_cycle_snapshot IN ('monthly','quarterly')",
+            name="ck_zero_tax_confirmation_filing_cycle",
+        ),
+        CheckConstraint(
+            "urban_maintenance_rate_snapshot IN (0.07, 0.05, 0.01)",
+            name="ck_zero_tax_confirmation_urban_rate",
+        ),
+        CheckConstraint(
+            "request_payload_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_zero_tax_confirmation_request_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "calculation_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_zero_tax_confirmation_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+
 class TaxPeriodSource(Base):
     """Organization-bound immutable taxable-event snapshot for a tax period."""
 
@@ -3014,9 +3214,7 @@ class BankStatementImportAction(Base):
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    parser_request_fingerprint_sha256: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    parser_request_fingerprint_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     calculation_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     calculation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -3048,9 +3246,7 @@ class BankStatementImportAction(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_bank_import_action_org_id"),
-        UniqueConstraint(
-            "org_id", "idempotency_key", name="uq_bank_import_action_idempotency"
-        ),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_bank_import_action_idempotency"),
         CheckConstraint(
             "status IN ('posted','partially_posted','rejected')",
             name="ck_bank_import_action_status",
@@ -3370,9 +3566,7 @@ class LateBankEvidenceAction(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_late_bank_action_org_id"),
-        UniqueConstraint(
-            "org_id", "idempotency_key", name="uq_late_bank_action_idempotency"
-        ),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_late_bank_action_idempotency"),
         CheckConstraint(
             "status IN ('posted','rejected')",
             name="ck_late_bank_action_status",
@@ -3534,9 +3728,7 @@ class BankReconciliationFailure(Base):
             name="fk_bank_reconciliation_failure_org_action",
             ondelete="RESTRICT",
         ),
-        CheckConstraint(
-            "error_ordinal >= 1", name="ck_bank_reconciliation_failure_ordinal"
-        ),
+        CheckConstraint("error_ordinal >= 1", name="ck_bank_reconciliation_failure_ordinal"),
         CheckConstraint(
             "length(code) BETWEEN 1 AND 100",
             name="ck_bank_reconciliation_failure_code",
@@ -4051,6 +4243,7 @@ _ATTRIBUTED_ROOT_TYPES = (
     PayrollBatch,
     PayrollOpeningState,
     PayrollPolicyVersion,
+    ZeroTaxPeriodConfirmation,
 )
 
 

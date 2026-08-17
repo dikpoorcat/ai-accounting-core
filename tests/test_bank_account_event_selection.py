@@ -14,7 +14,9 @@ from ai_accounting.models import (
     BusinessEvent,
     Counterparty,
     Evidence,
+    OpenItem,
     Organization,
+    Settlement,
     Voucher,
     VoucherLine,
     event_evidence,
@@ -141,6 +143,9 @@ def test_public_event_requirements_publish_explicit_bank_selection_and_late_evid
         EventType.OWNER_CONTRIBUTION_RECEIVED,
         EventType.OWNER_REPAYMENT,
         EventType.OTHER_INCOME_RECEIVED,
+        EventType.BANK_INTEREST_RECEIVED,
+        EventType.REFUNDABLE_DEPOSIT_PAID,
+        EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
         EventType.BANK_FEE,
         EventType.TAX_PAYMENT,
         EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -158,7 +163,12 @@ def test_public_event_requirements_publish_explicit_bank_selection_and_late_evid
         EventType.INTANGIBLE_ASSET_ACQUISITION,
     }
     special_bank_events = {EventType.INTERNAL_TRANSFER, EventType.CASH_BANK_TRANSFER}
-    required_bank_match_events = {EventType.OTHER_INCOME_RECEIVED}
+    required_bank_match_events = {
+        EventType.OTHER_INCOME_RECEIVED,
+        EventType.BANK_INTEREST_RECEIVED,
+        EventType.REFUNDABLE_DEPOSIT_PAID,
+        EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
+    }
 
     for event_type in unconditional_bank_events:
         requirements = EVENT_REQUIREMENTS[event_type.value]
@@ -315,6 +325,221 @@ def test_retained_verification_payment_requires_and_freezes_exact_sources(
         select(func.count())
         .select_from(event_evidence)
         .where(event_evidence.c.event_id == posted.event_id)
+    ) == 1
+
+
+def test_bank_interest_received_credits_finance_expense_and_requires_bank_evidence(
+    session: Session, organization: Organization
+) -> None:
+    _confirm_scope(session, organization)
+    service = FinanceService(session)
+    base = {
+        "org_id": organization.id,
+        "idempotency_key": "bank-interest-incomplete",
+        "event_type": "bank_interest_received",
+        "business_dates": {
+            "business_date": "2026-08-08",
+            "posting_date": "2026-08-08",
+            "payment_date": "2026-08-08",
+        },
+        "amounts": {"amount_fen": 275},
+        "bank_account_code": "1002",
+    }
+    incomplete = service.record_event(RecordEventRequest.model_validate(base))
+    assert incomplete.status == "needs_information"
+    assert incomplete.missing_information == [
+        "bank_transaction_references",
+        "evidence_references",
+        "description",
+    ]
+
+    bank = _bank_row(
+        session,
+        organization,
+        account_code="1002",
+        amount_fen=275,
+        seed="bank-interest-received",
+    )
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="i" * 64,
+        original_name="bank-statement.xls",
+        media_type="application/vnd.ms-excel",
+        source="test",
+        size_bytes=1,
+        storage_path="test/bank-statement.xls",
+    )
+    session.add(evidence)
+    session.flush()
+    complete = RecordEventRequest.model_validate(
+        base
+        | {
+            "idempotency_key": "bank-interest-complete",
+            "bank_transaction_references": [{"id": bank.id}],
+            "evidence_references": [evidence.id],
+            "description": "银行结息",
+        }
+    )
+    posted = service.record_event(complete)
+
+    assert posted.status == "posted", posted.errors
+    assert _voucher_lines(session, posted.voucher_id) == [
+        ("1002", 275, 0),
+        ("5603", 0, 275),
+    ]
+    assert posted.data["derived"] == {"bank_interest_income_fen": 275}
+    assert bank.matched_event_id == posted.event_id
+    assert session.scalar(
+        select(func.count())
+        .select_from(event_evidence)
+        .where(event_evidence.c.event_id == posted.event_id)
+    ) == 1
+
+
+def test_refundable_deposit_payment_and_return_keep_only_the_real_balance_open(
+    session: Session, organization: Organization
+) -> None:
+    _confirm_scope(session, organization)
+    service = FinanceService(session)
+    incomplete = service.record_event(
+        RecordEventRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "deposit-incomplete",
+                "event_type": "refundable_deposit_paid",
+                "business_dates": {
+                    "business_date": "2026-08-08",
+                    "posting_date": "2026-08-08",
+                    "payment_date": "2026-08-08",
+                },
+                "amounts": {"amount_fen": 2_000_000},
+                "bank_account_code": "1002",
+            }
+        )
+    )
+    assert incomplete.status == "needs_information"
+    assert incomplete.missing_information == [
+        "counterparty",
+        "bank_transaction_references",
+        "evidence_references",
+        "description",
+    ]
+
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="d" * 64,
+        original_name="deposit-confirmation.txt",
+        media_type="text/plain",
+        source="test",
+        size_bytes=1,
+        storage_path="test/deposit-confirmation.txt",
+    )
+    session.add(evidence)
+    session.flush()
+    wrong_payment_bank = _bank_row(
+        session,
+        organization,
+        account_code="1002",
+        amount_fen=-2_000_000,
+        seed="wrong-deposit-payment",
+    )
+    correct_payment_bank = _bank_row(
+        session,
+        organization,
+        account_code="1002",
+        amount_fen=-2_000_000,
+        seed="correct-deposit-payment",
+    )
+    return_bank = _bank_row(
+        session,
+        organization,
+        account_code="1002",
+        amount_fen=2_000_000,
+        seed="wrong-deposit-return",
+    )
+
+    def post_payment(*, key: str, name: str, bank: BankTransaction):
+        return service.record_event(
+            RecordEventRequest.model_validate(
+                {
+                    "org_id": organization.id,
+                    "idempotency_key": key,
+                    "event_type": "refundable_deposit_paid",
+                    "business_dates": {
+                        "business_date": "2026-08-08",
+                        "posting_date": "2026-08-08",
+                        "payment_date": "2026-08-08",
+                    },
+                    "counterparty": {"kind": "supplier", "name": name},
+                    "amounts": {"amount_fen": 2_000_000},
+                    "bank_account_code": "1002",
+                    "bank_transaction_references": [{"id": bank.id}],
+                    "evidence_references": [evidence.id],
+                    "description": "支付可退保证金",
+                }
+            )
+        )
+
+    wrong_payment = post_payment(
+        key="wrong-deposit-payment",
+        name="错误收款主体",
+        bank=wrong_payment_bank,
+    )
+    correct_payment = post_payment(
+        key="correct-deposit-payment",
+        name="正确收款主体",
+        bank=correct_payment_bank,
+    )
+    assert wrong_payment.status == "posted", wrong_payment.errors
+    assert correct_payment.status == "posted", correct_payment.errors
+    assert _voucher_lines(session, wrong_payment.voucher_id) == [
+        ("1221", 2_000_000, 0),
+        ("1002", 0, 2_000_000),
+    ]
+    wrong_item = session.scalar(
+        select(OpenItem).where(OpenItem.source_event_id == wrong_payment.event_id)
+    )
+    correct_item = session.scalar(
+        select(OpenItem).where(OpenItem.source_event_id == correct_payment.event_id)
+    )
+    assert wrong_item is not None and correct_item is not None
+
+    returned = service.record_event(
+        RecordEventRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "wrong-deposit-return",
+                "event_type": "refundable_deposit_return_received",
+                "business_dates": {
+                    "business_date": "2026-08-08",
+                    "posting_date": "2026-08-08",
+                    "payment_date": "2026-08-08",
+                },
+                "counterparty": {"kind": "supplier", "name": "错误收款主体"},
+                "amounts": {"amount_fen": 2_000_000},
+                "bank_account_code": "1002",
+                "bank_transaction_references": [{"id": return_bank.id}],
+                "evidence_references": [evidence.id],
+                "allocations": [
+                    {"open_item_id": wrong_item.id, "amount_fen": 2_000_000}
+                ],
+                "description": "收回误付的可退保证金",
+            }
+        )
+    )
+    assert returned.status == "posted", returned.errors
+    assert _voucher_lines(session, returned.voucher_id) == [
+        ("1002", 2_000_000, 0),
+        ("1221", 0, 2_000_000),
+    ]
+    session.refresh(wrong_item)
+    session.refresh(correct_item)
+    assert (wrong_item.settled_amount_fen, wrong_item.status) == (2_000_000, "settled")
+    assert (correct_item.settled_amount_fen, correct_item.status) == (0, "open")
+    assert session.scalar(
+        select(func.count())
+        .select_from(Settlement)
+        .where(Settlement.payment_event_id == returned.event_id)
     ) == 1
 
 

@@ -78,11 +78,13 @@ from .schemas import (
     INTERNAL_EVENT_TYPES,
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
+    ConfirmFixedAssetDepreciationBatchRequest,
     ConfirmFixedAssetDepreciationRequest,
     ConfirmPayrollRequest,
     DisposeFixedAssetRequest,
     EventType,
     ImportBankStatementRequest,
+    PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
     PreviewPayrollRequest,
     RecordEventRequest,
@@ -550,13 +552,13 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 "entry_tools": [
                     "finance_acquire_fixed_asset",
                     "finance_activate_fixed_asset",
-                    "finance_preview_fixed_asset_depreciation",
-                    "finance_confirm_fixed_asset_depreciation",
+                    "finance_preview_fixed_asset_depreciation_batch",
+                    "finance_confirm_fixed_asset_depreciation_batch",
                     "finance_dispose_fixed_asset",
                     "finance_get_fixed_asset",
                 ],
                 "generic_event_writer": "not_available",
-                "accrual_entry": "finance_confirm_fixed_asset_depreciation",
+                "accrual_entry": "finance_confirm_fixed_asset_depreciation_batch",
             },
             "intangible_asset": {
                 "status": "enabled",
@@ -777,9 +779,7 @@ def finance_query_bank_statement_state(
     """按固定筛选查询银行范围、流水、迟到处理和对账的当前投影。"""
     try:
         with SessionLocal() as session:
-            return _bank_statement_service(session).get_bank_statement_activity(
-                request
-            )
+            return _bank_statement_service(session).get_bank_statement_activity(request)
     except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -903,6 +903,32 @@ def finance_confirm_fixed_asset_depreciation(
     try:
         with SessionLocal.begin() as session:
             result = _fixed_asset_service(session).confirm_fixed_asset_depreciation(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_fixed_asset_depreciation_batch(
+    request: PreviewFixedAssetDepreciationBatchRequest,
+) -> dict[str, Any]:
+    """一次试算当月全部到期资产的逐卡片折旧与一张汇总凭证。"""
+    try:
+        with SessionLocal() as session:
+            result = _fixed_asset_service(session).preview_fixed_asset_depreciation_batch(request)
+            return result.model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_fixed_asset_depreciation_batch(
+    request: ConfirmFixedAssetDepreciationBatchRequest,
+) -> dict[str, Any]:
+    """负责人一次确认整月折旧，保留逐资产明细并只生成一张汇总凭证。"""
+    try:
+        with SessionLocal.begin() as session:
+            result = _fixed_asset_service(session).confirm_fixed_asset_depreciation_batch(request)
             return result.model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)

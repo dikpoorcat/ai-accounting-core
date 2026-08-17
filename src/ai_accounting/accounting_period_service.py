@@ -67,13 +67,16 @@ from .models import (
     Organization,
     OwnerAccount,
     PayrollBatch,
+    Settlement,
     TaxPeriod,
     Voucher,
     VoucherLine,
+    ZeroTaxPeriodConfirmation,
     accounting_period_action_evidence,
 )
+from .tax import calculate_tax_period
 
-_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.2"
+_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.3"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
 _PERIODIC_REVIEW_SOURCE_URLS = {
     "vat_filing_period": (
@@ -102,6 +105,82 @@ class AccountingPeriodService:
     def __init__(self, session: Session, *, current_date: date | None = None):
         self.session = session
         self._current_date = current_date
+
+    def _open_item_counts_as_of(
+        self, org_id: uuid.UUID, period_end: date
+    ) -> dict[str, dict[str, int]]:
+        """Return outstanding balances at period end, excluding later activity."""
+
+        item_rows = self.session.execute(
+            select(OpenItem, BusinessEvent)
+            .join(BusinessEvent, BusinessEvent.id == OpenItem.source_event_id)
+            .where(
+                OpenItem.org_id == org_id,
+                BusinessEvent.posting_date <= period_end,
+                BusinessEvent.status.in_(("posted", "reversed")),
+            )
+        ).all()
+        if not item_rows:
+            return {}
+
+        item_ids = [item.id for item, _source_event in item_rows]
+        settlements = list(
+            self.session.scalars(
+                select(Settlement).where(
+                    Settlement.org_id == org_id,
+                    Settlement.open_item_id.in_(item_ids),
+                )
+            )
+        )
+        event_ids = {
+            event_id
+            for item, source_event in item_rows
+            for event_id in (source_event.id, source_event.reversed_by_event_id)
+            if event_id is not None
+        }
+        event_ids.update(item.payment_event_id for item in settlements)
+        event_ids.update(
+            item.reversed_by_event_id
+            for item in settlements
+            if item.reversed_by_event_id is not None
+        )
+        events = {
+            event.id: event
+            for event in self.session.scalars(
+                select(BusinessEvent).where(
+                    BusinessEvent.org_id == org_id,
+                    BusinessEvent.id.in_(event_ids),
+                )
+            )
+        }
+        settlements_by_item: dict[uuid.UUID, list[Settlement]] = {}
+        for settlement in settlements:
+            settlements_by_item.setdefault(settlement.open_item_id, []).append(settlement)
+
+        counts: dict[str, dict[str, int]] = {}
+        for item, source_event in item_rows:
+            source_reversal = events.get(source_event.reversed_by_event_id)
+            if source_reversal is not None and source_reversal.posting_date <= period_end:
+                continue
+            settled_as_of = 0
+            for settlement in settlements_by_item.get(item.id, []):
+                payment_event = events.get(settlement.payment_event_id)
+                if payment_event is None or payment_event.posting_date > period_end:
+                    continue
+                settlement_reversal = events.get(settlement.reversed_by_event_id)
+                if (
+                    settlement_reversal is not None
+                    and settlement_reversal.posting_date <= period_end
+                ):
+                    continue
+                settled_as_of += settlement.amount_fen
+            remaining = item.original_amount_fen - settled_as_of
+            if remaining <= 0:
+                continue
+            group = counts.setdefault(item.item_type, {"count": 0, "remaining_fen": 0})
+            group["count"] += 1
+            group["remaining_fen"] += remaining
+        return counts
 
     def generate_accounting_period(
         self, request: GenerateAccountingPeriodRequest
@@ -816,25 +895,7 @@ class AccountingPeriodService:
         ).all()
         invoice_counts = {direction: int(count) for direction, count in invoice_rows}
 
-        open_item_rows = self.session.execute(
-            select(
-                OpenItem.item_type,
-                func.count(OpenItem.id),
-                func.coalesce(
-                    func.sum(OpenItem.original_amount_fen - OpenItem.settled_amount_fen),
-                    0,
-                ),
-            )
-            .where(
-                OpenItem.org_id == org_id,
-                OpenItem.status.in_(("open", "partial")),
-            )
-            .group_by(OpenItem.item_type)
-        ).all()
-        open_item_counts = {
-            item_type: {"count": int(count), "remaining_fen": int(remaining)}
-            for item_type, count, remaining in open_item_rows
-        }
+        open_item_counts = self._open_item_counts_as_of(org_id, period.end_date)
 
         assets = list(
             self.session.scalars(
@@ -923,7 +984,7 @@ class AccountingPeriodService:
                 1,
             )
         )
-        tax_period_count = (
+        adjustment_tax_period_count = (
             int(
                 self.session.scalar(
                     select(func.count())
@@ -939,6 +1000,33 @@ class AccountingPeriodService:
             )
             if tax_calculation_due
             else 0
+        )
+        matching_zero_tax_confirmation_count = 0
+        if tax_calculation_due and organization is not None:
+            zero_confirmations = list(
+                self.session.scalars(
+                    select(ZeroTaxPeriodConfirmation).where(
+                        ZeroTaxPeriodConfirmation.org_id == org_id,
+                        ZeroTaxPeriodConfirmation.start_date == tax_period_start,
+                        ZeroTaxPeriodConfirmation.end_date == period.end_date,
+                    )
+                )
+            )
+            for confirmation in zero_confirmations:
+                try:
+                    current = calculate_tax_period(
+                        self.session,
+                        organization,
+                        tax_period_start,
+                        period.end_date,
+                        confirmation.adjustment_posting_date,
+                    )
+                except ValueError:
+                    continue
+                if current.calculation_hash == confirmation.calculation_hash:
+                    matching_zero_tax_confirmation_count += 1
+        tax_period_count = (
+            adjustment_tax_period_count + matching_zero_tax_confirmation_count
         )
         annual_reporting_checkpoint_due = period.calendar_month == 5
         year_end_checkpoint_due = period.calendar_month == 12
@@ -1160,6 +1248,10 @@ class AccountingPeriodService:
                     "filing_cycle": filing_cycle,
                     "tax_calculation_due": tax_calculation_due,
                     "tax_period_count": tax_period_count,
+                    "adjustment_tax_period_count": adjustment_tax_period_count,
+                    "matching_zero_tax_confirmation_count": (
+                        matching_zero_tax_confirmation_count
+                    ),
                     "taxable_event_count": review_counts["tax_items_to_review"],
                     "input_invoice_count": invoice_counts.get("input", 0),
                     "output_invoice_count": invoice_counts.get("output", 0),
@@ -1606,13 +1698,9 @@ class AccountingPeriodService:
     def _review_warnings(
         self, org_id: uuid.UUID, period: AccountingPeriod
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-        open_items = (
-            self.session.scalar(
-                select(func.count())
-                .select_from(OpenItem)
-                .where(OpenItem.org_id == org_id, OpenItem.status.in_(("open", "partial")))
-            )
-            or 0
+        open_items = sum(
+            group["count"]
+            for group in self._open_item_counts_as_of(org_id, period.end_date).values()
         )
         ordinary_rows = self.session.scalars(
             select(BankTransaction).where(

@@ -33,6 +33,8 @@ _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
     "ck_evidence_sha256_lower_hex",
     "ck_intangible_asset_acquisition_month",
     "ck_tax_period_hash_lower_hex",
+    "ck_zero_tax_confirmation_request_hash_lower_hex",
+    "ck_zero_tax_confirmation_hash_lower_hex",
     "ck_borrowing_accrual_hash_lower_hex",
     "ck_intangible_amortization_period_month_start",
     "ck_intangible_amortization_posting_month",
@@ -41,6 +43,8 @@ _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
     "ck_fixed_asset_depreciation_posting_month",
     "ck_fixed_asset_depreciation_hash_lower_hex",
     "ck_fixed_asset_depreciation_period_month_start",
+    "ck_fixed_asset_depreciation_batch_hash_lower_hex",
+    "ck_fixed_asset_depreciation_batch_period_month_start",
 }
 
 

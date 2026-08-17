@@ -9,8 +9,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from ai_accounting.fixed_assets import (
+    DepreciationGroupMember,
     FixedAssetCalculationError,
     calculate_acquisition_cost,
+    calculate_grouped_straight_line_depreciation,
     calculate_straight_line_depreciation,
     calculate_used_fixed_asset_vat,
     fixed_asset_calculation_hash,
@@ -72,6 +74,67 @@ def test_straight_line_depreciation_puts_rounding_remainder_in_last_month() -> N
     ]
     assert final.is_final_month is True
     assert final.closing_accumulated_depreciation_fen == 1_000
+
+
+def test_grouped_straight_line_rounds_book_card_half_up_before_allocation() -> None:
+    members = (
+        DepreciationGroupMember("sign", 400_000, 0),
+        DepreciationGroupMember("renovation", 3_200_000, 0),
+        DepreciationGroupMember("glass", 140_000, 0),
+        DepreciationGroupMember("adjustment", 260_000, 0),
+    )
+    results = [
+        calculate_grouped_straight_line_depreciation(
+            members=members,
+            member_key=member.member_key,
+            useful_life_months=60,
+            completed_months=0,
+            opening_accumulated_depreciation_fen=0,
+        )
+        for member in members
+    ]
+
+    assert {result.group_base_monthly_fen for result in results} == {66_667}
+    assert sum(result.member_result.depreciation_fen for result in results) == 66_667
+    assert sum(result.member_receives_rounding_fen for result in results) == 2
+
+
+def test_grouped_straight_line_final_month_closes_every_member_exactly() -> None:
+    members = (
+        DepreciationGroupMember("a", 1_001, 1),
+        DepreciationGroupMember("b", 1_002, 2),
+    )
+    first = {
+        member.member_key: calculate_grouped_straight_line_depreciation(
+            members=members,
+            member_key=member.member_key,
+            useful_life_months=3,
+            completed_months=0,
+            opening_accumulated_depreciation_fen=0,
+        )
+        for member in members
+    }
+    final = {
+        member.member_key: calculate_grouped_straight_line_depreciation(
+            members=members,
+            member_key=member.member_key,
+            useful_life_months=3,
+            completed_months=2,
+            opening_accumulated_depreciation_fen=(
+                first[member.member_key].member_result.depreciation_fen * 2
+            ),
+        )
+        for member in members
+    }
+
+    assert all(result.member_result.is_final_month for result in final.values())
+    assert {
+        member.member_key: (
+            first[member.member_key].member_result.depreciation_fen * 2
+            + final[member.member_key].member_result.depreciation_fen
+        )
+        for member in members
+    } == {"a": 1_000, "b": 1_000}
 
 
 @given(

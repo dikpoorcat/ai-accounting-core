@@ -28,6 +28,9 @@ FINAL_VOUCHER_STATUSES = ("posted", "reversed")
 EVENT_TYPE_LABELS = {
     "owner_contribution_received": "股东投入",
     "other_income_received": "营业外收入",
+    "bank_interest_received": "银行存款利息",
+    "refundable_deposit_paid": "保证金支付",
+    "refundable_deposit_return_received": "保证金退回",
     "employee_reimbursement": "报销确认",
     "employee_reimbursement_payment": "报销付款",
     "fixed_asset_acquisition": "固定资产确认",
@@ -385,6 +388,12 @@ def _compact_voucher_summary(
         ):
             return "商户小额验证款转营业外收入"
         return "营业外收入确认"
+    if event.event_type == "bank_interest_received":
+        return "银行存款利息收入"
+    if event.event_type == "refundable_deposit_paid":
+        return f"支付{party + '的' if party else ''}可退保证金"
+    if event.event_type == "refundable_deposit_return_received":
+        return f"收回{party + '的' if party else ''}可退保证金"
     if event.event_type == "employee_reimbursement":
         compact = description.strip().rstrip("。")
         prefixes = (

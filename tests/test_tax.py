@@ -11,7 +11,14 @@ from hypothesis import strategies as st
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ai_accounting.models import BusinessEvent, Organization, TaxPeriod, TaxPeriodSource, Voucher
+from ai_accounting.models import (
+    BusinessEvent,
+    Organization,
+    TaxPeriod,
+    TaxPeriodSource,
+    Voucher,
+    ZeroTaxPeriodConfirmation,
+)
 from ai_accounting.schemas import (
     ReverseEventRequest,
     TaxPeriodConfirmRequest,
@@ -118,7 +125,7 @@ def test_tax_hash_payload_is_exported_reproducible_and_reload_stable(
     assert reloaded.calculation_hash == first.calculation_hash
 
 
-def test_zero_adjustment_rejects_without_confirmation_rows(
+def test_zero_adjustment_records_confirmation_without_event_or_voucher(
     session: Session, organization: Organization
 ) -> None:
     service = FinanceService(session)
@@ -141,12 +148,35 @@ def test_zero_adjustment_rejects_without_confirmation_rows(
             idempotency_key="zero-tax-adjustment",
         )
     )
-    assert result.status == "rejected"
-    assert result.errors == ["TAX_PERIOD_NO_ADJUSTMENT"]
+    assert result.status == "posted"
+    assert result.event_id is None
+    assert result.voucher_id is None
+    assert result.data["no_accounting_adjustment"] is True
+    assert result.data["idempotent_replay"] is False
+    confirmation = session.get(
+        ZeroTaxPeriodConfirmation,
+        uuid.UUID(result.data["zero_tax_period_confirmation_id"]),
+    )
+    assert confirmation is not None
+    assert confirmation.calculation_hash == preview["calculation_hash"]
     assert session.query(BusinessEvent).count() == before_events
     assert session.query(Voucher).count() == 0
     assert session.query(TaxPeriod).count() == 0
     assert session.query(TaxPeriodSource).count() == 0
+
+    replay = service.confirm_tax_period(
+        TaxPeriodConfirmRequest(
+            org_id=organization.id,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            adjustment_posting_date=date(2026, 3, 31),
+            calculation_hash=preview["calculation_hash"],
+            idempotency_key="zero-tax-adjustment",
+        )
+    )
+    assert replay.status == "posted"
+    assert replay.data["idempotent_replay"] is True
+    assert replay.data["zero_tax_period_confirmation_id"] == str(confirmation.id)
 
 
 def test_tax_period_adjustment_cannot_be_posted_twice(

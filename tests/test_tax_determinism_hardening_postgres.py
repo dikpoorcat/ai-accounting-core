@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.coa import seed_organization
-from ai_accounting.models import Account, TaxPeriod
+from ai_accounting.models import Account, TaxPeriod, ZeroTaxPeriodConfirmation
 from ai_accounting.schemas import (
     RecordEventRequest,
     TaxPeriodConfirmRequest,
@@ -475,5 +475,45 @@ def test_direct_sql_forgeries_and_concurrent_confirm_are_closed_at_commit(
                     .select_from(TaxPeriod)
                     .where(TaxPeriod.org_id == org_id, TaxPeriod.status == "posted")
                 ) == 1
+
+            with Session(engine) as session:
+                zero_org = seed_organization(
+                    session,
+                    name="零税额税期确认硬化验收",
+                    accounting_period_control_enabled=False,
+                )
+                zero_preview = _preview(FinanceService(session), zero_org.id)
+                zero_result = _confirm(
+                    FinanceService(session),
+                    zero_org.id,
+                    str(zero_preview["calculation_hash"]),
+                    "zero-tax-postgres-confirm",
+                )
+                assert zero_result.status.value == "posted", zero_result.errors
+                assert zero_result.event_id is None
+                assert zero_result.voucher_id is None
+                zero_org_id = zero_org.id
+                session.commit()
+
+            with Session(engine) as session:
+                assert session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(ZeroTaxPeriodConfirmation)
+                    .where(ZeroTaxPeriodConfirmation.org_id == zero_org_id)
+                ) == 1
+
+            with pytest.raises(
+                DBAPIError,
+                match="ZERO_TAX_PERIOD_CONFIRMATION_IMMUTABLE",
+            ):
+                with engine.begin() as connection:
+                    connection.execute(
+                        sa.text(
+                            "UPDATE zero_tax_period_confirmations "
+                            "SET calculation_hash = repeat('0', 64) "
+                            "WHERE org_id = :org_id"
+                        ),
+                        {"org_id": zero_org_id},
+                    )
         finally:
             engine.dispose()

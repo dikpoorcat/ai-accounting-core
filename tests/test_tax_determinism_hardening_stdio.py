@@ -16,7 +16,14 @@ from sqlalchemy import func, select
 
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_engine, make_session_factory
-from ai_accounting.models import BusinessEvent, Evidence, FixedAssetDisposal, TaxPeriod, Voucher
+from ai_accounting.models import (
+    BusinessEvent,
+    Evidence,
+    FixedAssetDisposal,
+    TaxPeriod,
+    Voucher,
+    ZeroTaxPeriodConfirmation,
+)
 
 
 def _stdio_environment(database_url: str, evidence_directory: Path) -> dict[str, str]:
@@ -275,8 +282,10 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                         }
                     },
                 )
-                assert no_adjustment["status"] == "rejected"
-                assert no_adjustment["errors"] == ["TAX_PERIOD_NO_ADJUSTMENT"]
+                assert no_adjustment["status"] == "posted"
+                assert no_adjustment["event_id"] is None
+                assert no_adjustment["voucher_id"] is None
+                assert no_adjustment["data"]["no_accounting_adjustment"] is True
                 return {
                     "source": source,
                     "confirmed": confirmed,
@@ -291,6 +300,9 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
     verification_factory = make_session_factory(verification_engine)
     try:
         with verification_factory() as database_session:
+            assert database_session.scalar(
+                select(func.count()).select_from(ZeroTaxPeriodConfirmation)
+            ) == 1
             source_id = uuid.UUID(result["source"]["event_id"])
             confirmation_id = uuid.UUID(result["confirmed"]["event_id"])
             retirement_id = uuid.UUID(result["retired"]["event_id"])

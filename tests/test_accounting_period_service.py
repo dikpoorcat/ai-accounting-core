@@ -25,13 +25,16 @@ from ai_accounting.models import (
     Borrowing,
     BorrowingInterestAccrual,
     BusinessEvent,
+    Counterparty,
     Evidence,
     FixedAssetActivation,
     FixedAssetDepreciation,
     FixedAssetDisposal,
     IntangibleAsset,
     IntangibleAssetAmortization,
+    OpenItem,
     Organization,
+    Settlement,
 )
 
 
@@ -93,6 +96,9 @@ class _LateWarningSession:
         if "SELECT business_events.status" in rendered:
             return self.direct_event_status
         return 0
+
+    def execute(self, _statement: object) -> _WarningRows:
+        return _WarningRows([])
 
     def scalars(self, statement: object) -> _WarningRows:
         rendered = str(statement)
@@ -171,6 +177,85 @@ def test_generation_rejects_future_month_with_injected_current_date() -> None:
 
     assert current.status is AccountingPeriodResultStatus.POSTED
     assert future.errors == ["ACCOUNTING_PERIOD_FUTURE_GENERATION_NOT_ALLOWED"]
+
+
+def test_open_item_review_uses_period_end_snapshot_not_current_status() -> None:
+    session = _session()
+    organization, _evidence = _organization_and_evidence(session)
+    counterparty = Counterparty(
+        org_id=organization.id,
+        kind="other",
+        name="期间往来方",
+    )
+    session.add(counterparty)
+    session.flush()
+
+    feb_source = BusinessEvent(
+        org_id=organization.id,
+        idempotency_key="feb-open-item",
+        event_type="expense_accrual",
+        status="posted",
+        facts={},
+        business_date=date(2026, 2, 20),
+        posting_date=date(2026, 2, 20),
+    )
+    march_source = BusinessEvent(
+        org_id=organization.id,
+        idempotency_key="march-open-item",
+        event_type="refundable_deposit_paid",
+        status="posted",
+        facts={},
+        business_date=date(2026, 3, 4),
+        posting_date=date(2026, 3, 4),
+    )
+    march_payment = BusinessEvent(
+        org_id=organization.id,
+        idempotency_key="march-settlement",
+        event_type="supplier_payment",
+        status="posted",
+        facts={},
+        business_date=date(2026, 3, 1),
+        posting_date=date(2026, 3, 1),
+    )
+    session.add_all([feb_source, march_source, march_payment])
+    session.flush()
+    feb_item = OpenItem(
+        org_id=organization.id,
+        counterparty_id=counterparty.id,
+        source_event_id=feb_source.id,
+        item_type="payable",
+        original_amount_fen=10_000,
+        settled_amount_fen=10_000,
+        status="settled",
+    )
+    march_item = OpenItem(
+        org_id=organization.id,
+        counterparty_id=counterparty.id,
+        source_event_id=march_source.id,
+        item_type="receivable",
+        original_amount_fen=20_000,
+        settled_amount_fen=0,
+        status="open",
+    )
+    session.add_all([feb_item, march_item])
+    session.flush()
+    session.add(
+        Settlement(
+            org_id=organization.id,
+            open_item_id=feb_item.id,
+            payment_event_id=march_payment.id,
+            amount_fen=10_000,
+            reversed=False,
+        )
+    )
+    session.flush()
+
+    counts = AccountingPeriodService(session)._open_item_counts_as_of(
+        organization.id,
+        date(2026, 2, 28),
+    )
+
+    assert counts == {"payable": {"count": 1, "remaining_fen": 10_000}}
 
 
 def test_pending_late_bank_warning_continues_each_later_month_and_direct_reversal_restores_it(
@@ -457,7 +542,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
     assert closed.data["calculation"]["checker_version"] == (
-        "accounting_period_close_checker_2026.2"
+        "accounting_period_close_checker_2026.3"
     )
     assert list(closed.data["calculation"]["review_counts"]) == [
         "historical_bank_scope_corrections_pending",

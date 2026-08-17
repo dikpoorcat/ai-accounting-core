@@ -18,6 +18,9 @@ from typing import Any
 
 SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION = "small_enterprise_fixed_asset_straight_line_2013.1"
 SMALL_SCALE_USED_FIXED_ASSET_VAT_RULE_VERSION = "small_scale_used_fixed_asset_vat_2026.1"
+LEGACY_FLOOR_DEPRECIATION_POLICY = "floor_final_remainder_v1"
+ROUND_HALF_UP_CARD_DEPRECIATION_POLICY = "round_half_up_card_v1"
+ROUND_HALF_UP_GROUP_DEPRECIATION_POLICY = "round_half_up_group_v1"
 
 
 class FixedAssetCalculationError(ValueError):
@@ -49,6 +52,30 @@ class StraightLineDepreciationResult:
     depreciation_fen: int
     closing_accumulated_depreciation_fen: int
     is_final_month: bool
+
+
+@dataclass(frozen=True)
+class DepreciationGroupMember:
+    """One immutable cost component participating in a book-card policy group."""
+
+    member_key: str
+    cost_fen: int
+    residual_value_fen: int
+
+
+@dataclass(frozen=True)
+class GroupedStraightLineDepreciationResult:
+    """One member's allocation from a rounded book-card monthly amount."""
+
+    rounding_policy: str
+    member_key: str
+    group_depreciable_fen: int
+    group_base_monthly_fen: int
+    group_member_count: int
+    member_base_monthly_fen: int
+    member_remainder_rank: int
+    member_receives_rounding_fen: bool
+    member_result: StraightLineDepreciationResult
 
 
 @dataclass(frozen=True)
@@ -152,9 +179,7 @@ def calculate_straight_line_depreciation(
             "opening accumulated depreciation does not match continuous history",
         )
     is_final_month = completed_months == useful_life_months - 1
-    depreciation_fen = (
-        depreciable_fen - opening if is_final_month else base_monthly_fen
-    )
+    depreciation_fen = depreciable_fen - opening if is_final_month else base_monthly_fen
     closing = opening + depreciation_fen
     return StraightLineDepreciationResult(
         cost_fen=cost,
@@ -167,6 +192,131 @@ def calculate_straight_line_depreciation(
         depreciation_fen=depreciation_fen,
         closing_accumulated_depreciation_fen=closing,
         is_final_month=is_final_month,
+    )
+
+
+def calculate_grouped_straight_line_depreciation(
+    *,
+    members: tuple[DepreciationGroupMember, ...],
+    member_key: str,
+    useful_life_months: int,
+    completed_months: int,
+    opening_accumulated_depreciation_fen: int,
+) -> GroupedStraightLineDepreciationResult:
+    """Round one book card half-up, then allocate cents deterministically.
+
+    Each component first receives the floor of its exact monthly amount.  Any
+    cents needed to reach the book-card half-up amount go to components with
+    the largest fractional remainders; ``member_key`` is the stable tie-break.
+    The last month still receives each component's remaining depreciable cost.
+    """
+
+    if not members:
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_DEPRECIATION_GROUP_EMPTY",
+            "at least one depreciation group member is required",
+        )
+    if isinstance(useful_life_months, bool) or not isinstance(useful_life_months, int):
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_INVALID_USEFUL_LIFE", "useful_life_months must be an integer"
+        )
+    if useful_life_months <= 0:
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_INVALID_USEFUL_LIFE", "useful_life_months must be positive"
+        )
+    if isinstance(completed_months, bool) or not isinstance(completed_months, int):
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_DEPRECIATION_OUT_OF_SEQUENCE", "completed_months must be an integer"
+        )
+    if completed_months < 0 or completed_months >= useful_life_months:
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_DEPRECIATION_OUT_OF_SEQUENCE",
+            "completed_months must identify an unposted depreciation month",
+        )
+
+    normalized: list[tuple[str, int, int, int, int, int]] = []
+    seen_keys: set[str] = set()
+    for member in members:
+        if not member.member_key or member.member_key in seen_keys:
+            raise FixedAssetCalculationError(
+                "FIXED_ASSET_DEPRECIATION_GROUP_INVALID",
+                "depreciation group member keys must be non-empty and unique",
+            )
+        seen_keys.add(member.member_key)
+        cost = _require_fen(member.cost_fen, "cost_fen", positive=True)
+        residual = _require_fen(member.residual_value_fen, "residual_value_fen")
+        if residual >= cost:
+            raise FixedAssetCalculationError(
+                "FIXED_ASSET_INVALID_RESIDUAL_VALUE",
+                "residual_value_fen must be less than cost_fen",
+            )
+        depreciable = cost - residual
+        if depreciable < useful_life_months:
+            raise FixedAssetCalculationError(
+                "FIXED_ASSET_INVALID_DEPRECIATION_POLICY",
+                "depreciable_fen must cover at least one fen in every useful-life month",
+            )
+        floor_amount, remainder = divmod(depreciable, useful_life_months)
+        normalized.append((member.member_key, cost, residual, depreciable, floor_amount, remainder))
+
+    target_rows = [row for row in normalized if row[0] == member_key]
+    if len(target_rows) != 1:
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_DEPRECIATION_GROUP_MEMBER_NOT_FOUND",
+            "target depreciation group member was not found",
+        )
+
+    group_depreciable = sum(row[3] for row in normalized)
+    group_base_monthly = _round_fen(Decimal(group_depreciable) / Decimal(useful_life_months))
+    floor_total = sum(row[4] for row in normalized)
+    extra_fen = group_base_monthly - floor_total
+    ranked = sorted(normalized, key=lambda row: (-row[5], row[0]))
+    if extra_fen < 0 or extra_fen > len(ranked):
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_DEPRECIATION_GROUP_INVALID",
+            "group rounding allocation is outside the member count",
+        )
+    allocations = {
+        row[0]: row[4] + (1 if rank < extra_fen else 0) for rank, row in enumerate(ranked)
+    }
+    target = target_rows[0]
+    member_base = allocations[member_key]
+    opening = _require_fen(
+        opening_accumulated_depreciation_fen,
+        "opening_accumulated_depreciation_fen",
+    )
+    expected_opening = member_base * completed_months
+    if opening != expected_opening:
+        raise FixedAssetCalculationError(
+            "FIXED_ASSET_DEPRECIATION_OUT_OF_SEQUENCE",
+            "opening accumulated depreciation does not match grouped history",
+        )
+    is_final_month = completed_months == useful_life_months - 1
+    depreciation = target[3] - opening if is_final_month else member_base
+    closing = opening + depreciation
+    member_rank = next(index + 1 for index, row in enumerate(ranked) if row[0] == member_key)
+    member_result = StraightLineDepreciationResult(
+        cost_fen=target[1],
+        residual_value_fen=target[2],
+        depreciable_fen=target[3],
+        useful_life_months=useful_life_months,
+        completed_months=completed_months,
+        opening_accumulated_depreciation_fen=opening,
+        base_monthly_fen=member_base,
+        depreciation_fen=depreciation,
+        closing_accumulated_depreciation_fen=closing,
+        is_final_month=is_final_month,
+    )
+    return GroupedStraightLineDepreciationResult(
+        rounding_policy=ROUND_HALF_UP_GROUP_DEPRECIATION_POLICY,
+        member_key=member_key,
+        group_depreciable_fen=group_depreciable,
+        group_base_monthly_fen=group_base_monthly,
+        group_member_count=len(normalized),
+        member_base_monthly_fen=member_base,
+        member_remainder_rank=member_rank,
+        member_receives_rounding_fen=member_rank <= extra_fen,
+        member_result=member_result,
     )
 
 

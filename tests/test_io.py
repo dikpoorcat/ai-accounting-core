@@ -23,6 +23,7 @@ def test_evidence_is_content_addressed_and_deduplicated(
     settings = Settings(
         database_url="sqlite://",
         finance_evidence_dir=tmp_path / "evidence",
+        finance_evidence_import_dir=tmp_path,
         finance_max_evidence_bytes=1024,
     )
     request = RegisterEvidenceRequest(

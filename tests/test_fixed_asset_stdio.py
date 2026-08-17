@@ -34,6 +34,8 @@ FIXED_ASSET_TOOLS = {
     "finance_activate_fixed_asset",
     "finance_preview_fixed_asset_depreciation",
     "finance_confirm_fixed_asset_depreciation",
+    "finance_preview_fixed_asset_depreciation_batch",
+    "finance_confirm_fixed_asset_depreciation_batch",
     "finance_dispose_fixed_asset",
     "finance_get_fixed_asset",
 }

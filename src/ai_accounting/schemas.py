@@ -41,6 +41,9 @@ class EventType(StrEnum):
     OWNER_CONTRIBUTION_RECEIVED = "owner_contribution_received"
     OWNER_REPAYMENT = "owner_repayment"
     OTHER_INCOME_RECEIVED = "other_income_received"
+    BANK_INTEREST_RECEIVED = "bank_interest_received"
+    REFUNDABLE_DEPOSIT_PAID = "refundable_deposit_paid"
+    REFUNDABLE_DEPOSIT_RETURN_RECEIVED = "refundable_deposit_return_received"
     BANK_FEE = "bank_fee"
     INTERNAL_TRANSFER = "internal_transfer"
     CASH_BANK_TRANSFER = "cash_bank_transfer"
@@ -240,9 +243,51 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_REQUIRED,
         "posting_template": "debit selected bank account; credit non-operating income",
         "accounting_basis_url": (
-            "https://kjs.mof.gov.cn/zhengcefabu/201111/"
-            "P020111118325852734144.pdf"
+            "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852734144.pdf"
         ),
+    },
+    EventType.BANK_INTEREST_RECEIVED.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "required_fields": [
+            "bank_account_code",
+            "bank_transaction_references",
+            "evidence_references",
+            "description",
+        ],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_REQUIRED,
+        "posting_template": "debit selected bank account; credit finance expense",
+        "accounting_basis_url": (
+            "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852734144.pdf"
+        ),
+    },
+    EventType.REFUNDABLE_DEPOSIT_PAID.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "counterparty": "supplier or other required",
+        "required_fields": [
+            "bank_account_code",
+            "bank_transaction_references",
+            "evidence_references",
+            "description",
+        ],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_REQUIRED,
+        "creates": "refundable-deposit receivable open item",
+        "posting_template": "debit other receivable; credit selected bank account",
+    },
+    EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "counterparty": "same supplier or other required",
+        "allocations": "required and total must equal receipt",
+        "required_fields": [
+            "bank_account_code",
+            "bank_transaction_references",
+            "evidence_references",
+            "description",
+        ],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_REQUIRED,
+        "posting_template": "debit selected bank account; credit other receivable",
     },
     EventType.BANK_FEE.value: {
         "amount": "amount_fen",
@@ -328,7 +373,7 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "workflow": "finance_activate_fixed_asset only",
     },
     EventType.FIXED_ASSET_DEPRECIATION.value: {
-        "workflow": "finance_preview_fixed_asset_depreciation then confirm only",
+        "workflow": ("finance_preview_fixed_asset_depreciation_batch then batch confirm only"),
     },
     EventType.FIXED_ASSET_DISPOSAL.value: {
         "workflow": "finance_dispose_fixed_asset only",
@@ -861,10 +906,17 @@ class FixedAssetAcquisitionSettlementKind(StrEnum):
     BANK = "bank"
     PAYABLE = "payable"
     EMPLOYEE_PAYABLE = "employee_payable"
+    ALLOCATED_EMPLOYEE_PAYABLES = "allocated_employee_payables"
 
 
 class FixedAssetDepreciationMethod(StrEnum):
     STRAIGHT_LINE = "straight_line"
+
+
+class FixedAssetDepreciationRoundingPolicy(StrEnum):
+    LEGACY_FLOOR_FINAL_REMAINDER = "floor_final_remainder_v1"
+    ROUND_HALF_UP_CARD = "round_half_up_card_v1"
+    ROUND_HALF_UP_GROUP = "round_half_up_group_v1"
 
 
 class FixedAssetDisposalKind(StrEnum):
@@ -911,18 +963,32 @@ class FixedAssetInformationRequirement(BaseModel):
     fields: list[str]
 
 
+class FixedAssetEmployeeCostSource(BaseModel):
+    """One evidence-backed employee advance included in a canonical asset card."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_key: str = Field(min_length=1, max_length=200)
+    amount_fen: PositiveFen
+    reimbursing_employee: CounterpartyRef
+    due_date: date
+    description: str = Field(min_length=1, max_length=500)
+
+
 class FixedAssetReadyForUseFacts(BaseModel):
     """Depreciation facts for an acquired asset that is already ready for use."""
 
     model_config = ConfigDict(extra="forbid")
 
     in_service_date: date | None = None
-    depreciation_method: FixedAssetDepreciationMethod = (
-        FixedAssetDepreciationMethod.STRAIGHT_LINE
-    )
+    depreciation_method: FixedAssetDepreciationMethod = FixedAssetDepreciationMethod.STRAIGHT_LINE
     useful_life_months: Annotated[StrictInt, Field(ge=13)] | None = None
     residual_value_fen: Fen | None = None
     benefit_area: FixedAssetBenefitArea | None = None
+    depreciation_group_code: str | None = Field(default=None, min_length=1, max_length=100)
+    depreciation_rounding_policy: FixedAssetDepreciationRoundingPolicy = (
+        FixedAssetDepreciationRoundingPolicy.ROUND_HALF_UP_CARD
+    )
 
     def missing_fields(self) -> list[str]:
         return [
@@ -957,6 +1023,9 @@ class AcquireFixedAssetRequest(BaseModel):
     cost_components: FixedAssetCostComponents = Field(default_factory=FixedAssetCostComponents)
     supplier: CounterpartyRef | None = None
     reimbursing_employee: CounterpartyRef | None = None
+    employee_cost_sources: list[FixedAssetEmployeeCostSource] = Field(
+        default_factory=list, max_length=100
+    )
     settlement_method: FixedAssetAcquisitionSettlementKind | None = None
     bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     payment_date: date | None = None
@@ -994,9 +1063,8 @@ class AcquireFixedAssetRequest(BaseModel):
         if self.settlement_method in {
             FixedAssetAcquisitionSettlementKind.PAYABLE,
             FixedAssetAcquisitionSettlementKind.EMPLOYEE_PAYABLE,
-        } and (
-            self.bank_account_code is not None or self.bank_transaction_references
-        ):
+            FixedAssetAcquisitionSettlementKind.ALLOCATED_EMPLOYEE_PAYABLES,
+        } and (self.bank_account_code is not None or self.bank_transaction_references):
             raise ValueError("a payable acquisition must not include bank facts")
         if (
             self.settlement_method is not FixedAssetAcquisitionSettlementKind.EMPLOYEE_PAYABLE
@@ -1005,6 +1073,28 @@ class AcquireFixedAssetRequest(BaseModel):
             raise ValueError(
                 "reimbursing_employee is only accepted for employee-payable acquisition"
             )
+        if (
+            self.settlement_method
+            is not FixedAssetAcquisitionSettlementKind.ALLOCATED_EMPLOYEE_PAYABLES
+            and self.employee_cost_sources
+        ):
+            raise ValueError(
+                "employee_cost_sources are only accepted for allocated employee payables"
+            )
+        if (
+            self.settlement_method
+            is FixedAssetAcquisitionSettlementKind.ALLOCATED_EMPLOYEE_PAYABLES
+        ):
+            if self.due_date is not None:
+                raise ValueError("allocated employee payables use each cost source due_date")
+            source_keys = [item.source_key for item in self.employee_cost_sources]
+            if len(source_keys) != len(set(source_keys)):
+                raise ValueError("employee cost source keys must be unique")
+            component_values = self.cost_components.model_dump().values()
+            if all(value is not None for value in component_values) and sum(
+                int(value) for value in component_values
+            ) != sum(item.amount_fen for item in self.employee_cost_sources):
+                raise ValueError("employee cost source amounts must equal asset cost")
         return self
 
     def missing_information(self) -> list[FixedAssetInformationRequirement]:
@@ -1109,6 +1199,21 @@ class AcquireFixedAssetRequest(BaseModel):
                         fields=["due_date"],
                     )
                 )
+        elif (
+            self.settlement_method
+            is FixedAssetAcquisitionSettlementKind.ALLOCATED_EMPLOYEE_PAYABLES
+        ):
+            if not self.employee_cost_sources:
+                missing.append(
+                    FixedAssetInformationRequirement(
+                        code="FIXED_ASSET_EMPLOYEE_COST_SOURCES_REQUIRED",
+                        message=(
+                            "a canonical asset funded by employee advances requires its "
+                            "finite cost-source allocations"
+                        ),
+                        fields=["employee_cost_sources"],
+                    )
+                )
         elif self.due_date is None:
             missing.append(
                 FixedAssetInformationRequirement(
@@ -1154,6 +1259,10 @@ class ActivateFixedAssetRequest(BaseModel):
     useful_life_months: Annotated[StrictInt, Field(ge=13)] | None = None
     residual_value_fen: Fen | None = None
     benefit_area: FixedAssetBenefitArea | None = None
+    depreciation_group_code: str | None = Field(default=None, min_length=1, max_length=100)
+    depreciation_rounding_policy: FixedAssetDepreciationRoundingPolicy = (
+        FixedAssetDepreciationRoundingPolicy.ROUND_HALF_UP_CARD
+    )
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     description: str = Field(default="", max_length=2000)
 
@@ -1244,6 +1353,54 @@ class ConfirmFixedAssetDepreciationRequest(PreviewFixedAssetDepreciationRequest)
                     code="FIXED_ASSET_CONFIRMATION_REQUIRED",
                     message="calculation hash is required",
                     fields=fields,
+                )
+            )
+        return missing
+
+
+class PreviewFixedAssetDepreciationBatchRequest(BaseModel):
+    """Calculate every active asset due in one calendar month as one batch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    depreciation_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    posting_date: date | None = None
+
+    def missing_information(self) -> list[FixedAssetInformationRequirement]:
+        fields = [
+            field_name
+            for field_name in ("depreciation_period", "posting_date")
+            if getattr(self, field_name) is None
+        ]
+        return (
+            [
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_DEPRECIATION_BATCH_FACTS_REQUIRED",
+                    message="YYYY-MM depreciation period and posting date are required",
+                    fields=fields,
+                )
+            ]
+            if fields
+            else []
+        )
+
+
+class ConfirmFixedAssetDepreciationBatchRequest(PreviewFixedAssetDepreciationBatchRequest):
+    """Confirm one unchanged all-assets monthly depreciation batch."""
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    confirmation_note: str = Field(default="", max_length=2000)
+
+    def missing_information(self) -> list[FixedAssetInformationRequirement]:
+        missing = super().missing_information()
+        if self.calculation_hash is None:
+            missing.append(
+                FixedAssetInformationRequirement(
+                    code="FIXED_ASSET_DEPRECIATION_BATCH_CONFIRMATION_REQUIRED",
+                    message="batch calculation hash is required",
+                    fields=["calculation_hash"],
                 )
             )
         return missing
@@ -1482,6 +1639,9 @@ class RecordEventRequest(BaseModel):
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
             EventType.OTHER_INCOME_RECEIVED,
+            EventType.BANK_INTEREST_RECEIVED,
+            EventType.REFUNDABLE_DEPOSIT_PAID,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
             EventType.BANK_FEE,
             EventType.TAX_PAYMENT,
             EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -1539,6 +1699,49 @@ class RecordEventRequest(BaseModel):
             raise ValueError("other_income_received does not accept invoice references")
         if self.allocations or self.salary_withholding_allocations:
             raise ValueError("other_income_received does not accept allocations")
+        return self
+
+    @model_validator(mode="after")
+    def bank_interest_received_uses_only_its_fixed_fact_shape(self) -> RecordEventRequest:
+        if self.event_type is not EventType.BANK_INTEREST_RECEIVED:
+            return self
+        if self.amounts.gross_amount_fen is not None:
+            raise ValueError("bank_interest_received must use amount_fen")
+        if self.amounts.expense_account_role is not None:
+            raise ValueError("bank_interest_received does not accept an expense account role")
+        if self.counterparty is not None:
+            raise ValueError("bank_interest_received does not accept a counterparty")
+        if self.tax_facts is not None:
+            raise ValueError("bank_interest_received does not accept tax_facts")
+        if self.invoice_references:
+            raise ValueError("bank_interest_received does not accept invoice references")
+        if self.allocations or self.salary_withholding_allocations:
+            raise ValueError("bank_interest_received does not accept allocations")
+        return self
+
+    @model_validator(mode="after")
+    def refundable_deposit_events_use_only_their_fixed_fact_shapes(
+        self,
+    ) -> RecordEventRequest:
+        if self.event_type not in {
+            EventType.REFUNDABLE_DEPOSIT_PAID,
+            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
+        }:
+            return self
+        if self.amounts.gross_amount_fen is not None:
+            raise ValueError("refundable deposit events must use amount_fen")
+        if self.amounts.expense_account_role is not None:
+            raise ValueError("refundable deposit events do not accept an expense account role")
+        if self.tax_facts is not None:
+            raise ValueError("refundable deposit events do not accept tax_facts")
+        if self.invoice_references:
+            raise ValueError("refundable deposit events do not accept invoice references")
+        if self.salary_withholding_allocations:
+            raise ValueError("refundable deposit events do not accept salary allocations")
+        if self.details.model_dump(exclude_none=True):
+            raise ValueError("refundable deposit events do not accept additional details")
+        if self.event_type is EventType.REFUNDABLE_DEPOSIT_PAID and self.allocations:
+            raise ValueError("refundable_deposit_paid does not accept allocations")
         return self
 
 

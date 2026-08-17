@@ -68,6 +68,7 @@ def test_fixed_asset_enums_are_finite_and_match_frozen_public_contract() -> None
         "bank",
         "payable",
         "employee_payable",
+        "allocated_employee_payables",
     }
     assert {item.value for item in FixedAssetDisposalKind} == {"sale", "retirement"}
     assert {item.value for item in FixedAssetDisposalSettlementKind} == {

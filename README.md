@@ -142,8 +142,8 @@ REST API；停止服务可在启动窗口按 `Ctrl+C`。
 
 1. `finance_acquire_fixed_asset` 登记外购资产；已交付可用时同时提供 `ready_for_use`，一张凭证直接记入固定资产并建立折旧卡片。只有明确尚未达到可使用状态时才省略该字段、记入待启用资产。银行现付必须精确匹配流水，挂账会生成受控应付开放项。
 2. `finance_activate_fixed_asset` 仅用于前一步明确尚未达到可使用状态的资产；达到可使用状态后冻结直线法、使用寿命月数、预计净残值、受益区域和官方规则来源。
-3. `finance_preview_fixed_asset_depreciation` 按启用月份次月起算单月折旧并返回计算哈希。
-4. `finance_confirm_fixed_asset_depreciation` 复算同一哈希后生成固定模板凭证；月份必须连续且入账日必须属于该折旧月份。
+3. `finance_preview_fixed_asset_depreciation_batch` 按启用月份次月起算，试算当月全部到期资产；返回逐资产折旧明细、费用科目汇总和批次计算哈希。逐资产金额按各正式资产卡片独立四舍五入，尾差只在该卡片最后一个月结清。
+4. `finance_confirm_fixed_asset_depreciation_batch` 复算同一哈希后原子写入一个月度批次、多条逐资产折旧明细和一张汇总凭证；月份必须连续且入账日必须属于该折旧月份。当前同属管理受益区域时只形成“借管理费用—折旧费、贷累计折旧”两条汇总分录；以后存在不同受益区域时可有多条借方和一条汇总贷方。
 5. `finance_dispose_fixed_asset` 处理单项非不动产资产出售或零收入报废，自动读取原值和累计折旧并计算清理损益；出售按有效的旧固定资产专项增值税规则计算。
 6. `finance_get_fixed_asset` 查询资产卡片、政策版本、全部历史规范事实、凭证、证据和冲正链。
 7. 更正仍使用 `finance_reverse_event`，顺序为处置、最新折旧、启用、购置；原凭证和规范事实不修改。
