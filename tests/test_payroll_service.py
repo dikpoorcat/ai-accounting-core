@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 import pytest
+from conftest import import_test_bank_transaction
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
@@ -328,13 +329,26 @@ def test_payroll_preview_preserves_not_generated_error_without_calculated_batch(
 
 
 def add_bank_row(
-    session: Session, organization: Organization, amount_fen: int, key: str
+    session: Session,
+    organization: Organization,
+    amount_fen: int,
+    key: str,
+    *,
+    booking_date: date = date(2026, 3, 5),
 ) -> BankTransaction:
+    if session.get_bind().dialect.name == "postgresql":
+        return import_test_bank_transaction(
+            session,
+            organization,
+            amount_fen=amount_fen,
+            key=key,
+            booking_date=booking_date,
+        )
     row = BankTransaction(
         org_id=organization.id,
         bank_account_code="1002",
         fingerprint=(key * 64)[:64],
-        booking_date=date(2026, 3, 5),
+        booking_date=booking_date,
         amount_fen=amount_fen,
         currency="CNY",
         memo=key,

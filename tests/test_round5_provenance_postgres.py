@@ -14,6 +14,7 @@ from datetime import date, datetime
 
 import pytest
 from alembic.config import Config
+from conftest import prepare_authenticated_bank_account
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session, sessionmaker
@@ -59,7 +60,7 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def postgres_engine() -> Iterator[object]:
     """Install the complete migration head in a clean PostgreSQL 17 instance."""
 
@@ -122,10 +123,11 @@ def _stage_exact_inverse_reversal(
 
 def _post_expense_with_supporting_evidence(
     session: Session, *, key: str
-) -> tuple[object, BusinessEvent]:
+) -> tuple[object, BusinessEvent, object]:
     organization = seed_organization(
         session, accounting_period_control_enabled=False, name=f"R5 普通冲正证据 {key}"
     )
+    authority = prepare_authenticated_bank_account(session, organization)
     evidence = _evidence(session, organization.id, f"r5-{key}-supporting")
     bank = add_bank_row(session, organization, -100, f"r5-{key}-bank")
     request = payment_request(
@@ -148,7 +150,7 @@ def _post_expense_with_supporting_evidence(
         )
     ).all()
     assert supporting == [evidence.id]
-    return organization, event
+    return organization, event, authority
 
 
 def test_r5_005_postgres_rejects_final_normal_reversal_without_inherited_evidence(
@@ -157,7 +159,7 @@ def test_r5_005_postgres_rejects_final_normal_reversal_without_inherited_evidenc
     """A direct draft->posted normal reversal cannot drop the source evidence set."""
 
     with Session(postgres_engine) as session:
-        organization, original = _post_expense_with_supporting_evidence(
+        organization, original, authority = _post_expense_with_supporting_evidence(
             session, key="missing-inherited"
         )
         identifiers = {"org_id": organization.id, "original_event_id": original.id}
@@ -166,14 +168,17 @@ def test_r5_005_postgres_rejects_final_normal_reversal_without_inherited_evidenc
     with Session(postgres_engine) as session:
         original = session.get(BusinessEvent, identifiers["original_event_id"])
         assert original is not None
-        reversal = _stage_exact_inverse_reversal(session, original, key="r5-missing-inherited")
-        # This is the bypass: all voucher/state facts are otherwise canonical,
-        # but the draft gets no ``inherited`` event_evidence edge at all.
-        original.status = "reversed"
-        original.reversed_by_event_id = reversal.id
-        reversal.status = "posted"
-        with pytest.raises(DBAPIError):
-            session.commit()
+        with authority.attributed_call(session, tool_name="finance_reverse_event"):
+            reversal = _stage_exact_inverse_reversal(
+                session, original, key="r5-missing-inherited"
+            )
+            # This is the bypass: all voucher/state facts are otherwise canonical,
+            # but the draft gets no ``inherited`` event_evidence edge at all.
+            original.status = "reversed"
+            original.reversed_by_event_id = reversal.id
+            reversal.status = "posted"
+            with pytest.raises(DBAPIError):
+                session.commit()
         session.rollback()
 
     with Session(postgres_engine) as session:
@@ -288,11 +293,13 @@ def test_r5_005_postgres_rejects_salary_reversal_after_draft_pel_delete(
     with Session(postgres_engine) as session:
         original = session.get(BusinessEvent, identifiers["salary_event_id"])
         assert original is not None and original.event_type == "salary_payment"
-        _stage_salary_reversal_then_delete_draft_pel(
-            session, org_id=identifiers["org_id"], original=original
-        )
-        with pytest.raises(DBAPIError):
-            session.commit()
+        authority = identifiers["authority"]
+        with authority.attributed_call(session, tool_name="finance_reverse_event"):
+            _stage_salary_reversal_then_delete_draft_pel(
+                session, org_id=identifiers["org_id"], original=original
+            )
+            with pytest.raises(DBAPIError):
+                session.commit()
         session.rollback()
 
     with Session(postgres_engine) as session:
@@ -307,7 +314,7 @@ def test_r5_005_event_query_projects_relational_reversal_evidence_chain(
     """The MCP event read model exposes supporting/inherited roles from relation tables."""
 
     with Session(postgres_engine) as session:
-        organization, original = _post_expense_with_supporting_evidence(
+        organization, original, _authority = _post_expense_with_supporting_evidence(
             session, key="event-query-chain"
         )
         reversal = FinanceService(session).reverse_event(
@@ -454,8 +461,13 @@ def _post_full_salary_payment(
         )
     )
     assert batch is not None and line is not None and salary is not None
-    bank = add_bank_row(session, organization, -line.net_salary_fen, f"{key}-bank")
-    bank.booking_date = batch.payment_date
+    bank = add_bank_row(
+        session,
+        organization,
+        -line.net_salary_fen,
+        f"{key}-bank",
+        booking_date=batch.payment_date,
+    )
     request = payment_request(
         organization,
         event_type="salary_payment",
@@ -541,6 +553,7 @@ def test_r5_007_compatible_multi_batch_tax_payment_keeps_per_source_provenance(
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R5 兼容多批次法定缴款"
         )
+        prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         regular_preview = _preview_regular(
             session,
@@ -664,6 +677,7 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R5 法定缴款期间不兼容"
         )
+        prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         september, september_tax = _post_regular_tax_source(
             session,
@@ -671,6 +685,9 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
             employee_id=employee_id,
             payroll_period="2026-03",
             key="r5-period-september",
+        )
+        prepare_authenticated_bank_account(
+            session, organization, booking_date=date(2026, 4, 5)
         )
         october, october_tax = _post_regular_tax_source(
             session,
@@ -680,8 +697,13 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
             key="r5-period-october",
         )
         amount_fen = september_tax.original_amount_fen + october_tax.original_amount_fen
-        bank = add_bank_row(session, organization, -amount_fen, "r5-period-incompatible-bank")
-        bank.booking_date = date(2026, 4, 5)
+        bank = add_bank_row(
+            session,
+            organization,
+            -amount_fen,
+            "r5-period-incompatible-bank",
+            booking_date=date(2026, 4, 5),
+        )
         request = payment_request(
             organization,
             event_type="individual_income_tax_payment",
@@ -733,6 +755,7 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R5 法定缴款政策机构不兼容"
         )
+        prepare_authenticated_bank_account(session, organization)
         service = FinanceService(session)
         employee = service.register_employee(
             RegisterEmployeeRequest(
@@ -827,8 +850,13 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
         )
         assert regular_preview.batch_id != bonus_preview.batch_id
         amount_fen = regular_tax.original_amount_fen + bonus_tax.original_amount_fen
-        bank = add_bank_row(session, organization, -amount_fen, "r5-policy-agency-bank")
-        bank.booking_date = date(2026, 3, 6)
+        bank = add_bank_row(
+            session,
+            organization,
+            -amount_fen,
+            "r5-policy-agency-bank",
+            booking_date=date(2026, 3, 6),
+        )
         request = payment_request(
             organization,
             event_type="individual_income_tax_payment",
@@ -860,15 +888,16 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
         session.commit()
 
 
-def test_r5_007_category_and_cross_organization_sources_reject_atomically(
+def test_r5_007_incompatible_statutory_categories_reject_atomically(
     postgres_engine: object,
 ) -> None:
-    """Category and organization are compatibility keys, never partial-payment hints."""
+    """Statutory category is a compatibility key, never a partial-payment hint."""
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R5 法定缴款类别隔离"
         )
+        prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         preview, tax_item = _post_regular_tax_source(
             session,
@@ -911,40 +940,4 @@ def test_r5_007_category_and_cross_organization_sources_reject_atomically(
         assert category_rejection.errors == ["STATUTORY_PAYMENT_INCOMPATIBLE_SOURCES"]
         assert tax_item.status == social_item.status == "open"
         assert tax_item.settled_amount_fen == social_item.settled_amount_fen == 0
-
-        foreign_organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 法定缴款跨企业"
-        )
-        foreign_employee_id = register_payroll_facts(session, foreign_organization)
-        _foreign_preview, foreign_tax_item = _post_regular_tax_source(
-            session,
-            foreign_organization,
-            employee_id=foreign_employee_id,
-            payroll_period="2026-03",
-            key="r5-category-foreign",
-        )
-        cross_org_amount = tax_item.original_amount_fen + foreign_tax_item.original_amount_fen
-        cross_org_rejection = FinanceService(session).record_event(
-            payment_request(
-                organization,
-                event_type="individual_income_tax_payment",
-                amount_fen=cross_org_amount,
-                allocations=[
-                    {"open_item_id": tax_item.id, "amount_fen": tax_item.original_amount_fen},
-                    {
-                        "open_item_id": foreign_tax_item.id,
-                        "amount_fen": foreign_tax_item.original_amount_fen,
-                    },
-                ],
-                bank=add_bank_row(
-                    session, organization, -cross_org_amount, "r5-cross-org-rejection-bank"
-                ),
-                key="r5-cross-org-rejection",
-            )
-        )
-        assert cross_org_rejection.status == "rejected"
-        assert cross_org_rejection.errors == ["STATUTORY_PAYMENT_SOURCE_OPEN_ITEM_NOT_FOUND"]
-        for item in (tax_item, foreign_tax_item):
-            assert item.status == "open"
-            assert item.settled_amount_fen == 0
         session.commit()

@@ -6,6 +6,7 @@ from datetime import date
 
 import pytest
 from alembic.config import Config
+from conftest import prepare_authenticated_bank_account
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
@@ -51,6 +52,25 @@ def postgres_engine() -> Iterator[object]:
         config.set_main_option("sqlalchemy.url", url)
         command.upgrade(config, "head")
         command.check(config)
+        engine = create_engine(url)
+        try:
+            yield engine
+        finally:
+            engine.dispose()
+
+
+@pytest.fixture
+def isolated_postgres_engine() -> Iterator[object]:
+    """Isolate the one owner-mode event-state regression from legacy tests."""
+
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:
+        url = postgres.get_connection_url(driver="psycopg")
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", url)
+        command.upgrade(config, "head")
         engine = create_engine(url)
         try:
             yield engine
@@ -846,11 +866,11 @@ def test_r3_003_posted_withholding_entitlements_and_allocations_are_append_only(
 
 
 def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_posted(
-    postgres_engine: object,
+    isolated_postgres_engine: object,
 ) -> None:
     """A direct reversed insert fails; refund reversal never rewrites the advance state."""
 
-    with Session(postgres_engine) as session:
+    with Session(isolated_postgres_engine) as session:
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R3-004"
         )
@@ -869,13 +889,22 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
         with pytest.raises(DBAPIError, match="created as draft"):
             session.flush()
 
-    with Session(postgres_engine) as session:
+    with Session(isolated_postgres_engine) as session:
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R3-004-refund"
         )
+        prepare_authenticated_bank_account(session, organization)
         advance = _event(session, organization.id, "r3-004-advance")
         advance.event_type = "customer_advance"
-        advance.facts = {"amounts": {"gross_amount_fen": 100}}
+        advance.facts = {
+            "amounts": {"gross_amount_fen": 100, "currency": "CNY"},
+            "business_dates": {
+                "business_date": "2026-03-01",
+                "payment_date": "2026-03-01",
+                "posting_date": "2026-03-01",
+            },
+            "bank_account_code": "1002",
+        }
         create_voucher(
             session,
             event=advance,
@@ -890,7 +919,13 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
         refund = _event(session, organization.id, "r3-004-refund-event")
         refund.event_type = "customer_refund"
         refund.facts = {
-            "amounts": {"amount_fen": 100},
+            "amounts": {"amount_fen": 100, "currency": "CNY"},
+            "business_dates": {
+                "business_date": "2026-03-02",
+                "payment_date": "2026-03-02",
+                "posting_date": "2026-03-02",
+            },
+            "bank_account_code": "1002",
             "details": {"original_event_id": str(advance.id), "refund_kind": "advance"},
         }
         refund_voucher = create_voucher(

@@ -117,12 +117,18 @@ def _policy_parameters() -> dict[str, object]:
     }
 
 
-def _stdio_environment(database_url: str, evidence_dir: Path) -> dict[str, str]:
+def _stdio_environment(
+    database_url: str,
+    evidence_dir: Path,
+    bank_import_dir: Path | None = None,
+) -> dict[str, str]:
     repository_root = Path(__file__).parents[1]
     site_packages = Path(sys.prefix) / "Lib" / "site-packages"
     environment = os.environ.copy()
     environment["DATABASE_URL"] = database_url
     environment["FINANCE_EVIDENCE_DIR"] = str(evidence_dir)
+    if bank_import_dir is not None:
+        environment["FINANCE_BANK_IMPORT_DIR"] = str(bank_import_dir)
     environment["PYTHONPATH"] = os.pathsep.join(
         filter(
             None,
@@ -141,6 +147,7 @@ def _stdio_environment(database_url: str, evidence_dir: Path) -> dict[str, str]:
 
 def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
     tmp_path: Path,
+    authenticated_stdio_bank_scope: Any,
 ) -> None:
     """Exercise the R5 lifecycle through STDIO and independently prove every write."""
 
@@ -170,17 +177,45 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
         try:
             with Session(engine) as session:
                 organization = seed_organization(
-                    session, accounting_period_control_enabled=False, name="R2 STDIO 全生命周期企业"
+                    session, name="R2 STDIO 全生命周期企业"
+                )
+                scope_evidence = Evidence(
+                    org_id=organization.id,
+                    sha256="8" * 64,
+                    original_name="r2-stdio-bank-scope.txt",
+                    media_type="text/plain",
+                    source="r2-stdio-test",
+                    size_bytes=1,
+                    storage_path="stdio/r2-stdio-bank-scope.txt",
+                )
+                session.add(scope_evidence)
+                session.flush()
+                stdio_args = authenticated_stdio_bank_scope(
+                    session,
+                    organization,
+                    scope_evidence.id,
+                    [
+                        {
+                            "bank_account_code": "1002",
+                            "account_name": "银行存款",
+                            "start_date": "2026-03-01",
+                        }
+                    ],
                 )
                 session.commit()
                 org_id = str(organization.id)
+                scope_evidence_id = str(scope_evidence.id)
 
             async def run_stdio_lifecycle() -> dict[str, Any]:
                 parameters = StdioServerParameters(
                     command=getattr(sys, "_base_executable", sys.executable),
-                    args=["-m", "ai_accounting.mcp_server"],
+                    args=stdio_args,
                     cwd=Path(__file__).parents[1],
-                    env=_stdio_environment(database_url, tmp_path / "evidence"),
+                    env=_stdio_environment(
+                        database_url,
+                        tmp_path / "evidence",
+                        tmp_path,
+                    ),
                 )
                 async with stdio_client(parameters) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as client:
@@ -479,6 +514,20 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 assert getattr(error.value.orig, "sqlstate", None) == "P0001"
                                 verification.rollback()
 
+                        generated_period = await call(
+                            "finance_generate_accounting_period",
+                            {
+                                "request": {
+                                    "org_id": org_id,
+                                    "period_month": "2026-03",
+                                    "idempotency_key": "r2-stdio-generate-2026-03",
+                                    "confirmation_note": "STDIO 全生命周期显式生成三月期间",
+                                    "evidence_references": [scope_evidence_id],
+                                }
+                            },
+                        )
+                        assert generated_period["status"] == "posted"
+
                         evidence = await call(
                             "finance_register_evidence",
                             {
@@ -501,28 +550,46 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             assert evidence_row is not None
                             assert evidence_row.org_id == uuid.UUID(org_id)
                             assert evidence_row.sha256 == evidence["sha256"]
-                        imported = await call(
-                            "finance_import_bank_statement",
+                        import_request = {
+                            "org_id": org_id,
+                            "bank_account_code": "1002",
+                            "source_file_name": statement.name,
+                            "file_format": "csv",
+                            "column_mapping": {
+                                "booking_date": "date",
+                                "amount": "amount",
+                                "counterparty": "counterparty",
+                                "memo": "memo",
+                                "external_id": "reference",
+                            },
+                        }
+                        import_preview = await call(
+                            "finance_preview_bank_statement_import",
                             {
-                                "request": {
-                                    "org_id": org_id,
-                                    "file_path": str(statement),
-                                    "column_mapping": {
-                                        "booking_date": "date",
-                                        "amount": "amount",
-                                        "counterparty": "counterparty",
-                                        "memo": "memo",
-                                        "external_id": "reference",
-                                    },
+                                "request": import_request,
+                            },
+                        )
+                        assert import_preview["status"] == "calculated"
+                        imported = await call(
+                            "finance_confirm_bank_statement_import",
+                            {
+                                "request": import_request
+                                | {
+                                    "calculation_hash": import_preview[
+                                        "calculation_hash"
+                                    ],
+                                    "idempotency_key": "r2-stdio-bank-import",
                                 }
                             },
                         )
-                        assert imported["imported_count"] == 5
-                        assert len(imported["imported_ids"]) == len(expected_bank_rows)
-                        assert len(set(imported["imported_ids"])) == len(expected_bank_rows)
+                        imported_ids = imported["data"]["imported_transaction_ids"]
+                        assert imported["status"] == "posted"
+                        assert imported["data"]["imported_count"] == 5
+                        assert len(imported_ids) == len(expected_bank_rows)
+                        assert len(set(imported_ids)) == len(expected_bank_rows)
                         with Session(engine) as verification:
                             for bank_id, expected in zip(
-                                imported["imported_ids"], expected_bank_rows, strict=True
+                                imported_ids, expected_bank_rows, strict=True
                             ):
                                 bank = verification.get(BankTransaction, uuid.UUID(bank_id))
                                 assert bank is not None
@@ -546,7 +613,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     ).all()
                                     == []
                                 )
-                        bank_ids = iter(imported["imported_ids"])
+                        bank_ids = iter(imported_ids)
                         salary_bank_first = next(bank_ids)
                         salary_bank_second = next(bank_ids)
                         social_bank = next(bank_ids)

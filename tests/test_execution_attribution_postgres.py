@@ -100,6 +100,24 @@ def _authority(
         ),
         {"org": org_id, "now": now},
     )
+    # Period generation in the attribution test needs a pre-owner evidence
+    # fact.  Keep it out of the helper's return contract: authority consists
+    # of exactly the organization, owner, and session identifiers.
+    evidence_id = uuid.uuid5(org_id, "execution-attribution-period-evidence")
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO evidence (
+                id, org_id, sha256, original_name, media_type, source,
+                size_bytes, storage_path, metadata, created_at
+            ) VALUES (
+                :id, :org, :sha, 'period-evidence.txt', 'text/plain', 'test',
+                1, 'test/period-evidence.txt', '{}'::jsonb, :now
+            )
+            """
+        ),
+        {"id": evidence_id, "org": org_id, "sha": "f" * 64, "now": now},
+    )
     connection.execute(
         sa.text(
             """
@@ -288,7 +306,7 @@ def test_postgres_attribution_and_revocation_share_owner_then_session_lock_order
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         try:
             with engine.begin() as connection:
-                org_id, owner_id, session_id, _evidence_id = _authority(connection)
+                org_id, owner_id, session_id = _authority(connection)
             writer_locked = Event()
             contender_started = Event()
             release_writer = Event()
@@ -402,7 +420,10 @@ def test_postgres_authenticated_mcp_rejected_posted_and_replay_attribution(
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         try:
             with engine.begin() as connection:
-                org_id, _owner_id, _session_id, evidence_id = _authority(connection)
+                org_id, _owner_id, _session_id = _authority(connection)
+                evidence_id = uuid.uuid5(
+                    org_id, "execution-attribution-period-evidence"
+                )
             monkeypatch.setattr(
                 mcp_server,
                 "SessionLocal",
@@ -482,7 +503,7 @@ def test_windows_credential_manager_real_production_stdio_write_attribution(
         _protect_current_windows_user_only(lock_file)
         try:
             with engine.begin() as connection:
-                org_id, _owner_id, _session_id, _evidence_id = _authority(connection)
+                org_id, _owner_id, _session_id = _authority(connection)
             store.save_session_token(SecretStr(MCP_TOKEN))
 
             repository_root = Path(__file__).parents[1]

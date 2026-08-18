@@ -46,6 +46,7 @@ from ai_accounting.intangible_asset_schemas import AcquireIntangibleAssetRequest
 from ai_accounting.intangible_asset_service import IntangibleAssetService
 from ai_accounting.models import (
     EXECUTION_ATTRIBUTION_SESSION_KEY,
+    AccountingPeriodCloseApproval,
     BankTransaction,
 )
 from ai_accounting.schemas import (
@@ -125,6 +126,32 @@ def _insert_owner_authority(
         },
     )
     return owner_id, session_id
+
+
+def _approve_close(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    owner_session_id: uuid.UUID,
+    period_id: uuid.UUID,
+    calculation_hash: str,
+) -> uuid.UUID:
+    now = datetime.now(UTC)
+    approval = AccountingPeriodCloseApproval(
+        org_id=org_id,
+        period_id=period_id,
+        owner_account_id=owner_id,
+        owner_session_id=owner_session_id,
+        owner_credential_version=1,
+        calculation_hash=calculation_hash,
+        confirmation_method="local_password_reauthentication",
+        confirmed_at=now,
+        expires_at=now + timedelta(minutes=30),
+    )
+    session.add(approval)
+    session.flush()
+    return approval.id
 
 
 def _insert_current_attribution(
@@ -908,10 +935,19 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                     preview = service.preview_accounting_period_close(preview_request)
                     assert preview.status == "calculated", preview.errors
                     assert preview.calculation_hash is not None
+                    owner_approval_id = _approve_close(
+                        session,
+                        org_id=org_id,
+                        owner_id=owner_id,
+                        owner_session_id=session_id,
+                        period_id=generated.period_id,
+                        calculation_hash=preview.calculation_hash,
+                    )
                     closed = service.confirm_accounting_period_close(
                         ConfirmAccountingPeriodCloseRequest(
                             **preview_request.model_dump(),
                             calculation_hash=preview.calculation_hash,
+                            owner_approval_id=owner_approval_id,
                             idempotency_key="close-july",
                             review_facts=AccountingPeriodReviewFacts(
                                 voucher_completeness_reviewed=True,
@@ -1119,7 +1155,7 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                     import_service = BankStatementService(
                         session,
                         settings=Settings(finance_bank_import_dir=tmp_path),
-                        current_date=date(2026, 8, 12),
+                        current_date=date.max,
                     )
                     preview_request = PreviewBankStatementFileImportRequest(
                         org_id=org_id,
@@ -2428,10 +2464,20 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                     )
                     close_preview = period_service.preview_accounting_period_close(close_request)
                     assert close_preview.status == "calculated", close_preview.errors
+                    assert close_preview.calculation_hash is not None
+                    owner_approval_id = _approve_close(
+                        session,
+                        org_id=org_id,
+                        owner_id=owner_id,
+                        owner_session_id=session_id,
+                        period_id=july_period_id,
+                        calculation_hash=close_preview.calculation_hash,
+                    )
                     closed = period_service.confirm_accounting_period_close(
                         ConfirmAccountingPeriodCloseRequest(
                             **close_request.model_dump(),
                             calculation_hash=close_preview.calculation_hash,
+                            owner_approval_id=owner_approval_id,
                             idempotency_key="late-matrix-close-july",
                             review_facts=AccountingPeriodReviewFacts(
                                 voucher_completeness_reviewed=True,
@@ -2510,7 +2556,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                     bank_service = BankStatementService(
                         session,
                         settings=Settings(finance_bank_import_dir=tmp_path),
-                        current_date=date(2026, 8, 12),
+                        current_date=date.max,
                     )
                     import_request = PreviewBankStatementFileImportRequest(
                         org_id=org_id,
@@ -3176,6 +3222,15 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                 assert close_wins_started.wait(timeout=10)
                 with Session(bind=connection, expire_on_commit=False) as session:
                     session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = close_attribution_id
+                    assert close_snapshot.calculation_hash is not None
+                    owner_approval_id = _approve_close(
+                        session,
+                        org_id=org_id,
+                        owner_id=owner_id,
+                        owner_session_id=session_id,
+                        period_id=august_period_id,
+                        calculation_hash=close_snapshot.calculation_hash,
+                    )
                     closed = AccountingPeriodService(
                         session, current_date=date(2026, 8, 12)
                     ).confirm_accounting_period_close(
@@ -3184,6 +3239,7 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                             period_id=august_period_id,
                             closing_date=date(2026, 7, 31),
                             calculation_hash=close_snapshot.calculation_hash,
+                            owner_approval_id=owner_approval_id,
                             idempotency_key="close-wins-close-august",
                             review_facts=AccountingPeriodReviewFacts(
                                 voucher_completeness_reviewed=True,
@@ -3326,6 +3382,15 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                     )
                     with Session(bind=connection, expire_on_commit=False) as session:
                         session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution_id
+                        assert september_close_preview.calculation_hash is not None
+                        owner_approval_id = _approve_close(
+                            session,
+                            org_id=org_id,
+                            owner_id=owner_id,
+                            owner_session_id=session_id,
+                            period_id=september_period_id,
+                            calculation_hash=september_close_preview.calculation_hash,
+                        )
                         result = AccountingPeriodService(
                             session, current_date=date(2026, 10, 1)
                         ).confirm_accounting_period_close(
@@ -3334,6 +3399,7 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                                 period_id=september_period_id,
                                 closing_date=date(2026, 8, 31),
                                 calculation_hash=september_close_preview.calculation_hash,
+                                owner_approval_id=owner_approval_id,
                                 idempotency_key="import-wins-stale-close",
                                 review_facts=AccountingPeriodReviewFacts(
                                     voucher_completeness_reviewed=True,

@@ -11,6 +11,10 @@ from datetime import date
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
+from conftest import (
+    bind_authenticated_bank_account,
+    prepare_authenticated_bank_account,
+)
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -60,7 +64,7 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def postgres_engine() -> Iterator[object]:
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         config = Config("alembic.ini")
@@ -245,6 +249,11 @@ def _register_payroll_facts_with_initial_policy(
 ) -> uuid.UUID:
     """Register unposted payroll facts with an explicit initial policy period."""
 
+    prepare_authenticated_bank_account(
+        session,
+        organization,
+        booking_date=employment_start_date.replace(day=5),
+    )
     service = FinanceService(session)
     employee = service.register_employee(
         RegisterEmployeeRequest(
@@ -287,24 +296,29 @@ def _register_payroll_facts_with_initial_policy(
     return employee_id
 
 
-def _profile_successor_statement() -> sa.TextClause:
+def _profile_successor_statement(*, attributed: bool = False) -> sa.TextClause:
+    attribution_column = ", execution_attribution_id" if attributed else ""
+    attribution_value = ", :execution_attribution_id" if attributed else ""
     return sa.text(
         "INSERT INTO employee_payroll_profile_versions "
         "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
         "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
-        "resident_employee, created_at) VALUES "
+        f"resident_employee, created_at{attribution_column}) VALUES "
         "(:id, :org_id, :employee_id, :profile_id, :effective_from, :effective_to, "
-        "'payroll_management_expense', 1000001, 1000001, TRUE, now())"
+        "'payroll_management_expense', 1000001, 1000001, TRUE, "
+        f"now(){attribution_value})"
     )
 
 
-def _policy_successor_statement() -> sa.TextClause:
+def _policy_successor_statement(*, attributed: bool = False) -> sa.TextClause:
+    attribution_column = ", execution_attribution_id" if attributed else ""
+    attribution_value = ", :execution_attribution_id" if attributed else ""
     return sa.text(
         "INSERT INTO payroll_policy_versions "
         "(id, org_id, region, supersedes_id, effective_from, effective_to, version, "
-        "source_url, parameters, created_at) "
+        f"source_url, parameters, created_at{attribution_column}) "
         "SELECT :id, :org_id, region, :policy_id, :effective_from, :effective_to, "
-        ":version, source_url, parameters, now() "
+        f":version, source_url, parameters, now(){attribution_value} "
         "FROM payroll_policy_versions WHERE id = :policy_id"
     )
 
@@ -326,6 +340,10 @@ def _regular_statutory_sources(
     payroll_period: str,
     key: str,
 ) -> tuple[object, dict[str, list[OpenItem]]]:
+    payment_date = date.fromisoformat(f"{payroll_period}-05")
+    prepare_authenticated_bank_account(
+        session, organization, booking_date=payment_date
+    )
     preview = _preview_regular(
         session,
         org_id=organization.id,
@@ -351,8 +369,13 @@ def _regular_statutory_sources(
         )
     )
     assert batch is not None and line is not None and salary is not None
-    bank = add_bank_row(session, organization, -line.net_salary_fen, f"{key}-salary-bank")
-    bank.booking_date = batch.payment_date
+    bank = add_bank_row(
+        session,
+        organization,
+        -line.net_salary_fen,
+        f"{key}-salary-bank",
+        booking_date=batch.payment_date,
+    )
     request = payment_request(
         organization,
         event_type="salary_payment",
@@ -430,6 +453,9 @@ def _stage_direct_statutory_payment(
     category: str,
     key: str,
 ) -> BusinessEvent:
+    prepare_authenticated_bank_account(
+        session, organization, booking_date=date(2026, 7, 6)
+    )
     event_types = {
         "social_insurance": "social_insurance_payment",
         "housing_fund": "housing_fund_payment",
@@ -442,13 +468,28 @@ def _stage_direct_statutory_payment(
     }
     amount = sum(item.original_amount_fen - item.settled_amount_fen for item in source_items)
     assert amount > 0
+    bank = add_bank_row(
+        session,
+        organization,
+        -amount,
+        f"{key}-bank",
+        booking_date=date(2026, 7, 6),
+    )
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key=key,
         event_type=event_types[category],
         status="draft",
         description="R7 直接构造规范法定缴款集合",
-        facts={},
+        facts={
+            "amounts": {"amount_fen": amount, "currency": "CNY"},
+            "business_dates": {
+                "business_date": "2026-07-06",
+                "payment_date": "2026-07-06",
+                "posting_date": "2026-07-06",
+            },
+            "bank_account_code": "1002",
+        },
         business_date=date(2026, 7, 6),
         payment_date=date(2026, 7, 6),
         posting_date=date(2026, 7, 6),
@@ -456,8 +497,6 @@ def _stage_direct_statutory_payment(
     )
     session.add(event)
     session.flush()
-    bank = add_bank_row(session, organization, -amount, f"{key}-bank")
-    bank.booking_date = event.payment_date
     bank.matched_event_id = event.id
     session.add(
         BankTransactionMatch(
@@ -913,6 +952,11 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
             preview=december_preview,
             key="r7-tax-year-december-confirm",
         )
+        authority = prepare_authenticated_bank_account(
+            session,
+            organization,
+            booking_date=date(2026, 1, 5),
+        )
         january_preview = _preview_regular(
             session,
             org_id=organization.id,
@@ -947,13 +991,29 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
         session.commit()
 
     with Session(postgres_engine) as session:
+        bind_authenticated_bank_account(session, authority)
         january_batch = session.get(PayrollBatch, january_preview.batch_id)
         assert january_batch is not None and january_batch.status == "posted"
-        session.execute(_profile_successor_statement(), {**ids, "id": uuid.uuid4()})
-        session.execute(
-            _policy_successor_statement(),
-            {**ids, "id": uuid.uuid4(), "version": "r7-december-correction"},
-        )
+        with authority.attributed_call(
+            session,
+            tool_name="finance_register_employee_profile_version",
+        ) as attribution:
+            attributed_ids = {
+                **ids,
+                "execution_attribution_id": attribution.id,
+            }
+            session.execute(
+                _profile_successor_statement(attributed=True),
+                {**attributed_ids, "id": uuid.uuid4()},
+            )
+            session.execute(
+                _policy_successor_statement(attributed=True),
+                {
+                    **attributed_ids,
+                    "id": uuid.uuid4(),
+                    "version": "r7-december-correction",
+                },
+            )
         session.commit()
 
 
@@ -1069,6 +1129,7 @@ def test_r7_002_iit_uses_payment_tax_month_not_payroll_period_at_commit(
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R7 个税税月企业"
         )
+        prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         _regular_preview, regular_tax = _post_regular_tax_source(
             session,
@@ -1076,6 +1137,9 @@ def test_r7_002_iit_uses_payment_tax_month_not_payroll_period_at_commit(
             employee_id=employee_id,
             payroll_period="2026-03",
             key="r7-iit-regular",
+        )
+        prepare_authenticated_bank_account(
+            session, organization, booking_date=date(2026, 4, 5)
         )
         bonus_preview = _preview_separate_bonus(
             session,
@@ -1117,6 +1181,7 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R7 个税政策列与快照分离"
         )
+        authority = prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         regular_preview, regular_tax = _post_regular_tax_source(
             session,
@@ -1184,6 +1249,7 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
         session.commit()
 
     with Session(postgres_engine) as session:
+        bind_authenticated_bank_account(session, authority)
         regular_batch = session.get(PayrollBatch, regular_preview.batch_id)
         bonus_batch = session.get(PayrollBatch, bonus_preview.batch_id)
         assert regular_batch is not None and bonus_batch is not None
@@ -1216,6 +1282,7 @@ def test_r7_007_social_and_housing_accept_same_contribution_policy_and_period(
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R7 社保公积金兼容正例"
         )
+        prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         preview, source_groups = _regular_statutory_sources(
             session,
@@ -1250,6 +1317,7 @@ def test_r7_007_social_and_housing_reject_different_payroll_periods(
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name=f"R7 {category} 缴费所属期反例"
         )
+        prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         september, september_sources = _regular_statutory_sources(
             session,

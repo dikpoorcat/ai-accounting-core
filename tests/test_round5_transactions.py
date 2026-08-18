@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from alembic.config import Config
+from conftest import prepare_authenticated_bank_account
 from sqlalchemy import event, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -58,7 +59,7 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def postgres_engine() -> Iterator[Engine]:
     """Use one empty PostgreSQL 17 database for the R5 service concurrency matrix."""
 
@@ -117,6 +118,8 @@ def _run_two_connections(
     operation: Callable[[FinanceService, Any], Any],
     *,
     reverse_submission_order: bool = False,
+    authority: object | None = None,
+    tool_name: str | None = None,
 ) -> list[Any]:
     """Execute public writes concurrently, with no session shared by workers."""
 
@@ -125,7 +128,11 @@ def _run_two_connections(
     def worker(request: Any) -> Any:
         barrier.wait(timeout=15)
         with factory.begin() as session:
-            return operation(FinanceService(session), request)
+            if authority is None:
+                return operation(FinanceService(session), request)
+            assert tool_name is not None
+            with authority.attributed_call(session, tool_name=tool_name):
+                return operation(FinanceService(session), request)
 
     submitted = list(reversed(requests)) if reverse_submission_order else requests
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -185,13 +192,14 @@ def _prepare_payment_requests(
     *,
     organization_name: str,
     event_type: str,
-) -> tuple[RecordEventRequest, RecordEventRequest]:
+) -> tuple[RecordEventRequest, RecordEventRequest, object]:
     """Make two different banks for one still-open canonical payroll payable."""
 
-    with factory.begin() as session:
+    with factory() as session:
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name=organization_name
         )
+        authority = prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
         preview = service.preview_payroll(
@@ -293,7 +301,8 @@ def _prepare_payment_requests(
         changed_data["bank_transaction_references"] = [{"id": str(second_bank.id)}]
         changed_data["description"] = "different request payload"
         changed = RecordEventRequest.model_validate(changed_data)
-        return request, changed
+        session.commit()
+        return request, changed, authority
 
 
 def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_after_reverse(
@@ -487,35 +496,34 @@ def test_r5_006_every_payroll_payment_entry_replays_and_rejects_payload_mismatch
     postgres_engine: Engine, event_type: str
 ) -> None:
     factory = make_session_factory(postgres_engine)
-    same, _unused = _prepare_payment_requests(
+    original, changed, authority = _prepare_payment_requests(
         factory,
-        organization_name=f"R5 {event_type} same",
+        organization_name=f"R5 {event_type}",
         event_type=event_type,
     )
     _assert_replay(
         _run_two_connections(
             factory,
-            [same, same],
+            [original, original],
             lambda service, request: service.record_event(request),
+            authority=authority,
+            tool_name="finance_record_event",
         )
     )
 
-    original, changed = _prepare_payment_requests(
-        factory,
-        organization_name=f"R5 {event_type} mismatch",
-        event_type=event_type,
-    )
     _assert_mismatch(
         _run_two_connections(
             factory,
             [original, changed],
             lambda service, request: service.record_event(request),
             reverse_submission_order=True,
+            authority=authority,
+            tool_name="finance_record_event",
         )
     )
 
 
-def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
+def test_r5_006_first_shared_agency_is_safe_across_connections(
     postgres_engine: Engine,
 ) -> None:
     """Force two confirmations past the same empty-agency read, then reverse twice."""
@@ -605,15 +613,21 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
         ).all()
         assert len(agencies) == 1
 
-    same, _unused = _prepare_payment_requests(
+
+def test_r5_006_reverse_replays_and_rejects_payload_mismatch_across_connections(
+    postgres_engine: Engine,
+) -> None:
+    factory = make_session_factory(postgres_engine)
+    same, _changed, authority = _prepare_payment_requests(
         factory,
         organization_name="R5 reverse same",
         event_type="salary_payment",
     )
     with factory.begin() as session:
-        source = FinanceService(session).record_event(
-            same.model_copy(update={"idempotency_key": "r5-reverse-source"})
-        )
+        with authority.attributed_call(session, tool_name="finance_record_event"):
+            source = FinanceService(session).record_event(
+                same.model_copy(update={"idempotency_key": "r5-reverse-source"})
+            )
         assert source.status == "posted", source.errors
         source_event_id = source.event_id
         source_org_id = same.org_id
@@ -630,6 +644,8 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
         [reversal, reversal],
         lambda service, request: service.reverse_event(request),
         reverse_submission_order=True,
+        authority=authority,
+        tool_name="finance_reverse_event",
     )
     _assert_replay(reverse_results)
     reversal_id = reverse_results[0].event_id
@@ -642,38 +658,15 @@ def test_r5_006_first_shared_agency_and_reverse_are_safe_across_connections(
             item.reversed and item.reversed_by_event_id == reversal_id for item in settlements
         )
 
-    # A distinct source lets the different-reason request race at the same
-    # external API boundary while still taking reverse locks in the opposite
-    # executor order.
-    other, _unused = _prepare_payment_requests(
-        factory,
-        organization_name="R5 reverse mismatch",
-        event_type="salary_payment",
-    )
-    with factory.begin() as session:
-        other_source = FinanceService(session).record_event(
-            other.model_copy(update={"idempotency_key": "r5-reverse-mismatch-source"})
-        )
-        assert other_source.status == "posted", other_source.errors
     mismatch = _run_two_connections(
         factory,
         [
-            ReverseEventRequest(
-                org_id=other.org_id,
-                event_id=other_source.event_id,
-                idempotency_key="r5-reverse-mismatch",
-                reason="R5 原因一",
-                posting_date=date(2026, 3, 6),
-            ),
-            ReverseEventRequest(
-                org_id=other.org_id,
-                event_id=other_source.event_id,
-                idempotency_key="r5-reverse-mismatch",
-                reason="R5 原因二",
-                posting_date=date(2026, 3, 6),
-            ),
+            reversal,
+            reversal.model_copy(update={"reason": "R5 不同原因"}),
         ],
         lambda service, request: service.reverse_event(request),
         reverse_submission_order=True,
+        authority=authority,
+        tool_name="finance_reverse_event",
     )
     _assert_mismatch(mismatch)

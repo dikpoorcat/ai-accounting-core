@@ -9,6 +9,7 @@ from datetime import date
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
+from conftest import prepare_authenticated_bank_account
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ from testcontainers.community.postgres import PostgresContainer
 from ai_accounting.coa import seed_organization
 from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
+    BankTransactionMatch,
     BusinessEvent,
     Evidence,
     OpenItem,
@@ -43,7 +45,7 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def postgres_engine() -> Iterator[object]:
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
@@ -94,7 +96,13 @@ def _confirmed_payroll_with_evidence(
 
 
 def _draft_batch_and_event(
-    session: Session, batch: PayrollBatch, line: PayrollLine, *, key: str
+    session: Session,
+    batch: PayrollBatch,
+    line: PayrollLine,
+    *,
+    key: str,
+    payroll_period: str = "2026-04",
+    version: int = 1,
 ) -> tuple[PayrollBatch, PayrollLine, BusinessEvent]:
     """Create ordinary draft parents that must never receive final facts."""
 
@@ -102,8 +110,8 @@ def _draft_batch_and_event(
         org_id=batch.org_id,
         idempotency_key=f"r4-draft-batch-{key}",
         batch_kind="regular",
-        payroll_period="2026-04",
-        version=1,
+        payroll_period=payroll_period,
+        version=version,
         status="draft",
         calculation_hash=(f"r4-{key}" * 64)[:64],
         request_payload_hash=(f"r4-request-{key}" * 64)[:64],
@@ -111,8 +119,8 @@ def _draft_batch_and_event(
         calculation_trace=[],
         policy_snapshot=batch.policy_snapshot,
         policy_version_id=batch.policy_version_id,
-        posting_date=date(2026, 4, 5),
-        payment_date=date(2026, 4, 5),
+        posting_date=date.fromisoformat(f"{payroll_period}-05"),
+        payment_date=date.fromisoformat(f"{payroll_period}-05"),
     )
     session.add(draft_batch)
     session.flush()
@@ -132,9 +140,9 @@ def _draft_batch_and_event(
         status="draft",
         description="R4 草稿父对象",
         facts={},
-        business_date=date(2026, 4, 5),
-        payment_date=date(2026, 4, 5),
-        posting_date=date(2026, 4, 5),
+        business_date=date.fromisoformat(f"{payroll_period}-05"),
+        payment_date=date.fromisoformat(f"{payroll_period}-05"),
+        posting_date=date.fromisoformat(f"{payroll_period}-05"),
         rule_trace=[],
     )
     session.add_all([draft_line, draft_event])
@@ -636,6 +644,7 @@ def _salary_payment_with_unsettled_statutory_sources(
     organization = seed_organization(
         session, accounting_period_control_enabled=False, name=f"R4 statutory direct SQL {key}"
     )
+    authority = prepare_authenticated_bank_account(session, organization)
     employee_id = register_payroll_facts(session, organization)
     service = FinanceService(session)
     preview = _preview(
@@ -707,7 +716,18 @@ def _salary_payment_with_unsettled_statutory_sources(
     )
     assert source_batch_id == batch.id
     unrelated_batch, _unrelated_line, _unrelated_event = _draft_batch_and_event(
-        session, batch, line, key=f"{key}-unrelated"
+        session,
+        batch,
+        line,
+        key=f"{key}-unrelated",
+        payroll_period=batch.payroll_period,
+        version=batch.version + 1,
+    )
+    wrong_batch_bank = add_bank_row(
+        session, organization, -40_000, f"r4-statutory-{key}-wrong-batch"
+    )
+    wrong_category_bank = add_bank_row(
+        session, organization, -35_000, f"r4-statutory-{key}-wrong-category"
     )
     return {
         "org_id": organization.id,
@@ -715,6 +735,9 @@ def _salary_payment_with_unsettled_statutory_sources(
         "unrelated_batch_id": unrelated_batch.id,
         "withheld_social_item_id": items["withheld_employee_social"].id,
         "withheld_housing_item_id": items["withheld_employee_housing"].id,
+        "wrong_batch_bank_id": wrong_batch_bank.id,
+        "wrong_category_bank_id": wrong_category_bank.id,
+        "authority": authority,
     }
 
 
@@ -726,6 +749,7 @@ def _stage_raw_statutory_settlement(
     payroll_batch_id: object,
     event_type: str,
     key: str,
+    bank_transaction_id: object,
 ) -> BusinessEvent:
     """Forge a fully-funded statutory event so only the PEL invariant can reject it."""
 
@@ -745,7 +769,15 @@ def _stage_raw_statutory_settlement(
         event_type=event_type,
         status="draft",
         description="R4 法定缴款来源边直接 SQL 反例",
-        facts={},
+        facts={
+            "amounts": {"amount_fen": amount_fen, "currency": "CNY"},
+            "business_dates": {
+                "business_date": "2026-03-06",
+                "payment_date": "2026-03-06",
+                "posting_date": "2026-03-06",
+            },
+            "bank_account_code": "1002",
+        },
         business_date=date(2026, 3, 6),
         payment_date=date(2026, 3, 6),
         posting_date=date(2026, 3, 6),
@@ -753,6 +785,13 @@ def _stage_raw_statutory_settlement(
     )
     session.add(event)
     session.flush()
+    session.add(
+        BankTransactionMatch(
+            org_id=org_id,
+            bank_transaction_id=bank_transaction_id,
+            event_id=event.id,
+        )
+    )
     create_voucher(
         session,
         event=event,
@@ -800,16 +839,19 @@ def test_r4_006_statutory_source_edge_rejects_wrong_payroll_batch_at_commit(
     with Session(postgres_engine) as session:
         source_item = session.get(OpenItem, identifiers["withheld_social_item_id"])
         assert source_item is not None
-        _stage_raw_statutory_settlement(
-            session,
-            org_id=identifiers["org_id"],
-            source_item=source_item,
-            payroll_batch_id=identifiers["unrelated_batch_id"],
-            event_type="social_insurance_payment",
-            key="r4-statutory-wrong-batch",
-        )
-        with pytest.raises(DBAPIError, match="must prove the same payroll batch"):
-            session.commit()
+        authority = identifiers["authority"]
+        with authority.attributed_call(session, tool_name="finance_record_event"):
+            _stage_raw_statutory_settlement(
+                session,
+                org_id=identifiers["org_id"],
+                source_item=source_item,
+                payroll_batch_id=identifiers["unrelated_batch_id"],
+                event_type="social_insurance_payment",
+                key="r4-statutory-wrong-batch",
+                bank_transaction_id=identifiers["wrong_batch_bank_id"],
+            )
+            with pytest.raises(DBAPIError, match="must prove the same payroll batch"):
+                session.commit()
         session.rollback()
 
     with Session(postgres_engine) as session:
@@ -832,16 +874,19 @@ def test_r4_006_statutory_source_edge_rejects_wrong_payable_category_at_commit(
     with Session(postgres_engine) as session:
         source_item = session.get(OpenItem, identifiers["withheld_housing_item_id"])
         assert source_item is not None
-        _stage_raw_statutory_settlement(
-            session,
-            org_id=identifiers["org_id"],
-            source_item=source_item,
-            payroll_batch_id=identifiers["source_batch_id"],
-            event_type="social_insurance_payment",
-            key="r4-statutory-wrong-category",
-        )
-        with pytest.raises(DBAPIError, match="incompatible payable category"):
-            session.commit()
+        authority = identifiers["authority"]
+        with authority.attributed_call(session, tool_name="finance_record_event"):
+            _stage_raw_statutory_settlement(
+                session,
+                org_id=identifiers["org_id"],
+                source_item=source_item,
+                payroll_batch_id=identifiers["source_batch_id"],
+                event_type="social_insurance_payment",
+                key="r4-statutory-wrong-category",
+                bank_transaction_id=identifiers["wrong_category_bank_id"],
+            )
+            with pytest.raises(DBAPIError, match="incompatible payable category"):
+                session.commit()
         session.rollback()
 
     with Session(postgres_engine) as session:

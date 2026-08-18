@@ -11,11 +11,11 @@ from datetime import date
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
-from conftest import authenticate_and_confirm_bank_scope
+from conftest import prepare_authenticated_bank_account
 from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
-from test_payroll_service import payment_request, register_payroll_facts
+from test_payroll_service import add_bank_row, payment_request, register_payroll_facts
 from test_round3_lineage import _preview
 from testcontainers.community.postgres import PostgresContainer
 
@@ -38,7 +38,7 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def postgres_engine() -> Iterator[object]:
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
@@ -128,6 +128,7 @@ def _post_two_partial_salary_social_payment(
 ) -> tuple[object, list[OpenItem]]:
     """Return a final statutory payment and the three open items it settled."""
 
+    authority = prepare_authenticated_bank_account(session, organization)
     service = FinanceService(session)
     employee_id = register_payroll_facts(session, organization)
     preview = _preview(
@@ -151,20 +152,6 @@ def _post_two_partial_salary_social_payment(
         )
     )
     assert salary_item is not None
-    scope_evidence = _evidence(session, organization.id, "r3-pg-bank-scope")
-    authority = authenticate_and_confirm_bank_scope(
-        session,
-        organization,
-        evidence_id=scope_evidence.id,
-        accounts=[
-            {
-                "bank_account_code": "1002",
-                "account_name": "银行存款",
-                "start_date": date(2026, 3, 1),
-            }
-        ],
-    )
-
     for key, cash, tax in (("one", 425_000, 0), ("two", 414_500, 10_500)):
         request = payment_request(
             organization,
@@ -201,7 +188,12 @@ def _post_two_partial_salary_social_payment(
             {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
             for item in statutory_items
         ],
-        bank=None,
+        bank=add_bank_row(
+            session,
+            organization,
+            -sum(item.original_amount_fen for item in statutory_items),
+            "r3-pg-source-statutory-bank",
+        ),
         key="r3-pg-source-statutory",
     )
     with authority.attributed_call(session, tool_name="finance_record_event"):

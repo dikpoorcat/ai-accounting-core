@@ -18,6 +18,7 @@ from datetime import date
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
+from conftest import prepare_authenticated_bank_account
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -76,6 +77,25 @@ def postgres_engine() -> Iterator[object]:
         config.set_main_option("sqlalchemy.url", url)
         command.upgrade(config, "head")
         command.check(config)
+        engine = create_engine(url)
+        try:
+            yield engine
+        finally:
+            engine.dispose()
+
+
+@pytest.fixture
+def isolated_postgres_engine() -> Iterator[object]:
+    """Isolate the owner-mode statutory collection attack from legacy cases."""
+
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:
+        url = postgres.get_connection_url(driver="psycopg")
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", url)
+        command.upgrade(config, "head")
         engine = create_engine(url)
         try:
             yield engine
@@ -738,13 +758,28 @@ def _stage_direct_tax_payment(
 
     amount = sum(item.original_amount_fen - item.settled_amount_fen for item in source_items)
     assert amount > 0
+    bank = add_bank_row(
+        session,
+        organization,
+        -amount,
+        f"{key}-bank",
+        booking_date=date(2026, 4, 6),
+    )
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key=key,
         event_type="individual_income_tax_payment",
         status="draft",
         description="R6 直接构造法定付款集合",
-        facts={},
+        facts={
+            "amounts": {"amount_fen": amount, "currency": "CNY"},
+            "business_dates": {
+                "business_date": "2026-04-06",
+                "payment_date": "2026-04-06",
+                "posting_date": "2026-04-06",
+            },
+            "bank_account_code": "1002",
+        },
         business_date=date(2026, 4, 6),
         payment_date=date(2026, 4, 6),
         posting_date=date(2026, 4, 6),
@@ -752,8 +787,6 @@ def _stage_direct_tax_payment(
     )
     session.add(event)
     session.flush()
-    bank = add_bank_row(session, organization, -amount, f"{key}-bank")
-    bank.booking_date = event.payment_date
     bank.matched_event_id = event.id
     session.add(
         BankTransactionMatch(
@@ -808,13 +841,17 @@ def _stage_direct_tax_payment(
 
 
 def test_r6_005_direct_cross_period_statutory_collection_rejects_at_commit(
-    postgres_engine: object,
+    isolated_postgres_engine: object,
 ) -> None:
     """Two otherwise-valid source edges cannot merge September and October tax."""
 
-    with Session(postgres_engine) as session:
+    with Session(isolated_postgres_engine) as session:
         organization = seed_organization(
             session, accounting_period_control_enabled=False, name="R6 法定集合跨期"
+        )
+        prepare_authenticated_bank_account(session, organization)
+        prepare_authenticated_bank_account(
+            session, organization, booking_date=date(2026, 4, 5)
         )
         employee_id = register_payroll_facts(session, organization)
         _september_preview, september_tax = _post_regular_tax_source(
