@@ -78,6 +78,8 @@ class OpenItemPlan:
             "employer_housing",
             "withheld_employee_housing",
             "individual_income_tax",
+            "labor_remuneration",
+            "labor_individual_income_tax",
         }:
             raise ValueError(f"unsupported payable category: {self.payable_category}")
         if self.payable_category in {

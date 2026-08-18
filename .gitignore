@@ -18,3 +18,4 @@ build/
 .codex/tmp/
 docs/private-pilot-empty-db-startup-checklist.md
 docs/private-pilot-replay-ledger.md
+docs/private-pilot-replay-data/

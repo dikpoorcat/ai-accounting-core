@@ -63,12 +63,17 @@ from .models import (
     IntangibleAssetAmortization,
     IntangibleAssetRetirement,
     Invoice,
+    LaborExternalDeclarationConfirmation,
+    LaborRemunerationBatch,
+    LaborRemunerationLine,
     OpenItem,
     Organization,
     OwnerAccount,
     PayrollBatch,
     Settlement,
     TaxPeriod,
+    UnifiedPayoutRun,
+    UnifiedPayoutRunItem,
     Voucher,
     VoucherLine,
     ZeroTaxPeriodConfirmation,
@@ -84,8 +89,7 @@ _PERIODIC_REVIEW_SOURCE_URLS = {
     ),
     "enterprise_income_tax": "https://12366.chinatax.gov.cn/bzds/050/050-4-1.html",
     "business_annual_report": (
-        "https://www.samr.gov.cn/xyjgs/flfg/art/2024/"
-        "art_be55c2e3a54a43e5ab12794c9dc87600.html"
+        "https://www.samr.gov.cn/xyjgs/flfg/art/2024/art_be55c2e3a54a43e5ab12794c9dc87600.html"
     ),
     "zhejiang_stamp_duty_period": (
         "https://zhejiang.chinatax.gov.cn/art/2024/2/6/art_13314_609717.html"
@@ -178,6 +182,53 @@ class AccountingPeriodService:
             if remaining <= 0:
                 continue
             group = counts.setdefault(item.item_type, {"count": 0, "remaining_fen": 0})
+            group["count"] += 1
+            group["remaining_fen"] += remaining
+        return counts
+
+    def _labor_open_item_counts_as_of(
+        self, org_id: uuid.UUID, period_end: date
+    ) -> dict[str, dict[str, int]]:
+        """Return period-end labor payable balances by controlled source category."""
+
+        rows = self.session.execute(
+            select(OpenItem, BusinessEvent)
+            .join(BusinessEvent, BusinessEvent.id == OpenItem.source_event_id)
+            .where(
+                OpenItem.org_id == org_id,
+                OpenItem.payable_category.in_(
+                    ("labor_remuneration", "labor_individual_income_tax")
+                ),
+                BusinessEvent.posting_date <= period_end,
+                BusinessEvent.status.in_(("posted", "reversed")),
+            )
+        ).all()
+        counts: dict[str, dict[str, int]] = {}
+        for item, source_event in rows:
+            source_reversal = (
+                self.session.get(BusinessEvent, source_event.reversed_by_event_id)
+                if source_event.reversed_by_event_id
+                else None
+            )
+            if source_reversal is not None and source_reversal.posting_date <= period_end:
+                continue
+            settled_as_of = 0
+            for settlement in item.settlements:
+                payment = self.session.get(BusinessEvent, settlement.payment_event_id)
+                if payment is None or payment.posting_date > period_end:
+                    continue
+                reversal = (
+                    self.session.get(BusinessEvent, settlement.reversed_by_event_id)
+                    if settlement.reversed_by_event_id
+                    else None
+                )
+                if reversal is None or reversal.posting_date > period_end:
+                    settled_as_of += settlement.amount_fen
+            remaining = item.original_amount_fen - settled_as_of
+            if remaining <= 0:
+                continue
+            category = str(item.payable_category)
+            group = counts.setdefault(category, {"count": 0, "remaining_fen": 0})
             group["count"] += 1
             group["remaining_fen"] += remaining
         return counts
@@ -791,8 +842,8 @@ class AccountingPeriodService:
             if result["blocking"]:
                 self._add_check(checks, blockers, result["code"], False, result["count"])
         account_totals = self._account_totals(request.org_id, period)
-        bank_reconciliations, bank_reconciliation_issues = (
-            self._current_bank_reconciliations(request.org_id, period)
+        bank_reconciliations, bank_reconciliation_issues = self._current_bank_reconciliations(
+            request.org_id, period
         )
         self._add_check(
             checks,
@@ -922,9 +973,7 @@ class AccountingPeriodService:
         )
         pending_assets = [asset for asset in assets if asset.id not in activated_asset_ids]
         acquired_in_period = [
-            asset
-            for asset in assets
-            if period.start_date <= asset.posting_date <= period.end_date
+            asset for asset in assets if period.start_date <= asset.posting_date <= period.end_date
         ]
 
         employee_counterparties = list(
@@ -973,6 +1022,54 @@ class AccountingPeriodService:
                 "individual_income_tax_payment",
             )
         )
+        labor_batches = list(
+            self.session.scalars(
+                select(LaborRemunerationBatch).where(
+                    LaborRemunerationBatch.org_id == org_id,
+                    LaborRemunerationBatch.remuneration_period == period_month,
+                    LaborRemunerationBatch.status.not_in(("reversed", "superseded")),
+                )
+            )
+        )
+        labor_open_items = self._labor_open_item_counts_as_of(org_id, period.end_date)
+        declaration_rows = self.session.execute(
+            select(LaborRemunerationLine, UnifiedPayoutRun)
+            .join(
+                UnifiedPayoutRunItem,
+                (UnifiedPayoutRunItem.org_id == LaborRemunerationLine.org_id)
+                & (UnifiedPayoutRunItem.labor_line_id == LaborRemunerationLine.id),
+            )
+            .join(
+                UnifiedPayoutRun,
+                (UnifiedPayoutRun.org_id == UnifiedPayoutRunItem.org_id)
+                & (UnifiedPayoutRun.id == UnifiedPayoutRunItem.payout_run_id),
+            )
+            .where(
+                LaborRemunerationLine.org_id == org_id,
+                UnifiedPayoutRun.status == "posted",
+                LaborRemunerationLine.external_declaration_status != "confirmed",
+            )
+        ).all()
+        confirmed_declaration_line_ids = set(
+            self.session.scalars(
+                select(LaborExternalDeclarationConfirmation.labor_line_id).where(
+                    LaborExternalDeclarationConfirmation.org_id == org_id
+                )
+            )
+        )
+        due_labor_declarations = []
+        for labor_line, payout_run in declaration_rows:
+            due_date = (
+                date(payout_run.payment_date.year + 1, 1, 15)
+                if payout_run.payment_date.month == 12
+                else date(
+                    payout_run.payment_date.year,
+                    payout_run.payment_date.month + 1,
+                    15,
+                )
+            )
+            if due_date <= period.end_date and labor_line.id not in confirmed_declaration_line_ids:
+                due_labor_declarations.append((labor_line, due_date))
 
         tax_calculation_due = filing_cycle == "monthly" or period.calendar_month % 3 == 0
         tax_period_start = (
@@ -1025,9 +1122,7 @@ class AccountingPeriodService:
                     continue
                 if current.calculation_hash == confirmation.calculation_hash:
                     matching_zero_tax_confirmation_count += 1
-        tax_period_count = (
-            adjustment_tax_period_count + matching_zero_tax_confirmation_count
-        )
+        tax_period_count = adjustment_tax_period_count + matching_zero_tax_confirmation_count
         annual_reporting_checkpoint_due = period.calendar_month == 5
         year_end_checkpoint_due = period.calendar_month == 12
         borrowing_count = int(
@@ -1050,9 +1145,7 @@ class AccountingPeriodService:
             or review_counts["pending_late_bank_transactions"] > 0
             or review_counts["historical_bank_scope_corrections_pending"] > 0
         )
-        fixed_asset_attention = bool(
-            pending_assets or module_checks["fixed_assets"]["count"]
-        )
+        fixed_asset_attention = bool(pending_assets or module_checks["fixed_assets"]["count"])
         active_employee_counterparty_ids = {
             employee.counterparty_id for employee in active_employees
         }
@@ -1065,6 +1158,15 @@ class AccountingPeriodService:
             employee_master_gaps
             or (active_employees and not regular_payroll_batches)
             or module_checks["payroll"]["count"]
+        )
+        labor_attention = bool(
+            module_checks["labor_remuneration"]["count"]
+            or labor_open_items
+            or due_labor_declarations
+        )
+        unpaid_labor_count = labor_open_items.get("labor_remuneration", {}).get("count", 0)
+        unpaid_labor_tax_count = labor_open_items.get("labor_individual_income_tax", {}).get(
+            "count", 0
         )
         open_item_total_count = sum(item["count"] for item in open_item_counts.values())
 
@@ -1102,9 +1204,7 @@ class AccountingPeriodService:
                 "system_facts": {
                     "reconciliation_count": bank_reconciliation_count,
                     "reconciliation_issue_count": bank_reconciliation_issue_count,
-                    "unmatched_transaction_count": review_counts[
-                        "unmatched_bank_transactions"
-                    ],
+                    "unmatched_transaction_count": review_counts["unmatched_bank_transactions"],
                     "pending_late_transaction_count": review_counts[
                         "pending_late_bank_transactions"
                     ],
@@ -1156,12 +1256,8 @@ class AccountingPeriodService:
                     "recorded_asset_count": len(assets),
                     "acquired_in_period_count": len(acquired_in_period),
                     "pending_activation_count": len(pending_assets),
-                    "pending_activation_cost_fen": sum(
-                        asset.cost_fen for asset in pending_assets
-                    ),
-                    "depreciation_schedule_issue_count": module_checks["fixed_assets"][
-                        "count"
-                    ],
+                    "pending_activation_cost_fen": sum(asset.cost_fen for asset in pending_assets),
+                    "depreciation_schedule_issue_count": module_checks["fixed_assets"]["count"],
                     "pending_assets": [
                         {
                             "asset_code": asset.asset_code,
@@ -1193,8 +1289,7 @@ class AccountingPeriodService:
                     )
                 ),
                 "completed": (
-                    bool(active_employees and regular_payroll_batches)
-                    and not payroll_attention
+                    bool(active_employees and regular_payroll_batches) and not payroll_attention
                 ),
                 "summary": (
                     f"系统有 {len(employee_counterparties)} 个员工类往来对象、"
@@ -1218,6 +1313,49 @@ class AccountingPeriodService:
                     "本月是否有人新入职、离职或开始形成劳动关系？股东或联合创始人身份不自动等于员工。",
                     "本月是否应发工资、奖金，或应缴社保、公积金、个人所得税？即使尚未付款也要确认。",
                 ],
+            },
+            {
+                "code": "MONTH_END_PERSONAL_LABOR_REMUNERATION",
+                "topic": "非员工个人劳务报酬、扣缴和外部申报",
+                "state": (
+                    "needs_attention"
+                    if labor_attention
+                    else ("completed" if labor_batches else "owner_confirmation_required")
+                ),
+                "completed": bool(labor_batches) and not labor_attention,
+                "summary": (
+                    f"本月有 {len(labor_batches)} 个个人劳务报酬批次；"
+                    f"未付劳务应付 {unpaid_labor_count} 项，"
+                    f"已扣未缴劳务个税 {unpaid_labor_tax_count} 项，"
+                    f"已到期且外部申报待确认 {len(due_labor_declarations)} 项。"
+                ),
+                "system_facts": {
+                    "labor_batch_count": len(labor_batches),
+                    "unfinished_labor_batch_or_payout_count": module_checks["labor_remuneration"][
+                        "count"
+                    ],
+                    "open_labor_payables": labor_open_items.get(
+                        "labor_remuneration", {"count": 0, "remaining_fen": 0}
+                    ),
+                    "open_labor_withholding_tax": labor_open_items.get(
+                        "labor_individual_income_tax",
+                        {"count": 0, "remaining_fen": 0},
+                    ),
+                    "due_external_declaration_count": len(due_labor_declarations),
+                    "due_external_declarations": [
+                        {
+                            "labor_line_id": str(line.id),
+                            "due_date": due_date.isoformat(),
+                            "recorded_status": line.external_declaration_status,
+                        }
+                        for line, due_date in due_labor_declarations
+                    ],
+                },
+                "owner_questions": (
+                    ["请核对未付劳务应付、已扣未缴个税，并确认已到期项目的外部申报状态。"]
+                    if labor_attention
+                    else ["本月是否存在尚未交给系统的非员工个人劳务报酬？"]
+                ),
             },
             {
                 "code": "MONTH_END_TAX_AND_FILING",
@@ -1249,9 +1387,7 @@ class AccountingPeriodService:
                     "tax_calculation_due": tax_calculation_due,
                     "tax_period_count": tax_period_count,
                     "adjustment_tax_period_count": adjustment_tax_period_count,
-                    "matching_zero_tax_confirmation_count": (
-                        matching_zero_tax_confirmation_count
-                    ),
+                    "matching_zero_tax_confirmation_count": (matching_zero_tax_confirmation_count),
                     "taxable_event_count": review_counts["tax_items_to_review"],
                     "input_invoice_count": invoice_counts.get("input", 0),
                     "output_invoice_count": invoice_counts.get("output", 0),
@@ -1367,9 +1503,7 @@ class AccountingPeriodService:
                         "code": "PERIODIC_TAX_FILING",
                         "cadence": filing_cycle,
                         "trigger_months": (
-                            list(range(1, 13))
-                            if filing_cycle == "monthly"
-                            else [3, 6, 9, 12]
+                            list(range(1, 13)) if filing_cycle == "monthly" else [3, 6, 9, 12]
                         ),
                         "source_url": _PERIODIC_REVIEW_SOURCE_URLS["vat_filing_period"],
                     },
@@ -1386,9 +1520,7 @@ class AccountingPeriodService:
                         "code": "YEAR_END_STATUTORY_CHECKPOINT",
                         "cadence": "annual",
                         "trigger_months": [12],
-                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS[
-                            "zhejiang_stamp_duty_period"
-                        ],
+                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS["zhejiang_stamp_duty_period"],
                     },
                 ],
             },
@@ -1537,6 +1669,32 @@ class AccountingPeriodService:
             )
             or 0
         )
+        unfinished_labor_batches = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(LaborRemunerationBatch)
+                .where(
+                    LaborRemunerationBatch.org_id == org_id,
+                    LaborRemunerationBatch.remuneration_period
+                    == f"{period.calendar_year:04d}-{period.calendar_month:02d}",
+                    LaborRemunerationBatch.status == "calculated",
+                )
+            )
+            or 0
+        )
+        unfinished_payout_runs = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(UnifiedPayoutRun)
+                .where(
+                    UnifiedPayoutRun.org_id == org_id,
+                    UnifiedPayoutRun.posting_date.between(period.start_date, period.end_date),
+                    UnifiedPayoutRun.status == "calculated",
+                )
+            )
+            or 0
+        )
+        unfinished_labor = int(unfinished_labor_batches) + int(unfinished_payout_runs)
         return {
             "fixed_assets": {
                 "code": "ACCOUNTING_PERIOD_FIXED_ASSET_DEPRECIATION_PENDING",
@@ -1557,6 +1715,11 @@ class AccountingPeriodService:
                 "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
                 "count": int(unfinished_payroll),
                 "blocking": unfinished_payroll > 0,
+            },
+            "labor_remuneration": {
+                "code": "ACCOUNTING_PERIOD_LABOR_REMUNERATION_PENDING",
+                "count": unfinished_labor,
+                "blocking": unfinished_labor > 0,
             },
         }
 
@@ -1709,18 +1872,20 @@ class AccountingPeriodService:
                 BankTransaction.is_late.is_(False),
             )
         ).all()
-        active_matches = self.session.scalars(
-            select(BankTransactionMatch).where(
-                BankTransactionMatch.org_id == org_id,
-                BankTransactionMatch.bank_transaction_id.in_(
-                    [item.id for item in ordinary_rows]
-                ),
-                BankTransactionMatch.invalidated_by_event_id.is_(None),
-            )
-        ).all() if ordinary_rows else []
-        active_by_transaction = {
-            item.bank_transaction_id: item for item in active_matches
-        }
+        active_matches = (
+            self.session.scalars(
+                select(BankTransactionMatch).where(
+                    BankTransactionMatch.org_id == org_id,
+                    BankTransactionMatch.bank_transaction_id.in_(
+                        [item.id for item in ordinary_rows]
+                    ),
+                    BankTransactionMatch.invalidated_by_event_id.is_(None),
+                )
+            ).all()
+            if ordinary_rows
+            else []
+        )
+        active_by_transaction = {item.bank_transaction_id: item for item in active_matches}
         from .bank_statement_service import BankStatementService
 
         bank_service = BankStatementService(
@@ -1753,9 +1918,7 @@ class AccountingPeriodService:
                 and bank_service._current_late_action(transaction) is None
             ):
                 pending_late_bank += 1
-        historical_scope_corrections = len(
-            bank_service._historical_scope_corrections(org_id)
-        )
+        historical_scope_corrections = len(bank_service._historical_scope_corrections(org_id))
         tax_events = (
             self.session.scalar(
                 select(func.count())
@@ -1769,9 +1932,7 @@ class AccountingPeriodService:
             or 0
         )
         counts = {
-            "historical_bank_scope_corrections_pending": int(
-                historical_scope_corrections
-            ),
+            "historical_bank_scope_corrections_pending": int(historical_scope_corrections),
             "open_items": int(open_items),
             "pending_late_bank_transactions": int(pending_late_bank),
             "tax_items_to_review": int(tax_events),
@@ -1803,10 +1964,7 @@ class AccountingPeriodService:
         period: AccountingPeriod,
     ) -> tuple[list[BankReconciliation], list[str]]:
         organization = self.session.get(Organization, org_id)
-        if (
-            organization is None
-            or organization.bank_reconciliation_scope_current_action_id is None
-        ):
+        if organization is None or organization.bank_reconciliation_scope_current_action_id is None:
             return [], ["BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED"]
         accounts = self.session.scalars(
             select(Account)
@@ -1842,9 +2000,7 @@ class AccountingPeriodService:
                 .limit(1)
             )
             if reconciliation is None:
-                issues.append(
-                    f"BANK_RECONCILIATION_MISSING:{account.code}"
-                )
+                issues.append(f"BANK_RECONCILIATION_MISSING:{account.code}")
                 continue
             calculation = reconciliation.calculation
             preview_request = PreviewBankReconciliationRequest.model_validate(
@@ -1854,22 +2010,15 @@ class AccountingPeriodService:
                     "bank_account_code": account.code,
                     "coverage_start_date": calculation["coverage_start_date"],
                     "coverage_end_date": calculation["coverage_end_date"],
-                    "statement_opening_balance_fen": calculation[
-                        "statement_opening_balance_fen"
-                    ],
-                    "statement_closing_balance_fen": calculation[
-                        "statement_closing_balance_fen"
-                    ],
+                    "statement_opening_balance_fen": calculation["statement_opening_balance_fen"],
+                    "statement_closing_balance_fen": calculation["statement_closing_balance_fen"],
                     "statement_import_action_ids": [
                         item["action_id"] for item in calculation["import_actions"]
                     ],
                     "statement_evidence_references": [
-                        item["evidence_id"]
-                        for item in calculation["statement_evidence"]
+                        item["evidence_id"] for item in calculation["statement_evidence"]
                     ],
-                    "difference_explanations": calculation[
-                        "difference_explanations"
-                    ],
+                    "difference_explanations": calculation["difference_explanations"],
                 }
             )
             preview = service.preview_bank_reconciliation(preview_request)
@@ -1877,9 +2026,7 @@ class AccountingPeriodService:
                 preview.status != "calculated"
                 or preview.calculation_hash != reconciliation.calculation_hash
             ):
-                issues.append(
-                    f"BANK_RECONCILIATION_STALE:{account.code}"
-                )
+                issues.append(f"BANK_RECONCILIATION_STALE:{account.code}")
                 continue
             current.append(reconciliation)
         return current, issues

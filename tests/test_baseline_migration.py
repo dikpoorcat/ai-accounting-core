@@ -19,8 +19,9 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0012_zero_tax_confirmation"]
+    assert scripts.get_heads() == ["0013_labor_remuneration"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0013_labor_remuneration",
         "0012_zero_tax_confirmation",
         "0011_close_as_of_items",
         "0010_depreciation_batch",
@@ -67,7 +68,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0012_zero_tax_confirmation"
+                == "0013_labor_remuneration"
             )
             assert "reimbursing_employee_id" in {
                 column["name"] for column in inspect(connection).get_columns("fixed_assets")
@@ -89,6 +90,9 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
                 "fixed_asset_cost_sources",
                 "fixed_asset_depreciation_batches",
                 "zero_tax_period_confirmations",
+                "labor_service_persons",
+                "labor_remuneration_batches",
+                "unified_payout_runs",
             } <= set(inspect(connection).get_table_names())
             depreciation_columns = {
                 column["name"]
@@ -104,7 +108,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0012_zero_tax_confirmation"
+                == "0013_labor_remuneration"
             )
     finally:
         engine.dispose()

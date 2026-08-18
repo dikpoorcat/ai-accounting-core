@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Account, Organization, TaxRule
+from .models import Account, LaborRemunerationTaxPolicyVersion, Organization, TaxRule
 
 DEFAULT_ACCOUNTS = [
     ("1001", "库存现金", "asset", "debit", "cash"),
@@ -53,6 +53,10 @@ DEFAULT_ACCOUNTS = [
         "withheld_employee_housing_fund_payable",
     ),
     ("222103", "应交个人所得税", "liability", "credit", "individual_income_tax_payable"),
+    ("224104", "其他应付款—个人劳务报酬", "liability", "credit", "labor_remuneration_payable"),
+    ("560204", "管理费用—个人劳务", "expense", "debit", "labor_management_expense"),
+    ("560104", "销售费用—个人劳务", "expense", "debit", "labor_sales_expense"),
+    ("540104", "主营业务成本—个人劳务", "expense", "debit", "labor_service_cost"),
     ("1604", "在建工程—待启用固定资产", "asset", "debit", "fixed_asset_pending"),
     ("1601", "固定资产", "asset", "debit", "fixed_asset_cost"),
     ("1602", "累计折旧", "asset", "credit", "accumulated_depreciation"),
@@ -166,6 +170,48 @@ TAX_RULES = [
 ]
 
 
+LABOR_REMUNERATION_TAX_POLICIES = [
+    {
+        "code": "cn_resident_labor_remuneration_withholding",
+        "version": "2019.1",
+        "effective_from": date(2019, 1, 1),
+        "effective_to": None,
+        "primary_source_url": "https://12366.chinatax.gov.cn/bzds/070/070-5-4.html",
+        "invoice_withholding_source_url": (
+            "https://zhejiang.chinatax.gov.cn/art/2025/3/25/art_13314_634526.html"
+        ),
+        "legal_filing_source_url": (
+            "https://www.chinatax.gov.cn/n810219/n810744/n3752930/n3752974/c3970366/content.html"
+        ),
+        "parameters": {
+            "small_payment_threshold_fen": 400_000,
+            "fixed_expense_deduction_fen": 80_000,
+            "large_payment_expense_rate": "0.20",
+            "withholding_brackets": [
+                {
+                    "upper_taxable_income_fen": 2_000_000,
+                    "rate": "0.20",
+                    "quick_deduction_fen": 0,
+                },
+                {
+                    "upper_taxable_income_fen": 5_000_000,
+                    "rate": "0.30",
+                    "quick_deduction_fen": 200_000,
+                },
+                {
+                    "upper_taxable_income_fen": None,
+                    "rate": "0.40",
+                    "quick_deduction_fen": 700_000,
+                },
+            ],
+            "rounding": "half_up_to_fen",
+            "filing_due_rule": "day_15_of_following_month",
+            "student_internship_method_supported": False,
+        },
+    }
+]
+
+
 def seed_organization(
     session: Session,
     *,
@@ -205,6 +251,15 @@ def seed_organization(
         )
         if existing is None:
             session.add(TaxRule(**rule_data))
+    for policy_data in LABOR_REMUNERATION_TAX_POLICIES:
+        existing_policy = session.scalar(
+            select(LaborRemunerationTaxPolicyVersion).where(
+                LaborRemunerationTaxPolicyVersion.code == policy_data["code"],
+                LaborRemunerationTaxPolicyVersion.version == policy_data["version"],
+            )
+        )
+        if existing_policy is None:
+            session.add(LaborRemunerationTaxPolicyVersion(**policy_data))
     session.flush()
     return organization
 

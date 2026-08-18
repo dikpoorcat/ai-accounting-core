@@ -56,6 +56,17 @@ from .intangible_asset_schemas import (
     PreviewIntangibleAssetAmortizationRequest,
     RetireIntangibleAssetRequest,
 )
+from .labor_remuneration_schemas import (
+    ConfirmLaborExternalDeclarationRequest,
+    ConfirmLaborRemunerationBatchRequest,
+    ConfirmUnifiedPayoutRunRequest,
+    EndLaborServicePersonRequest,
+    GetLaborRemunerationRequest,
+    PayLaborWithholdingTaxRequest,
+    PreviewLaborRemunerationBatchRequest,
+    PreviewUnifiedPayoutRunRequest,
+    RegisterLaborServicePersonRequest,
+)
 from .models import (
     Account,
     AuditLog,
@@ -63,6 +74,7 @@ from .models import (
     BankTransactionMatch,
     BusinessEvent,
     Evidence,
+    LaborRemunerationTaxPolicyVersion,
     OpenItem,
     Organization,
     OwnerAccount,
@@ -439,6 +451,14 @@ def _accounting_period_service(session: Any) -> Any:
     return AccountingPeriodService(session)
 
 
+def _labor_remuneration_service(session: Any) -> Any:
+    """Load the non-employee labor workflow only when invoked."""
+
+    from .labor_remuneration_service import LaborRemunerationService
+
+    return LaborRemunerationService(session)
+
+
 def _bank_statement_service(session: Any) -> Any:
     """Load formal CSV import/reconciliation workflows only when invoked."""
 
@@ -464,6 +484,11 @@ def finance_get_profile(org_id: str) -> dict[str, Any]:
         ).all()
         rules = session.scalars(
             select(TaxRule).where(TaxRule.jurisdiction == organization.jurisdiction)
+        ).all()
+        labor_policies = session.scalars(
+            select(LaborRemunerationTaxPolicyVersion).order_by(
+                LaborRemunerationTaxPolicyVersion.effective_from
+            )
         ).all()
         return {
             "status": "ok",
@@ -499,6 +524,21 @@ def finance_get_profile(org_id: str) -> dict[str, Any]:
                     "parameters": rule.parameters,
                 }
                 for rule in rules
+            ],
+            "labor_remuneration_tax_policies": [
+                {
+                    "code": policy.code,
+                    "version": policy.version,
+                    "effective_from": policy.effective_from.isoformat(),
+                    "effective_to": (
+                        policy.effective_to.isoformat() if policy.effective_to else None
+                    ),
+                    "primary_source_url": policy.primary_source_url,
+                    "invoice_withholding_source_url": policy.invoice_withholding_source_url,
+                    "legal_filing_source_url": policy.legal_filing_source_url,
+                    "parameters": policy.parameters,
+                }
+                for policy in labor_policies
             ],
         }
 
@@ -546,6 +586,23 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 ],
                 "generic_event_writer": "not_available",
                 "accrual_entry": "finance_confirm_payroll",
+            },
+            "personal_labor_remuneration": {
+                "status": "enabled",
+                "entry_tools": [
+                    "finance_register_labor_service_person",
+                    "finance_end_labor_service_person",
+                    "finance_preview_labor_remuneration_batch",
+                    "finance_confirm_labor_remuneration_batch",
+                    "finance_get_labor_remuneration",
+                    "finance_preview_unified_payout_run",
+                    "finance_confirm_unified_payout_run",
+                    "finance_pay_labor_withholding_tax",
+                    "finance_confirm_labor_external_declaration",
+                ],
+                "generic_event_writer": "not_available",
+                "accrual_entry": "finance_confirm_labor_remuneration_batch",
+                "mixed_salary_labor_bank_match": "finance_confirm_unified_payout_run",
             },
             "fixed_asset": {
                 "status": "enabled",
@@ -857,6 +914,134 @@ def finance_get_payroll_batch(org_id: uuid.UUID, batch_id: uuid.UUID) -> dict[st
         with SessionLocal() as session:
             return FinanceService(session).get_payroll_batch(org_id, batch_id)
     except (ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_labor_service_person(
+    request: RegisterLaborServicePersonRequest,
+) -> dict[str, Any]:
+    """登记与 Employee 严格分离的非员工个人劳务人员及有效期证据。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session)
+                .register_person(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_end_labor_service_person(
+    request: EndLaborServicePersonRequest,
+) -> dict[str, Any]:
+    """以证据支持的受控动作结束劳务关系，保留未来转员工的身份链。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session).end_person(request).model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_preview_labor_remuneration_batch(
+    request: PreviewLaborRemunerationBatchRequest,
+) -> dict[str, Any]:
+    """按有效政策试算普通居民个人劳务报酬，冻结分项、税额和哈希。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session).preview_batch(request).model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_labor_remuneration_batch(
+    request: ConfirmLaborRemunerationBatchRequest,
+) -> dict[str, Any]:
+    """确认劳务试算哈希，按固定费用/应付模板原子计提。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session).confirm_batch(request).model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_labor_remuneration(request: GetLaborRemunerationRequest) -> dict[str, Any]:
+    """读取劳务人员、劳务批次或统一发放批次的不可变事实链。"""
+    try:
+        with SessionLocal() as session:
+            return _labor_remuneration_service(session).get(request).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_preview_unified_payout_run(
+    request: PreviewUnifiedPayoutRunRequest,
+) -> dict[str, Any]:
+    """试算工资和个人劳务混合发放，并精确勾稽一笔已导入银行汇总扣款。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session).preview_payout(request).model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_unified_payout_run(
+    request: ConfirmUnifiedPayoutRunRequest,
+) -> dict[str, Any]:
+    """锁后复算混合发放哈希，整批原子过账且银行流水只匹配一次。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session).confirm_payout(request).model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_pay_labor_withholding_tax(
+    request: PayLaborWithholdingTaxRequest,
+) -> dict[str, Any]:
+    """仅核销劳务报酬扣缴来源的个税应付，不冒充工资个税来源。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session)
+                .pay_withholding_tax(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_labor_external_declaration(
+    request: ConfirmLaborExternalDeclarationRequest,
+) -> dict[str, Any]:
+    """追加确认外部劳务个税申报证据；不改写原劳务批次。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _labor_remuneration_service(session)
+                .confirm_external_declaration(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
 
@@ -1359,6 +1544,12 @@ def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
                 "borrowing_principal_repayment",
             }:
                 service = _borrowing_service(session)
+            elif event_type in {
+                "labor_remuneration_accrual",
+                "unified_payout_run",
+                "labor_withholding_tax_payment",
+            }:
+                service = _labor_remuneration_service(session)
             else:
                 service = _fixed_asset_service(session)
             return service.reverse_event(request).model_dump(mode="json")

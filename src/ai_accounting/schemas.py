@@ -633,6 +633,7 @@ class RegisterEmployeeRequest(BaseModel):
     employment_start_date: date
     employment_end_date: date | None = None
     status: Literal["active", "inactive", "terminated"] = "active"
+    prior_labor_person_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def employment_dates_are_ordered(self) -> RegisterEmployeeRequest:

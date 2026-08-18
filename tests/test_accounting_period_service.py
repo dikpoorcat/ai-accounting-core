@@ -333,6 +333,7 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
         "MONTH_END_OPEN_ITEMS",
         "MONTH_END_FIXED_ASSETS",
         "MONTH_END_PEOPLE_PAYROLL_STATUTORY",
+        "MONTH_END_PERSONAL_LABOR_REMUNERATION",
         "MONTH_END_TAX_AND_FILING",
         "MONTH_END_BORROWINGS_AND_CAPITAL",
     ]

@@ -695,7 +695,7 @@ class Counterparty(Base):
         UniqueConstraint("org_id", "kind", "name", name="uq_counterparty_identity"),
         UniqueConstraint("org_id", "id", name="uq_counterparty_org_id"),
         CheckConstraint(
-            "kind IN ('customer','supplier','employee','owner','other')",
+            "kind IN ('customer','supplier','employee','owner','other','labor_person')",
             name="ck_counterparty_kind",
         ),
     )
@@ -707,6 +707,7 @@ class Employee(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    prior_labor_person_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     employee_code: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200))
     employment_start_date: Mapped[date] = mapped_column(Date)
@@ -730,9 +731,16 @@ class Employee(Base):
             name="fk_employee_execution_attribution",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["org_id", "prior_labor_person_id"],
+            ["labor_service_persons.org_id", "labor_service_persons.id"],
+            name="fk_employee_org_prior_labor_person",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "id", name="uq_employee_org_id"),
         UniqueConstraint("org_id", "employee_code", name="uq_employee_org_code"),
         UniqueConstraint("counterparty_id", name="uq_employee_counterparty"),
+        UniqueConstraint("prior_labor_person_id", name="uq_employee_prior_labor_person"),
         CheckConstraint(
             "employment_end_date IS NULL OR employment_start_date <= employment_end_date",
             name="ck_employee_employment_dates",
@@ -3064,6 +3072,737 @@ class TaxPeriod(Base):
     )
 
 
+class LaborRemunerationTaxPolicyVersion(Base):
+    """Effective-dated official withholding policy for personal labor income."""
+
+    __tablename__ = "labor_remuneration_tax_policy_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    primary_source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    invoice_withholding_source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    legal_filing_source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("code", "version", name="uq_labor_tax_policy_code_version"),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_from <= effective_to",
+            name="ck_labor_tax_policy_dates",
+        ),
+    )
+
+
+class LaborServicePerson(Base):
+    """A non-employee natural person engaged for temporary personal services."""
+
+    __tablename__ = "labor_service_persons"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    person_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    relationship_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    relationship_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "counterparty_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_labor_person_org_counterparty",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_labor_person_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_labor_person_org_id"),
+        UniqueConstraint("org_id", "person_code", name="uq_labor_person_org_code"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_labor_person_idempotency"),
+        UniqueConstraint("counterparty_id", name="uq_labor_person_counterparty"),
+        CheckConstraint(
+            "relationship_end_date IS NULL OR relationship_start_date <= relationship_end_date",
+            name="ck_labor_person_dates",
+        ),
+        CheckConstraint(
+            "status IN ('active','ended')",
+            name="ck_labor_person_status",
+        ),
+        CheckConstraint(
+            "(status = 'active' AND relationship_end_date IS NULL) OR "
+            "(status = 'ended' AND relationship_end_date IS NOT NULL)",
+            name="ck_labor_person_status_dates",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64",
+            name="ck_labor_person_request_hash",
+        ),
+    )
+
+
+class LaborServicePersonEvidence(Base):
+    __tablename__ = "labor_service_person_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    labor_person_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "labor_person_id"],
+            ["labor_service_persons.org_id", "labor_service_persons.id"],
+            name="fk_labor_person_evidence_org_person",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_labor_person_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class LaborServicePersonEndAction(Base):
+    """Append-only evidence-backed end of a non-employee service relationship."""
+
+    __tablename__ = "labor_service_person_end_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    labor_person_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    relationship_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "labor_person_id"],
+            ["labor_service_persons.org_id", "labor_service_persons.id"],
+            name="fk_labor_person_end_action_org_person",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_labor_person_end_action_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_labor_person_end_action_org_id"),
+        UniqueConstraint("labor_person_id", name="uq_labor_person_end_action_person"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_labor_person_end_action_idempotency"
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64",
+            name="ck_labor_person_end_action_request_hash",
+        ),
+    )
+
+
+class LaborServicePersonEndActionEvidence(Base):
+    __tablename__ = "labor_service_person_end_action_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
+            ["labor_service_person_end_actions.org_id", "labor_service_person_end_actions.id"],
+            name="fk_labor_person_end_evidence_org_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_labor_person_end_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class LaborRemunerationBatch(Base):
+    __tablename__ = "labor_remuneration_batches"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    remuneration_period: Mapped[str] = mapped_column(String(7), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="calculated")
+    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_input: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    calculation_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    policy_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    policy_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    business_date: Mapped[date] = mapped_column(Date, nullable=False)
+    posting_date: Mapped[date] = mapped_column(Date, nullable=False)
+    planned_payment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["policy_version_id"],
+            ["labor_remuneration_tax_policy_versions.id"],
+            name="fk_labor_batch_tax_policy",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "business_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_labor_batch_org_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_labor_batch_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_labor_batch_org_id"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_labor_batch_idempotency"),
+        CheckConstraint(
+            "status IN ('calculated','posted','reversed','superseded')",
+            name="ck_labor_batch_status",
+        ),
+        CheckConstraint(
+            "length(remuneration_period) = 7 AND substr(remuneration_period, 5, 1) = '-' "
+            "AND substr(remuneration_period, 6, 2) BETWEEN '01' AND '12'",
+            name="ck_labor_batch_period",
+        ),
+        CheckConstraint("length(calculation_hash) = 64", name="ck_labor_batch_hash"),
+        CheckConstraint("length(request_payload_hash) = 64", name="ck_labor_batch_request_hash"),
+    )
+
+
+class LaborRemunerationLine(Base):
+    __tablename__ = "labor_remuneration_lines"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    labor_person_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    service_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    service_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    fixed_fee_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    commission_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    gross_remuneration_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expense_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    tax_identity: Mapped[str] = mapped_column(String(20), nullable=False)
+    income_grouping: Mapped[str] = mapped_column(String(30), nullable=False)
+    is_full_time_student: Mapped[bool] = mapped_column(nullable=False)
+    expense_deduction_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    taxable_income_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    withholding_rate: Mapped[Decimal] = mapped_column(Numeric(6, 5), nullable=False)
+    quick_deduction_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    withholding_tax_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    net_payment_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    external_declaration_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    external_declaration_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    calculation_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "batch_id"],
+            ["labor_remuneration_batches.org_id", "labor_remuneration_batches.id"],
+            name="fk_labor_line_org_batch",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "labor_person_id"],
+            ["labor_service_persons.org_id", "labor_service_persons.id"],
+            name="fk_labor_line_org_person",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "counterparty_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_labor_line_org_counterparty",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_labor_line_org_id"),
+        UniqueConstraint("batch_id", "labor_person_id", name="uq_labor_line_batch_person"),
+        CheckConstraint("service_start_date <= service_end_date", name="ck_labor_line_dates"),
+        CheckConstraint(
+            "fixed_fee_fen >= 0 AND commission_fen >= 0 AND gross_remuneration_fen > 0 "
+            "AND gross_remuneration_fen = fixed_fee_fen + commission_fen",
+            name="ck_labor_line_gross",
+        ),
+        CheckConstraint(
+            "expense_role IN ('labor_management_expense','labor_sales_expense',"
+            "'labor_service_cost')",
+            name="ck_labor_line_expense_role",
+        ),
+        CheckConstraint("tax_identity = 'resident'", name="ck_labor_line_resident"),
+        CheckConstraint(
+            "income_grouping IN ('single_occurrence','continuous_monthly')",
+            name="ck_labor_line_grouping",
+        ),
+        CheckConstraint("is_full_time_student IS FALSE", name="ck_labor_line_not_student"),
+        CheckConstraint(
+            "expense_deduction_fen >= 0 AND taxable_income_fen >= 0 "
+            "AND withholding_tax_fen >= 0 AND net_payment_fen >= 0 "
+            "AND expense_deduction_fen + taxable_income_fen = gross_remuneration_fen "
+            "AND net_payment_fen = gross_remuneration_fen - withholding_tax_fen",
+            name="ck_labor_line_calculation",
+        ),
+        CheckConstraint(
+            "external_declaration_status IN ('not_due','pending','confirmed')",
+            name="ck_labor_line_declaration_status",
+        ),
+        CheckConstraint(
+            "(external_declaration_status = 'confirmed' "
+            "AND external_declaration_reference IS NOT NULL) OR "
+            "(external_declaration_status <> 'confirmed' "
+            "AND external_declaration_reference IS NULL)",
+            name="ck_labor_line_declaration_reference",
+        ),
+    )
+
+
+class LaborRemunerationBatchEvidence(Base):
+    __tablename__ = "labor_remuneration_batch_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "batch_id"],
+            ["labor_remuneration_batches.org_id", "labor_remuneration_batches.id"],
+            name="fk_labor_batch_evidence_org_batch",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_labor_batch_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class LaborExternalDeclarationConfirmation(Base):
+    """Append-only evidence that an external labor-IIT declaration was confirmed."""
+
+    __tablename__ = "labor_external_declaration_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    labor_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    external_declaration_reference: Mapped[str] = mapped_column(String(200), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "labor_line_id"],
+            ["labor_remuneration_lines.org_id", "labor_remuneration_lines.id"],
+            name="fk_labor_declaration_org_line",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_labor_declaration_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_labor_declaration_org_id"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_labor_declaration_idempotency"),
+        CheckConstraint(
+            "length(request_payload_hash) = 64", name="ck_labor_declaration_request_hash"
+        ),
+    )
+
+
+class LaborExternalDeclarationEvidence(Base):
+    __tablename__ = "labor_external_declaration_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    confirmation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "confirmation_id"],
+            [
+                "labor_external_declaration_confirmations.org_id",
+                "labor_external_declaration_confirmations.id",
+            ],
+            name="fk_labor_declaration_evidence_org_confirmation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_labor_declaration_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class LaborWithholdingEntitlement(Base):
+    __tablename__ = "labor_withholding_entitlements"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    labor_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "labor_line_id"],
+            ["labor_remuneration_lines.org_id", "labor_remuneration_lines.id"],
+            name="fk_labor_withholding_org_line",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_labor_withholding_org_id"),
+        CheckConstraint("amount_fen >= 0", name="ck_labor_withholding_amount"),
+    )
+
+
+class UnifiedPayoutRun(Base):
+    """One bank-matched parent for employee salary and personal labor children."""
+
+    __tablename__ = "unified_payout_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="calculated")
+    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_input: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    calculation_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    bank_account_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    bank_transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    business_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    posting_date: Mapped[date] = mapped_column(Date, nullable=False)
+    gross_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    withholding_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    net_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "bank_transaction_id"],
+            ["bank_transactions.org_id", "bank_transactions.id"],
+            name="fk_payout_run_org_bank_transaction",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "business_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_payout_run_org_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_payout_run_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_payout_run_org_id"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_payout_run_idempotency"),
+        Index(
+            "uq_active_payout_run_bank_transaction",
+            "org_id",
+            "bank_transaction_id",
+            unique=True,
+            postgresql_where=text("status IN ('calculated','posted')"),
+            sqlite_where=text("status IN ('calculated','posted')"),
+        ),
+        CheckConstraint(
+            "status IN ('calculated','posted','reversed','superseded')",
+            name="ck_payout_run_status",
+        ),
+        CheckConstraint(
+            "gross_total_fen > 0 AND withholding_total_fen >= 0 AND net_total_fen > 0 "
+            "AND net_total_fen = gross_total_fen - withholding_total_fen",
+            name="ck_payout_run_totals",
+        ),
+        CheckConstraint("length(calculation_hash) = 64", name="ck_payout_run_hash"),
+        CheckConstraint("length(request_payload_hash) = 64", name="ck_payout_run_request_hash"),
+    )
+
+
+class UnifiedPayoutRunItem(Base):
+    __tablename__ = "unified_payout_run_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    payout_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    item_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_open_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payroll_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    labor_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    gross_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    employee_social_insurance_fen: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    employee_housing_fund_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    individual_income_tax_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    net_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    withholding_components: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "payout_run_id"],
+            ["unified_payout_runs.org_id", "unified_payout_runs.id"],
+            name="fk_payout_item_org_run",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "source_open_item_id"],
+            ["open_items.org_id", "open_items.id"],
+            name="fk_payout_item_org_open_item",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "payroll_line_id"],
+            ["payroll_lines.org_id", "payroll_lines.id"],
+            name="fk_payout_item_org_payroll_line",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "labor_line_id"],
+            ["labor_remuneration_lines.org_id", "labor_remuneration_lines.id"],
+            name="fk_payout_item_org_labor_line",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "counterparty_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_payout_item_org_counterparty",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_payout_item_org_id"),
+        UniqueConstraint("payout_run_id", "source_open_item_id", name="uq_payout_item_run_source"),
+        CheckConstraint(
+            "(item_kind = 'salary' AND payroll_line_id IS NOT NULL AND labor_line_id IS NULL) OR "
+            "(item_kind = 'labor' AND payroll_line_id IS NULL AND labor_line_id IS NOT NULL)",
+            name="ck_payout_item_source_kind",
+        ),
+        CheckConstraint(
+            "gross_amount_fen > 0 AND employee_social_insurance_fen >= 0 "
+            "AND employee_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0 "
+            "AND net_amount_fen = gross_amount_fen - employee_social_insurance_fen "
+            "- employee_housing_fund_fen - individual_income_tax_fen "
+            "AND net_amount_fen >= 0",
+            name="ck_payout_item_totals",
+        ),
+    )
+
+
+class UnifiedPayoutRunEvidence(Base):
+    __tablename__ = "unified_payout_run_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    payout_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "payout_run_id"],
+            ["unified_payout_runs.org_id", "unified_payout_runs.id"],
+            name="fk_payout_evidence_org_run",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_payout_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class LaborWithholdingOpenItemSource(Base):
+    """Exact per-person entitlement behind one labor-IIT payable open item."""
+
+    __tablename__ = "labor_withholding_open_item_sources"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    open_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    entitlement_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    labor_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payment_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "open_item_id"],
+            ["open_items.org_id", "open_items.id"],
+            name="fk_labor_tax_source_org_open_item",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "entitlement_id"],
+            ["labor_withholding_entitlements.org_id", "labor_withholding_entitlements.id"],
+            name="fk_labor_tax_source_org_entitlement",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "labor_line_id"],
+            ["labor_remuneration_lines.org_id", "labor_remuneration_lines.id"],
+            name="fk_labor_tax_source_org_line",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "payment_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_labor_tax_source_org_payment",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("amount_fen > 0", name="ck_labor_tax_source_amount"),
+    )
+
+
+class LaborWithholdingTaxPaymentAllocation(Base):
+    __tablename__ = "labor_withholding_tax_payment_allocations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    entitlement_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    open_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payment_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reversed: Mapped[bool] = mapped_column(default=False)
+    reversed_by_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "entitlement_id"],
+            ["labor_withholding_entitlements.org_id", "labor_withholding_entitlements.id"],
+            name="fk_labor_tax_allocation_org_entitlement",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "open_item_id"],
+            ["open_items.org_id", "open_items.id"],
+            name="fk_labor_tax_allocation_org_open_item",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "payment_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_labor_tax_allocation_org_payment",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "reversed_by_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_labor_tax_allocation_org_reversal",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "entitlement_id",
+            "payment_event_id",
+            name="uq_labor_tax_entitlement_event",
+        ),
+        CheckConstraint("amount_fen > 0", name="ck_labor_tax_allocation_amount"),
+        CheckConstraint(
+            "(reversed IS FALSE AND reversed_by_event_id IS NULL) OR "
+            "(reversed IS TRUE AND reversed_by_event_id IS NOT NULL)",
+            name="ck_labor_tax_allocation_reversal",
+        ),
+    )
+
+
+class LaborRemunerationEventLink(Base):
+    __tablename__ = "labor_remuneration_event_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    labor_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_open_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_payment_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    link_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_labor_event_link_org_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "batch_id"],
+            ["labor_remuneration_batches.org_id", "labor_remuneration_batches.id"],
+            name="fk_labor_event_link_org_batch",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "labor_line_id"],
+            ["labor_remuneration_lines.org_id", "labor_remuneration_lines.id"],
+            name="fk_labor_event_link_org_line",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "source_open_item_id"],
+            ["open_items.org_id", "open_items.id"],
+            name="fk_labor_event_link_org_open_item",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "source_payment_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_labor_event_link_org_source_payment",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "event_id", "batch_id", "labor_line_id", "link_kind", name="uq_labor_event_link"
+        ),
+        CheckConstraint(
+            "link_kind IN ('accrual','payment','tax_payment','reversal')",
+            name="ck_labor_event_link_kind",
+        ),
+    )
+
+
 class ZeroTaxPeriodConfirmation(Base):
     """Immutable confirmation of a deterministic all-zero VAT/surtax period.
 
@@ -3087,9 +3826,7 @@ class ZeroTaxPeriodConfirmation(Base):
     calculation_hash_payload: Mapped[str] = mapped_column(Text, nullable=False)
     filing_cycle_snapshot: Mapped[str] = mapped_column(String(20), nullable=False)
     jurisdiction_snapshot: Mapped[str] = mapped_column(String(100), nullable=False)
-    urban_maintenance_rate_snapshot: Mapped[Decimal] = mapped_column(
-        Numeric(6, 5), nullable=False
-    )
+    urban_maintenance_rate_snapshot: Mapped[Decimal] = mapped_column(Numeric(6, 5), nullable=False)
     vat_rule_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     surtax_rule_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -4046,7 +4783,8 @@ class OpenItem(Base):
         CheckConstraint(
             "payable_category IS NULL OR (item_type = 'payable' AND payable_category IN "
             "('salary','employer_social','withheld_employee_social','employer_housing',"
-            "'withheld_employee_housing','individual_income_tax'))",
+            "'withheld_employee_housing','individual_income_tax','labor_remuneration',"
+            "'labor_individual_income_tax'))",
             name="ck_open_item_payable_category",
         ),
         CheckConstraint(
@@ -4240,9 +4978,14 @@ _ATTRIBUTED_ROOT_TYPES = (
     Employee,
     EmployeePayrollProfileVersion,
     Evidence,
+    LaborExternalDeclarationConfirmation,
+    LaborRemunerationBatch,
+    LaborServicePerson,
+    LaborServicePersonEndAction,
     PayrollBatch,
     PayrollOpeningState,
     PayrollPolicyVersion,
+    UnifiedPayoutRun,
     ZeroTaxPeriodConfirmation,
 )
 

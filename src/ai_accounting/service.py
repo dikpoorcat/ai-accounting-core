@@ -39,6 +39,7 @@ from .models import (
     EmployeePayrollProfileVersion,
     Evidence,
     Invoice,
+    LaborServicePerson,
     OpenItem,
     Organization,
     PayrollBatch,
@@ -2818,6 +2819,7 @@ class FinanceService:
                 and existing.employment_start_date == request.employment_start_date
                 and existing.employment_end_date == request.employment_end_date
                 and existing.status == request.status
+                and existing.prior_labor_person_id == request.prior_labor_person_id
             )
             if not same:
                 return {"status": "rejected", "errors": ["EMPLOYEE_CODE_ALREADY_EXISTS"]}
@@ -2826,6 +2828,43 @@ class FinanceService:
                 "employee_id": str(existing.id),
                 "idempotent_replay": True,
             }
+
+        prior_labor_person = None
+        if request.prior_labor_person_id is not None:
+            prior_labor_person = self.session.scalar(
+                select(LaborServicePerson).where(
+                    LaborServicePerson.org_id == request.org_id,
+                    LaborServicePerson.id == request.prior_labor_person_id,
+                )
+            )
+            if prior_labor_person is None:
+                return {
+                    "status": "rejected",
+                    "errors": ["PRIOR_LABOR_PERSON_NOT_FOUND_OR_ORGANIZATION_MISMATCH"],
+                }
+            if (
+                prior_labor_person.status != "ended"
+                or prior_labor_person.relationship_end_date is None
+                or prior_labor_person.relationship_end_date >= request.employment_start_date
+            ):
+                return {
+                    "status": "rejected",
+                    "errors": ["LABOR_RELATIONSHIP_MUST_END_BEFORE_EMPLOYMENT"],
+                }
+            if self.session.scalar(
+                select(Employee.id).where(
+                    Employee.prior_labor_person_id == prior_labor_person.id
+                )
+            ):
+                return {
+                    "status": "rejected",
+                    "errors": ["LABOR_PERSON_ALREADY_LINKED_TO_EMPLOYEE"],
+                }
+            if prior_labor_person.name != request.name:
+                return {
+                    "status": "rejected",
+                    "errors": ["LABOR_TO_EMPLOYEE_IDENTITY_NAME_MISMATCH"],
+                }
 
         # Counterparty names are deliberately code-qualified: two employees may share a name,
         # while the underlying counterparty identity remains deterministic and non-sensitive.
@@ -2849,6 +2888,7 @@ class FinanceService:
         employee = Employee(
             org_id=request.org_id,
             counterparty_id=counterparty.id,
+            prior_labor_person_id=(prior_labor_person.id if prior_labor_person else None),
             employee_code=request.employee_code,
             name=request.name,
             employment_start_date=request.employment_start_date,
@@ -6589,6 +6629,23 @@ class FinanceService:
                 from .fixed_asset_service import FixedAssetService
 
                 return FixedAssetService(self.session).reverse_event(request)
+            if event_type in {
+                "labor_remuneration_accrual",
+                "unified_payout_run",
+                "labor_withholding_tax_payment",
+            }:
+                from .labor_remuneration_service import LaborRemunerationService
+
+                try:
+                    with self.session.begin_nested():
+                        return LaborRemunerationService(self.session).reverse_event(request)
+                except AccountingPeriodError as exc:
+                    return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
+                except IntegrityError:
+                    return FinanceResult(
+                        status=ResultStatus.REJECTED,
+                        errors=["LABOR_REVERSAL_CONCURRENT_WRITE_CONFLICT"],
+                    )
 
         request_payload_hash = self._request_payload_hash(request)
         try:
