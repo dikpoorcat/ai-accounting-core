@@ -543,7 +543,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
     assert closed.data["calculation"]["checker_version"] == (
-        "accounting_period_close_checker_2026.3"
+        "accounting_period_close_checker_2026.4"
     )
     assert list(closed.data["calculation"]["review_counts"]) == [
         "historical_bank_scope_corrections_pending",

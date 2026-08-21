@@ -81,7 +81,7 @@ from .models import (
 )
 from .tax import calculate_tax_period
 
-_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.3"
+_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.4"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
 _PERIODIC_REVIEW_SOURCE_URLS = {
     "vat_filing_period": (
