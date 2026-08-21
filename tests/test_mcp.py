@@ -278,7 +278,7 @@ mcp_server.main()
     assert "statement_bytes" not in request_schema["properties"]
 
 
-def test_formal_server_starts_without_token_inside_service_lease(
+def test_formal_server_initializes_store_without_caching_token_inside_service_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from ai_accounting import mcp_server
@@ -286,8 +286,11 @@ def test_formal_server_starts_without_token_inside_service_lease(
     calls: list[str] = []
 
     class _CredentialStore:
+        def __init__(self) -> None:
+            calls.append("credential-init")
+
         def load_session_token(self) -> None:
-            calls.append("credential")
+            calls.append("credential-read")
             return None
 
     class _Lease:
@@ -320,4 +323,4 @@ def test_formal_server_starts_without_token_inside_service_lease(
 
     mcp_server.main()
 
-    assert calls == ["lease-enter", "credential", "run:stdio", "lease-exit"]
+    assert calls == ["lease-enter", "credential-init", "run:stdio", "lease-exit"]

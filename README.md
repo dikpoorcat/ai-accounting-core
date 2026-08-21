@@ -31,22 +31,80 @@
 
 ## 本地启动
 
-要求 Python 3.12、PostgreSQL 17；推荐使用 Docker Desktop。
+要求 Python 3.12、PostgreSQL 17；Windows 本地开发推荐使用 Docker Desktop。
+
+### 已安装项目：每次如何启动
+
+下面是日常启动流程。`finance-bootstrap`、负责人账号设置等首次初始化命令不要重复执行。
+
+1. 启动 Docker Desktop，等待界面显示 Docker Engine 已运行。
+2. 打开 PowerShell，进入本仓库目录：
+
+   ```powershell
+   Set-Location D:\GitHub\ai-accounting-core
+   ```
+
+3. 启动本地 PostgreSQL：
+
+   ```powershell
+   docker compose up -d
+   docker compose ps
+   ```
+
+   等待 `postgres` 的 `STATUS` 显示 `healthy` 后再继续。如果仍为 `starting`，稍等几秒后
+   重新执行 `docker compose ps`。如果容器未能变成 `healthy`，查看数据库日志：
+
+   ```powershell
+   docker compose logs --tail 100 postgres
+   ```
+
+4. 启动只读经营概览：
+
+   ```powershell
+   .\.venv\Scripts\finance-overview.exe
+   ```
+
+   启动成功后会自动打开 `http://127.0.0.1:8765/`。保持该 PowerShell 窗口运行；需要停止
+   概览时在窗口中按 `Ctrl+C`。若程序停在 `psycopg.connect()`，通常表示 PostgreSQL
+   尚未就绪；回到第 3 步检查状态和日志。
+
+日常使用结束后可以停止数据库容器；数据仍保存在 Docker volume 中：
+
+```powershell
+docker compose stop
+```
+
+不要使用 `docker compose down -v`，该命令会删除本地数据库 volume。
+
+### 首次安装：只执行一次
+
+以下流程只适用于全新空数据库。要求先安装 Python 3.12 和 Docker Desktop，并确认 Docker
+Desktop 已经运行。
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 docker compose up -d
+docker compose ps
+```
+
+等待数据库状态显示 `healthy`，再创建空库结构和首个企业：
+
+```powershell
 .\.venv\Scripts\alembic.exe upgrade head
 .\.venv\Scripts\finance-bootstrap.exe --name "测试服务公司" --filing-cycle quarterly
 ```
 
-`0001_baseline` 是已经冻结的空数据库基线；私有试用启用后的结构变化由后续前向 revision 管理。旧的 15 段迁移链已移除，项目不支持从那些旧 revision 原地升级。对包含试用业务数据的数据库执行 `alembic upgrade head` 前必须先完成备份和迁移前置检查。
+`finance-bootstrap` 只运行一次，并会输出企业 `org_id`；请妥善保存。后续所有工具调用都必须
+携带该 ID。不要在已经存在试用企业的数据库中重复执行该命令。
+
+`0001_baseline` 是已经冻结的空数据库基线；私有试用启用后的结构变化由后续前向 revision
+管理。旧的 15 段迁移链已移除，项目不支持从那些旧 revision 原地升级。对包含试用业务
+数据的数据库执行 `alembic upgrade head` 前必须先完成备份和迁移前置检查；因此拉取新代码后
+不要把迁移命令当成日常启动命令直接执行。
 
 启动私有试用前，请复制并完成[空库私有试用启动检查单模板](docs/private-pilot-empty-db-startup-checklist-template.md)。实际完成状态和业务进度只保存在本地资料中。
-
-`finance-bootstrap` 会输出企业 `org_id`。后续所有工具调用都必须携带该 ID。
 
 首次试用还需创建唯一的本地负责人账号并登录。密码和一次性恢复码只在本地交互窗口中处理，不得通过命令行参数、环境变量或聊天传递：
 
@@ -56,7 +114,8 @@ $trialOrgId = "将 finance-bootstrap 输出的 org_id 粘贴到这里"
 .\.venv\Scripts\python.exe -m ai_accounting.identity_cli login --login-name owner
 ```
 
-妥善保存设置时显示的一次性恢复码。登录成功后必须重启 Codex，MCP 才会读取本地会话令牌。
+妥善保存设置时显示的一次性恢复码。登录成功后，当前运行中的 MCP 会在下一次企业数据工具
+调用时读取最新的本地会话令牌，无需重启 Codex。
 
 项目包含 `.codex/config.toml`，其命令、工作目录和证据目录按本仓库固定路径 `D:\GitHub\ai-accounting-core` 配置；如果仓库位于其他路径，需要同步修改这三个值。在 Codex 中信任并打开本仓库、确认 PostgreSQL 已启动和迁移完成后，重启 Codex 即可加载 `ai_accounting` MCP。Codex 官方配置说明见 [Model Context Protocol](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 

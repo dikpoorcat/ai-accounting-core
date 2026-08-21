@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session
 
 from ai_accounting import mcp_server
 from ai_accounting.coa import seed_organization
+from ai_accounting.credential_store import InMemoryCredentialStore
 from ai_accounting.execution_attribution import persist_execution_attribution
-from ai_accounting.identity import ExecutorIdentity, ExecutorKind
+from ai_accounting.identity import ExecutorIdentity, ExecutorKind, IdentityError
 from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
 from ai_accounting.identity_service import IdentityService
 from ai_accounting.models import Evidence, ExecutionAttribution, OwnerAccount, OwnerSession
@@ -74,26 +75,27 @@ def test_only_event_schema_is_public_and_all_data_tools_fail_closed(
         "get_settings",
         lambda: SimpleNamespace(finance_environment="production"),
     )
+    store = InMemoryCredentialStore()
+    mcp_server._set_mcp_credential_store_for_tests(store)
     tools = mcp_server.mcp._tool_manager.list_tools()
     schema = next(tool for tool in tools if tool.name == "finance_get_event_schema")
     assert schema.fn()["status"] == "ok"
 
     data_tools = [tool for tool in tools if tool.name != "finance_get_event_schema"]
-    mcp_server._set_mcp_session_token_for_tests(None)
     for tool in data_tools:
         assert tool.fn(**_dummy_arguments(tool.fn, org_id)) == {
             "status": "rejected",
             "errors": ["AUTHENTICATION_REQUIRED"],
         }
 
-    mcp_server._set_mcp_session_token_for_tests(SecretStr("fake-session-token"))
+    store.save_session_token(SecretStr("fake-session-token"))
     for tool in data_tools:
         assert tool.fn(**_dummy_arguments(tool.fn, org_id)) == {
             "status": "rejected",
             "errors": ["AUTHENTICATION_REQUIRED"],
         }
 
-    mcp_server._set_mcp_session_token_for_tests(SecretStr(token))
+    store.save_session_token(SecretStr(token))
     wrong_org = uuid.uuid4()
     with Session(factory) as check:
         before = check.scalar(select(OwnerSession))
@@ -120,7 +122,7 @@ def test_only_event_schema_is_public_and_all_data_tools_fail_closed(
             "status": "rejected",
             "errors": ["AUTHENTICATION_REQUIRED"],
         }
-    mcp_server._set_mcp_session_token_for_tests(None)
+    mcp_server._set_mcp_credential_store_for_tests(None)
 
 
 def test_owner_mode_root_requires_current_execution_and_attribution_is_append_only(
@@ -172,6 +174,132 @@ def test_owner_mode_root_requires_current_execution_and_attribution_is_append_on
         with session.begin_nested():
             attribution.tool_name = "finance_record_event"
             session.flush()
+
+
+def test_mcp_uses_current_local_session_on_every_enterprise_call(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id, first_token = _provision(session)
+    first_session = session.scalar(
+        select(OwnerSession).order_by(OwnerSession.created_at)
+    )
+    assert first_session is not None
+    second_login = IdentityService(session).authenticate(
+        OwnerLoginRequest(
+            login_name="owner",
+            password=SecretStr("Correct-Horse-Battery-2026!"),
+        )
+    )
+    session.commit()
+    factory = session.get_bind()
+    monkeypatch.setattr(
+        mcp_server,
+        "SessionLocal",
+        mcp_server._ContextAwareSessionFactory(  # type: ignore[attr-defined]
+            __import__("sqlalchemy.orm").orm.sessionmaker(
+                bind=factory, expire_on_commit=False
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "get_settings",
+        lambda: SimpleNamespace(finance_environment="production"),
+    )
+    authorized_sessions: list[uuid.UUID] = []
+    authorize_execution = IdentityService.authorize_execution
+
+    def track_authorized_session(
+        service: IdentityService, **kwargs: object
+    ) -> object:
+        context = authorize_execution(service, **kwargs)  # type: ignore[arg-type]
+        authorized_sessions.append(context.owner_session_id)
+        return context
+
+    monkeypatch.setattr(IdentityService, "authorize_execution", track_authorized_session)
+    store = InMemoryCredentialStore()
+    mcp_server._set_mcp_credential_store_for_tests(store)
+    profile = mcp_server.mcp._tool_manager.get_tool("finance_get_profile")
+    assert profile is not None
+    try:
+        assert profile.fn(org_id=str(org_id)) == {
+            "status": "rejected",
+            "errors": ["AUTHENTICATION_REQUIRED"],
+        }
+
+        store.save_session_token(SecretStr(first_token))
+        assert profile.fn(org_id=str(org_id))["status"] == "ok"
+        assert authorized_sessions == [first_session.id]
+
+        store.save_session_token(second_login.session_token)
+        assert profile.fn(org_id=str(org_id))["status"] == "ok"
+        assert authorized_sessions == [first_session.id, second_login.session_id]
+
+        store.delete_session_token()
+        assert profile.fn(org_id=str(org_id)) == {
+            "status": "rejected",
+            "errors": ["AUTHENTICATION_REQUIRED"],
+        }
+        assert authorized_sessions == [first_session.id, second_login.session_id]
+    finally:
+        mcp_server._set_mcp_credential_store_for_tests(None)
+
+
+def test_mcp_credential_store_failure_is_stable_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingCredentialStore(InMemoryCredentialStore):
+        def load_session_token(self) -> SecretStr | None:
+            raise IdentityError("IDENTITY_CREDENTIAL_STORE_READ_FAILED")
+
+    monkeypatch.setattr(
+        mcp_server,
+        "get_settings",
+        lambda: SimpleNamespace(finance_environment="production"),
+    )
+    mcp_server._set_mcp_credential_store_for_tests(FailingCredentialStore())
+    schema = mcp_server.mcp._tool_manager.get_tool("finance_get_event_schema")
+    profile = mcp_server.mcp._tool_manager.get_tool("finance_get_profile")
+    assert schema is not None and profile is not None
+    try:
+        assert schema.fn()["status"] == "ok"
+        assert profile.fn(org_id=str(uuid.uuid4())) == {
+            "status": "rejected",
+            "errors": ["IDENTITY_CREDENTIAL_STORE_READ_FAILED"],
+        }
+    finally:
+        mcp_server._set_mcp_credential_store_for_tests(None)
+
+
+def test_development_zero_owner_path_does_not_require_a_credential_store(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session.commit()
+    factory = session.get_bind()
+    monkeypatch.setattr(
+        mcp_server,
+        "SessionLocal",
+        mcp_server._ContextAwareSessionFactory(  # type: ignore[attr-defined]
+            __import__("sqlalchemy.orm").orm.sessionmaker(
+                bind=factory, expire_on_commit=False
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "get_settings",
+        lambda: SimpleNamespace(finance_environment="development"),
+    )
+    mcp_server._set_mcp_credential_store_for_tests(None)
+    profile = mcp_server.mcp._tool_manager.get_tool("finance_get_profile")
+    assert profile is not None
+
+    assert profile.fn(org_id=str(uuid.uuid4())) == {
+        "status": "rejected",
+        "errors": ["ORGANIZATION_NOT_FOUND"],
+    }
 
 
 def test_execution_attribution_schema_has_no_secret_or_caller_identity_fields() -> None:

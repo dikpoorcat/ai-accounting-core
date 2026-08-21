@@ -22,7 +22,7 @@ from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting import mcp_server
 from ai_accounting.accounting_period_schemas import GenerateAccountingPeriodRequest
-from ai_accounting.credential_store import WindowsCredentialStore
+from ai_accounting.credential_store import InMemoryCredentialStore, WindowsCredentialStore
 from ai_accounting.execution_attribution import persist_execution_attribution
 from ai_accounting.identity import ExecutorIdentity, ExecutorKind, token_sha256
 from ai_accounting.identity_service import IdentityService
@@ -434,7 +434,9 @@ def test_postgres_authenticated_mcp_rejected_posted_and_replay_attribution(
                 "get_settings",
                 lambda: type("Settings", (), {"finance_environment": "production"})(),
             )
-            mcp_server._set_mcp_session_token_for_tests(SecretStr(MCP_TOKEN))
+            credential_store = InMemoryCredentialStore()
+            credential_store.save_session_token(SecretStr(MCP_TOKEN))
+            mcp_server._set_mcp_credential_store_for_tests(credential_store)
 
             record_tool = mcp_server.mcp._tool_manager.get_tool("finance_record_event")
             assert record_tool is not None
@@ -477,7 +479,7 @@ def test_postgres_authenticated_mcp_rejected_posted_and_replay_attribution(
                 assert action.confirmed_by is None
                 assert action.execution_attribution_id == attributions[1].id
         finally:
-            mcp_server._set_mcp_session_token_for_tests(None)
+            mcp_server._set_mcp_credential_store_for_tests(None)
             engine.dispose()
 
 
@@ -504,7 +506,7 @@ def test_windows_credential_manager_real_production_stdio_write_attribution(
         try:
             with engine.begin() as connection:
                 org_id, _owner_id, _session_id = _authority(connection)
-            store.save_session_token(SecretStr(MCP_TOKEN))
+            store.delete_session_token()
 
             repository_root = Path(__file__).parents[1]
             site_packages = Path(sys.prefix) / "Lib" / "site-packages"
@@ -547,7 +549,7 @@ mcp_server.WindowsCredentialStore = lambda: WindowsCredentialStore(
 mcp_server.main()
 """
 
-            async def invoke() -> object:
+            async def invoke() -> tuple[object, object, object]:
                 parameters = StdioServerParameters(
                     command=getattr(sys, "_base_executable", sys.executable),
                     args=["-c", script, target],
@@ -557,7 +559,12 @@ mcp_server.main()
                 async with stdio_client(parameters) as (read_stream, write_stream):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
-                        return await session.call_tool(
+                        before_login = await session.call_tool(
+                            "finance_get_profile",
+                            {"org_id": str(org_id)},
+                        )
+                        store.save_session_token(SecretStr(MCP_TOKEN))
+                        authenticated = await session.call_tool(
                             "finance_register_evidence",
                             {
                                 "request": {
@@ -568,11 +575,27 @@ mcp_server.main()
                                 }
                             },
                         )
+                        store.delete_session_token()
+                        after_logout = await session.call_tool(
+                            "finance_get_profile",
+                            {"org_id": str(org_id)},
+                        )
+                        return before_login, authenticated, after_logout
 
-            response = asyncio.run(invoke())
+            before_login, response, after_logout = asyncio.run(invoke())
+            assert before_login.isError is False
+            assert before_login.structuredContent == {
+                "status": "rejected",
+                "errors": ["AUTHENTICATION_REQUIRED"],
+            }
             assert response.isError is False
             assert response.structuredContent is not None
             assert response.structuredContent["status"] == "registered"
+            assert after_logout.isError is False
+            assert after_logout.structuredContent == {
+                "status": "rejected",
+                "errors": ["AUTHENTICATION_REQUIRED"],
+            }
             with engine.connect() as connection:
                 attribution = connection.execute(
                     sa.text(

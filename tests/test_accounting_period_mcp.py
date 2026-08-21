@@ -25,6 +25,7 @@ from ai_accounting.bank_statement_schemas import (
     PreviewBankReconciliationScopeRequest,
 )
 from ai_accounting.coa import seed_organization
+from ai_accounting.credential_store import InMemoryCredentialStore
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
 from ai_accounting.identity_service import IdentityService
@@ -232,7 +233,9 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             "SessionLocal",
             mcp_server._ContextAwareSessionFactory(factory),
         )
-        mcp_server._set_mcp_session_token_for_tests(login.session_token)
+        credential_store = InMemoryCredentialStore()
+        credential_store.save_session_token(login.session_token)
+        mcp_server._set_mcp_credential_store_for_tests(credential_store)
 
         scope_request = PreviewBankReconciliationScopeRequest(
             org_id=org_id,
@@ -353,7 +356,7 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
         )
         assert closed["data"]["periods"][0]["status"] == "closed"
     finally:
-        mcp_server._set_mcp_session_token_for_tests(None)
+        mcp_server._set_mcp_credential_store_for_tests(None)
         engine.dispose()
 
 
@@ -402,7 +405,9 @@ def test_mcp_posting_uses_china_current_date_boundary(
             "SessionLocal",
             mcp_server._ContextAwareSessionFactory(factory),
         )
-        mcp_server._set_mcp_session_token_for_tests(login.session_token)
+        credential_store = InMemoryCredentialStore()
+        credential_store.save_session_token(login.session_token)
+        mcp_server._set_mcp_credential_store_for_tests(credential_store)
         scope_request = PreviewBankReconciliationScopeRequest(
             org_id=org_id,
             action_type="initial_confirmation",
@@ -480,5 +485,5 @@ def test_mcp_posting_uses_china_current_date_boundary(
         assert future["errors"] == ["ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"]
         assert future["voucher_id"] is None
     finally:
-        mcp_server._set_mcp_session_token_for_tests(None)
+        mcp_server._set_mcp_credential_store_for_tests(None)
         engine.dispose()

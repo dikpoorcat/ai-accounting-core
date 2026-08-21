@@ -44,7 +44,7 @@ from .borrowing_schemas import (
     RepayBorrowingPrincipalRequest,
 )
 from .config import get_settings
-from .credential_store import WindowsCredentialStore
+from .credential_store import CredentialStore, WindowsCredentialStore
 from .database import SessionLocal
 from .evidence import register_evidence
 from .execution_attribution import persist_execution_attribution
@@ -123,7 +123,7 @@ SERVER_MCP_EXECUTOR = ExecutorIdentity(
 _ACTIVE_TOOL_SESSION: ContextVar[Any | None] = ContextVar(
     "finance_mcp_active_tool_session", default=None
 )
-_MCP_SESSION_TOKEN: SecretStr | None = None
+_MCP_CREDENTIAL_STORE: CredentialStore | None = None
 
 
 class _BorrowedSessionContext(AbstractContextManager[Any]):
@@ -183,23 +183,36 @@ REVERSAL_WRITE = ToolAnnotations(
 )
 
 
-def _set_mcp_session_token_for_tests(token: SecretStr | None) -> None:
-    """Inject an opaque token in-process; production startup never calls this."""
+def _set_mcp_credential_store_for_tests(store: CredentialStore | None) -> None:
+    """Inject a session-store boundary; production startup never calls this."""
 
-    global _MCP_SESSION_TOKEN
-    _MCP_SESSION_TOKEN = token
+    global _MCP_CREDENTIAL_STORE
+    _MCP_CREDENTIAL_STORE = store
 
 
-def _load_startup_session_token() -> None:
-    """Read DEC-031 B's token once; login afterwards requires an MCP restart."""
+def _clear_mcp_credential_store() -> None:
+    global _MCP_CREDENTIAL_STORE
+    _MCP_CREDENTIAL_STORE = None
 
-    global _MCP_SESSION_TOKEN
+
+def _initialize_mcp_credential_store(*, environment: str) -> None:
+    """Open DEC-031 B's stateless store without caching its current token."""
+
+    global _MCP_CREDENTIAL_STORE
     try:
-        _MCP_SESSION_TOKEN = WindowsCredentialStore().load_session_token()
+        _MCP_CREDENTIAL_STORE = WindowsCredentialStore()
     except IdentityError:
-        if get_settings().finance_environment == "production":
+        if environment == "production":
             raise
-        _MCP_SESSION_TOKEN = None
+        _MCP_CREDENTIAL_STORE = None
+
+
+def _load_current_session_token() -> SecretStr | None:
+    """Read one call-scoped token so local login changes take effect immediately."""
+
+    if _MCP_CREDENTIAL_STORE is None:
+        raise IdentityError("IDENTITY_CREDENTIAL_STORE_UNAVAILABLE")
+    return _MCP_CREDENTIAL_STORE.load_session_token()
 
 
 def _tool_org_id(
@@ -252,8 +265,14 @@ def _secure_registered_data_tools() -> None:
             except ValueError:
                 return _rejected_identity("INVALID_REQUEST")
             environment = get_settings().finance_environment
-            if _MCP_SESSION_TOKEN is None and environment != "development":
-                return _rejected_identity("AUTHENTICATION_REQUIRED")
+            session_token: SecretStr | None = None
+            if environment != "development":
+                try:
+                    session_token = _load_current_session_token()
+                except IdentityError as exc:
+                    return _rejected_identity(exc.code)
+                if session_token is None:
+                    return _rejected_identity("AUTHENTICATION_REQUIRED")
             with _begin_mcp_transaction() as session:
                 owner_exists = session.scalar(select(OwnerAccount.id).limit(1)) is not None
                 if not owner_exists and environment == "development":
@@ -262,12 +281,17 @@ def _secure_registered_data_tools() -> None:
                         return _original(*args, **kwargs)
                     finally:
                         _ACTIVE_TOOL_SESSION.reset(marker)
-                if _MCP_SESSION_TOKEN is None:
+                if environment == "development":
+                    try:
+                        session_token = _load_current_session_token()
+                    except IdentityError as exc:
+                        return _rejected_identity(exc.code)
+                if session_token is None:
                     return _rejected_identity("AUTHENTICATION_REQUIRED")
                 correlation_id = uuid.uuid4()
                 try:
                     context = IdentityService(session).authorize_execution(
-                        session_token=_MCP_SESSION_TOKEN.get_secret_value(),
+                        session_token=session_token.get_secret_value(),
                         executor=SERVER_MCP_EXECUTOR,
                         request_correlation_id=correlation_id,
                         expected_org_id=requested_org_id,
@@ -1882,8 +1906,13 @@ def main() -> None:
                 mode="service",
                 access_verifier=WindowsCurrentUserOnlyAclVerifier(),
             ):
-                _load_startup_session_token()
-                mcp.run(transport="stdio")
+                try:
+                    _initialize_mcp_credential_store(
+                        environment=settings.finance_environment
+                    )
+                    mcp.run(transport="stdio")
+                finally:
+                    _clear_mcp_credential_store()
         finally:
             # ``mcp.run`` normally owns the process lifetime.  Restoring only
             # supports in-process tests or an orderly stopped development host;
@@ -1891,8 +1920,11 @@ def main() -> None:
             if legacy_bank_tool is not None:
                 mcp._tool_manager._tools["finance_import_bank_statement"] = legacy_bank_tool
         return
-    _load_startup_session_token()
-    mcp.run(transport="stdio")
+    try:
+        _initialize_mcp_credential_store(environment=settings.finance_environment)
+        mcp.run(transport="stdio")
+    finally:
+        _clear_mcp_credential_store()
 
 
 if __name__ == "__main__":
