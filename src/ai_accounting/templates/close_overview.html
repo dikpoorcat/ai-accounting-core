@@ -474,6 +474,14 @@
       background: var(--green-soft);
       color: var(--green);
     }
+    .check.pending {
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+    .check.neutral {
+      background: var(--surface-soft);
+      color: var(--muted);
+    }
     .warning-box {
       display: grid;
       align-content: center;
@@ -1239,18 +1247,37 @@
         byId("validation-summary").textContent =
           month.voucher_count + " 张凭证 · " + month.line_count +
           " 行分录 · " + (month.checks.balanced ? "借贷平衡" : "借贷不平");
+        const bankMatched = month.checks.bank_rows - month.checks.bank_unmatched;
         const checks = [
-          "银行流水 " + (month.checks.bank_rows - month.checks.bank_unmatched) +
-            " / " + month.checks.bank_rows + " 已匹配",
-          "迟到流水 " + month.checks.late_bank_rows,
-          month.voucher_count + " / " + month.voucher_count + " 凭证已检查",
-          month.checks.active_fixed_assets + " 项资产已确认可用"
+          month.checks.bank_rows === 0
+            ? { text: "本月无银行流水", state: "neutral" }
+            : {
+                text: "银行流水 " + bankMatched + " / " +
+                  month.checks.bank_rows + " 已匹配",
+                state: month.checks.bank_unmatched === 0 ? "pass" : "pending"
+              },
+          {
+            text: "迟到流水 " + month.checks.late_bank_rows,
+            state: month.checks.late_bank_rows === 0 ? "pass" : "pending"
+          },
+          {
+            text: month.voucher_count + " / " + month.voucher_count + " 凭证已检查",
+            state: "pass"
+          },
+          {
+            text: month.checks.active_fixed_assets + " 项资产已确认可用",
+            state: "pass"
+          }
         ];
         const grid = byId("check-grid");
         grid.replaceChildren();
         checks.forEach((item) => {
           const check = make("div", "check");
-          check.append(make("span", "", "✓"), make("span", "", item));
+          check.classList.add(item.state);
+          const symbol = item.state === "pass"
+            ? "✓"
+            : item.state === "pending" ? "!" : "–";
+          check.append(make("span", "", symbol), make("span", "", item.text));
           grid.append(check);
         });
         byId("attention-title").textContent =

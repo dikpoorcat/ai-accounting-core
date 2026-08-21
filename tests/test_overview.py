@@ -575,3 +575,5 @@ def test_overview_document_embeds_data_without_script_breakout(session: Session)
     assert 'id="fixed-assets-card"' in document
     assert 'aria-label="查看期末待付员工款明细"' in document
     assert "open-item-category-employee_payables" in document
+    assert 'state: month.checks.bank_unmatched === 0 ? "pass" : "pending"' in document
+    assert 'text: "本月无银行流水", state: "neutral"' in document
