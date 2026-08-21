@@ -977,6 +977,7 @@ class LaborRemunerationService:
                 derived_items.append(
                     {
                         "item_kind": "salary",
+                        "settlement_mode": "not_applicable",
                         "source_open_item_id": str(source_id),
                         "payroll_line_id": allocation["payroll_line_id"],
                         "labor_line_id": None,
@@ -985,6 +986,8 @@ class LaborRemunerationService:
                         "employee_social_insurance_fen": social,
                         "employee_housing_fund_fen": housing,
                         "individual_income_tax_fen": tax,
+                        "theoretical_individual_income_tax_fen": tax,
+                        "unwithheld_individual_income_tax_fen": 0,
                         "net_amount_fen": gross - social - housing - tax,
                         "withholding_components": allocation,
                     }
@@ -1030,9 +1033,17 @@ class LaborRemunerationService:
             )
             if entitlement is None or entitlement.amount_fen != line.withholding_tax_fen:
                 raise ValueError("LABOR_WITHHOLDING_ENTITLEMENT_MISMATCH")
+            assert labor_item.settlement_mode is not None
+            actual_withholding_fen = (
+                entitlement.amount_fen
+                if labor_item.settlement_mode == "net_after_withholding"
+                else 0
+            )
+            unwithheld_fen = entitlement.amount_fen - actual_withholding_fen
             derived_items.append(
                 {
                     "item_kind": "labor",
+                    "settlement_mode": labor_item.settlement_mode,
                     "source_open_item_id": str(source.id),
                     "payroll_line_id": None,
                     "labor_line_id": str(line.id),
@@ -1040,11 +1051,17 @@ class LaborRemunerationService:
                     "gross_amount_fen": source.original_amount_fen,
                     "employee_social_insurance_fen": 0,
                     "employee_housing_fund_fen": 0,
-                    "individual_income_tax_fen": entitlement.amount_fen,
-                    "net_amount_fen": source.original_amount_fen - entitlement.amount_fen,
+                    "individual_income_tax_fen": actual_withholding_fen,
+                    "theoretical_individual_income_tax_fen": entitlement.amount_fen,
+                    "unwithheld_individual_income_tax_fen": unwithheld_fen,
+                    "net_amount_fen": source.original_amount_fen - actual_withholding_fen,
                     "withholding_components": {
                         "entitlement_id": str(entitlement.id),
                         "batch_id": str(line.batch_id),
+                        "settlement_mode": labor_item.settlement_mode,
+                        "theoretical_withholding_tax_fen": entitlement.amount_fen,
+                        "actual_withholding_tax_fen": actual_withholding_fen,
+                        "unwithheld_tax_fen": unwithheld_fen,
                     },
                 }
             )
@@ -1053,6 +1070,12 @@ class LaborRemunerationService:
         gross_total = sum(item["gross_amount_fen"] for item in derived_items)
         net_total = sum(item["net_amount_fen"] for item in derived_items)
         withholding_total = gross_total - net_total
+        theoretical_income_tax_total = sum(
+            item["theoretical_individual_income_tax_fen"] for item in derived_items
+        )
+        unwithheld_income_tax_total = sum(
+            item["unwithheld_individual_income_tax_fen"] for item in derived_items
+        )
         if salary_derived is not None and salary_derived["gross_salary_fen"] != salary_gross:
             raise ValueError("SALARY_DERIVATION_GROSS_MISMATCH")
         return {
@@ -1060,6 +1083,8 @@ class LaborRemunerationService:
             "salary_derived": salary_derived,
             "gross_total_fen": gross_total,
             "withholding_total_fen": withholding_total,
+            "theoretical_individual_income_tax_total_fen": theoretical_income_tax_total,
+            "unwithheld_individual_income_tax_total_fen": unwithheld_income_tax_total,
             "net_total_fen": net_total,
         }
 
@@ -1117,7 +1142,18 @@ class LaborRemunerationService:
                             ),
                             "gross_total_fen": derived["gross_total_fen"],
                             "withholding_total_fen": derived["withholding_total_fen"],
+                            "theoretical_individual_income_tax_total_fen": derived[
+                                "theoretical_individual_income_tax_total_fen"
+                            ],
+                            "unwithheld_individual_income_tax_total_fen": derived[
+                                "unwithheld_individual_income_tax_total_fen"
+                            ],
                             "net_total_fen": derived["net_total_fen"],
+                            "compliance_exception": (
+                                "labor_gross_paid_without_withholding"
+                                if derived["unwithheld_individual_income_tax_total_fen"]
+                                else None
+                            ),
                         }
                     ],
                     bank_account_code=request.bank_account_code,
@@ -1149,10 +1185,17 @@ class LaborRemunerationService:
                                 else None
                             ),
                             counterparty_id=uuid.UUID(values["counterparty_id"]),
+                            settlement_mode=values["settlement_mode"],
                             gross_amount_fen=values["gross_amount_fen"],
                             employee_social_insurance_fen=values["employee_social_insurance_fen"],
                             employee_housing_fund_fen=values["employee_housing_fund_fen"],
                             individual_income_tax_fen=values["individual_income_tax_fen"],
+                            theoretical_individual_income_tax_fen=values[
+                                "theoretical_individual_income_tax_fen"
+                            ],
+                            unwithheld_individual_income_tax_fen=values[
+                                "unwithheld_individual_income_tax_fen"
+                            ],
                             net_amount_fen=values["net_amount_fen"],
                             withholding_components=values["withholding_components"],
                         )
@@ -1199,11 +1242,18 @@ class LaborRemunerationService:
                 "bank_transaction_id": str(run.bank_transaction_id),
                 "gross_total_fen": run.gross_total_fen,
                 "withholding_total_fen": run.withholding_total_fen,
+                "theoretical_individual_income_tax_total_fen": sum(
+                    item.theoretical_individual_income_tax_fen for item in items
+                ),
+                "unwithheld_individual_income_tax_total_fen": sum(
+                    item.unwithheld_individual_income_tax_fen for item in items
+                ),
                 "net_total_fen": run.net_total_fen,
                 "items": [
                     {
                         "id": str(item.id),
                         "item_kind": item.item_kind,
+                        "settlement_mode": item.settlement_mode,
                         "source_open_item_id": str(item.source_open_item_id),
                         "payroll_line_id": (
                             str(item.payroll_line_id) if item.payroll_line_id else None
@@ -1213,6 +1263,12 @@ class LaborRemunerationService:
                         "employee_social_insurance_fen": (item.employee_social_insurance_fen),
                         "employee_housing_fund_fen": item.employee_housing_fund_fen,
                         "individual_income_tax_fen": item.individual_income_tax_fen,
+                        "theoretical_individual_income_tax_fen": (
+                            item.theoretical_individual_income_tax_fen
+                        ),
+                        "unwithheld_individual_income_tax_fen": (
+                            item.unwithheld_individual_income_tax_fen
+                        ),
                         "net_amount_fen": item.net_amount_fen,
                     }
                     for item in items
@@ -1361,12 +1417,30 @@ class LaborRemunerationService:
                         "calculation_hash": run.calculation_hash,
                         "salary_item_count": sum(item.item_kind == "salary" for item in items),
                         "labor_item_count": sum(item.item_kind == "labor" for item in items),
+                        "theoretical_labor_withholding_fen": sum(
+                            item.theoretical_individual_income_tax_fen
+                            for item in items
+                            if item.item_kind == "labor"
+                        ),
+                        "actual_labor_withholding_fen": sum(
+                            item.individual_income_tax_fen
+                            for item in items
+                            if item.item_kind == "labor"
+                        ),
+                        "unwithheld_labor_tax_fen": sum(
+                            item.unwithheld_individual_income_tax_fen
+                            for item in items
+                            if item.item_kind == "labor"
+                        ),
+                        "labor_settlement_modes": sorted(
+                            {item.settlement_mode for item in items if item.item_kind == "labor"}
+                        ),
                     },
                     business_date=run.business_date,
                     payment_date=run.payment_date,
                     posting_date=run.posting_date,
                     rule_trace=run.calculation_trace,
-                    rule_version="unified-payout/1",
+                    rule_version="unified-payout/2",
                 )
                 self.session.add(event)
                 self.session.flush()
@@ -1542,6 +1616,11 @@ class LaborRemunerationService:
                             "payout_run_id": str(run.id),
                             "bank_transaction_id": str(bank.id),
                             "calculation_hash": run.calculation_hash,
+                            "unwithheld_labor_tax_fen": sum(
+                                item.unwithheld_individual_income_tax_fen
+                                for item in items
+                                if item.item_kind == "labor"
+                            ),
                         },
                     )
                 )

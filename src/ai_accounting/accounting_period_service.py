@@ -1033,7 +1033,7 @@ class AccountingPeriodService:
         )
         labor_open_items = self._labor_open_item_counts_as_of(org_id, period.end_date)
         declaration_rows = self.session.execute(
-            select(LaborRemunerationLine, UnifiedPayoutRun)
+            select(LaborRemunerationLine, UnifiedPayoutRun, UnifiedPayoutRunItem)
             .join(
                 UnifiedPayoutRunItem,
                 (UnifiedPayoutRunItem.org_id == LaborRemunerationLine.org_id)
@@ -1047,9 +1047,18 @@ class AccountingPeriodService:
             .where(
                 LaborRemunerationLine.org_id == org_id,
                 UnifiedPayoutRun.status == "posted",
-                LaborRemunerationLine.external_declaration_status != "confirmed",
             )
         ).all()
+        gross_without_withholding_rows = [
+            (labor_line, payout_run, payout_item)
+            for labor_line, payout_run, payout_item in declaration_rows
+            if payout_item.settlement_mode == "gross_paid_without_withholding"
+            and period.start_date <= payout_run.payment_date <= period.end_date
+        ]
+        labor_payout_count = sum(
+            period.start_date <= payout_run.payment_date <= period.end_date
+            for _, payout_run, _ in declaration_rows
+        )
         confirmed_declaration_line_ids = set(
             self.session.scalars(
                 select(LaborExternalDeclarationConfirmation.labor_line_id).where(
@@ -1058,7 +1067,12 @@ class AccountingPeriodService:
             )
         )
         due_labor_declarations = []
-        for labor_line, payout_run in declaration_rows:
+        for labor_line, payout_run, payout_item in declaration_rows:
+            if (
+                payout_item.settlement_mode == "gross_paid_without_withholding"
+                or labor_line.external_declaration_status == "confirmed"
+            ):
+                continue
             due_date = (
                 date(payout_run.payment_date.year + 1, 1, 15)
                 if payout_run.payment_date.month == 12
@@ -1164,6 +1178,7 @@ class AccountingPeriodService:
             or labor_open_items
             or due_labor_declarations
         )
+        labor_recorded = bool(labor_batches or labor_payout_count)
         unpaid_labor_count = labor_open_items.get("labor_remuneration", {}).get("count", 0)
         unpaid_labor_tax_count = labor_open_items.get("labor_individual_income_tax", {}).get(
             "count", 0
@@ -1320,17 +1335,25 @@ class AccountingPeriodService:
                 "state": (
                     "needs_attention"
                     if labor_attention
-                    else ("completed" if labor_batches else "owner_confirmation_required")
+                    else (
+                        "completed_with_warning"
+                        if gross_without_withholding_rows
+                        else ("completed" if labor_recorded else "owner_confirmation_required")
+                    )
                 ),
-                "completed": bool(labor_batches) and not labor_attention,
+                "completed": labor_recorded and not labor_attention,
                 "summary": (
                     f"本月有 {len(labor_batches)} 个个人劳务报酬批次；"
+                    f"已支付劳务 {labor_payout_count} 项，"
                     f"未付劳务应付 {unpaid_labor_count} 项，"
                     f"已扣未缴劳务个税 {unpaid_labor_tax_count} 项，"
-                    f"已到期且外部申报待确认 {len(due_labor_declarations)} 项。"
+                    f"已到期且外部申报待确认 {len(due_labor_declarations)} 项；"
+                    f"毛额支付但实际未扣税的合规例外 "
+                    f"{len(gross_without_withholding_rows)} 项。"
                 ),
                 "system_facts": {
                     "labor_batch_count": len(labor_batches),
+                    "labor_payout_count": labor_payout_count,
                     "unfinished_labor_batch_or_payout_count": module_checks["labor_remuneration"][
                         "count"
                     ],
@@ -1350,11 +1373,23 @@ class AccountingPeriodService:
                         }
                         for line, due_date in due_labor_declarations
                     ],
+                    "gross_paid_without_withholding_exception_count": len(
+                        gross_without_withholding_rows
+                    ),
+                    "gross_paid_without_withholding_theoretical_tax_fen": sum(
+                        payout_item.theoretical_individual_income_tax_fen
+                        for _, _, payout_item in gross_without_withholding_rows
+                    ),
+                    "gross_paid_without_withholding_actual_tax_fen": 0,
                 },
                 "owner_questions": (
                     ["请核对未付劳务应付、已扣未缴个税，并确认已到期项目的外部申报状态。"]
                     if labor_attention
-                    else ["本月是否存在尚未交给系统的非员工个人劳务报酬？"]
+                    else (
+                        []
+                        if gross_without_withholding_rows
+                        else ["本月是否存在尚未交给系统的非员工个人劳务报酬？"]
+                    )
                 ),
             },
             {

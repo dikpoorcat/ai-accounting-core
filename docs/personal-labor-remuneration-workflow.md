@@ -39,6 +39,26 @@
 - 贷：银行存款（所有子项净额之和）、工资扣缴项目及应交个人所得税；
 - 每个非零劳务预扣税创建独立 `labor_individual_income_tax` 开放项，并以规范来源表关联到唯一劳务人员、劳务明细和扣缴权益。
 
+每个劳务子项必须显式选择结算模式：
+
+- `net_after_withholding`：按政策计算的预扣税作为实际扣缴额，银行支付毛额减预扣税后的净额，并生成劳务个税开放项；调用方必须提供扣缴机构身份。
+- `gross_paid_without_withholding`：仅用于有证据证明毛额已经全部付出、实际扣缴为零的历史事实。调用方必须另行提供 `withholding_exception_evidence_references`，且这些证据也必须包含在通用 `evidence_references` 中。内核仍保存政策计算的理论预扣税、实际扣缴零元和全部未扣差额，不把理论税额改写为零；银行按毛额精确匹配，不生成个税应付、开放项或凭证行。
+
+后一模式记录的是已发生的合规例外，不代表免税、不改变政策计算，也不是允许调用方自由输入税额的接口。示例：
+
+```json
+{
+  "labor_items": [
+    {
+      "source_open_item_id": "<labor-open-item-uuid>",
+      "settlement_mode": "gross_paid_without_withholding"
+    }
+  ],
+  "evidence_references": ["<bank-or-owner-evidence-uuid>"],
+  "withholding_exception_evidence_references": ["<owner-confirmation-evidence-uuid>"]
+}
+```
+
 `finance_pay_labor_withholding_tax` 只接受上述劳务个税开放项。其后续缴纳不能使用工资 `individual_income_tax` 来源，也不能把实际未申报表达成无需申报。实际在外部系统完成申报后，使用 `finance_confirm_labor_external_declaration` 追加申报日期、外部引用和证据；原劳务批次中的确认时状态保持不变。
 
 ## 统一代发与银行硬门
@@ -55,6 +75,6 @@
 
 已确认计提和发放批次、明细、证据、扣缴权益及来源边不可修改或删除。更正使用 `finance_reverse_event` 生成关联冲正凭证；存在劳务个税缴款时，必须先冲正缴款，再冲正发放，最后才能冲正计提。
 
-月结门禁阻止关闭仍为 `calculated` 的当月劳务计提或发放批次。月结建议清单同时列示未支付劳务应付、已扣未缴劳务个税和已经到申报期限但外部状态仍未确认的项目；尚未到次月十五日的外部申报事项标为未到期，不逐月重复询问。
+月结门禁阻止关闭仍为 `calculated` 的当月劳务计提或发放批次。月结建议清单同时列示未支付劳务应付、已扣未缴劳务个税和已经到申报期限但外部状态仍未确认的项目；尚未到次月十五日的外部申报事项标为未到期，不逐月重复询问。`gross_paid_without_withholding` 已经全额结清劳务应付，且没有虚构个税应付，因此不会被列成未结清账款或阻断待办；清单仍以 `completed_with_warning` 展示理论预扣税与实际零扣缴差异。个人年度汇算不属于本内核管理范围。
 
-迁移 revision 为 `0013_labor_remuneration`。该迁移只创建生产结构、政策版本、系统科目和数据库约束；不迁移或写入任何真实试用业务数据。
+劳务模块基线迁移为 `0013_labor_remuneration`；结算例外前向迁移为 `0014_labor_gross_unwithheld`。迁移只调整生产结构和数据库约束，不迁移或写入任何真实试用业务数据。

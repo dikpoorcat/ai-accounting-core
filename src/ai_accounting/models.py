@@ -3572,12 +3572,19 @@ class UnifiedPayoutRunItem(Base):
     payroll_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     labor_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    settlement_mode: Mapped[str] = mapped_column(String(50), nullable=False)
     gross_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     employee_social_insurance_fen: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
     employee_housing_fund_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     individual_income_tax_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    theoretical_individual_income_tax_fen: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    unwithheld_individual_income_tax_fen: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
     net_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     withholding_components: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -3616,17 +3623,34 @@ class UnifiedPayoutRunItem(Base):
         UniqueConstraint("org_id", "id", name="uq_payout_item_org_id"),
         UniqueConstraint("payout_run_id", "source_open_item_id", name="uq_payout_item_run_source"),
         CheckConstraint(
-            "(item_kind = 'salary' AND payroll_line_id IS NOT NULL AND labor_line_id IS NULL) OR "
-            "(item_kind = 'labor' AND payroll_line_id IS NULL AND labor_line_id IS NOT NULL)",
+            "(item_kind = 'salary' AND payroll_line_id IS NOT NULL AND labor_line_id IS NULL "
+            "AND settlement_mode = 'not_applicable') OR "
+            "(item_kind = 'labor' AND payroll_line_id IS NULL AND labor_line_id IS NOT NULL "
+            "AND settlement_mode IN "
+            "('net_after_withholding','gross_paid_without_withholding'))",
             name="ck_payout_item_source_kind",
         ),
         CheckConstraint(
             "gross_amount_fen > 0 AND employee_social_insurance_fen >= 0 "
             "AND employee_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0 "
+            "AND theoretical_individual_income_tax_fen >= individual_income_tax_fen "
+            "AND unwithheld_individual_income_tax_fen = "
+            "theoretical_individual_income_tax_fen - individual_income_tax_fen "
             "AND net_amount_fen = gross_amount_fen - employee_social_insurance_fen "
             "- employee_housing_fund_fen - individual_income_tax_fen "
             "AND net_amount_fen >= 0",
             name="ck_payout_item_totals",
+        ),
+        CheckConstraint(
+            "(item_kind = 'salary' AND unwithheld_individual_income_tax_fen = 0) OR "
+            "(item_kind = 'labor' AND settlement_mode = 'net_after_withholding' "
+            "AND individual_income_tax_fen = theoretical_individual_income_tax_fen "
+            "AND unwithheld_individual_income_tax_fen = 0) OR "
+            "(item_kind = 'labor' AND settlement_mode = 'gross_paid_without_withholding' "
+            "AND individual_income_tax_fen = 0 "
+            "AND unwithheld_individual_income_tax_fen = "
+            "theoretical_individual_income_tax_fen)",
+            name="ck_payout_item_settlement_mode",
         ),
     )
 

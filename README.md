@@ -204,7 +204,7 @@ REST API；停止服务可在启动窗口按 `Ctrl+C`。
 2. `finance_preview_labor_remuneration_batch` 逐人保存服务期间、固定劳务费、佣金、受益费用角色、居民身份、按次或连续收入归组及外部申报状态。缺少任一会改变处理的事实时返回 `needs_information`；非居民和学生实习特殊算法在首期明确拒绝。
 3. 内核按业务日期选择有效的普通居民个人劳务报酬政策版本，用整数分和 `Decimal` 计算费用扣除、应纳税所得额、预扣率、速算扣除数、预扣个税和实付净额。`finance_confirm_labor_remuneration_batch` 复核哈希后按固定模板计提：借有限枚举费用/成本，贷个人劳务报酬应付。
 4. `finance_preview_unified_payout_run` 与 `finance_confirm_unified_payout_run` 可把一个工资批次的一个或多个工资开放项和一个或多个劳务开放项放入同一父发放批次。所有子项净额必须精确等于一笔已通过受控导入动作进入系统的银行汇总扣款；银行流水只在父事件匹配一次，任何子项失败整批回滚。
-5. 劳务支付首期只支持全额结算，不按比例猜测部分支付的个税分配。支付固定模板为借工资/劳务应付毛额，贷银行净额及对应社保、公积金、工资个税和劳务个税扣缴应付；零税额仍保留不可变计算与确认事实，但不创建零金额应付或凭证行。
+5. 劳务支付首期只支持全额结算，不按比例猜测部分支付的个税分配。每个劳务子项必须显式选择 `net_after_withholding` 或 `gross_paid_without_withholding`。前者按政策税额扣缴并支付净额；后者仅表达有单独证据支持的“毛额已全部支付、实际未扣税”历史事实，仍保存理论税额和未扣差异，按毛额匹配银行且不虚构个税应付。支付模板固定，不接受调用方自组分录或自填税额。
 6. `finance_pay_labor_withholding_tax` 只能核销逐人劳务扣缴来源的 `labor_individual_income_tax` 开放项，不能冒充工资个税来源。`finance_confirm_labor_external_declaration` 以追加式记录保存外部申报日期、引用和证据，不改写计提快照；本系统不宣称完成报税。
 7. `finance_get_labor_remuneration` 查询人员、计提批次或统一发放批次；更正使用 `finance_reverse_event`，并按个税缴款、发放、计提的下游优先顺序冲正。
 

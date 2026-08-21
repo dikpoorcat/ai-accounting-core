@@ -47,6 +47,9 @@ def test_labor_mcp_contract_is_typed_and_has_no_freeform_journal_fields() -> Non
     assert "tax_identity" in schema_text
     assert "income_grouping" in schema_text
     assert "calculation_hash" in schema_text
+    assert "settlement_mode" in schema_text
+    assert "gross_paid_without_withholding" in schema_text
+    assert "withholding_exception_evidence_references" in schema_text
     assert "debit_fen" not in schema_text
     assert "credit_fen" not in schema_text
     assert "'account_code':" not in schema_text
@@ -59,4 +62,14 @@ def test_event_schema_advertises_labor_workflow_separately_from_payroll() -> Non
 
     assert set(capability["personal_labor_remuneration"]["entry_tools"]) == LABOR_TOOLS
     assert capability["personal_labor_remuneration"]["generic_event_writer"] == ("not_available")
+    assert capability["personal_labor_remuneration"]["labor_settlement_modes"] == [
+        "net_after_withholding",
+        "gross_paid_without_withholding",
+    ]
+    assert (
+        capability["personal_labor_remuneration"][
+            "gross_paid_without_withholding_requires_exception_evidence"
+        ]
+        is True
+    )
     assert capability["payroll"]["generic_event_writer"] == "not_available"

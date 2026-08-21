@@ -46,6 +46,7 @@ from ai_accounting.models import (
     LaborWithholdingOpenItemSource,
     OpenItem,
     PayrollWithholdingPaymentAllocation,
+    UnifiedPayoutRun,
     UnifiedPayoutRunItem,
     Voucher,
     VoucherLine,
@@ -635,7 +636,12 @@ def test_unified_payout_rejects_bank_row_without_controlled_import_action(
             posting_date=date(2026, 9, 5),
             bank_account_code="1002",
             bank_transaction_id=forged_bank_row.id,
-            labor_items=[LaborPayoutItem(source_open_item_id=source.id)],
+            labor_items=[
+                LaborPayoutItem(
+                    source_open_item_id=source.id,
+                    settlement_mode="net_after_withholding",
+                )
+            ],
             withholding_agency_code="TAX-LABOR-DIRECT",
             withholding_agency_name="测试税务局",
             evidence_references=[evidence.id],
@@ -733,7 +739,12 @@ def test_full_labor_payout_tax_source_payment_and_downstream_first_reversal() ->
                     posting_date=date(2026, 3, 5),
                     bank_account_code="1002",
                     bank_transaction_id=payout_bank.id,
-                    labor_items=[LaborPayoutItem(source_open_item_id=labor_open_item.id)],
+                    labor_items=[
+                        LaborPayoutItem(
+                            source_open_item_id=labor_open_item.id,
+                            settlement_mode="net_after_withholding",
+                        )
+                    ],
                     withholding_agency_code="TAX-LABOR-01",
                     withholding_agency_name="测试税务局",
                     evidence_references=[evidence.id],
@@ -911,6 +922,217 @@ def test_full_labor_payout_tax_source_payment_and_downstream_first_reversal() ->
         engine.dispose()
 
 
+def test_gross_paid_without_withholding_preserves_exception_and_settles_full_bank_amount() -> None:
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    try:
+        with factory() as session:
+            organization = seed_organization(
+                session,
+                name="个人劳务毛额支付未扣税测试",
+                accounting_period_control_enabled=True,
+            )
+            prepare_authenticated_bank_account(
+                session,
+                organization,
+                booking_date=date(2026, 3, 31),
+            )
+            prepare_authenticated_bank_account(
+                session,
+                organization,
+                booking_date=date(2026, 4, 4),
+            )
+            evidence = _evidence(session, organization, "i")
+            person_id = _register_person(
+                session, organization, evidence, "L-GROSS", "毛额支付劳务人员"
+            )
+            service = LaborRemunerationService(session)
+            batch_preview = service.preview_batch(
+                PreviewLaborRemunerationBatchRequest(
+                    org_id=organization.id,
+                    idempotency_key="gross-unwithheld-batch-preview",
+                    remuneration_period="2026-03",
+                    business_date=date(2026, 3, 31),
+                    posting_date=date(2026, 3, 31),
+                    planned_payment_date=date(2026, 4, 4),
+                    items=[
+                        LaborRemunerationItemFacts(
+                            labor_person_id=person_id,
+                            service_start_date=date(2026, 3, 1),
+                            service_end_date=date(2026, 3, 31),
+                            fixed_fee_fen=300_000,
+                            commission_fen=200_000,
+                            expense_role="labor_service_cost",
+                            tax_identity="resident",
+                            income_grouping="continuous_monthly",
+                            is_full_time_student=False,
+                            external_declaration_status="not_due",
+                        )
+                    ],
+                    evidence_references=[evidence.id],
+                )
+            )
+            accrual = service.confirm_batch(
+                ConfirmLaborRemunerationBatchRequest(
+                    org_id=organization.id,
+                    batch_id=batch_preview.batch_id,
+                    idempotency_key="gross-unwithheld-batch-confirm",
+                    calculation_hash=batch_preview.calculation_hash,
+                    confirmation_note="确认三月劳务计提",
+                )
+            )
+            assert accrual.status.value == "posted"
+            labor_open_item = session.scalar(
+                select(OpenItem).where(
+                    OpenItem.org_id == organization.id,
+                    OpenItem.source_event_id == accrual.event_id,
+                    OpenItem.payable_category == "labor_remuneration",
+                )
+            )
+            assert labor_open_item is not None
+            payout_bank = import_test_bank_transaction(
+                session,
+                organization,
+                amount_fen=-500_000,
+                key="gross-unwithheld-payout-bank",
+                booking_date=date(2026, 4, 4),
+            )
+            request_facts = {
+                "org_id": organization.id,
+                "idempotency_key": "gross-unwithheld-payout-preview",
+                "business_date": date(2026, 4, 4),
+                "payment_date": date(2026, 4, 4),
+                "posting_date": date(2026, 4, 4),
+                "bank_account_code": "1002",
+                "bank_transaction_id": payout_bank.id,
+                "labor_items": [
+                    {
+                        "source_open_item_id": labor_open_item.id,
+                        "settlement_mode": "gross_paid_without_withholding",
+                    }
+                ],
+                "evidence_references": [evidence.id],
+            }
+            missing_evidence = service.preview_payout(
+                PreviewUnifiedPayoutRunRequest.model_validate(request_facts)
+            )
+            assert missing_evidence.status.value == "needs_information"
+            assert missing_evidence.missing_information[0].fields == [
+                "withholding_exception_evidence_references"
+            ]
+
+            payout_preview = service.preview_payout(
+                PreviewUnifiedPayoutRunRequest.model_validate(
+                    request_facts
+                    | {
+                        "withholding_exception_evidence_references": [evidence.id],
+                    }
+                )
+            )
+            assert payout_preview.status.value == "calculated"
+            assert payout_preview.data["gross_total_fen"] == 500_000
+            assert payout_preview.data["withholding_total_fen"] == 0
+            assert (
+                payout_preview.data["theoretical_individual_income_tax_total_fen"]
+                == 80_000
+            )
+            assert (
+                payout_preview.data["unwithheld_individual_income_tax_total_fen"]
+                == 80_000
+            )
+            assert payout_preview.data["net_total_fen"] == 500_000
+
+            confirm_request = ConfirmUnifiedPayoutRunRequest(
+                org_id=organization.id,
+                payout_run_id=payout_preview.payout_run_id,
+                idempotency_key="gross-unwithheld-payout-confirm",
+                calculation_hash=payout_preview.calculation_hash,
+                confirmation_note="确认毛额已全部支付且实际未扣税",
+            )
+            payout = service.confirm_payout(confirm_request)
+            assert payout.status.value == "posted"
+            assert labor_open_item.status == "settled"
+            assert payout_bank.matched_event_id == payout.event_id
+            run_item = session.scalar(
+                select(UnifiedPayoutRunItem).where(
+                    UnifiedPayoutRunItem.payout_run_id == payout.payout_run_id
+                )
+            )
+            assert run_item is not None
+            assert run_item.settlement_mode == "gross_paid_without_withholding"
+            assert run_item.theoretical_individual_income_tax_fen == 80_000
+            assert run_item.individual_income_tax_fen == 0
+            assert run_item.unwithheld_individual_income_tax_fen == 80_000
+            assert run_item.net_amount_fen == 500_000
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(OpenItem)
+                    .where(
+                        OpenItem.source_event_id == payout.event_id,
+                        OpenItem.payable_category == "labor_individual_income_tax",
+                    )
+                )
+                == 0
+            )
+            event = session.get(BusinessEvent, payout.event_id)
+            assert event is not None
+            assert event.facts["theoretical_labor_withholding_fen"] == 80_000
+            assert event.facts["actual_labor_withholding_fen"] == 0
+            assert event.facts["unwithheld_labor_tax_fen"] == 80_000
+            assert service.confirm_payout(confirm_request).data["idempotent_replay"] is True
+
+            april_period = session.scalar(
+                select(AccountingPeriod).where(
+                    AccountingPeriod.org_id == organization.id,
+                    AccountingPeriod.start_date == date(2026, 4, 1),
+                )
+            )
+            assert april_period is not None
+            april_close = AccountingPeriodService(
+                session, current_date=date(2026, 5, 31)
+            ).preview_accounting_period_close(
+                PreviewAccountingPeriodCloseRequest(
+                    org_id=organization.id,
+                    period_id=april_period.id,
+                    closing_date=date(2026, 4, 30),
+                )
+            )
+            labor_check = next(
+                item
+                for item in april_close.data["assistant_review_checklist"]["items"]
+                if item["code"] == "MONTH_END_PERSONAL_LABOR_REMUNERATION"
+            )
+            assert labor_check["state"] == "completed_with_warning"
+            assert labor_check["completed"] is True
+            assert labor_check["system_facts"]["open_labor_withholding_tax"]["count"] == 0
+            assert labor_check["system_facts"]["due_external_declaration_count"] == 0
+            assert (
+                labor_check["system_facts"][
+                    "gross_paid_without_withholding_theoretical_tax_fen"
+                ]
+                == 80_000
+            )
+
+            reversal = service.reverse_event(
+                ReverseEventRequest(
+                    org_id=organization.id,
+                    event_id=payout.event_id,
+                    idempotency_key="reverse-gross-unwithheld-payout",
+                    reason="验证受控冲正链",
+                    posting_date=date(2026, 4, 4),
+                )
+            )
+            assert reversal.status.value == "posted"
+            payout_run = session.get(UnifiedPayoutRun, payout.payout_run_id)
+            assert payout_run is not None
+            assert payout_run.status == "reversed"
+            session.commit()
+    finally:
+        engine.dispose()
+
+
 def test_one_imported_bank_row_atomically_covers_salary_and_labor_children() -> None:
     engine = make_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -1042,7 +1264,12 @@ def test_one_imported_bank_row_atomically_covers_salary_and_labor_children() -> 
                                 "individual_income_tax_fen": 10_500,
                             }
                         ],
-                        "labor_items": [{"source_open_item_id": labor_item.id}],
+                        "labor_items": [
+                            {
+                                "source_open_item_id": labor_item.id,
+                                "settlement_mode": "net_after_withholding",
+                            }
+                        ],
                         "withholding_agency_code": "TAX-LABOR-02",
                         "withholding_agency_name": "测试税务局",
                         "evidence_references": [evidence.id],

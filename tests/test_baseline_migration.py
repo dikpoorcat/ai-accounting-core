@@ -19,8 +19,9 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0013_labor_remuneration"]
+    assert scripts.get_heads() == ["0014_labor_gross_unwithheld"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0014_labor_gross_unwithheld",
         "0013_labor_remuneration",
         "0012_zero_tax_confirmation",
         "0011_close_as_of_items",
@@ -68,7 +69,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0013_labor_remuneration"
+                == "0014_labor_gross_unwithheld"
             )
             assert "reimbursing_employee_id" in {
                 column["name"] for column in inspect(connection).get_columns("fixed_assets")
@@ -94,6 +95,15 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
                 "labor_remuneration_batches",
                 "unified_payout_runs",
             } <= set(inspect(connection).get_table_names())
+            payout_item_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("unified_payout_run_items")
+            }
+            assert {
+                "settlement_mode",
+                "theoretical_individual_income_tax_fen",
+                "unwithheld_individual_income_tax_fen",
+            } <= payout_item_columns
             depreciation_columns = {
                 column["name"]
                 for column in inspect(connection).get_columns("fixed_asset_depreciations")
@@ -108,7 +118,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0013_labor_remuneration"
+                == "0014_labor_gross_unwithheld"
             )
     finally:
         engine.dispose()

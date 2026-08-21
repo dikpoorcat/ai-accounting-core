@@ -7,7 +7,7 @@ from threading import Barrier
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, inspect, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from testcontainers.community.postgres import PostgresContainer
 
@@ -50,6 +50,58 @@ def _evidence(session, org_id, marker: str) -> Evidence:
     session.add(evidence)
     session.flush()
     return evidence
+
+
+def test_postgres_gross_unwithheld_migration_installs_and_restores_invariants() -> None:
+    with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
+        database_url = postgres.get_connection_url(driver="psycopg")
+        config = Config("alembic.ini")
+        config.set_main_option("sqlalchemy.url", database_url)
+        command.upgrade(config, "head")
+        engine = create_engine(database_url)
+        try:
+            columns = {
+                column["name"] for column in inspect(engine).get_columns("unified_payout_run_items")
+            }
+            assert {
+                "settlement_mode",
+                "theoretical_individual_income_tax_fen",
+                "unwithheld_individual_income_tax_fen",
+            } <= columns
+            checks = {
+                constraint["name"]
+                for constraint in inspect(engine).get_check_constraints(
+                    "unified_payout_run_items"
+                )
+            }
+            assert "ck_payout_item_settlement_mode" in checks
+            with engine.connect() as connection:
+                definition = connection.scalar(
+                    text(
+                        "SELECT pg_get_functiondef("
+                        "'finance_assert_unified_payout_0013(uuid)'::regprocedure)"
+                    )
+                )
+                assert "theoretical_individual_income_tax_fen" in definition
+                assert "UNIFIED_PAYOUT_WITHHOLDING_EXCEPTION_EVIDENCE_MISMATCH" in definition
+
+            command.downgrade(config, "0013_labor_remuneration")
+            downgraded_columns = {
+                column["name"] for column in inspect(engine).get_columns("unified_payout_run_items")
+            }
+            assert "settlement_mode" not in downgraded_columns
+            with engine.connect() as connection:
+                restored = connection.scalar(
+                    text(
+                        "SELECT pg_get_functiondef("
+                        "'finance_assert_unified_payout_0013(uuid)'::regprocedure)"
+                    )
+                )
+                assert "theoretical_individual_income_tax_fen" not in restored
+                assert "UNIFIED_PAYOUT_WITHHOLDING_EXCEPTION_EVIDENCE_MISMATCH" not in restored
+            command.upgrade(config, "head")
+        finally:
+            engine.dispose()
 
 
 def test_postgres_labor_confirmation_is_concurrent_and_direct_writes_fail_closed() -> None:

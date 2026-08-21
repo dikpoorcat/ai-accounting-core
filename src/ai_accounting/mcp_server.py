@@ -627,6 +627,11 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 "generic_event_writer": "not_available",
                 "accrual_entry": "finance_confirm_labor_remuneration_batch",
                 "mixed_salary_labor_bank_match": "finance_confirm_unified_payout_run",
+                "labor_settlement_modes": [
+                    "net_after_withholding",
+                    "gross_paid_without_withholding",
+                ],
+                "gross_paid_without_withholding_requires_exception_evidence": True,
             },
             "fixed_asset": {
                 "status": "enabled",
@@ -1013,7 +1018,7 @@ def finance_get_labor_remuneration(request: GetLaborRemunerationRequest) -> dict
 def finance_preview_unified_payout_run(
     request: PreviewUnifiedPayoutRunRequest,
 ) -> dict[str, Any]:
-    """试算工资和个人劳务混合发放，并精确勾稽一笔已导入银行汇总扣款。"""
+    """按逐劳务项显式结算模式试算统一发放，并精确勾稽已导入银行扣款。"""
     try:
         with SessionLocal.begin() as session:
             return (

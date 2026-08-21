@@ -185,6 +185,9 @@ class LaborPayoutItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_open_item_id: uuid.UUID | None = None
+    settlement_mode: Literal["net_after_withholding", "gross_paid_without_withholding"] | None = (
+        None
+    )
 
 
 class PreviewUnifiedPayoutRunRequest(BaseModel):
@@ -205,7 +208,27 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
     withholding_agency_code: str | None = Field(default=None, min_length=1, max_length=100)
     withholding_agency_name: str | None = Field(default=None, min_length=1, max_length=200)
     evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+    withholding_exception_evidence_references: list[uuid.UUID] = Field(
+        default_factory=list, max_length=100
+    )
     description: str = Field(default="工资及个人劳务统一发放", max_length=2000)
+
+    @model_validator(mode="after")
+    def exception_evidence_is_scoped(self) -> PreviewUnifiedPayoutRunRequest:
+        gross_without_withholding = any(
+            item.settlement_mode == "gross_paid_without_withholding" for item in self.labor_items
+        )
+        if not gross_without_withholding and self.withholding_exception_evidence_references:
+            raise ValueError(
+                "withholding exception evidence is only accepted for gross_paid_without_withholding"
+            )
+        if not set(self.withholding_exception_evidence_references).issubset(
+            self.evidence_references
+        ):
+            raise ValueError(
+                "withholding exception evidence must also be included in evidence_references"
+            )
+        return self
 
     def missing_fields(self) -> list[str]:
         fields = [
@@ -226,13 +249,23 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
         for index, item in enumerate(self.labor_items):
             if item.source_open_item_id is None:
                 fields.append(f"labor_items.{index}.source_open_item_id")
-        if self.labor_items and (
+            if item.settlement_mode is None:
+                fields.append(f"labor_items.{index}.settlement_mode")
+        if any(item.settlement_mode == "net_after_withholding" for item in self.labor_items) and (
             self.withholding_agency_code is None or self.withholding_agency_name is None
         ):
             if self.withholding_agency_code is None:
                 fields.append("withholding_agency_code")
             if self.withholding_agency_name is None:
                 fields.append("withholding_agency_name")
+        if (
+            any(
+                item.settlement_mode == "gross_paid_without_withholding"
+                for item in self.labor_items
+            )
+            and not self.withholding_exception_evidence_references
+        ):
+            fields.append("withholding_exception_evidence_references")
         if not self.evidence_references:
             fields.append("evidence_references")
         return fields
