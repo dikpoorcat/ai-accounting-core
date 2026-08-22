@@ -28,16 +28,32 @@ def render_overview_document(payload: dict[str, Any]) -> str:
         .read_text(encoding="utf-8")
     )
     serialized = json.dumps(
-        payload,
+        _stringify_fen_values(payload),
         ensure_ascii=False,
         separators=(",", ":"),
     )
     serialized = (
-        serialized.replace("<", "\\u003c")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
+        serialized.replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     )
     return template.replace("__OVERVIEW_DATA__", serialized)
+
+
+def _stringify_fen_values(value: Any, *, key: str | None = None) -> Any:
+    if isinstance(value, dict):
+        return {
+            item_key: _stringify_fen_values(item_value, key=item_key)
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_stringify_fen_values(item) for item in value]
+    if (
+        key is not None
+        and key.endswith("_fen")
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+    ):
+        return str(value)
+    return value
 
 
 def load_overview_document(

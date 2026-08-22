@@ -1,40 +1,119 @@
 from __future__ import annotations
 
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
+from .bank_statement_service import BankStatementService
 from .models import (
     Account,
     AccountingPeriod,
     AccountingPeriodClose,
     BankTransaction,
+    BankTransactionMatch,
     BusinessEvent,
     Counterparty,
+    Employee,
     FixedAsset,
     FixedAssetActivation,
+    FixedAssetDisposal,
+    IntangibleAsset,
+    IntangibleAssetRetirement,
     OpenItem,
     Organization,
+    PayrollBatch,
+    PayrollLine,
     Settlement,
     Voucher,
     VoucherLine,
 )
 
 FINAL_VOUCHER_STATUSES = ("posted", "reversed")
-EVENT_TYPE_LABELS = {
-    "owner_contribution_received": "股东投入",
-    "other_income_received": "营业外收入",
-    "bank_interest_received": "银行存款利息",
-    "refundable_deposit_paid": "保证金支付",
-    "refundable_deposit_return_received": "保证金退回",
-    "employee_reimbursement": "报销确认",
-    "employee_reimbursement_payment": "报销付款",
-    "fixed_asset_acquisition": "固定资产确认",
-    "fixed_asset_activation": "固定资产启用",
+PAYROLL_EXPENSE_ROLES = {
+    "payroll_management_expense",
+    "payroll_sales_expense",
+    "payroll_service_cost",
+}
+ACTIVITY_GROUPS = {
+    "income_customer": "收入与客户",
+    "expense_supplier": "费用与供应商",
+    "employee_reimbursement": "员工报销",
+    "payroll": "工资与社保",
+    "labor": "个人劳务",
+    "tax": "税费事项",
+    "assets": "长期资产",
+    "financing_owner": "融资与股东",
+    "fund_movement": "资金调拨与保证金",
+    "correction": "更正与冲正",
+    "other": "其他业务",
+}
+
+ACTIVITY_GROUP_ORDER = tuple(ACTIVITY_GROUPS)
+
+EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
+    "service_cash_sale": ("income_customer", "现款服务收入"),
+    "service_credit_sale": ("income_customer", "赊销服务收入"),
+    "service_fulfillment": ("income_customer", "服务履约确认"),
+    "customer_receipt": ("income_customer", "客户回款"),
+    "customer_advance": ("income_customer", "客户预收款"),
+    "customer_refund": ("income_customer", "客户退款"),
+    "other_income_received": ("income_customer", "营业外收入"),
+    "bank_interest_received": ("income_customer", "银行存款利息"),
+    "expense_cash": ("expense_supplier", "现付费用"),
+    "expense_payable": ("expense_supplier", "应付费用"),
+    "supplier_payment": ("expense_supplier", "供应商付款"),
+    "bank_fee": ("expense_supplier", "银行手续费"),
+    "inventory": ("expense_supplier", "存货事项"),
+    "employee_reimbursement": ("employee_reimbursement", "报销确认"),
+    "employee_reimbursement_payment": ("employee_reimbursement", "报销付款"),
+    "payroll": ("payroll", "工资事项"),
+    "payroll_accrual": ("payroll", "工资计提"),
+    "salary_payment": ("payroll", "工资结算"),
+    "social_insurance_payment": ("payroll", "社保缴纳"),
+    "housing_fund_payment": ("payroll", "公积金缴纳"),
+    "individual_income_tax_payment": ("payroll", "工资个税缴纳"),
+    "labor_remuneration_accrual": ("labor", "个人劳务计提"),
+    "unified_payout_run": ("labor", "工资与劳务统一付款"),
+    "labor_withholding_tax_payment": ("labor", "劳务个税缴纳"),
+    "tax_payment": ("tax", "税费缴纳"),
+    "tax_relief": ("tax", "税费减免"),
+    "fixed_asset": ("assets", "固定资产事项"),
+    "fixed_asset_acquisition": ("assets", "固定资产购置"),
+    "fixed_asset_activation": ("assets", "固定资产启用"),
+    "fixed_asset_depreciation": ("assets", "固定资产折旧"),
+    "fixed_asset_disposal": ("assets", "固定资产处置"),
+    "intangible_asset": ("assets", "无形资产事项"),
+    "intangible_asset_acquisition": ("assets", "无形资产购置"),
+    "intangible_asset_amortization": ("assets", "无形资产摊销"),
+    "intangible_asset_retirement": ("assets", "无形资产退役"),
+    "owner_loan_received": ("financing_owner", "股东借款"),
+    "owner_contribution_received": ("financing_owner", "股东投入"),
+    "owner_repayment": ("financing_owner", "归还股东款"),
+    "loan_interest": ("financing_owner", "借款利息事项"),
+    "borrowing_drawdown": ("financing_owner", "借款到账"),
+    "borrowing_interest_accrual": ("financing_owner", "借款利息计提"),
+    "borrowing_interest_payment": ("financing_owner", "借款利息支付"),
+    "borrowing_principal_repayment": ("financing_owner", "借款本金归还"),
+    "refundable_deposit_paid": ("fund_movement", "可退保证金支付"),
+    "refundable_deposit_return_received": ("fund_movement", "可退保证金收回"),
+    "internal_transfer": ("fund_movement", "银行账户内部转账"),
+    "cash_bank_transfer": ("fund_movement", "现金与银行互转"),
+    "reversal": ("correction", "冲正凭证"),
+}
+
+OPEN_ITEM_CONFIGS = {
+    "customer_receivables": ("待收客户款", "receivable", "笔"),
+    "refundable_deposit_receivables": ("待收回保证金", "receivable", "个往来对象"),
+    "other_receivables": ("其他应收事项", "receivable", "笔"),
+    "supplier_payables": ("待付供应商款", "payable", "笔"),
+    "employee_payables": ("待付员工报销款", "payable", "笔"),
+    "payroll_payables": ("待付工资、社保与个税", "payable", "笔"),
+    "labor_payables": ("待付个人劳务及个税", "payable", "笔"),
+    "other_payables": ("其他应付事项", "payable", "笔"),
 }
 
 
@@ -54,9 +133,17 @@ def build_overview_payload(
         )
     ).all()
     counterparties = {row.id: row.name for row in counterparty_rows}
-    employee_counterparty_ids = {
-        row.id for row in counterparty_rows if row.kind == "employee"
-    }
+    employee_rows = session.execute(
+        select(Employee.counterparty_id, Employee.name).where(Employee.org_id == organization.id)
+    ).all()
+    counterparties.update(
+        {
+            row.counterparty_id: row.name.strip()
+            for row in employee_rows
+            if row.name and row.name.strip()
+        }
+    )
+    employee_counterparty_ids = {row.id for row in counterparty_rows if row.kind == "employee"}
     periods = session.scalars(
         select(AccountingPeriod)
         .where(AccountingPeriod.org_id == organization.id)
@@ -72,20 +159,14 @@ def build_overview_payload(
         )
         for period in periods
     ]
-    populated = [month for month in months if month["voucher_count"]]
-    default_period = (
-        populated[-1]["key"]
-        if populated
-        else (months[-1]["key"] if months else None)
-    )
+    default_period = months[-1]["key"] if months else None
     return {
+        "schema_version": 2,
         "company": organization.name,
         "generated_at": datetime.now(UTC).isoformat(),
         "default_period": default_period,
         "months": months,
-        "disclaimer": (
-            "私有试用经营概览 · 非正式财务报表、法定账簿或纳税申报结果"
-        ),
+        "disclaimer": ("私有试用经营概览 · 非正式财务报表、法定账簿或纳税申报结果"),
     }
 
 
@@ -136,22 +217,23 @@ def _build_month(
     )
     position = _position_metrics(cumulative_balances)
     month_result = _result_metrics(month_balances)
+    employee_compensation = _load_employee_compensation(
+        session,
+        org_id=organization.id,
+        period=period,
+        month_balances=month_balances,
+    )
     cumulative_result = _result_metrics(cumulative_balances)
-    bank_transactions = session.scalars(
-        select(BankTransaction).where(
-            BankTransaction.org_id == organization.id,
-            BankTransaction.booking_date >= period.start_date,
-            BankTransaction.booking_date <= period.end_date,
-        )
-    ).all()
-    inflow_fen = sum(item.amount_fen for item in bank_transactions if item.amount_fen > 0)
-    outflow_fen = -sum(
-        item.amount_fen for item in bank_transactions if item.amount_fen < 0
+    bank_activity = _load_bank_activity(
+        session,
+        org_id=organization.id,
+        period=period,
     )
     open_items = _load_open_items(
         session,
         org_id=organization.id,
         end_date=period.end_date,
+        counterparties=counterparties,
     )
     refundable_deposits = _load_refundable_deposits(
         session,
@@ -161,15 +243,7 @@ def _build_month(
         voucher_records=voucher_records,
     )
     open_items["refundable_deposit_receivables"] = refundable_deposits["balances"]
-    open_items["total_count"] = sum(
-        open_items[key]["count"]
-        for key in (
-            "employee_payables",
-            "refundable_deposit_receivables",
-            "other_receivables",
-            "other_payables",
-        )
-    )
+    open_items = _finalize_open_items(open_items)
     fixed_assets = _load_fixed_assets(
         session,
         org_id=organization.id,
@@ -177,35 +251,43 @@ def _build_month(
         counterparties=counterparties,
         voucher_by_event=voucher_by_event,
     )
-    employee_activity = _employee_activity(
-        voucher_records,
-        counterparties=counterparties,
-        employee_counterparty_ids=employee_counterparty_ids,
-        open_item_groups=open_items["employee_payables"]["groups"],
+    intangible_assets = _load_intangible_assets(
+        session,
+        org_id=organization.id,
+        period=period,
     )
-    owner_rows = _event_rows(voucher_records, "owner_contribution_received")
-    other_income_rows = _event_rows(voucher_records, "other_income_received")
+    activity_groups = _build_activity_groups(voucher_records)
     voucher_count = len(voucher_records)
     line_count = sum(len(item["lines"]) for _, item in voucher_records)
     total_debit_fen = sum(
-        line["debit_fen"]
-        for _, item in voucher_records
-        for line in item["lines"]
+        line["debit_fen"] for _, item in voucher_records for line in item["lines"]
     )
     total_credit_fen = sum(
-        line["credit_fen"]
-        for _, item in voucher_records
-        for line in item["lines"]
+        line["credit_fen"] for _, item in voucher_records for line in item["lines"]
     )
     close = (
-        session.get(AccountingPeriodClose, period.close_id)
-        if period.close_id is not None
-        else None
+        session.get(AccountingPeriodClose, period.close_id) if period.close_id is not None else None
     )
     equation_valid = position["assets_fen"] == (
-        position["liabilities_fen"]
-        + position["capital_fen"]
-        + cumulative_result["result_fen"]
+        position["liabilities_fen"] + position["capital_fen"] + cumulative_result["result_fen"]
+    )
+    balanced = total_debit_fen == total_credit_fen and all(
+        item["balanced"] for _, item in voucher_records
+    )
+    close_snapshot_consistent = (
+        close.voucher_count == voucher_count
+        and close.line_count == line_count
+        and close.total_debit_fen == total_debit_fen
+        and close.total_credit_fen == total_credit_fen
+        if close is not None
+        else None
+    )
+    validation = _build_validation(
+        period=period,
+        balanced=balanced,
+        equation_valid=equation_valid,
+        bank_activity=bank_activity,
+        close_snapshot_consistent=close_snapshot_consistent,
     )
     return {
         "key": f"{period.calendar_year:04d}-{period.calendar_month:02d}",
@@ -218,6 +300,8 @@ def _build_month(
         "total_debit_fen": total_debit_fen,
         "total_credit_fen": total_credit_fen,
         "vouchers": [item for _, item in voucher_records],
+        "activity_groups": activity_groups,
+        "represented_voucher_count": sum(group["event_count"] for group in activity_groups),
         "position": {
             **position,
             "month_revenue_fen": month_result["revenue_fen"],
@@ -226,50 +310,33 @@ def _build_month(
             "cumulative_result_fen": cumulative_result["result_fen"],
             "equation_valid": equation_valid,
         },
-        "cash": {
-            "inflow_fen": inflow_fen,
-            "outflow_fen": outflow_fen,
-            "net_fen": inflow_fen - outflow_fen,
-            "transaction_count": len(bank_transactions),
-            "matched_count": sum(
-                item.matched_event_id is not None for item in bank_transactions
-            ),
-            "unmatched_count": sum(
-                item.matched_event_id is None for item in bank_transactions
-            ),
-            "late_count": sum(item.is_late for item in bank_transactions),
+        "cash": bank_activity,
+        "unmatched_bank_activity": {
+            "count": bank_activity["unmatched_count"] + bank_activity["pending_late_count"],
+            "ordinary_count": bank_activity["unmatched_count"],
+            "pending_late_count": bank_activity["pending_late_count"],
+            "inflow_fen": bank_activity["unmatched_inflow_fen"],
+            "outflow_fen": bank_activity["unmatched_outflow_fen"],
+            "rows": bank_activity["attention_rows"],
         },
         "open_items": open_items,
+        "employee_compensation": employee_compensation,
         "fixed_assets": fixed_assets,
-        "activity": {
-            "owner_contribution": {
-                "count": len(owner_rows),
-                "total_fen": sum(item["amount_fen"] for item in owner_rows),
-                "rows": owner_rows,
-            },
-            "employee_advance": employee_activity,
-            "refundable_deposit": refundable_deposits["activity"],
-            "fixed_assets": {
-                "count": len(fixed_assets["acquired_rows"]),
-                "total_fen": sum(
-                    item["amount_fen"] for item in fixed_assets["acquired_rows"]
-                ),
-                "rows": fixed_assets["acquired_rows"],
-            },
-            "other_income": {
-                "count": len(other_income_rows),
-                "total_fen": sum(item["amount_fen"] for item in other_income_rows),
-                "rows": other_income_rows,
-            },
+        "intangible_assets": intangible_assets,
+        "long_term_assets": {
+            "net_fen": position["fixed_asset_net_fen"] + position["intangible_asset_net_fen"],
+            "fixed_net_fen": position["fixed_asset_net_fen"],
+            "intangible_net_fen": position["intangible_asset_net_fen"],
+            "fixed_active_count": fixed_assets["active_count"],
+            "intangible_active_count": intangible_assets["active_count"],
         },
+        "validation": validation,
         "checks": {
-            "balanced": total_debit_fen == total_credit_fen
-            and all(item["balanced"] for _, item in voucher_records),
-            "bank_rows": len(bank_transactions),
-            "bank_unmatched": sum(
-                item.matched_event_id is None for item in bank_transactions
-            ),
-            "late_bank_rows": sum(item.is_late for item in bank_transactions),
+            "balanced": balanced,
+            "bank_rows": bank_activity["transaction_count"],
+            "bank_unmatched": bank_activity["unmatched_count"],
+            "late_bank_rows": bank_activity["late_count"],
+            "pending_late_bank_rows": bank_activity["pending_late_count"],
             "active_fixed_assets": fixed_assets["active_count"],
             "open_item_count": open_items["total_count"],
         },
@@ -280,11 +347,70 @@ def _build_month(
                 "total_debit_fen": close.total_debit_fen,
                 "total_credit_fen": close.total_credit_fen,
                 "confirmed_at": close.confirmed_at.isoformat(),
+                "consistent": close_snapshot_consistent,
             }
             if close is not None
             else None
         ),
     }
+
+
+def _event_presentation(event_type: str) -> tuple[str, str]:
+    return EVENT_PRESENTATIONS.get(event_type, ("other", "其他业务"))
+
+
+def _build_activity_groups(
+    voucher_records: list[tuple[Voucher, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for voucher, item in voucher_records:
+        group_key, event_label = _event_presentation(item["event_type"])
+        if item["is_reversal"]:
+            group_key = "correction"
+            event_label = f"{event_label}冲正"
+        elif _is_refundable_deposit_event(voucher.event):
+            group_key = "fund_movement"
+            if item["event_type"] == "employee_reimbursement":
+                event_label = "员工垫付可退保证金"
+        group = grouped.setdefault(
+            group_key,
+            {
+                "key": group_key,
+                "label": ACTIVITY_GROUPS[group_key],
+                "event_count": 0,
+                "type_counts": Counter(),
+                "rows": [],
+            },
+        )
+        group["event_count"] += 1
+        group["type_counts"][event_label] += 1
+        group["rows"].append(
+            {
+                "date": item["date"],
+                "reference": item["number"],
+                "title": event_label,
+                "description": item["summary"],
+                "amount_fen": item["amount_fen"],
+                "state": item["state"],
+                "party": "、".join(item["parties"]),
+                "evidence": item["evidence"],
+            }
+        )
+    result = []
+    for key in ACTIVITY_GROUP_ORDER:
+        group = grouped.get(key)
+        if group is None:
+            continue
+        counts = group.pop("type_counts")
+        group["type_counts"] = [
+            {"label": label, "count": count}
+            for label, count in sorted(
+                counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ]
+        result.append(group)
+    return result
 
 
 def _load_vouchers(
@@ -311,19 +437,17 @@ def _load_vouchers(
     records: list[tuple[Voucher, dict[str, Any]]] = []
     by_event: dict[uuid.UUID, dict[str, Any]] = {}
     for voucher in vouchers:
+        _, event_label = _event_presentation(voucher.event.event_type)
         lines = [
             {
                 "line_number": line.line_number,
                 "code": line.account.code,
                 "account": line.account.name,
                 "system_role": line.account.system_role,
-                "memo": line.memo or voucher.description,
                 "debit_fen": line.debit_fen,
                 "credit_fen": line.credit_fen,
                 "party": (
-                    counterparties.get(line.counterparty_id, "")
-                    if line.counterparty_id
-                    else ""
+                    counterparties.get(line.counterparty_id, "") if line.counterparty_id else ""
                 ),
             }
             for line in sorted(voucher.lines, key=lambda item: item.line_number)
@@ -335,10 +459,16 @@ def _load_vouchers(
             "number": voucher.voucher_number,
             "date": voucher.posting_date.isoformat(),
             "event_type": voucher.event.event_type,
-            "type": EVENT_TYPE_LABELS.get(
-                voucher.event.event_type,
-                voucher.event.event_type,
+            "type": event_label,
+            "status": voucher.status,
+            "state": (
+                "冲正入账"
+                if voucher.reversal_of_voucher_id is not None
+                else "已在后续期间冲正"
+                if voucher.status == "reversed"
+                else "已入账"
             ),
+            "is_reversal": voucher.reversal_of_voucher_id is not None,
             "summary": voucher.description,
             "list_summary": _compact_voucher_summary(
                 event=voucher.event,
@@ -347,9 +477,7 @@ def _load_vouchers(
             ),
             "amount_fen": debit_fen,
             "parties": parties,
-            "evidence": sorted(
-                evidence.original_name for evidence in voucher.event.evidence
-            ),
+            "evidence": sorted(evidence.original_name for evidence in voucher.event.evidence),
             "lines": lines,
             "balanced": debit_fen == credit_fen,
         }
@@ -366,11 +494,9 @@ def _compact_voucher_summary(
 ) -> str:
     facts = event.facts if isinstance(event.facts, dict) else {}
     counterparty = facts.get("counterparty")
-    party = (
-        counterparty.get("name", "")
-        if isinstance(counterparty, dict)
-        else ""
-    ) or (parties[0] if parties else "")
+    party = (counterparty.get("name", "") if isinstance(counterparty, dict) else "") or (
+        parties[0] if parties else ""
+    )
 
     if event.event_type == "owner_contribution_received":
         return f"{party or '股东'}投入实收资本"
@@ -462,9 +588,7 @@ def _load_account_balances(
         debit_fen = int(row.debit_fen)
         credit_fen = int(row.credit_fen)
         normal_fen = (
-            debit_fen - credit_fen
-            if row.normal_side == "debit"
-            else credit_fen - debit_fen
+            debit_fen - credit_fen if row.normal_side == "debit" else credit_fen - debit_fen
         )
         category_side = {
             "asset": "debit",
@@ -474,16 +598,13 @@ def _load_account_balances(
             "revenue": "credit",
         }.get(row.category, row.normal_side)
         category_fen = (
-            debit_fen - credit_fen
-            if category_side == "debit"
-            else credit_fen - debit_fen
+            debit_fen - credit_fen if category_side == "debit" else credit_fen - debit_fen
         )
         result.append(
             {
                 "category": row.category,
                 "system_role": row.system_role,
-                "bank": bool(row.requires_bank_reconciliation)
-                or row.system_role == "bank",
+                "bank": bool(row.requires_bank_reconciliation) or row.system_role == "bank",
                 "normal_fen": normal_fen,
                 "category_fen": category_fen,
             }
@@ -501,31 +622,377 @@ def _position_metrics(balances: list[dict[str, Any]]) -> dict[str, int]:
         )
 
     bank_fen = sum(item["category_fen"] for item in balances if item["bank"])
+    fixed_asset_cost_fen = total(role="fixed_asset_cost")
+    accumulated_depreciation_fen = -total(role="accumulated_depreciation")
+    fixed_asset_net_fen = fixed_asset_cost_fen - accumulated_depreciation_fen
+    intangible_asset_cost_fen = total(role="intangible_asset_cost")
+    accumulated_amortization_fen = -total(role="accumulated_amortization")
+    intangible_asset_net_fen = intangible_asset_cost_fen - accumulated_amortization_fen
+    assets_fen = total(category="asset")
     return {
-        "assets_fen": total(category="asset"),
+        "assets_fen": assets_fen,
         "liabilities_fen": total(category="liability"),
         "capital_fen": total(category="equity"),
         "bank_fen": bank_fen,
-        "fixed_asset_fen": total(role="fixed_asset_cost"),
+        "fixed_asset_fen": fixed_asset_cost_fen,
+        "fixed_asset_cost_fen": fixed_asset_cost_fen,
+        "accumulated_depreciation_fen": accumulated_depreciation_fen,
+        "fixed_asset_net_fen": fixed_asset_net_fen,
+        "intangible_asset_cost_fen": intangible_asset_cost_fen,
+        "accumulated_amortization_fen": accumulated_amortization_fen,
+        "intangible_asset_net_fen": intangible_asset_net_fen,
+        "other_assets_fen": (
+            assets_fen - bank_fen - fixed_asset_net_fen - intangible_asset_net_fen
+        ),
         "other_receivable_fen": total(role="employee_receivable"),
     }
 
 
 def _result_metrics(balances: list[dict[str, Any]]) -> dict[str, int]:
-    revenue_fen = sum(
-        item["category_fen"]
-        for item in balances
-        if item["category"] == "revenue"
-    )
-    expense_fen = sum(
-        item["category_fen"]
-        for item in balances
-        if item["category"] == "expense"
-    )
+    revenue_fen = sum(item["category_fen"] for item in balances if item["category"] == "revenue")
+    expense_fen = sum(item["category_fen"] for item in balances if item["category"] == "expense")
     return {
         "revenue_fen": revenue_fen,
         "expense_fen": expense_fen,
         "result_fen": revenue_fen - expense_fen,
+    }
+
+
+def _load_employee_compensation(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    period: AccountingPeriod,
+    month_balances: list[dict[str, Any]],
+) -> dict[str, Any]:
+    total_fen = sum(
+        item["category_fen"]
+        for item in month_balances
+        if item["system_role"] in PAYROLL_EXPENSE_ROLES
+    )
+    rows = session.execute(
+        select(PayrollBatch, PayrollLine)
+        .join(
+            PayrollLine,
+            and_(
+                PayrollLine.org_id == PayrollBatch.org_id,
+                PayrollLine.payroll_batch_id == PayrollBatch.id,
+            ),
+        )
+        .join(
+            BusinessEvent,
+            and_(
+                BusinessEvent.org_id == PayrollBatch.org_id,
+                BusinessEvent.id == PayrollBatch.business_event_id,
+            ),
+        )
+        .where(
+            PayrollBatch.org_id == org_id,
+            PayrollBatch.status.in_(FINAL_VOUCHER_STATUSES),
+            BusinessEvent.posting_date >= period.start_date,
+            BusinessEvent.posting_date <= period.end_date,
+            BusinessEvent.status.in_(FINAL_VOUCHER_STATUSES),
+        )
+        .order_by(PayrollBatch.posting_date, PayrollBatch.id, PayrollLine.id)
+    ).all()
+    totals = {
+        "gross_salary_fen": 0,
+        "employer_social_insurance_fen": 0,
+        "employer_housing_fund_fen": 0,
+        "employee_social_insurance_fen": 0,
+        "employee_housing_fund_fen": 0,
+    }
+    by_payroll_period: dict[str, dict[str, Any]] = {}
+    batch_ids: set[uuid.UUID] = set()
+    for batch, line in rows:
+        sign = -1 if batch.reversal_of_batch_id is not None else 1
+        batch_ids.add(batch.id)
+        period_totals = by_payroll_period.setdefault(
+            batch.payroll_period,
+            {
+                "payroll_period": batch.payroll_period,
+                "gross_salary_fen": 0,
+                "employer_social_insurance_fen": 0,
+                "employer_housing_fund_fen": 0,
+                "employee_social_insurance_fen": 0,
+                "employee_housing_fund_fen": 0,
+                "total_fen": 0,
+                "has_reversal": False,
+            },
+        )
+        values = {
+            "gross_salary_fen": sign * line.gross_salary_fen,
+            "employer_social_insurance_fen": sign * line.employer_social_insurance_fen,
+            "employer_housing_fund_fen": sign * line.employer_housing_fund_fen,
+            "employee_social_insurance_fen": sign * line.employee_social_insurance_fen,
+            "employee_housing_fund_fen": sign * line.employee_housing_fund_fen,
+        }
+        for key, value in values.items():
+            totals[key] += value
+            period_totals[key] += value
+        period_totals["total_fen"] += (
+            values["gross_salary_fen"]
+            + values["employer_social_insurance_fen"]
+            + values["employer_housing_fund_fen"]
+        )
+        period_totals["has_reversal"] = (
+            period_totals["has_reversal"] or batch.reversal_of_batch_id is not None
+        )
+
+    controlled_total_fen = (
+        totals["gross_salary_fen"]
+        + totals["employer_social_insurance_fen"]
+        + totals["employer_housing_fund_fen"]
+    )
+    has_controlled_basis = bool(batch_ids)
+    breakdown_available = controlled_total_fen == total_fen and (
+        has_controlled_basis or total_fen == 0
+    )
+    if breakdown_available:
+        reason = None
+    elif not has_controlled_basis:
+        reason = "现有历史数据缺少受控工资批次关联，明细不可拆。"
+    else:
+        reason = "受控工资批次与职工薪酬科目净额不一致，明细不可拆。"
+    periods = sorted(by_payroll_period.values(), key=lambda item: item["payroll_period"])
+    return {
+        "has_activity": total_fen != 0 or has_controlled_basis,
+        "breakdown_available": breakdown_available,
+        "reason": reason,
+        "total_fen": total_fen,
+        "gross_salary_fen": totals["gross_salary_fen"] if breakdown_available else None,
+        "employer_social_insurance_fen": (
+            totals["employer_social_insurance_fen"] if breakdown_available else None
+        ),
+        "employer_housing_fund_fen": (
+            totals["employer_housing_fund_fen"] if breakdown_available else None
+        ),
+        "employee_social_insurance_fen": (
+            totals["employee_social_insurance_fen"] if breakdown_available else None
+        ),
+        "employee_housing_fund_fen": (
+            totals["employee_housing_fund_fen"] if breakdown_available else None
+        ),
+        "personal_withholding_fen": (
+            totals["employee_social_insurance_fen"] + totals["employee_housing_fund_fen"]
+            if breakdown_available
+            else None
+        ),
+        "batch_count": len(batch_ids),
+        "periods": periods if breakdown_available else [],
+    }
+
+
+def _load_bank_activity(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    period: AccountingPeriod,
+) -> dict[str, Any]:
+    transactions = session.scalars(
+        select(BankTransaction)
+        .where(
+            BankTransaction.org_id == org_id,
+            BankTransaction.booking_date >= period.start_date,
+            BankTransaction.booking_date <= period.end_date,
+        )
+        .order_by(BankTransaction.booking_date, BankTransaction.id)
+    ).all()
+    active_matches = (
+        session.scalars(
+            select(BankTransactionMatch).where(
+                BankTransactionMatch.org_id == org_id,
+                BankTransactionMatch.bank_transaction_id.in_([item.id for item in transactions]),
+                BankTransactionMatch.invalidated_by_event_id.is_(None),
+            )
+        ).all()
+        if transactions
+        else []
+    )
+    matches = {item.bank_transaction_id: item for item in active_matches}
+    service = BankStatementService(session)
+    matched_count = 0
+    ordinary_count = 0
+    unmatched_count = 0
+    late_count = 0
+    pending_late_count = 0
+    attention_rows = []
+    for transaction in transactions:
+        state = "matched"
+        if transaction.is_late:
+            late_count += 1
+            if service._current_late_action(transaction) is None:
+                pending_late_count += 1
+                state = "pending_late"
+            else:
+                state = "handled_late"
+        else:
+            ordinary_count += 1
+            try:
+                matched = service._valid_current_match(
+                    transaction,
+                    matches.get(transaction.id),
+                )
+                state = "matched" if matched else "unmatched"
+            except ValueError:
+                matched = False
+                state = "invalid_match"
+            if matched:
+                matched_count += 1
+            else:
+                unmatched_count += 1
+        if state not in {"unmatched", "invalid_match", "pending_late"}:
+            continue
+        attention_rows.append(
+            {
+                "date": transaction.booking_date.isoformat(),
+                "direction": "inflow" if transaction.amount_fen > 0 else "outflow",
+                "amount_fen": abs(transaction.amount_fen),
+                "signed_amount_fen": transaction.amount_fen,
+                "party": transaction.counterparty_name or "未提供往来对方",
+                "memo": transaction.memo.strip() or "无摘要",
+                "state": state,
+                "is_late": transaction.is_late,
+            }
+        )
+    inflow_fen = sum(item.amount_fen for item in transactions if item.amount_fen > 0)
+    outflow_fen = -sum(item.amount_fen for item in transactions if item.amount_fen < 0)
+    unmatched_inflow_fen = sum(
+        item["amount_fen"] for item in attention_rows if item["direction"] == "inflow"
+    )
+    unmatched_outflow_fen = sum(
+        item["amount_fen"] for item in attention_rows if item["direction"] == "outflow"
+    )
+    return {
+        "inflow_fen": inflow_fen,
+        "outflow_fen": outflow_fen,
+        "net_fen": inflow_fen - outflow_fen,
+        "transaction_count": len(transactions),
+        "ordinary_count": ordinary_count,
+        "matched_count": matched_count,
+        "unmatched_count": unmatched_count,
+        "late_count": late_count,
+        "pending_late_count": pending_late_count,
+        "unmatched_inflow_fen": unmatched_inflow_fen,
+        "unmatched_outflow_fen": unmatched_outflow_fen,
+        "attention_rows": attention_rows,
+    }
+
+
+def _build_validation(
+    *,
+    period: AccountingPeriod,
+    balanced: bool,
+    equation_valid: bool,
+    bank_activity: dict[str, Any],
+    close_snapshot_consistent: bool | None,
+) -> dict[str, Any]:
+    items = [
+        {
+            "key": "voucher_balance",
+            "label": "复式凭证",
+            "state": "pass" if balanced else "error",
+            "text": "每张凭证借贷平衡" if balanced else "发现借贷不平凭证",
+        },
+        {
+            "key": "accounting_equation",
+            "label": "会计等式",
+            "state": "pass" if equation_valid else "error",
+            "text": "资产与负债、权益及累计差额相符"
+            if equation_valid
+            else "资产与负债、权益及累计差额不符",
+        },
+    ]
+    if bank_activity["ordinary_count"] == 0:
+        items.append(
+            {
+                "key": "bank_match",
+                "label": "银行流水",
+                "state": "neutral",
+                "text": "本月没有普通银行流水",
+            }
+        )
+    else:
+        items.append(
+            {
+                "key": "bank_match",
+                "label": "银行流水",
+                "state": "pass" if bank_activity["unmatched_count"] == 0 else "pending",
+                "text": (
+                    f"{bank_activity['matched_count']} / "
+                    f"{bank_activity['ordinary_count']} 已完成当前有效匹配"
+                ),
+            }
+        )
+    items.append(
+        {
+            "key": "late_bank",
+            "label": "迟到流水",
+            "state": "pending"
+            if bank_activity["pending_late_count"]
+            else "pass"
+            if bank_activity["late_count"]
+            else "neutral",
+            "text": (
+                f"{bank_activity['pending_late_count']} 笔仍待处理"
+                if bank_activity["pending_late_count"]
+                else f"{bank_activity['late_count']} 笔均已处理"
+                if bank_activity["late_count"]
+                else "本月没有迟到流水"
+            ),
+        }
+    )
+    if close_snapshot_consistent is not None:
+        items.append(
+            {
+                "key": "close_snapshot",
+                "label": "关账快照",
+                "state": "pass" if close_snapshot_consistent else "error",
+                "text": "当前投影与不可变关账快照一致"
+                if close_snapshot_consistent
+                else "当前投影与关账快照不一致",
+            }
+        )
+    items.append(
+        {
+            "key": "period_status",
+            "label": "期间状态",
+            "state": "pass" if period.status == "closed" else "pending",
+            "text": "本月已关账并锁定" if period.status == "closed" else "本月仍开放，尚未关账",
+        }
+    )
+    integrity_valid = balanced and equation_valid and close_snapshot_consistent is not False
+    attention_count = (
+        bank_activity["unmatched_count"]
+        + bank_activity["pending_late_count"]
+        + (1 if period.status != "closed" else 0)
+    )
+    if not integrity_valid:
+        state = "error"
+        title = "账务一致性异常"
+        summary = "存在必须立即复核的数据一致性问题"
+    elif attention_count:
+        state = "attention"
+        title = "账务平衡，仍有事项待处理"
+        pending_parts = []
+        if bank_activity["unmatched_count"]:
+            pending_parts.append(f"{bank_activity['unmatched_count']} 笔流水待识别")
+        if bank_activity["pending_late_count"]:
+            pending_parts.append(f"{bank_activity['pending_late_count']} 笔迟到流水待处理")
+        if period.status != "closed":
+            pending_parts.append("期间尚未关账")
+        summary = "；".join(pending_parts)
+    else:
+        state = "complete"
+        title = "本月已关账并完成校验"
+        summary = "账务一致、银行流水已处理，关账快照一致"
+    return {
+        "state": state,
+        "title": title,
+        "summary": summary,
+        "integrity_valid": integrity_valid,
+        "attention_count": attention_count,
+        "items": items,
     }
 
 
@@ -534,6 +1001,7 @@ def _load_open_items(
     *,
     org_id: uuid.UUID,
     end_date: Any,
+    counterparties: dict[uuid.UUID, str],
 ) -> dict[str, Any]:
     source_reversal = aliased(BusinessEvent)
     rows = session.execute(
@@ -614,9 +1082,13 @@ def _load_open_items(
             settled_by_open_item[open_item_id] += amount_fen
 
     category_items: dict[str, list[dict[str, Any]]] = {
+        "customer_receivables": [],
         "employee_payables": [],
         "refundable_deposit_receivables": [],
         "other_receivables": [],
+        "supplier_payables": [],
+        "payroll_payables": [],
+        "labor_payables": [],
         "other_payables": [],
     }
     for (
@@ -635,31 +1107,39 @@ def _load_open_items(
         if outstanding_fen <= 0:
             continue
 
-        if (
-            open_item.item_type == "receivable"
-            and event_type == "refundable_deposit_paid"
-        ):
-            category = "refundable_deposit_receivables"
-        elif open_item.item_type == "payable" and party_kind == "employee":
+        if open_item.item_type == "receivable":
+            if event_type == "refundable_deposit_paid":
+                category = "refundable_deposit_receivables"
+            elif party_kind == "customer":
+                category = "customer_receivables"
+            else:
+                category = "other_receivables"
+        elif open_item.payable_category in {
+            "labor_remuneration",
+            "labor_individual_income_tax",
+        }:
+            category = "labor_payables"
+        elif open_item.payable_category is not None:
+            category = "payroll_payables"
+        elif event_type == "employee_reimbursement" or party_kind == "employee":
             category = "employee_payables"
-        elif open_item.item_type == "receivable":
-            category = "other_receivables"
+        elif party_kind == "supplier":
+            category = "supplier_payables"
         else:
             category = "other_payables"
 
-        category_items[category].append({
-            "voucher": voucher_number or "—",
-            "party": party,
-            "description": description,
-            "status": "partial" if settled_fen else "open",
-            "item_type": open_item.item_type,
-            "outstanding_fen": outstanding_fen,
-        })
+        category_items[category].append(
+            {
+                "voucher": voucher_number or "—",
+                "party": counterparties.get(open_item.counterparty_id, party),
+                "description": description,
+                "status": "partial" if settled_fen else "open",
+                "item_type": open_item.item_type,
+                "outstanding_fen": outstanding_fen,
+            }
+        )
 
-    categories = {
-        key: _summarize_open_items(items)
-        for key, items in category_items.items()
-    }
+    categories = {key: _summarize_open_items(items) for key, items in category_items.items()}
     return {
         "total_count": sum(category["count"] for category in categories.values()),
         **categories,
@@ -694,6 +1174,36 @@ def _summarize_open_items(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _finalize_open_items(open_items: dict[str, Any]) -> dict[str, Any]:
+    empty = _summarize_open_items([])
+    categories = []
+    for key, (label, direction, unit) in OPEN_ITEM_CONFIGS.items():
+        data = open_items.get(key, empty)
+        open_items[key] = data
+        categories.append(
+            {
+                "key": key,
+                "label": label,
+                "direction": direction,
+                "unit": unit,
+                **data,
+            }
+        )
+    receivable_categories = [item for item in categories if item["direction"] == "receivable"]
+    payable_categories = [item for item in categories if item["direction"] == "payable"]
+    open_items.update(
+        {
+            "categories": categories,
+            "receivable_count": sum(item["count"] for item in receivable_categories),
+            "receivable_fen": sum(item["outstanding_fen"] for item in receivable_categories),
+            "payable_count": sum(item["count"] for item in payable_categories),
+            "payable_fen": sum(item["outstanding_fen"] for item in payable_categories),
+            "total_count": sum(item["count"] for item in categories),
+        }
+    )
+    return open_items
+
+
 def _load_fixed_assets(
     session: Session,
     *,
@@ -702,7 +1212,7 @@ def _load_fixed_assets(
     counterparties: dict[uuid.UUID, str],
     voucher_by_event: dict[uuid.UUID, dict[str, Any]],
 ) -> dict[str, Any]:
-    active_rows = session.execute(
+    candidate_rows = session.execute(
         select(FixedAsset, FixedAssetActivation)
         .join(
             FixedAssetActivation,
@@ -717,6 +1227,38 @@ def _load_fixed_assets(
             FixedAssetActivation.in_service_date <= period.end_date,
         )
     ).all()
+    asset_ids = [asset.id for asset, _ in candidate_rows]
+    disposal_rows = (
+        session.execute(
+            select(FixedAssetDisposal, BusinessEvent)
+            .join(BusinessEvent, BusinessEvent.id == FixedAssetDisposal.event_id)
+            .where(
+                FixedAssetDisposal.org_id == org_id,
+                FixedAssetDisposal.asset_id.in_(asset_ids),
+                FixedAssetDisposal.disposal_date <= period.end_date,
+            )
+        ).all()
+        if asset_ids
+        else []
+    )
+    disposed_asset_ids = {
+        disposal.asset_id
+        for disposal, event in disposal_rows
+        if _event_effective_as_of(session, event, period.end_date)
+    }
+    active_rows = []
+    for asset, activation in candidate_rows:
+        acquisition_event = session.get(BusinessEvent, asset.acquisition_event_id)
+        activation_event = session.get(BusinessEvent, activation.event_id)
+        if (
+            acquisition_event is None
+            or activation_event is None
+            or not _event_effective_as_of(session, acquisition_event, period.end_date)
+            or not _event_effective_as_of(session, activation_event, period.end_date)
+            or asset.id in disposed_asset_ids
+        ):
+            continue
+        active_rows.append((asset, activation))
     acquired_rows = []
     for asset, activation in active_rows:
         if not period.start_date <= asset.posting_date <= period.end_date:
@@ -753,6 +1295,66 @@ def _load_fixed_assets(
     }
 
 
+def _load_intangible_assets(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    period: AccountingPeriod,
+) -> dict[str, Any]:
+    assets = session.scalars(
+        select(IntangibleAsset).where(
+            IntangibleAsset.org_id == org_id,
+            IntangibleAsset.posting_date <= period.end_date,
+            IntangibleAsset.available_for_use_date <= period.end_date,
+        )
+    ).all()
+    asset_ids = [asset.id for asset in assets]
+    retirement_rows = (
+        session.execute(
+            select(IntangibleAssetRetirement, BusinessEvent)
+            .join(BusinessEvent, BusinessEvent.id == IntangibleAssetRetirement.event_id)
+            .where(
+                IntangibleAssetRetirement.org_id == org_id,
+                IntangibleAssetRetirement.asset_id.in_(asset_ids),
+                IntangibleAssetRetirement.retirement_date <= period.end_date,
+            )
+        ).all()
+        if asset_ids
+        else []
+    )
+    retired_asset_ids = {
+        retirement.asset_id
+        for retirement, event in retirement_rows
+        if _event_effective_as_of(session, event, period.end_date)
+    }
+    active_assets = []
+    for asset in assets:
+        acquisition = session.get(BusinessEvent, asset.acquisition_event_id)
+        if (
+            acquisition is not None
+            and _event_effective_as_of(session, acquisition, period.end_date)
+            and asset.id not in retired_asset_ids
+        ):
+            active_assets.append(asset)
+    return {
+        "active_count": len(active_assets),
+        "active_cost_fen": sum(item.cost_fen for item in active_assets),
+    }
+
+
+def _event_effective_as_of(
+    session: Session,
+    event: BusinessEvent,
+    end_date: Any,
+) -> bool:
+    if event.status == "posted":
+        return True
+    if event.status != "reversed" or event.reversed_by_event_id is None:
+        return False
+    reversal = session.get(BusinessEvent, event.reversed_by_event_id)
+    return reversal is None or reversal.posting_date > end_date
+
+
 def _employee_activity(
     voucher_records: list[tuple[Voucher, dict[str, Any]]],
     *,
@@ -760,9 +1362,7 @@ def _employee_activity(
     employee_counterparty_ids: set[uuid.UUID],
     open_item_groups: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    outstanding_by_party = {
-        item["party"]: item["outstanding_fen"] for item in open_item_groups
-    }
+    outstanding_by_party = {item["party"]: item["outstanding_fen"] for item in open_item_groups}
     groups: dict[str, dict[str, Any]] = defaultdict(
         lambda: {
             "confirmed_fen": 0,
@@ -846,9 +1446,7 @@ def _load_refundable_deposits(
         .order_by(Voucher.posting_date, Voucher.voucher_number)
     ).all()
     deposit_voucher_ids = {
-        voucher.id
-        for voucher in cumulative_vouchers
-        if _is_refundable_deposit_event(voucher.event)
+        voucher.id for voucher in cumulative_vouchers if _is_refundable_deposit_event(voucher.event)
     }
     balance_by_party: dict[str, int] = defaultdict(int)
     source_references: dict[str, set[str]] = defaultdict(set)
@@ -860,10 +1458,7 @@ def _load_refundable_deposits(
         if not deposit_related:
             continue
         for line in voucher.lines:
-            if (
-                line.account.system_role != "employee_receivable"
-                or line.counterparty_id is None
-            ):
+            if line.account.system_role != "employee_receivable" or line.counterparty_id is None:
                 continue
             party = counterparties.get(line.counterparty_id, "未命名保证金对方")
             balance_by_party[party] += line.debit_fen - line.credit_fen
@@ -896,9 +1491,7 @@ def _load_refundable_deposits(
             }
         )
     groups.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
-    balance_items.sort(
-        key=lambda item: (-item["outstanding_fen"], item["party"])
-    )
+    balance_items.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
 
     added_rows = []
     return_rows = []
@@ -910,15 +1503,12 @@ def _load_refundable_deposits(
         if not _is_refundable_deposit_event(voucher.event):
             continue
         deposit_lines = [
-            line
-            for line in item["lines"]
-            if line["system_role"] == "employee_receivable"
+            line for line in item["lines"] if line["system_role"] == "employee_receivable"
         ]
         parties = sorted({line["party"] for line in deposit_lines if line["party"]})
         is_return = voucher.event.event_type == "refundable_deposit_return_received"
         amount_fen = sum(
-            line["credit_fen"] if is_return else line["debit_fen"]
-            for line in deposit_lines
+            line["credit_fen"] if is_return else line["debit_fen"] for line in deposit_lines
         )
         if amount_fen <= 0:
             continue
@@ -995,12 +1585,8 @@ def _is_refundable_deposit_event(event: BusinessEvent) -> bool:
     derived = facts.get("derived")
     details = facts.get("details")
     return (
-        isinstance(derived, dict)
-        and derived.get("reimbursement_kind") == "refundable_deposit"
-    ) or (
-        isinstance(details, dict)
-        and details.get("reimbursement_kind") == "refundable_deposit"
-    )
+        isinstance(derived, dict) and derived.get("reimbursement_kind") == "refundable_deposit"
+    ) or (isinstance(details, dict) and details.get("reimbursement_kind") == "refundable_deposit")
 
 
 def _event_rows(
@@ -1018,7 +1604,7 @@ def _event_rows(
                 "title": voucher["type"],
                 "description": voucher["list_summary"],
                 "amount_fen": voucher["amount_fen"],
-                "state": "已入账",
+                "state": voucher["state"],
                 "party": "、".join(voucher["parties"]),
                 "evidence": voucher["evidence"],
             }

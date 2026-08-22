@@ -19,8 +19,9 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0015_labor_final_events"]
+    assert scripts.get_heads() == ["0016_close_labor_module"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0016_close_labor_module",
         "0015_labor_final_events",
         "0014_labor_gross_unwithheld",
         "0013_labor_remuneration",
@@ -70,7 +71,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0015_labor_final_events"
+                == "0016_close_labor_module"
             )
             assert "reimbursing_employee_id" in {
                 column["name"] for column in inspect(connection).get_columns("fixed_assets")
@@ -119,7 +120,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0015_labor_final_events"
+                == "0016_close_labor_module"
             )
     finally:
         engine.dispose()
