@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
 from .bank_statement_service import BankStatementService
@@ -23,6 +23,9 @@ from .models import (
     FixedAssetDisposal,
     IntangibleAsset,
     IntangibleAssetRetirement,
+    LaborRemunerationBatch,
+    LaborRemunerationEventLink,
+    LaborRemunerationLine,
     OpenItem,
     Organization,
     PayrollBatch,
@@ -37,6 +40,11 @@ PAYROLL_EXPENSE_ROLES = {
     "payroll_management_expense",
     "payroll_sales_expense",
     "payroll_service_cost",
+}
+LABOR_EXPENSE_ROLES = {
+    "labor_management_expense",
+    "labor_sales_expense",
+    "labor_service_cost",
 }
 ACTIVITY_GROUPS = {
     "income_customer": "收入与客户",
@@ -217,7 +225,7 @@ def _build_month(
     )
     position = _position_metrics(cumulative_balances)
     month_result = _result_metrics(month_balances)
-    employee_compensation = _load_employee_compensation(
+    workforce_cost = _load_workforce_cost(
         session,
         org_id=organization.id,
         period=period,
@@ -320,7 +328,7 @@ def _build_month(
             "rows": bank_activity["attention_rows"],
         },
         "open_items": open_items,
-        "employee_compensation": employee_compensation,
+        "workforce_cost": workforce_cost,
         "fixed_assets": fixed_assets,
         "intangible_assets": intangible_assets,
         "long_term_assets": {
@@ -658,6 +666,33 @@ def _result_metrics(balances: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def _load_workforce_cost(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    period: AccountingPeriod,
+    month_balances: list[dict[str, Any]],
+) -> dict[str, Any]:
+    employee = _load_employee_compensation(
+        session,
+        org_id=org_id,
+        period=period,
+        month_balances=month_balances,
+    )
+    personal_labor = _load_personal_labor_cost(
+        session,
+        org_id=org_id,
+        period=period,
+        month_balances=month_balances,
+    )
+    return {
+        "has_activity": employee["has_activity"] or personal_labor["has_activity"],
+        "total_fen": employee["total_fen"] + personal_labor["total_fen"],
+        "employee": employee,
+        "personal_labor": personal_labor,
+    }
+
+
 def _load_employee_compensation(
     session: Session,
     *,
@@ -778,6 +813,116 @@ def _load_employee_compensation(
             if breakdown_available
             else None
         ),
+        "batch_count": len(batch_ids),
+        "periods": periods if breakdown_available else [],
+    }
+
+
+def _load_personal_labor_cost(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    period: AccountingPeriod,
+    month_balances: list[dict[str, Any]],
+) -> dict[str, Any]:
+    total_fen = sum(
+        item["category_fen"]
+        for item in month_balances
+        if item["system_role"] in LABOR_EXPENSE_ROLES
+    )
+    rows = session.execute(
+        select(
+            LaborRemunerationEventLink,
+            LaborRemunerationBatch,
+            LaborRemunerationLine,
+        )
+        .join(
+            BusinessEvent,
+            and_(
+                BusinessEvent.org_id == LaborRemunerationEventLink.org_id,
+                BusinessEvent.id == LaborRemunerationEventLink.event_id,
+            ),
+        )
+        .join(
+            LaborRemunerationBatch,
+            and_(
+                LaborRemunerationBatch.org_id == LaborRemunerationEventLink.org_id,
+                LaborRemunerationBatch.id == LaborRemunerationEventLink.batch_id,
+            ),
+        )
+        .join(
+            LaborRemunerationLine,
+            and_(
+                LaborRemunerationLine.org_id == LaborRemunerationBatch.org_id,
+                LaborRemunerationLine.batch_id == LaborRemunerationBatch.id,
+                or_(
+                    LaborRemunerationEventLink.labor_line_id.is_(None),
+                    LaborRemunerationEventLink.labor_line_id == LaborRemunerationLine.id,
+                ),
+            ),
+        )
+        .where(
+            LaborRemunerationEventLink.org_id == org_id,
+            LaborRemunerationEventLink.link_kind.in_(("accrual", "reversal")),
+            LaborRemunerationBatch.status.in_(FINAL_VOUCHER_STATUSES),
+            BusinessEvent.posting_date >= period.start_date,
+            BusinessEvent.posting_date <= period.end_date,
+            BusinessEvent.status.in_(FINAL_VOUCHER_STATUSES),
+        )
+        .order_by(
+            BusinessEvent.posting_date,
+            LaborRemunerationEventLink.id,
+            LaborRemunerationLine.id,
+        )
+    ).all()
+    gross_remuneration_fen = 0
+    withholding_tax_fen = 0
+    by_remuneration_period: dict[str, dict[str, Any]] = {}
+    batch_ids: set[uuid.UUID] = set()
+    event_link_ids: set[uuid.UUID] = set()
+    for link, batch, line in rows:
+        sign = -1 if link.link_kind == "reversal" else 1
+        batch_ids.add(batch.id)
+        event_link_ids.add(link.id)
+        period_totals = by_remuneration_period.setdefault(
+            batch.remuneration_period,
+            {
+                "remuneration_period": batch.remuneration_period,
+                "gross_remuneration_fen": 0,
+                "withholding_tax_fen": 0,
+                "total_fen": 0,
+                "has_reversal": False,
+            },
+        )
+        gross = sign * line.gross_remuneration_fen
+        withholding = sign * line.withholding_tax_fen
+        gross_remuneration_fen += gross
+        withholding_tax_fen += withholding
+        period_totals["gross_remuneration_fen"] += gross
+        period_totals["withholding_tax_fen"] += withholding
+        period_totals["total_fen"] += gross
+        period_totals["has_reversal"] = (
+            period_totals["has_reversal"] or link.link_kind == "reversal"
+        )
+
+    has_controlled_basis = bool(event_link_ids)
+    breakdown_available = gross_remuneration_fen == total_fen and (
+        has_controlled_basis or total_fen == 0
+    )
+    if breakdown_available:
+        reason = None
+    elif not has_controlled_basis:
+        reason = "现有历史数据缺少受控个人劳务批次关联，明细不可拆。"
+    else:
+        reason = "受控个人劳务批次与个人劳务费用科目净额不一致，明细不可拆。"
+    periods = sorted(by_remuneration_period.values(), key=lambda item: item["remuneration_period"])
+    return {
+        "has_activity": total_fen != 0 or has_controlled_basis,
+        "breakdown_available": breakdown_available,
+        "reason": reason,
+        "total_fen": total_fen,
+        "gross_remuneration_fen": gross_remuneration_fen if breakdown_available else None,
+        "withholding_tax_fen": withholding_tax_fen if breakdown_available else None,
         "batch_count": len(batch_ids),
         "periods": periods if breakdown_available else [],
     }

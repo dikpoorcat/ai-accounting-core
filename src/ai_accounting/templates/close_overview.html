@@ -346,10 +346,18 @@
     .staff-cost-total { display: grid; justify-items: end; gap: 2px; white-space: nowrap; }
     .staff-cost-total span { color: var(--muted); font-size: 12px; }
     .staff-cost-total strong { font-size: 24px; }
-    .staff-cost-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+    .workforce-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+    .workforce-group { padding: 17px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-soft); }
+    .workforce-group-heading { display: flex; justify-content: space-between; align-items: start; gap: 14px; }
+    .workforce-group-heading p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .workforce-subtotal { display: grid; justify-items: end; gap: 2px; white-space: nowrap; }
+    .workforce-subtotal span { color: var(--muted); font-size: 12px; }
+    .workforce-subtotal strong { font-size: 20px; }
+    .staff-cost-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
     .staff-cost-card { display: grid; gap: 5px; padding: 17px; border-radius: var(--radius-md); background: var(--surface-soft); }
     .staff-cost-card.salary { background: var(--blue-soft); color: var(--blue); }
     .staff-cost-card.social { background: var(--green-soft); color: var(--green); }
+    .staff-cost-card.labor { background: color-mix(in srgb, var(--blue-soft) 55%, var(--green-soft)); }
     .staff-cost-card strong { font-size: 23px; }
     .staff-cost-note { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--muted); }
     .staff-cost-note.attention { background: var(--amber-soft); color: var(--amber); }
@@ -447,7 +455,7 @@
       .hero { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .activity-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .staff-cost-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .staff-cost-grid { grid-template-columns: 1fr; }
       .priority-panel, .validation-panel { grid-template-columns: 1fr; }
       .validation-copy { border-right: 0; border-bottom: 1px solid var(--line); }
       .check-grid { padding: 0 24px 24px; }
@@ -463,9 +471,10 @@
       .brand-name { max-width: calc(100vw - 88px); }
       .page { padding-top: 16px; }
       .hero { padding: 24px 20px; }
-      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid { grid-template-columns: 1fr; }
+      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .workforce-groups { grid-template-columns: 1fr; }
       .section-heading, .title-row { align-items: flex-start; flex-direction: column; gap: 10px; }
       .staff-cost-total { justify-items: start; }
+      .workforce-subtotal { justify-items: start; }
       .view-switch { width: 100%; }
       .view-choice { width: 100%; }
       .priority-panel, .panel-pad { padding: 18px; }
@@ -600,15 +609,32 @@
         </div>
       </section>
 
-      <section id="staff-cost-section" class="section panel panel-pad staff-cost-panel" aria-labelledby="staff-cost-title" hidden>
+      <section id="workforce-cost-section" class="section panel panel-pad staff-cost-panel" aria-labelledby="workforce-cost-title" hidden>
         <div class="section-heading">
-          <div><p class="eyebrow">费用拆分</p><h2 id="staff-cost-title">本月职工薪酬</h2></div>
-          <div class="staff-cost-total"><span>职工薪酬合计</span><strong id="staff-cost-total"></strong></div>
+          <div><p class="eyebrow">费用拆分</p><h2 id="workforce-cost-title">本月用工成本</h2></div>
+          <div class="staff-cost-total"><span>用工成本合计</span><strong id="workforce-cost-total"></strong></div>
         </div>
-        <div id="staff-cost-grid" class="staff-cost-grid"></div>
-        <p id="staff-cost-note" class="staff-cost-note"></p>
-        <div id="staff-cost-periods" class="staff-periods" aria-label="职工薪酬来源期间"></div>
-        <p id="staff-payment-note" class="staff-payment-note"></p>
+        <div class="workforce-groups">
+          <section class="workforce-group" aria-labelledby="employee-cost-title">
+            <div class="workforce-group-heading">
+              <div><h3 id="employee-cost-title">正式员工</h3><p>工资及公司承担的社保医保、公积金</p></div>
+              <div class="workforce-subtotal"><span>职工薪酬小计</span><strong id="employee-cost-total"></strong></div>
+            </div>
+            <div id="employee-cost-grid" class="staff-cost-grid"></div>
+            <p id="employee-cost-note" class="staff-cost-note"></p>
+            <div id="employee-cost-periods" class="staff-periods" aria-label="正式员工职工薪酬来源期间"></div>
+          </section>
+          <section class="workforce-group" aria-labelledby="personal-labor-title">
+            <div class="workforce-group-heading">
+              <div><h3 id="personal-labor-title">非员工个人劳务</h3><p>个人劳务报酬及佣金，不作为员工工资</p></div>
+              <div class="workforce-subtotal"><span>劳务报酬小计</span><strong id="personal-labor-total"></strong></div>
+            </div>
+            <div id="personal-labor-grid" class="staff-cost-grid"></div>
+            <p id="personal-labor-note" class="staff-cost-note"></p>
+            <div id="personal-labor-periods" class="staff-periods" aria-label="非员工个人劳务来源期间"></div>
+          </section>
+        </div>
+        <p id="workforce-payment-note" class="staff-payment-note"></p>
       </section>
 
       <section id="bank-attention-section" class="section panel panel-pad bank-attention" aria-labelledby="bank-attention-title" hidden>
@@ -846,48 +872,12 @@
         return details;
       };
 
-      const renderEmployeeCompensation = (month) => {
-        const data = month.employee_compensation;
-        const section = byId("staff-cost-section");
-        section.hidden = !data.has_activity;
-        if (!data.has_activity) return;
-        byId("staff-cost-total").textContent = money(data.total_fen);
-        const grid = byId("staff-cost-grid");
-        const note = byId("staff-cost-note");
-        const periods = byId("staff-cost-periods");
-        const paymentNote = byId("staff-payment-note");
-        grid.replaceChildren();
-        periods.replaceChildren();
-        note.className = "staff-cost-note";
-        paymentNote.textContent = "社保医保付款只清偿已经确认的应付款，不会在付款时再次计入费用。";
-        if (!data.breakdown_available) {
-          note.classList.add("attention");
-          note.textContent = data.reason || "现有数据缺少可靠拆分依据，仅展示职工薪酬合计。";
-          return;
-        }
-        const cards = [
-          ["工资总额", data.gross_salary_fen, "staff-cost-card salary"],
-          ["公司承担社保医保", data.employer_social_insurance_fen, "staff-cost-card social"]
-        ];
-        if (fen(data.employer_housing_fund_fen) !== 0n) {
-          cards.push(["公司承担住房公积金", data.employer_housing_fund_fen, "staff-cost-card"]);
-        }
-        cards.forEach((item) => {
-          const card = make("article", item[2]);
-          card.append(make("span", "", item[0]), make("strong", "", money(item[1])));
-          grid.append(card);
-        });
-        const personalSocial = fen(data.employee_social_insurance_fen);
-        const personalHousing = fen(data.employee_housing_fund_fen);
-        const personalParts = [];
-        if (personalSocial !== 0n) personalParts.push("个人承担社保医保 " + money(personalSocial));
-        if (personalHousing !== 0n) personalParts.push("个人承担住房公积金 " + money(personalHousing));
-        note.textContent = personalParts.length
-          ? personalParts.join("、") + "，已包含在工资总额中，仅由工资代扣，不会重复计入公司费用。"
-          : "本月没有从工资代扣的个人社保医保或住房公积金。";
-        data.periods.forEach((item) => {
-          const sourceMonth = Number(item.payroll_period.slice(5));
-          const label = item.payroll_period === month.key
+      const renderCostPeriods = (container, items, periodKey, month) => {
+        container.replaceChildren();
+        items.forEach((item) => {
+          const sourcePeriod = item[periodKey];
+          const sourceMonth = Number(sourcePeriod.slice(5));
+          const label = sourcePeriod === month.key
             ? sourceMonth + " 月本月计提"
             : sourceMonth + (item.has_reversal ? " 月补记/调整" : " 月补记");
           const chip = make("span", "staff-period");
@@ -895,8 +885,80 @@
             make("span", "", label + (item.has_reversal ? "（含更正）" : "")),
             make("strong", "", money(item.total_fen))
           );
-          periods.append(chip);
+          container.append(chip);
         });
+      };
+
+      const renderWorkforceCost = (month) => {
+        const data = month.workforce_cost;
+        const section = byId("workforce-cost-section");
+        section.hidden = !data.has_activity;
+        if (!data.has_activity) return;
+        byId("workforce-cost-total").textContent = money(data.total_fen);
+        byId("workforce-payment-note").textContent = "工资、社保医保及个人劳务的实际付款只清偿已经确认的应付款，不会在付款时再次计入用工成本。";
+
+        const employee = data.employee;
+        const employeeGrid = byId("employee-cost-grid");
+        const employeeNote = byId("employee-cost-note");
+        const employeePeriods = byId("employee-cost-periods");
+        byId("employee-cost-total").textContent = money(employee.total_fen);
+        employeeGrid.replaceChildren();
+        employeePeriods.replaceChildren();
+        employeeNote.className = "staff-cost-note";
+        if (!employee.has_activity) {
+          employeeNote.textContent = "本月没有入账的正式员工职工薪酬。";
+        } else if (!employee.breakdown_available) {
+          employeeNote.classList.add("attention");
+          employeeNote.textContent = employee.reason || "现有数据缺少可靠拆分依据，仅展示职工薪酬小计。";
+        } else {
+          const employeeCards = [
+            ["工资总额", employee.gross_salary_fen, "staff-cost-card salary"],
+            ["公司承担社保医保", employee.employer_social_insurance_fen, "staff-cost-card social"]
+          ];
+          if (fen(employee.employer_housing_fund_fen) !== 0n) {
+            employeeCards.push(["公司承担住房公积金", employee.employer_housing_fund_fen, "staff-cost-card"]);
+          }
+          employeeCards.forEach((item) => {
+            const card = make("article", item[2]);
+            card.append(make("span", "", item[0]), make("strong", "", money(item[1])));
+            employeeGrid.append(card);
+          });
+          const personalSocial = fen(employee.employee_social_insurance_fen);
+          const personalHousing = fen(employee.employee_housing_fund_fen);
+          const personalParts = [];
+          if (personalSocial !== 0n) personalParts.push("个人承担社保医保 " + money(personalSocial));
+          if (personalHousing !== 0n) personalParts.push("个人承担住房公积金 " + money(personalHousing));
+          employeeNote.textContent = personalParts.length
+            ? personalParts.join("、") + "，已包含在工资总额中，仅由工资代扣，不会重复计入公司成本。"
+            : "本月没有从工资代扣的个人社保医保或住房公积金。";
+          renderCostPeriods(employeePeriods, employee.periods, "payroll_period", month);
+        }
+
+        const personalLabor = data.personal_labor;
+        const laborGrid = byId("personal-labor-grid");
+        const laborNote = byId("personal-labor-note");
+        const laborPeriods = byId("personal-labor-periods");
+        byId("personal-labor-total").textContent = money(personalLabor.total_fen);
+        laborGrid.replaceChildren();
+        laborPeriods.replaceChildren();
+        laborNote.className = "staff-cost-note";
+        if (!personalLabor.has_activity) {
+          laborNote.textContent = "本月没有入账的非员工个人劳务报酬。";
+        } else if (!personalLabor.breakdown_available) {
+          laborNote.classList.add("attention");
+          laborNote.textContent = personalLabor.reason || "现有数据缺少可靠拆分依据，仅展示劳务报酬小计。";
+        } else {
+          const card = make("article", "staff-cost-card labor");
+          card.append(
+            make("span", "", "个人劳务报酬/佣金毛额"),
+            make("strong", "", money(personalLabor.gross_remuneration_fen))
+          );
+          laborGrid.append(card);
+          laborNote.textContent = fen(personalLabor.withholding_tax_fen) !== 0n
+            ? "劳务批次计算的个人所得税 " + money(personalLabor.withholding_tax_fen) + "，从劳务毛额中代扣，不会作为公司额外用工成本重复加总。"
+            : "本月受控劳务批次没有计算需代扣的个人所得税。";
+          renderCostPeriods(laborPeriods, personalLabor.periods, "remuneration_period", month);
+        }
       };
 
       const renderVoucherList = (month) => {
@@ -1192,7 +1254,7 @@
 
         renderPriority(month);
         renderActivity(month);
-        renderEmployeeCompensation(month);
+        renderWorkforceCost(month);
         renderVoucherList(month);
         renderBankAttention(month);
         renderFinancialOverview(month);

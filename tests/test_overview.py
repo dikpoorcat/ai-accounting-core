@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,6 +21,11 @@ from ai_accounting.models import (
     Employee,
     EmployeePayrollProfileVersion,
     Evidence,
+    LaborRemunerationBatch,
+    LaborRemunerationEventLink,
+    LaborRemunerationLine,
+    LaborRemunerationTaxPolicyVersion,
+    LaborServicePerson,
     OpenItem,
     Organization,
     PayrollBatch,
@@ -276,6 +283,132 @@ def _add_controlled_payroll_accrual(
     return batch
 
 
+def _add_controlled_labor_accrual(
+    session: Session,
+    *,
+    organization: Organization,
+    labor_person: LaborServicePerson,
+    policy: LaborRemunerationTaxPolicyVersion,
+    accounts: dict[str, Account],
+    number: str,
+    posting_date: date,
+    remuneration_period: str,
+    fixed_fee_fen: int,
+    commission_fen: int,
+    withholding_tax_fen: int,
+) -> tuple[LaborRemunerationBatch, LaborRemunerationLine]:
+    gross_fen = fixed_fee_fen + commission_fen
+    counterparty = session.get(Counterparty, labor_person.counterparty_id)
+    assert counterparty is not None
+    event, _ = _add_test_voucher(
+        session,
+        organization=organization,
+        number=number,
+        event_type="labor_remuneration_accrual",
+        description=f"{remuneration_period} 非员工个人劳务计提",
+        facts={},
+        posting_date=posting_date,
+        lines=[
+            (accounts["expense"], counterparty, gross_fen, 0),
+            (accounts["payable"], counterparty, 0, gross_fen),
+        ],
+    )
+    batch = LaborRemunerationBatch(
+        org_id=organization.id,
+        idempotency_key="labor-" + number,
+        request_payload_hash=("request" + number.replace("-", "") + "0" * 64)[:64],
+        remuneration_period=remuneration_period,
+        status="posted",
+        calculation_hash=("calculation" + number.replace("-", "") + "0" * 64)[:64],
+        calculation_input={"request": {}},
+        calculation_trace=[],
+        policy_version_id=policy.id,
+        policy_snapshot={"version": policy.version},
+        business_date=posting_date,
+        posting_date=posting_date,
+        planned_payment_date=posting_date,
+        business_event_id=event.id,
+    )
+    session.add(batch)
+    session.flush()
+    line = LaborRemunerationLine(
+        org_id=organization.id,
+        batch_id=batch.id,
+        labor_person_id=labor_person.id,
+        counterparty_id=labor_person.counterparty_id,
+        service_start_date=posting_date.replace(day=1),
+        service_end_date=posting_date,
+        fixed_fee_fen=fixed_fee_fen,
+        commission_fen=commission_fen,
+        gross_remuneration_fen=gross_fen,
+        expense_role=accounts["expense"].system_role,
+        tax_identity="resident",
+        income_grouping="continuous_monthly",
+        is_full_time_student=False,
+        expense_deduction_fen=0,
+        taxable_income_fen=gross_fen,
+        withholding_rate=Decimal("0"),
+        quick_deduction_fen=0,
+        withholding_tax_fen=withholding_tax_fen,
+        net_payment_fen=gross_fen - withholding_tax_fen,
+        external_declaration_status="not_due",
+    )
+    session.add_all(
+        [
+            line,
+            LaborRemunerationEventLink(
+                org_id=organization.id,
+                event_id=event.id,
+                batch_id=batch.id,
+                link_kind="accrual",
+            ),
+        ]
+    )
+    session.flush()
+    return batch, line
+
+
+def _add_controlled_labor_reversal(
+    session: Session,
+    *,
+    organization: Organization,
+    batch: LaborRemunerationBatch,
+    line: LaborRemunerationLine,
+    accounts: dict[str, Account],
+    number: str,
+    posting_date: date,
+) -> None:
+    original = session.get(BusinessEvent, batch.business_event_id)
+    counterparty = session.get(Counterparty, line.counterparty_id)
+    assert original is not None and counterparty is not None
+    reversal, _ = _add_test_voucher(
+        session,
+        organization=organization,
+        number=number,
+        event_type="reversal",
+        description=f"冲正 {batch.remuneration_period} 非员工个人劳务计提",
+        facts={},
+        posting_date=posting_date,
+        lines=[
+            (accounts["payable"], counterparty, line.gross_remuneration_fen, 0),
+            (accounts["expense"], counterparty, 0, line.gross_remuneration_fen),
+        ],
+    )
+    original.status = "reversed"
+    original.reversed_by_event_id = reversal.id
+    batch.status = "reversed"
+    session.add(
+        LaborRemunerationEventLink(
+            org_id=organization.id,
+            event_id=reversal.id,
+            batch_id=batch.id,
+            source_payment_event_id=original.id,
+            link_kind="reversal",
+        )
+    )
+    session.flush()
+
+
 def test_overview_event_catalog_covers_public_and_internal_posting_types() -> None:
     assert {item.value for item in EventType} <= set(EVENT_PRESENTATIONS)
     assert {
@@ -310,6 +443,8 @@ def test_overview_builds_balanced_month_without_internal_ids(session: Session) -
     assert len(month["activity_groups"]) == 1
     assert month["activity_groups"][0]["key"] == "financing_owner"
     assert month["activity_groups"][0]["event_count"] == 1
+    assert month["workforce_cost"]["has_activity"] is False
+    assert month["workforce_cost"]["total_fen"] == 0
     assert month["vouchers"][0]["evidence"] == ["股东投入确认.txt"]
     assert month["vouchers"][0]["summary"] == "测试负责人投入启动资金"
     assert month["vouchers"][0]["list_summary"] == "测试负责人投入实收资本"
@@ -542,7 +677,7 @@ def test_overview_uses_employee_name_instead_of_internal_employee_code(
     assert month["open_items"]["payroll_payables"]["groups"][0]["party"] == "罗正宏"
 
 
-def test_overview_splits_controlled_employee_compensation_without_double_counting(
+def test_overview_combines_controlled_workforce_costs_without_double_counting(
     session: Session,
 ) -> None:
     organization = _seed_overview_month(session)
@@ -688,12 +823,122 @@ def test_overview_splits_controlled_employee_compensation_without_double_countin
         employee_social_insurance_fen=105_000,
         employer_social_insurance_fen=264_000,
     )
+
+    labor_party = Counterparty(
+        org_id=organization.id,
+        kind="labor_person",
+        name="杨彦",
+        external_ref="LAB001",
+    )
+    labor_policy = LaborRemunerationTaxPolicyVersion(
+        code="overview-labor-tax",
+        version="2026.1",
+        effective_from=date(2026, 1, 1),
+        primary_source_url="https://www.chinatax.gov.cn/",
+        invoice_withholding_source_url="https://www.chinatax.gov.cn/",
+        legal_filing_source_url="https://www.chinatax.gov.cn/",
+        parameters={},
+    )
+    session.add_all([labor_party, labor_policy])
+    session.flush()
+    labor_person = LaborServicePerson(
+        org_id=organization.id,
+        counterparty_id=labor_party.id,
+        person_code="LAB001",
+        name="杨彦",
+        relationship_start_date=date(2026, 1, 1),
+        status="active",
+        idempotency_key="overview-labor-person",
+        request_payload_hash="1" * 64,
+    )
+    session.add(labor_person)
+    session.flush()
+    labor_accounts = {
+        key: session.scalar(
+            select(Account).where(
+                Account.org_id == organization.id,
+                Account.system_role == role,
+            )
+        )
+        for key, role in {
+            "expense": "labor_management_expense",
+            "payable": "labor_remuneration_payable",
+            "bank": "bank",
+        }.items()
+    }
+    assert all(labor_accounts.values())
+    typed_labor_accounts = {
+        key: value for key, value in labor_accounts.items() if value is not None
+    }
+    _add_controlled_labor_accrual(
+        session,
+        organization=organization,
+        labor_person=labor_person,
+        policy=labor_policy,
+        accounts=typed_labor_accounts,
+        number="202604-0010",
+        posting_date=date(2026, 4, 1),
+        remuneration_period="2026-03",
+        fixed_fee_fen=966_200,
+        commission_fen=0,
+        withholding_tax_fen=193_240,
+    )
+    _add_test_voucher(
+        session,
+        organization=organization,
+        number="202604-0011",
+        event_type="unified_payout_run",
+        description="支付3月非员工个人劳务报酬",
+        facts={},
+        posting_date=date(2026, 4, 4),
+        lines=[
+            (typed_labor_accounts["payable"], labor_party, 966_200, 0),
+            (typed_labor_accounts["bank"], labor_party, 0, 966_200),
+        ],
+    )
+    april_labor_original, april_labor_line = _add_controlled_labor_accrual(
+        session,
+        organization=organization,
+        labor_person=labor_person,
+        policy=labor_policy,
+        accounts=typed_labor_accounts,
+        number="202604-0012",
+        posting_date=date(2026, 4, 30),
+        remuneration_period="2026-04",
+        fixed_fee_fen=900_000,
+        commission_fen=271_085,
+        withholding_tax_fen=234_217,
+    )
+    _add_controlled_labor_reversal(
+        session,
+        organization=organization,
+        batch=april_labor_original,
+        line=april_labor_line,
+        accounts=typed_labor_accounts,
+        number="202604-0013",
+        posting_date=date(2026, 4, 30),
+    )
+    _add_controlled_labor_accrual(
+        session,
+        organization=organization,
+        labor_person=labor_person,
+        policy=labor_policy,
+        accounts=typed_labor_accounts,
+        number="202604-0014",
+        posting_date=date(2026, 4, 30),
+        remuneration_period="2026-04",
+        fixed_fee_fen=900_000,
+        commission_fen=271_085,
+        withholding_tax_fen=234_217,
+    )
     session.flush()
 
     april = next(
         month for month in build_overview_payload(session)["months"] if month["key"] == "2026-04"
     )
-    compensation = april["employee_compensation"]
+    workforce = april["workforce_cost"]
+    compensation = workforce["employee"]
+    personal_labor = workforce["personal_labor"]
 
     assert compensation["breakdown_available"] is True
     assert compensation["gross_salary_fen"] == 514_500
@@ -710,9 +955,86 @@ def test_overview_splits_controlled_employee_compensation_without_double_countin
         ("2026-04", 673_500),
     ]
     assert compensation["periods"][1]["has_reversal"] is True
+    assert personal_labor["breakdown_available"] is True
+    assert personal_labor["gross_remuneration_fen"] == 2_137_285
+    assert personal_labor["total_fen"] == 2_137_285
+    assert personal_labor["withholding_tax_fen"] == 427_457
+    assert [
+        (item["remuneration_period"], item["total_fen"]) for item in personal_labor["periods"]
+    ] == [
+        ("2026-03", 966_200),
+        ("2026-04", 1_171_085),
+    ]
+    assert personal_labor["periods"][1]["has_reversal"] is True
+    assert workforce["total_fen"] == 3_179_785
+    assert workforce["total_fen"] == compensation["total_fen"] + personal_labor["total_fen"]
 
 
-def test_overview_falls_back_when_employee_compensation_has_no_controlled_basis(
+@pytest.mark.parametrize(
+    ("expense_role", "payable_role", "event_type", "active_key", "inactive_key"),
+    [
+        (
+            "payroll_management_expense",
+            "employee_salary_payable",
+            "payroll_accrual",
+            "employee",
+            "personal_labor",
+        ),
+        (
+            "labor_management_expense",
+            "labor_remuneration_payable",
+            "labor_remuneration_accrual",
+            "personal_labor",
+            "employee",
+        ),
+    ],
+)
+def test_overview_handles_only_one_workforce_cost_kind(
+    session: Session,
+    expense_role: str,
+    payable_role: str,
+    event_type: str,
+    active_key: str,
+    inactive_key: str,
+) -> None:
+    organization = _seed_overview_month(session)
+    expense = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == expense_role,
+        )
+    )
+    payable = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == payable_role,
+        )
+    )
+    assert expense is not None and payable is not None
+    _add_test_voucher(
+        session,
+        organization=organization,
+        number="202602-0002",
+        event_type=event_type,
+        description="单一用工成本类型测试",
+        facts={},
+        lines=[
+            (expense, None, 100_000, 0),
+            (payable, None, 0, 100_000),
+        ],
+    )
+
+    workforce = build_overview_payload(session)["months"][0]["workforce_cost"]
+
+    assert workforce["has_activity"] is True
+    assert workforce["total_fen"] == 100_000
+    assert workforce[active_key]["has_activity"] is True
+    assert workforce[active_key]["total_fen"] == 100_000
+    assert workforce[inactive_key]["has_activity"] is False
+    assert workforce[inactive_key]["total_fen"] == 0
+
+
+def test_overview_falls_back_when_workforce_costs_have_no_controlled_basis(
     session: Session,
 ) -> None:
     organization = _seed_overview_month(session)
@@ -728,7 +1050,19 @@ def test_overview_falls_back_when_employee_compensation_has_no_controlled_basis(
             Account.system_role == "employee_salary_payable",
         )
     )
-    assert expense is not None and salary is not None
+    labor_expense = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == "labor_management_expense",
+        )
+    )
+    labor_payable = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == "labor_remuneration_payable",
+        )
+    )
+    assert all((expense, salary, labor_expense, labor_payable))
     _add_test_voucher(
         session,
         organization=organization,
@@ -741,8 +1075,22 @@ def test_overview_falls_back_when_employee_compensation_has_no_controlled_basis(
             (salary, None, 0, 100_000),
         ],
     )
+    _add_test_voucher(
+        session,
+        organization=organization,
+        number="202602-0003",
+        event_type="labor_remuneration_accrual",
+        description="历史个人劳务计提",
+        facts={},
+        lines=[
+            (labor_expense, None, 250_000, 0),
+            (labor_payable, None, 0, 250_000),
+        ],
+    )
 
-    compensation = build_overview_payload(session)["months"][0]["employee_compensation"]
+    workforce = build_overview_payload(session)["months"][0]["workforce_cost"]
+    compensation = workforce["employee"]
+    personal_labor = workforce["personal_labor"]
 
     assert compensation["has_activity"] is True
     assert compensation["breakdown_available"] is False
@@ -750,6 +1098,13 @@ def test_overview_falls_back_when_employee_compensation_has_no_controlled_basis(
     assert compensation["gross_salary_fen"] is None
     assert compensation["periods"] == []
     assert "明细不可拆" in compensation["reason"]
+    assert personal_labor["has_activity"] is True
+    assert personal_labor["breakdown_available"] is False
+    assert personal_labor["total_fen"] == 250_000
+    assert personal_labor["gross_remuneration_fen"] is None
+    assert personal_labor["periods"] == []
+    assert "明细不可拆" in personal_labor["reason"]
+    assert workforce["total_fen"] == 350_000
 
 
 def test_overview_separates_employee_payables_and_refundable_deposits(
@@ -1058,9 +1413,12 @@ def test_overview_document_embeds_data_without_script_breakout(session: Session)
     assert "本月发生了什么" in document
     assert "本月一句话" in document
     assert "待识别资金动向" in document
-    assert "本月职工薪酬" in document
+    assert "本月用工成本" in document
+    assert "正式员工" in document
+    assert "非员工个人劳务" in document
+    assert "个人劳务报酬/佣金毛额" in document
     assert "公司承担社保医保" in document
-    assert "不会在付款时再次计入费用" in document
+    assert "不会在付款时再次计入用工成本" in document
     assert "借方合计" in document
     assert "voucher-ledger" in document
     assert "分录摘要" not in document
