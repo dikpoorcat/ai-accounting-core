@@ -149,11 +149,10 @@ class CumulativeTaxState:
 class CumulativeTaxPeriodInput:
     """The fully classified income and deduction facts for one payroll period."""
 
-    # The taxable period is derived from ``income_date`` by callers.  Keeping the
-    # date alongside the classified figures makes it impossible for a service to
-    # silently use a wage-period date for income-tax policy selection.
+    # For regular wages the caller supplies the payroll-period end date; annual
+    # bonus rules may use their separately controlled payment date.
     income_date: date
-    employment_start_date: date
+    withholding_start_date: date
     income_fen: int
     tax_exempt_income_fen: int
     employee_contributions_fen: int
@@ -206,9 +205,9 @@ def calculate_cumulative_withholding(
         raise CalculationValidationError(
             "INVALID_TAX_INPUT", "income_date must belong to the tax period"
         )
-    if current.employment_start_date > current.income_date:
+    if current.withholding_start_date > current.income_date:
         raise CalculationValidationError(
-            "INVALID_TAX_INPUT", "employment_start_date must not follow income_date"
+            "INVALID_TAX_INPUT", "withholding_start_date must not follow income_date"
         )
     policy.assert_effective(current.income_date)
     if prior_state is None:
@@ -230,29 +229,29 @@ def calculate_cumulative_withholding(
 
     cumulative_income = prior_state.cumulative_income_fen + current.income_fen
     cumulative_exempt = prior_state.cumulative_tax_exempt_income_fen + current.tax_exempt_income_fen
-    # Basic deduction accrues once for every employment month in this tax year,
-    # including months without a payroll batch.  It is deliberately not based on
-    # the number of calculator calls: a back-filled calculation must not change
-    # the statutory deduction merely because it was entered later.
+    # Basic deduction accrues once for every declared wage-withholding month in
+    # this tax year, including declared months with zero salary.  Employment and
+    # tax registration are separate facts, so the employment start date must not
+    # silently create tax months before the withholding relationship began.
     first_month = (
-        current.employment_start_date.month
-        if current.employment_start_date.year == period.year
+        current.withholding_start_date.month
+        if current.withholding_start_date.year == period.year
         else 1
     )
-    if current.employment_start_date.year > period.year or first_month > period.month:
+    if current.withholding_start_date.year > period.year or first_month > period.month:
         raise CalculationValidationError(
-            "INVALID_TAX_INPUT", "employment_start_date must precede the tax period"
+            "INVALID_TAX_INPUT", "withholding_start_date must not follow the tax period"
         )
-    employment_months = period.month - first_month + 1
-    cumulative_standard = policy.monthly_standard_deduction_fen * employment_months
+    withholding_months = period.month - first_month + 1
+    cumulative_standard = policy.monthly_standard_deduction_fen * withholding_months
     if prior_state.through_period is not None:
         prior_first_month = first_month
-        prior_employment_months = prior_state.through_period.month - prior_first_month + 1
-        expected_prior_standard = policy.monthly_standard_deduction_fen * prior_employment_months
+        prior_withholding_months = prior_state.through_period.month - prior_first_month + 1
+        expected_prior_standard = policy.monthly_standard_deduction_fen * prior_withholding_months
         if prior_state.cumulative_standard_deduction_fen != expected_prior_standard:
             raise CalculationValidationError(
                 "INVALID_TAX_STATE",
-                "prior cumulative standard deduction is inconsistent with employment months",
+                "prior cumulative standard deduction is inconsistent with withholding months",
             )
     elif prior_state.cumulative_standard_deduction_fen != 0:
         raise CalculationValidationError(
@@ -307,7 +306,8 @@ def calculate_cumulative_withholding(
                 "cumulative_income_fen": cumulative_income,
                 "cumulative_tax_exempt_income_fen": cumulative_exempt,
                 "cumulative_standard_deduction_fen": cumulative_standard,
-                "employment_months_in_tax_year": employment_months,
+                "withholding_start_date": current.withholding_start_date.isoformat(),
+                "withholding_months_in_tax_year": withholding_months,
                 "cumulative_employee_contributions_fen": cumulative_contributions,
                 "cumulative_special_additional_deduction_fen": cumulative_special,
                 "cumulative_other_legal_deduction_fen": cumulative_other,

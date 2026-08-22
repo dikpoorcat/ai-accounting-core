@@ -27,6 +27,7 @@ def _register_cross_year_facts(session: Session, organization: Organization) -> 
             employee_code="R3-010",
             name="跨年快照员工",
             employment_start_date=date(2026, 12, 1),
+            tax_withholding_start_date=date(2026, 12, 1),
             status="active",
         )
     )
@@ -96,11 +97,7 @@ def _cross_year_preview(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": 1_000_000,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": 1_000_000,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }
@@ -110,10 +107,10 @@ def _cross_year_preview(
     )
 
 
-def test_r3_010_policy_snapshot_uses_each_rule_actual_effective_date_and_detects_tampering(
+def test_r3_010_regular_payroll_uses_payroll_period_policy_and_detects_tampering(
     session: Session, organization: Organization
 ) -> None:
-    """A Dec accrual paid in Jan never advertises the prior year's income tax."""
+    """A December wage paid in January remains a December wage-tax fact."""
 
     employee_id = _register_cross_year_facts(session, organization)
     preview = _cross_year_preview(session, organization, employee_id)
@@ -127,10 +124,10 @@ def test_r3_010_policy_snapshot_uses_each_rule_actual_effective_date_and_detects
         )
     }
     assert batch.policy_snapshot["contribution_policy"]["id"] == str(policies["policy-2026"].id)
-    assert batch.policy_snapshot["income_tax_policy"]["id"] == str(policies["policy-2027"].id)
+    assert batch.policy_snapshot["income_tax_policy"]["id"] == str(policies["policy-2026"].id)
     assert batch.policy_snapshot["parameters"]["contribution_rules"][0]["code"] == "pension-2026"
-    assert batch.policy_snapshot["parameters"]["income_tax"]["version"] == "income-2027"
-    assert batch.policy_snapshot["income_tax_policy"]["version"] == "income-2027"
+    assert batch.policy_snapshot["parameters"]["income_tax"]["version"] == "income-2026"
+    assert batch.policy_snapshot["income_tax_policy"]["version"] == "income-2026"
 
     # The stored calculation hash is no substitute for comparing the immutable
     # snapshot.  A direct draft JSON edit must not let confirmation post facts

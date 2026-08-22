@@ -91,11 +91,7 @@ def _preview(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": 1_000_000,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": 1_000_000,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }

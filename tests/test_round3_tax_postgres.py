@@ -42,7 +42,10 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def postgres_engine() -> object:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -67,6 +70,7 @@ def _register_payroll_facts(
                 employee_code=f"R3-TAX-{number + 1}",
                 name=f"R3 税务员工 {number + 1}",
                 employment_start_date=date(2026, 3, 1),
+                tax_withholding_start_date=date(2026, 3, 1),
                 status="active",
             )
         )
@@ -129,11 +133,7 @@ def _preview_regular(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": 1_000_000,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": 1_000_000,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }

@@ -129,7 +129,7 @@ def _line(
         payroll_batch_id=batch_id,
         employee_id=employee.id,
         employee_payroll_profile_version_id=profile.id,
-        base_salary_fen=10_000,
+        tax_reported_salary_fen=10_000,
         gross_salary_fen=10_000,
         net_salary_fen=10_000,
     )
@@ -187,12 +187,13 @@ def _make_final_batch(
     session.flush()
     session.add(_line(org_id=org_id, batch_id=batch.id, employee=employee, profile=profile))
     if reversal_of is None:
+        tax_year, tax_month = (int(value) for value in batch.payroll_period.split("-"))
         session.add(
             PayrollTaxStateSlot(
                 org_id=org_id,
                 employee_id=employee.id,
-                tax_year=batch.payment_date.year,
-                tax_month=batch.payment_date.month,
+                tax_year=tax_year,
+                tax_month=tax_month,
                 regular_batch_id=batch.id,
                 final_batch_id=batch.id,
             )
@@ -291,12 +292,13 @@ def _make_final_withholding_batch(
         amount_fen=80,
     )
     session.add(entitlement)
+    tax_year, tax_month = (int(value) for value in batch.payroll_period.split("-"))
     session.add(
         PayrollTaxStateSlot(
             org_id=org_id,
             employee_id=employee.id,
-            tax_year=batch.payment_date.year,
-            tax_month=batch.payment_date.month,
+            tax_year=tax_year,
+            tax_month=tax_month,
             regular_batch_id=batch.id,
             final_batch_id=batch.id,
         )
@@ -369,7 +371,7 @@ def test_pay_014_final_payroll_batches_and_lines_are_immutable(postgres_engine: 
     with Session(postgres_engine) as session:
         line = session.get(PayrollLine, line_id)
         assert line is not None
-        line.base_salary_fen = 10_001
+        line.tax_reported_salary_fen = 10_001
         with pytest.raises(DBAPIError, match="final payroll lines are immutable"):
             session.flush()
 
@@ -974,7 +976,7 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
 def test_r3_002_tax_state_slot_rejects_cross_employee_and_arbitrary_mutation(
     postgres_engine: object,
 ) -> None:
-    """A slot is bound to the posted regular line's employee and payment month."""
+    """A slot is bound to the posted regular line's employee and payroll period."""
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
@@ -1038,7 +1040,7 @@ def test_r3_002_tax_state_slot_rejects_cross_employee_and_arbitrary_mutation(
         slot = session.get(PayrollTaxStateSlot, slot_id)
         assert slot is not None
         slot.final_batch_id = regular_b_id
-        with pytest.raises(DBAPIError, match="combined annual bonus"):
+        with pytest.raises(DBAPIError, match="same tax month"):
             session.commit()
 
     with Session(postgres_engine) as session:

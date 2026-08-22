@@ -53,7 +53,7 @@ def _preview(
     employee_id: uuid.UUID,
     *,
     idempotency_key: str,
-    base_salary_fen: int = 1_000_000,
+    tax_reported_salary_fen: int = 1_000_000,
     description: str = "",
     evidence_references: list[uuid.UUID] | None = None,
 ) -> object:
@@ -71,11 +71,7 @@ def _preview(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": base_salary_fen,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": tax_reported_salary_fen,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }
@@ -218,6 +214,7 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
             employee_code="R2-011-EMP",
             name="R2-011 员工",
             employment_start_date=date(2028, 1, 1),
+            tax_withholding_start_date=date(2028, 1, 1),
             status="active",
         )
     )
@@ -270,11 +267,7 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": 1_000_000,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": 1_000_000,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }
@@ -657,7 +650,10 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
 
     from alembic import command
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -844,7 +840,10 @@ def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connecti
 
     from alembic import command
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -886,11 +885,7 @@ def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connecti
                         "employee_items": [
                             {
                                 "employee_id": employee_id,
-                                "base_salary_fen": 1_000_000,
-                                "performance_pay_fen": 0,
-                                "taxable_allowance_fen": 0,
-                                "tax_exempt_income_fen": 0,
-                                "attendance_deduction_fen": 0,
+                                "tax_reported_salary_fen": 1_000_000,
                                 "special_additional_deduction_fen": 0,
                                 "other_legal_deduction_fen": 0,
                             }
@@ -922,7 +917,10 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
 
     from alembic import command
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", url)
@@ -949,11 +947,7 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
                         "employee_items": [
                             {
                                 "employee_id": employee_id,
-                                "base_salary_fen": 1_000_000,
-                                "performance_pay_fen": 0,
-                                "taxable_allowance_fen": 0,
-                                "tax_exempt_income_fen": 0,
-                                "attendance_deduction_fen": 0,
+                                "tax_reported_salary_fen": 1_000_000,
                                 "special_additional_deduction_fen": 0,
                                 "other_legal_deduction_fen": 0,
                             }
@@ -1002,7 +996,7 @@ def test_pay_013_zero_cash_salary_settlement_and_pay_009_lifecycle_query(
         organization,
         employee_id,
         idempotency_key="zero-cash-salary",
-        base_salary_fen=150_000,
+        tax_reported_salary_fen=150_000,
     )
     confirmed = _confirm(session, organization, preview, "confirm-zero-cash-salary")
     assert confirmed.status == "posted"

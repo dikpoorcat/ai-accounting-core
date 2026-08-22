@@ -424,7 +424,10 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
 ) -> None:
     """Exercise the private-pilot path without real data or a Compose database."""
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -498,6 +501,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                         employee_code="FICTIONAL-E-001",
                         name="虚构试用员工",
                         employment_start_date=date(2026, 3, 1),
+                        tax_withholding_start_date=date(2026, 3, 1),
                         status="active",
                     )
                 )
@@ -542,11 +546,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                             "employee_items": [
                                 {
                                     "employee_id": employee_id,
-                                    "base_salary_fen": 1_000_000,
-                                    "performance_pay_fen": 0,
-                                    "taxable_allowance_fen": 0,
-                                    "tax_exempt_income_fen": 0,
-                                    "attendance_deduction_fen": 0,
+                                    "tax_reported_salary_fen": 1_000_000,
                                     "special_additional_deduction_fen": 0,
                                     "other_legal_deduction_fen": 0,
                                 }
@@ -659,9 +659,9 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                             "lender": {"name": "虚构持牌银行"},
                             "lender_is_licensed_financial_institution": True,
                             "currency": "CNY",
-                                "principal_fen": 1_000_000,
-                                "bank_account_code": "1002",
-                                "drawdown_date": "2026-03-03",
+                            "principal_fen": 1_000_000,
+                            "bank_account_code": "1002",
+                            "drawdown_date": "2026-03-03",
                             "due_date": "2027-03-03",
                             "posting_date": "2026-03-03",
                             "annual_rate_percent": "3.65",

@@ -64,7 +64,10 @@ pytestmark = [
 def postgres_engine() -> Iterator[object]:
     """Install the complete migration head in a clean PostgreSQL 17 instance."""
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
@@ -169,9 +172,7 @@ def test_r5_005_postgres_rejects_final_normal_reversal_without_inherited_evidenc
         original = session.get(BusinessEvent, identifiers["original_event_id"])
         assert original is not None
         with authority.attributed_call(session, tool_name="finance_reverse_event"):
-            reversal = _stage_exact_inverse_reversal(
-                session, original, key="r5-missing-inherited"
-            )
+            reversal = _stage_exact_inverse_reversal(session, original, key="r5-missing-inherited")
             # This is the bypass: all voucher/state facts are otherwise canonical,
             # but the draft gets no ``inherited`` event_evidence edge at all.
             original.status = "reversed"
@@ -381,11 +382,7 @@ def _preview_regular(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": 1_000_000,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": 1_000_000,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }
@@ -686,9 +683,7 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
             payroll_period="2026-03",
             key="r5-period-september",
         )
-        prepare_authenticated_bank_account(
-            session, organization, booking_date=date(2026, 4, 5)
-        )
+        prepare_authenticated_bank_account(session, organization, booking_date=date(2026, 4, 5))
         october, october_tax = _post_regular_tax_source(
             session,
             organization,
@@ -763,6 +758,7 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
                 employee_code="R5-POLICY-001",
                 name="政策边界员工",
                 employment_start_date=date(2026, 3, 1),
+                tax_withholding_start_date=date(2026, 3, 1),
                 status="active",
             )
         )

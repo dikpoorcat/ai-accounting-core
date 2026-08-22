@@ -168,7 +168,10 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
         (date(2026, 3, 7), -140_000, "公积金中心", "公积金缴纳", "R2-HOUSING"),
         (date(2026, 3, 7), -10_500, "税务局", "个税缴纳", "R2-IIT"),
     )
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
@@ -176,9 +179,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
         engine = create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(
-                    session, name="R2 STDIO 全生命周期企业"
-                )
+                organization = seed_organization(session, name="R2 STDIO 全生命周期企业")
                 scope_evidence = Evidence(
                     org_id=organization.id,
                     sha256="8" * 64,
@@ -329,6 +330,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 assert employee_row.employee_code == "R2-STDIO-E-001"
                                 assert employee_row.name == "R2 工资员工"
                                 assert employee_row.employment_start_date == date(2026, 3, 1)
+                                assert employee_row.tax_withholding_start_date == date(2026, 3, 1)
                                 assert employee_row.status == "active"
 
                         def assert_profile(employee_id: str, profile_version_id: str) -> None:
@@ -575,9 +577,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             {
                                 "request": import_request
                                 | {
-                                    "calculation_hash": import_preview[
-                                        "calculation_hash"
-                                    ],
+                                    "calculation_hash": import_preview["calculation_hash"],
                                     "idempotency_key": "r2-stdio-bank-import",
                                 }
                             },
@@ -628,6 +628,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "employee_code": "R2-STDIO-E-001",
                                     "name": "R2 工资员工",
                                     "employment_start_date": "2026-03-01",
+                                    "tax_withholding_start_date": "2026-03-01",
                                     "status": "active",
                                 }
                             },
@@ -683,11 +684,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                     "employee_items": [
                                         {
                                             "employee_id": employee_id,
-                                            "base_salary_fen": 1_000_000,
-                                            "performance_pay_fen": 0,
-                                            "taxable_allowance_fen": 0,
-                                            "tax_exempt_income_fen": 0,
-                                            "attendance_deduction_fen": 0,
+                                            "tax_reported_salary_fen": 1_000_000,
                                             "special_additional_deduction_fen": 0,
                                             "other_legal_deduction_fen": 0,
                                         }
@@ -737,8 +734,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             assert line.org_id == batch.org_id
                             assert line.employee_id == uuid.UUID(employee_id)
                             assert line.employee_payroll_profile_version_id == profile.id
-                            assert line.base_salary_fen == 1_000_000
-                            assert line.performance_pay_fen == 0
+                            assert line.tax_reported_salary_fen == 1_000_000
                             assert line.calculation_trace == preview["data"]["lines"][0]["trace"]
                             evidence_edges = verification.scalars(
                                 select(PayrollBatchEvidence).where(
@@ -1345,7 +1341,10 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
     malformed_xlsx = tmp_path / "r7-malformed.xlsx"
     malformed_xlsx.write_bytes(sentinels["file"].encode("utf-8"))
 
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)

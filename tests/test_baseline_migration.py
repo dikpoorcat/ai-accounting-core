@@ -19,8 +19,9 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0016_close_labor_module"]
+    assert scripts.get_heads() == ["0017_payroll_reported_salary"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0017_payroll_reported_salary",
         "0016_close_labor_module",
         "0015_labor_final_events",
         "0014_labor_gross_unwithheld",
@@ -71,7 +72,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0016_close_labor_module"
+                == "0017_payroll_reported_salary"
             )
             assert "reimbursing_employee_id" in {
                 column["name"] for column in inspect(connection).get_columns("fixed_assets")
@@ -111,6 +112,17 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
                 for column in inspect(connection).get_columns("fixed_asset_depreciations")
             }
             assert "batch_id" in depreciation_columns
+            payroll_line_columns = {
+                column["name"] for column in inspect(connection).get_columns("payroll_lines")
+            }
+            assert "tax_reported_salary_fen" in payroll_line_columns
+            assert {
+                "base_salary_fen",
+                "performance_pay_fen",
+                "taxable_allowance_fen",
+                "tax_exempt_income_fen",
+                "attendance_deduction_fen",
+            }.isdisjoint(payroll_line_columns)
         command.check(config)
 
         command.downgrade(config, "base")
@@ -120,7 +132,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0016_close_labor_module"
+                == "0017_payroll_reported_salary"
             )
     finally:
         engine.dispose()

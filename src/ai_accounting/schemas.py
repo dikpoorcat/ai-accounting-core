@@ -604,16 +604,18 @@ class AnnualBonusTaxMethod(StrEnum):
 
 
 class PayrollEmployeeItem(BaseModel):
-    """Classified employee payroll facts; all monetary values are integer fen."""
+    """Owner-approved payroll facts; all monetary values are integer fen."""
 
     model_config = ConfigDict(extra="forbid")
 
     employee_id: uuid.UUID
-    base_salary_fen: Fen = 0
-    performance_pay_fen: Fen = 0
-    taxable_allowance_fen: Fen = 0
-    tax_exempt_income_fen: Fen = 0
-    attendance_deduction_fen: Fen = 0
+    # The final wage amount approved for tax declaration.  The core never
+    # accepts or calculates base pay, commission, performance, or attendance.
+    tax_reported_salary_fen: Fen | None = Field(
+        default=None,
+        title="报税工资",
+        description="负责人最终确认并准备向税务客户端申报的工资金额；常规工资必填，可为 0。",
+    )
     special_additional_deduction_fen: Fen = 0
     other_legal_deduction_fen: Fen = 0
     tax_relief_fen: Fen = 0
@@ -631,6 +633,9 @@ class RegisterEmployeeRequest(BaseModel):
     employee_code: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
     employment_start_date: date
+    # The withholding relationship is a separate fact from employment.  It may
+    # be supplied later, but payroll calculation will not infer it.
+    tax_withholding_start_date: date | None = None
     employment_end_date: date | None = None
     status: Literal["active", "inactive", "terminated"] = "active"
     prior_labor_person_id: uuid.UUID | None = None
@@ -642,6 +647,11 @@ class RegisterEmployeeRequest(BaseModel):
             and self.employment_end_date < self.employment_start_date
         ):
             raise ValueError("employment_end_date must not precede employment_start_date")
+        if (
+            self.tax_withholding_start_date is not None
+            and self.tax_withholding_start_date < self.employment_start_date
+        ):
+            raise ValueError("tax_withholding_start_date must not precede employment_start_date")
         return self
 
 
@@ -757,6 +767,7 @@ class PayrollPolicyParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contribution_rules: list[PayrollContributionRuleParameters] = Field(min_length=1)
+    employee_contribution_shortfall_treatment: Literal["reject", "employer_borne"] = "reject"
     income_tax: IncomeTaxParameters
     annual_bonus: AnnualBonusParameters | None = None
     payment_targets: PayrollPaymentTargetsParameters
@@ -829,6 +840,10 @@ class PreviewPayrollRequest(BaseModel):
                 raise ValueError("tax_method is only available for annual_bonus payroll")
             if any(item.annual_bonus_fen for item in self.employee_items):
                 raise ValueError("annual_bonus_fen is only available for annual_bonus payroll")
+            if any(item.tax_reported_salary_fen is None for item in self.employee_items):
+                raise ValueError(
+                    "tax_reported_salary_fen is required for regular payroll, including zero"
+                )
             if any(item.regular_payroll_batch_id is not None for item in self.employee_items):
                 raise ValueError(
                     "regular_payroll_batch_id is only available for annual_bonus payroll"
@@ -837,13 +852,10 @@ class PreviewPayrollRequest(BaseModel):
             if any(item.annual_bonus_fen <= 0 for item in self.employee_items):
                 raise ValueError("annual_bonus_fen must be positive for annual_bonus payroll")
             if any(
-                item.base_salary_fen
-                or item.performance_pay_fen
-                or item.taxable_allowance_fen
-                or item.tax_exempt_income_fen
-                or item.attendance_deduction_fen
+                item.tax_reported_salary_fen is not None
                 or item.special_additional_deduction_fen
                 or item.other_legal_deduction_fen
+                or item.tax_relief_fen
                 for item in self.employee_items
             ):
                 raise ValueError("annual_bonus payroll cannot include regular monthly wage facts")

@@ -63,7 +63,17 @@ def test_payroll_mcp_list_tools_exposes_strict_typed_schemas() -> None:
     assert set(batch_kind["enum"]) == {"regular", "annual_bonus"}
     employee_items = _definition(preview, preview_request["properties"]["employee_items"]["items"])
     assert employee_items["additionalProperties"] is False
-    assert employee_items["properties"]["base_salary_fen"]["type"] == "integer"
+    assert employee_items["properties"]["tax_reported_salary_fen"]["anyOf"][0]["type"] == (
+        "integer"
+    )
+    for removed in (
+        "base_salary_fen",
+        "performance_pay_fen",
+        "taxable_allowance_fen",
+        "tax_exempt_income_fen",
+        "attendance_deduction_fen",
+    ):
+        assert removed not in employee_items["properties"]
 
     schema_text = json.dumps(schemas, ensure_ascii=False)
     assert "debit_fen" not in schema_text
@@ -96,7 +106,26 @@ def test_payroll_mcp_rejects_extra_float_and_missing_arguments() -> None:
                         "employee_items": [
                             {
                                 "employee_id": "00000000-0000-0000-0000-000000000001",
-                                "base_salary_fen": 12.5,
+                                "tax_reported_salary_fen": 12.5,
+                            }
+                        ],
+                    }
+                }
+            )
+        )
+    with pytest.raises(ToolError):
+        asyncio.run(call({"request": valid_preview}))
+    with pytest.raises(ToolError):
+        asyncio.run(
+            call(
+                {
+                    "request": {
+                        **valid_preview,
+                        "employee_items": [
+                            {
+                                "employee_id": "00000000-0000-0000-0000-000000000001",
+                                "tax_reported_salary_fen": 100,
+                                "base_salary_fen": 100,
                             }
                         ],
                     }
@@ -112,13 +141,9 @@ def test_r7_003_evidence_and_bank_import_contracts_are_typed_and_strict() -> Non
 
     evidence_schema = _tool_schema("finance_register_evidence")
     bank_schema = _tool_schema("finance_import_bank_statement")
-    evidence_request = _definition(
-        evidence_schema, evidence_schema["properties"]["request"]
-    )
+    evidence_request = _definition(evidence_schema, evidence_schema["properties"]["request"])
     bank_request = _definition(bank_schema, bank_schema["properties"]["request"])
-    bank_mapping = _definition(
-        bank_schema, bank_request["properties"]["column_mapping"]
-    )
+    bank_mapping = _definition(bank_schema, bank_request["properties"]["column_mapping"])
 
     assert evidence_schema["additionalProperties"] is False
     assert bank_schema["additionalProperties"] is False
@@ -129,10 +154,10 @@ def test_r7_003_evidence_and_bank_import_contracts_are_typed_and_strict() -> Non
     assert evidence_request["properties"]["org_id"]["format"] == "uuid"
     assert bank_request["properties"]["file_path"]["format"] == "path"
     assert len(evidence_request["oneOf"]) == 2
-    assert {
-        tuple(option["required"])
-        for option in evidence_request["oneOf"]
-    } == {("file_path",), ("content_base64",)}
+    assert {tuple(option["required"]) for option in evidence_request["oneOf"]} == {
+        ("file_path",),
+        ("content_base64",),
+    }
     assert bank_mapping["additionalProperties"] is False
     assert set(bank_mapping["properties"]) == {
         "booking_date",
@@ -440,6 +465,7 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                             "employee_code": "STDIO-E-001",
                             "name": "工资回归员工",
                             "employment_start_date": "2026-07-01",
+                            "tax_withholding_start_date": "2026-07-01",
                             "status": "active",
                         }
                     },
@@ -492,11 +518,7 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                             "employee_items": [
                                 {
                                     "employee_id": employee_id,
-                                    "base_salary_fen": 1_000_000,
-                                    "performance_pay_fen": 0,
-                                    "taxable_allowance_fen": 0,
-                                    "tax_exempt_income_fen": 0,
-                                    "attendance_deduction_fen": 0,
+                                    "tax_reported_salary_fen": 1_000_000,
                                     "special_additional_deduction_fen": 0,
                                     "other_legal_deduction_fen": 0,
                                 }

@@ -25,6 +25,13 @@ class ContributionBaseKind(StrEnum):
     HOUSING_FUND = "housing_fund"
 
 
+class EmployeeContributionShortfallTreatment(StrEnum):
+    """Company policy for statutory employee contributions when gross pay is insufficient."""
+
+    REJECT = "reject"
+    EMPLOYER_BORNE = "employer_borne"
+
+
 @dataclass(frozen=True)
 class ContributionBases:
     """Employee profile bases in fen; absent values intentionally remain absent."""
@@ -153,6 +160,30 @@ class ContributionResult:
         return self.employer_social_insurance_fen + self.employer_housing_fund_fen
 
 
+@dataclass(frozen=True)
+class ContributionBurdenResult:
+    """Actual payroll deduction and employer burden after applying company policy."""
+
+    employee_social_insurance_items: dict[str, int]
+    employer_social_insurance_items: dict[str, int]
+    employee_housing_fund_items: dict[str, int]
+    employer_housing_fund_items: dict[str, int]
+    employee_social_insurance_fen: int
+    employer_social_insurance_fen: int
+    employee_housing_fund_fen: int
+    employer_housing_fund_fen: int
+    employer_borne_employee_contributions_fen: int
+    trace: tuple[TraceEntry, ...]
+
+    @property
+    def employee_total_fen(self) -> int:
+        return self.employee_social_insurance_fen + self.employee_housing_fund_fen
+
+    @property
+    def employer_total_fen(self) -> int:
+        return self.employer_social_insurance_fen + self.employer_housing_fund_fen
+
+
 _ROUNDING = {
     RoundingRule.HALF_UP: ROUND_HALF_UP,
     RoundingRule.DOWN: ROUND_DOWN,
@@ -258,4 +289,80 @@ def calculate_contributions(
         employee_housing_fund_fen=total(ContributionBaseKind.HOUSING_FUND, "employee"),
         employer_housing_fund_fen=total(ContributionBaseKind.HOUSING_FUND, "employer"),
         trace=tuple(trace),
+    )
+
+
+def allocate_contribution_burden(
+    result: ContributionResult,
+    gross_salary_fen: int,
+    treatment: EmployeeContributionShortfallTreatment,
+) -> ContributionBurdenResult:
+    """Allocate statutory contributions without inventing wage cash or negative net pay.
+
+    The policy order is the deterministic allocation order when gross salary is positive but
+    below the statutory employee total.  Any unwithheld employee portion is added to the
+    employer burden for the same insurance kind; the statutory agency total is unchanged.
+    """
+
+    require_fen(gross_salary_fen, "gross_salary_fen")
+    if not isinstance(treatment, EmployeeContributionShortfallTreatment):
+        raise CalculationValidationError(
+            "INVALID_CONTRIBUTION_SHORTFALL_TREATMENT",
+            "employee contribution shortfall treatment is not supported",
+        )
+    if treatment == EmployeeContributionShortfallTreatment.REJECT:
+        if result.employee_total_fen > gross_salary_fen:
+            raise CalculationValidationError(
+                "NEGATIVE_NET_PAY",
+                "statutory employee contributions exceed gross salary",
+            )
+        employee_budget = result.employee_total_fen
+    else:
+        employee_budget = min(gross_salary_fen, result.employee_total_fen)
+
+    employee_social: dict[str, int] = {}
+    employer_social: dict[str, int] = {}
+    employee_housing: dict[str, int] = {}
+    employer_housing: dict[str, int] = {}
+    employer_borne_total = 0
+    remaining_employee_budget = employee_budget
+    allocation_trace: list[TraceEntry] = []
+    for line in result.lines:
+        employee_amount = min(line.employee_contribution_fen, remaining_employee_budget)
+        remaining_employee_budget -= employee_amount
+        employer_borne_amount = line.employee_contribution_fen - employee_amount
+        employer_amount = line.employer_contribution_fen + employer_borne_amount
+        employer_borne_total += employer_borne_amount
+        if line.base_kind == ContributionBaseKind.SOCIAL_INSURANCE:
+            employee_social[line.code] = employee_amount
+            employer_social[line.code] = employer_amount
+        else:
+            employee_housing[line.code] = employee_amount
+            employer_housing[line.code] = employer_amount
+        allocation_trace.append(
+            TraceEntry(
+                step="contribution_burden_allocation",
+                values={
+                    "code": line.code,
+                    "statutory_employee_contribution_fen": line.employee_contribution_fen,
+                    "employee_deduction_fen": employee_amount,
+                    "statutory_employer_contribution_fen": line.employer_contribution_fen,
+                    "employer_borne_employee_shortfall_fen": employer_borne_amount,
+                    "employer_total_fen": employer_amount,
+                    "shortfall_treatment": treatment.value,
+                },
+            )
+        )
+
+    return ContributionBurdenResult(
+        employee_social_insurance_items=employee_social,
+        employer_social_insurance_items=employer_social,
+        employee_housing_fund_items=employee_housing,
+        employer_housing_fund_items=employer_housing,
+        employee_social_insurance_fen=sum(employee_social.values()),
+        employer_social_insurance_fen=sum(employer_social.values()),
+        employee_housing_fund_fen=sum(employee_housing.values()),
+        employer_housing_fund_fen=sum(employer_housing.values()),
+        employer_borne_employee_contributions_fen=employer_borne_total,
+        trace=tuple(allocation_trace),
     )

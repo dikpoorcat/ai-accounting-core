@@ -134,11 +134,7 @@ def _preview(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": 1_000_000,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": 1_000_000,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }
@@ -850,9 +846,7 @@ def test_r6_005_direct_cross_period_statutory_collection_rejects_at_commit(
             session, accounting_period_control_enabled=False, name="R6 法定集合跨期"
         )
         prepare_authenticated_bank_account(session, organization)
-        prepare_authenticated_bank_account(
-            session, organization, booking_date=date(2026, 4, 5)
-        )
+        prepare_authenticated_bank_account(session, organization, booking_date=date(2026, 4, 5))
         employee_id = register_payroll_facts(session, organization)
         _september_preview, september_tax = _post_regular_tax_source(
             session,

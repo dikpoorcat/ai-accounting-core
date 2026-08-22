@@ -274,7 +274,7 @@ def _add_controlled_payroll_accrual(
             payroll_batch_id=batch.id,
             employee_id=employee.id,
             employee_payroll_profile_version_id=profile.id,
-            base_salary_fen=gross_salary_fen,
+            tax_reported_salary_fen=gross_salary_fen,
             employee_social_insurance_fen=employee_social_insurance_fen,
             employer_social_insurance_fen=employer_social_insurance_fen,
             gross_salary_fen=gross_salary_fen,

@@ -19,11 +19,13 @@ from ai_accounting.payroll import (
     CumulativeIncomeTaxPolicy,
     CumulativeTaxPeriodInput,
     CumulativeTaxState,
+    EmployeeContributionShortfallTreatment,
     ExpiredPolicyError,
     NeedsInformationError,
     RegularPayrollInput,
     RoundingRule,
     YearMonth,
+    allocate_contribution_burden,
     calculate_annual_bonus_scenarios,
     calculate_contributions,
     calculate_cumulative_withholding,
@@ -75,16 +77,44 @@ def wage_tax_policy() -> CumulativeIncomeTaxPolicy:
     return CumulativeIncomeTaxPolicy.china_resident_wage_withholding()
 
 
+def hangzhou_social_policy() -> ContributionPolicy:
+    rates = (
+        ("pension", "0.08", "0.16"),
+        ("medical", "0.02", "0.095"),
+        ("unemployment", "0.005", "0.005"),
+        ("work_injury", "0", "0.004"),
+    )
+    return ContributionPolicy(
+        version="hangzhou-2026-test",
+        jurisdiction="杭州",
+        effective_from=date(2026, 1, 1),
+        effective_to=date(2026, 12, 31),
+        primary_source_url="https://www.hangzhou.gov.cn/",
+        rules=tuple(
+            ContributionRule(
+                code=code,
+                base_kind=ContributionBaseKind.SOCIAL_INSURANCE,
+                employee_rate=Decimal(employee_rate),
+                employer_rate=Decimal(employer_rate),
+                minimum_base_fen=0,
+                maximum_base_fen=10_000_000,
+                rounding_rule=RoundingRule.HALF_UP,
+            )
+            for code, employee_rate, employer_rate in rates
+        ),
+    )
+
+
 def current_tax_input(
     income_fen: int,
     contributions_fen: int = 0,
     *,
     income_date: date = date(2026, 1, 31),
-    employment_start_date: date = date(2026, 1, 1),
+    withholding_start_date: date = date(2026, 1, 1),
 ) -> CumulativeTaxPeriodInput:
     return CumulativeTaxPeriodInput(
         income_date=income_date,
-        employment_start_date=employment_start_date,
+        withholding_start_date=withholding_start_date,
         income_fen=income_fen,
         tax_exempt_income_fen=0,
         employee_contributions_fen=contributions_fen,
@@ -176,7 +206,7 @@ def test_midyear_new_hire_must_supply_an_explicit_known_zero_state() -> None:
         current_tax_input(
             1_000_000,
             income_date=date(2026, 7, 31),
-            employment_start_date=date(2026, 7, 1),
+            withholding_start_date=date(2026, 7, 1),
         ),
     )
     assert july.new_state.cumulative_standard_deduction_fen == 500_000
@@ -257,13 +287,64 @@ def test_contributions_round_each_component_not_the_aggregate() -> None:
     assert result.employee_social_insurance_fen == 4
 
 
+def test_zero_tax_reported_salary_can_shift_employee_social_share_to_company() -> None:
+    statutory = calculate_contributions(
+        hangzhou_social_policy(),
+        ContributionBases(social_insurance_base_fen=500_000, housing_fund_base_fen=0),
+        date(2026, 3, 31),
+    )
+    burden = allocate_contribution_burden(
+        statutory,
+        0,
+        EmployeeContributionShortfallTreatment.EMPLOYER_BORNE,
+    )
+
+    assert statutory.employee_social_insurance_fen == 52_500
+    assert statutory.employer_social_insurance_fen == 132_000
+    assert burden.employee_social_insurance_fen == 0
+    assert burden.employer_social_insurance_fen == 184_500
+    assert burden.employer_borne_employee_contributions_fen == 52_500
+
+
+def test_tax_reported_wages_from_march_reconcile_to_filed_may_withholding() -> None:
+    policy = wage_tax_policy()
+
+    def filed_tax(wages: tuple[int, int, int]) -> int:
+        state = CumulativeTaxState.empty(2026)
+        result = None
+        for month, income_fen, employee_social_fen in (
+            (3, wages[0], 0),
+            (4, wages[1], 52_500),
+            (5, wages[2], 52_500),
+        ):
+            result = calculate_cumulative_withholding(
+                policy,
+                YearMonth(2026, month),
+                state,
+                CumulativeTaxPeriodInput(
+                    income_date=date(2026, month, 28),
+                    withholding_start_date=date(2026, 3, 1),
+                    income_fen=income_fen,
+                    tax_exempt_income_fen=0,
+                    employee_contributions_fen=employee_social_fen,
+                    special_additional_deduction_fen=0,
+                    other_legal_deduction_fen=0,
+                ),
+            )
+            state = result.new_state
+        assert result is not None
+        return result.current_withholding_tax_fen
+
+    luo_tax = filed_tax((0, 52_500, 2_557_633))
+    jiang_tax = filed_tax((0, 357_000, 2_658_783))
+    assert luo_tax == 30_154
+    assert jiang_tax == 42_323
+    assert luo_tax + jiang_tax == 72_477
+
+
 def test_regular_payroll_reconciles_gross_deductions_tax_and_net_pay() -> None:
     payroll_input = RegularPayrollInput(
-        base_salary_fen=2_000_000,
-        performance_pay_fen=300_000,
-        taxable_allowance_fen=100_000,
-        tax_exempt_income_fen=50_000,
-        attendance_deduction_fen=100_000,
+        tax_reported_salary_fen=2_350_000,
         special_additional_deduction_fen=20_000,
         other_legal_deduction_fen=10_000,
     )
@@ -276,9 +357,9 @@ def test_regular_payroll_reconciles_gross_deductions_tax_and_net_pay() -> None:
         CumulativeTaxState.empty(2026),
         CumulativeTaxPeriodInput(
             income_date=date(2026, 1, 31),
-            employment_start_date=date(2026, 1, 1),
+            withholding_start_date=date(2026, 1, 1),
             income_fen=payroll_input.gross_salary_fen,
-            tax_exempt_income_fen=payroll_input.tax_exempt_income_fen,
+            tax_exempt_income_fen=0,
             employee_contributions_fen=contributions.employee_total_fen,
             special_additional_deduction_fen=payroll_input.special_additional_deduction_fen,
             other_legal_deduction_fen=payroll_input.other_legal_deduction_fen,
@@ -295,14 +376,10 @@ def test_regular_payroll_reconciles_gross_deductions_tax_and_net_pay() -> None:
     assert result.trace[0].step == "net_pay_reconciliation"
 
 
-def test_regular_payroll_rejects_an_ambiguous_negative_taxable_component() -> None:
-    with pytest.raises(CalculationValidationError, match="attendance_deduction"):
+def test_regular_payroll_rejects_a_negative_tax_reported_salary() -> None:
+    with pytest.raises(CalculationValidationError, match="tax_reported_salary_fen"):
         RegularPayrollInput(
-            base_salary_fen=100,
-            performance_pay_fen=0,
-            taxable_allowance_fen=0,
-            tax_exempt_income_fen=100,
-            attendance_deduction_fen=101,
+            tax_reported_salary_fen=-1,
             special_additional_deduction_fen=0,
             other_legal_deduction_fen=0,
         )
@@ -320,7 +397,7 @@ def bonus_request(
         regular_period_input=current_tax_input(
             1_000_000,
             income_date=date(actual_period.year, actual_period.month, 28),
-            employment_start_date=date(actual_period.year, 1, 1),
+            withholding_start_date=date(actual_period.year, 1, 1),
         ),
         usage=AnnualBonusUsage(actual_period.year, used),
     )

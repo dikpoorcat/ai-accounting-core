@@ -185,9 +185,7 @@ def _object_schemas(schema: dict[str, Any]) -> list[dict[str, Any]]:
     return objects
 
 
-async def _call(
-    client: ClientSession, name: str, request: dict[str, Any]
-) -> dict[str, Any]:
+async def _call(client: ClientSession, name: str, request: dict[str, Any]) -> dict[str, Any]:
     response = await client.call_tool(name, {"request": request})
     assert response.isError is False
     assert len(response.content) == 1
@@ -258,13 +256,9 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                     "confirmation_note": "STDIO 显式生成七月期间",
                     "evidence_references": [evidence_id],
                 }
-                generated = await _call(
-                    client, "finance_generate_accounting_period", generation
-                )
+                generated = await _call(client, "finance_generate_accounting_period", generation)
                 assert generated["status"] == "posted", generated
-                replay = await _call(
-                    client, "finance_generate_accounting_period", generation
-                )
+                replay = await _call(client, "finance_generate_accounting_period", generation)
                 assert replay["period_id"] == generated["period_id"]
                 assert replay["data"]["idempotent_replay"] is True
 
@@ -293,9 +287,7 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                         },
                     },
                 )
-                assert before_control_start["errors"] == [
-                    "ACCOUNTING_PERIOD_NOT_GENERATED"
-                ]
+                assert before_control_start["errors"] == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
 
                 sale_request = {
                     "org_id": org_id,
@@ -453,9 +445,7 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
         async with stdio_client(parameters) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as client:
                 await client.initialize()
-                periods = await _call(
-                    client, "finance_get_accounting_periods", {"org_id": org_id}
-                )
+                periods = await _call(client, "finance_get_accounting_periods", {"org_id": org_id})
                 assert [row["status"] for row in periods["data"]["periods"]] == [
                     "closed",
                     "open",
@@ -502,14 +492,10 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                 .order_by(AccountingPeriod.start_date)
             ).all()
             assert [period.status for period in periods] == ["closed", "open"]
-            close = database_session.get(
-                AccountingPeriodClose, uuid.UUID(result["close_id"])
-            )
+            close = database_session.get(AccountingPeriodClose, uuid.UUID(result["close_id"]))
             assert close.calculation_hash == result["close_hash"]
             assert close.calculation_payload
-            source = database_session.get(
-                BusinessEvent, uuid.UUID(result["sale_event_id"])
-            )
+            source = database_session.get(BusinessEvent, uuid.UUID(result["sale_event_id"]))
             reversal = database_session.get(
                 BusinessEvent, uuid.UUID(reversal_result["generic"]["event_id"])
             )
@@ -634,18 +620,14 @@ def test_zero_voucher_month_closes_through_real_stdio(
     verification_factory = make_session_factory(verification_engine)
     try:
         with verification_factory() as database_session:
-            close = database_session.get(
-                AccountingPeriodClose, uuid.UUID(confirmed["close_id"])
-            )
+            close = database_session.get(AccountingPeriodClose, uuid.UUID(confirmed["close_id"]))
             assert (
                 close.voucher_count,
                 close.line_count,
                 close.total_debit_fen,
                 close.total_credit_fen,
             ) == (0, 0, 0, 0)
-            period = database_session.get(
-                AccountingPeriod, uuid.UUID(confirmed["period_id"])
-            )
+            period = database_session.get(AccountingPeriod, uuid.UUID(confirmed["period_id"]))
             assert period.status == "closed"
     finally:
         verification_engine.dispose()
@@ -735,9 +717,7 @@ def test_real_stdio_uses_china_current_date_for_posting_boundary(tmp_path: Path)
                 )
                 assert current["status"] == "posted", current
                 assert future["status"] == "rejected"
-                assert future["errors"] == [
-                    "ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"
-                ]
+                assert future["errors"] == ["ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"]
                 assert future["voucher_id"] is None
 
     asyncio.run(run())
@@ -753,9 +733,7 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
         closed_org = seed_organization(database_session, name="工资预览关闭月 STDIO")
-        not_generated_org = seed_organization(
-            database_session, name="工资预览未生成月 STDIO"
-        )
+        not_generated_org = seed_organization(database_session, name="工资预览未生成月 STDIO")
         evidence = Evidence(
             org_id=closed_org.id,
             sha256="w" * 64,
@@ -767,9 +745,7 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
         )
         database_session.add(evidence)
         database_session.flush()
-        period_service = AccountingPeriodService(
-            database_session, current_date=date(2026, 8, 11)
-        )
+        period_service = AccountingPeriodService(database_session, current_date=date(2026, 8, 11))
         generated = period_service.generate_accounting_period(
             GenerateAccountingPeriodRequest(
                 org_id=closed_org.id,
@@ -823,6 +799,7 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
                     employee_code=f"E-{suffix}",
                     name=f"工资员工 {suffix}",
                     employment_start_date=date(2026, 7, 1),
+                    tax_withholding_start_date=date(2026, 7, 1),
                     status="active",
                 )
             )
@@ -854,9 +831,7 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
             return str(employee_id)
 
         closed_employee_id = register_payroll_facts(closed_org.id, "CLOSED")
-        not_generated_employee_id = register_payroll_facts(
-            not_generated_org.id, "NOT-GENERATED"
-        )
+        not_generated_employee_id = register_payroll_facts(not_generated_org.id, "NOT-GENERATED")
         closed_org_id = str(closed_org.id)
         not_generated_org_id = str(not_generated_org.id)
     setup_engine.dispose()
@@ -884,11 +859,7 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
                         "employee_items": [
                             {
                                 "employee_id": employee_id,
-                                "base_salary_fen": 1_000_000,
-                                "performance_pay_fen": 0,
-                                "taxable_allowance_fen": 0,
-                                "tax_exempt_income_fen": 0,
-                                "attendance_deduction_fen": 0,
+                                "tax_reported_salary_fen": 1_000_000,
                                 "special_additional_deduction_fen": 0,
                                 "other_legal_deduction_fen": 0,
                             }

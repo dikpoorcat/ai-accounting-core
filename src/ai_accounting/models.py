@@ -711,6 +711,7 @@ class Employee(Base):
     employee_code: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(200))
     employment_start_date: Mapped[date] = mapped_column(Date)
+    tax_withholding_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     employment_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -744,6 +745,11 @@ class Employee(Base):
         CheckConstraint(
             "employment_end_date IS NULL OR employment_start_date <= employment_end_date",
             name="ck_employee_employment_dates",
+        ),
+        CheckConstraint(
+            "tax_withholding_start_date IS NULL OR "
+            "employment_start_date <= tax_withholding_start_date",
+            name="ck_employee_tax_withholding_start",
         ),
         CheckConstraint("status IN ('active','inactive','terminated')", name="ck_employee_status"),
     )
@@ -1003,11 +1009,7 @@ class PayrollLine(Base):
     regular_payroll_batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     employee_payroll_profile_version_id: Mapped[uuid.UUID] = mapped_column(Uuid)
-    base_salary_fen: Mapped[int] = mapped_column(BigInteger, default=0)
-    performance_pay_fen: Mapped[int] = mapped_column(BigInteger, default=0)
-    taxable_allowance_fen: Mapped[int] = mapped_column(BigInteger, default=0)
-    tax_exempt_income_fen: Mapped[int] = mapped_column(BigInteger, default=0)
-    attendance_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    tax_reported_salary_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     special_additional_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     other_legal_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     annual_bonus_fen: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -1063,9 +1065,8 @@ class PayrollLine(Base):
         ),
         UniqueConstraint("payroll_batch_id", "employee_id", name="uq_payroll_line_employee"),
         CheckConstraint(
-            "base_salary_fen >= 0 AND performance_pay_fen >= 0 AND "
-            "taxable_allowance_fen >= 0 AND tax_exempt_income_fen >= 0 AND "
-            "attendance_deduction_fen >= 0 AND special_additional_deduction_fen >= 0 AND "
+            "(tax_reported_salary_fen IS NULL OR tax_reported_salary_fen >= 0) AND "
+            "special_additional_deduction_fen >= 0 AND "
             "other_legal_deduction_fen >= 0 AND annual_bonus_fen >= 0 AND "
             "employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 AND "
             "employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0 AND "
@@ -1073,9 +1074,10 @@ class PayrollLine(Base):
             name="ck_payroll_line_nonnegative_amounts",
         ),
         CheckConstraint(
-            "gross_salary_fen = base_salary_fen + performance_pay_fen + taxable_allowance_fen + "
-            "tax_exempt_income_fen + annual_bonus_fen - attendance_deduction_fen AND "
-            "gross_salary_fen > 0",
+            "((tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND "
+            "gross_salary_fen = tax_reported_salary_fen) OR "
+            "(tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND "
+            "gross_salary_fen = annual_bonus_fen))",
             name="ck_payroll_line_gross_salary",
         ),
         CheckConstraint(
@@ -1341,7 +1343,7 @@ class PayrollTaxYearGuard(Base):
 
 
 class PayrollTaxStateSlot(Base):
-    """The single final-tax state slot for one employee and actual payment month."""
+    """The single final-tax state slot for one employee and controlled tax month."""
 
     __tablename__ = "payroll_tax_state_slots"
 

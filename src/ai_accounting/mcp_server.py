@@ -918,7 +918,7 @@ def finance_register_payroll_opening_state(
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_preview_payroll(request: PreviewPayrollRequest) -> dict[str, Any]:
-    """试算并保存不可变工资草稿；资料不全时返回具体 needs_information。"""
+    """按负责人确认的报税工资试算并保存不可变草稿；不计算工资组成。"""
     try:
         with SessionLocal.begin() as session:
             return FinanceService(session).preview_payroll(request).model_dump(mode="json")

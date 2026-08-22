@@ -66,7 +66,10 @@ pytestmark = [
 
 @pytest.fixture
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", postgres.get_connection_url(driver="psycopg"))
         command.upgrade(config, "head")
@@ -176,7 +179,7 @@ def _preview_regular_salary(
     org_id: uuid.UUID,
     employee_id: uuid.UUID,
     payroll_period: str,
-    base_salary_fen: int,
+    tax_reported_salary_fen: int,
     key: str,
 ) -> object:
     payment_date = date.fromisoformat(f"{payroll_period}-05")
@@ -192,11 +195,7 @@ def _preview_regular_salary(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "base_salary_fen": base_salary_fen,
-                        "performance_pay_fen": 0,
-                        "taxable_allowance_fen": 0,
-                        "tax_exempt_income_fen": 0,
-                        "attendance_deduction_fen": 0,
+                        "tax_reported_salary_fen": tax_reported_salary_fen,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }
@@ -216,6 +215,7 @@ def _register_second_employee(session: Session, *, org_id: uuid.UUID, key: str) 
             employee_code=f"R7-{key}-E002",
             name=f"R7 {key} 员工二",
             employment_start_date=date(2026, 3, 1),
+            tax_withholding_start_date=date(2026, 3, 1),
             status="active",
         )
     )
@@ -261,6 +261,7 @@ def _register_payroll_facts_with_initial_policy(
             employee_code=employee_code,
             name=f"R7 {employee_code} 员工",
             employment_start_date=employment_start_date,
+            tax_withholding_start_date=employment_start_date,
             status="active",
         )
     )
@@ -341,9 +342,7 @@ def _regular_statutory_sources(
     key: str,
 ) -> tuple[object, dict[str, list[OpenItem]]]:
     payment_date = date.fromisoformat(f"{payroll_period}-05")
-    prepare_authenticated_bank_account(
-        session, organization, booking_date=payment_date
-    )
+    prepare_authenticated_bank_account(session, organization, booking_date=payment_date)
     preview = _preview_regular(
         session,
         org_id=organization.id,
@@ -453,9 +452,7 @@ def _stage_direct_statutory_payment(
     category: str,
     key: str,
 ) -> BusinessEvent:
-    prepare_authenticated_bank_account(
-        session, organization, booking_date=date(2026, 7, 6)
-    )
+    prepare_authenticated_bank_account(session, organization, booking_date=date(2026, 7, 6))
     event_types = {
         "social_insurance": "social_insurance_payment",
         "housing_fund": "housing_fund_payment",
@@ -1049,7 +1046,7 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
                 org_id=organization.id,
                 employee_id=employee_id,
                 payroll_period=direct_period,
-                base_salary_fen=salary,
+                tax_reported_salary_fen=salary,
                 key=f"r7-shared-{label}-direct-preview",
             )
             _confirm(
@@ -1063,7 +1060,7 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
                 org_id=organization.id,
                 employee_id=employee_id,
                 payroll_period=downstream_period,
-                base_salary_fen=salary,
+                tax_reported_salary_fen=salary,
                 key=f"r7-shared-{label}-downstream-preview",
             )
             _confirm(
@@ -1138,9 +1135,7 @@ def test_r7_002_iit_uses_payment_tax_month_not_payroll_period_at_commit(
             payroll_period="2026-03",
             key="r7-iit-regular",
         )
-        prepare_authenticated_bank_account(
-            session, organization, booking_date=date(2026, 4, 5)
-        )
+        prepare_authenticated_bank_account(session, organization, booking_date=date(2026, 4, 5))
         bonus_preview = _preview_separate_bonus(
             session,
             org_id=organization.id,

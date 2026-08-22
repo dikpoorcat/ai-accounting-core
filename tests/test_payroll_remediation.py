@@ -48,12 +48,12 @@ def tax_policy(*, effective_to: date | None = None) -> CumulativeIncomeTaxPolicy
 def tax_input(
     income_date: date,
     *,
-    employment_start_date: date = date(2026, 1, 1),
+    withholding_start_date: date = date(2026, 1, 1),
     income_fen: int = 2_000_000,
 ) -> CumulativeTaxPeriodInput:
     return CumulativeTaxPeriodInput(
         income_date=income_date,
-        employment_start_date=employment_start_date,
+        withholding_start_date=withholding_start_date,
         income_fen=income_fen,
         tax_exempt_income_fen=0,
         employee_contributions_fen=0,
@@ -143,7 +143,7 @@ def test_pay004_standard_deduction_counts_zero_wage_months_and_midyear_hire() ->
         tax_policy(),
         YearMonth(2026, 3),
         CumulativeTaxState.empty(2026),
-        tax_input(date(2026, 3, 31), employment_start_date=date(2026, 3, 15)),
+        tax_input(date(2026, 3, 31), withholding_start_date=date(2026, 3, 15)),
     )
 
     assert march.new_state.cumulative_standard_deduction_fen == 1_500_000

@@ -47,7 +47,10 @@ pytestmark = [
 
 @pytest.fixture
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
+    with PostgresContainer(
+        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
+        driver="psycopg",
+    ) as postgres:  # noqa: E501
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
@@ -129,7 +132,7 @@ def _draft_batch_and_event(
         payroll_batch_id=draft_batch.id,
         employee_id=line.employee_id,
         employee_payroll_profile_version_id=line.employee_payroll_profile_version_id,
-        base_salary_fen=10_000,
+        tax_reported_salary_fen=10_000,
         gross_salary_fen=10_000,
         net_salary_fen=10_000,
     )

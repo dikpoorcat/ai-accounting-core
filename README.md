@@ -186,12 +186,16 @@ REST API；停止服务可在启动窗口按 `Ctrl+C`。
 
 工资不经过 `finance_record_event` 的自由事件路径，按以下顺序调用：
 
+常规工资只接收负责人最终确认的“报税工资”金额；底薪、绩效、提成、津贴和考勤扣款等工资形成过程不进入内核。内核以报税工资作为工资费用和工资薪金个税收入的唯一金额事实，并据此计算社保代扣、累计个税和实发工资。专项附加扣除、其他法定扣除及减免税额仍作为法定算税事实单独提供。非员工个人劳务报酬继续走独立模块，不得混入工资。
+
 1. `finance_register_employee` 登记员工。
 2. `finance_register_employee_profile_version` 和 `finance_register_payroll_policy_version` 登记有效期版本。
 3. 仅在系统年中启用或迁移历史累计状态时调用 `finance_register_payroll_opening_state`。
 4. `finance_preview_payroll` 试算并取得计算哈希。
 5. 用户核对事实后，由 `finance_confirm_payroll` 使用同一哈希确认并入账。
 6. 工资发放及社保、公积金、个税缴纳通过受支持的业务事件核销正式开放项。
+
+税务客户端的申报操作和原始申报表由 AI 在外部协助读取、提交或核对，不另建一套薪资管理事实。银行流水只能证明汇总税款实际支付，不能单独证明逐人申报明细；内核保存工资计算形成的个税应付款，并要求银行税款支付与指定开放项精确一致，金额不一致时不得静默核销。
 7. `finance_get_payroll_batch` 查询完整计算、政策、凭证、支付和冲正链；更正仍使用 `finance_reverse_event`。
 
 资料缺失、政策无有效版本、累计状态断层或支付无法唯一归属时，内核返回 `needs_information` 或稳定拒绝原因，不推测会改变会计处理的事实。

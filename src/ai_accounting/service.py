@@ -71,11 +71,13 @@ from .payroll import (
     CumulativeIncomeTaxPolicy,
     CumulativeTaxPeriodInput,
     CumulativeTaxState,
+    EmployeeContributionShortfallTreatment,
     ExpiredPolicyError,
     NeedsInformationError,
     RegularPayrollInput,
     RoundingRule,
     YearMonth,
+    allocate_contribution_burden,
     calculate_annual_bonus_scenarios,
     calculate_contributions,
     calculate_cumulative_withholding,
@@ -772,9 +774,7 @@ class FinanceService:
             EventType.REFUNDABLE_DEPOSIT_PAID,
             EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
         } and (counterparty is None or counterparty.kind not in {"supplier", "other"}):
-            raise ValueError(
-                "refundable deposit requires a supplier or other counterparty"
-            )
+            raise ValueError("refundable deposit requires a supplier or other counterparty")
         if deposit_holder is not None and deposit_holder.kind not in {"supplier", "other"}:
             raise ValueError("a refundable deposit holder must be a supplier or other counterparty")
         facts = request.model_dump(mode="json")
@@ -1480,9 +1480,7 @@ class FinanceService:
                     )
                 )
                 if source_type != EventType.REFUNDABLE_DEPOSIT_PAID.value:
-                    raise ValueError(
-                        f"open item is not a refundable deposit receivable: {item.id}"
-                    )
+                    raise ValueError(f"open item is not a refundable deposit receivable: {item.id}")
             available = item.original_amount_fen - item.settled_amount_fen
             if allocation.amount_fen > available:
                 raise ValueError(
@@ -2553,9 +2551,7 @@ class FinanceService:
 
         if event_type == EventType.OTHER_INCOME_RECEIVED:
             if request.details.other_income_kind != "retained_verification_payment":
-                missing.append(
-                    "details.other_income_kind='retained_verification_payment'"
-                )
+                missing.append("details.other_income_kind='retained_verification_payment'")
             if not request.bank_transaction_references:
                 missing.append("bank_transaction_references")
             if not request.evidence_references:
@@ -2817,6 +2813,7 @@ class FinanceService:
             same = (
                 existing.name == request.name
                 and existing.employment_start_date == request.employment_start_date
+                and existing.tax_withholding_start_date == request.tax_withholding_start_date
                 and existing.employment_end_date == request.employment_end_date
                 and existing.status == request.status
                 and existing.prior_labor_person_id == request.prior_labor_person_id
@@ -2852,9 +2849,7 @@ class FinanceService:
                     "errors": ["LABOR_RELATIONSHIP_MUST_END_BEFORE_EMPLOYMENT"],
                 }
             if self.session.scalar(
-                select(Employee.id).where(
-                    Employee.prior_labor_person_id == prior_labor_person.id
-                )
+                select(Employee.id).where(Employee.prior_labor_person_id == prior_labor_person.id)
             ):
                 return {
                     "status": "rejected",
@@ -2892,6 +2887,7 @@ class FinanceService:
             employee_code=request.employee_code,
             name=request.name,
             employment_start_date=request.employment_start_date,
+            tax_withholding_start_date=request.tax_withholding_start_date,
             employment_end_date=request.employment_end_date,
             status=request.status,
         )
@@ -2901,7 +2897,16 @@ class FinanceService:
             AuditLog(
                 org_id=request.org_id,
                 action="payroll_employee_registered",
-                details={"employee_id": str(employee.id), "employee_code": employee.employee_code},
+                details={
+                    "employee_id": str(employee.id),
+                    "employee_code": employee.employee_code,
+                    "employment_start_date": employee.employment_start_date.isoformat(),
+                    "tax_withholding_start_date": (
+                        employee.tax_withholding_start_date.isoformat()
+                        if employee.tax_withholding_start_date
+                        else None
+                    ),
+                },
             )
         )
         return {"status": "registered", "employee_id": str(employee.id)}
@@ -3621,10 +3626,11 @@ class FinanceService:
         # empty slot range can independently confirm.
         if self._batch_uses_cumulative_tax_state(batch):
             try:
+                batch_tax_period = self._batch_tax_period(batch)
                 self._lock_payroll_tax_year(
                     batch.org_id,
                     [line.employee_id for line in lines],
-                    batch.payment_date.year,
+                    batch_tax_period.year,
                 )
             except CalculationValidationError as exc:
                 return PayrollResult(status=PayrollResultStatus.REJECTED, errors=[exc.code])
@@ -3721,7 +3727,7 @@ class FinanceService:
                     AnnualBonusUsage(
                         org_id=batch.org_id,
                         employee_id=line.employee_id,
-                        tax_year=batch.payment_date.year,
+                        tax_year=self._batch_tax_period(batch).year,
                         payroll_batch_id=batch.id,
                         payroll_line_id=line.id,
                     )
@@ -4374,7 +4380,8 @@ class FinanceService:
             and batch.tax_method == "separate"
         ):
             return
-        year, month = batch.payment_date.year, batch.payment_date.month
+        tax_period = self._batch_tax_period(batch)
+        year, month = tax_period.year, tax_period.month
         employee_ids = [line.employee_id for line in lines]
         later = self.session.scalars(
             select(PayrollTaxStateSlot)
@@ -4440,9 +4447,18 @@ class FinanceService:
 
     def _calculate_payroll(self, request: PreviewPayrollRequest) -> dict[str, Any]:
         period = YearMonth(int(request.payroll_period[:4]), int(request.payroll_period[5:]))
-        tax_period = YearMonth(request.payment_date.year, request.payment_date.month)
+        tax_period = (
+            period
+            if request.batch_kind == PayrollBatchKind.REGULAR
+            else YearMonth(request.payment_date.year, request.payment_date.month)
+        )
+        tax_policy_date = (
+            period.end_date
+            if request.batch_kind == PayrollBatchKind.REGULAR
+            else request.payment_date
+        )
         contribution_policy_record = self._effective_payroll_policy(request.org_id, period.end_date)
-        tax_policy_record = self._effective_payroll_policy(request.org_id, request.payment_date)
+        tax_policy_record = self._effective_payroll_policy(request.org_id, tax_policy_date)
         if contribution_policy_record is None or tax_policy_record is None:
             required_policy_dates = []
             if contribution_policy_record is None:
@@ -4455,7 +4471,7 @@ class FinanceService:
                         "code": "payroll_policy",
                         "message": (
                             "an effective contribution policy at the payroll-period end and "
-                            "income-tax policy at the payment date are required"
+                            "income-tax policy for the tax period are required"
                         ),
                         "fields": required_policy_dates,
                     }
@@ -4481,9 +4497,10 @@ class FinanceService:
                 # A combined bonus is governed by the current cumulative wage-tax
                 # rule; an expired separate-method policy must not block it.
                 bonus_policy = None
-        # The three calculators deliberately have different effective dates:
-        # contribution rules use the payroll-period end, while income tax (and
-        # annual-bonus tax) use the actual payment date.  Do not start from one
+        # Regular wage contributions and cumulative tax use the payroll period;
+        # a later bank settlement date must not move a reported wage into a new
+        # declaration month. Annual-bonus tax keeps its actual payment period.
+        # Do not start from one
         # outer policy JSON document and patch a few display fields: doing that
         # makes the hash evidence claim a different rule from the one used by
         # the calculator when a payment crosses a policy year.
@@ -4497,6 +4514,9 @@ class FinanceService:
         }
         snapshot_parameters = {
             "contribution_rules": deepcopy(contribution_parameters.get("contribution_rules", [])),
+            "employee_contribution_shortfall_treatment": contribution_parameters.get(
+                "employee_contribution_shortfall_treatment", "reject"
+            ),
             "income_tax": deepcopy(tax_parameters["income_tax"]),
             "annual_bonus": deepcopy(tax_parameters.get("annual_bonus")),
             "payment_targets": merged_payment_targets,
@@ -4578,11 +4598,7 @@ class FinanceService:
                 )
             if request.batch_kind == PayrollBatchKind.REGULAR:
                 required_regular_fields = (
-                    "base_salary_fen",
-                    "performance_pay_fen",
-                    "taxable_allowance_fen",
-                    "tax_exempt_income_fen",
-                    "attendance_deduction_fen",
+                    "tax_reported_salary_fen",
                     "special_additional_deduction_fen",
                     "other_legal_deduction_fen",
                 )
@@ -4597,9 +4613,21 @@ class FinanceService:
                             "code": "regular_payroll_items",
                             "message": (
                                 f"employee {employee.employee_code} needs explicit regular "
-                                "payroll components"
+                                "tax-reported salary and deduction facts"
                             ),
                             "fields": absent_fields,
+                        }
+                    )
+                    continue
+                if employee.tax_withholding_start_date is None:
+                    missing.append(
+                        {
+                            "code": "tax_withholding_start_date",
+                            "message": (
+                                f"employee {employee.employee_code} needs an explicit tax "
+                                "withholding start date"
+                            ),
+                            "fields": ["tax_withholding_start_date"],
                         }
                     )
                     continue
@@ -4655,20 +4683,26 @@ class FinanceService:
                     period.end_date,
                 )
                 payroll_input = RegularPayrollInput(
-                    base_salary_fen=item.base_salary_fen,
-                    performance_pay_fen=item.performance_pay_fen,
-                    taxable_allowance_fen=item.taxable_allowance_fen,
-                    tax_exempt_income_fen=item.tax_exempt_income_fen,
-                    attendance_deduction_fen=item.attendance_deduction_fen,
+                    tax_reported_salary_fen=item.tax_reported_salary_fen,
                     special_additional_deduction_fen=item.special_additional_deduction_fen,
                     other_legal_deduction_fen=item.other_legal_deduction_fen,
                 )
+                shortfall_treatment = EmployeeContributionShortfallTreatment(
+                    contribution_parameters.get(
+                        "employee_contribution_shortfall_treatment", "reject"
+                    )
+                )
+                contribution_burden = allocate_contribution_burden(
+                    contribution,
+                    payroll_input.gross_salary_fen,
+                    shortfall_treatment,
+                )
                 tax_input = CumulativeTaxPeriodInput(
-                    income_date=request.payment_date,
-                    employment_start_date=employee.employment_start_date,
+                    income_date=period.end_date,
+                    withholding_start_date=employee.tax_withholding_start_date,
                     income_fen=payroll_input.gross_salary_fen,
-                    tax_exempt_income_fen=payroll_input.tax_exempt_income_fen,
-                    employee_contributions_fen=contribution.employee_total_fen,
+                    tax_exempt_income_fen=0,
+                    employee_contributions_fen=contribution_burden.employee_total_fen,
                     special_additional_deduction_fen=payroll_input.special_additional_deduction_fen,
                     other_legal_deduction_fen=payroll_input.other_legal_deduction_fen,
                     tax_relief_fen=item.tax_relief_fen,
@@ -4676,7 +4710,9 @@ class FinanceService:
                 tax = calculate_cumulative_withholding(
                     tax_policy, tax_period, prior_state, tax_input
                 )
-                result = calculate_regular_payroll(payroll_input, contribution, tax)
+                result = calculate_regular_payroll(
+                    payroll_input, contribution, tax, contribution_burden
+                )
                 prepared_lines.append(
                     self._regular_prepared_line(employee, profile, item, result, tax.new_state)
                 )
@@ -4684,6 +4720,9 @@ class FinanceService:
                     {
                         "employee_id": str(employee.id),
                         "profile": profile_snapshot,
+                        "tax_withholding_start_date": (
+                            employee.tax_withholding_start_date.isoformat()
+                        ),
                         "prior_tax_state": self._tax_state_dict(prior_state),
                     }
                 )
@@ -4776,7 +4815,9 @@ class FinanceService:
                         prior_state,
                         CumulativeTaxPeriodInput(
                             income_date=request.payment_date,
-                            employment_start_date=employee.employment_start_date,
+                            withholding_start_date=self._required_tax_withholding_start_date(
+                                employee
+                            ),
                             income_fen=regular_tax_input.income_fen + item.annual_bonus_fen,
                             tax_exempt_income_fen=regular_tax_input.tax_exempt_income_fen,
                             employee_contributions_fen=regular_tax_input.employee_contributions_fen,
@@ -4860,7 +4901,9 @@ class FinanceService:
                             prior_state,
                             CumulativeTaxPeriodInput(
                                 income_date=request.payment_date,
-                                employment_start_date=employee.employment_start_date,
+                                withholding_start_date=self._required_tax_withholding_start_date(
+                                    employee
+                                ),
                                 income_fen=regular_tax_input.income_fen + item.annual_bonus_fen,
                                 tax_exempt_income_fen=regular_tax_input.tax_exempt_income_fen,
                                 employee_contributions_fen=regular_tax_input.employee_contributions_fen,
@@ -5192,7 +5235,7 @@ class FinanceService:
                 PayrollBatch.status == "posted",
                 PayrollBatch.reversal_of_batch_id.is_(None),
             )
-            .order_by(PayrollBatch.payment_date, PayrollBatch.id, PayrollLine.id)
+            .order_by(PayrollBatch.payroll_period, PayrollBatch.id, PayrollLine.id)
         ).all()
 
     @staticmethod
@@ -5208,16 +5251,18 @@ class FinanceService:
         remain in the closure through their formal tax-state chain.
         """
 
-        cutoffs: dict[tuple[uuid.UUID, int], date] = {}
+        cutoffs: dict[tuple[uuid.UUID, int], YearMonth] = {}
         for line, batch in direct:
-            key = (line.employee_id, batch.payment_date.year)
+            period = FinanceService._batch_tax_period(batch)
+            key = (line.employee_id, period.year)
             cutoff = cutoffs.get(key)
-            if cutoff is None or batch.payment_date < cutoff:
-                cutoffs[key] = batch.payment_date
+            if cutoff is None or period < cutoff:
+                cutoffs[key] = period
         blocked = {batch.id for _line, batch in direct}
         for line, batch in rows:
-            cutoff = cutoffs.get((line.employee_id, batch.payment_date.year))
-            if cutoff is not None and batch.payment_date >= cutoff:
+            period = FinanceService._batch_tax_period(batch)
+            cutoff = cutoffs.get((line.employee_id, period.year))
+            if cutoff is not None and period >= cutoff:
                 blocked.add(batch.id)
         return blocked
 
@@ -5267,8 +5312,8 @@ class FinanceService:
                 self._effective_date_ranges_overlap(
                     effective_from,
                     effective_to,
-                    batch.payment_date,
-                    batch.payment_date,
+                    self._batch_tax_period(batch).end_date,
+                    self._batch_tax_period(batch).end_date,
                 )
             )
             uses_contribution_policy = contribution_id == str(predecessor_id) and (
@@ -5294,8 +5339,8 @@ class FinanceService:
             batch.id
             for line, batch in rows
             if line.employee_id == employee_id
-            and batch.payment_date.year == tax_year
-            and batch.payment_date.month > through_month
+            and self._batch_tax_period(batch).year == tax_year
+            and self._batch_tax_period(batch).month > through_month
         }
 
     def _regular_payroll_dependency(
@@ -5323,10 +5368,10 @@ class FinanceService:
                 "INVALID_REGULAR_PAYROLL_DEPENDENCY",
                 "combined annual bonus requires a posted regular payroll batch",
             )
-        if YearMonth(batch.payment_date.year, batch.payment_date.month) != tax_period:
+        if self._batch_tax_period(batch) != tax_period:
             raise CalculationValidationError(
                 "INVALID_REGULAR_PAYROLL_DEPENDENCY",
-                "regular payroll must have the same actual payment tax month",
+                "regular payroll must have the same tax period",
             )
         lines = self.session.scalars(
             select(PayrollLine).where(
@@ -5403,10 +5448,10 @@ class FinanceService:
                 "referenced regular payroll has no immutable employee facts",
             )
         return CumulativeTaxPeriodInput(
-            income_date=batch.payment_date,
-            employment_start_date=employee.employment_start_date,
+            income_date=self._batch_tax_period(batch).end_date,
+            withholding_start_date=self._required_tax_withholding_start_date(employee),
             income_fen=line.gross_salary_fen,
-            tax_exempt_income_fen=line.tax_exempt_income_fen,
+            tax_exempt_income_fen=0,
             employee_contributions_fen=(
                 line.employee_social_insurance_fen + line.employee_housing_fund_fen
             ),
@@ -5474,6 +5519,21 @@ class FinanceService:
             )
         )
 
+    @staticmethod
+    def _batch_tax_period(batch: PayrollBatch) -> YearMonth:
+        if batch.batch_kind == PayrollBatchKind.REGULAR.value:
+            return YearMonth(int(batch.payroll_period[:4]), int(batch.payroll_period[5:]))
+        return YearMonth(batch.payment_date.year, batch.payment_date.month)
+
+    @staticmethod
+    def _required_tax_withholding_start_date(employee: Employee) -> date:
+        if employee.tax_withholding_start_date is None:
+            raise CalculationValidationError(
+                "TAX_WITHHOLDING_START_DATE_REQUIRED",
+                "tax withholding start date is required for cumulative tax calculation",
+            )
+        return employee.tax_withholding_start_date
+
     def _prior_tax_state(self, employee: Employee, period: YearMonth) -> CumulativeTaxState | None:
         """Read the preceding cumulative state through its formal state slot.
 
@@ -5515,7 +5575,7 @@ class FinanceService:
                     "the formal tax-state slot has no single posted final payroll line",
                 )
             line, batch = row[0]
-            posted_month = YearMonth(batch.payment_date.year, batch.payment_date.month)
+            posted_month = self._batch_tax_period(batch)
             state = self._tax_state_from_trace(line.calculation_trace)
             if (
                 state is None
@@ -5578,7 +5638,10 @@ class FinanceService:
             return posted_state
         if opening_state is not None:
             return opening_state
-        if period.month == 1 or employee.employment_start_date.year == period.year:
+        if period.month == 1 or (
+            employee.tax_withholding_start_date is not None
+            and employee.tax_withholding_start_date.year == period.year
+        ):
             return CumulativeTaxState.empty(period.year)
         return None
 
@@ -5605,7 +5668,7 @@ class FinanceService:
     def _tax_input_dict(value: CumulativeTaxPeriodInput) -> dict[str, Any]:
         return {
             "income_date": value.income_date.isoformat(),
-            "employment_start_date": value.employment_start_date.isoformat(),
+            "withholding_start_date": value.withholding_start_date.isoformat(),
             "income_fen": value.income_fen,
             "tax_exempt_income_fen": value.tax_exempt_income_fen,
             "employee_contributions_fen": value.employee_contributions_fen,
@@ -5659,29 +5722,14 @@ class FinanceService:
         result: Any,
         tax_state: CumulativeTaxState,
     ) -> dict[str, Any]:
-        contribution_lines = result.contribution_result.lines
-        social_employee = {
-            line.code: line.employee_contribution_fen
-            for line in contribution_lines
-            if line.base_kind == "social_insurance"
-        }
-        social_employer = {
-            line.code: line.employer_contribution_fen
-            for line in contribution_lines
-            if line.base_kind == "social_insurance"
-        }
-        housing_employee = {
-            line.code: line.employee_contribution_fen
-            for line in contribution_lines
-            if line.base_kind == "housing_fund"
-        }
-        housing_employer = {
-            line.code: line.employer_contribution_fen
-            for line in contribution_lines
-            if line.base_kind == "housing_fund"
-        }
+        burden = result.contribution_burden_result
+        social_employee = burden.employee_social_insurance_items
+        social_employer = burden.employer_social_insurance_items
+        housing_employee = burden.employee_housing_fund_items
+        housing_employer = burden.employer_housing_fund_items
         trace = [
             *self._trace_dicts(result.contribution_result.trace),
+            *self._trace_dicts(burden.trace),
             *self._trace_dicts(result.income_tax_result.trace),
             *self._trace_dicts(result.trace),
             {"step": "tax_state_after", "values": self._tax_state_dict(tax_state)},
@@ -5689,11 +5737,7 @@ class FinanceService:
         return {
             "employee_id": employee.id,
             "employee_payroll_profile_version_id": profile.id,
-            "base_salary_fen": item.base_salary_fen,
-            "performance_pay_fen": item.performance_pay_fen,
-            "taxable_allowance_fen": item.taxable_allowance_fen,
-            "tax_exempt_income_fen": item.tax_exempt_income_fen,
-            "attendance_deduction_fen": item.attendance_deduction_fen,
+            "tax_reported_salary_fen": item.tax_reported_salary_fen,
             "special_additional_deduction_fen": item.special_additional_deduction_fen,
             "other_legal_deduction_fen": item.other_legal_deduction_fen,
             "annual_bonus_fen": 0,
@@ -5740,11 +5784,7 @@ class FinanceService:
             "employee_id": employee.id,
             "employee_payroll_profile_version_id": profile.id,
             "regular_payroll_batch_id": regular_payroll_batch_id,
-            "base_salary_fen": 0,
-            "performance_pay_fen": 0,
-            "taxable_allowance_fen": 0,
-            "tax_exempt_income_fen": 0,
-            "attendance_deduction_fen": 0,
+            "tax_reported_salary_fen": None,
             "special_additional_deduction_fen": 0,
             "other_legal_deduction_fen": 0,
             "annual_bonus_fen": item.annual_bonus_fen,
@@ -5812,10 +5852,16 @@ class FinanceService:
                 raise ValueError("payroll batch has an incomplete immutable employee snapshot")
             entries.extend(
                 [
-                    Entry(
-                        account_role=profile.expense_role,
-                        debit_fen=line.gross_salary_fen,
-                        counterparty_id=employee.counterparty_id,
+                    *(
+                        [
+                            Entry(
+                                account_role=profile.expense_role,
+                                debit_fen=line.gross_salary_fen,
+                                counterparty_id=employee.counterparty_id,
+                            )
+                        ]
+                        if line.gross_salary_fen
+                        else []
                     ),
                     *(
                         [
@@ -6018,11 +6064,7 @@ class FinanceService:
         return {
             "id": str(line.id),
             "employee_id": str(line.employee_id),
-            "base_salary_fen": line.base_salary_fen,
-            "performance_pay_fen": line.performance_pay_fen,
-            "taxable_allowance_fen": line.taxable_allowance_fen,
-            "tax_exempt_income_fen": line.tax_exempt_income_fen,
-            "attendance_deduction_fen": line.attendance_deduction_fen,
+            "tax_reported_salary_fen": line.tax_reported_salary_fen,
             "annual_bonus_fen": line.annual_bonus_fen,
             "employee_social_insurance_fen": line.employee_social_insurance_fen,
             "employer_social_insurance_fen": line.employer_social_insurance_fen,
@@ -6527,11 +6569,7 @@ class FinanceService:
                 payroll_batch_id=reversal_batch.id,
                 employee_id=source.employee_id,
                 employee_payroll_profile_version_id=source.employee_payroll_profile_version_id,
-                base_salary_fen=source.base_salary_fen,
-                performance_pay_fen=source.performance_pay_fen,
-                taxable_allowance_fen=source.taxable_allowance_fen,
-                tax_exempt_income_fen=source.tax_exempt_income_fen,
-                attendance_deduction_fen=source.attendance_deduction_fen,
+                tax_reported_salary_fen=source.tax_reported_salary_fen,
                 special_additional_deduction_fen=source.special_additional_deduction_fen,
                 other_legal_deduction_fen=source.other_legal_deduction_fen,
                 annual_bonus_fen=source.annual_bonus_fen,
@@ -6794,10 +6832,11 @@ class FinanceService:
             ).all()
             if self._batch_uses_cumulative_tax_state(payroll_batch):
                 try:
+                    payroll_tax_period = self._batch_tax_period(payroll_batch)
                     self._lock_payroll_tax_year(
                         payroll_batch.org_id,
                         employee_ids,
-                        payroll_batch.payment_date.year,
+                        payroll_tax_period.year,
                     )
                 except CalculationValidationError as exc:
                     return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
@@ -6810,14 +6849,11 @@ class FinanceService:
                     PayrollLine.employee_id.in_(employee_ids),
                 )
             ).all()
-            original_tax_period = YearMonth(
-                payroll_batch.payment_date.year, payroll_batch.payment_date.month
-            )
+            original_tax_period = self._batch_tax_period(payroll_batch)
             dependent = any(
                 candidate_batch.id != payroll_batch.id
                 and (
-                    YearMonth(candidate_batch.payment_date.year, candidate_batch.payment_date.month)
-                    > original_tax_period
+                    self._batch_tax_period(candidate_batch) > original_tax_period
                     or candidate_line.regular_payroll_batch_id == payroll_batch.id
                 )
                 for candidate_batch, candidate_line in dependent_rows
@@ -6832,8 +6868,8 @@ class FinanceService:
                 .where(
                     PayrollTaxStateSlot.org_id == payroll_batch.org_id,
                     PayrollTaxStateSlot.employee_id.in_(employee_ids),
-                    PayrollTaxStateSlot.tax_year == payroll_batch.payment_date.year,
-                    PayrollTaxStateSlot.tax_month == payroll_batch.payment_date.month,
+                    PayrollTaxStateSlot.tax_year == original_tax_period.year,
+                    PayrollTaxStateSlot.tax_month == original_tax_period.month,
                 )
                 .with_for_update()
             ).all()

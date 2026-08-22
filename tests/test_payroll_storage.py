@@ -173,7 +173,7 @@ def test_payroll_line_database_reconciles_gross_and_net_salary(
             payroll_batch_id=batch.id,
             employee_id=employee.id,
             employee_payroll_profile_version_id=profile.id,
-            base_salary_fen=100_000,
+            tax_reported_salary_fen=100_000,
             employee_social_insurance_fen=5_000,
             employee_housing_fund_fen=5_000,
             individual_income_tax_fen=1_000,
@@ -191,7 +191,7 @@ def test_payroll_line_database_reconciles_gross_and_net_salary(
             payroll_batch_id=batch.id,
             employee_id=second_employee.id,
             employee_payroll_profile_version_id=second_profile.id,
-            base_salary_fen=100_000,
+            tax_reported_salary_fen=100_000,
             gross_salary_fen=99_999,
             net_salary_fen=99_999,
         )
