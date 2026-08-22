@@ -1777,8 +1777,14 @@ class RegisterEvidenceRequest(BaseModel):
 
     org_id: uuid.UUID
     source: str = Field(min_length=1, max_length=50)
-    file_path: Path | None = None
-    content_base64: str | None = None
+    file_path: Path | None = Field(
+        default=None,
+        description="批准证据目录内的文件路径；与 content_base64 必须且只能提供一个。",
+    )
+    content_base64: str | None = Field(
+        default=None,
+        description="内联 base64 内容；与 file_path 必须且只能提供一个。",
+    )
     original_name: str | None = None
     media_type: str = "application/octet-stream"
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -1822,28 +1828,6 @@ class RegisterEvidenceRequest(BaseModel):
             raise ValueError("provide exactly one of file_path or content_base64")
         return self
 
-    @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> dict[str, Any]:
-        """Publish the same mutually-exclusive content rule enforced at runtime."""
-
-        schema = handler(core_schema)
-        schema["oneOf"] = [
-            {
-                "required": ["file_path"],
-                "properties": {
-                    "file_path": {"type": "string"},
-                    "content_base64": {"type": "null"},
-                },
-            },
-            {
-                "required": ["content_base64"],
-                "properties": {
-                    "file_path": {"type": "null"},
-                    "content_base64": {"type": "string"},
-                },
-            },
-        ]
-        return schema
 
 
 class BankStatementColumnMapping(BaseModel):

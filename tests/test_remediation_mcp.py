@@ -153,11 +153,18 @@ def test_r7_003_evidence_and_bank_import_contracts_are_typed_and_strict() -> Non
     assert {"org_id", "file_path", "column_mapping"} == set(bank_request["required"])
     assert evidence_request["properties"]["org_id"]["format"] == "uuid"
     assert bank_request["properties"]["file_path"]["format"] == "path"
-    assert len(evidence_request["oneOf"]) == 2
-    assert {tuple(option["required"]) for option in evidence_request["oneOf"]} == {
-        ("file_path",),
-        ("content_base64",),
-    }
+    assert "oneOf" not in evidence_request
+    assert {
+        "org_id",
+        "source",
+        "file_path",
+        "content_base64",
+        "original_name",
+        "media_type",
+        "metadata",
+    } == set(evidence_request["properties"])
+    assert "必须且只能提供一个" in evidence_request["properties"]["file_path"]["description"]
+    assert "必须且只能提供一个" in evidence_request["properties"]["content_base64"]["description"]
     assert bank_mapping["additionalProperties"] is False
     assert set(bank_mapping["properties"]) == {
         "booking_date",
