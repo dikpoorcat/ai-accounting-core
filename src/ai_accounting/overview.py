@@ -31,6 +31,8 @@ from .models import (
     PayrollBatch,
     PayrollLine,
     Settlement,
+    UnifiedPayoutRun,
+    UnifiedPayoutRunItem,
     Voucher,
     VoucherLine,
 )
@@ -876,30 +878,32 @@ def _load_personal_labor_cost(
         )
     ).all()
     gross_remuneration_fen = 0
-    withholding_tax_fen = 0
+    theoretical_withholding_tax_fen = 0
     by_remuneration_period: dict[str, dict[str, Any]] = {}
     batch_ids: set[uuid.UUID] = set()
     event_link_ids: set[uuid.UUID] = set()
+    line_weights: dict[uuid.UUID, int] = defaultdict(int)
     for link, batch, line in rows:
         sign = -1 if link.link_kind == "reversal" else 1
         batch_ids.add(batch.id)
         event_link_ids.add(link.id)
+        line_weights[line.id] += sign
         period_totals = by_remuneration_period.setdefault(
             batch.remuneration_period,
             {
                 "remuneration_period": batch.remuneration_period,
                 "gross_remuneration_fen": 0,
-                "withholding_tax_fen": 0,
+                "theoretical_withholding_tax_fen": 0,
                 "total_fen": 0,
                 "has_reversal": False,
             },
         )
         gross = sign * line.gross_remuneration_fen
-        withholding = sign * line.withholding_tax_fen
+        theoretical_withholding = sign * line.withholding_tax_fen
         gross_remuneration_fen += gross
-        withholding_tax_fen += withholding
+        theoretical_withholding_tax_fen += theoretical_withholding
         period_totals["gross_remuneration_fen"] += gross
-        period_totals["withholding_tax_fen"] += withholding
+        period_totals["theoretical_withholding_tax_fen"] += theoretical_withholding
         period_totals["total_fen"] += gross
         period_totals["has_reversal"] = (
             period_totals["has_reversal"] or link.link_kind == "reversal"
@@ -916,13 +920,82 @@ def _load_personal_labor_cost(
     else:
         reason = "受控个人劳务批次与个人劳务费用科目净额不一致，明细不可拆。"
     periods = sorted(by_remuneration_period.values(), key=lambda item: item["remuneration_period"])
+    effective_line_weights = {
+        line_id: weight for line_id, weight in line_weights.items() if weight != 0
+    }
+    payout_rows = (
+        session.execute(
+            select(UnifiedPayoutRunItem, UnifiedPayoutRun)
+            .join(
+                UnifiedPayoutRun,
+                and_(
+                    UnifiedPayoutRun.org_id == UnifiedPayoutRunItem.org_id,
+                    UnifiedPayoutRun.id == UnifiedPayoutRunItem.payout_run_id,
+                ),
+            )
+            .where(
+                UnifiedPayoutRunItem.org_id == org_id,
+                UnifiedPayoutRunItem.item_kind == "labor",
+                UnifiedPayoutRunItem.labor_line_id.in_(tuple(effective_line_weights)),
+                UnifiedPayoutRun.status == "posted",
+            )
+            .order_by(UnifiedPayoutRun.posting_date, UnifiedPayoutRunItem.id)
+        ).all()
+        if effective_line_weights
+        else []
+    )
+    payouts_by_line: dict[uuid.UUID, list[UnifiedPayoutRunItem]] = defaultdict(list)
+    for item, _run in payout_rows:
+        if item.labor_line_id is not None:
+            payouts_by_line[item.labor_line_id].append(item)
+
+    actual_withholding_tax_fen = 0
+    unwithheld_tax_fen = 0
+    settled_gross_fen = 0
+    settlement_modes: set[str] = set()
+    for line_id, weight in effective_line_weights.items():
+        for item in payouts_by_line.get(line_id, []):
+            actual_withholding_tax_fen += weight * item.individual_income_tax_fen
+            unwithheld_tax_fen += weight * item.unwithheld_individual_income_tax_fen
+            settled_gross_fen += weight * item.gross_amount_fen
+            settlement_modes.add(item.settlement_mode)
+    unsettled_gross_fen = gross_remuneration_fen - settled_gross_fen
+    pending_theoretical_tax_fen = (
+        theoretical_withholding_tax_fen - actual_withholding_tax_fen - unwithheld_tax_fen
+    )
+    has_cost_correction = any(weight < 0 for weight in effective_line_weights.values())
+    if has_cost_correction:
+        withholding_status = "correction"
+    elif theoretical_withholding_tax_fen == 0:
+        withholding_status = "none"
+    elif unsettled_gross_fen != 0 and settled_gross_fen != 0:
+        withholding_status = "partially_settled"
+    elif unsettled_gross_fen != 0:
+        withholding_status = "pending_payment"
+    elif actual_withholding_tax_fen == 0 and unwithheld_tax_fen != 0:
+        withholding_status = "not_withheld"
+    elif actual_withholding_tax_fen != 0 and unwithheld_tax_fen == 0:
+        withholding_status = "withheld"
+    else:
+        withholding_status = "mixed"
     return {
         "has_activity": total_fen != 0 or has_controlled_basis,
         "breakdown_available": breakdown_available,
         "reason": reason,
         "total_fen": total_fen,
         "gross_remuneration_fen": gross_remuneration_fen if breakdown_available else None,
-        "withholding_tax_fen": withholding_tax_fen if breakdown_available else None,
+        "theoretical_withholding_tax_fen": (
+            theoretical_withholding_tax_fen if breakdown_available else None
+        ),
+        "actual_withholding_tax_fen": (actual_withholding_tax_fen if breakdown_available else None),
+        "unwithheld_tax_fen": unwithheld_tax_fen if breakdown_available else None,
+        "pending_theoretical_tax_fen": (
+            pending_theoretical_tax_fen if breakdown_available else None
+        ),
+        "settled_gross_fen": settled_gross_fen if breakdown_available else None,
+        "unsettled_gross_fen": unsettled_gross_fen if breakdown_available else None,
+        "withholding_status": withholding_status if breakdown_available else "unavailable",
+        "settlement_modes": sorted(settlement_modes) if breakdown_available else [],
         "batch_count": len(batch_ids),
         "periods": periods if breakdown_available else [],
     }

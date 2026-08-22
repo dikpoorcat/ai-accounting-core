@@ -954,9 +954,25 @@
             make("strong", "", money(personalLabor.gross_remuneration_fen))
           );
           laborGrid.append(card);
-          laborNote.textContent = fen(personalLabor.withholding_tax_fen) !== 0n
-            ? "劳务批次计算的个人所得税 " + money(personalLabor.withholding_tax_fen) + "，从劳务毛额中代扣，不会作为公司额外用工成本重复加总。"
-            : "本月受控劳务批次没有计算需代扣的个人所得税。";
+          const actualLaborTax = fen(personalLabor.actual_withholding_tax_fen);
+          const unwithheldLaborTax = fen(personalLabor.unwithheld_tax_fen);
+          if (personalLabor.withholding_status === "correction") {
+            laborNote.textContent = "本月个人劳务成本含冲正或更正，未将理论税额认定为新增实际代扣。";
+          } else if (personalLabor.withholding_status === "partially_settled") {
+            laborNote.textContent = "劳务尚未全部付款；已付款部分"
+              + (actualLaborTax !== 0n ? "实际代扣个人所得税 " + money(actualLaborTax) : "实际未代扣个人所得税")
+              + "，未付款部分仅有理论测算。";
+          } else if (personalLabor.withholding_status === "pending_payment") {
+            laborNote.textContent = "劳务尚未付款，个人所得税仅完成理论测算，未认定为实际代扣。";
+          } else if (actualLaborTax !== 0n) {
+            laborNote.textContent = "实际从劳务毛额代扣个人所得税 " + money(actualLaborTax)
+              + "，不增加公司用工成本"
+              + (unwithheldLaborTax !== 0n ? "；另有部分未代扣，按受控付款状态另行处理。" : "。");
+          } else if (personalLabor.withholding_status === "not_withheld") {
+            laborNote.textContent = "劳务报酬已按毛额支付，实际未代扣个人所得税，不影响用工成本。";
+          } else {
+            laborNote.textContent = "本月劳务报酬没有需要说明的实际代扣个人所得税。";
+          }
           renderCostPeriods(laborPeriods, personalLabor.periods, "remuneration_period", month);
         }
       };

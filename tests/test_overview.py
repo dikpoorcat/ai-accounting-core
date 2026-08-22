@@ -32,6 +32,8 @@ from ai_accounting.models import (
     PayrollLine,
     PayrollPolicyVersion,
     Settlement,
+    UnifiedPayoutRun,
+    UnifiedPayoutRunItem,
     Voucher,
     VoucherLine,
 )
@@ -296,7 +298,7 @@ def _add_controlled_labor_accrual(
     fixed_fee_fen: int,
     commission_fen: int,
     withholding_tax_fen: int,
-) -> tuple[LaborRemunerationBatch, LaborRemunerationLine]:
+) -> tuple[LaborRemunerationBatch, LaborRemunerationLine, OpenItem]:
     gross_fen = fixed_fee_fen + commission_fen
     counterparty = session.get(Counterparty, labor_person.counterparty_id)
     assert counterparty is not None
@@ -353,9 +355,20 @@ def _add_controlled_labor_accrual(
         net_payment_fen=gross_fen - withholding_tax_fen,
         external_declaration_status="not_due",
     )
+    open_item = OpenItem(
+        org_id=organization.id,
+        counterparty_id=labor_person.counterparty_id,
+        source_event_id=event.id,
+        item_type="payable",
+        payable_category="labor_remuneration",
+        original_amount_fen=gross_fen,
+        settled_amount_fen=0,
+        status="open",
+    )
     session.add_all(
         [
             line,
+            open_item,
             LaborRemunerationEventLink(
                 org_id=organization.id,
                 event_id=event.id,
@@ -365,7 +378,7 @@ def _add_controlled_labor_accrual(
         ]
     )
     session.flush()
-    return batch, line
+    return batch, line, open_item
 
 
 def _add_controlled_labor_reversal(
@@ -406,6 +419,85 @@ def _add_controlled_labor_reversal(
             link_kind="reversal",
         )
     )
+    session.flush()
+
+
+def _add_gross_labor_payout_without_withholding(
+    session: Session,
+    *,
+    organization: Organization,
+    line: LaborRemunerationLine,
+    open_item: OpenItem,
+    accounts: dict[str, Account],
+    number: str,
+    posting_date: date,
+) -> None:
+    counterparty = session.get(Counterparty, line.counterparty_id)
+    assert counterparty is not None
+    event, _ = _add_test_voucher(
+        session,
+        organization=organization,
+        number=number,
+        event_type="unified_payout_run",
+        description="个人劳务按毛额支付，未代扣个人所得税",
+        facts={},
+        posting_date=posting_date,
+        lines=[
+            (accounts["payable"], counterparty, line.gross_remuneration_fen, 0),
+            (accounts["bank"], counterparty, 0, line.gross_remuneration_fen),
+        ],
+    )
+    bank_transaction = BankTransaction(
+        org_id=organization.id,
+        bank_account_code=accounts["bank"].code,
+        fingerprint=(number.replace("-", "") + "4" * 64)[:64],
+        booking_date=posting_date,
+        amount_fen=-line.gross_remuneration_fen,
+        source_sha256=(number.replace("-", "") + "5" * 64)[:64],
+        matched_event_id=event.id,
+    )
+    session.add(bank_transaction)
+    session.flush()
+    run = UnifiedPayoutRun(
+        org_id=organization.id,
+        idempotency_key="payout-" + number,
+        request_payload_hash=(number.replace("-", "") + "6" * 64)[:64],
+        status="posted",
+        calculation_hash=(number.replace("-", "") + "7" * 64)[:64],
+        calculation_input={"request": {}},
+        calculation_trace=[],
+        bank_account_code=accounts["bank"].code,
+        bank_transaction_id=bank_transaction.id,
+        business_date=posting_date,
+        payment_date=posting_date,
+        posting_date=posting_date,
+        gross_total_fen=line.gross_remuneration_fen,
+        withholding_total_fen=0,
+        net_total_fen=line.gross_remuneration_fen,
+        business_event_id=event.id,
+        confirmed_at=datetime.now(UTC),
+    )
+    session.add(run)
+    session.flush()
+    session.add(
+        UnifiedPayoutRunItem(
+            org_id=organization.id,
+            payout_run_id=run.id,
+            item_kind="labor",
+            source_open_item_id=open_item.id,
+            labor_line_id=line.id,
+            counterparty_id=line.counterparty_id,
+            settlement_mode="gross_paid_without_withholding",
+            gross_amount_fen=line.gross_remuneration_fen,
+            individual_income_tax_fen=0,
+            theoretical_individual_income_tax_fen=line.withholding_tax_fen,
+            unwithheld_individual_income_tax_fen=line.withholding_tax_fen,
+            net_amount_fen=line.gross_remuneration_fen,
+            withholding_components={},
+        )
+    )
+    open_item.settled_amount_fen = open_item.original_amount_fen
+    open_item.status = "settled"
     session.flush()
 
 
@@ -684,7 +776,7 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
     evidence = session.scalar(select(Evidence).where(Evidence.org_id == organization.id))
     assert evidence is not None
     period_service = AccountingPeriodService(session, current_date=date(2026, 8, 17))
-    for period_month in ("2026-03", "2026-04"):
+    for period_month in ("2026-03", "2026-04", "2026-05"):
         result = period_service.generate_accounting_period(
             GenerateAccountingPeriodRequest(
                 org_id=organization.id,
@@ -870,7 +962,7 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
     typed_labor_accounts = {
         key: value for key, value in labor_accounts.items() if value is not None
     }
-    _add_controlled_labor_accrual(
+    _, march_labor_line, march_labor_open_item = _add_controlled_labor_accrual(
         session,
         organization=organization,
         labor_person=labor_person,
@@ -883,20 +975,16 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
         commission_fen=0,
         withholding_tax_fen=193_240,
     )
-    _add_test_voucher(
+    _add_gross_labor_payout_without_withholding(
         session,
         organization=organization,
+        line=march_labor_line,
+        open_item=march_labor_open_item,
+        accounts=typed_labor_accounts,
         number="202604-0011",
-        event_type="unified_payout_run",
-        description="支付3月非员工个人劳务报酬",
-        facts={},
         posting_date=date(2026, 4, 4),
-        lines=[
-            (typed_labor_accounts["payable"], labor_party, 966_200, 0),
-            (typed_labor_accounts["bank"], labor_party, 0, 966_200),
-        ],
     )
-    april_labor_original, april_labor_line = _add_controlled_labor_accrual(
+    april_labor_original, april_labor_line, _ = _add_controlled_labor_accrual(
         session,
         organization=organization,
         labor_person=labor_person,
@@ -918,7 +1006,7 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
         number="202604-0013",
         posting_date=date(2026, 4, 30),
     )
-    _add_controlled_labor_accrual(
+    _, april_replacement_line, april_replacement_open_item = _add_controlled_labor_accrual(
         session,
         organization=organization,
         labor_person=labor_person,
@@ -931,11 +1019,26 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
         commission_fen=271_085,
         withholding_tax_fen=234_217,
     )
+    before_may_payment = next(
+        month for month in build_overview_payload(session)["months"] if month["key"] == "2026-04"
+    )["workforce_cost"]["personal_labor"]
+    assert before_may_payment["withholding_status"] == "partially_settled"
+    assert before_may_payment["actual_withholding_tax_fen"] == 0
+    assert before_may_payment["unwithheld_tax_fen"] == 193_240
+    assert before_may_payment["pending_theoretical_tax_fen"] == 234_217
+    _add_gross_labor_payout_without_withholding(
+        session,
+        organization=organization,
+        line=april_replacement_line,
+        open_item=april_replacement_open_item,
+        accounts=typed_labor_accounts,
+        number="202605-0001",
+        posting_date=date(2026, 5, 6),
+    )
     session.flush()
 
-    april = next(
-        month for month in build_overview_payload(session)["months"] if month["key"] == "2026-04"
-    )
+    payload = build_overview_payload(session)
+    april = next(month for month in payload["months"] if month["key"] == "2026-04")
     workforce = april["workforce_cost"]
     compensation = workforce["employee"]
     personal_labor = workforce["personal_labor"]
@@ -958,7 +1061,12 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
     assert personal_labor["breakdown_available"] is True
     assert personal_labor["gross_remuneration_fen"] == 2_137_285
     assert personal_labor["total_fen"] == 2_137_285
-    assert personal_labor["withholding_tax_fen"] == 427_457
+    assert personal_labor["theoretical_withholding_tax_fen"] == 427_457
+    assert personal_labor["actual_withholding_tax_fen"] == 0
+    assert personal_labor["unwithheld_tax_fen"] == 427_457
+    assert personal_labor["pending_theoretical_tax_fen"] == 0
+    assert personal_labor["withholding_status"] == "not_withheld"
+    assert personal_labor["settlement_modes"] == ["gross_paid_without_withholding"]
     assert [
         (item["remuneration_period"], item["total_fen"]) for item in personal_labor["periods"]
     ] == [
@@ -968,6 +1076,10 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
     assert personal_labor["periods"][1]["has_reversal"] is True
     assert workforce["total_fen"] == 3_179_785
     assert workforce["total_fen"] == compensation["total_fen"] + personal_labor["total_fen"]
+    document = render_overview_document(payload)
+    assert "劳务批次计算的个人所得税" not in document
+    assert "劳务报酬已按毛额支付，实际未代扣个人所得税" in document
+    assert '"actual_withholding_tax_fen":"0"' in document
 
 
 @pytest.mark.parametrize(
