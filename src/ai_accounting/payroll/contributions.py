@@ -38,6 +38,8 @@ class ContributionBases:
 
     social_insurance_base_fen: int | None
     housing_fund_base_fen: int | None
+    social_insurance_participating: bool = True
+    housing_fund_participating: bool = True
 
     def __post_init__(self) -> None:
         if self.social_insurance_base_fen is not None:
@@ -50,6 +52,15 @@ class ContributionBases:
             return self.social_insurance_base_fen
         if base_kind == ContributionBaseKind.HOUSING_FUND:
             return self.housing_fund_base_fen
+        raise CalculationValidationError(
+            "INVALID_BASE_KIND", f"unknown contribution base kind {base_kind}"
+        )
+
+    def participates_in(self, base_kind: ContributionBaseKind) -> bool:
+        if base_kind == ContributionBaseKind.SOCIAL_INSURANCE:
+            return self.social_insurance_participating
+        if base_kind == ContributionBaseKind.HOUSING_FUND:
+            return self.housing_fund_participating
         raise CalculationValidationError(
             "INVALID_BASE_KIND", f"unknown contribution base kind {base_kind}"
         )
@@ -213,7 +224,9 @@ def calculate_contributions(
     missing_kinds = {
         rule.base_kind
         for rule in policy.rules
-        if rule.enabled and bases.for_kind(rule.base_kind) is None
+        if rule.enabled
+        and bases.participates_in(rule.base_kind)
+        and bases.for_kind(rule.base_kind) is None
     }
     if missing_kinds:
         fields = tuple(
@@ -233,19 +246,24 @@ def calculate_contributions(
     lines: list[ContributionLine] = []
     trace: list[TraceEntry] = []
     for rule in policy.rules:
+        participating = bases.participates_in(rule.base_kind)
         input_base = bases.for_kind(rule.base_kind)
         if input_base is None:
             # Disabled rules do not need a base and remain explicitly zero.
             input_base = 0
-        capped_base = min(max(input_base, rule.minimum_base_fen), rule.maximum_base_fen)
+        capped_base = (
+            min(max(input_base, rule.minimum_base_fen), rule.maximum_base_fen)
+            if participating
+            else 0
+        )
         employee = (
             _round_fen(Decimal(capped_base) * rule.employee_rate, rule.rounding_rule)
-            if rule.enabled
+            if rule.enabled and participating
             else 0
         )
         employer = (
             _round_fen(Decimal(capped_base) * rule.employer_rate, rule.rounding_rule)
-            if rule.enabled
+            if rule.enabled and participating
             else 0
         )
         line = ContributionLine(
@@ -269,6 +287,7 @@ def calculate_contributions(
                     "employer_rate": str(rule.employer_rate),
                     "rounding_rule": rule.rounding_rule.value,
                     "enabled": rule.enabled,
+                    "employee_participating": participating,
                 },
             )
         )

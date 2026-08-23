@@ -767,6 +767,8 @@ class EmployeePayrollProfileVersion(Base):
     expense_role: Mapped[str] = mapped_column(String(50))
     social_insurance_base_fen: Mapped[int] = mapped_column(BigInteger)
     housing_fund_base_fen: Mapped[int] = mapped_column(BigInteger)
+    social_insurance_participating: Mapped[bool] = mapped_column(default=True)
+    housing_fund_participating: Mapped[bool] = mapped_column(default=True)
     resident_employee: Mapped[bool] = mapped_column(default=True)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -632,8 +632,14 @@ class RegisterEmployeeRequest(BaseModel):
     org_id: uuid.UUID
     employee_code: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
-    employment_start_date: date
-    # The withholding relationship is a separate fact from employment.  It may
+    # This is the first month in which the person may enter the controlled
+    # employee-payroll workflow.  It is an accounting role date, not a legal
+    # conclusion about whether or when a labor relationship was formed.
+    employment_start_date: date = Field(
+        title="工资核算身份开始日",
+        description="开始按员工工资口径核算的日期；不用于判断或证明劳动关系。",
+    )
+    # The withholding relationship is a separate accounting/tax fact.  It may
     # be supplied later, but payroll calculation will not infer it.
     tax_withholding_start_date: date | None = None
     employment_end_date: date | None = None
@@ -667,6 +673,16 @@ class RegisterEmployeePayrollProfileVersionRequest(BaseModel):
     ]
     social_insurance_base_fen: Fen
     housing_fund_base_fen: Fen
+    social_insurance_participating: bool = Field(
+        default=True,
+        title="本公司参保",
+        description="该工资核算人员在本公司是否实际参加社保；不用于判断劳动关系。",
+    )
+    housing_fund_participating: bool = Field(
+        default=True,
+        title="本公司缴存公积金",
+        description="该工资核算人员在本公司是否实际缴存住房公积金。",
+    )
     resident_employee: bool
     supersedes_profile_version_id: uuid.UUID | None = None
 

@@ -2945,6 +2945,12 @@ class FinanceService:
                     "expense_role": existing_successor.expense_role,
                     "social_insurance_base_fen": existing_successor.social_insurance_base_fen,
                     "housing_fund_base_fen": existing_successor.housing_fund_base_fen,
+                    "social_insurance_participating": (
+                        existing_successor.social_insurance_participating
+                    ),
+                    "housing_fund_participating": (
+                        existing_successor.housing_fund_participating
+                    ),
                     "resident_employee": existing_successor.resident_employee,
                 }
                 if actual == expected:
@@ -2969,6 +2975,8 @@ class FinanceService:
                     "expense_role": existing.expense_role,
                     "social_insurance_base_fen": existing.social_insurance_base_fen,
                     "housing_fund_base_fen": existing.housing_fund_base_fen,
+                    "social_insurance_participating": existing.social_insurance_participating,
+                    "housing_fund_participating": existing.housing_fund_participating,
                     "resident_employee": existing.resident_employee,
                 }
                 if actual == expected:
@@ -3027,6 +3035,8 @@ class FinanceService:
             expense_role=request.expense_role,
             social_insurance_base_fen=request.social_insurance_base_fen,
             housing_fund_base_fen=request.housing_fund_base_fen,
+            social_insurance_participating=request.social_insurance_participating,
+            housing_fund_participating=request.housing_fund_participating,
             resident_employee=request.resident_employee,
         )
         try:
@@ -4090,6 +4100,12 @@ class FinanceService:
                         "housing_fund_base_fen": profiles[
                             line.employee_payroll_profile_version_id
                         ].housing_fund_base_fen,
+                        "social_insurance_participating": profiles[
+                            line.employee_payroll_profile_version_id
+                        ].social_insurance_participating,
+                        "housing_fund_participating": profiles[
+                            line.employee_payroll_profile_version_id
+                        ].housing_fund_participating,
                     }
                     if line.employee_payroll_profile_version_id in profiles
                     else None,
@@ -4638,6 +4654,8 @@ class FinanceService:
                 "expense_role": profile.expense_role,
                 "social_insurance_base_fen": profile.social_insurance_base_fen,
                 "housing_fund_base_fen": profile.housing_fund_base_fen,
+                "social_insurance_participating": profile.social_insurance_participating,
+                "housing_fund_participating": profile.housing_fund_participating,
                 "resident_employee": profile.resident_employee,
             }
             if request.batch_kind == PayrollBatchKind.REGULAR:
@@ -4679,6 +4697,8 @@ class FinanceService:
                     ContributionBases(
                         profile.social_insurance_base_fen,
                         profile.housing_fund_base_fen,
+                        profile.social_insurance_participating,
+                        profile.housing_fund_participating,
                     ),
                     period.end_date,
                 )

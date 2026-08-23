@@ -1293,7 +1293,7 @@ class AccountingPeriodService:
             },
             {
                 "code": "MONTH_END_PEOPLE_PAYROLL_STATUTORY",
-                "topic": "新入职、工资、社保公积金和个税",
+                "topic": "工资核算人员、社保公积金和个税",
                 "state": (
                     "needs_attention"
                     if payroll_attention
@@ -1309,7 +1309,8 @@ class AccountingPeriodService:
                 "summary": (
                     f"系统有 {len(employee_counterparties)} 个员工类往来对象、"
                     f"{len(active_employees)} 份当月有效员工档案、"
-                    f"{len(hires_in_period)} 名当月入职、{len(payroll_batches)} 个工资批次。"
+                    f"{len(hires_in_period)} 名当月开始按员工工资核算、"
+                    f"{len(payroll_batches)} 个工资批次。"
                 ),
                 "system_facts": {
                     "employee_counterparty_count": len(employee_counterparties),
@@ -1325,7 +1326,7 @@ class AccountingPeriodService:
                     "unfinished_payroll_batch_count": module_checks["payroll"]["count"],
                 },
                 "owner_questions": [
-                    "本月是否有人新入职、离职或开始形成劳动关系？股东或联合创始人身份不自动等于员工。",
+                    "本月是否有人开始或停止按员工工资口径核算？股东或联合创始人身份不自动进入工资核算。",
                     "本月是否应发工资、奖金，或应缴社保、公积金、个人所得税？即使尚未付款也要确认。",
                 ],
             },

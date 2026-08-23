@@ -557,7 +557,7 @@
           <span id="bank-context" class="kpi-meta"></span>
         </article>
         <article id="result-card" class="kpi result">
-          <span class="kpi-label">本月收入费用差额</span>
+          <span class="kpi-label">本月账面损益</span>
           <strong id="month-result" class="kpi-value"></strong>
           <span id="result-context" class="kpi-meta"></span>
         </article>
@@ -782,7 +782,7 @@
           : net < 0n ? "银行流水净流出 " + positiveMoney(net) : "银行流水本月无净变动";
         const unmatched = month.unmatched_bank_activity.count;
         const bankNote = unmatched ? "，其中 " + unmatched + " 笔待识别或处理" : "，流水均已处理";
-        const result = "收入费用差额 " + money(month.position.month_result_fen);
+        const result = "账面损益 " + money(month.position.month_result_fen);
         const pending = [];
         if (fen(month.open_items.receivable_fen) > 0n) pending.push("待收 " + money(month.open_items.receivable_fen));
         if (fen(month.open_items.payable_fen) > 0n) pending.push("待付 " + money(month.open_items.payable_fen));
@@ -1262,7 +1262,7 @@
         resultValue.textContent = money(month.position.month_result_fen);
         resultValue.classList.toggle("loss", fen(month.position.month_result_fen) < 0n);
         byId("result-card").classList.toggle("loss", fen(month.position.month_result_fen) < 0n);
-        byId("result-context").textContent = "收入 " + money(month.position.month_revenue_fen) + " · 费用 " + money(month.position.month_expense_fen);
+        byId("result-context").textContent = "本月确认收入 " + money(month.position.month_revenue_fen) + " · 本月计入费用 " + money(month.position.month_expense_fen) + " · 按业务归属月，不按收付款月";
         byId("long-assets-value").textContent = money(month.long_term_assets.net_fen);
         byId("long-assets-context").innerHTML = "固定 " + month.long_term_assets.fixed_active_count + " 项 · 无形 " + month.long_term_assets.intangible_active_count + " 项 · <span class=\"inline-link\">查看构成 ›</span>";
         byId("open-items-value").textContent = money(month.open_items.receivable_fen) + " / " + money(month.open_items.payable_fen);

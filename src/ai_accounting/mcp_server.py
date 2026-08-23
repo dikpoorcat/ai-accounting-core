@@ -872,7 +872,7 @@ def finance_query_bank_statement_state(
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_register_employee(request: RegisterEmployeeRequest) -> dict[str, Any]:
-    """登记非敏感员工主数据；不接受证件号、银行卡或自由会计科目。"""
+    """登记员工工资核算身份；不判断劳动关系，不接受证件号、银行卡或自由科目。"""
     try:
         with SessionLocal.begin() as session:
             return FinanceService(session).register_employee(request)
@@ -884,7 +884,7 @@ def finance_register_employee(request: RegisterEmployeeRequest) -> dict[str, Any
 def finance_register_employee_profile_version(
     request: RegisterEmployeePayrollProfileVersionRequest,
 ) -> dict[str, Any]:
-    """登记员工有效期工资档案版本及明确的缴费基数。"""
+    """登记工资档案、费用角色，以及在本公司的实际参保缴存状态和缴费基数。"""
     try:
         with SessionLocal.begin() as session:
             return FinanceService(session).register_employee_payroll_profile_version(request)

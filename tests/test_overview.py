@@ -1524,6 +1524,9 @@ def test_overview_document_embeds_data_without_script_breakout(session: Session)
     assert "\\u003c/script>\\u003cscript>alert" in document
     assert "本月发生了什么" in document
     assert "本月一句话" in document
+    assert "本月账面损益" in document
+    assert "按业务归属月，不按收付款月" in document
+    assert "本月收入费用差额" not in document
     assert "待识别资金动向" in document
     assert "本月用工成本" in document
     assert "正式员工" in document

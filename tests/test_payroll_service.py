@@ -19,6 +19,7 @@ from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.models import (
     BankTransaction,
+    EmployeePayrollProfileVersion,
     Evidence,
     OpenItem,
     Organization,
@@ -504,6 +505,46 @@ def test_zero_tax_reported_salary_posts_company_borne_social_in_payroll_period(
     assert slot is not None
     assert (slot.tax_year, slot.tax_month) == (2026, 3)
     assert_balanced(session, confirmed.voucher_id)
+
+
+def test_payroll_profile_records_company_contribution_participation(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    employee_result = service.register_employee(
+        RegisterEmployeeRequest(
+            org_id=organization.id,
+            employee_code="WAGE-NO-SOCIAL-001",
+            name="本公司未参保工资人员",
+            employment_start_date=date(2026, 3, 1),
+            tax_withholding_start_date=date(2026, 3, 1),
+        )
+    )
+    employee_id = uuid.UUID(employee_result["employee_id"])
+    request = RegisterEmployeePayrollProfileVersionRequest(
+        org_id=organization.id,
+        employee_id=employee_id,
+        effective_from=date(2026, 3, 1),
+        expense_role="payroll_management_expense",
+        social_insurance_base_fen=0,
+        housing_fund_base_fen=0,
+        social_insurance_participating=False,
+        housing_fund_participating=False,
+        resident_employee=True,
+    )
+
+    registered = service.register_employee_payroll_profile_version(request)
+    replay = service.register_employee_payroll_profile_version(request)
+    profile = session.get(
+        EmployeePayrollProfileVersion,
+        uuid.UUID(registered["profile_version_id"]),
+    )
+
+    assert registered["status"] == "registered"
+    assert replay["idempotent_replay"] is True
+    assert profile is not None
+    assert profile.social_insurance_participating is False
+    assert profile.housing_fund_participating is False
 
 
 def test_payroll_accrual_is_gross_salary_and_payment_events_are_category_bound(

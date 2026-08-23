@@ -287,6 +287,27 @@ def test_contributions_round_each_component_not_the_aggregate() -> None:
     assert result.employee_social_insurance_fen == 4
 
 
+def test_nonparticipating_employee_does_not_invent_minimum_base_contributions() -> None:
+    result = calculate_contributions(
+        contribution_policy(),
+        ContributionBases(
+            social_insurance_base_fen=0,
+            housing_fund_base_fen=0,
+            social_insurance_participating=False,
+            housing_fund_participating=False,
+        ),
+        date(2026, 7, 31),
+    )
+
+    assert {line.capped_base_fen for line in result.lines} == {0}
+    assert result.employee_total_fen == 0
+    assert result.employer_total_fen == 0
+    assert all(
+        line_trace.values["employee_participating"] is False
+        for line_trace in result.trace
+    )
+
+
 def test_zero_tax_reported_salary_can_shift_employee_social_share_to_company() -> None:
     statutory = calculate_contributions(
         hangzhou_social_policy(),
