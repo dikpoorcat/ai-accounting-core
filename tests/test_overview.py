@@ -551,6 +551,87 @@ def test_overview_builds_balanced_month_without_internal_ids(session: Session) -
     )
 
 
+def test_overview_distinguishes_customer_receipt_with_vat_transfer(
+    session: Session,
+) -> None:
+    organization = _seed_overview_month(session)
+    customer = Counterparty(
+        org_id=organization.id,
+        kind="customer",
+        name="测试客户",
+    )
+    session.add(customer)
+    session.flush()
+    accounts = {
+        role: session.scalar(
+            select(Account).where(
+                Account.org_id == organization.id,
+                Account.system_role == role,
+            )
+        )
+        for role in (
+            "bank",
+            "accounts_receivable",
+            "deferred_output_vat",
+            "vat_payable",
+        )
+    }
+    assert all(accounts.values())
+    bank = accounts["bank"]
+    receivable = accounts["accounts_receivable"]
+    deferred_output_vat = accounts["deferred_output_vat"]
+    vat_payable = accounts["vat_payable"]
+    assert bank and receivable and deferred_output_vat and vat_payable
+    _add_test_voucher(
+        session,
+        organization=organization,
+        number="202602-0002",
+        event_type="customer_receipt",
+        description="收到普通客户回款",
+        facts={"derived": {"allocated_fen": 10_000}},
+        lines=[
+            (bank, customer, 10_000, 0),
+            (receivable, customer, 0, 10_000),
+        ],
+    )
+    _add_test_voucher(
+        session,
+        organization=organization,
+        number="202602-0003",
+        event_type="customer_receipt",
+        description="收到客户回款并结转增值税",
+        facts={
+            "derived": {
+                "allocated_fen": 20_000,
+                "deferred_output_vat_transfer_fen": 168,
+            }
+        },
+        lines=[
+            (bank, customer, 20_000, 0),
+            (receivable, customer, 0, 20_000),
+            (deferred_output_vat, None, 168, 0),
+            (vat_payable, None, 0, 168),
+        ],
+    )
+
+    month = build_overview_payload(session)["months"][0]
+    vouchers = {voucher["number"]: voucher for voucher in month["vouchers"]}
+    income_group = next(
+        group for group in month["activity_groups"] if group["key"] == "income_customer"
+    )
+
+    assert vouchers["202602-0002"]["type"] == "客户回款"
+    assert vouchers["202602-0003"]["type"] == "客户回款及增值税结转"
+    assert {row["title"] for row in income_group["rows"]} == {
+        "客户回款",
+        "客户回款及增值税结转",
+    }
+    assert income_group["type_counts"] == [
+        {"label": "客户回款", "count": 1},
+        {"label": "客户回款及增值税结转", "count": 1},
+    ]
+
+
 def test_overview_subtracts_accumulated_depreciation_from_assets(
     session: Session,
 ) -> None:

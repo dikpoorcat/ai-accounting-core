@@ -369,12 +369,27 @@ def _event_presentation(event_type: str) -> tuple[str, str]:
     return EVENT_PRESENTATIONS.get(event_type, ("other", "其他业务"))
 
 
+def _voucher_event_label(event: BusinessEvent) -> str:
+    _, event_label = _event_presentation(event.event_type)
+    if event.event_type != "customer_receipt":
+        return event_label
+    facts = event.facts if isinstance(event.facts, dict) else {}
+    derived = facts.get("derived")
+    transfer_fen = (
+        derived.get("deferred_output_vat_transfer_fen") if isinstance(derived, dict) else None
+    )
+    if isinstance(transfer_fen, int) and not isinstance(transfer_fen, bool) and transfer_fen > 0:
+        return "客户回款及增值税结转"
+    return event_label
+
+
 def _build_activity_groups(
     voucher_records: list[tuple[Voucher, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for voucher, item in voucher_records:
-        group_key, event_label = _event_presentation(item["event_type"])
+        group_key, _ = _event_presentation(item["event_type"])
+        event_label = item["type"]
         if item["is_reversal"]:
             group_key = "correction"
             event_label = f"{event_label}冲正"
@@ -447,7 +462,7 @@ def _load_vouchers(
     records: list[tuple[Voucher, dict[str, Any]]] = []
     by_event: dict[uuid.UUID, dict[str, Any]] = {}
     for voucher in vouchers:
-        _, event_label = _event_presentation(voucher.event.event_type)
+        event_label = _voucher_event_label(voucher.event)
         lines = [
             {
                 "line_number": line.line_number,
