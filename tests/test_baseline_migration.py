@@ -19,8 +19,10 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0017_payroll_reported_salary"]
+    assert scripts.get_heads() == ["0019_deferred_output_vat"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0019_deferred_output_vat",
+        "0018_payroll_participation",
         "0017_payroll_reported_salary",
         "0016_close_labor_module",
         "0015_labor_final_events",
@@ -72,7 +74,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0017_payroll_reported_salary"
+                == "0019_deferred_output_vat"
             )
             assert "reimbursing_employee_id" in {
                 column["name"] for column in inspect(connection).get_columns("fixed_assets")
@@ -123,6 +125,18 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
                 "tax_exempt_income_fen",
                 "attendance_deduction_fen",
             }.isdisjoint(payroll_line_columns)
+            assert "deferred_output_vat_transfers" in set(
+                inspect(connection).get_table_names()
+            )
+            assert (
+                connection.scalar(
+                    sa.text(
+                        "SELECT COUNT(*) FROM accounts "
+                        "WHERE system_role = 'deferred_output_vat'"
+                    )
+                )
+                == 0
+            )
         command.check(config)
 
         command.downgrade(config, "base")
@@ -132,7 +146,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0017_payroll_reported_salary"
+                == "0019_deferred_output_vat"
             )
     finally:
         engine.dispose()

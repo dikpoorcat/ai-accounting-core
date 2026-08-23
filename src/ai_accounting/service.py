@@ -35,6 +35,7 @@ from .models import (
     BusinessEvent,
     BusinessEventDependency,
     Counterparty,
+    DeferredOutputVatTransfer,
     Employee,
     EmployeePayrollProfileVersion,
     Evidence,
@@ -113,6 +114,12 @@ from .tax import active_tax_rule, calculate_tax_period, split_tax_inclusive
 
 
 class FinanceService:
+    DEFERRED_OUTPUT_VAT_RULE_VERSION = "mof-cai-kuai-2016-22-v1"
+    DEFERRED_OUTPUT_VAT_RULE_SOURCE_URL = (
+        "https://www.mof.gov.cn/gkml/caizhengwengao/2017wg/wg201703/"
+        "201707/t20170707_2641107.htm"
+    )
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -843,6 +850,7 @@ class FinanceService:
         )
         self.session.add(event)
         self.session.flush()
+        self._persist_deferred_output_vat_transfers(event, request, derived)
         if linked_original is not None:
             self.session.add(
                 BusinessEventDependency(
@@ -977,10 +985,23 @@ class FinanceService:
                 Entry(account_role="service_revenue", credit_fen=net, counterparty_id=cp_id)
             )
             if vat:
-                entries.append(Entry(account_role="vat_payable", credit_fen=vat))
+                entries.append(
+                    Entry(
+                        account_role=(
+                            "deferred_output_vat"
+                            if self._should_defer_output_vat(request)
+                            else "vat_payable"
+                        ),
+                        credit_fen=vat,
+                    )
+                )
             if event_type == EventType.SERVICE_CREDIT_SALE:
                 open_item_type = "receivable"
             derived = self._sales_derived(request, amount, net, vat, taxable)
+            if vat:
+                derived["vat_recognition"] = (
+                    "deferred" if self._should_defer_output_vat(request) else "payable"
+                )
 
         elif event_type == EventType.SERVICE_FULFILLMENT:
             tax_previously_accrued = bool(request.details["tax_previously_accrued"])
@@ -1037,6 +1058,8 @@ class FinanceService:
         elif event_type == EventType.CUSTOMER_RECEIPT:
             allocated = sum(item.amount_fen for item in request.allocations)
             excess = amount - allocated
+            vat_transfer_plans = self._deferred_output_vat_transfer_plans(request)
+            vat_transfer_total = sum(plan["amount_fen"] for plan in vat_transfer_plans)
             entries = [
                 Entry(
                     account_code=request.bank_account_code, debit_fen=amount, counterparty_id=cp_id
@@ -1056,7 +1079,19 @@ class FinanceService:
                         account_role="contract_liability", credit_fen=excess, counterparty_id=cp_id
                     )
                 )
-            derived = {"allocated_fen": allocated, "advance_fen": excess}
+            if vat_transfer_total:
+                entries.extend(
+                    [
+                        Entry(account_role="deferred_output_vat", debit_fen=vat_transfer_total),
+                        Entry(account_role="vat_payable", credit_fen=vat_transfer_total),
+                    ]
+                )
+            derived = {
+                "allocated_fen": allocated,
+                "advance_fen": excess,
+                "deferred_output_vat_transfer_fen": vat_transfer_total,
+                "deferred_output_vat_transfers": vat_transfer_plans,
+            }
 
         elif event_type == EventType.CUSTOMER_REFUND:
             refund_kind = request.details["refund_kind"]
@@ -1383,6 +1418,114 @@ class FinanceService:
             return gross_fen, 0, False
         net, vat = split_tax_inclusive(gross_fen, tax.rate_percent)
         return net, vat, True
+
+    @staticmethod
+    def _should_defer_output_vat(request: RecordEventRequest) -> bool:
+        """Recognize output VAT later when accounting income precedes the tax date."""
+
+        return bool(
+            request.event_type is EventType.SERVICE_CREDIT_SALE
+            and request.tax_facts
+            and request.tax_facts.taxable
+            and request.tax_facts.tax_due_on_event
+            and request.business_dates.tax_obligation_date
+            and request.business_dates.tax_obligation_date
+            > request.business_dates.posting_date
+        )
+
+    def _deferred_output_vat_transfer_plans(
+        self, request: RecordEventRequest
+    ) -> list[dict[str, Any]]:
+        """Derive receipt-side VAT transfers solely from normalized receivable sources."""
+
+        if request.event_type is not EventType.CUSTOMER_RECEIPT:
+            return []
+        payment_date = request.business_dates.payment_date
+        if payment_date is None:
+            return []
+
+        transfer_event = aliased(BusinessEvent)
+        plans: list[dict[str, Any]] = []
+        for allocation in request.allocations:
+            item = self.session.scalar(
+                select(OpenItem)
+                .where(
+                    OpenItem.org_id == request.org_id,
+                    OpenItem.id == allocation.open_item_id,
+                )
+                .with_for_update()
+            )
+            if item is None:
+                continue
+            source = self.session.scalar(
+                select(BusinessEvent).where(
+                    BusinessEvent.org_id == request.org_id,
+                    BusinessEvent.id == item.source_event_id,
+                    BusinessEvent.status == "posted",
+                )
+            )
+            if (
+                source is None
+                or source.event_type != EventType.SERVICE_CREDIT_SALE.value
+                or source.tax_obligation_date != payment_date
+                or source.tax_obligation_date <= source.posting_date
+                or source.facts.get("derived", {}).get("vat_recognition") != "deferred"
+            ):
+                continue
+            if request.business_dates.posting_date != source.tax_obligation_date:
+                raise ValueError(
+                    "DEFERRED_OUTPUT_VAT_TRANSFER_POSTING_DATE_MUST_EQUAL_TAX_OBLIGATION_DATE"
+                )
+            vat_fen = int(source.facts.get("derived", {}).get("vat_fen", 0))
+            if vat_fen <= 0:
+                continue
+            already_transferred = self.session.scalar(
+                select(
+                    exists().where(
+                        DeferredOutputVatTransfer.org_id == request.org_id,
+                        DeferredOutputVatTransfer.source_event_id == source.id,
+                        DeferredOutputVatTransfer.transfer_event_id == transfer_event.id,
+                        transfer_event.status == "posted",
+                    )
+                )
+            )
+            if already_transferred:
+                continue
+            plans.append(
+                {
+                    "source_event_id": str(source.id),
+                    "source_open_item_id": str(item.id),
+                    "amount_fen": vat_fen,
+                    "tax_obligation_date": source.tax_obligation_date.isoformat(),
+                    "accounting_rule_version": self.DEFERRED_OUTPUT_VAT_RULE_VERSION,
+                    "accounting_rule_source_url": self.DEFERRED_OUTPUT_VAT_RULE_SOURCE_URL,
+                }
+            )
+        return plans
+
+    def _persist_deferred_output_vat_transfers(
+        self,
+        event: BusinessEvent,
+        request: RecordEventRequest,
+        derived: dict[str, Any],
+    ) -> None:
+        if request.event_type is not EventType.CUSTOMER_RECEIPT:
+            return
+        for plan in derived.get("deferred_output_vat_transfers", []):
+            self.session.add(
+                DeferredOutputVatTransfer(
+                    org_id=request.org_id,
+                    source_event_id=uuid.UUID(plan["source_event_id"]),
+                    source_open_item_id=uuid.UUID(plan["source_open_item_id"]),
+                    transfer_event_id=event.id,
+                    amount_fen=plan["amount_fen"],
+                    tax_obligation_date=date.fromisoformat(plan["tax_obligation_date"]),
+                    accounting_rule_version=plan["accounting_rule_version"],
+                    accounting_rule_source_url=plan["accounting_rule_source_url"],
+                )
+            )
+        if derived.get("deferred_output_vat_transfers"):
+            self.session.flush()
 
     @staticmethod
     def _sales_derived(

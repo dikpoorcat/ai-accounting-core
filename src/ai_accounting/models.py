@@ -2884,6 +2884,57 @@ class BusinessEventDependency(Base):
     )
 
 
+class DeferredOutputVatTransfer(Base):
+    """Immutable link from deferred VAT recognition to its automatic transfer."""
+
+    __tablename__ = "deferred_output_vat_transfers"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    source_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    source_open_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    transfer_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    tax_obligation_date: Mapped[date] = mapped_column(Date, nullable=False)
+    accounting_rule_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    accounting_rule_source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "source_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_deferred_vat_transfer_org_source_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "source_open_item_id"],
+            ["open_items.org_id", "open_items.id"],
+            name="fk_deferred_vat_transfer_org_open_item",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "transfer_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_deferred_vat_transfer_org_transfer_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "source_event_id",
+            "transfer_event_id",
+            name="uq_deferred_vat_transfer_source_event",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_deferred_vat_transfer_org_id"),
+        CheckConstraint("amount_fen > 0", name="ck_deferred_vat_transfer_amount"),
+        CheckConstraint(
+            "length(trim(accounting_rule_version)) > 0 "
+            "AND length(trim(accounting_rule_source_url)) > 0",
+            name="ck_deferred_vat_transfer_rule_text",
+        ),
+    )
+
+
 class AccountingPeriodDependencyMigrationAction(Base):
     """Marks normalized dependency rows proven by the schema baseline."""
 

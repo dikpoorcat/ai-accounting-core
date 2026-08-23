@@ -17,6 +17,7 @@ DEFAULT_ACCOUNTS = [
     ("2202", "应付账款", "liability", "credit", "accounts_payable"),
     ("2203", "合同负债及预收款", "liability", "credit", "contract_liability"),
     ("222101", "应交增值税", "liability", "credit", "vat_payable"),
+    ("222104", "应交税费—待转销项税额", "liability", "credit", "deferred_output_vat"),
     ("222102", "应交附加税费", "liability", "credit", "surtax_payable"),
     ("224101", "其他应付款—员工", "liability", "credit", "employee_payable"),
     ("2241", "其他应付款—股东", "liability", "credit", "owner_payable"),

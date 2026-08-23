@@ -11,6 +11,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from ai_accounting.models import (
     Account,
     BankTransaction,
+    DeferredOutputVatTransfer,
     OpenItem,
     Organization,
     Voucher,
@@ -167,6 +168,92 @@ def test_credit_sale_partial_settlement_and_oversettlement_rejected(
     assert rejected.status == "rejected"
     assert "exceeds open amount" in rejected.errors[0]
     assert item.settled_amount_fen == 40_000
+
+
+def test_credit_sale_defers_vat_and_receipt_transfers_it_on_tax_date(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    sale_request_payload = sale_request(
+        organization,
+        event_type="service_credit_sale",
+        amount_fen=149_400,
+        key="march-revenue-deferred-vat",
+    ).model_dump(mode="json")
+    sale_request_payload["business_dates"] = {
+        "business_date": "2026-03-31",
+        "posting_date": "2026-03-31",
+        "fulfillment_date": "2026-03-31",
+        "payment_date": None,
+        "tax_obligation_date": "2026-04-02",
+        "invoice_date": None,
+    }
+    sale = service.record_event(RecordEventRequest.model_validate(sale_request_payload))
+
+    assert sale.status == "posted"
+    assert sale.data["derived"]["vat_fen"] == 1_479
+    assert sale.data["derived"]["vat_recognition"] == "deferred"
+    sale_voucher = session.get(Voucher, sale.voucher_id)
+    sale_by_role = {line.account.system_role: line for line in sale_voucher.lines}
+    assert sale_by_role["deferred_output_vat"].credit_fen == 1_479
+    assert "vat_payable" not in sale_by_role
+
+    item = session.scalar(select(OpenItem).where(OpenItem.source_event_id == sale.event_id))
+    receipt = service.record_event(
+        RecordEventRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "april-receipt-transfers-vat",
+                "event_type": "customer_receipt",
+                "business_dates": {
+                    "business_date": "2026-04-02",
+                    "posting_date": "2026-04-02",
+                    "payment_date": "2026-04-02",
+                },
+                "counterparty": {"kind": "customer", "name": "甲客户"},
+                "bank_account_code": "1002",
+                "amounts": {"amount_fen": 149_400},
+                "allocations": [{"open_item_id": item.id, "amount_fen": 149_400}],
+                "description": "收到3月服务款",
+            }
+        )
+    )
+
+    assert receipt.status == "posted"
+    assert receipt.data["derived"]["deferred_output_vat_transfer_fen"] == 1_479
+    receipt_voucher = session.get(Voucher, receipt.voucher_id)
+    receipt_by_role = {line.account.system_role: line for line in receipt_voucher.lines}
+    assert receipt_by_role["deferred_output_vat"].debit_fen == 1_479
+    assert receipt_by_role["vat_payable"].credit_fen == 1_479
+    transfer = session.scalar(
+        select(DeferredOutputVatTransfer).where(
+            DeferredOutputVatTransfer.transfer_event_id == receipt.event_id
+        )
+    )
+    assert transfer.source_event_id == sale.event_id
+    assert transfer.source_open_item_id == item.id
+    assert transfer.tax_obligation_date == date(2026, 4, 2)
+    assert transfer.amount_fen == 1_479
+    assert transfer.accounting_rule_source_url == FinanceService.DEFERRED_OUTPUT_VAT_RULE_SOURCE_URL
+
+
+def test_credit_sale_same_day_tax_obligation_still_credits_vat_payable(
+    session: Session, organization: Organization
+) -> None:
+    result = FinanceService(session).record_event(
+        sale_request(
+            organization,
+            event_type="service_credit_sale",
+            amount_fen=101_000,
+            key="same-day-credit-sale-vat",
+        )
+    )
+
+    voucher = session.get(Voucher, result.voucher_id)
+    by_role = {line.account.system_role: line for line in voucher.lines}
+    assert by_role["vat_payable"].credit_fen == 1_000
+    assert "deferred_output_vat" not in by_role
+    assert result.data["derived"]["vat_recognition"] == "payable"
 
 
 def test_idempotency_replays_original_result(session: Session, organization: Organization) -> None:
