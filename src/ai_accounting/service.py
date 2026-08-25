@@ -2927,6 +2927,7 @@ class FinanceService:
             elif request.amounts.expense_account_role not in {
                 "general_expense",
                 "finance_expense",
+                "labor_service_cost",
             }:
                 missing.append("a supported amounts.expense_account_role")
 

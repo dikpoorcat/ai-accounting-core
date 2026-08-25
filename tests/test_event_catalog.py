@@ -227,7 +227,7 @@ def test_employee_reimbursement_claims_create_payables_and_one_payment_settles_t
                 "counterparty": employee,
                 "amounts": {
                     "gross_amount_fen": 1_234_500,
-                    "expense_account_role": "general_expense",
+                    "expense_account_role": "labor_service_cost",
                 },
                 "details": {"paid_now": False, "reimbursement_kind": "expense"},
             },
@@ -254,6 +254,21 @@ def test_employee_reimbursement_claims_create_payables_and_one_payment_settles_t
         )
     )
     assert expense.status == deposit.status == "posted"
+    expense_lines = session.scalars(
+        select(VoucherLine).where(VoucherLine.voucher_id == expense.voucher_id)
+    ).all()
+    labor_service_cost_account = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == "labor_service_cost",
+        )
+    )
+    assert labor_service_cost_account is not None
+    assert any(
+        line.account_id == labor_service_cost_account.id
+        and line.debit_fen == 1_234_500
+        for line in expense_lines
+    )
     claims = session.scalars(
         select(OpenItem)
         .where(OpenItem.source_event_id.in_([expense.event_id, deposit.event_id]))
