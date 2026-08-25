@@ -65,7 +65,11 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
     Base.metadata.create_all(setup_engine)
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
-        organization = seed_organization(database_session, name="税务硬化 STDIO 验收企业")
+        organization = seed_organization(
+            database_session,
+            taxpayer_identification_number="91330106MA1234567T",
+            name="税务硬化 STDIO 验收企业",
+        )
         organization.accounting_period_control_enabled = False
         database_session.flush()
         evidence = Evidence(

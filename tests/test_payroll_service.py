@@ -188,7 +188,11 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ai_accounting.ledger.china_current_date", lambda: date(2026, 12, 31))
-    organization = seed_organization(session, name="工资预览关闭期间")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="工资预览关闭期间",
+    )
     evidence = Evidence(
         org_id=organization.id,
         sha256="q" * 64,
@@ -283,7 +287,11 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
 def test_payroll_preview_preserves_not_generated_error_without_calculated_batch(
     session: Session,
 ) -> None:
-    organization = seed_organization(session, name="工资预览未生成期间")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="工资预览未生成期间",
+    )
     employee_id = register_payroll_facts(session, organization)
     preview = FinanceService(session).preview_payroll(
         PreviewPayrollRequest.model_validate(

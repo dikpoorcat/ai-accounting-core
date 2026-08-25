@@ -67,7 +67,10 @@ def _confirmed_payroll_with_evidence(
     session: Session, *, key: str
 ) -> tuple[object, PayrollBatch, PayrollLine, Evidence, BusinessEvent]:
     organization = seed_organization(
-        session, accounting_period_control_enabled=False, name=f"R4 event integrity {key}"
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        accounting_period_control_enabled=False,
+        name=f"R4 event integrity {key}",
     )
     employee_id = register_payroll_facts(session, organization)
     evidence = _evidence(session, organization.id, f"r4-{key}-evidence")
@@ -260,7 +263,10 @@ def test_r4_004_final_event_evidence_is_org_bound_immutable_and_inherited(
             session, key="event-evidence"
         )
         other_organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R4 外企业证据"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R4 外企业证据",
         )
         foreign_evidence = _evidence(session, other_organization.id, "r4-foreign-evidence")
         expected_batch_evidence = set(
@@ -394,7 +400,10 @@ def test_r4_005_rejects_fake_payroll_reversal_of_sale_and_requires_exact_voucher
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R4 canonical reversal"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R4 canonical reversal",
         )
         original = _post_expense_event(session, organization, key="r4-original-expense")
         original_voucher = session.scalar(select(Voucher).where(Voucher.event_id == original.id))
@@ -467,7 +476,10 @@ def test_r4_005_final_reversal_voucher_lines_are_immutable_and_link_is_checked(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R4 exact reversal voucher"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R4 exact reversal voucher",
         )
         original = _post_expense_event(session, organization, key="r4-exact-original")
         reversed_result = FinanceService(session).reverse_event(
@@ -524,7 +536,10 @@ def test_r4_005_draft_reversal_with_balanced_noninverse_lines_fails_at_commit(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R4 malformed draft reversal"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R4 malformed draft reversal",
         )
         original = _post_unmatched_expense_for_invariant(
             session, organization, key="r4-noninverse-original"
@@ -575,7 +590,10 @@ def test_r4_006_statutory_edges_keep_each_direct_source_and_query_the_normalized
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R4 statutory source graph"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R4 statutory source graph",
         )
         statutory, settled_items = _post_two_partial_salary_social_payment(session, organization)
         edges = session.scalars(
@@ -645,7 +663,10 @@ def _salary_payment_with_unsettled_statutory_sources(
     """
 
     organization = seed_organization(
-        session, accounting_period_control_enabled=False, name=f"R4 statutory direct SQL {key}"
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        accounting_period_control_enabled=False,
+        name=f"R4 statutory direct SQL {key}",
     )
     authority = prepare_authenticated_bank_account(session, organization)
     employee_id = register_payroll_facts(session, organization)

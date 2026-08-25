@@ -217,6 +217,7 @@ def seed_organization(
     session: Session,
     *,
     name: str,
+    taxpayer_identification_number: str,
     filing_cycle: str = "quarterly",
     jurisdiction: str = "CN",
     urban_maintenance_rate: Decimal = Decimal("0.07"),
@@ -226,6 +227,7 @@ def seed_organization(
     organization = Organization(
         id=org_id or uuid.uuid4(),
         name=name,
+        taxpayer_identification_number=taxpayer_identification_number,
         filing_cycle=filing_cycle,
         jurisdiction=jurisdiction,
         urban_maintenance_rate=urban_maintenance_rate,

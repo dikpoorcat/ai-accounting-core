@@ -427,6 +427,7 @@ def test_labor_batch_rejects_cross_organization_person_and_evidence(
     )
     other = seed_organization(
         session,
+        taxpayer_identification_number="91330106MA1234567T",
         name="劳务跨组织攻击测试",
         accounting_period_control_enabled=False,
     )
@@ -487,6 +488,7 @@ def test_concurrent_labor_batch_confirmation_is_exactly_once() -> None:
             with factory.begin() as session:
                 organization = seed_organization(
                     session,
+                    taxpayer_identification_number="91330106MA1234567T",
                     name="个人劳务并发确认测试",
                     accounting_period_control_enabled=False,
                 )
@@ -659,6 +661,7 @@ def test_full_labor_payout_tax_source_payment_and_downstream_first_reversal() ->
         with factory() as session:
             organization = seed_organization(
                 session,
+                taxpayer_identification_number="91330106MA1234567T",
                 name="个人劳务完整支付测试",
                 accounting_period_control_enabled=True,
             )
@@ -930,6 +933,7 @@ def test_gross_paid_without_withholding_preserves_exception_and_settles_full_ban
         with factory() as session:
             organization = seed_organization(
                 session,
+                taxpayer_identification_number="91330106MA1234567T",
                 name="个人劳务毛额支付未扣税测试",
                 accounting_period_control_enabled=True,
             )
@@ -1141,6 +1145,7 @@ def test_one_imported_bank_row_atomically_covers_salary_and_labor_children() -> 
         with factory() as session:
             organization = seed_organization(
                 session,
+                taxpayer_identification_number="91330106MA1234567T",
                 name="工资劳务统一代发测试",
                 accounting_period_control_enabled=True,
             )

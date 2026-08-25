@@ -420,7 +420,11 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
     Base.metadata.create_all(engine)
     factory = make_session_factory(engine)
     with factory.begin() as database_session:
-        organization = seed_organization(database_session, name="工资 STDIO 回归企业")
+        organization = seed_organization(
+            database_session,
+            taxpayer_identification_number="91330106MA1234567T",
+            name="工资 STDIO 回归企业",
+        )
         organization.accounting_period_control_enabled = False
         database_session.flush()
         org_id = str(organization.id)

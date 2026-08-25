@@ -197,7 +197,10 @@ def _prepare_payment_requests(
 
     with factory() as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name=organization_name
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name=organization_name,
         )
         authority = prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
@@ -313,7 +316,10 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 PG correction barrier"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 PG correction barrier",
         )
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
@@ -417,7 +423,10 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 preview and confirm envelope"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 preview and confirm envelope",
         )
         employee_id = register_payroll_facts(session, organization)
         org_id = organization.id
@@ -531,7 +540,10 @@ def test_r5_006_first_shared_agency_is_safe_across_connections(
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 shared agency construction"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 shared agency construction",
         )
         first_employee_id = register_payroll_facts(session, organization)
         second_employee_id = _register_second_employee(session, organization.id)

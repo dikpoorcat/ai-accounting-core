@@ -380,11 +380,12 @@ def test_pg17_dump_restore_alembic_head_and_evidence_cross_validation(
                 connection.exec_driver_sql(
                     """
                     INSERT INTO organizations (
-                        id, name, taxpayer_type, filing_cycle, jurisdiction,
+                        id, name, taxpayer_identification_number, taxpayer_type,
+                        filing_cycle, jurisdiction,
                         urban_maintenance_rate, accounting_standard,
                         accounting_period_control_enabled, created_at
                     ) VALUES (
-                        %s, %s, 'small_scale', 'quarterly', 'CN', 0.07,
+                        %s, %s, '91330106MA1234567T', 'small_scale', 'quarterly', 'CN', 0.07,
                         'small_enterprise', true, %s
                     )
                     """,

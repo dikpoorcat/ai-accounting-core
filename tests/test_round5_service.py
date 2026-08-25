@@ -46,7 +46,11 @@ def test_r5_004_profile_correction_is_blocked_until_final_payroll_is_reversed(
 ) -> None:
     """A profile replacement cannot reinterpret a final cumulative-payroll chain."""
 
-    organization = seed_organization(session, name="R5 profile correction barrier")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="R5 profile correction barrier",
+    )
     organization.accounting_period_control_enabled = False
     session.flush()
     service, confirmed = preview_and_confirm(session, organization)
@@ -94,7 +98,11 @@ def test_r5_004_policy_correction_blocks_every_employee_in_the_final_batch(
 ) -> None:
     """A policy correction exposes the formal batch IDs that must be rebuilt."""
 
-    organization = seed_organization(session, name="R5 policy correction barrier")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="R5 policy correction barrier",
+    )
     organization.accounting_period_control_enabled = False
     session.flush()
     _service, confirmed = preview_and_confirm(session, organization)
@@ -123,7 +131,11 @@ def test_r5_004_opening_correction_blocks_all_later_payroll_kinds(
 ) -> None:
     """Opening-state replacement is barred by any later final payroll batch."""
 
-    organization = seed_organization(session, name="R5 opening correction barrier")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="R5 opening correction barrier",
+    )
     organization.accounting_period_control_enabled = False
     session.flush()
     employee_id = register_payroll_facts(session, organization)

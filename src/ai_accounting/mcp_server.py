@@ -540,6 +540,9 @@ def finance_get_profile(org_id: str) -> dict[str, Any]:
             "organization": {
                 "id": str(organization.id),
                 "name": organization.name,
+                "taxpayer_identification_number": (
+                    organization.taxpayer_identification_number
+                ),
                 "taxpayer_type": organization.taxpayer_type,
                 "filing_cycle": organization.filing_cycle,
                 "jurisdiction": organization.jurisdiction,

@@ -47,10 +47,11 @@ def _insert_org(connection: sa.Connection, org_id: uuid.UUID, name: str) -> None
         sa.text(
             """
             INSERT INTO organizations (
-                id, name, taxpayer_type, filing_cycle, jurisdiction,
+                id, name, taxpayer_identification_number, taxpayer_type,
+                filing_cycle, jurisdiction,
                 urban_maintenance_rate, accounting_standard, created_at
             ) VALUES (
-                :id, :name, 'small_scale', 'quarterly', 'CN',
+                :id, :name, '91330106MA1234567T', 'small_scale', 'quarterly', 'CN',
                 0.07, 'small_enterprise', CURRENT_TIMESTAMP
             )
             """
@@ -461,7 +462,11 @@ def test_postgres_identity_service_commits_password_rotation_atomically() -> Non
         random = SequenceRandom()
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG身份服务提交点")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG身份服务提交点",
+                )
                 session.flush()
                 service = IdentityService(session, randbytes=random.bytes)
                 provisioned = service.provision_owner(

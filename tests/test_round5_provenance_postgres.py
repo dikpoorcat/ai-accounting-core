@@ -128,7 +128,10 @@ def _post_expense_with_supporting_evidence(
     session: Session, *, key: str
 ) -> tuple[object, BusinessEvent, object]:
     organization = seed_organization(
-        session, accounting_period_control_enabled=False, name=f"R5 普通冲正证据 {key}"
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        accounting_period_control_enabled=False,
+        name=f"R5 普通冲正证据 {key}",
     )
     authority = prepare_authenticated_bank_account(session, organization)
     evidence = _evidence(session, organization.id, f"r5-{key}-supporting")
@@ -548,7 +551,10 @@ def test_r5_007_compatible_multi_batch_tax_payment_keeps_per_source_provenance(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 兼容多批次法定缴款"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 兼容多批次法定缴款",
         )
         prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
@@ -672,7 +678,10 @@ def test_r5_007_incompatible_tax_period_rejects_before_any_source_settlement(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 法定缴款期间不兼容"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 法定缴款期间不兼容",
         )
         prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
@@ -748,7 +757,10 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 法定缴款政策机构不兼容"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 法定缴款政策机构不兼容",
         )
         prepare_authenticated_bank_account(session, organization)
         service = FinanceService(session)
@@ -891,7 +903,10 @@ def test_r5_007_incompatible_statutory_categories_reject_atomically(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 法定缴款类别隔离"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 法定缴款类别隔离",
         )
         prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)

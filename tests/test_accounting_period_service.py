@@ -45,7 +45,10 @@ def _session() -> Session:
 
 
 def _organization_and_evidence(session: Session) -> tuple[Organization, Evidence]:
-    organization = Organization(name="期间测试企业")
+    organization = Organization(
+        name="期间测试企业",
+        taxpayer_identification_number="91330106MA1234567T",
+    )
     session.add(organization)
     session.flush()
     evidence = Evidence(

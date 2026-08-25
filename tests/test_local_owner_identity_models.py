@@ -28,7 +28,10 @@ def test_identity_metadata_is_sqlite_compatible_and_keeps_one_current_recovery_c
     now = datetime.now(UTC)
     try:
         with Session(engine) as session:
-            organization = Organization(name="单负责人元数据")
+            organization = Organization(
+                name="单负责人元数据",
+                taxpayer_identification_number="91330106MA1234567T",
+            )
             session.add(organization)
             session.flush()
             owner = OwnerAccount(

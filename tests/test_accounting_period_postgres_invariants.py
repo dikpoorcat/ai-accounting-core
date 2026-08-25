@@ -212,7 +212,11 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
         engine = sa.create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG期间提交点")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG期间提交点",
+                )
                 session.flush()
                 evidence = Evidence(
                     org_id=organization.id,
@@ -560,7 +564,11 @@ def test_postgres_close_vs_close_is_linearized(
         engine = sa.create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG并发月结")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG并发月结",
+                )
                 session.flush()
                 evidence = Evidence(
                     org_id=organization.id,
@@ -670,7 +678,11 @@ def test_postgres_close_vs_post_is_linearized(
         engine = sa.create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG入账月结并发")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG入账月结并发",
+                )
                 session.flush()
                 evidence = Evidence(
                     org_id=organization.id,
@@ -793,7 +805,11 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
         engine = sa.create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG期间生成并发")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG期间生成并发",
+                )
                 session.flush()
                 evidence = Evidence(
                     org_id=organization.id,
@@ -873,7 +889,11 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
             tamper_org_id = None
             with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_SNAPSHOT_IMMUTABLE"):
                 with Session(engine) as session:
-                    tamper_org = seed_organization(session, name="PG构造期篡改")
+                    tamper_org = seed_organization(
+                        session,
+                        taxpayer_identification_number="91330106MA1234567T",
+                        name="PG构造期篡改",
+                    )
                     session.flush()
                     tamper_org_id = tamper_org.id
                     tamper_evidence = Evidence(
@@ -1116,7 +1136,11 @@ def test_postgres_owner_close_vs_raw_payroll_is_linearized(
         engine = sa.create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG owner月结工资并发")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG owner月结工资并发",
+                )
                 evidence = Evidence(
                     org_id=organization.id,
                     sha256="1" * 64,
@@ -1260,7 +1284,11 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
         engine = sa.create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="PG附加并发门禁")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG附加并发门禁",
+                )
                 session.flush()
                 evidence = Evidence(
                     org_id=organization.id,
@@ -1476,7 +1504,11 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                     )
 
             with Session(engine) as session:
-                second_org = seed_organization(session, name="PG生成org锁")
+                second_org = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG生成org锁",
+                )
                 session.flush()
                 second_evidence = Evidence(
                     org_id=second_org.id,
@@ -1522,7 +1554,11 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                 )
 
             with Session(engine) as session:
-                direct_org = seed_organization(session, name="PG服务直写锁序")
+                direct_org = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG服务直写锁序",
+                )
                 session.flush()
                 direct_evidence = Evidence(
                     org_id=direct_org.id,

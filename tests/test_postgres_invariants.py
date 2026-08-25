@@ -33,7 +33,10 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
         try:
             with Session(engine) as session:
                 organization = seed_organization(
-                    session, accounting_period_control_enabled=False, name="PostgreSQL 约束测试"
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="PostgreSQL 约束测试",
                 )
                 event = BusinessEvent(
                     org_id=organization.id,
@@ -75,7 +78,10 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
 
             with Session(engine) as session:
                 organization = seed_organization(
-                    session, accounting_period_control_enabled=False, name="不可变约束测试"
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="不可变约束测试",
                 )
                 event = BusinessEvent(
                     org_id=organization.id,

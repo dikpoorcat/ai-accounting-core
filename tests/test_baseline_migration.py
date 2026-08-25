@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -19,8 +20,10 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0019_deferred_output_vat"]
+    assert scripts.get_heads() == ["0021_taxpayer_identification"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0021_taxpayer_identification",
+        "0020_salary_deduction_payout",
         "0019_deferred_output_vat",
         "0018_payroll_participation",
         "0017_payroll_reported_salary",
@@ -74,8 +77,18 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0019_deferred_output_vat"
+                == "0021_taxpayer_identification"
             )
+            organization_columns = {
+                column["name"] for column in inspect(connection).get_columns("organizations")
+            }
+            assert "taxpayer_identification_number" in organization_columns
+            taxpayer_column = next(
+                column
+                for column in inspect(connection).get_columns("organizations")
+                if column["name"] == "taxpayer_identification_number"
+            )
+            assert taxpayer_column["nullable"] is False
             assert "reimbursing_employee_id" in {
                 column["name"] for column in inspect(connection).get_columns("fixed_assets")
             }
@@ -146,7 +159,57 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0019_deferred_output_vat"
+                == "0021_taxpayer_identification"
             )
+    finally:
+        engine.dispose()
+
+
+def _seed_pre_taxpayer_identification_organization(database_url: str) -> None:
+    config = _config(database_url)
+    command.upgrade(config, "0020_salary_deduction_payout")
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO organizations (
+                        id, name, taxpayer_type, filing_cycle, jurisdiction,
+                        urban_maintenance_rate, accounting_standard,
+                        accounting_period_control_enabled, created_at
+                    ) VALUES (
+                        '11111111111111111111111111111111', '迁移前企业', 'small_scale',
+                        'quarterly', 'CN', 0.07, 'small_enterprise', true,
+                        CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+    finally:
+        engine.dispose()
+
+
+def test_existing_organization_taxpayer_identification_backfill_is_explicit(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_url = f"sqlite+pysqlite:///{(tmp_path / 'missing-tax-id.db').as_posix()}"
+    _seed_pre_taxpayer_identification_organization(missing_url)
+    monkeypatch.delenv("AI_ACCOUNTING_TAXPAYER_IDENTIFICATION_NUMBER", raising=False)
+    with pytest.raises(RuntimeError, match="requires AI_ACCOUNTING"):
+        command.upgrade(_config(missing_url), "head")
+
+    backfill_url = f"sqlite+pysqlite:///{(tmp_path / 'tax-id-backfill.db').as_posix()}"
+    _seed_pre_taxpayer_identification_organization(backfill_url)
+    monkeypatch.setenv(
+        "AI_ACCOUNTING_TAXPAYER_IDENTIFICATION_NUMBER", "91330106MA1234567T"
+    )
+    command.upgrade(_config(backfill_url), "head")
+    engine = create_engine(backfill_url)
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(
+                sa.text("SELECT taxpayer_identification_number FROM organizations")
+            ) == "91330106MA1234567T"
     finally:
         engine.dispose()

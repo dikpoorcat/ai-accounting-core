@@ -106,7 +106,10 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
         try:
             with factory() as session:
                 organization = seed_organization(
-                    session, accounting_period_control_enabled=False, name="PG 无形资产借款闭包"
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="PG 无形资产借款闭包",
                 )
                 evidence = Evidence(
                     org_id=organization.id,

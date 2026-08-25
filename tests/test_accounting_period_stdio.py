@@ -202,7 +202,11 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
     Base.metadata.create_all(setup_engine)
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
-        organization = seed_organization(database_session, name="期间 STDIO 验收企业")
+        organization = seed_organization(
+            database_session,
+            taxpayer_identification_number="91330106MA1234567T",
+            name="期间 STDIO 验收企业",
+        )
         assert organization.accounting_period_control_enabled is True
         assert organization.accounting_period_control_start_date is None
         evidence = Evidence(
@@ -531,7 +535,11 @@ def test_zero_voucher_month_closes_through_real_stdio(
     Base.metadata.create_all(setup_engine)
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
-        organization = seed_organization(database_session, name="零凭证期间 STDIO 企业")
+        organization = seed_organization(
+            database_session,
+            taxpayer_identification_number="91330106MA1234567T",
+            name="零凭证期间 STDIO 企业",
+        )
         evidence = Evidence(
             org_id=organization.id,
             sha256="z" * 64,
@@ -642,7 +650,11 @@ def test_real_stdio_uses_china_current_date_for_posting_boundary(tmp_path: Path)
     Base.metadata.create_all(setup_engine)
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
-        organization = seed_organization(database_session, name="中国日期 STDIO 企业")
+        organization = seed_organization(
+            database_session,
+            taxpayer_identification_number="91330106MA1234567T",
+            name="中国日期 STDIO 企业",
+        )
         evidence = Evidence(
             org_id=organization.id,
             sha256="y" * 64,
@@ -732,8 +744,16 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
     Base.metadata.create_all(setup_engine)
     setup_factory = make_session_factory(setup_engine)
     with setup_factory.begin() as database_session:
-        closed_org = seed_organization(database_session, name="工资预览关闭月 STDIO")
-        not_generated_org = seed_organization(database_session, name="工资预览未生成月 STDIO")
+        closed_org = seed_organization(
+            database_session,
+            taxpayer_identification_number="91330106MA1234567T",
+            name="工资预览关闭月 STDIO",
+        )
+        not_generated_org = seed_organization(
+            database_session,
+            taxpayer_identification_number="91330106MA1234567T",
+            name="工资预览未生成月 STDIO",
+        )
         evidence = Evidence(
             org_id=closed_org.id,
             sha256="w" * 64,

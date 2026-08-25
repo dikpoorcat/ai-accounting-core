@@ -42,7 +42,11 @@ def test_cli_failed_login_commits_throttle_and_fixed_audit_across_sessions(
     store = InMemoryCredentialStore()
     try:
         with factory.begin() as session:
-            organization = seed_organization(session, name="CLI failure persistence")
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="CLI failure persistence",
+            )
             IdentityService(session).provision_owner(
                 OwnerProvisionRequest(
                     org_id=organization.id,
@@ -109,7 +113,11 @@ def test_cli_approve_close_reauthenticates_and_binds_exact_preview_hash(
     password = "Owner-Explicit-Close-Approval-2026!"
     try:
         with factory.begin() as session:
-            organization = seed_organization(session, name="CLI owner close approval")
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="CLI owner close approval",
+            )
             evidence = Evidence(
                 org_id=organization.id,
                 sha256="c" * 64,

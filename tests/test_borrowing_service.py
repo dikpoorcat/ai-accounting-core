@@ -959,7 +959,10 @@ def test_bank_currency_and_lender_identity_are_frozen(
     )
 
     wrong_kind = Counterparty(org_id=organization.id, kind="supplier", name="错误类型贷款人")
-    other_organization = Organization(name="另一组织")
+    other_organization = Organization(
+        name="另一组织",
+        taxpayer_identification_number="91330106MA1234567T",
+    )
     session.add(other_organization)
     session.flush()
     foreign_lender = Counterparty(
@@ -1152,7 +1155,11 @@ def test_normalized_rate_and_interest_hash_are_stable_across_sessions(tmp_path) 
     factory = make_session_factory(engine)
     try:
         with factory.begin() as first_session:
-            organization = seed_organization(first_session, name="跨会话借款测试组织")
+            organization = seed_organization(
+                first_session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="跨会话借款测试组织",
+            )
             organization.accounting_period_control_enabled = False
             first_session.flush()
             _confirm_bank_scope(first_session, organization)

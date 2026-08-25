@@ -371,7 +371,11 @@ def _import_and_reconcile_bank_period(
 
 
 def test_new_organization_defaults_to_period_control_fail_closed(session: Session) -> None:
-    organization = seed_organization(session, name="新组织默认期控")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="新组织默认期控",
+    )
     evidence = _period_evidence(session, organization)
     _confirm_default_bank_scope(session, organization, evidence)
     session.flush()
@@ -402,7 +406,11 @@ def test_china_current_date_boundary_blocks_future_posting(
     tomorrow = date(2026, 8, 12)
     monkeypatch.setattr("ai_accounting.ledger.china_current_date", lambda: today)
 
-    controlled = seed_organization(session, name="中国日期期控组织")
+    controlled = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="中国日期期控组织",
+    )
     evidence = _period_evidence(session, controlled)
     _confirm_default_bank_scope(session, controlled, evidence)
     generated = AccountingPeriodService(session, current_date=today).generate_accounting_period(
@@ -431,6 +439,7 @@ def test_explicitly_disabled_migrated_organization_remains_compatible(
 ) -> None:
     organization = seed_organization(
         session,
+        taxpayer_identification_number="91330106MA1234567T",
         name="迁移组织期控兼容",
         accounting_period_control_enabled=False,
     )
@@ -512,7 +521,11 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
     session: Session,
     tmp_path: Path,
 ) -> None:
-    organization = seed_organization(session, name="非零期间完整闭环")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="非零期间完整闭环",
+    )
     evidence = _period_evidence(session, organization)
     _confirm_default_bank_scope(session, organization, evidence)
     period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
@@ -652,6 +665,7 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
     )
     organization = seed_organization(
         session,
+        taxpayer_identification_number="91330106MA1234567T",
         name="税期历史归属与后续调整",
         filing_cycle="monthly",
     )

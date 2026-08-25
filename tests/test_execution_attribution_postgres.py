@@ -92,10 +92,11 @@ def _authority(
         sa.text(
             """
             INSERT INTO organizations (
-                id, name, taxpayer_type, filing_cycle, jurisdiction,
+                id, name, taxpayer_identification_number, taxpayer_type,
+                filing_cycle, jurisdiction,
                 urban_maintenance_rate, accounting_standard, created_at
-            ) VALUES (:org, 'execution pg', 'small_scale', 'quarterly', 'CN',
-                      0.07, 'small_enterprise', :now)
+            ) VALUES (:org, 'execution pg', '91330106MA1234567T', 'small_scale',
+                      'quarterly', 'CN', 0.07, 'small_enterprise', :now)
             """
         ),
         {"org": org_id, "now": now},

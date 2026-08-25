@@ -209,7 +209,10 @@ def test_r3_007_postgresql_sealed_payroll_evidence_rejects_sql_mutations(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-007 evidence freeze"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-007 evidence freeze",
         )
         policy = _policy(session, organization.id, "evidence-freeze")
         original = _evidence(session, organization.id, "r3-original-evidence")
@@ -266,7 +269,10 @@ def test_r3_006_postgresql_source_edges_are_complete_and_immutable(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-006 source edges"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-006 source edges",
         )
         statutory, statutory_items = _post_two_partial_salary_social_payment(session, organization)
         organization_id = organization.id
@@ -344,10 +350,16 @@ def test_r3_007_postgresql_rejects_cross_organization_draft_evidence(
 
     with Session(postgres_engine) as session:
         organization_a = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-007 evidence A"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-007 evidence A",
         )
         organization_b = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-007 evidence B"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-007 evidence B",
         )
         policy = _policy(session, organization_a.id, "cross-org")
         foreign_evidence = _evidence(session, organization_b.id, "r3-foreign-evidence")
@@ -389,7 +401,10 @@ def test_r3_007_postgresql_rejects_cross_organization_draft_evidence(
         # relation; construct an independent legal draft in a fresh transaction.
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-007 evidence legal"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-007 evidence legal",
         )
         policy = _policy(session, organization.id, "legal-draft")
         evidence = _evidence(session, organization.id, "r3-legal-evidence")

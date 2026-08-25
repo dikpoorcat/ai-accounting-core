@@ -93,11 +93,15 @@ docker compose ps
 
 ```powershell
 .\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\finance-bootstrap.exe --name "测试服务公司" --filing-cycle quarterly
+.\.venv\Scripts\finance-bootstrap.exe `
+  --name "测试服务公司" `
+  --taxpayer-identification-number "填写18位统一社会信用代码" `
+  --filing-cycle quarterly
 ```
 
-`finance-bootstrap` 只运行一次，并会输出企业 `org_id`；请妥善保存。后续所有工具调用都必须
-携带该 ID。不要在已经存在试用企业的数据库中重复执行该命令。
+`finance-bootstrap` 只运行一次；企业名称和 18 位统一社会信用代码（纳税人识别号）均为
+必填业务事实。命令会输出企业 `org_id`，请妥善保存；后续所有工具调用都必须携带该 ID。
+不要在已经存在试用企业的数据库中重复执行该命令。
 
 `0001_baseline` 是已经冻结的空数据库基线；私有试用启用后的结构变化由后续前向 revision
 管理。旧的 15 段迁移链已移除，项目不支持从那些旧 revision 原地升级。对包含试用业务

@@ -188,7 +188,11 @@ def _service(session: Session, clock: _Clock) -> IdentityService:
 
 
 def test_six_character_password_can_provision_and_authenticate(session: Session) -> None:
-    organization = seed_organization(session, name="六位密码登录")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="六位密码登录",
+    )
     service = _service(session, _Clock())
 
     provisioned = service.provision_owner(_owner_request(organization.id, password="123456"))
@@ -202,7 +206,11 @@ def test_six_character_password_can_provision_and_authenticate(session: Session)
 def test_sqlite_owner_login_stores_only_hashes_and_separates_execution_attribution(
     session: Session,
 ) -> None:
-    organization = seed_organization(session, name="身份 SQLite 服务")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="身份 SQLite 服务",
+    )
     clock = _Clock()
     service = _service(session, clock)
 
@@ -241,7 +249,11 @@ def test_sqlite_owner_login_stores_only_hashes_and_separates_execution_attributi
 
 
 def test_sqlite_failures_are_generic_and_use_incremental_backoff(session: Session) -> None:
-    organization = seed_organization(session, name="身份登录限速")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="身份登录限速",
+    )
     clock = _Clock()
     service = _service(session, clock)
     service.provision_owner(_owner_request(organization.id))
@@ -272,7 +284,11 @@ def test_sqlite_failures_are_generic_and_use_incremental_backoff(session: Sessio
 def test_sqlite_recovery_consumes_code_revokes_sessions_and_issues_one_replacement(
     session: Session,
 ) -> None:
-    organization = seed_organization(session, name="身份恢复")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="身份恢复",
+    )
     clock = _Clock()
     service = _service(session, clock)
     provisioned = service.provision_owner(_owner_request(organization.id))
@@ -323,7 +339,11 @@ def test_sqlite_recovery_consumes_code_revokes_sessions_and_issues_one_replaceme
 
 
 def test_sqlite_session_absolute_expiry_is_not_extended_by_activity(session: Session) -> None:
-    organization = seed_organization(session, name="身份会话超时")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="身份会话超时",
+    )
     clock = _Clock()
     service = _service(session, clock)
     service.provision_owner(_owner_request(organization.id))

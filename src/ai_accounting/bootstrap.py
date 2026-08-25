@@ -13,6 +13,11 @@ from .models import Organization
 def main() -> None:
     parser = argparse.ArgumentParser(description="Initialize one private-pilot organization")
     parser.add_argument("--name", required=True, help="Organization name")
+    parser.add_argument(
+        "--taxpayer-identification-number",
+        required=True,
+        help="18-character unified social credit code / taxpayer identification number",
+    )
     parser.add_argument("--filing-cycle", choices=["monthly", "quarterly"], default="quarterly")
     parser.add_argument("--jurisdiction", default="CN")
     parser.add_argument("--urban-maintenance-rate", default="0.07")
@@ -25,6 +30,7 @@ def main() -> None:
         organization = seed_organization(
             session,
             name=args.name,
+            taxpayer_identification_number=args.taxpayer_identification_number,
             filing_cycle=args.filing_cycle,
             jurisdiction=args.jurisdiction,
             urban_maintenance_rate=Decimal(args.urban_maintenance_rate),

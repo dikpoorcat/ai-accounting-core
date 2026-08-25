@@ -45,6 +45,7 @@ from ai_accounting.schemas import EventType
 def _seed_overview_month(session: Session) -> Organization:
     organization = seed_organization(
         session,
+        taxpayer_identification_number="91330106MA1234567T",
         name="经营概览测试公司",
         accounting_period_control_enabled=True,
     )

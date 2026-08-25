@@ -145,6 +145,7 @@ def test_postgres_labor_accrual_and_gross_unwithheld_payout_commit_end_to_end() 
             with factory() as session:
                 organization = seed_organization(
                     session,
+                    taxpayer_identification_number="91330106MA1234567T",
                     name="个人劳务 PostgreSQL 终态事件端到端测试",
                     accounting_period_control_enabled=True,
                 )
@@ -308,6 +309,7 @@ def test_postgres_labor_confirmation_is_concurrent_and_direct_writes_fail_closed
             with factory.begin() as session:
                 organization = seed_organization(
                     session,
+                    taxpayer_identification_number="91330106MA1234567T",
                     name="个人劳务 PostgreSQL 硬约束测试",
                     accounting_period_control_enabled=False,
                 )
@@ -408,6 +410,7 @@ def test_postgres_labor_confirmation_is_concurrent_and_direct_writes_fail_closed
 
                 other = seed_organization(
                     session,
+                    taxpayer_identification_number="91330106MA1234567T",
                     name="个人劳务跨组织硬约束测试",
                     accounting_period_control_enabled=False,
                 )

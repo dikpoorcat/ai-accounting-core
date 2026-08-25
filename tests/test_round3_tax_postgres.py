@@ -212,7 +212,10 @@ def test_r3_001_january_and_march_confirmations_are_linearized_by_tax_year_guard
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
         organization = seed_organization(
-            setup, accounting_period_control_enabled=False, name="R3-001 跨月并发企业"
+            setup,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-001 跨月并发企业",
         )
         employee_id = _register_payroll_facts(setup, organization)[0]
         january = _preview_regular(
@@ -273,7 +276,10 @@ def test_r3_001_confirmation_and_reversal_cannot_cross_the_same_tax_year_guard(
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
         organization = seed_organization(
-            setup, accounting_period_control_enabled=False, name="R3-001 确认冲正并发企业"
+            setup,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-001 确认冲正并发企业",
         )
         employee_id = _register_payroll_facts(setup, organization)[0]
         january = _preview_regular(
@@ -319,7 +325,10 @@ def test_r3_001_multi_employee_guards_are_locked_in_employee_id_order(
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
         organization = seed_organization(
-            setup, accounting_period_control_enabled=False, name="R3-001 多员工锁顺序企业"
+            setup,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-001 多员工锁顺序企业",
         )
         employee_ids = _register_payroll_facts(setup, organization, employee_count=2)
         january = _preview_regular(

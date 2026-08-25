@@ -202,7 +202,11 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
     factory = make_session_factory(engine)
     try:
         with factory.begin() as session:
-            organization = seed_organization(session, name="期间 MCP SQLite")
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="期间 MCP SQLite",
+            )
             evidence = Evidence(
                 org_id=organization.id,
                 sha256="p" * 64,
@@ -374,7 +378,11 @@ def test_mcp_posting_uses_china_current_date_boundary(
     factory = make_session_factory(engine)
     try:
         with factory.begin() as session:
-            organization = seed_organization(session, name="MCP 中国日期边界")
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="MCP 中国日期边界",
+            )
             evidence = Evidence(
                 org_id=organization.id,
                 sha256="t" * 64,

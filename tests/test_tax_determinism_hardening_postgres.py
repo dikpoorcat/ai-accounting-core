@@ -104,6 +104,7 @@ def _seed_graph(engine: sa.Engine, label: str) -> dict[str, Any]:
     with Session(engine) as session:
         organization = seed_organization(
             session,
+            taxpayer_identification_number="91330106MA1234567T",
             name=f"税务伪造验收-{label}",
             accounting_period_control_enabled=False,
         )
@@ -421,6 +422,7 @@ def test_direct_sql_forgeries_and_concurrent_confirm_are_closed_at_commit(
             with Session(engine) as session:
                 organization = seed_organization(
                     session,
+                    taxpayer_identification_number="91330106MA1234567T",
                     name="双连接税期确认硬化验收",
                     accounting_period_control_enabled=False,
                 )
@@ -479,6 +481,7 @@ def test_direct_sql_forgeries_and_concurrent_confirm_are_closed_at_commit(
             with Session(engine) as session:
                 zero_org = seed_organization(
                     session,
+                    taxpayer_identification_number="91330106MA1234567T",
                     name="零税额税期确认硬化验收",
                     accounting_period_control_enabled=False,
                 )

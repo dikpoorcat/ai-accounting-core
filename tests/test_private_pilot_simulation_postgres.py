@@ -434,7 +434,10 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
         try:
             with Session(engine) as session:
                 organization = seed_organization(
-                    session, name="虚构五个月私有试用组织", filing_cycle="monthly"
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="虚构五个月私有试用组织",
+                    filing_cycle="monthly",
                 )
                 evidence = _evidence(session, organization, "pilot-evidence")
                 session.commit()

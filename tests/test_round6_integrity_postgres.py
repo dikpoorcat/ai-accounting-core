@@ -150,7 +150,10 @@ def _confirmed_cross_month_regular(session: Session, *, key: str) -> tuple[objec
     """Final October payroll paid in November: profile uses October month-end."""
 
     organization = seed_organization(
-        session, accounting_period_control_enabled=False, name=f"R6 跨月资料 {key}"
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        accounting_period_control_enabled=False,
+        name=f"R6 跨月资料 {key}",
     )
     employee_id = register_payroll_facts(session, organization)
     service = FinanceService(session)
@@ -351,7 +354,10 @@ def _unconfirmed_regular_for_correction_race(
 
     with Session(engine, expire_on_commit=False) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name=f"R6 版本并发 {key}"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name=f"R6 版本并发 {key}",
         )
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
@@ -710,7 +716,10 @@ def test_r6_002_r6_004_sealed_evidence_freezes_timestamp_and_requires_lower_hex(
         session.flush()
         draft.created_at = draft.created_at.replace(year=2026)
         other_organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R6 跨企业摘要"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R6 跨企业摘要",
         )
         # The digest identity is enterprise-scoped, so the same canonical
         # content hash remains legitimate in a different enterprise.
@@ -843,7 +852,10 @@ def test_r6_005_direct_cross_period_statutory_collection_rejects_at_commit(
 
     with Session(isolated_postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R6 法定集合跨期"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R6 法定集合跨期",
         )
         prepare_authenticated_bank_account(session, organization)
         prepare_authenticated_bank_account(session, organization, booking_date=date(2026, 4, 5))

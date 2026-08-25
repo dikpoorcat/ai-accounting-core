@@ -333,7 +333,10 @@ def _make_final_withholding_batch(
 def test_pay_014_final_payroll_batches_and_lines_are_immutable(postgres_engine: object) -> None:
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="PAY-014 不变量"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="PAY-014 不变量",
         )
         policy = _policy(session, organization.id)
         employee, profile = _employee_profile(session, organization.id)
@@ -478,10 +481,16 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
 ) -> None:
     with Session(postgres_engine) as session:
         organization_a = seed_organization(
-            session, accounting_period_control_enabled=False, name="PAY-015 企业 A"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="PAY-015 企业 A",
         )
         organization_b = seed_organization(
-            session, accounting_period_control_enabled=False, name="PAY-015 企业 B"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="PAY-015 企业 B",
         )
         policy_a = _policy(session, organization_a.id, version="A")
         policy_b = _policy(session, organization_b.id, version="B")
@@ -569,7 +578,10 @@ def test_pay_016_final_voucher_lines_reject_insert_update_and_delete(
 ) -> None:
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="PAY-016 凭证不可变"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="PAY-016 凭证不可变",
         )
         event = _event(session, organization.id, "pay-016-source")
         voucher = create_voucher(
@@ -628,10 +640,16 @@ def test_pay_016_final_voucher_lines_reject_insert_update_and_delete(
 def test_pay_017_open_item_settlement_conservation_and_org_links(postgres_engine: object) -> None:
     with Session(postgres_engine) as session:
         organization_a = seed_organization(
-            session, accounting_period_control_enabled=False, name="PAY-017 企业 A"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="PAY-017 企业 A",
         )
         organization_b = seed_organization(
-            session, accounting_period_control_enabled=False, name="PAY-017 企业 B"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="PAY-017 企业 B",
         )
         counterparty_a = Counterparty(org_id=organization_a.id, kind="supplier", name="机构 A")
         counterparty_b = Counterparty(org_id=organization_b.id, kind="supplier", name="机构 B")
@@ -729,7 +747,10 @@ def test_r2_003_per_insurance_withholding_cannot_be_reallocated(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R2-003"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R2-003",
         )
         policy = _policy(session, organization.id, version="r2-003")
         employee, profile = _employee_profile(session, organization.id, code="R2-003")
@@ -789,7 +810,10 @@ def test_r3_003_posted_withholding_entitlements_and_allocations_are_append_only(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-003"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-003",
         )
         policy = _policy(session, organization.id, version="r3-003")
         employee, profile = _employee_profile(session, organization.id, code="R3-003")
@@ -874,7 +898,10 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
 
     with Session(isolated_postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-004"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-004",
         )
         direct = BusinessEvent(
             org_id=organization.id,
@@ -893,7 +920,10 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
 
     with Session(isolated_postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-004-refund"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-004-refund",
         )
         prepare_authenticated_bank_account(session, organization)
         advance = _event(session, organization.id, "r3-004-advance")
@@ -980,7 +1010,10 @@ def test_r3_002_tax_state_slot_rejects_cross_employee_and_arbitrary_mutation(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R3-002"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R3-002",
         )
         policy = _policy(session, organization.id, version="r3-002")
         employee_a, profile_a = _employee_profile(session, organization.id, code="R3-002-A")
@@ -1056,7 +1089,10 @@ def test_r2_005_final_vouchers_and_business_events_are_database_immutable(
 ) -> None:
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R2-005"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R2-005",
         )
         event = _event(session, organization.id, "r2-005-empty")
         session.add(
@@ -1074,7 +1110,10 @@ def test_r2_005_final_vouchers_and_business_events_are_database_immutable(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R2-005-event"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R2-005-event",
         )
         original = _event(session, organization.id, "r2-005-original")
         original_voucher = create_voucher(
@@ -1127,10 +1166,16 @@ def test_r2_006_voucher_line_composite_organization_foreign_keys(
 ) -> None:
     with Session(postgres_engine) as session:
         organization_a = seed_organization(
-            session, accounting_period_control_enabled=False, name="R2-006-A"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R2-006-A",
         )
         organization_b = seed_organization(
-            session, accounting_period_control_enabled=False, name="R2-006-B"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R2-006-B",
         )
         event_a = _event(session, organization_a.id, "r2-006-event-a")
         event_b = _event(session, organization_b.id, "r2-006-event-b")
@@ -1211,7 +1256,10 @@ def test_r2_010_explicit_version_successors_allow_only_their_own_overlap(
 ) -> None:
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R2-010"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R2-010",
         )
         organization_id = organization.id
         policy = _policy(session, organization.id, version="r2-010-root")

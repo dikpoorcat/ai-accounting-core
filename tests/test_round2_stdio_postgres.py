@@ -179,7 +179,11 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
         engine = create_engine(database_url)
         try:
             with Session(engine) as session:
-                organization = seed_organization(session, name="R2 STDIO 全生命周期企业")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="R2 STDIO 全生命周期企业",
+                )
                 scope_evidence = Evidence(
                     org_id=organization.id,
                     sha256="8" * 64,
@@ -1353,7 +1357,10 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
         try:
             with Session(engine) as session:
                 organization = seed_organization(
-                    session, accounting_period_control_enabled=False, name="R7 STDIO 导入错误企业"
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="R7 STDIO 导入错误企业",
                 )
                 session.commit()
                 org_id = str(organization.id)

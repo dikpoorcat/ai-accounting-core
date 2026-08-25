@@ -404,6 +404,7 @@ def session() -> Iterator[Session]:
 def organization(session: Session) -> Organization:
     organization = seed_organization(
         session,
+        taxpayer_identification_number="91330106MA1234567T",
         name="测试服务公司",
         accounting_period_control_enabled=False,
     )

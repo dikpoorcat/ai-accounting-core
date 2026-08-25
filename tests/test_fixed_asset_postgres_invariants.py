@@ -70,7 +70,10 @@ def _evidence(session: Session, org_id: uuid.UUID, seed: str) -> Evidence:
 
 def _acquire_payable(session: Session, key: str) -> tuple[FixedAsset, BusinessEvent]:
     organization = seed_organization(
-        session, accounting_period_control_enabled=False, name=f"PG 固定资产 {key}"
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        accounting_period_control_enabled=False,
+        name=f"PG 固定资产 {key}",
     )
     evidence = _evidence(session, organization.id, key[0])
     result = FixedAssetService(session).acquire_fixed_asset(

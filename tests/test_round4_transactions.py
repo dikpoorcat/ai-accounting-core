@@ -91,7 +91,10 @@ def _post_two_expenses(
     key_prefix: str,
 ) -> tuple[object, list[object]]:
     organization = seed_organization(
-        session, accounting_period_control_enabled=False, name=organization_name
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        accounting_period_control_enabled=False,
+        name=organization_name,
     )
     event_ids: list[object] = []
     for index in (1, 2):
@@ -150,6 +153,7 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
     with Session(postgres_engine) as session:
         organization = seed_organization(
             session,
+            taxpayer_identification_number="91330106MA1234567T",
             accounting_period_control_enabled=False,
             name="R4-009 version lineage organization",
         )
@@ -277,6 +281,7 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
     with factory.begin() as session:
         organization = seed_organization(
             session,
+            taxpayer_identification_number="91330106MA1234567T",
             accounting_period_control_enabled=False,
             name="R4-009 successor concurrency organization",
         )

@@ -197,7 +197,11 @@ def test_preview_session_query_contract_covers_all_authoritative_models() -> Non
 
 
 def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_path) -> None:
-    organization = seed_organization(session, name="正式银行确认测试")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="正式银行确认测试",
+    )
     identity = IdentityService(session)
     identity.provision_owner(
         OwnerProvisionRequest(

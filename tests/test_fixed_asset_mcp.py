@@ -241,7 +241,11 @@ def test_acquisition_mcp_handler_posts_to_an_isolated_sqlite_database(
     factory = make_session_factory(engine)
     try:
         with factory.begin() as session:
-            organization = seed_organization(session, name="MCP fixed asset test")
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="MCP fixed asset test",
+            )
             organization.accounting_period_control_enabled = False
             session.flush()
             evidence = Evidence(
@@ -302,7 +306,11 @@ def test_ready_for_use_acquisition_posts_one_voucher_and_starts_depreciation_nex
     factory = make_session_factory(engine)
     try:
         with factory.begin() as session:
-            organization = seed_organization(session, name="Direct fixed asset test")
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="Direct fixed asset test",
+            )
             organization.accounting_period_control_enabled = False
             evidence = Evidence(
                 org_id=organization.id,
@@ -405,7 +413,11 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
     factory = make_session_factory(engine)
     try:
         with factory.begin() as session:
-            organization = seed_organization(session, name="MCP tax lock test")
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="MCP tax lock test",
+            )
             organization.accounting_period_control_enabled = False
             session.flush()
             evidence = Evidence(

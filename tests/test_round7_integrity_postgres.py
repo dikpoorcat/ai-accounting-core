@@ -561,7 +561,10 @@ def test_r7_001_reversed_direct_batch_keeps_cumulative_downstream_blocked_at_com
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 累计闭包企业"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 累计闭包企业",
         )
         employee_id = register_payroll_facts(session, organization)
         september_preview = _preview_regular(
@@ -672,7 +675,10 @@ def test_r7_007_combined_enters_cumulative_closure(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 combined 累计闭包"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 combined 累计闭包",
         )
         employee_id = register_payroll_facts(session, organization)
         separate_preview = _preview_annual_bonus(
@@ -772,7 +778,10 @@ def test_r7_007_later_separate_bonus_does_not_enter_cumulative_closure(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 separate 不进入累计闭包"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 separate 不进入累计闭包",
         )
         employee_id = register_payroll_facts(session, organization)
         regular_preview = _preview_regular(
@@ -835,7 +844,10 @@ def test_r7_007_direct_separate_bonus_still_blocks_profile_and_policy(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 separate 直接阻断"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 separate 直接阻断",
         )
         employee_id = register_payroll_facts(session, organization)
         preview = _preview_annual_bonus(
@@ -899,7 +911,10 @@ def test_r7_007_december_closure_does_not_cross_into_next_payment_tax_year(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 跨支付税年边界"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 跨支付税年边界",
         )
         parameters = deepcopy(payroll_parameters())
         income_tax = parameters["income_tax"]
@@ -1029,7 +1044,10 @@ def test_r7_007_shared_policy_waits_for_every_employee_chain_in_fixed_lock_order
         assert lock_function is not None
         assert "ORDER BY guard_kind, dimension_key" in lock_function
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 双员工共享政策"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 双员工共享政策",
         )
         first_employee_id = register_payroll_facts(session, organization)
         second_employee_id = _register_second_employee(
@@ -1124,7 +1142,10 @@ def test_r7_002_iit_uses_payment_tax_month_not_payroll_period_at_commit(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 个税税月企业"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 个税税月企业",
         )
         prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
@@ -1174,7 +1195,10 @@ def test_r7_007_iit_uses_policy_version_id_even_when_snapshot_ids_match(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 个税政策列与快照分离"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 个税政策列与快照分离",
         )
         authority = prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
@@ -1275,7 +1299,10 @@ def test_r7_007_social_and_housing_accept_same_contribution_policy_and_period(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R7 社保公积金兼容正例"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R7 社保公积金兼容正例",
         )
         prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
@@ -1310,7 +1337,10 @@ def test_r7_007_social_and_housing_reject_different_payroll_periods(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name=f"R7 {category} 缴费所属期反例"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name=f"R7 {category} 缴费所属期反例",
         )
         prepare_authenticated_bank_account(session, organization)
         employee_id = register_payroll_facts(session, organization)
@@ -1357,7 +1387,10 @@ def test_r7_007_social_and_housing_reject_different_contribution_policies(
 
     with Session(postgres_engine) as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name=f"R7 {category} 缴费政策反例"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name=f"R7 {category} 缴费政策反例",
         )
         parameters = deepcopy(payroll_parameters())
         income_tax = parameters["income_tax"]

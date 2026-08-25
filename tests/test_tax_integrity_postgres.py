@@ -155,6 +155,7 @@ def test_tax_determinism_commit_guards_and_concurrency(
             with Session(engine) as session:
                 organization = seed_organization(
                     session,
+                    taxpayer_identification_number="91330106MA1234567T",
                     name="0010 PostgreSQL 门禁",
                     accounting_period_control_enabled=False,
                 )

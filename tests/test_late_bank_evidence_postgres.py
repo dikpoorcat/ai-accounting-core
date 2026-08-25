@@ -397,12 +397,14 @@ def test_postgres_scope_confirmation_is_attributed_complete_and_sealed() -> None
                     sa.text(
                         """
                         INSERT INTO organizations (
-                            id, name, taxpayer_type, filing_cycle, jurisdiction,
+                            id, name, taxpayer_identification_number, taxpayer_type,
+                            filing_cycle, jurisdiction,
                             urban_maintenance_rate, accounting_standard,
                             accounting_period_control_enabled,
                             accounting_period_control_start_date, created_at
                         ) VALUES (
-                            :org, 'scope pg', 'small_scale', 'quarterly', 'CN',
+                            :org, 'scope pg', '91330106MA1234567T', 'small_scale',
+                            'quarterly', 'CN',
                             0.07, 'small_enterprise', false, NULL, :now
                         )
                         """
@@ -632,12 +634,14 @@ def test_postgres_scope_confirmation_supports_explicit_zero_accounts() -> None:
                     sa.text(
                         """
                         INSERT INTO organizations (
-                            id, name, taxpayer_type, filing_cycle, jurisdiction,
+                            id, name, taxpayer_identification_number, taxpayer_type,
+                            filing_cycle, jurisdiction,
                             urban_maintenance_rate, accounting_standard,
                             accounting_period_control_enabled,
                             accounting_period_control_start_date, created_at
                         ) VALUES (
-                            :org, 'zero scope pg', 'small_scale', 'quarterly', 'CN',
+                            :org, 'zero scope pg', '91330106MA1234567T', 'small_scale',
+                            'quarterly', 'CN',
                             0.07, 'small_enterprise', false, NULL, :now
                         )
                         """
@@ -782,13 +786,15 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                     sa.text(
                         """
                         INSERT INTO organizations (
-                            id, name, taxpayer_type, filing_cycle, jurisdiction,
+                            id, name, taxpayer_identification_number, taxpayer_type,
+                            filing_cycle, jurisdiction,
                             urban_maintenance_rate, accounting_standard,
                             accounting_period_control_enabled,
                             accounting_period_control_start_date, created_at
                         ) VALUES (
-                            :org, 'backdated scope pg', 'small_scale', 'quarterly',
-                            'CN', 0.07, 'small_enterprise', false, NULL, :now
+                            :org, 'backdated scope pg', '91330106MA1234567T',
+                            'small_scale', 'quarterly', 'CN', 0.07,
+                            'small_enterprise', false, NULL, :now
                         )
                         """
                     ),
@@ -1239,7 +1245,11 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path) -> None:
         engine = sa.create_engine(database_url)
         try:
             with Session(engine, expire_on_commit=False) as session:
-                organization = seed_organization(session, name="PG现金银行互转")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG现金银行互转",
+                )
                 session.commit()
                 org_id = organization.id
             with engine.begin() as connection:
@@ -2402,7 +2412,11 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
         engine = sa.create_engine(database_url)
         try:
             with Session(engine, expire_on_commit=False) as session:
-                organization = seed_organization(session, name="PG迟到证据与对账")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG迟到证据与对账",
+                )
                 session.commit()
                 org_id = organization.id
             with engine.begin() as connection:
@@ -2898,7 +2912,11 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
         engine = sa.create_engine(database_url)
         try:
             with Session(engine, expire_on_commit=False) as session:
-                organization = seed_organization(session, name="PG银行导入并发")
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    name="PG银行导入并发",
+                )
                 session.commit()
                 org_id = organization.id
             with engine.begin() as connection:

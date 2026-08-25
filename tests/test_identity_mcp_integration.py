@@ -23,7 +23,11 @@ from ai_accounting.models import Evidence, ExecutionAttribution, OwnerAccount, O
 
 
 def _provision(session: Session) -> tuple[uuid.UUID, str]:
-    organization = seed_organization(session, name="MCP owner attribution")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="MCP owner attribution",
+    )
     service = IdentityService(session)
     service.provision_owner(
         OwnerProvisionRequest(
@@ -229,7 +233,11 @@ def test_mcp_uses_current_local_session_on_every_enterprise_call(
         }
 
         store.save_session_token(SecretStr(first_token))
-        assert profile.fn(org_id=str(org_id))["status"] == "ok"
+        profile_payload = profile.fn(org_id=str(org_id))
+        assert profile_payload["status"] == "ok"
+        assert profile_payload["organization"]["taxpayer_identification_number"] == (
+            "91330106MA1234567T"
+        )
         assert authorized_sessions == [first_session.id]
 
         store.save_session_token(second_login.session_token)
@@ -363,7 +371,11 @@ def test_evidence_metadata_recursively_rejects_parallel_identity_without_writes(
     session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    organization = seed_organization(session, name="Evidence metadata boundary")
+    organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        name="Evidence metadata boundary",
+    )
     session.flush()
     monkeypatch.setattr(
         mcp_server,

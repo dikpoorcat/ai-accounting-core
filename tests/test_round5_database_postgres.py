@@ -93,7 +93,10 @@ def test_r5_002_sealed_evidence_blocks_every_content_and_identity_mutation(
             session, key="r5-evidence-seal"
         )
         foreign_organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 密封证据外部企业"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 密封证据外部企业",
         )
         draft_evidence = Evidence(
             org_id=organization.id,
@@ -179,7 +182,10 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
         organization = seed_organization(
-            session, accounting_period_control_enabled=False, name="R5 版本锁并发企业"
+            session,
+            taxpayer_identification_number="91330106MA1234567T",
+            accounting_period_control_enabled=False,
+            name="R5 版本锁并发企业",
         )
         employee = FinanceService(session).register_employee(
             RegisterEmployeeRequest(

@@ -27,9 +27,10 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.orm import Mapped, Session, attributes, mapped_column, relationship
+from sqlalchemy.orm import Mapped, Session, attributes, mapped_column, relationship, validates
 
 from .database import Base
+from .taxpayer_identity import normalize_taxpayer_identification_number
 
 
 def utcnow() -> datetime:
@@ -74,6 +75,7 @@ class Organization(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200))
+    taxpayer_identification_number: Mapped[str] = mapped_column(String(18), nullable=False)
     taxpayer_type: Mapped[str] = mapped_column(String(30), default="small_scale")
     filing_cycle: Mapped[str] = mapped_column(String(20), default="quarterly")
     jurisdiction: Mapped[str] = mapped_column(String(100), default="CN")
@@ -92,6 +94,14 @@ class Organization(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
+        CheckConstraint(
+            "length(taxpayer_identification_number) = 18",
+            name="ck_org_taxpayer_identification_number_length",
+        ),
+        CheckConstraint(
+            "taxpayer_identification_number = upper(taxpayer_identification_number)",
+            name="ck_org_taxpayer_identification_number_uppercase",
+        ),
         CheckConstraint("taxpayer_type = 'small_scale'", name="ck_org_small_scale"),
         CheckConstraint("filing_cycle IN ('monthly', 'quarterly')", name="ck_org_filing_cycle"),
         CheckConstraint(
@@ -118,6 +128,10 @@ class Organization(Base):
             name="ck_org_bank_reconciliation_scope_confirmation",
         ),
     )
+
+    @validates("taxpayer_identification_number")
+    def validate_taxpayer_identification_number(self, _key: str, value: str) -> str:
+        return normalize_taxpayer_identification_number(value)
 
 
 class OwnerAccount(Base):
@@ -1218,9 +1232,9 @@ class PayrollSalaryActualDeductionAllocation(Base):
     __tablename__ = "payroll_salary_actual_deduction_allocations"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    payroll_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    payment_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payroll_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payment_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     expense_role: Mapped[str] = mapped_column(String(50), nullable=False)
     reversed: Mapped[bool] = mapped_column(default=False)
@@ -1251,6 +1265,16 @@ class PayrollSalaryActualDeductionAllocation(Base):
             "payroll_line_id",
             "payment_event_id",
             name="uq_salary_actual_deduction_line_event",
+        ),
+        Index(
+            "ix_salary_actual_deduction_org_line",
+            "org_id",
+            "payroll_line_id",
+        ),
+        Index(
+            "ix_salary_actual_deduction_org_event",
+            "org_id",
+            "payment_event_id",
         ),
         CheckConstraint("amount_fen > 0", name="ck_salary_actual_deduction_positive"),
         CheckConstraint(

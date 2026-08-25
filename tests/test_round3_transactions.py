@@ -66,7 +66,10 @@ def test_r3_008_reversal_replays_after_source_lock_and_r3_009_rebooks_source() -
         try:
             with factory.begin() as session:
                 organization = seed_organization(
-                    session, accounting_period_control_enabled=False, name="R3 幂等冲正企业"
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="R3 幂等冲正企业",
                 )
                 posted = FinanceService(session).record_event(
                     _expense_request(organization.id, key="r3-original-expense")

@@ -414,7 +414,10 @@ def test_r2_013_preview_persists_organization_bound_evidence_for_draft_and_poste
     assert duplicate.errors == ["DUPLICATE_PAYROLL_BATCH_EVIDENCE_REFERENCE"]
 
     other_organization = seed_organization(
-        session, accounting_period_control_enabled=False, name="R2-013 证据隔离企业"
+        session,
+        taxpayer_identification_number="91330106MA1234567T",
+        accounting_period_control_enabled=False,
+        name="R2-013 证据隔离企业",
     )
     cross_organization = _preview(
         session,
@@ -663,7 +666,10 @@ def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation(
         try:
             with factory() as setup:
                 organization = seed_organization(
-                    setup, accounting_period_control_enabled=False, name="PAY-002 并发工资企业"
+                    setup,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="PAY-002 并发工资企业",
                 )
                 employee_id = register_payroll_facts(setup, organization)
                 preview = _preview(
@@ -854,6 +860,7 @@ def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connecti
             with factory.begin() as first_connection:
                 organization = seed_organization(
                     first_connection,
+                    taxpayer_identification_number="91330106MA1234567T",
                     accounting_period_control_enabled=False,
                     name="R2-001 跨月企业",
                 )
@@ -930,7 +937,10 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
         try:
             with factory.begin() as setup:
                 organization = seed_organization(
-                    setup, accounting_period_control_enabled=False, name="PAY-012 并发试算企业"
+                    setup,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="PAY-012 并发试算企业",
                 )
                 employee_id = register_payroll_facts(setup, organization)
                 org_id = organization.id
