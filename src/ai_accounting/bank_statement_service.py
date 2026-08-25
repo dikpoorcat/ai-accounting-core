@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import null, select, text
+from sqlalchemy import and_, func, null, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
@@ -2090,10 +2090,29 @@ class BankStatementService:
                 Voucher.status == "posted",
             )
         )
+        matched_bank_movement = self.session.scalar(
+            select(
+                func.coalesce(func.sum(BankTransaction.amount_fen), 0)
+            )
+            .select_from(BankTransactionMatch)
+            .join(
+                BankTransaction,
+                and_(
+                    BankTransaction.org_id == BankTransactionMatch.org_id,
+                    BankTransaction.id == BankTransactionMatch.bank_transaction_id,
+                ),
+            )
+            .where(
+                BankTransactionMatch.org_id == transaction.org_id,
+                BankTransactionMatch.event_id == event.id,
+                BankTransactionMatch.invalidated_by_event_id.is_(None),
+                BankTransaction.bank_account_code == transaction.bank_account_code,
+            )
+        )
         if (
             voucher is None
             or self._voucher_bank_movement(voucher.id, transaction.bank_account_code)
-            != transaction.amount_fen
+            != int(matched_bank_movement or 0)
         ):
             raise _BankDecision(
                 "BANK_RECONCILIATION_MATCHED_EVENT_BANK_ACCOUNT_MISMATCH"

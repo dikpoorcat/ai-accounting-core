@@ -46,13 +46,109 @@ from ai_accounting.models import (
     BankStatementImportAction,
     BankStatementImportFailure,
     BankTransaction,
+    BankTransactionMatch,
+    BusinessEvent,
     Evidence,
     LateBankEvidenceAction,
     Organization,
+    Voucher,
+    VoucherLine,
 )
 
 ORG_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 PERIOD_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
+
+
+def test_bank_match_validation_accepts_multiple_rows_for_one_aggregate_voucher(
+    session: Session,
+    organization: Organization,
+) -> None:
+    bank_account = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.code == "1002",
+        )
+    )
+    expense_account = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == "general_expense",
+        )
+    )
+    assert bank_account is not None
+    assert expense_account is not None
+
+    event = BusinessEvent(
+        org_id=organization.id,
+        idempotency_key="aggregate-bank-match-event",
+        event_type="unified_payout_run",
+        status="posted",
+        facts={},
+        business_date=date(2026, 8, 10),
+        posting_date=date(2026, 8, 10),
+    )
+    session.add(event)
+    session.flush()
+    voucher = Voucher(
+        org_id=organization.id,
+        event_id=event.id,
+        voucher_number="202608-aggregate-bank-match",
+        posting_date=date(2026, 8, 10),
+        description="多笔银行流水汇总付款",
+        status="posted",
+    )
+    session.add(voucher)
+    session.flush()
+    session.add_all(
+        [
+            VoucherLine(
+                org_id=organization.id,
+                voucher_id=voucher.id,
+                line_number=1,
+                account_id=expense_account.id,
+                debit_fen=30_000,
+                credit_fen=0,
+            ),
+            VoucherLine(
+                org_id=organization.id,
+                voucher_id=voucher.id,
+                line_number=2,
+                account_id=bank_account.id,
+                debit_fen=0,
+                credit_fen=30_000,
+            ),
+        ]
+    )
+    transactions = [
+        BankTransaction(
+            org_id=organization.id,
+            bank_account_code=bank_account.code,
+            fingerprint=character * 64,
+            booking_date=date(2026, 8, 10),
+            amount_fen=amount_fen,
+            currency="CNY",
+            memo="汇总付款",
+            source_sha256="f" * 64,
+            matched_event_id=event.id,
+        )
+        for character, amount_fen in (("a", -10_000), ("b", -20_000))
+    ]
+    session.add_all(transactions)
+    session.flush()
+    matches = [
+        BankTransactionMatch(
+            org_id=organization.id,
+            bank_transaction_id=transaction.id,
+            event_id=event.id,
+        )
+        for transaction in transactions
+    ]
+    session.add_all(matches)
+    session.flush()
+
+    service = BankStatementService(session)
+    assert service._valid_current_match(transactions[0], matches[0]) is True
+    assert service._valid_current_match(transactions[1], matches[1]) is True
 
 
 class _Rows:
