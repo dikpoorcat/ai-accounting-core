@@ -27,6 +27,7 @@ from ai_accounting.models import (
     BorrowingInterestAccrual,
     BusinessEvent,
     Counterparty,
+    Employee,
     Evidence,
     FixedAssetActivation,
     FixedAssetDepreciation,
@@ -449,6 +450,61 @@ def test_quarterly_tax_filing_is_not_asked_before_quarter_end() -> None:
     assert tax_item["owner_questions"] == []
     assert "ANNUAL_REPORTING_AND_SETTLEMENT" not in item_by_code
     assert "YEAR_END_STATUTORY_CHECKPOINT" not in item_by_code
+
+
+def test_employee_named_counterparty_alias_is_not_reported_as_missing_master() -> None:
+    session = _session()
+    organization, evidence = _organization_and_evidence(session)
+    payroll_counterparty = Counterparty(
+        org_id=organization.id,
+        kind="employee",
+        name="员工 EMP001",
+    )
+    reimbursement_alias = Counterparty(
+        org_id=organization.id,
+        kind="employee",
+        name="测试员工",
+    )
+    session.add_all([payroll_counterparty, reimbursement_alias])
+    session.flush()
+    session.add(
+        Employee(
+            org_id=organization.id,
+            counterparty_id=payroll_counterparty.id,
+            employee_code="EMP001",
+            name="测试员工",
+            employment_start_date=date(2026, 3, 1),
+            status="active",
+        )
+    )
+    session.flush()
+    service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
+    generated = service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-03",
+            idempotency_key="period-generation-employee-alias",
+            confirmation_note="核对员工实名往来别名",
+            evidence_references=[evidence.id],
+        )
+    )
+    preview = service.preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            closing_date=date(2026, 3, 31),
+        )
+    )
+    item = next(
+        item
+        for item in preview.data["assistant_review_checklist"]["items"]
+        if item["code"] == "MONTH_END_PEOPLE_PAYROLL_STATUTORY"
+    )
+
+    assert item["system_facts"]["employee_master_gap_count"] == 0
+    assert item["system_facts"]["employee_master_gap_names"] == []
+    assert item["system_facts"]["employee_counterparty_alias_count"] == 1
+    assert item["system_facts"]["employee_counterparty_alias_names"] == ["测试员工"]
 
 
 def test_annual_checkpoints_are_scheduled_without_monthly_repetition() -> None:

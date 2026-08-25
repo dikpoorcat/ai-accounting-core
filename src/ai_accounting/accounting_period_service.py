@@ -1267,10 +1267,24 @@ class AccountingPeriodService:
         active_employee_counterparty_ids = {
             employee.counterparty_id for employee in active_employees
         }
+        active_employee_name_counts: dict[str, int] = {}
+        for employee in active_employees:
+            normalized_name = employee.name.strip()
+            if normalized_name:
+                active_employee_name_counts[normalized_name] = (
+                    active_employee_name_counts.get(normalized_name, 0) + 1
+                )
+        employee_counterparty_aliases = [
+            counterparty
+            for counterparty in employee_counterparties
+            if counterparty.id not in active_employee_counterparty_ids
+            and active_employee_name_counts.get(counterparty.name.strip(), 0) == 1
+        ]
         employee_master_gaps = [
             counterparty
             for counterparty in employee_counterparties
             if counterparty.id not in active_employee_counterparty_ids
+            and active_employee_name_counts.get(counterparty.name.strip(), 0) != 1
         ]
         payroll_attention = bool(
             employee_master_gaps
@@ -1439,16 +1453,24 @@ class AccountingPeriodService:
                     "employee_master_gap_names": [
                         counterparty.name for counterparty in employee_master_gaps
                     ],
+                    "employee_counterparty_alias_count": len(employee_counterparty_aliases),
+                    "employee_counterparty_alias_names": [
+                        counterparty.name for counterparty in employee_counterparty_aliases
+                    ],
                     "hire_count": len(hires_in_period),
                     "payroll_batch_count": len(payroll_batches),
                     "regular_payroll_batch_count": len(regular_payroll_batches),
                     "payroll_or_statutory_payment_event_count": payroll_payment_event_count,
                     "unfinished_payroll_batch_count": module_checks["payroll"]["count"],
                 },
-                "owner_questions": [
-                    "本月是否有人开始或停止按员工工资口径核算？股东或联合创始人身份不自动进入工资核算。",
-                    "本月是否应发工资、奖金，或应缴社保、公积金、个人所得税？即使尚未付款也要确认。",
-                ],
+                "owner_questions": (
+                    [
+                        "系统列出的具体工资核算人员缺档、工资批次或法定项目异常，"
+                        "是否有尚未提供且会改变本月工资、社保、公积金或个税的事实？"
+                    ]
+                    if payroll_attention
+                    else []
+                ),
             },
             {
                 "code": "MONTH_END_PERSONAL_LABOR_REMUNERATION",
