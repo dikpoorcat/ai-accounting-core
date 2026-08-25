@@ -982,6 +982,23 @@ class LaborRemunerationService:
                 item.open_item_id: item.amount_fen
                 for item in request.salary_actual_deduction_allocations
             }
+            petty_recovery_by_item = {
+                item.open_item_id: item.amount_fen
+                for item in request.salary_petty_cash_recovery_allocations
+            }
+            if len(petty_recovery_by_item) != len(
+                request.salary_petty_cash_recovery_allocations
+            ):
+                raise ValueError(
+                    "salary petty-cash recovery cannot be stated twice for one open item"
+                )
+            salary_open_item_ids = {
+                allocation.open_item_id for allocation in request.salary_allocations
+            }
+            if not set(petty_recovery_by_item).issubset(salary_open_item_ids):
+                raise ValueError(
+                    "salary petty-cash recovery must belong to a salary allocation"
+                )
             salary_net = sum(
                 allocation.amount_fen
                 - sum(
@@ -1008,6 +1025,19 @@ class LaborRemunerationService:
                 housing = sum(allocation["employee_housing_fund_items"].values())
                 tax = int(allocation["individual_income_tax_fen"])
                 actual_deduction = int(allocation["actual_salary_deduction_fen"])
+                petty_recovery = int(petty_recovery_by_item.get(source_id, 0))
+                statutory_withholding = social + housing + tax
+                if petty_recovery:
+                    if actual_deduction:
+                        raise ValueError(
+                            "salary petty-cash recovery cannot be combined with an "
+                            "actual salary deduction"
+                        )
+                    if petty_recovery != statutory_withholding:
+                        raise ValueError(
+                            "salary petty-cash recovery must equal the full statutory "
+                            "withholding for the salary item"
+                        )
                 open_item = self.session.get(OpenItem, source_id)
                 if open_item is None:
                     raise ValueError("SALARY_OPEN_ITEM_NOT_FOUND")
@@ -1024,11 +1054,17 @@ class LaborRemunerationService:
                         "employee_housing_fund_fen": housing,
                         "individual_income_tax_fen": tax,
                         "actual_salary_deduction_fen": actual_deduction,
+                        "salary_petty_cash_recovery_fen": petty_recovery,
                         "salary_expense_role": allocation["expense_role"],
                         "theoretical_individual_income_tax_fen": tax,
                         "unwithheld_individual_income_tax_fen": 0,
                         "net_amount_fen": (
-                            gross - social - housing - tax - actual_deduction
+                            gross
+                            - social
+                            - housing
+                            - tax
+                            - actual_deduction
+                            + petty_recovery
                         ),
                         "withholding_components": allocation,
                     }
@@ -1094,6 +1130,7 @@ class LaborRemunerationService:
                     "employee_housing_fund_fen": 0,
                     "individual_income_tax_fen": actual_withholding_fen,
                     "actual_salary_deduction_fen": 0,
+                    "salary_petty_cash_recovery_fen": 0,
                     "salary_expense_role": None,
                     "theoretical_individual_income_tax_fen": entitlement.amount_fen,
                     "unwithheld_individual_income_tax_fen": unwithheld_fen,
@@ -1112,7 +1149,21 @@ class LaborRemunerationService:
             raise ValueError("DUPLICATE_PAYOUT_SOURCE_OPEN_ITEM")
         gross_total = sum(item["gross_amount_fen"] for item in derived_items)
         net_total = sum(item["net_amount_fen"] for item in derived_items)
-        withholding_total = gross_total - net_total
+        withholding_total = sum(
+            item["employee_social_insurance_fen"]
+            + item["employee_housing_fund_fen"]
+            + item["individual_income_tax_fen"]
+            + item["actual_salary_deduction_fen"]
+            for item in derived_items
+        )
+        salary_petty_cash_recovery_total = sum(
+            item["salary_petty_cash_recovery_fen"] for item in derived_items
+        )
+        if (
+            net_total
+            != gross_total - withholding_total + salary_petty_cash_recovery_total
+        ):
+            raise ValueError("UNIFIED_PAYOUT_RECOVERY_TOTAL_MISMATCH")
         theoretical_income_tax_total = sum(
             item["theoretical_individual_income_tax_fen"] for item in derived_items
         )
@@ -1126,6 +1177,9 @@ class LaborRemunerationService:
             "salary_derived": salary_derived,
             "gross_total_fen": gross_total,
             "withholding_total_fen": withholding_total,
+            "salary_petty_cash_recovery_total_fen": (
+                salary_petty_cash_recovery_total
+            ),
             "theoretical_individual_income_tax_total_fen": theoretical_income_tax_total,
             "unwithheld_individual_income_tax_total_fen": unwithheld_income_tax_total,
             "net_total_fen": net_total,
@@ -1189,6 +1243,9 @@ class LaborRemunerationService:
                                 item["actual_salary_deduction_fen"]
                                 for item in derived["items"]
                             ),
+                            "salary_petty_cash_recovery_total_fen": derived[
+                                "salary_petty_cash_recovery_total_fen"
+                            ],
                             "theoretical_individual_income_tax_total_fen": derived[
                                 "theoretical_individual_income_tax_total_fen"
                             ],
@@ -1210,6 +1267,9 @@ class LaborRemunerationService:
                     posting_date=request.posting_date,
                     gross_total_fen=derived["gross_total_fen"],
                     withholding_total_fen=derived["withholding_total_fen"],
+                    salary_petty_cash_recovery_total_fen=derived[
+                        "salary_petty_cash_recovery_total_fen"
+                    ],
                     net_total_fen=derived["net_total_fen"],
                 )
                 self.session.add(run)
@@ -1247,6 +1307,9 @@ class LaborRemunerationService:
                             individual_income_tax_fen=values["individual_income_tax_fen"],
                             actual_salary_deduction_fen=values[
                                 "actual_salary_deduction_fen"
+                            ],
+                            salary_petty_cash_recovery_fen=values[
+                                "salary_petty_cash_recovery_fen"
                             ],
                             theoretical_individual_income_tax_fen=values[
                                 "theoretical_individual_income_tax_fen"
@@ -1317,6 +1380,9 @@ class LaborRemunerationService:
                 "unwithheld_individual_income_tax_total_fen": sum(
                     item.unwithheld_individual_income_tax_fen for item in items
                 ),
+                "salary_petty_cash_recovery_total_fen": (
+                    run.salary_petty_cash_recovery_total_fen
+                ),
                 "net_total_fen": run.net_total_fen,
                 "items": [
                     {
@@ -1333,6 +1399,9 @@ class LaborRemunerationService:
                         "employee_housing_fund_fen": item.employee_housing_fund_fen,
                         "individual_income_tax_fen": item.individual_income_tax_fen,
                         "actual_salary_deduction_fen": item.actual_salary_deduction_fen,
+                        "salary_petty_cash_recovery_fen": (
+                            item.salary_petty_cash_recovery_fen
+                        ),
                         "theoretical_individual_income_tax_fen": (
                             item.theoretical_individual_income_tax_fen
                         ),
@@ -1520,13 +1589,21 @@ class LaborRemunerationService:
                             for item in items
                             if item.item_kind == "salary"
                         ),
+                        "salary_petty_cash_recovery_total_fen": sum(
+                            item.salary_petty_cash_recovery_fen
+                            for item in items
+                            if item.item_kind == "salary"
+                        ),
+                        "salary_petty_cash_recovery_treatment": run.calculation_input[
+                            "request"
+                        ].get("salary_petty_cash_recovery_treatment"),
                         "bank_transaction_ids": [str(item.id) for item in banks],
                     },
                     business_date=run.business_date,
                     payment_date=run.payment_date,
                     posting_date=run.posting_date,
                     rule_trace=run.calculation_trace,
-                    rule_version="unified-payout/2",
+                    rule_version="unified-payout/3",
                 )
                 self.session.add(event)
                 self.session.flush()
@@ -1590,6 +1667,25 @@ class LaborRemunerationService:
                     )
                 for expense_role, amount in sorted(salary_deductions_by_role.items()):
                     entries.append(Entry(account_role=expense_role, credit_fen=amount))
+                petty_cash_recovery_total = sum(
+                    item.salary_petty_cash_recovery_fen
+                    for item in items
+                    if item.item_kind == "salary"
+                )
+                if petty_cash_recovery_total:
+                    if (
+                        run.calculation_input["request"].get(
+                            "salary_petty_cash_recovery_treatment"
+                        )
+                        != "offbook_petty_cash_expense"
+                    ):
+                        raise ValueError("SALARY_PETTY_CASH_RECOVERY_TREATMENT_INVALID")
+                    entries.append(
+                        Entry(
+                            account_role="general_expense",
+                            debit_fen=petty_cash_recovery_total,
+                        )
+                    )
                 for item in items:
                     source = source_by_id.get(item.source_open_item_id)
                     if source is None:
@@ -1724,6 +1820,9 @@ class LaborRemunerationService:
                                 item.unwithheld_individual_income_tax_fen
                                 for item in items
                                 if item.item_kind == "labor"
+                            ),
+                            "salary_petty_cash_recovery_total_fen": (
+                                petty_cash_recovery_total
                             ),
                         },
                     )

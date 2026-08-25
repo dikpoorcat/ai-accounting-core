@@ -190,6 +190,21 @@ class LaborPayoutItem(BaseModel):
     )
 
 
+class SalaryPettyCashRecoveryAllocation(BaseModel):
+    """Salary withholding repaid after a mistaken gross bank payout.
+
+    This is intentionally narrower than a generic cash-receipt adjustment.  It
+    is only accepted when the employee repays the full statutory withholding
+    for the same salary line into an off-ledger petty-cash pool whose established
+    accounting treatment is immediate general expense recognition.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    open_item_id: uuid.UUID
+    amount_fen: PositiveFen
+
+
 class PreviewUnifiedPayoutRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -207,6 +222,15 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
     )
     salary_actual_deduction_allocations: list[SalaryActualDeductionAllocation] = Field(
         default_factory=list, max_length=1000
+    )
+    salary_petty_cash_recovery_allocations: list[
+        SalaryPettyCashRecoveryAllocation
+    ] = Field(default_factory=list, max_length=1000)
+    salary_petty_cash_recovery_treatment: (
+        Literal["offbook_petty_cash_expense"] | None
+    ) = None
+    salary_petty_cash_recovery_evidence_references: list[uuid.UUID] = Field(
+        default_factory=list, max_length=100
     )
     labor_items: list[LaborPayoutItem] = Field(default_factory=list, max_length=1000)
     withholding_agency_code: str | None = Field(default=None, min_length=1, max_length=100)
@@ -231,6 +255,24 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
         ):
             raise ValueError(
                 "withholding exception evidence must also be included in evidence_references"
+            )
+        petty_recovery = bool(self.salary_petty_cash_recovery_allocations)
+        if petty_recovery != (
+            self.salary_petty_cash_recovery_treatment
+            == "offbook_petty_cash_expense"
+        ):
+            raise ValueError(
+                "salary petty-cash recovery allocations and treatment must be provided together"
+            )
+        if not petty_recovery and self.salary_petty_cash_recovery_evidence_references:
+            raise ValueError(
+                "salary petty-cash recovery evidence is only accepted with recovery allocations"
+            )
+        if not set(self.salary_petty_cash_recovery_evidence_references).issubset(
+            self.evidence_references
+        ):
+            raise ValueError(
+                "salary petty-cash recovery evidence must also be included in evidence_references"
             )
         return self
 
@@ -286,6 +328,11 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
             and not self.withholding_exception_evidence_references
         ):
             fields.append("withholding_exception_evidence_references")
+        if (
+            self.salary_petty_cash_recovery_allocations
+            and not self.salary_petty_cash_recovery_evidence_references
+        ):
+            fields.append("salary_petty_cash_recovery_evidence_references")
         if not self.evidence_references:
             fields.append("evidence_references")
         return fields

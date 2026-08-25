@@ -4042,6 +4042,9 @@ class UnifiedPayoutRun(Base):
     posting_date: Mapped[date] = mapped_column(Date, nullable=False)
     gross_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     withholding_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    salary_petty_cash_recovery_total_fen: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
     net_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -4084,7 +4087,10 @@ class UnifiedPayoutRun(Base):
         ),
         CheckConstraint(
             "gross_total_fen > 0 AND withholding_total_fen >= 0 AND net_total_fen > 0 "
-            "AND net_total_fen = gross_total_fen - withholding_total_fen",
+            "AND salary_petty_cash_recovery_total_fen >= 0 "
+            "AND salary_petty_cash_recovery_total_fen <= withholding_total_fen "
+            "AND net_total_fen = gross_total_fen - withholding_total_fen "
+            "+ salary_petty_cash_recovery_total_fen",
             name="ck_payout_run_totals",
         ),
         CheckConstraint("length(calculation_hash) = 64", name="ck_payout_run_hash"),
@@ -4144,6 +4150,9 @@ class UnifiedPayoutRunItem(Base):
     actual_salary_deduction_fen: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
+    salary_petty_cash_recovery_fen: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
     theoretical_individual_income_tax_fen: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
@@ -4192,6 +4201,7 @@ class UnifiedPayoutRunItem(Base):
             "AND settlement_mode = 'not_applicable') OR "
             "(item_kind = 'labor' AND payroll_line_id IS NULL AND labor_line_id IS NOT NULL "
             "AND actual_salary_deduction_fen = 0 "
+            "AND salary_petty_cash_recovery_fen = 0 "
             "AND settlement_mode IN "
             "('net_after_withholding','gross_paid_without_withholding'))",
             name="ck_payout_item_source_kind",
@@ -4200,12 +4210,15 @@ class UnifiedPayoutRunItem(Base):
             "gross_amount_fen > 0 AND employee_social_insurance_fen >= 0 "
             "AND employee_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0 "
             "AND actual_salary_deduction_fen >= 0 "
+            "AND salary_petty_cash_recovery_fen >= 0 "
+            "AND salary_petty_cash_recovery_fen <= employee_social_insurance_fen "
+            "+ employee_housing_fund_fen + individual_income_tax_fen "
             "AND theoretical_individual_income_tax_fen >= individual_income_tax_fen "
             "AND unwithheld_individual_income_tax_fen = "
             "theoretical_individual_income_tax_fen - individual_income_tax_fen "
             "AND net_amount_fen = gross_amount_fen - employee_social_insurance_fen "
             "- employee_housing_fund_fen - individual_income_tax_fen "
-            "- actual_salary_deduction_fen "
+            "- actual_salary_deduction_fen + salary_petty_cash_recovery_fen "
             "AND net_amount_fen >= 0",
             name="ck_payout_item_totals",
         ),
@@ -4219,6 +4232,13 @@ class UnifiedPayoutRunItem(Base):
             "AND unwithheld_individual_income_tax_fen = "
             "theoretical_individual_income_tax_fen)",
             name="ck_payout_item_settlement_mode",
+        ),
+        CheckConstraint(
+            "salary_petty_cash_recovery_fen = 0 OR "
+            "(item_kind = 'salary' AND actual_salary_deduction_fen = 0 "
+            "AND salary_petty_cash_recovery_fen = employee_social_insurance_fen "
+            "+ employee_housing_fund_fen + individual_income_tax_fen)",
+            name="ck_payout_item_petty_recovery",
         ),
     )
 

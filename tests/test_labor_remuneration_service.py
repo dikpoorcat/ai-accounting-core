@@ -35,6 +35,7 @@ from ai_accounting.labor_remuneration_service import (
     calculate_resident_labor_withholding,
 )
 from ai_accounting.models import (
+    Account,
     AccountingPeriod,
     BankTransaction,
     BankTransactionMatch,
@@ -1132,6 +1133,164 @@ def test_gross_paid_without_withholding_preserves_exception_and_settles_full_ban
             payout_run = session.get(UnifiedPayoutRun, payout.payout_run_id)
             assert payout_run is not None
             assert payout_run.status == "reversed"
+            session.commit()
+    finally:
+        engine.dispose()
+
+
+def test_salary_statutory_withholding_repaid_to_offbook_petty_cash() -> None:
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    try:
+        with factory() as session:
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="工资代扣款退回备用金测试",
+                accounting_period_control_enabled=True,
+            )
+            prepare_authenticated_bank_account(
+                session,
+                organization,
+                booking_date=date(2026, 3, 5),
+            )
+            evidence = session.scalar(
+                select(Evidence).where(
+                    Evidence.org_id == organization.id,
+                    Evidence.original_name == "test-bank-scope.txt",
+                )
+            )
+            assert evidence is not None
+            _, payroll_accrual = preview_and_confirm(session, organization)
+            salary_item = session.scalar(
+                select(OpenItem).where(
+                    OpenItem.org_id == organization.id,
+                    OpenItem.source_event_id == payroll_accrual.event_id,
+                    OpenItem.payable_category == "salary",
+                )
+            )
+            assert salary_item is not None
+            bank = import_test_bank_transaction(
+                session,
+                organization,
+                amount_fen=-1_000_000,
+                key="salary-gross-bank-with-petty-recovery",
+                booking_date=date(2026, 3, 5),
+            )
+            request_facts = {
+                "org_id": organization.id,
+                "idempotency_key": "salary-petty-recovery-preview",
+                "business_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "posting_date": "2026-03-05",
+                "bank_account_code": "1002",
+                "bank_transaction_id": bank.id,
+                "salary_allocations": [
+                    {"open_item_id": salary_item.id, "amount_fen": 1_000_000}
+                ],
+                "salary_withholding_allocations": [
+                    {
+                        "open_item_id": salary_item.id,
+                        "employee_social_insurance_items": {"pension": 80_000},
+                        "employee_housing_fund_items": {"housing_fund": 70_000},
+                        "individual_income_tax_fen": 10_500,
+                    }
+                ],
+                "salary_petty_cash_recovery_allocations": [
+                    {"open_item_id": salary_item.id, "amount_fen": 160_500}
+                ],
+                "salary_petty_cash_recovery_treatment": "offbook_petty_cash_expense",
+                "evidence_references": [evidence.id],
+            }
+            service = LaborRemunerationService(session)
+            missing = service.preview_payout(
+                PreviewUnifiedPayoutRunRequest.model_validate(request_facts)
+            )
+            assert missing.status.value == "needs_information"
+            assert missing.missing_information[0].fields == [
+                "salary_petty_cash_recovery_evidence_references"
+            ]
+
+            invalid_request = request_facts | {
+                "idempotency_key": "salary-petty-recovery-invalid",
+                "salary_petty_cash_recovery_allocations": [
+                    {"open_item_id": salary_item.id, "amount_fen": 160_499}
+                ],
+                "salary_petty_cash_recovery_evidence_references": [evidence.id],
+            }
+            invalid = service.preview_payout(
+                PreviewUnifiedPayoutRunRequest.model_validate(invalid_request)
+            )
+            assert invalid.status.value == "rejected"
+            assert "must equal the full statutory withholding" in invalid.errors[0]
+
+            preview = service.preview_payout(
+                PreviewUnifiedPayoutRunRequest.model_validate(
+                    request_facts
+                    | {
+                        "salary_petty_cash_recovery_evidence_references": [
+                            evidence.id
+                        ]
+                    }
+                )
+            )
+            assert preview.status.value == "calculated"
+            assert preview.data["gross_total_fen"] == 1_000_000
+            assert preview.data["withholding_total_fen"] == 160_500
+            assert preview.data["salary_petty_cash_recovery_total_fen"] == 160_500
+            assert preview.data["net_total_fen"] == 1_000_000
+
+            payout = service.confirm_payout(
+                ConfirmUnifiedPayoutRunRequest(
+                    org_id=organization.id,
+                    payout_run_id=preview.payout_run_id,
+                    idempotency_key="salary-petty-recovery-confirm",
+                    calculation_hash=preview.calculation_hash,
+                    confirmation_note="确认法定代扣款全部退回小荷包并作为备用金",
+                )
+            )
+            assert payout.status.value == "posted"
+            assert salary_item.status == "settled"
+            assert bank.matched_event_id == payout.event_id
+            run = session.get(UnifiedPayoutRun, payout.payout_run_id)
+            assert run is not None
+            assert run.salary_petty_cash_recovery_total_fen == 160_500
+            run_item = session.scalar(
+                select(UnifiedPayoutRunItem).where(
+                    UnifiedPayoutRunItem.payout_run_id == payout.payout_run_id
+                )
+            )
+            assert run_item is not None
+            assert run_item.salary_petty_cash_recovery_fen == 160_500
+            assert run_item.net_amount_fen == 1_000_000
+
+            voucher_lines = session.execute(
+                select(
+                    Account.system_role,
+                    VoucherLine.debit_fen,
+                    VoucherLine.credit_fen,
+                )
+                .join(Voucher, Voucher.id == VoucherLine.voucher_id)
+                .join(Account, Account.id == VoucherLine.account_id)
+                .where(Voucher.event_id == payout.event_id)
+            ).all()
+            assert ("employee_salary_payable", 1_000_000, 0) in voucher_lines
+            assert ("general_expense", 160_500, 0) in voucher_lines
+            assert ("withheld_employee_social_payable", 0, 80_000) in voucher_lines
+            assert ("withheld_employee_housing_fund_payable", 0, 70_000) in voucher_lines
+            assert ("individual_income_tax_payable", 0, 10_500) in voucher_lines
+            assert ("bank", 0, 1_000_000) in voucher_lines
+            assert {
+                item.payable_category
+                for item in session.scalars(
+                    select(OpenItem).where(OpenItem.source_event_id == payout.event_id)
+                )
+            } == {
+                "withheld_employee_social",
+                "withheld_employee_housing",
+                "individual_income_tax",
+            }
             session.commit()
     finally:
         engine.dispose()
