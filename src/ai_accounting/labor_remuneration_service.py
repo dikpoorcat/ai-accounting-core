@@ -65,9 +65,11 @@ from .models import (
     OpenItem,
     Organization,
     PayrollEventLink,
+    PayrollSalaryActualDeductionAllocation,
     PayrollWithholdingPaymentAllocation,
     Settlement,
     UnifiedPayoutRun,
+    UnifiedPayoutRunBankTransaction,
     UnifiedPayoutRunEvidence,
     UnifiedPayoutRunItem,
     Voucher,
@@ -881,37 +883,62 @@ class LaborRemunerationService:
         payment_date: date,
         amount_fen: int,
     ) -> BankTransaction:
+        return self._validated_banks(
+            org_id,
+            account_code,
+            [transaction_id],
+            payment_date,
+            amount_fen,
+        )[0]
+
+    def _validated_banks(
+        self,
+        org_id: uuid.UUID,
+        account_code: str,
+        transaction_ids: list[uuid.UUID],
+        payment_date: date,
+        amount_fen: int,
+    ) -> list[BankTransaction]:
+        if not transaction_ids or len(transaction_ids) != len(set(transaction_ids)):
+            raise ValueError("BANK_TRANSACTION_IDS_MUST_BE_UNIQUE_AND_NONEMPTY")
         self.finance._validate_bank_account(org_id, account_code, payment_date)
-        bank = self.session.scalar(
+        banks = self.session.scalars(
             select(BankTransaction)
             .where(
                 BankTransaction.org_id == org_id,
-                BankTransaction.id == transaction_id,
+                BankTransaction.id.in_(transaction_ids),
             )
+            .order_by(BankTransaction.id)
             .with_for_update()
-        )
-        if bank is None:
+        ).all()
+        if len(banks) != len(transaction_ids):
             raise ValueError("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-        if bank.import_action_id is None:
-            raise ValueError("BANK_TRANSACTION_REQUIRES_CONTROLLED_IMPORT_ACTION")
-        if bank.bank_account_code != account_code:
-            raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-        if bank.amount_fen != -amount_fen:
+        if sum(bank.amount_fen for bank in banks) != -amount_fen:
             raise ValueError("BANK_TRANSACTION_AMOUNT_MISMATCH")
-        if bank.booking_date != payment_date:
-            raise ValueError("BANK_TRANSACTION_PAYMENT_DATE_MISMATCH")
-        active_match = self.session.scalar(
+        active_matches = self.session.scalars(
             select(BankTransactionMatch)
             .where(
                 BankTransactionMatch.org_id == org_id,
-                BankTransactionMatch.bank_transaction_id == bank.id,
+                BankTransactionMatch.bank_transaction_id.in_(transaction_ids),
                 BankTransactionMatch.invalidated_by_event_id.is_(None),
             )
+            .order_by(BankTransactionMatch.bank_transaction_id)
             .with_for_update()
-        )
-        if active_match is not None or bank.matched_event_id is not None:
+        ).all()
+        if active_matches:
             raise ValueError("BANK_TRANSACTION_ALREADY_MATCHED")
-        return bank
+        by_id = {bank.id: bank for bank in banks}
+        ordered = [by_id[transaction_id] for transaction_id in transaction_ids]
+        for bank in ordered:
+            if bank.import_action_id is None:
+                raise ValueError("BANK_TRANSACTION_REQUIRES_CONTROLLED_IMPORT_ACTION")
+            if bank.bank_account_code != account_code:
+                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
+            if bank.booking_date != payment_date:
+                raise ValueError("BANK_TRANSACTION_PAYMENT_DATE_MISMATCH")
+            if bank.matched_event_id is not None:
+                raise ValueError("BANK_TRANSACTION_ALREADY_MATCHED")
+        return ordered
 
     def _salary_request(
         self, request: PreviewUnifiedPayoutRunRequest, net_amount_fen: int
@@ -934,6 +961,10 @@ class LaborRemunerationService:
                 "salary_withholding_allocations": [
                     item.model_dump(mode="json") for item in request.salary_withholding_allocations
                 ],
+                "salary_actual_deduction_allocations": [
+                    item.model_dump(mode="json")
+                    for item in request.salary_actual_deduction_allocations
+                ],
                 "description": request.description,
             }
         )
@@ -947,6 +978,10 @@ class LaborRemunerationService:
             supplied_by_item = {
                 item.open_item_id: item for item in request.salary_withholding_allocations
             }
+            actual_deduction_by_item = {
+                item.open_item_id: item.amount_fen
+                for item in request.salary_actual_deduction_allocations
+            }
             salary_net = sum(
                 allocation.amount_fen
                 - sum(
@@ -958,6 +993,7 @@ class LaborRemunerationService:
                     supplied_by_item[allocation.open_item_id].employee_housing_fund_items.values()
                 )
                 - supplied_by_item[allocation.open_item_id].individual_income_tax_fen
+                - actual_deduction_by_item.get(allocation.open_item_id, 0)
                 for allocation in request.salary_allocations
             )
             salary_request = self._salary_request(request, salary_net)
@@ -971,6 +1007,7 @@ class LaborRemunerationService:
                 social = sum(allocation["employee_social_insurance_items"].values())
                 housing = sum(allocation["employee_housing_fund_items"].values())
                 tax = int(allocation["individual_income_tax_fen"])
+                actual_deduction = int(allocation["actual_salary_deduction_fen"])
                 open_item = self.session.get(OpenItem, source_id)
                 if open_item is None:
                     raise ValueError("SALARY_OPEN_ITEM_NOT_FOUND")
@@ -986,9 +1023,13 @@ class LaborRemunerationService:
                         "employee_social_insurance_fen": social,
                         "employee_housing_fund_fen": housing,
                         "individual_income_tax_fen": tax,
+                        "actual_salary_deduction_fen": actual_deduction,
+                        "salary_expense_role": allocation["expense_role"],
                         "theoretical_individual_income_tax_fen": tax,
                         "unwithheld_individual_income_tax_fen": 0,
-                        "net_amount_fen": gross - social - housing - tax,
+                        "net_amount_fen": (
+                            gross - social - housing - tax - actual_deduction
+                        ),
                         "withholding_components": allocation,
                     }
                 )
@@ -1052,6 +1093,8 @@ class LaborRemunerationService:
                     "employee_social_insurance_fen": 0,
                     "employee_housing_fund_fen": 0,
                     "individual_income_tax_fen": actual_withholding_fen,
+                    "actual_salary_deduction_fen": 0,
+                    "salary_expense_role": None,
                     "theoretical_individual_income_tax_fen": entitlement.amount_fen,
                     "unwithheld_individual_income_tax_fen": unwithheld_fen,
                     "net_amount_fen": source.original_amount_fen - actual_withholding_fen,
@@ -1099,7 +1142,7 @@ class LaborRemunerationService:
                 assert request.posting_date is not None
                 assert request.payment_date is not None
                 assert request.bank_account_code is not None
-                assert request.bank_transaction_id is not None
+                bank_transaction_ids = request.selected_bank_transaction_ids()
                 assert_period_open(self.session, request.org_id, request.posting_date)
                 existing = self.session.scalar(
                     select(UnifiedPayoutRun).where(
@@ -1112,10 +1155,10 @@ class LaborRemunerationService:
                         return self._rejected("PAYOUT_RUN_IDEMPOTENCY_PAYLOAD_MISMATCH")
                     return self._payout_result(existing, replay=True)
                 derived = self._derive_payout(request)
-                self._validated_bank(
+                self._validated_banks(
                     request.org_id,
                     request.bank_account_code,
-                    request.bank_transaction_id,
+                    bank_transaction_ids,
                     request.payment_date,
                     derived["net_total_fen"],
                 )
@@ -1142,6 +1185,10 @@ class LaborRemunerationService:
                             ),
                             "gross_total_fen": derived["gross_total_fen"],
                             "withholding_total_fen": derived["withholding_total_fen"],
+                            "actual_salary_deduction_fen": sum(
+                                item["actual_salary_deduction_fen"]
+                                for item in derived["items"]
+                            ),
                             "theoretical_individual_income_tax_total_fen": derived[
                                 "theoretical_individual_income_tax_total_fen"
                             ],
@@ -1157,7 +1204,7 @@ class LaborRemunerationService:
                         }
                     ],
                     bank_account_code=request.bank_account_code,
-                    bank_transaction_id=request.bank_transaction_id,
+                    bank_transaction_id=bank_transaction_ids[0],
                     business_date=request.business_date,
                     payment_date=request.payment_date,
                     posting_date=request.posting_date,
@@ -1167,6 +1214,14 @@ class LaborRemunerationService:
                 )
                 self.session.add(run)
                 self.session.flush()
+                for bank_transaction_id in bank_transaction_ids:
+                    self.session.add(
+                        UnifiedPayoutRunBankTransaction(
+                            org_id=request.org_id,
+                            payout_run_id=run.id,
+                            bank_transaction_id=bank_transaction_id,
+                        )
+                    )
                 for values in derived["items"]:
                     self.session.add(
                         UnifiedPayoutRunItem(
@@ -1190,6 +1245,9 @@ class LaborRemunerationService:
                             employee_social_insurance_fen=values["employee_social_insurance_fen"],
                             employee_housing_fund_fen=values["employee_housing_fund_fen"],
                             individual_income_tax_fen=values["individual_income_tax_fen"],
+                            actual_salary_deduction_fen=values[
+                                "actual_salary_deduction_fen"
+                            ],
                             theoretical_individual_income_tax_fen=values[
                                 "theoretical_individual_income_tax_fen"
                             ],
@@ -1229,6 +1287,16 @@ class LaborRemunerationService:
             )
             .order_by(UnifiedPayoutRunItem.id)
         ).all()
+        bank_transaction_ids = self.session.scalars(
+            select(UnifiedPayoutRunBankTransaction.bank_transaction_id)
+            .where(
+                UnifiedPayoutRunBankTransaction.org_id == run.org_id,
+                UnifiedPayoutRunBankTransaction.payout_run_id == run.id,
+            )
+            .order_by(UnifiedPayoutRunBankTransaction.bank_transaction_id)
+        ).all()
+        if not bank_transaction_ids:
+            bank_transaction_ids = [run.bank_transaction_id]
         return LaborResult(
             status=LaborResultStatus(run.status),
             payout_run_id=run.id,
@@ -1240,6 +1308,7 @@ class LaborRemunerationService:
             data={
                 "idempotent_replay": replay,
                 "bank_transaction_id": str(run.bank_transaction_id),
+                "bank_transaction_ids": [str(item) for item in bank_transaction_ids],
                 "gross_total_fen": run.gross_total_fen,
                 "withholding_total_fen": run.withholding_total_fen,
                 "theoretical_individual_income_tax_total_fen": sum(
@@ -1263,6 +1332,7 @@ class LaborRemunerationService:
                         "employee_social_insurance_fen": (item.employee_social_insurance_fen),
                         "employee_housing_fund_fen": item.employee_housing_fund_fen,
                         "individual_income_tax_fen": item.individual_income_tax_fen,
+                        "actual_salary_deduction_fen": item.actual_salary_deduction_fen,
                         "theoretical_individual_income_tax_fen": (
                             item.theoretical_individual_income_tax_fen
                         ),
@@ -1379,10 +1449,20 @@ class LaborRemunerationService:
                 if self._hash(current_input) != run.calculation_hash:
                     return self._rejected("PAYOUT_SOURCE_STATE_OR_CALCULATION_CHANGED")
                 assert_period_open(self.session, run.org_id, run.posting_date)
-                bank = self._validated_bank(
+                bank_transaction_ids = self.session.scalars(
+                    select(UnifiedPayoutRunBankTransaction.bank_transaction_id)
+                    .where(
+                        UnifiedPayoutRunBankTransaction.org_id == run.org_id,
+                        UnifiedPayoutRunBankTransaction.payout_run_id == run.id,
+                    )
+                    .order_by(UnifiedPayoutRunBankTransaction.bank_transaction_id)
+                ).all()
+                if not bank_transaction_ids:
+                    bank_transaction_ids = [run.bank_transaction_id]
+                banks = self._validated_banks(
                     run.org_id,
                     run.bank_account_code,
-                    run.bank_transaction_id,
+                    list(bank_transaction_ids),
                     run.payment_date,
                     run.net_total_fen,
                 )
@@ -1435,6 +1515,12 @@ class LaborRemunerationService:
                         "labor_settlement_modes": sorted(
                             {item.settlement_mode for item in items if item.item_kind == "labor"}
                         ),
+                        "actual_salary_deduction_fen": sum(
+                            item.actual_salary_deduction_fen
+                            for item in items
+                            if item.item_kind == "salary"
+                        ),
+                        "bank_transaction_ids": [str(item.id) for item in banks],
                     },
                     business_date=run.business_date,
                     payment_date=run.payment_date,
@@ -1487,6 +1573,23 @@ class LaborRemunerationService:
                 ):
                     if amount:
                         entries.append(Entry(account_role=role, credit_fen=amount))
+                salary_deductions_by_role: dict[str, int] = {}
+                for item in items:
+                    if item.item_kind != "salary" or not item.actual_salary_deduction_fen:
+                        continue
+                    expense_role = item.withholding_components.get("expense_role")
+                    if expense_role not in {
+                        "payroll_management_expense",
+                        "payroll_sales_expense",
+                        "payroll_service_cost",
+                    }:
+                        raise ValueError("SALARY_ACTUAL_DEDUCTION_EXPENSE_ROLE_INVALID")
+                    salary_deductions_by_role[expense_role] = (
+                        salary_deductions_by_role.get(expense_role, 0)
+                        + item.actual_salary_deduction_fen
+                    )
+                for expense_role, amount in sorted(salary_deductions_by_role.items()):
+                    entries.append(Entry(account_role=expense_role, credit_fen=amount))
                 for item in items:
                     source = source_by_id.get(item.source_open_item_id)
                     if source is None:
@@ -1587,14 +1690,15 @@ class LaborRemunerationService:
                             amount_fen=run_item.individual_income_tax_fen,
                         )
                     )
-                self.session.add(
-                    BankTransactionMatch(
-                        org_id=run.org_id,
-                        bank_transaction_id=bank.id,
-                        event_id=event.id,
+                for bank in banks:
+                    self.session.add(
+                        BankTransactionMatch(
+                            org_id=run.org_id,
+                            bank_transaction_id=bank.id,
+                            event_id=event.id,
+                        )
                     )
-                )
-                bank.matched_event_id = event.id
+                    bank.matched_event_id = event.id
                 voucher = create_voucher(
                     self.session,
                     event=event,
@@ -1614,7 +1718,7 @@ class LaborRemunerationService:
                         action="unified_payout_confirmed",
                         details={
                             "payout_run_id": str(run.id),
-                            "bank_transaction_id": str(bank.id),
+                            "bank_transaction_ids": [str(bank.id) for bank in banks],
                             "calculation_hash": run.calculation_hash,
                             "unwithheld_labor_tax_fen": sum(
                                 item.unwithheld_individual_income_tax_fen
@@ -2013,6 +2117,16 @@ class LaborRemunerationService:
             for allocation in allocations:
                 allocation.reversed = True
                 allocation.reversed_by_event_id = reversal_id
+            actual_deductions = self.session.scalars(
+                select(PayrollSalaryActualDeductionAllocation).where(
+                    PayrollSalaryActualDeductionAllocation.org_id == request.org_id,
+                    PayrollSalaryActualDeductionAllocation.payment_event_id == original.id,
+                    PayrollSalaryActualDeductionAllocation.reversed.is_(False),
+                )
+            ).all()
+            for deduction in actual_deductions:
+                deduction.reversed = True
+                deduction.reversed_by_event_id = reversal_id
         elif original_type == "labor_withholding_tax_payment":
             allocations = self.session.scalars(
                 select(LaborWithholdingTaxPaymentAllocation).where(

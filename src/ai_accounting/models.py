@@ -1212,6 +1212,60 @@ class PayrollWithholdingPaymentAllocation(Base):
     )
 
 
+class PayrollSalaryActualDeductionAllocation(Base):
+    """Actual employer-retained salary deduction used in one salary settlement."""
+
+    __tablename__ = "payroll_salary_actual_deduction_allocations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    payroll_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    payment_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expense_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    reversed: Mapped[bool] = mapped_column(default=False)
+    reversed_by_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "payroll_line_id"],
+            ["payroll_lines.org_id", "payroll_lines.id"],
+            name="fk_salary_actual_deduction_org_line",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "payment_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_salary_actual_deduction_org_payment_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "reversed_by_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_salary_actual_deduction_org_reversal_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "payroll_line_id",
+            "payment_event_id",
+            name="uq_salary_actual_deduction_line_event",
+        ),
+        CheckConstraint("amount_fen > 0", name="ck_salary_actual_deduction_positive"),
+        CheckConstraint(
+            "expense_role IN ('payroll_management_expense','payroll_sales_expense',"
+            "'payroll_service_cost')",
+            name="ck_salary_actual_deduction_expense_role",
+        ),
+        CheckConstraint(
+            "(reversed IS FALSE AND reversed_by_event_id IS NULL) OR "
+            "(reversed IS TRUE AND reversed_by_event_id IS NOT NULL)",
+            name="ck_salary_actual_deduction_reversal",
+        ),
+    )
+
+
 class PayrollOpeningState(Base):
     __tablename__ = "payroll_opening_states"
 
@@ -3616,6 +3670,37 @@ class UnifiedPayoutRun(Base):
     )
 
 
+class UnifiedPayoutRunBankTransaction(Base):
+    """Normalized bank rows that jointly fund one unified payout run."""
+
+    __tablename__ = "unified_payout_run_bank_transactions"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    payout_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    bank_transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "payout_run_id"],
+            ["unified_payout_runs.org_id", "unified_payout_runs.id"],
+            name="fk_payout_bank_org_run",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "bank_transaction_id"],
+            ["bank_transactions.org_id", "bank_transactions.id"],
+            name="fk_payout_bank_org_transaction",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "payout_run_id",
+            "bank_transaction_id",
+            name="uq_payout_bank_run_transaction",
+        ),
+    )
+
+
 class UnifiedPayoutRunItem(Base):
     __tablename__ = "unified_payout_run_items"
 
@@ -3634,6 +3719,9 @@ class UnifiedPayoutRunItem(Base):
     )
     employee_housing_fund_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     individual_income_tax_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    actual_salary_deduction_fen: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
     theoretical_individual_income_tax_fen: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
@@ -3681,6 +3769,7 @@ class UnifiedPayoutRunItem(Base):
             "(item_kind = 'salary' AND payroll_line_id IS NOT NULL AND labor_line_id IS NULL "
             "AND settlement_mode = 'not_applicable') OR "
             "(item_kind = 'labor' AND payroll_line_id IS NULL AND labor_line_id IS NOT NULL "
+            "AND actual_salary_deduction_fen = 0 "
             "AND settlement_mode IN "
             "('net_after_withholding','gross_paid_without_withholding'))",
             name="ck_payout_item_source_kind",
@@ -3688,11 +3777,13 @@ class UnifiedPayoutRunItem(Base):
         CheckConstraint(
             "gross_amount_fen > 0 AND employee_social_insurance_fen >= 0 "
             "AND employee_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0 "
+            "AND actual_salary_deduction_fen >= 0 "
             "AND theoretical_individual_income_tax_fen >= individual_income_tax_fen "
             "AND unwithheld_individual_income_tax_fen = "
             "theoretical_individual_income_tax_fen - individual_income_tax_fen "
             "AND net_amount_fen = gross_amount_fen - employee_social_insurance_fen "
             "- employee_housing_fund_fen - individual_income_tax_fen "
+            "- actual_salary_deduction_fen "
             "AND net_amount_fen >= 0",
             name="ck_payout_item_totals",
         ),

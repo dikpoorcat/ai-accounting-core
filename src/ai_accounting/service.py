@@ -50,6 +50,7 @@ from .models import (
     PayrollLine,
     PayrollOpeningState,
     PayrollPolicyVersion,
+    PayrollSalaryActualDeductionAllocation,
     PayrollTaxStateSlot,
     PayrollTaxYearGuard,
     PayrollWithholdingEntitlement,
@@ -1345,6 +1346,11 @@ class FinanceService:
             ):
                 if withholding[field_name]:
                     entries.append(Entry(account_role=role, credit_fen=withholding[field_name]))
+            for expense_role, deduction_fen in sorted(
+                withholding["actual_salary_deduction_by_expense_role"].items()
+            ):
+                if deduction_fen:
+                    entries.append(Entry(account_role=expense_role, credit_fen=deduction_fen))
             derived = {
                 "payable_categories": ["salary"],
                 "allocated_gross_salary_fen": withholding["gross_salary_fen"],
@@ -1352,6 +1358,15 @@ class FinanceService:
                 "employee_social_insurance_fen": withholding["employee_social_insurance_fen"],
                 "employee_housing_fund_fen": withholding["employee_housing_fund_fen"],
                 "individual_income_tax_fen": withholding["individual_income_tax_fen"],
+                "actual_salary_deduction_fen": withholding[
+                    "actual_salary_deduction_fen"
+                ],
+                "actual_salary_deduction_allocations": withholding[
+                    "actual_salary_deduction_allocations"
+                ],
+                "actual_salary_deduction_by_expense_role": withholding[
+                    "actual_salary_deduction_by_expense_role"
+                ],
                 "payroll_batch_id": withholding["payroll_batch_id"],
                 "payroll_line_ids": withholding["payroll_line_ids"],
                 "withholding_payment_allocations": withholding["withholding_payment_allocations"],
@@ -1708,14 +1723,31 @@ class FinanceService:
             raise ValueError(
                 "salary payment needs explicit withholdings for every salary allocation"
             )
+        actual_deduction_by_item = {
+            item.open_item_id: item.amount_fen
+            for item in request.salary_actual_deduction_allocations
+        }
+        if len(actual_deduction_by_item) != len(
+            request.salary_actual_deduction_allocations
+        ):
+            raise ValueError(
+                "salary payment cannot state actual deductions twice for one open item"
+            )
+        if not set(actual_deduction_by_item).issubset(allocation_by_item):
+            raise ValueError(
+                "salary actual deduction must belong to a salary allocation"
+            )
 
         batch: PayrollBatch | None = None
         cash_total = 0
         social_total = 0
         housing_total = 0
         tax_total = 0
+        actual_deduction_total = 0
+        actual_deduction_by_expense_role: dict[str, int] = {}
         serialised_allocations: list[dict[str, Any]] = []
         withholding_allocations: list[dict[str, Any]] = []
+        actual_deduction_allocations: list[dict[str, Any]] = []
         for open_item_id, gross_amount in allocation_by_item.items():
             open_item = self.session.scalar(
                 select(OpenItem).where(
@@ -1769,6 +1801,16 @@ class FinanceService:
             )
             if line is None:
                 raise ValueError("salary open item has no matching payroll line")
+            profile = self.session.scalar(
+                select(EmployeePayrollProfileVersion).where(
+                    EmployeePayrollProfileVersion.org_id == request.org_id,
+                    EmployeePayrollProfileVersion.id
+                    == line.employee_payroll_profile_version_id,
+                    EmployeePayrollProfileVersion.employee_id == line.employee_id,
+                )
+            )
+            if profile is None:
+                raise ValueError("salary payroll line has no matching payroll expense profile")
             supplied = withholding_by_item[open_item_id]
             entitlements = self.session.scalars(
                 select(PayrollWithholdingEntitlement)
@@ -1805,12 +1847,29 @@ class FinanceService:
             )
             tax = sum(tax_components.values())
             withholding_total = sum(social.values()) + sum(housing.values()) + tax
-            if withholding_total > gross_amount:
-                raise ValueError("salary withholding exceeds the allocated gross salary")
-            cash_total += gross_amount - withholding_total
+            actual_deduction = int(actual_deduction_by_item.get(open_item_id, 0))
+            if withholding_total + actual_deduction > gross_amount:
+                raise ValueError(
+                    "salary withholdings and actual deduction exceed the allocated gross salary"
+                )
+            cash_total += gross_amount - withholding_total - actual_deduction
             social_total += sum(social.values())
             housing_total += sum(housing.values())
             tax_total += tax
+            actual_deduction_total += actual_deduction
+            if actual_deduction:
+                actual_deduction_by_expense_role[profile.expense_role] = (
+                    actual_deduction_by_expense_role.get(profile.expense_role, 0)
+                    + actual_deduction
+                )
+                actual_deduction_allocations.append(
+                    {
+                        "open_item_id": str(open_item_id),
+                        "payroll_line_id": str(line.id),
+                        "amount_fen": actual_deduction,
+                        "expense_role": profile.expense_role,
+                    }
+                )
             serialised_allocations.append(
                 {
                     "open_item_id": str(open_item_id),
@@ -1818,6 +1877,8 @@ class FinanceService:
                     "employee_social_insurance_items": social,
                     "employee_housing_fund_items": housing,
                     "individual_income_tax_fen": tax,
+                    "actual_salary_deduction_fen": actual_deduction,
+                    "expense_role": profile.expense_role,
                 }
             )
             withholding_allocations.extend(
@@ -1827,7 +1888,8 @@ class FinanceService:
             raise ValueError("ZERO_CASH_SALARY_PAYMENT_FORBIDS_BANK_TRANSACTIONS")
         if batch is None or cash_total != self._amount(request):
             raise ValueError(
-                "salary cash payment must equal gross allocations less explicit withholdings"
+                "salary cash payment must equal gross allocations less explicit "
+                "withholdings and actual salary deductions"
             )
         return {
             "payroll_batch_id": str(batch.id),
@@ -1835,9 +1897,18 @@ class FinanceService:
             "employee_social_insurance_fen": social_total,
             "employee_housing_fund_fen": housing_total,
             "individual_income_tax_fen": tax_total,
+            "actual_salary_deduction_fen": actual_deduction_total,
+            "actual_salary_deduction_by_expense_role": actual_deduction_by_expense_role,
+            "actual_salary_deduction_allocations": actual_deduction_allocations,
             "allocations": serialised_allocations,
             "payroll_line_ids": sorted(
-                {str(item["payroll_line_id"]) for item in withholding_allocations}
+                {
+                    str(item["payroll_line_id"])
+                    for item in [
+                        *withholding_allocations,
+                        *actual_deduction_allocations,
+                    ]
+                }
             ),
             "withholding_payment_allocations": withholding_allocations,
         }
@@ -1962,7 +2033,7 @@ class FinanceService:
     def _record_payroll_withholding_allocations(
         self, event: BusinessEvent, derived: dict[str, Any]
     ) -> None:
-        """Persist each statutory deduction against its formal entitlement."""
+        """Persist statutory and actual salary deductions against their payroll lines."""
         for allocation in derived.get("withholding_payment_allocations", []):
             self.session.add(
                 PayrollWithholdingPaymentAllocation(
@@ -1970,6 +2041,16 @@ class FinanceService:
                     entitlement_id=uuid.UUID(allocation["entitlement_id"]),
                     payment_event_id=event.id,
                     amount_fen=int(allocation["amount_fen"]),
+                )
+            )
+        for allocation in derived.get("actual_salary_deduction_allocations", []):
+            self.session.add(
+                PayrollSalaryActualDeductionAllocation(
+                    org_id=event.org_id,
+                    payroll_line_id=uuid.UUID(allocation["payroll_line_id"]),
+                    payment_event_id=event.id,
+                    amount_fen=int(allocation["amount_fen"]),
+                    expense_role=allocation["expense_role"],
                 )
             )
 
@@ -6148,7 +6229,34 @@ class FinanceService:
         return targets
 
     def _agency_counterparty(self, org_id: uuid.UUID, target: dict[str, str]) -> Counterparty:
-        name = f"法定缴费机构 {target['agency_name']}"
+        agency_code = target["agency_code"]
+        legacy_name = f"法定缴费机构 {target['agency_name']}"
+        coded_name = f"{legacy_name} [{agency_code}]"
+        agencies = self.session.scalars(
+            select(Counterparty).where(
+                Counterparty.org_id == org_id,
+                Counterparty.kind == "other",
+                Counterparty.external_ref == agency_code,
+            )
+        ).all()
+        if len(agencies) > 1:
+            raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT")
+        if agencies:
+            if agencies[0].name not in {legacy_name, coded_name}:
+                raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT")
+            return agencies[0]
+
+        legacy = self.session.scalar(
+            select(Counterparty).where(
+                Counterparty.org_id == org_id,
+                Counterparty.kind == "other",
+                Counterparty.name == legacy_name,
+            )
+        )
+        if legacy is not None and legacy.external_ref == agency_code:
+            return legacy
+
+        name = coded_name
         statement = select(Counterparty).where(
             Counterparty.org_id == org_id,
             Counterparty.kind == "other",
@@ -6166,7 +6274,7 @@ class FinanceService:
                         org_id=org_id,
                         kind="other",
                         name=name,
-                        external_ref=target["agency_code"],
+                        external_ref=agency_code,
                     )
                     self.session.add(agency)
                     self.session.flush()
@@ -6174,7 +6282,7 @@ class FinanceService:
                 agency = self.session.scalar(statement)
                 if agency is None:
                     raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT") from None
-        if agency.external_ref != target["agency_code"]:
+        if agency.external_ref != agency_code:
             raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT")
         return agency
 
@@ -7258,6 +7366,18 @@ class FinanceService:
             for allocation in withholding_allocations:
                 allocation.reversed = True
                 allocation.reversed_by_event_id = reversal.id
+            actual_deductions = self.session.scalars(
+                select(PayrollSalaryActualDeductionAllocation)
+                .where(
+                    PayrollSalaryActualDeductionAllocation.org_id == request.org_id,
+                    PayrollSalaryActualDeductionAllocation.payment_event_id == original.id,
+                    PayrollSalaryActualDeductionAllocation.reversed.is_(False),
+                )
+                .with_for_update()
+            ).all()
+            for deduction in actual_deductions:
+                deduction.reversed = True
+                deduction.reversed_by_event_id = reversal.id
 
         tax_period = self.session.scalar(
             select(TaxPeriod).where(TaxPeriod.adjustment_event_id == original.id)

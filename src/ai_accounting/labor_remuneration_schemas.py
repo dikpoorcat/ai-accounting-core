@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
-from .schemas import Allocation, SalaryWithholdingAllocation
+from .schemas import Allocation, SalaryActualDeductionAllocation, SalaryWithholdingAllocation
 
 Fen = Annotated[StrictInt, Field(ge=0)]
 PositiveFen = Annotated[StrictInt, Field(gt=0)]
@@ -200,8 +200,12 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
     posting_date: date | None = None
     bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     bank_transaction_id: uuid.UUID | None = None
+    bank_transaction_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
     salary_allocations: list[Allocation] = Field(default_factory=list, max_length=1000)
     salary_withholding_allocations: list[SalaryWithholdingAllocation] = Field(
+        default_factory=list, max_length=1000
+    )
+    salary_actual_deduction_allocations: list[SalaryActualDeductionAllocation] = Field(
         default_factory=list, max_length=1000
     )
     labor_items: list[LaborPayoutItem] = Field(default_factory=list, max_length=1000)
@@ -230,6 +234,21 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def bank_transaction_selection_is_unambiguous(self) -> PreviewUnifiedPayoutRunRequest:
+        if self.bank_transaction_id is not None and self.bank_transaction_ids:
+            raise ValueError(
+                "provide bank_transaction_id or bank_transaction_ids, not both"
+            )
+        if len(self.bank_transaction_ids) != len(set(self.bank_transaction_ids)):
+            raise ValueError("bank_transaction_ids must not contain duplicates")
+        return self
+
+    def selected_bank_transaction_ids(self) -> list[uuid.UUID]:
+        if self.bank_transaction_ids:
+            return list(self.bank_transaction_ids)
+        return [self.bank_transaction_id] if self.bank_transaction_id is not None else []
+
     def missing_fields(self) -> list[str]:
         fields = [
             name
@@ -238,10 +257,11 @@ class PreviewUnifiedPayoutRunRequest(BaseModel):
                 "payment_date",
                 "posting_date",
                 "bank_account_code",
-                "bank_transaction_id",
             )
             if getattr(self, name) is None
         ]
+        if not self.selected_bank_transaction_ids():
+            fields.append("bank_transaction_id_or_ids")
         if not self.salary_allocations and not self.labor_items:
             fields.append("salary_allocations_or_labor_items")
         if self.salary_allocations and not self.salary_withholding_allocations:

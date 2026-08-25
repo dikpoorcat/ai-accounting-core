@@ -334,6 +334,11 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "salary_withholding_allocations": (
             "required; classified employee deductions per salary open item"
         ),
+        "salary_actual_deduction_allocations": (
+            "optional; employer-retained actual salary deductions per salary open item; "
+            "settles salary without creating another payable and credits only the source "
+            "payroll expense role"
+        ),
         "conditional_required_fields": {"when amount_fen > 0": ["bank_account_code"]},
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
         "creates": "withheld statutory payroll payables internally",
@@ -562,6 +567,21 @@ class SalaryWithholdingAllocation(BaseModel):
         ):
             raise ValueError("withholding component values must be non-negative integer fen")
         return self
+
+
+class SalaryActualDeductionAllocation(BaseModel):
+    """Employer-retained salary deduction that settles salary without creating a debt.
+
+    The deduction is distinct from statutory social-insurance, housing-fund and
+    income-tax withholdings.  The posting template always credits the same
+    benefit-area payroll expense used by the source payroll line; callers cannot
+    select an account or journal direction.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    open_item_id: uuid.UUID
+    amount_fen: PositiveFen
 
 
 class EventDetails(BaseModel):
@@ -1623,8 +1643,22 @@ class RecordEventRequest(BaseModel):
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     allocations: list[Allocation] = Field(default_factory=list)
     salary_withholding_allocations: list[SalaryWithholdingAllocation] = Field(default_factory=list)
+    salary_actual_deduction_allocations: list[SalaryActualDeductionAllocation] = Field(
+        default_factory=list
+    )
     description: str = Field(default="", max_length=2000)
     details: EventDetails = Field(default_factory=EventDetails)
+
+    @model_validator(mode="after")
+    def actual_salary_deductions_are_salary_payment_only(self) -> RecordEventRequest:
+        if (
+            self.event_type is not EventType.SALARY_PAYMENT
+            and self.salary_actual_deduction_allocations
+        ):
+            raise ValueError(
+                "salary_actual_deduction_allocations are only accepted for salary payment"
+            )
+        return self
 
     @model_validator(mode="after")
     def zero_cash_is_limited_to_salary_withholding_settlement(self) -> RecordEventRequest:
