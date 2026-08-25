@@ -515,6 +515,128 @@ def test_zero_tax_reported_salary_posts_company_borne_social_in_payroll_period(
     assert_balanced(session, confirmed.voucher_id)
 
 
+def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    employee_result = service.register_employee(
+        RegisterEmployeeRequest(
+            org_id=organization.id,
+            employee_code="CONTRIBUTION-ONLY-001",
+            name="仅社保人员",
+            employment_start_date=date(2026, 7, 1),
+            tax_withholding_start_date=None,
+        )
+    )
+    employee_id = uuid.UUID(employee_result["employee_id"])
+    assert (
+        service.register_employee_payroll_profile_version(
+            RegisterEmployeePayrollProfileVersionRequest(
+                org_id=organization.id,
+                employee_id=employee_id,
+                effective_from=date(2026, 7, 1),
+                expense_role="payroll_service_cost",
+                social_insurance_base_fen=500_000,
+                housing_fund_base_fen=0,
+                social_insurance_participating=True,
+                housing_fund_participating=False,
+                resident_employee=None,
+            )
+        )["status"]
+        == "registered"
+    )
+    parameters = payroll_parameters()
+    parameters["employee_contribution_shortfall_treatment"] = "employer_borne"
+    parameters["contribution_rules"] = [
+        {
+            "code": code,
+            "base_kind": "social_insurance",
+            "employee_rate": employee_rate,
+            "employer_rate": employer_rate,
+            "minimum_base_fen": 0,
+            "maximum_base_fen": 10_000_000,
+            "rounding_rule": "half_up",
+        }
+        for code, employee_rate, employer_rate in (
+            ("pension", "0.08", "0.16"),
+            ("medical", "0.02", "0.095"),
+            ("unemployment", "0.005", "0.005"),
+            ("work_injury", "0", "0.004"),
+        )
+    ]
+    assert (
+        service.register_payroll_policy_version(
+            RegisterPayrollPolicyVersionRequest.model_validate(
+                {
+                    "org_id": organization.id,
+                    "region": "杭州",
+                    "effective_from": "2026-01-01",
+                    "effective_to": "2026-12-31",
+                    "version": "contribution-only-2026",
+                    "source_url": "https://www.chinatax.gov.cn/",
+                    "parameters": parameters,
+                }
+            )
+        )["status"]
+        == "registered"
+    )
+
+    preview = service.preview_payroll(
+        PreviewPayrollRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "contribution-only-july-preview",
+                "batch_kind": "regular",
+                "payroll_period": "2026-07",
+                "posting_date": "2026-07-31",
+                "payment_date": "2026-08-15",
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "wage_tax_declaration_state": "not_declared",
+                        "tax_reported_salary_fen": None,
+                        "special_additional_deduction_fen": 0,
+                        "other_legal_deduction_fen": 0,
+                    }
+                ],
+            }
+        )
+    )
+    assert preview.status == "calculated", preview.model_dump(mode="json")
+    assert preview.data["summary"] == {
+        "gross_salary_fen": 0,
+        "net_salary_fen": 0,
+        "employer_social_insurance_fen": 184_500,
+        "employer_housing_fund_fen": 0,
+        "individual_income_tax_fen": 0,
+    }
+    assert preview.data["lines"][0]["wage_tax_declaration_state"] == "not_declared"
+
+    confirmed = service.confirm_payroll(
+        ConfirmPayrollRequest(
+            org_id=organization.id,
+            batch_id=preview.batch_id,
+            calculation_hash=preview.calculation_hash,
+            idempotency_key="contribution-only-july-confirm",
+        )
+    )
+    assert confirmed.status == "posted", confirmed.errors
+    line = session.scalar(
+        select(PayrollLine).where(PayrollLine.payroll_batch_id == preview.batch_id)
+    )
+    assert line is not None
+    assert line.wage_tax_declaration_state == "not_declared"
+    assert line.tax_reported_salary_fen is None
+    assert line.employee_social_insurance_fen == 0
+    assert line.employer_social_insurance_fen == 184_500
+    assert session.scalar(
+        select(PayrollTaxStateSlot).where(
+            PayrollTaxStateSlot.regular_batch_id == preview.batch_id
+        )
+    ) is None
+    assert_balanced(session, confirmed.voucher_id)
+
+
 def test_payroll_profile_records_company_contribution_participation(
     session: Session, organization: Organization
 ) -> None:

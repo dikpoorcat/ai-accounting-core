@@ -112,6 +112,7 @@ from .schemas import (
     PayrollPolicyParameters,
     PayrollResult,
     PayrollResultStatus,
+    PayrollWageTaxDeclarationState,
     PreviewPayrollRequest,
     RecordEventRequest,
     RecordPayrollContributionSupplementRequest,
@@ -502,11 +503,10 @@ class FinanceService:
             )
 
     @staticmethod
-    def _batch_uses_cumulative_tax_state(batch: PayrollBatch) -> bool:
-        return not (
-            batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
-            and batch.tax_method == AnnualBonusTaxMethod.SEPARATE.value
-        )
+    def _line_uses_cumulative_tax_state(batch: PayrollBatch, line: PayrollLine) -> bool:
+        if batch.batch_kind == PayrollBatchKind.REGULAR.value:
+            return line.wage_tax_declaration_state == "declared"
+        return batch.tax_method == AnnualBonusTaxMethod.COMBINED.value
 
     def _allocate_payroll_batch_version(
         self, org_id: uuid.UUID, batch_kind: str, payroll_period: str
@@ -4645,12 +4645,15 @@ class FinanceService:
         # Lock the persistent annual domain *before* re-reading cumulative
         # state.  Otherwise a January and March batch both calculated from an
         # empty slot range can independently confirm.
-        if self._batch_uses_cumulative_tax_state(batch):
+        tax_state_lines = [
+            line for line in lines if self._line_uses_cumulative_tax_state(batch, line)
+        ]
+        if tax_state_lines:
             try:
                 batch_tax_period = self._batch_tax_period(batch)
                 self._lock_payroll_tax_year(
                     batch.org_id,
-                    [line.employee_id for line in lines],
+                    [line.employee_id for line in tax_state_lines],
                     batch_tax_period.year,
                 )
             except CalculationValidationError as exc:
@@ -5405,14 +5408,14 @@ class FinanceService:
     ) -> None:
         """Atomically reserve/advance the only tax-state slot for each employee-month."""
 
-        if (
-            batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
-            and batch.tax_method == "separate"
-        ):
+        tax_state_lines = [
+            line for line in lines if self._line_uses_cumulative_tax_state(batch, line)
+        ]
+        if not tax_state_lines:
             return
         tax_period = self._batch_tax_period(batch)
         year, month = tax_period.year, tax_period.month
-        employee_ids = [line.employee_id for line in lines]
+        employee_ids = [line.employee_id for line in tax_state_lines]
         later = self.session.scalars(
             select(PayrollTaxStateSlot)
             .where(
@@ -5433,7 +5436,7 @@ class FinanceService:
                 if self.session.bind and self.session.bind.dialect.name == "postgresql"
                 else sqlite_insert(PayrollTaxStateSlot)
             )
-            for line in lines:
+            for line in tax_state_lines:
                 inserted_slot_id = self.session.scalar(
                     insert_stmt.values(
                         org_id=batch.org_id,
@@ -5453,7 +5456,7 @@ class FinanceService:
                         "PAYROLL_TAX_STATE_SLOT_ALREADY_EXISTS", "regular tax slot already exists"
                     )
             return
-        for line in lines:
+        for line in tax_state_lines:
             if line.regular_payroll_batch_id is None:
                 raise CalculationValidationError(
                     "INVALID_REGULAR_PAYROLL_DEPENDENCY", "combined bonus needs a regular batch"
@@ -5624,7 +5627,24 @@ class FinanceService:
                     }
                 )
                 continue
-            if not profile.resident_employee:
+            uses_wage_tax = (
+                request.batch_kind == PayrollBatchKind.ANNUAL_BONUS
+                or item.wage_tax_declaration_state
+                == PayrollWageTaxDeclarationState.DECLARED
+            )
+            if uses_wage_tax and profile.resident_employee is None:
+                missing.append(
+                    {
+                        "code": "resident_employee",
+                        "message": (
+                            f"employee {employee.employee_code} needs an explicit resident "
+                            "individual status before wage-tax calculation"
+                        ),
+                        "fields": ["resident_employee"],
+                    }
+                )
+                continue
+            if uses_wage_tax and not profile.resident_employee:
                 raise CalculationValidationError(
                     "UNSUPPORTED_EMPLOYEE_TYPE", "phase 1 supports resident employees only"
                 )
@@ -5651,7 +5671,11 @@ class FinanceService:
                         }
                     )
                     continue
-                if employee.tax_withholding_start_date is None:
+                if (
+                    item.wage_tax_declaration_state
+                    == PayrollWageTaxDeclarationState.DECLARED
+                    and employee.tax_withholding_start_date is None
+                ):
                     missing.append(
                         {
                             "code": "tax_withholding_start_date",
@@ -5675,6 +5699,77 @@ class FinanceService:
                 "resident_employee": profile.resident_employee,
             }
             if request.batch_kind == PayrollBatchKind.REGULAR:
+                policy_contribution = calculate_contributions(
+                    contribution_policy,
+                    ContributionBases(
+                        profile.social_insurance_base_fen,
+                        profile.housing_fund_base_fen,
+                        profile.social_insurance_participating,
+                        profile.housing_fund_participating,
+                    ),
+                    period.end_date,
+                )
+                active_actuals = self._active_contribution_actual_items(
+                    request.org_id, employee.id, request.payroll_period
+                )
+                contribution = apply_contribution_actuals(
+                    policy_contribution,
+                    tuple(
+                        ContributionActualOverride(
+                            actual_item_id=str(actual.id),
+                            code=actual.insurance_kind,
+                            base_kind=ContributionBaseKind(actual.contribution_group),
+                            actual_state=actual.actual_state,
+                            employee_amount_fen=actual.employee_amount_fen,
+                            employer_amount_fen=actual.employer_amount_fen,
+                        )
+                        for actual in active_actuals
+                    ),
+                )
+                actual_item_ids.update(actual.id for actual in active_actuals)
+                payroll_input = RegularPayrollInput(
+                    tax_reported_salary_fen=item.tax_reported_salary_fen or 0,
+                    special_additional_deduction_fen=item.special_additional_deduction_fen,
+                    other_legal_deduction_fen=item.other_legal_deduction_fen,
+                )
+                shortfall_treatment = EmployeeContributionShortfallTreatment(
+                    contribution_parameters.get(
+                        "employee_contribution_shortfall_treatment", "reject"
+                    )
+                )
+                contribution_burden = allocate_contribution_burden(
+                    contribution,
+                    payroll_input.gross_salary_fen,
+                    shortfall_treatment,
+                )
+                if (
+                    item.wage_tax_declaration_state
+                    == PayrollWageTaxDeclarationState.NOT_DECLARED
+                ):
+                    prepared_lines.append(
+                        self._unreported_regular_prepared_line(
+                            employee,
+                            profile,
+                            item,
+                            contribution,
+                            contribution_burden,
+                        )
+                    )
+                    input_snapshots.append(
+                        {
+                            "employee_id": str(employee.id),
+                            "profile": profile_snapshot,
+                            "wage_tax_declaration_state": "not_declared",
+                            "tax_withholding_start_date": None,
+                            "prior_tax_state": None,
+                            "contribution_actual_item_ids": [
+                                str(actual.id) for actual in active_actuals
+                            ],
+                            "first_wage_tax_treatment": None,
+                        }
+                    )
+                    continue
+
                 later_slot = self.session.scalar(
                     select(PayrollTaxStateSlot.id).where(
                         PayrollTaxStateSlot.org_id == request.org_id,
@@ -5719,49 +5814,6 @@ class FinanceService:
                     first_wage_treatment_ids.add(first_wage_treatment.id)
                     if first_wage_treatment.treatment_state == "eligible":
                         standard_deduction_start_month = 1
-                policy_contribution = calculate_contributions(
-                    contribution_policy,
-                    ContributionBases(
-                        profile.social_insurance_base_fen,
-                        profile.housing_fund_base_fen,
-                        profile.social_insurance_participating,
-                        profile.housing_fund_participating,
-                    ),
-                    period.end_date,
-                )
-                active_actuals = self._active_contribution_actual_items(
-                    request.org_id, employee.id, request.payroll_period
-                )
-                contribution = apply_contribution_actuals(
-                    policy_contribution,
-                    tuple(
-                        ContributionActualOverride(
-                            actual_item_id=str(actual.id),
-                            code=actual.insurance_kind,
-                            base_kind=ContributionBaseKind(actual.contribution_group),
-                            actual_state=actual.actual_state,
-                            employee_amount_fen=actual.employee_amount_fen,
-                            employer_amount_fen=actual.employer_amount_fen,
-                        )
-                        for actual in active_actuals
-                    ),
-                )
-                actual_item_ids.update(actual.id for actual in active_actuals)
-                payroll_input = RegularPayrollInput(
-                    tax_reported_salary_fen=item.tax_reported_salary_fen,
-                    special_additional_deduction_fen=item.special_additional_deduction_fen,
-                    other_legal_deduction_fen=item.other_legal_deduction_fen,
-                )
-                shortfall_treatment = EmployeeContributionShortfallTreatment(
-                    contribution_parameters.get(
-                        "employee_contribution_shortfall_treatment", "reject"
-                    )
-                )
-                contribution_burden = allocate_contribution_burden(
-                    contribution,
-                    payroll_input.gross_salary_fen,
-                    shortfall_treatment,
-                )
                 tax_input = CumulativeTaxPeriodInput(
                     income_date=period.end_date,
                     withholding_start_date=employee.tax_withholding_start_date,
@@ -5786,6 +5838,7 @@ class FinanceService:
                     {
                         "employee_id": str(employee.id),
                         "profile": profile_snapshot,
+                        "wage_tax_declaration_state": "declared",
                         "tax_withholding_start_date": (
                             employee.tax_withholding_start_date.isoformat()
                         ),
@@ -6346,6 +6399,8 @@ class FinanceService:
 
         cutoffs: dict[tuple[uuid.UUID, int], YearMonth] = {}
         for line, batch in direct:
+            if not FinanceService._line_uses_cumulative_tax_state(batch, line):
+                continue
             period = FinanceService._batch_tax_period(batch)
             key = (line.employee_id, period.year)
             cutoff = cutoffs.get(key)
@@ -6353,6 +6408,8 @@ class FinanceService:
                 cutoffs[key] = period
         blocked = {batch.id for _line, batch in direct}
         for line, batch in rows:
+            if not FinanceService._line_uses_cumulative_tax_state(batch, line):
+                continue
             period = FinanceService._batch_tax_period(batch)
             cutoff = cutoffs.get((line.employee_id, period.year))
             if cutoff is not None and period >= cutoff:
@@ -6425,13 +6482,14 @@ class FinanceService:
     def _opening_correction_blocking_batches(
         self, org_id: uuid.UUID, employee_id: uuid.UUID, tax_year: int, through_month: int
     ) -> set[uuid.UUID]:
-        """Opening state affects every later payroll kind, not only regular tax traces."""
+        """Opening state affects only later payroll lines that advance cumulative tax."""
 
         rows = self._posted_payroll_rows(org_id)
         return {
             batch.id
             for line, batch in rows
             if line.employee_id == employee_id
+            and self._line_uses_cumulative_tax_state(batch, line)
             and self._batch_tax_period(batch).year == tax_year
             and self._batch_tax_period(batch).month > through_month
         }
@@ -6848,6 +6906,7 @@ class FinanceService:
         return {
             "employee_id": employee.id,
             "employee_payroll_profile_version_id": profile.id,
+            "wage_tax_declaration_state": "declared",
             "tax_reported_salary_fen": item.tax_reported_salary_fen,
             "special_additional_deduction_fen": item.special_additional_deduction_fen,
             "other_legal_deduction_fen": item.other_legal_deduction_fen,
@@ -6863,6 +6922,50 @@ class FinanceService:
             "individual_income_tax_fen": result.individual_income_tax_fen,
             "gross_salary_fen": result.gross_salary_fen,
             "net_salary_fen": result.net_pay_fen,
+            "calculation_trace": trace,
+        }
+
+    def _unreported_regular_prepared_line(
+        self,
+        employee: Employee,
+        profile: EmployeePayrollProfileVersion,
+        item: Any,
+        contribution: Any,
+        burden: Any,
+    ) -> dict[str, Any]:
+        """Prepare a contribution-only line that creates no wage-tax fact or state slot."""
+
+        trace = [
+            *self._trace_dicts(contribution.trace),
+            *self._trace_dicts(burden.trace),
+            {
+                "step": "wage_tax_not_declared",
+                "values": {
+                    "tax_reported_salary_fen": None,
+                    "individual_income_tax_fen": 0,
+                    "tax_state_advanced": False,
+                },
+            },
+        ]
+        return {
+            "employee_id": employee.id,
+            "employee_payroll_profile_version_id": profile.id,
+            "wage_tax_declaration_state": "not_declared",
+            "tax_reported_salary_fen": None,
+            "special_additional_deduction_fen": item.special_additional_deduction_fen,
+            "other_legal_deduction_fen": item.other_legal_deduction_fen,
+            "annual_bonus_fen": 0,
+            "employee_social_insurance_fen": burden.employee_social_insurance_fen,
+            "employer_social_insurance_fen": burden.employer_social_insurance_fen,
+            "employee_housing_fund_fen": burden.employee_housing_fund_fen,
+            "employer_housing_fund_fen": burden.employer_housing_fund_fen,
+            "employee_social_insurance_items": burden.employee_social_insurance_items,
+            "employer_social_insurance_items": burden.employer_social_insurance_items,
+            "employee_housing_fund_items": burden.employee_housing_fund_items,
+            "employer_housing_fund_items": burden.employer_housing_fund_items,
+            "individual_income_tax_fen": 0,
+            "gross_salary_fen": 0,
+            "net_salary_fen": 0,
             "calculation_trace": trace,
         }
 
@@ -6895,6 +6998,7 @@ class FinanceService:
             "employee_id": employee.id,
             "employee_payroll_profile_version_id": profile.id,
             "regular_payroll_batch_id": regular_payroll_batch_id,
+            "wage_tax_declaration_state": "not_applicable",
             "tax_reported_salary_fen": None,
             "special_additional_deduction_fen": 0,
             "other_legal_deduction_fen": 0,
@@ -7202,6 +7306,7 @@ class FinanceService:
         return {
             "id": str(line.id),
             "employee_id": str(line.employee_id),
+            "wage_tax_declaration_state": line.wage_tax_declaration_state,
             "tax_reported_salary_fen": line.tax_reported_salary_fen,
             "annual_bonus_fen": line.annual_bonus_fen,
             "employee_social_insurance_fen": line.employee_social_insurance_fen,
@@ -7711,6 +7816,7 @@ class FinanceService:
                 payroll_batch_id=reversal_batch.id,
                 employee_id=source.employee_id,
                 employee_payroll_profile_version_id=source.employee_payroll_profile_version_id,
+                wage_tax_declaration_state=source.wage_tax_declaration_state,
                 tax_reported_salary_fen=source.tax_reported_salary_fen,
                 special_additional_deduction_fen=source.special_additional_deduction_fen,
                 other_legal_deduction_fen=source.other_legal_deduction_fen,
@@ -7985,54 +8091,65 @@ class FinanceService:
                     status=ResultStatus.REJECTED,
                     errors=["REVERSE_DEPENDENT_EVENTS_FIRST"],
                 )
-            employee_ids = self.session.scalars(
-                select(PayrollLine.employee_id).where(
+            payroll_lines = self.session.scalars(
+                select(PayrollLine).where(
                     PayrollLine.payroll_batch_id == payroll_batch.id
                 )
             ).all()
-            if self._batch_uses_cumulative_tax_state(payroll_batch):
+            tax_employee_ids = [
+                line.employee_id
+                for line in payroll_lines
+                if self._line_uses_cumulative_tax_state(payroll_batch, line)
+            ]
+            if tax_employee_ids:
                 try:
                     payroll_tax_period = self._batch_tax_period(payroll_batch)
                     self._lock_payroll_tax_year(
                         payroll_batch.org_id,
-                        employee_ids,
+                        tax_employee_ids,
                         payroll_tax_period.year,
                     )
                 except CalculationValidationError as exc:
                     return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
-            dependent_rows = self.session.execute(
-                select(PayrollBatch, PayrollLine)
-                .join(PayrollLine, PayrollLine.payroll_batch_id == PayrollBatch.id)
-                .where(
-                    PayrollBatch.org_id == original.org_id,
-                    PayrollBatch.status == "posted",
-                    PayrollLine.employee_id.in_(employee_ids),
-                )
-            ).all()
             original_tax_period = self._batch_tax_period(payroll_batch)
-            dependent = any(
-                candidate_batch.id != payroll_batch.id
-                and (
-                    self._batch_tax_period(candidate_batch) > original_tax_period
-                    or candidate_line.regular_payroll_batch_id == payroll_batch.id
+            dependent = False
+            slots: list[PayrollTaxStateSlot] = []
+            if tax_employee_ids:
+                dependent_rows = self.session.execute(
+                    select(PayrollBatch, PayrollLine)
+                    .join(PayrollLine, PayrollLine.payroll_batch_id == PayrollBatch.id)
+                    .where(
+                        PayrollBatch.org_id == original.org_id,
+                        PayrollBatch.status == "posted",
+                        PayrollLine.employee_id.in_(tax_employee_ids),
+                    )
+                ).all()
+                dependent = any(
+                    candidate_batch.id != payroll_batch.id
+                    and self._line_uses_cumulative_tax_state(
+                        candidate_batch, candidate_line
+                    )
+                    and (
+                        self._batch_tax_period(candidate_batch) > original_tax_period
+                        or candidate_line.regular_payroll_batch_id == payroll_batch.id
+                    )
+                    for candidate_batch, candidate_line in dependent_rows
                 )
-                for candidate_batch, candidate_line in dependent_rows
-            )
+                slots = self.session.scalars(
+                    select(PayrollTaxStateSlot)
+                    .where(
+                        PayrollTaxStateSlot.org_id == payroll_batch.org_id,
+                        PayrollTaxStateSlot.employee_id.in_(tax_employee_ids),
+                        PayrollTaxStateSlot.tax_year == original_tax_period.year,
+                        PayrollTaxStateSlot.tax_month == original_tax_period.month,
+                    )
+                    .with_for_update()
+                ).all()
             if dependent:
                 return FinanceResult(
                     status=ResultStatus.REJECTED,
                     errors=["REVERSE_DEPENDENT_PAYROLL_BATCHES_FIRST"],
                 )
-            slots = self.session.scalars(
-                select(PayrollTaxStateSlot)
-                .where(
-                    PayrollTaxStateSlot.org_id == payroll_batch.org_id,
-                    PayrollTaxStateSlot.employee_id.in_(employee_ids),
-                    PayrollTaxStateSlot.tax_year == original_tax_period.year,
-                    PayrollTaxStateSlot.tax_month == original_tax_period.month,
-                )
-                .with_for_update()
-            ).all()
             if payroll_batch.batch_kind == PayrollBatchKind.REGULAR.value and any(
                 slot.regular_batch_id == payroll_batch.id
                 and slot.final_batch_id != payroll_batch.id

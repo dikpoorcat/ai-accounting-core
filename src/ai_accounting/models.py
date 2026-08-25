@@ -783,7 +783,7 @@ class EmployeePayrollProfileVersion(Base):
     housing_fund_base_fen: Mapped[int] = mapped_column(BigInteger)
     social_insurance_participating: Mapped[bool] = mapped_column(default=True)
     housing_fund_participating: Mapped[bool] = mapped_column(default=True)
-    resident_employee: Mapped[bool] = mapped_column(default=True)
+    resident_employee: Mapped[bool | None] = mapped_column(nullable=True)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -1412,6 +1412,7 @@ class PayrollLine(Base):
     regular_payroll_batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     employee_payroll_profile_version_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    wage_tax_declaration_state: Mapped[str] = mapped_column(String(20), default="declared")
     tax_reported_salary_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     special_additional_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     other_legal_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -1477,11 +1478,20 @@ class PayrollLine(Base):
             name="ck_payroll_line_nonnegative_amounts",
         ),
         CheckConstraint(
-            "((tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND "
+            "((wage_tax_declaration_state = 'declared' AND "
+            "tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND "
             "gross_salary_fen = tax_reported_salary_fen) OR "
-            "(tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND "
+            "(wage_tax_declaration_state = 'not_declared' AND "
+            "tax_reported_salary_fen IS NULL AND annual_bonus_fen = 0 AND "
+            "gross_salary_fen = 0) OR "
+            "(wage_tax_declaration_state = 'not_applicable' AND "
+            "tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND "
             "gross_salary_fen = annual_bonus_fen))",
             name="ck_payroll_line_gross_salary",
+        ),
+        CheckConstraint(
+            "wage_tax_declaration_state IN ('declared','not_declared','not_applicable')",
+            name="ck_payroll_line_wage_tax_declaration_state",
         ),
         CheckConstraint(
             "net_salary_fen = gross_salary_fen - employee_social_insurance_fen - "

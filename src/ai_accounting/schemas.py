@@ -625,12 +625,27 @@ class AnnualBonusTaxMethod(StrEnum):
     COMBINED = "combined"
 
 
+class PayrollWageTaxDeclarationState(StrEnum):
+    """Whether a regular payroll person was included in the wage-tax filing."""
+
+    DECLARED = "declared"
+    NOT_DECLARED = "not_declared"
+
+
 class PayrollEmployeeItem(BaseModel):
     """Owner-approved payroll facts; all monetary values are integer fen."""
 
     model_config = ConfigDict(extra="forbid")
 
     employee_id: uuid.UUID
+    wage_tax_declaration_state: PayrollWageTaxDeclarationState = Field(
+        default=PayrollWageTaxDeclarationState.DECLARED,
+        title="工资个税申报状态",
+        description=(
+            "常规工资默认表示已纳入工资薪金个税申报；确有证据证明本月未申报工资、"
+            "但仍需处理社保时，明确填 not_declared。"
+        ),
+    )
     # The final wage amount approved for tax declaration.  The core never
     # accepts or calculates base pay, commission, performance, or attendance.
     tax_reported_salary_fen: Fen | None = Field(
@@ -860,7 +875,11 @@ class RegisterEmployeePayrollProfileVersionRequest(BaseModel):
         title="本公司缴存公积金",
         description="该工资核算人员在本公司是否实际缴存住房公积金。",
     )
-    resident_employee: bool
+    resident_employee: bool | None = Field(
+        default=None,
+        title="居民个人",
+        description="仅在工资薪金个税申报时必需；只处理社保且本月未申报工资时可暂缺。",
+    )
     supersedes_profile_version_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
@@ -1033,15 +1052,42 @@ class PreviewPayrollRequest(BaseModel):
                 raise ValueError("tax_method is only available for annual_bonus payroll")
             if any(item.annual_bonus_fen for item in self.employee_items):
                 raise ValueError("annual_bonus_fen is only available for annual_bonus payroll")
-            if any(item.tax_reported_salary_fen is None for item in self.employee_items):
-                raise ValueError(
-                    "tax_reported_salary_fen is required for regular payroll, including zero"
-                )
+            for item in self.employee_items:
+                if (
+                    item.wage_tax_declaration_state
+                    == PayrollWageTaxDeclarationState.DECLARED
+                    and item.tax_reported_salary_fen is None
+                ):
+                    raise ValueError(
+                        "tax_reported_salary_fen is required when wage tax is declared, "
+                        "including zero"
+                    )
+                if (
+                    item.wage_tax_declaration_state
+                    == PayrollWageTaxDeclarationState.NOT_DECLARED
+                    and (
+                        item.tax_reported_salary_fen is not None
+                        or item.special_additional_deduction_fen
+                        or item.other_legal_deduction_fen
+                        or item.tax_relief_fen
+                    )
+                ):
+                    raise ValueError(
+                        "not_declared regular payroll cannot include wage-tax amounts or deductions"
+                    )
             if any(item.regular_payroll_batch_id is not None for item in self.employee_items):
                 raise ValueError(
                     "regular_payroll_batch_id is only available for annual_bonus payroll"
                 )
         else:
+            if any(
+                item.wage_tax_declaration_state
+                != PayrollWageTaxDeclarationState.DECLARED
+                for item in self.employee_items
+            ):
+                raise ValueError(
+                    "wage_tax_declaration_state is only available for regular payroll"
+                )
             if any(item.annual_bonus_fen <= 0 for item in self.employee_items):
                 raise ValueError("annual_bonus_fen must be positive for annual_bonus payroll")
             if any(

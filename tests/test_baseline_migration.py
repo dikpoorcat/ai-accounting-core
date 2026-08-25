@@ -20,8 +20,9 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0024_first_wage_tax"]
+    assert scripts.get_heads() == ["0025_payroll_tax_declaration"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0025_payroll_tax_declaration",
         "0024_first_wage_tax",
         "0023_payroll_contrib_actuals",
         "0022_bank_recon_multi_match",
@@ -80,7 +81,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0024_first_wage_tax"
+                == "0025_payroll_tax_declaration"
             )
             organization_columns = {
                 column["name"] for column in inspect(connection).get_columns("organizations")
@@ -134,6 +135,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
                 column["name"] for column in inspect(connection).get_columns("payroll_lines")
             }
             assert "tax_reported_salary_fen" in payroll_line_columns
+            assert "wage_tax_declaration_state" in payroll_line_columns
             assert {
                 "base_salary_fen",
                 "performance_pay_fen",
@@ -162,7 +164,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0024_first_wage_tax"
+                == "0025_payroll_tax_declaration"
             )
     finally:
         engine.dispose()
