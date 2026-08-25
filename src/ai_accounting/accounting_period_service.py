@@ -71,6 +71,10 @@ from .models import (
     Organization,
     OwnerAccount,
     PayrollBatch,
+    PayrollContributionActualItem,
+    PayrollContributionActualSet,
+    PayrollContributionActualUse,
+    PayrollContributionSupplement,
     Settlement,
     TaxPeriod,
     UnifiedPayoutRun,
@@ -1117,6 +1121,70 @@ class AccountingPeriodService:
         regular_payroll_batches = [
             batch for batch in payroll_batches if batch.batch_kind == "regular"
         ]
+        contribution_actual_rows = self.session.execute(
+            select(PayrollContributionActualItem, PayrollContributionActualSet)
+            .join(
+                PayrollContributionActualSet,
+                (PayrollContributionActualSet.org_id == PayrollContributionActualItem.org_id)
+                & (PayrollContributionActualSet.id == PayrollContributionActualItem.actual_set_id),
+            )
+            .where(
+                PayrollContributionActualItem.org_id == org_id,
+                PayrollContributionActualItem.contribution_period == period_month,
+            )
+            .order_by(
+                PayrollContributionActualItem.employee_id,
+                PayrollContributionActualItem.contribution_group,
+                PayrollContributionActualItem.insurance_kind,
+            )
+        ).all()
+        superseded_actual_ids = {
+            item.supersedes_id for item, _ in contribution_actual_rows if item.supersedes_id
+        }
+        active_contribution_actual_rows = [
+            (item, actual_set)
+            for item, actual_set in contribution_actual_rows
+            if item.id not in superseded_actual_ids
+        ]
+        active_actual_ids = {item.id for item, _ in active_contribution_actual_rows}
+        used_actual_ids = set(
+            self.session.scalars(
+                select(PayrollContributionActualUse.actual_item_id)
+                .join(
+                    PayrollBatch,
+                    (PayrollBatch.org_id == PayrollContributionActualUse.org_id)
+                    & (PayrollBatch.id == PayrollContributionActualUse.payroll_batch_id),
+                )
+                .where(
+                    PayrollContributionActualUse.org_id == org_id,
+                    PayrollContributionActualUse.actual_item_id.in_(active_actual_ids),
+                    PayrollBatch.status.not_in(("reversed", "superseded")),
+                )
+            )
+        ) if active_actual_ids else set()
+        unapplied_contribution_actual_rows = [
+            (item, actual_set)
+            for item, actual_set in active_contribution_actual_rows
+            if item.id not in used_actual_ids
+        ]
+        contribution_supplement_count = int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(PayrollContributionSupplement)
+                .join(
+                    BusinessEvent,
+                    (BusinessEvent.org_id == PayrollContributionSupplement.org_id)
+                    & (BusinessEvent.id == PayrollContributionSupplement.event_id),
+                )
+                .where(
+                    PayrollContributionSupplement.org_id == org_id,
+                    BusinessEvent.posting_date >= period.start_date,
+                    BusinessEvent.posting_date <= period.end_date,
+                    BusinessEvent.status == "posted",
+                )
+            )
+            or 0
+        )
         payroll_payment_event_count = sum(
             event_type_counts.get(event_type, 0)
             for event_type in (
@@ -1289,6 +1357,7 @@ class AccountingPeriodService:
         payroll_attention = bool(
             employee_master_gaps
             or (active_employees and not regular_payroll_batches)
+            or unapplied_contribution_actual_rows
             or module_checks["payroll"]["count"]
         )
         labor_attention = bool(
@@ -1462,11 +1531,53 @@ class AccountingPeriodService:
                     "regular_payroll_batch_count": len(regular_payroll_batches),
                     "payroll_or_statutory_payment_event_count": payroll_payment_event_count,
                     "unfinished_payroll_batch_count": module_checks["payroll"]["count"],
+                    "contribution_actual_difference_count": len(
+                        active_contribution_actual_rows
+                    ),
+                    "unapplied_contribution_actual_difference_count": len(
+                        unapplied_contribution_actual_rows
+                    ),
+                    "contribution_actual_differences": [
+                        {
+                            "employee_id": str(item.employee_id),
+                            "contribution_group": item.contribution_group,
+                            "insurance_kind": item.insurance_kind,
+                            "actual_state": item.actual_state,
+                            "employee_amount_fen": item.employee_amount_fen,
+                            "employer_amount_fen": item.employer_amount_fen,
+                            "reason_code": actual_set.reason_code,
+                            "applied_to_current_payroll": item.id in used_actual_ids,
+                        }
+                        for item, actual_set in active_contribution_actual_rows
+                    ],
+                    "historical_contribution_supplement_count": contribution_supplement_count,
                 },
                 "owner_questions": (
                     [
-                        "系统列出的具体工资核算人员缺档、工资批次或法定项目异常，"
-                        "是否有尚未提供且会改变本月工资、社保、公积金或个税的事实？"
+                        *(
+                            [
+                                "以下已登记的逐险种实际应缴事实尚未进入本月工资批次："
+                                + "；".join(
+                                    f"员工{item.employee_id} {item.contribution_group}/"
+                                    f"{item.insurance_kind}={item.employee_amount_fen}+"
+                                    f"{item.employer_amount_fen}分（{item.actual_state}）"
+                                    for item, _ in unapplied_contribution_actual_rows
+                                )
+                                + "。请先按这些已知事实重算工资批次。"
+                            ]
+                            if unapplied_contribution_actual_rows
+                            else []
+                        ),
+                        *(
+                            [
+                                "系统列出的具体工资核算人员缺档、工资批次或法定项目异常，"
+                                "是否有尚未提供且会改变本月工资、社保、公积金或个税的事实？"
+                            ]
+                            if employee_master_gaps
+                            or (active_employees and not regular_payroll_batches)
+                            or module_checks["payroll"]["count"]
+                            else []
+                        ),
                     ]
                     if payroll_attention
                     else []

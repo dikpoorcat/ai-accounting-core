@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 from enum import StrEnum
@@ -172,6 +172,37 @@ class ContributionResult:
 
 
 @dataclass(frozen=True)
+class ContributionActualOverride:
+    """Evidenced actual assessment for one policy contribution line."""
+
+    actual_item_id: str
+    code: str
+    base_kind: ContributionBaseKind
+    actual_state: str
+    employee_amount_fen: int
+    employer_amount_fen: int
+
+    def __post_init__(self) -> None:
+        if not self.actual_item_id or not self.code:
+            raise CalculationValidationError(
+                "INVALID_CONTRIBUTION_ACTUAL", "actual item id and contribution code are required"
+            )
+        require_fen(self.employee_amount_fen, "employee_amount_fen")
+        require_fen(self.employer_amount_fen, "employer_amount_fen")
+        if self.actual_state not in {"declared", "not_declared"}:
+            raise CalculationValidationError(
+                "INVALID_CONTRIBUTION_ACTUAL", "actual_state is not supported"
+            )
+        if self.actual_state == "not_declared" and (
+            self.employee_amount_fen or self.employer_amount_fen
+        ):
+            raise CalculationValidationError(
+                "INVALID_CONTRIBUTION_ACTUAL",
+                "not-declared actual contribution amounts must be zero",
+            )
+
+
+@dataclass(frozen=True)
 class ContributionBurdenResult:
     """Actual payroll deduction and employer burden after applying company policy."""
 
@@ -302,6 +333,78 @@ def calculate_contributions(
     return ContributionResult(
         policy_version=policy.version,
         primary_source_url=policy.primary_source_url,
+        lines=tuple(lines),
+        employee_social_insurance_fen=total(ContributionBaseKind.SOCIAL_INSURANCE, "employee"),
+        employer_social_insurance_fen=total(ContributionBaseKind.SOCIAL_INSURANCE, "employer"),
+        employee_housing_fund_fen=total(ContributionBaseKind.HOUSING_FUND, "employee"),
+        employer_housing_fund_fen=total(ContributionBaseKind.HOUSING_FUND, "employer"),
+        trace=tuple(trace),
+    )
+
+
+def apply_contribution_actuals(
+    result: ContributionResult,
+    actuals: tuple[ContributionActualOverride, ...],
+) -> ContributionResult:
+    """Overlay sparse evidenced actual assessments without changing the policy baseline."""
+
+    if not actuals:
+        return result
+    actual_by_key = {(item.base_kind, item.code): item for item in actuals}
+    if len(actual_by_key) != len(actuals):
+        raise CalculationValidationError(
+            "DUPLICATE_CONTRIBUTION_ACTUAL", "actual contribution keys must be unique"
+        )
+    policy_keys = {(line.base_kind, line.code) for line in result.lines}
+    unknown = sorted(
+        f"{base_kind}:{code}"
+        for base_kind, code in set(actual_by_key).difference(policy_keys)
+    )
+    if unknown:
+        raise CalculationValidationError(
+            "CONTRIBUTION_ACTUAL_KIND_NOT_IN_POLICY",
+            f"actual contribution kinds are absent from the effective policy: {unknown}",
+        )
+    lines: list[ContributionLine] = []
+    trace = list(result.trace)
+    for line in result.lines:
+        actual = actual_by_key.get((line.base_kind, line.code))
+        if actual is None:
+            lines.append(line)
+            continue
+        lines.append(
+            replace(
+                line,
+                employee_contribution_fen=actual.employee_amount_fen,
+                employer_contribution_fen=actual.employer_amount_fen,
+            )
+        )
+        trace.append(
+            TraceEntry(
+                step="contribution_actual_override",
+                values={
+                    "actual_item_id": actual.actual_item_id,
+                    "code": line.code,
+                    "base_kind": str(line.base_kind),
+                    "actual_state": actual.actual_state,
+                    "policy_employee_contribution_fen": line.employee_contribution_fen,
+                    "policy_employer_contribution_fen": line.employer_contribution_fen,
+                    "actual_employee_contribution_fen": actual.employee_amount_fen,
+                    "actual_employer_contribution_fen": actual.employer_amount_fen,
+                },
+            )
+        )
+
+    def total(base_kind: ContributionBaseKind, side: str) -> int:
+        return sum(
+            line.employee_contribution_fen if side == "employee" else line.employer_contribution_fen
+            for line in lines
+            if line.base_kind == base_kind
+        )
+
+    return ContributionResult(
+        policy_version=result.policy_version,
+        primary_source_url=result.primary_source_url,
         lines=tuple(lines),
         employee_social_insurance_fen=total(ContributionBaseKind.SOCIAL_INSURANCE, "employee"),
         employer_social_insurance_fen=total(ContributionBaseKind.SOCIAL_INSURANCE, "employer"),

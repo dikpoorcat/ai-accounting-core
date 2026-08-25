@@ -54,6 +54,7 @@ class EventType(StrEnum):
     HOUSING_FUND_PAYMENT = "housing_fund_payment"
     INDIVIDUAL_INCOME_TAX_PAYMENT = "individual_income_tax_payment"
     PAYROLL = "payroll"
+    PAYROLL_CONTRIBUTION_SUPPLEMENT = "payroll_contribution_supplement"
     FIXED_ASSET = "fixed_asset"
     FIXED_ASSET_ACQUISITION = "fixed_asset_acquisition"
     FIXED_ASSET_ACTIVATION = "fixed_asset_activation"
@@ -92,6 +93,7 @@ INTERNAL_EVENT_TYPES = {
     EventType.BORROWING_INTEREST_ACCRUAL,
     EventType.BORROWING_INTEREST_PAYMENT,
     EventType.BORROWING_PRINCIPAL_REPAYMENT,
+    EventType.PAYROLL_CONTRIBUTION_SUPPLEMENT,
 }
 
 
@@ -644,6 +646,133 @@ class PayrollEmployeeItem(BaseModel):
     # from this posted regular payroll batch.  A caller cannot provide free-form
     # monthly wage tax inputs.
     regular_payroll_batch_id: uuid.UUID | None = None
+
+
+class PayrollContributionGroup(StrEnum):
+    SOCIAL_INSURANCE = "social_insurance"
+    HOUSING_FUND = "housing_fund"
+
+
+class PayrollContributionActualState(StrEnum):
+    DECLARED = "declared"
+    NOT_DECLARED = "not_declared"
+
+
+class PayrollContributionActualItem(BaseModel):
+    """One evidenced actual assessment, distinct from the company policy baseline."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contribution_group: PayrollContributionGroup
+    insurance_kind: str = Field(min_length=1, max_length=50)
+    actual_state: PayrollContributionActualState
+    employee_amount_fen: Fen
+    employer_amount_fen: Fen
+
+    @model_validator(mode="after")
+    def non_declaration_has_no_assessed_amount(self) -> PayrollContributionActualItem:
+        if self.actual_state is PayrollContributionActualState.NOT_DECLARED and (
+            self.employee_amount_fen or self.employer_amount_fen
+        ):
+            raise ValueError("not_declared contribution items must have zero actual amounts")
+        return self
+
+
+class RegisterPayrollContributionActualRequest(BaseModel):
+    """Register immutable employee/month/kind actual assessment facts.
+
+    The company policy remains the calculation baseline.  Only the explicitly
+    supplied insurance kinds are replaced by these evidenced actual amounts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    employee_id: uuid.UUID
+    contribution_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    declaration_date: date
+    reason_code: Literal[
+        "late_enrollment",
+        "missing_declaration",
+        "partial_declaration",
+        "agency_assessment",
+        "documented_correction",
+        "other_documented",
+    ]
+    reason_description: str = Field(min_length=1, max_length=2000)
+    items: list[PayrollContributionActualItem] = Field(min_length=1)
+    evidence_references: list[uuid.UUID] = Field(min_length=1)
+    supersedes_actual_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def contribution_items_are_unique(self) -> RegisterPayrollContributionActualRequest:
+        keys = [(item.contribution_group.value, item.insurance_kind) for item in self.items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("items must contain each contribution group and insurance kind once")
+        if len(self.evidence_references) != len(set(self.evidence_references)):
+            raise ValueError("evidence_references must not contain duplicates")
+        if len(self.supersedes_actual_ids) != len(set(self.supersedes_actual_ids)):
+            raise ValueError("supersedes_actual_ids must not contain duplicates")
+        return self
+
+
+class PayrollContributionSupplementItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contribution_group: PayrollContributionGroup
+    insurance_kind: str = Field(min_length=1, max_length=50)
+    employee_amount_fen: Fen
+    employer_amount_fen: Fen
+    employee_amount_treatment: Literal["employer_borne", "employee_receivable"]
+
+    @model_validator(mode="after")
+    def amount_is_positive(self) -> PayrollContributionSupplementItem:
+        if self.employee_amount_fen + self.employer_amount_fen <= 0:
+            raise ValueError("a contribution supplement item must have a positive amount")
+        return self
+
+
+class RecordPayrollContributionSupplementRequest(BaseModel):
+    """Accrue an evidenced historical contribution supplement in an open period."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    employee_id: uuid.UUID
+    contribution_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    posting_date: date
+    due_date: date
+    assessment_reference: str = Field(min_length=1, max_length=200)
+    reason_code: Literal[
+        "late_enrollment",
+        "missing_declaration",
+        "agency_assessment",
+        "documented_correction",
+        "other_documented",
+    ]
+    reason_description: str = Field(min_length=1, max_length=2000)
+    items: list[PayrollContributionSupplementItem] = Field(min_length=1)
+    evidence_references: list[uuid.UUID] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def supplement_shape_is_valid(self) -> RecordPayrollContributionSupplementRequest:
+        keys = [(item.contribution_group.value, item.insurance_kind) for item in self.items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("items must contain each contribution group and insurance kind once")
+        if len(self.evidence_references) != len(set(self.evidence_references)):
+            raise ValueError("evidence_references must not contain duplicates")
+        if self.due_date < self.posting_date:
+            raise ValueError("due_date must not precede posting_date")
+        contribution_year = int(self.contribution_period[:4])
+        contribution_month = int(self.contribution_period[5:])
+        if (contribution_year, contribution_month) >= (
+            self.posting_date.year,
+            self.posting_date.month,
+        ):
+            raise ValueError("supplement contribution_period must precede the posting month")
+        return self
 
 
 class RegisterEmployeeRequest(BaseModel):

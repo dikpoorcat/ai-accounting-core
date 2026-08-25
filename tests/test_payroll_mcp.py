@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 from ai_accounting import mcp_server
 from ai_accounting.mcp_server import mcp
 from ai_accounting.models import BusinessEvent, Counterparty, OpenItem, Organization
-from ai_accounting.schemas import ConfirmPayrollRequest, PreviewPayrollRequest, RecordEventRequest
+from ai_accounting.schemas import (
+    ConfirmPayrollRequest,
+    PreviewPayrollRequest,
+    RecordEventRequest,
+    RecordPayrollContributionSupplementRequest,
+    RegisterPayrollContributionActualRequest,
+)
 
 
 def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
@@ -18,6 +24,8 @@ def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
         "finance_register_employee_profile_version",
         "finance_register_payroll_policy_version",
         "finance_register_payroll_opening_state",
+        "finance_register_payroll_contribution_actual",
+        "finance_record_payroll_contribution_supplement",
         "finance_preview_payroll",
         "finance_confirm_payroll",
         "finance_get_payroll_batch",
@@ -26,11 +34,21 @@ def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
     preview_schema = PreviewPayrollRequest.model_json_schema()
     confirm_schema = ConfirmPayrollRequest.model_json_schema()
     record_schema = RecordEventRequest.model_json_schema()
+    actual_schema = RegisterPayrollContributionActualRequest.model_json_schema()
+    supplement_schema = RecordPayrollContributionSupplementRequest.model_json_schema()
     assert "calculation_hash" in confirm_schema["properties"]
     assert "employee_items" in preview_schema["properties"]
     schema_text = str(
-        {"preview": preview_schema, "confirm": confirm_schema, "record": record_schema}
+        {
+            "preview": preview_schema,
+            "confirm": confirm_schema,
+            "record": record_schema,
+            "contribution_actual": actual_schema,
+            "contribution_supplement": supplement_schema,
+        }
     )
+    assert actual_schema["properties"]["evidence_references"]["minItems"] == 1
+    assert supplement_schema["properties"]["evidence_references"]["minItems"] == 1
     assert "debit_fen" not in schema_text
     assert "credit_fen" not in schema_text
     assert "'account_code'" not in schema_text

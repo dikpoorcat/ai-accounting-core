@@ -46,6 +46,12 @@ from .models import (
     PayrollBatch,
     PayrollBatchEvidence,
     PayrollBatchVersionSequence,
+    PayrollContributionActualEvidence,
+    PayrollContributionActualItem,
+    PayrollContributionActualSet,
+    PayrollContributionActualUse,
+    PayrollContributionSupplement,
+    PayrollContributionSupplementItem,
     PayrollEventLink,
     PayrollLine,
     PayrollOpeningState,
@@ -67,6 +73,8 @@ from .payroll import (
     AnnualBonusTaxPolicy,
     AnnualBonusTaxScenario,
     CalculationValidationError,
+    ContributionActualOverride,
+    ContributionBaseKind,
     ContributionBases,
     ContributionPolicy,
     ContributionRule,
@@ -80,6 +88,7 @@ from .payroll import (
     RoundingRule,
     YearMonth,
     allocate_contribution_burden,
+    apply_contribution_actuals,
     calculate_annual_bonus_scenarios,
     calculate_contributions,
     calculate_cumulative_withholding,
@@ -102,8 +111,10 @@ from .schemas import (
     PayrollResultStatus,
     PreviewPayrollRequest,
     RecordEventRequest,
+    RecordPayrollContributionSupplementRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
+    RegisterPayrollContributionActualRequest,
     RegisterPayrollOpeningStateRequest,
     RegisterPayrollPolicyVersionRequest,
     ResultStatus,
@@ -2092,25 +2103,34 @@ class FinanceService:
         requested_source_item_ids = {allocation.open_item_id for allocation in request.allocations}
         if len(source_items) != len(requested_source_item_ids):
             raise ValueError("STATUTORY_PAYMENT_SOURCE_OPEN_ITEM_NOT_FOUND")
-        source_link_kinds = {
-            item.id: (
-                "payroll_accrual"
-                if item.payable_category in {"employer_social", "employer_housing"}
-                else "salary_payment"
-            )
-            for item in source_items
-        }
         source_event_ids = {item.source_event_id for item in source_items}
         links = self.session.scalars(
             select(PayrollEventLink).where(
                 PayrollEventLink.org_id == event.org_id,
                 PayrollEventLink.event_id.in_(source_event_ids),
-                PayrollEventLink.link_kind.in_(("payroll_accrual", "salary_payment")),
+                PayrollEventLink.link_kind.in_(
+                    ("payroll_accrual", "salary_payment", "contribution_supplement")
+                ),
             )
         ).all()
         links_by_event: dict[uuid.UUID, list[PayrollEventLink]] = {}
         for link in links:
             links_by_event.setdefault(link.event_id, []).append(link)
+        supplement_event_ids = {
+            link.event_id for link in links if link.link_kind == "contribution_supplement"
+        }
+        source_link_kinds = {
+            item.id: (
+                "contribution_supplement"
+                if item.source_event_id in supplement_event_ids
+                else (
+                    "payroll_accrual"
+                    if item.payable_category in {"employer_social", "employer_housing"}
+                    else "salary_payment"
+                )
+            )
+            for item in source_items
+        }
 
         source_links: dict[uuid.UUID, PayrollEventLink] = {}
         for item in source_items:
@@ -2275,7 +2295,9 @@ class FinanceService:
             select(PayrollEventLink).where(
                 PayrollEventLink.org_id == request.org_id,
                 PayrollEventLink.event_id.in_(source_event_ids),
-                PayrollEventLink.link_kind.in_(("payroll_accrual", "salary_payment")),
+                PayrollEventLink.link_kind.in_(
+                    ("payroll_accrual", "salary_payment", "contribution_supplement")
+                ),
             )
         ).all()
         batch_ids = {link.payroll_batch_id for link in source_links}
@@ -3566,6 +3588,546 @@ class FinanceService:
         )
         return {"status": "registered", "opening_state_id": str(opening.id)}
 
+    @staticmethod
+    def _contribution_actual_result(actual_set: PayrollContributionActualSet) -> dict[str, Any]:
+        return {
+            "status": "registered",
+            "actual_set_id": str(actual_set.id),
+            "employee_id": str(actual_set.employee_id),
+            "contribution_period": actual_set.contribution_period,
+        }
+
+    def _active_contribution_actual_items(
+        self, org_id: uuid.UUID, employee_id: uuid.UUID, contribution_period: str
+    ) -> list[PayrollContributionActualItem]:
+        successor = aliased(PayrollContributionActualItem)
+        return list(
+            self.session.scalars(
+                select(PayrollContributionActualItem)
+                .where(
+                    PayrollContributionActualItem.org_id == org_id,
+                    PayrollContributionActualItem.employee_id == employee_id,
+                    PayrollContributionActualItem.contribution_period == contribution_period,
+                    ~exists(
+                        select(successor.id).where(
+                            successor.supersedes_id == PayrollContributionActualItem.id
+                        )
+                    ),
+                )
+                .order_by(
+                    PayrollContributionActualItem.contribution_group,
+                    PayrollContributionActualItem.insurance_kind,
+                    PayrollContributionActualItem.id,
+                )
+            )
+        )
+
+    def register_payroll_contribution_actual(
+        self, request: RegisterPayrollContributionActualRequest
+    ) -> dict[str, Any]:
+        """Persist sparse, evidenced actual amounts without mutating company policy."""
+
+        payload_hash = self._request_payload_hash(request)
+        existing_set = self.session.scalar(
+            select(PayrollContributionActualSet).where(
+                PayrollContributionActualSet.org_id == request.org_id,
+                PayrollContributionActualSet.idempotency_key == request.idempotency_key,
+            )
+        )
+        if existing_set is not None:
+            if existing_set.request_payload_hash != payload_hash:
+                return {
+                    "status": "rejected",
+                    "errors": ["PAYROLL_CONTRIBUTION_ACTUAL_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                }
+            return {
+                **self._contribution_actual_result(existing_set),
+                "actual_item_ids": [
+                    str(value)
+                    for value in self.session.scalars(
+                        select(PayrollContributionActualItem.id)
+                        .where(
+                            PayrollContributionActualItem.org_id == request.org_id,
+                            PayrollContributionActualItem.actual_set_id == existing_set.id,
+                        )
+                        .order_by(PayrollContributionActualItem.id)
+                    )
+                ],
+                "idempotent_replay": True,
+            }
+        employee = self._employee_for_org(request.org_id, request.employee_id)
+        if employee is None:
+            return {"status": "rejected", "errors": ["EMPLOYEE_NOT_FOUND"]}
+        try:
+            evidence_ids = self._validate_payroll_batch_evidence(
+                request.org_id, request.evidence_references
+            )
+        except CalculationValidationError as exc:
+            return {"status": "rejected", "errors": [exc.code]}
+        period = YearMonth(
+            int(request.contribution_period[:4]), int(request.contribution_period[5:])
+        )
+        policy_record = self._effective_payroll_policy(request.org_id, period.end_date)
+        if policy_record is None:
+            return {
+                "status": "needs_information",
+                "missing_information": [
+                    {
+                        "code": "payroll_policy",
+                        "message": "the contribution period needs an effective company policy",
+                        "fields": ["contribution_policy_version"],
+                    }
+                ],
+            }
+        try:
+            contribution_policy, _, _ = self._calculator_policies(policy_record)
+        except CalculationValidationError as exc:
+            return {"status": "rejected", "errors": [f"{exc.code}:{exc}"]}
+        policy_keys = {(str(rule.base_kind), rule.code) for rule in contribution_policy.rules}
+        requested_by_key = {
+            (item.contribution_group.value, item.insurance_kind): item for item in request.items
+        }
+        unknown_keys = sorted(set(requested_by_key).difference(policy_keys))
+        if unknown_keys:
+            return {
+                "status": "rejected",
+                "errors": ["CONTRIBUTION_ACTUAL_KIND_NOT_IN_POLICY"],
+                "invalid_items": [f"{group}:{kind}" for group, kind in unknown_keys],
+            }
+        active_items = self._active_contribution_actual_items(
+            request.org_id, request.employee_id, request.contribution_period
+        )
+        active_by_key = {
+            (item.contribution_group, item.insurance_kind): item for item in active_items
+        }
+        supersedes_ids = set(request.supersedes_actual_ids)
+        supplied_predecessors = list(
+            self.session.scalars(
+                select(PayrollContributionActualItem)
+                .where(
+                    PayrollContributionActualItem.org_id == request.org_id,
+                    PayrollContributionActualItem.id.in_(supersedes_ids),
+                )
+                .with_for_update()
+            )
+        ) if supersedes_ids else []
+        if {item.id for item in supplied_predecessors} != supersedes_ids:
+            return {"status": "rejected", "errors": ["INVALID_CONTRIBUTION_ACTUAL_SUPERSEDES"]}
+        supplied_by_key = {
+            (item.contribution_group, item.insurance_kind): item for item in supplied_predecessors
+        }
+        if any(
+            item.employee_id != request.employee_id
+            or item.contribution_period != request.contribution_period
+            for item in supplied_predecessors
+        ) or set(supplied_by_key) != {
+            key for key in requested_by_key if key in active_by_key
+        }:
+            return {"status": "rejected", "errors": ["INVALID_CONTRIBUTION_ACTUAL_SUPERSEDES"]}
+        for key, active in active_by_key.items():
+            supplied = supplied_by_key.get(key)
+            if key in requested_by_key and (supplied is None or supplied.id != active.id):
+                return {
+                    "status": "rejected",
+                    "errors": ["CONTRIBUTION_ACTUAL_CORRECTION_REQUIRES_SUPERSEDES"],
+                }
+        calculated_batches_to_supersede: list[PayrollBatch] = []
+        if supersedes_ids:
+            use_rows = self.session.execute(
+                select(PayrollContributionActualUse, PayrollBatch)
+                .join(
+                    PayrollBatch,
+                    (PayrollBatch.org_id == PayrollContributionActualUse.org_id)
+                    & (PayrollBatch.id == PayrollContributionActualUse.payroll_batch_id),
+                )
+                .where(
+                    PayrollContributionActualUse.org_id == request.org_id,
+                    PayrollContributionActualUse.actual_item_id.in_(supersedes_ids),
+                    PayrollBatch.status.in_(("calculated", "posted")),
+                )
+                .with_for_update()
+            ).all()
+            posted_batches = sorted(
+                {str(batch.id) for _, batch in use_rows if batch.status == "posted"}
+            )
+            if posted_batches:
+                return {
+                    "status": "rejected",
+                    "errors": ["CONTRIBUTION_ACTUAL_POSTED_PAYROLL_MUST_BE_REVERSED_FIRST"],
+                    "blocking_payroll_batch_ids": posted_batches,
+                }
+            calculated_batches_to_supersede = [batch for _, batch in use_rows]
+
+        actual_set = PayrollContributionActualSet(
+            org_id=request.org_id,
+            employee_id=request.employee_id,
+            idempotency_key=request.idempotency_key,
+            request_payload_hash=payload_hash,
+            contribution_period=request.contribution_period,
+            declaration_date=request.declaration_date,
+            reason_code=request.reason_code,
+            reason_description=request.reason_description,
+        )
+        try:
+            with self.session.begin_nested():
+                for batch in calculated_batches_to_supersede:
+                    batch.status = "superseded"
+                self.session.add(actual_set)
+                self.session.flush()
+                new_items: list[PayrollContributionActualItem] = []
+                for key, request_item in requested_by_key.items():
+                    predecessor = supplied_by_key.get(key)
+                    item = PayrollContributionActualItem(
+                        org_id=request.org_id,
+                        actual_set_id=actual_set.id,
+                        employee_id=request.employee_id,
+                        contribution_period=request.contribution_period,
+                        contribution_group=key[0],
+                        insurance_kind=key[1],
+                        actual_state=request_item.actual_state.value,
+                        employee_amount_fen=request_item.employee_amount_fen,
+                        employer_amount_fen=request_item.employer_amount_fen,
+                        supersedes_id=predecessor.id if predecessor is not None else None,
+                    )
+                    self.session.add(item)
+                    new_items.append(item)
+                for evidence_id in evidence_ids:
+                    self.session.add(
+                        PayrollContributionActualEvidence(
+                            org_id=request.org_id,
+                            actual_set_id=actual_set.id,
+                            evidence_id=evidence_id,
+                        )
+                    )
+                self.session.flush()
+        except IntegrityError:
+            concurrent = self.session.scalar(
+                select(PayrollContributionActualSet).where(
+                    PayrollContributionActualSet.org_id == request.org_id,
+                    PayrollContributionActualSet.idempotency_key == request.idempotency_key,
+                )
+            )
+            if concurrent is not None and concurrent.request_payload_hash == payload_hash:
+                return {
+                    **self._contribution_actual_result(concurrent),
+                    "idempotent_replay": True,
+                }
+            return {
+                "status": "rejected",
+                "errors": ["PAYROLL_CONTRIBUTION_ACTUAL_CONCURRENT_WRITE_CONFLICT"],
+            }
+        self.session.add(
+            AuditLog(
+                org_id=request.org_id,
+                action="payroll_contribution_actual_registered",
+                details={
+                    "actual_set_id": str(actual_set.id),
+                    "employee_id": str(request.employee_id),
+                    "contribution_period": request.contribution_period,
+                    "actual_item_ids": [str(item.id) for item in new_items],
+                    "supersedes_actual_ids": [str(value) for value in supersedes_ids],
+                },
+            )
+        )
+        return {
+            **self._contribution_actual_result(actual_set),
+            "actual_item_ids": [str(item.id) for item in new_items],
+        }
+
+    def record_payroll_contribution_supplement(
+        self, request: RecordPayrollContributionSupplementRequest
+    ) -> FinanceResult:
+        """Post a historical assessment in the current open period using a fixed template."""
+
+        payload_hash = self._request_payload_hash(request)
+        existing = self.session.scalar(
+            select(BusinessEvent).where(
+                BusinessEvent.org_id == request.org_id,
+                BusinessEvent.idempotency_key == request.idempotency_key,
+            )
+        )
+        if existing is not None:
+            if error := self._idempotency_error(existing, payload_hash, payroll_envelope=True):
+                return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
+            return self._result_for_existing(existing)
+        employee = self._employee_for_org(request.org_id, request.employee_id)
+        if employee is None:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=["EMPLOYEE_NOT_FOUND"])
+        try:
+            evidence_ids = self._validate_payroll_batch_evidence(
+                request.org_id, request.evidence_references
+            )
+            assert_period_open(self.session, request.org_id, request.posting_date)
+        except CalculationValidationError as exc:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
+        except AccountingPeriodError as exc:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
+        period = YearMonth(
+            int(request.contribution_period[:4]), int(request.contribution_period[5:])
+        )
+        policy_record = self._effective_payroll_policy(request.org_id, period.end_date)
+        if policy_record is None:
+            return FinanceResult(
+                status=ResultStatus.NEEDS_INFORMATION,
+                missing_information=["contribution_policy_version"],
+            )
+        contribution_policy, _, _ = self._calculator_policies(policy_record)
+        policy_keys = {(str(rule.base_kind), rule.code) for rule in contribution_policy.rules}
+        item_keys = {(item.contribution_group.value, item.insurance_kind) for item in request.items}
+        if invalid := sorted(item_keys.difference(policy_keys)):
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=[
+                    "CONTRIBUTION_SUPPLEMENT_KIND_NOT_IN_POLICY:"
+                    + ",".join(f"{group}:{kind}" for group, kind in invalid)
+                ],
+            )
+        profile = self._effective_profile(employee.id, period.end_date)
+        if profile is None:
+            return FinanceResult(
+                status=ResultStatus.NEEDS_INFORMATION,
+                missing_information=["employee_payroll_profile_version"],
+            )
+        source_batches = self.session.scalars(
+            select(PayrollBatch)
+            .join(
+                PayrollLine,
+                (PayrollLine.org_id == PayrollBatch.org_id)
+                & (PayrollLine.payroll_batch_id == PayrollBatch.id),
+            )
+            .where(
+                PayrollBatch.org_id == request.org_id,
+                PayrollBatch.batch_kind == PayrollBatchKind.REGULAR.value,
+                PayrollBatch.payroll_period == request.contribution_period,
+                PayrollBatch.status == "posted",
+                PayrollLine.employee_id == request.employee_id,
+            )
+            .order_by(PayrollBatch.id)
+        ).all()
+        if len(source_batches) != 1:
+            return FinanceResult(
+                status=ResultStatus.NEEDS_INFORMATION,
+                missing_information=["unique_posted_source_payroll_batch"],
+            )
+        source_batch = source_batches[0]
+        duplicate_assessment = self.session.scalar(
+            select(PayrollContributionSupplement.id).where(
+                PayrollContributionSupplement.org_id == request.org_id,
+                PayrollContributionSupplement.employee_id == request.employee_id,
+                PayrollContributionSupplement.assessment_reference == request.assessment_reference,
+            )
+        )
+        if duplicate_assessment is not None:
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=["CONTRIBUTION_SUPPLEMENT_ASSESSMENT_ALREADY_RECORDED"],
+            )
+        targets = self._payment_targets(policy_record.parameters)
+        entries: list[Entry] = []
+        plans: list[OpenItemPlan] = []
+        item_trace: list[dict[str, Any]] = []
+        for item in request.items:
+            is_social = item.contribution_group.value == "social_insurance"
+            employer_role = (
+                "employer_social_payable" if is_social else "employer_housing_fund_payable"
+            )
+            withheld_role = (
+                "withheld_employee_social_payable"
+                if is_social
+                else "withheld_employee_housing_fund_payable"
+            )
+            employer_category = "employer_social" if is_social else "employer_housing"
+            withheld_category = (
+                "withheld_employee_social" if is_social else "withheld_employee_housing"
+            )
+            target = targets["social_insurance" if is_social else "housing_fund"]
+            agency = self._agency_counterparty(request.org_id, target)
+            employer_borne_employee = (
+                item.employee_amount_fen
+                if item.employee_amount_treatment == "employer_borne"
+                else 0
+            )
+            employer_payable = item.employer_amount_fen + employer_borne_employee
+            if employer_payable:
+                entries.extend(
+                    [
+                        Entry(
+                            account_role=profile.expense_role,
+                            debit_fen=employer_payable,
+                            counterparty_id=employee.counterparty_id,
+                        ),
+                        Entry(account_role=employer_role, credit_fen=employer_payable),
+                    ]
+                )
+                plans.append(
+                    OpenItemPlan(
+                        counterparty_id=agency.id,
+                        item_type="payable",
+                        original_amount_fen=employer_payable,
+                        due_date=request.due_date,
+                        payable_category=employer_category,
+                        payable_agency_code=target["agency_code"],
+                        insurance_kind=item.insurance_kind,
+                    )
+                )
+            employee_receivable = (
+                item.employee_amount_fen
+                if item.employee_amount_treatment == "employee_receivable"
+                else 0
+            )
+            if employee_receivable:
+                entries.extend(
+                    [
+                        Entry(
+                            account_role="employee_receivable",
+                            debit_fen=employee_receivable,
+                            counterparty_id=employee.counterparty_id,
+                        ),
+                        Entry(account_role=withheld_role, credit_fen=employee_receivable),
+                    ]
+                )
+                plans.extend(
+                    [
+                        OpenItemPlan(
+                            counterparty_id=employee.counterparty_id,
+                            item_type="receivable",
+                            original_amount_fen=employee_receivable,
+                            due_date=request.due_date,
+                        ),
+                        OpenItemPlan(
+                            counterparty_id=agency.id,
+                            item_type="payable",
+                            original_amount_fen=employee_receivable,
+                            due_date=request.due_date,
+                            payable_category=withheld_category,
+                            payable_agency_code=target["agency_code"],
+                            insurance_kind=item.insurance_kind,
+                        ),
+                    ]
+                )
+            item_trace.append(
+                {
+                    "contribution_group": item.contribution_group.value,
+                    "insurance_kind": item.insurance_kind,
+                    "employee_amount_fen": item.employee_amount_fen,
+                    "employer_amount_fen": item.employer_amount_fen,
+                    "employee_amount_treatment": item.employee_amount_treatment,
+                }
+            )
+        event = BusinessEvent(
+            org_id=request.org_id,
+            idempotency_key=request.idempotency_key,
+            request_payload_hash=payload_hash,
+            event_type="payroll_contribution_supplement",
+            status="draft",
+            description=(
+                f"{request.contribution_period} 社保公积金历史补缴确认："
+                f"{request.reason_description}"
+            ),
+            facts={
+                "employee_id": str(employee.id),
+                "contribution_period": request.contribution_period,
+                "assessment_reference": request.assessment_reference,
+                "reason_code": request.reason_code,
+                "items": item_trace,
+            },
+            business_date=request.posting_date,
+            posting_date=request.posting_date,
+            rule_trace=[
+                {
+                    "stage": "payroll_contribution_supplement_template",
+                    "policy_version_id": str(policy_record.id),
+                    "contribution_period": request.contribution_period,
+                    "posting_date": request.posting_date.isoformat(),
+                    "items": item_trace,
+                }
+            ],
+            rule_version=policy_record.version,
+        )
+        try:
+            with self.session.begin_nested():
+                self.session.add(event)
+                self.session.flush()
+                self._attach_evidence(event, evidence_ids)
+                voucher = create_voucher(
+                    self.session,
+                    event=event,
+                    posting_date=request.posting_date,
+                    description=event.description,
+                    entries=entries,
+                )
+                create_open_items(self.session, event=event, plans=plans)
+                supplement = PayrollContributionSupplement(
+                    org_id=request.org_id,
+                    event_id=event.id,
+                    employee_id=employee.id,
+                    source_payroll_batch_id=source_batch.id,
+                    contribution_period=request.contribution_period,
+                    assessment_reference=request.assessment_reference,
+                    reason_code=request.reason_code,
+                    reason_description=request.reason_description,
+                )
+                self.session.add(supplement)
+                self.session.add(
+                    PayrollEventLink(
+                        org_id=request.org_id,
+                        event_id=event.id,
+                        payroll_batch_id=source_batch.id,
+                        link_kind="contribution_supplement",
+                    )
+                )
+                self.session.flush()
+                for item in request.items:
+                    self.session.add(
+                        PayrollContributionSupplementItem(
+                            org_id=request.org_id,
+                            supplement_id=supplement.id,
+                            contribution_group=item.contribution_group.value,
+                            insurance_kind=item.insurance_kind,
+                            employee_amount_fen=item.employee_amount_fen,
+                            employer_amount_fen=item.employer_amount_fen,
+                            employee_amount_treatment=item.employee_amount_treatment,
+                        )
+                    )
+                # PostgreSQL treats the final event transition as the seal for
+                # the complete normalized supplement and evidence graph.
+                self.session.flush()
+                event.status = "posted"
+                self.session.add(
+                    AuditLog(
+                        org_id=request.org_id,
+                        event_id=event.id,
+                        action="payroll_contribution_supplement_posted",
+                        details={
+                            "supplement_id": str(supplement.id),
+                            "employee_id": str(employee.id),
+                            "contribution_period": request.contribution_period,
+                        },
+                    )
+                )
+                self.session.flush()
+        except IntegrityError:
+            concurrent = self.session.scalar(
+                select(BusinessEvent).where(
+                    BusinessEvent.org_id == request.org_id,
+                    BusinessEvent.idempotency_key == request.idempotency_key,
+                )
+            )
+            if concurrent is not None and concurrent.request_payload_hash == payload_hash:
+                return self._result_for_existing(concurrent)
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=["CONTRIBUTION_SUPPLEMENT_CONCURRENT_WRITE_CONFLICT"],
+            )
+        return FinanceResult(
+            status=ResultStatus.POSTED,
+            event_id=event.id,
+            voucher_id=voucher.id,
+            voucher_number=voucher.voucher_number,
+            trace=event.rule_trace,
+            data={"supplement_id": str(supplement.id)},
+        )
+
     def preview_payroll(self, request: PreviewPayrollRequest) -> PayrollResult:
         if self.session.get(Organization, request.org_id) is None:
             return PayrollResult(
@@ -3662,6 +4224,14 @@ class FinanceService:
                 self.session.add(batch)
                 self.session.flush()
                 self._attach_payroll_batch_evidence(batch, request.evidence_references)
+                for actual_item_id in calculation["actual_item_ids"]:
+                    self.session.add(
+                        PayrollContributionActualUse(
+                            org_id=request.org_id,
+                            actual_item_id=actual_item_id,
+                            payroll_batch_id=batch.id,
+                        )
+                    )
                 for prepared in calculation["lines"]:
                     self.session.add(
                         PayrollLine(org_id=request.org_id, payroll_batch_id=batch.id, **prepared)
@@ -3846,6 +4416,14 @@ class FinanceService:
                 status=PayrollResultStatus.REJECTED,
                 errors=["STALE_PAYROLL_CALCULATION"],
             )
+        stored_actual_item_ids = set(
+            self.session.scalars(
+                select(PayrollContributionActualUse.actual_item_id).where(
+                    PayrollContributionActualUse.org_id == batch.org_id,
+                    PayrollContributionActualUse.payroll_batch_id == batch.id,
+                )
+            )
+        )
         lines = self.session.scalars(
             select(PayrollLine)
             .where(PayrollLine.payroll_batch_id == batch.id)
@@ -3883,6 +4461,7 @@ class FinanceService:
             recalculated["missing"]
             or recalculated["calculation_hash"] != batch.calculation_hash
             or recalculated["policy_snapshot"] != batch.policy_snapshot
+            or set(recalculated["actual_item_ids"]) != stored_actual_item_ids
         ):
             return PayrollResult(
                 status=PayrollResultStatus.REJECTED,
@@ -4805,6 +5384,7 @@ class FinanceService:
         scenarios: list[dict[str, Any]] = []
         prepared_lines: list[dict[str, Any]] = []
         input_snapshots: list[dict[str, Any]] = []
+        actual_item_ids: set[uuid.UUID] = set()
         for item in request.employee_items:
             employee = self._employee_for_org(request.org_id, item.employee_id)
             if employee is None:
@@ -4917,7 +5497,7 @@ class FinanceService:
                         }
                     )
                     continue
-                contribution = calculate_contributions(
+                policy_contribution = calculate_contributions(
                     contribution_policy,
                     ContributionBases(
                         profile.social_insurance_base_fen,
@@ -4927,6 +5507,24 @@ class FinanceService:
                     ),
                     period.end_date,
                 )
+                active_actuals = self._active_contribution_actual_items(
+                    request.org_id, employee.id, request.payroll_period
+                )
+                contribution = apply_contribution_actuals(
+                    policy_contribution,
+                    tuple(
+                        ContributionActualOverride(
+                            actual_item_id=str(actual.id),
+                            code=actual.insurance_kind,
+                            base_kind=ContributionBaseKind(actual.contribution_group),
+                            actual_state=actual.actual_state,
+                            employee_amount_fen=actual.employee_amount_fen,
+                            employer_amount_fen=actual.employer_amount_fen,
+                        )
+                        for actual in active_actuals
+                    ),
+                )
+                actual_item_ids.update(actual.id for actual in active_actuals)
                 payroll_input = RegularPayrollInput(
                     tax_reported_salary_fen=item.tax_reported_salary_fen,
                     special_additional_deduction_fen=item.special_additional_deduction_fen,
@@ -4969,6 +5567,9 @@ class FinanceService:
                             employee.tax_withholding_start_date.isoformat()
                         ),
                         "prior_tax_state": self._tax_state_dict(prior_state),
+                        "contribution_actual_item_ids": [
+                            str(actual.id) for actual in active_actuals
+                        ],
                     }
                 )
             else:
@@ -5208,6 +5809,7 @@ class FinanceService:
             "calculation_input": calculation_input,
             "policy_snapshot": policy_snapshot,
             "lines": prepared_lines,
+            "actual_item_ids": sorted(actual_item_ids, key=str),
         }
         calculation_hash = hashlib.sha256(
             json.dumps(
@@ -5255,6 +5857,7 @@ class FinanceService:
             "calculation_input": calculation_input,
             "calculation_hash": calculation_hash,
             "lines": prepared_lines,
+            "actual_item_ids": sorted(actual_item_ids, key=str),
             "summary": summary,
             "trace": trace,
         }
@@ -6340,8 +6943,12 @@ class FinanceService:
             "annual_bonus_fen": line.annual_bonus_fen,
             "employee_social_insurance_fen": line.employee_social_insurance_fen,
             "employer_social_insurance_fen": line.employer_social_insurance_fen,
+            "employee_social_insurance_items": line.employee_social_insurance_items,
+            "employer_social_insurance_items": line.employer_social_insurance_items,
             "employee_housing_fund_fen": line.employee_housing_fund_fen,
             "employer_housing_fund_fen": line.employer_housing_fund_fen,
+            "employee_housing_fund_items": line.employee_housing_fund_items,
+            "employer_housing_fund_items": line.employer_housing_fund_items,
             "individual_income_tax_fen": line.individual_income_tax_fen,
             "gross_salary_fen": line.gross_salary_fen,
             "net_salary_fen": line.net_salary_fen,
@@ -7096,6 +7703,24 @@ class FinanceService:
                 return FinanceResult(
                     status=ResultStatus.REJECTED,
                     errors=["PAYROLL_BATCH_NOT_FOUND_FOR_ACCRUAL"],
+                )
+            active_supplement = self.session.scalar(
+                select(PayrollContributionSupplement.id)
+                .join(
+                    BusinessEvent,
+                    (BusinessEvent.org_id == PayrollContributionSupplement.org_id)
+                    & (BusinessEvent.id == PayrollContributionSupplement.event_id),
+                )
+                .where(
+                    PayrollContributionSupplement.org_id == request.org_id,
+                    PayrollContributionSupplement.source_payroll_batch_id == payroll_batch.id,
+                    BusinessEvent.status == "posted",
+                )
+            )
+            if active_supplement is not None:
+                return FinanceResult(
+                    status=ResultStatus.REJECTED,
+                    errors=["REVERSE_DEPENDENT_EVENTS_FIRST"],
                 )
             employee_ids = self.session.scalars(
                 select(PayrollLine.employee_id).where(

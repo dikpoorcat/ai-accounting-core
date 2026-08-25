@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v1"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
@@ -55,6 +54,15 @@ def agent_operating_protocol() -> dict[str, Any]:
                 "code": "identify_material_unknowns",
                 "instruction": (
                     "只把会改变金额、分类、归属期间、税额或能否入账的未知事实列为待补信息。"
+                ),
+            },
+            {
+                "code": "separate_contribution_policy_actual_and_cash",
+                "instruction": (
+                    "社保公积金必须区分公司统一政策计算基线、员工所属月逐险种实际申报应缴、"
+                    "现金缴款和历史补缴。材料证明某员工某月漏报或少报险种时，先登记有证据的"
+                    "逐险种实际事实；恢复正常月份继续使用统一政策。历史补缴绑定原所属月，"
+                    "但在实际确认月份入账，不得重算或改写已关闭工资批次。"
                 ),
             },
             {

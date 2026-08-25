@@ -26,6 +26,7 @@ from .annual_bonus import (
     select_annual_bonus_tax_method,
 )
 from .contributions import (
+    ContributionActualOverride,
     ContributionBaseKind,
     ContributionBases,
     ContributionBurdenResult,
@@ -35,6 +36,7 @@ from .contributions import (
     ContributionRule,
     EmployeeContributionShortfallTreatment,
     allocate_contribution_burden,
+    apply_contribution_actuals,
     calculate_contributions,
 )
 from .income_tax import (
@@ -64,6 +66,7 @@ __all__ = [
     "CalculationValidationError",
     "ContributionBases",
     "ContributionBaseKind",
+    "ContributionActualOverride",
     "ContributionBurdenResult",
     "ContributionLine",
     "ContributionPolicy",
@@ -83,6 +86,7 @@ __all__ = [
     "YearMonth",
     "calculate_annual_bonus_scenarios",
     "allocate_contribution_burden",
+    "apply_contribution_actuals",
     "calculate_contributions",
     "calculate_cumulative_withholding",
     "calculate_regular_payroll",

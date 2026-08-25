@@ -834,6 +834,278 @@ class EmployeePayrollProfileVersion(Base):
     )
 
 
+class PayrollContributionActualSet(Base):
+    """Immutable evidenced actual assessment facts for an employee contribution month."""
+
+    __tablename__ = "payroll_contribution_actual_sets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    contribution_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    reason_description: Mapped[str] = mapped_column(Text, nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "employee_id"],
+            ["employees.org_id", "employees.id"],
+            name="fk_contribution_actual_set_org_employee",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_contribution_actual_set_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_contribution_actual_set_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_contribution_actual_set_idempotency"
+        ),
+        CheckConstraint(
+            "length(contribution_period) = 7 AND substr(contribution_period, 5, 1) = '-' "
+            "AND substr(contribution_period, 6, 2) BETWEEN '01' AND '12'",
+            name="ck_contribution_actual_set_period",
+        ),
+        CheckConstraint(
+            "reason_code IN ('late_enrollment','missing_declaration','partial_declaration',"
+            "'agency_assessment','documented_correction','other_documented')",
+            name="ck_contribution_actual_set_reason",
+        ),
+    )
+
+
+class PayrollContributionActualItem(Base):
+    """One employee/month/contribution-kind actual amount, never a policy mutation."""
+
+    __tablename__ = "payroll_contribution_actual_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    actual_set_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    contribution_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    contribution_group: Mapped[str] = mapped_column(String(30), nullable=False)
+    insurance_kind: Mapped[str] = mapped_column(String(50), nullable=False)
+    actual_state: Mapped[str] = mapped_column(String(20), nullable=False)
+    employee_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    employer_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "actual_set_id"],
+            ["payroll_contribution_actual_sets.org_id", "payroll_contribution_actual_sets.id"],
+            name="fk_contribution_actual_item_org_set",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "employee_id"],
+            ["employees.org_id", "employees.id"],
+            name="fk_contribution_actual_item_org_employee",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            ["payroll_contribution_actual_items.org_id", "payroll_contribution_actual_items.id"],
+            name="fk_contribution_actual_item_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_contribution_actual_item_org_id"),
+        UniqueConstraint(
+            "actual_set_id",
+            "contribution_group",
+            "insurance_kind",
+            name="uq_contribution_actual_item_set_kind",
+        ),
+        CheckConstraint(
+            "contribution_group IN ('social_insurance','housing_fund')",
+            name="ck_contribution_actual_item_group",
+        ),
+        CheckConstraint(
+            "actual_state IN ('declared','not_declared')",
+            name="ck_contribution_actual_item_state",
+        ),
+        CheckConstraint(
+            "employee_amount_fen >= 0 AND employer_amount_fen >= 0",
+            name="ck_contribution_actual_item_amounts",
+        ),
+        CheckConstraint(
+            "actual_state <> 'not_declared' OR "
+            "(employee_amount_fen = 0 AND employer_amount_fen = 0)",
+            name="ck_contribution_actual_item_non_declaration_zero",
+        ),
+    )
+
+
+Index(
+    "uq_contribution_actual_root_kind",
+    PayrollContributionActualItem.org_id,
+    PayrollContributionActualItem.employee_id,
+    PayrollContributionActualItem.contribution_period,
+    PayrollContributionActualItem.contribution_group,
+    PayrollContributionActualItem.insurance_kind,
+    unique=True,
+    postgresql_where=PayrollContributionActualItem.supersedes_id.is_(None),
+    sqlite_where=PayrollContributionActualItem.supersedes_id.is_(None),
+)
+
+
+class PayrollContributionActualEvidence(Base):
+    __tablename__ = "payroll_contribution_actual_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    actual_set_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "actual_set_id"],
+            ["payroll_contribution_actual_sets.org_id", "payroll_contribution_actual_sets.id"],
+            name="fk_contribution_actual_evidence_org_set",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_contribution_actual_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class PayrollContributionActualUse(Base):
+    """Normalized dependency that freezes the actual facts used by a payroll draft."""
+
+    __tablename__ = "payroll_contribution_actual_uses"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    actual_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    payroll_batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "actual_item_id"],
+            ["payroll_contribution_actual_items.org_id", "payroll_contribution_actual_items.id"],
+            name="fk_contribution_actual_use_org_item",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "payroll_batch_id"],
+            ["payroll_batches.org_id", "payroll_batches.id"],
+            name="fk_contribution_actual_use_org_batch",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class PayrollContributionSupplement(Base):
+    """Typed historical contribution accrual; its event date is never the old payroll month."""
+
+    __tablename__ = "payroll_contribution_supplements"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    source_payroll_batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    contribution_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    assessment_reference: Mapped[str] = mapped_column(String(200), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    reason_description: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_contribution_supplement_org_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "employee_id"],
+            ["employees.org_id", "employees.id"],
+            name="fk_contribution_supplement_org_employee",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "source_payroll_batch_id"],
+            ["payroll_batches.org_id", "payroll_batches.id"],
+            name="fk_contribution_supplement_org_source_batch",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_contribution_supplement_org_id"),
+        UniqueConstraint(
+            "org_id",
+            "employee_id",
+            "assessment_reference",
+            name="uq_contribution_supplement_assessment",
+        ),
+        CheckConstraint(
+            "length(contribution_period) = 7 AND substr(contribution_period, 5, 1) = '-' "
+            "AND substr(contribution_period, 6, 2) BETWEEN '01' AND '12'",
+            name="ck_contribution_supplement_period",
+        ),
+        CheckConstraint(
+            "reason_code IN ('late_enrollment','missing_declaration','agency_assessment',"
+            "'documented_correction','other_documented')",
+            name="ck_contribution_supplement_reason",
+        ),
+    )
+
+
+class PayrollContributionSupplementItem(Base):
+    __tablename__ = "payroll_contribution_supplement_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    supplement_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    contribution_group: Mapped[str] = mapped_column(String(30), nullable=False)
+    insurance_kind: Mapped[str] = mapped_column(String(50), nullable=False)
+    employee_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    employer_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    employee_amount_treatment: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "supplement_id"],
+            ["payroll_contribution_supplements.org_id", "payroll_contribution_supplements.id"],
+            name="fk_contribution_supplement_item_org_supplement",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_contribution_supplement_item_org_id"),
+        UniqueConstraint(
+            "supplement_id",
+            "contribution_group",
+            "insurance_kind",
+            name="uq_contribution_supplement_item_kind",
+        ),
+        CheckConstraint(
+            "contribution_group IN ('social_insurance','housing_fund')",
+            name="ck_contribution_supplement_item_group",
+        ),
+        CheckConstraint(
+            "employee_amount_fen >= 0 AND employer_amount_fen >= 0 "
+            "AND employee_amount_fen + employer_amount_fen > 0",
+            name="ck_contribution_supplement_item_amounts",
+        ),
+        CheckConstraint(
+            "employee_amount_treatment IN ('employer_borne','employee_receivable')",
+            name="ck_contribution_supplement_item_treatment",
+        ),
+    )
+
+
 class PayrollPolicyVersion(Base):
     __tablename__ = "payroll_policy_versions"
 
@@ -3066,7 +3338,8 @@ class PayrollEventLink(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "link_kind IN ('payroll_accrual','salary_payment','statutory_payment','reversal')",
+            "link_kind IN ('payroll_accrual','salary_payment','contribution_supplement',"
+            "'statutory_payment','reversal')",
             name="ck_payroll_event_link_kind",
         ),
     )

@@ -18,13 +18,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
-from .agent_contract import MCP_SERVER_INSTRUCTIONS, agent_operating_protocol
 from .accounting_period_schemas import (
     ConfirmAccountingPeriodCloseRequest,
     GenerateAccountingPeriodRequest,
     GetAccountingPeriodsRequest,
     PreviewAccountingPeriodCloseRequest,
 )
+from .agent_contract import MCP_SERVER_INSTRUCTIONS, agent_operating_protocol
 from .bank_import import BankStatementInputError, import_bank_statement
 from .bank_statement_schemas import (
     ConfirmBankReconciliationRequest,
@@ -102,9 +102,11 @@ from .schemas import (
     PreviewFixedAssetDepreciationRequest,
     PreviewPayrollRequest,
     RecordEventRequest,
+    RecordPayrollContributionSupplementRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     RegisterEvidenceRequest,
+    RegisterPayrollContributionActualRequest,
     RegisterPayrollOpeningStateRequest,
     RegisterPayrollPolicyVersionRequest,
     ReverseEventRequest,
@@ -622,6 +624,8 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                     "finance_register_employee_profile_version",
                     "finance_register_payroll_policy_version",
                     "finance_register_payroll_opening_state",
+                    "finance_register_payroll_contribution_actual",
+                    "finance_record_payroll_contribution_supplement",
                     "finance_preview_payroll",
                     "finance_confirm_payroll",
                     "finance_get_payroll_batch",
@@ -931,6 +935,34 @@ def finance_register_payroll_opening_state(
     try:
         with SessionLocal.begin() as session:
             return FinanceService(session).register_payroll_opening_state(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_payroll_contribution_actual(
+    request: RegisterPayrollContributionActualRequest,
+) -> dict[str, Any]:
+    """登记有证据的员工、所属月、险种实际应缴事实；不修改公司统一政策。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).register_payroll_contribution_actual(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_record_payroll_contribution_supplement(
+    request: RecordPayrollContributionSupplementRequest,
+) -> dict[str, Any]:
+    """按历史所属月和险种登记补缴应付，在当前开放月份用固定模板入账。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                FinanceService(session)
+                .record_payroll_contribution_supplement(request)
+                .model_dump(mode="json")
+            )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
