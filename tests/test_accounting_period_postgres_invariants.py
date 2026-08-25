@@ -211,6 +211,33 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
         command.check(config)
         engine = sa.create_engine(database_url)
         try:
+            with engine.connect() as connection:
+                close_assertion = connection.scalar(
+                    sa.text(
+                        "SELECT pg_get_functiondef(to_regprocedure("
+                        "'finance_assert_accounting_period_close(uuid)'))"
+                    )
+                )
+                source_validator = connection.scalar(
+                    sa.text(
+                        "SELECT pg_get_functiondef(to_regprocedure("
+                        "'finance_validate_accounting_period_close_source()'))"
+                    )
+                )
+                source_guard = connection.scalar(
+                    sa.text(
+                        "SELECT pg_get_functiondef(to_regprocedure("
+                        "'finance_guard_accounting_period_close_source_insert()'))"
+                    )
+                )
+                assert "PERFORM finance_assert_fixed_asset(asset.id)" not in close_assertion
+                assert "PERFORM finance_assert_intangible_asset(asset.id)" not in close_assertion
+                assert (
+                    "PERFORM finance_assert_accounting_period_close(NEW.close_id)"
+                    not in source_validator
+                )
+                assert "finance_parent_xmin_is_current_0015(close_xmin)" in source_guard
+
             with Session(engine) as session:
                 organization = seed_organization(
                     session,
@@ -362,6 +389,8 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 assert future_sale.status == "posted", future_sale.errors
                 session.commit()
                 august_period_id = august.period_id
+                august_event_id = future_sale.event_id
+                august_voucher_id = future_sale.voucher_id
 
             with Session(engine) as session:
                 organization = session.get(Organization, org_id)
@@ -411,6 +440,32 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 close_id = confirmed.close_id
                 original_hash = confirmed.calculation_hash
                 original_payload = session.get(AccountingPeriodClose, close_id).calculation_payload
+
+            with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_CLOSE_ALREADY_SEALED"):
+                with engine.begin() as connection:
+                    connection.execute(
+                        sa.text(
+                            """
+                            INSERT INTO accounting_period_close_sources (
+                                close_id, voucher_id, org_id, event_id, voucher_number,
+                                posting_date, description, event_type,
+                                event_status_at_close, request_payload_hash_at_close,
+                                debit_fen, credit_fen, line_snapshot, created_at
+                            ) VALUES (
+                                :close_id, :voucher_id, :org_id, :event_id,
+                                'ILLEGAL-LATE-SOURCE', '2026-08-01', '',
+                                'service_credit_sale', 'posted', NULL,
+                                1, 1, '[]'::jsonb, CURRENT_TIMESTAMP
+                            )
+                            """
+                        ),
+                        {
+                            "close_id": close_id,
+                            "voucher_id": august_voucher_id,
+                            "org_id": org_id,
+                            "event_id": august_event_id,
+                        },
+                    )
 
             with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_CLOSED"):
                 with engine.begin() as connection:
