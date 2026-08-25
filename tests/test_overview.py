@@ -1617,12 +1617,24 @@ def test_overview_document_embeds_data_without_script_breakout(session: Session)
     assert "不会在付款时再次计入用工成本" in document
     assert "借方合计" in document
     assert "voucher-ledger" in document
+    assert '["科目", "往来对象", "借方", "贷方"]' in document
+    assert ".voucher-ledger { table-layout: fixed; }" in document
+    assert "--voucher-account-width: 35%;" in document
+    assert "grid-column: 3 / 5;" in document
+    assert 'make("span", "balance-equals", "=")' in document
+    assert "balance-total-row" in document
+    assert "minmax(0, 1fr) auto 9px minmax(0, 1fr) auto 9px" in document
+    assert "grid-column: 1 / -1;" in document
+    assert "place-self: center;" in document
+    assert '"voucher-amount-column", "voucher-amount-column"' in document
     assert "分录摘要" not in document
     assert "期末待收 / 待付" in document
     assert "期末往来事项" in document
     assert 'id="long-assets-card"' in document
     assert 'aria-label="查看期末待收待付事项"' in document
     assert 'focusSection(byId("activity-detail"))' not in document
+    assert 'new URLSearchParams(window.location.search).get("period")' in document
+    assert 'url.searchParams.set("period", periodSelect.value)' in document
     assert "BigInt" in document
     assert '"total_debit_fen":"10000"' in document
     assert '"assets_fen":"9007199254740993"' in document

@@ -387,14 +387,55 @@
     .voucher-row-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .voucher-row-amount { text-align: right; white-space: nowrap; }
     .voucher-toggle { color: var(--green); font-size: 12px; text-align: right; }
-    .voucher-detail { margin: 2px 0 8px; padding: 18px; border: 1px solid var(--green); border-radius: var(--radius-sm); background: var(--green-soft); }
-    .voucher-detail-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; margin-bottom: 16px; }
+    .voucher-detail {
+      --voucher-account-width: 35%;
+      --voucher-party-width: 33%;
+      --voucher-amount-width: 16%;
+      margin: 2px 0 8px;
+      padding: 18px;
+      border: 1px solid var(--green);
+      border-radius: var(--radius-sm);
+      background: var(--green-soft);
+    }
+    .voucher-detail-top {
+      display: grid;
+      grid-template-columns:
+        var(--voucher-account-width)
+        var(--voucher-party-width)
+        var(--voucher-amount-width)
+        var(--voucher-amount-width);
+      margin-bottom: 16px;
+    }
+    .voucher-description { grid-column: 1 / 3; padding: 0 9px; }
     .voucher-description p { margin: 5px 0 0; }
-    .voucher-balance { display: flex; align-items: center; gap: 10px; }
-    .balance-side { display: grid; text-align: right; }
+    .voucher-balance {
+      grid-column: 3 / 5;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: auto auto;
+      align-content: start;
+    }
+    .balance-side { padding: 0 9px; text-align: right; }
     .balance-side span { color: var(--muted); font-size: 12px; }
+    .balance-total-row {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto 9px minmax(0, 1fr) auto 9px;
+      align-items: baseline;
+    }
+    .balance-debit-total { grid-column: 2; }
+    .balance-equals {
+      z-index: 1;
+      grid-column: 3 / 5;
+      place-self: center;
+    }
+    .balance-credit-total { grid-column: 5; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
+    .voucher-ledger { table-layout: fixed; }
+    .voucher-ledger .voucher-account-column { width: var(--voucher-account-width); }
+    .voucher-ledger .voucher-party-column { width: var(--voucher-party-width); }
+    .voucher-ledger .voucher-amount-column { width: var(--voucher-amount-width); }
     th, td { padding: 10px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
     th { color: var(--muted); font-size: 12px; }
     .number { text-align: right; white-space: nowrap; }
@@ -483,12 +524,14 @@
       .component-row { grid-template-columns: 80px minmax(60px, 1fr); }
       .component-row strong { grid-column: 1 / -1; }
       .event-main, .bank-main, .voucher-detail-top { grid-template-columns: 1fr; }
+      .voucher-description, .voucher-balance { grid-column: 1; }
+      .voucher-description { padding: 0; }
       .voucher-row { grid-template-columns: 92px minmax(0, 1fr) auto; }
       .voucher-row .voucher-type { grid-column: 2 / 3; }
       .voucher-row-summary { grid-column: 1 / 3; white-space: normal; }
       .voucher-row-amount { grid-column: 3; grid-row: 1; }
       .voucher-toggle { grid-column: 3; grid-row: 2; }
-      .voucher-balance { justify-content: flex-start; }
+      .voucher-balance { width: min(100%, 320px); }
       .table-wrap { overflow: visible; }
       table, thead, tbody, tr, th, td { display: block; width: 100%; }
       thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -753,12 +796,15 @@
       const periodSelect = byId("period-select");
       byId("company-name").textContent = payload.company;
       byId("disclaimer").textContent = payload.disclaimer;
+      const requestedPeriod = new URLSearchParams(window.location.search).get("period");
       payload.months.forEach((month) => {
         const option = make("option", "", month.label);
         option.value = month.key;
         periodSelect.append(option);
       });
-      periodSelect.value = payload.default_period || "";
+      periodSelect.value = payload.months.some((month) => month.key === requestedPeriod)
+        ? requestedPeriod
+        : (payload.default_period || "");
 
       const resetExpandedContent = () => {
         openActivityKey = null;
@@ -1021,17 +1067,26 @@
         copy.append(make("span", "eyebrow", "凭证摘要"), make("p", "", voucher.summary));
         const balance = make("div", "voucher-balance");
         const debit = make("div", "balance-side");
-        debit.append(make("span", "", "借方合计"), make("strong", "", money(voucher.amount_fen)));
+        debit.append(make("span", "", "借方合计"));
         const credit = make("div", "balance-side");
-        credit.append(make("span", "", "贷方合计"), make("strong", "", money(voucher.amount_fen)));
-        balance.append(debit, make("span", "", "="), credit);
+        credit.append(make("span", "", "贷方合计"));
+        const totalRow = make("div", "balance-total-row");
+        totalRow.append(
+          make("strong", "balance-debit-total", money(voucher.amount_fen)),
+          make("span", "balance-equals", "="),
+          make("strong", "balance-credit-total", money(voucher.amount_fen))
+        );
+        balance.append(debit, credit, totalRow);
         top.append(copy, balance);
         detail.append(top);
         const wrap = make("div", "table-wrap");
         const table = make("table", "voucher-ledger");
+        const columns = make("colgroup", "");
+        ["voucher-account-column", "voucher-party-column", "voucher-amount-column", "voucher-amount-column"]
+          .forEach((className) => columns.append(make("col", className)));
         const thead = make("thead", "");
         const header = make("tr", "");
-        ["科目", "借方", "贷方", "往来对象"].forEach((label) => header.append(make("th", ["借方", "贷方"].includes(label) ? "number" : "", label)));
+        ["科目", "往来对象", "借方", "贷方"].forEach((label) => header.append(make("th", ["借方", "贷方"].includes(label) ? "number" : "", label)));
         thead.append(header);
         const tbody = make("tbody", "");
         voucher.lines.forEach((line) => {
@@ -1041,18 +1096,18 @@
           const accountCopy = make("div", "account-cell");
           accountCopy.append(make("span", "account-code", line.code), make("strong", "", line.account));
           account.append(accountCopy);
-          row.append(
-            account,
-            cell("借方", fen(line.debit_fen) ? money(line.debit_fen) : "—", "number"),
-            cell("贷方", fen(line.credit_fen) ? money(line.credit_fen) : "—", "number")
-          );
           const party = make("td", "");
           party.dataset.label = "往来对象";
           party.append(make("span", line.party ? "party-pill" : "muted", line.party || "—"));
-          row.append(party);
+          row.append(
+            account,
+            party,
+            cell("借方", fen(line.debit_fen) ? money(line.debit_fen) : "—", "number"),
+            cell("贷方", fen(line.credit_fen) ? money(line.credit_fen) : "—", "number")
+          );
           tbody.append(row);
         });
-        table.append(thead, tbody);
+        table.append(columns, thead, tbody);
         wrap.append(table);
         detail.append(wrap);
         if (voucher.evidence.length) detail.append(makeEvidenceDisclosure(voucher.evidence));
@@ -1294,7 +1349,11 @@
         const month = payload.months.find((item) => item.key === periodSelect.value);
         if (month) renderMonth(month);
       });
-      byId("refresh-button").addEventListener("click", () => location.reload());
+      byId("refresh-button").addEventListener("click", () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set("period", periodSelect.value);
+        window.location.assign(url);
+      });
       byId("theme-button").addEventListener("click", () => {
         const root = document.documentElement;
         const dark = root.dataset.theme !== "dark";
