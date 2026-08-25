@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v1"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v2"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -63,6 +63,16 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "现金缴款和历史补缴。材料证明某员工某月漏报或少报险种时，先登记有证据的"
                     "逐险种实际事实；恢复正常月份继续使用统一政策。历史补缴绑定原所属月，"
                     "但在实际确认月份入账，不得重算或改写已关闭工资批次。"
+                ),
+            },
+            {
+                "code": "apply_first_wage_tax_treatment_only_with_evidence",
+                "instruction": (
+                    "年度中间首次取得工资薪金的累计减除费用待遇必须按员工和纳税年度单独登记，"
+                    "并留存其此前未取得工资薪金、也未按累计预扣法预扣连续性劳务报酬个税的"
+                    "证据或负责人确认。不得通过提前员工入职日、伪造个税期初状态或默认为所有"
+                    "新员工适用来得到税额；符合条件时按国家税务总局公告2020年第13号从当年1月"
+                    "起累计5000元/月。"
                 ),
             },
             {

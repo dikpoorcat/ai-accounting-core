@@ -53,6 +53,9 @@ from .models import (
     PayrollContributionSupplement,
     PayrollContributionSupplementItem,
     PayrollEventLink,
+    PayrollFirstWageTaxTreatment,
+    PayrollFirstWageTaxTreatmentEvidence,
+    PayrollFirstWageTaxTreatmentUse,
     PayrollLine,
     PayrollOpeningState,
     PayrollPolicyVersion,
@@ -115,6 +118,7 @@ from .schemas import (
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     RegisterPayrollContributionActualRequest,
+    RegisterPayrollFirstWageTaxTreatmentRequest,
     RegisterPayrollOpeningStateRequest,
     RegisterPayrollPolicyVersionRequest,
     ResultStatus,
@@ -130,6 +134,9 @@ class FinanceService:
     DEFERRED_OUTPUT_VAT_RULE_SOURCE_URL = (
         "https://www.mof.gov.cn/gkml/caizhengwengao/2017wg/wg201703/"
         "201707/t20170707_2641107.htm"
+    )
+    FIRST_WAGE_TAX_TREATMENT_SOURCE_URL = (
+        "https://fgk.chinatax.gov.cn/zcfgk/c100012/c5194937/content.html"
     )
 
     def __init__(self, session: Session):
@@ -3588,6 +3595,191 @@ class FinanceService:
         )
         return {"status": "registered", "opening_state_id": str(opening.id)}
 
+    def _active_first_wage_tax_treatment(
+        self, org_id: uuid.UUID, employee_id: uuid.UUID, tax_year: int
+    ) -> PayrollFirstWageTaxTreatment | None:
+        successor = aliased(PayrollFirstWageTaxTreatment)
+        matches = list(
+            self.session.scalars(
+                select(PayrollFirstWageTaxTreatment)
+                .where(
+                    PayrollFirstWageTaxTreatment.org_id == org_id,
+                    PayrollFirstWageTaxTreatment.employee_id == employee_id,
+                    PayrollFirstWageTaxTreatment.tax_year == tax_year,
+                    ~exists(
+                        select(successor.id).where(
+                            successor.supersedes_id == PayrollFirstWageTaxTreatment.id
+                        )
+                    ),
+                )
+                .order_by(PayrollFirstWageTaxTreatment.created_at.desc())
+            )
+        )
+        if len(matches) > 1:
+            raise CalculationValidationError(
+                "AMBIGUOUS_FIRST_WAGE_TAX_TREATMENT",
+                "more than one first-wage tax treatment is active for the employee-year",
+            )
+        return matches[0] if matches else None
+
+    def register_payroll_first_wage_tax_treatment(
+        self, request: RegisterPayrollFirstWageTaxTreatmentRequest
+    ) -> dict[str, Any]:
+        """Register the evidenced employee-year treatment without changing employment dates."""
+
+        payload_hash = self._request_payload_hash(request)
+        existing = self.session.scalar(
+            select(PayrollFirstWageTaxTreatment).where(
+                PayrollFirstWageTaxTreatment.org_id == request.org_id,
+                PayrollFirstWageTaxTreatment.idempotency_key == request.idempotency_key,
+            )
+        )
+        if existing is not None:
+            if existing.request_payload_hash != payload_hash:
+                return {
+                    "status": "rejected",
+                    "errors": ["FIRST_WAGE_TAX_TREATMENT_IDEMPOTENCY_PAYLOAD_MISMATCH"],
+                }
+            return {
+                "status": "registered",
+                "treatment_id": str(existing.id),
+                "idempotent_replay": True,
+            }
+        employee = self._employee_for_org(request.org_id, request.employee_id)
+        if employee is None:
+            return {"status": "rejected", "errors": ["EMPLOYEE_NOT_FOUND"]}
+        tax_start = employee.tax_withholding_start_date
+        if (
+            tax_start is None
+            or tax_start.year != request.tax_year
+            or tax_start.month != request.first_wage_month
+        ):
+            return {
+                "status": "rejected",
+                "errors": ["FIRST_WAGE_MONTH_MUST_MATCH_TAX_WITHHOLDING_START"],
+            }
+        try:
+            evidence_ids = self._validate_payroll_batch_evidence(
+                request.org_id, request.evidence_references
+            )
+        except CalculationValidationError as exc:
+            return {"status": "rejected", "errors": [exc.code]}
+        active = self._active_first_wage_tax_treatment(
+            request.org_id, request.employee_id, request.tax_year
+        )
+        predecessor = None
+        if request.supersedes_treatment_id is not None:
+            predecessor = self.session.scalar(
+                select(PayrollFirstWageTaxTreatment)
+                .where(
+                    PayrollFirstWageTaxTreatment.org_id == request.org_id,
+                    PayrollFirstWageTaxTreatment.id == request.supersedes_treatment_id,
+                )
+                .with_for_update()
+            )
+            if (
+                predecessor is None
+                or predecessor.employee_id != request.employee_id
+                or predecessor.tax_year != request.tax_year
+                or active is None
+                or predecessor.id != active.id
+            ):
+                return {"status": "rejected", "errors": ["INVALID_FIRST_WAGE_SUPERSEDES"]}
+        elif active is not None:
+            return {
+                "status": "rejected",
+                "errors": ["FIRST_WAGE_TREATMENT_CORRECTION_REQUIRES_SUPERSEDES"],
+            }
+        calculated_batches_to_supersede: list[PayrollBatch] = []
+        if predecessor is not None:
+            uses = self.session.execute(
+                select(PayrollFirstWageTaxTreatmentUse, PayrollBatch)
+                .join(
+                    PayrollBatch,
+                    (PayrollBatch.org_id == PayrollFirstWageTaxTreatmentUse.org_id)
+                    & (PayrollBatch.id == PayrollFirstWageTaxTreatmentUse.payroll_batch_id),
+                )
+                .where(
+                    PayrollFirstWageTaxTreatmentUse.org_id == request.org_id,
+                    PayrollFirstWageTaxTreatmentUse.treatment_id == predecessor.id,
+                    PayrollBatch.status.in_(("calculated", "posted")),
+                )
+                .with_for_update()
+            ).all()
+            posted_ids = sorted({str(batch.id) for _, batch in uses if batch.status == "posted"})
+            if posted_ids:
+                return {
+                    "status": "rejected",
+                    "errors": ["FIRST_WAGE_POSTED_PAYROLL_MUST_BE_REVERSED_FIRST"],
+                    "blocking_payroll_batch_ids": posted_ids,
+                }
+            calculated_batches_to_supersede = [batch for _, batch in uses]
+        treatment = PayrollFirstWageTaxTreatment(
+            org_id=request.org_id,
+            employee_id=request.employee_id,
+            idempotency_key=request.idempotency_key,
+            request_payload_hash=payload_hash,
+            tax_year=request.tax_year,
+            first_wage_month=request.first_wage_month,
+            treatment_state=request.treatment_state.value,
+            declaration_date=request.declaration_date,
+            confirmation_description=request.confirmation_description,
+            legal_basis_url=self.FIRST_WAGE_TAX_TREATMENT_SOURCE_URL,
+            supersedes_id=predecessor.id if predecessor is not None else None,
+        )
+        try:
+            with self.session.begin_nested():
+                for batch in calculated_batches_to_supersede:
+                    batch.status = "superseded"
+                self.session.add(treatment)
+                self.session.flush()
+                for evidence_id in evidence_ids:
+                    self.session.add(
+                        PayrollFirstWageTaxTreatmentEvidence(
+                            org_id=request.org_id,
+                            treatment_id=treatment.id,
+                            evidence_id=evidence_id,
+                        )
+                    )
+                self.session.flush()
+        except IntegrityError:
+            concurrent = self.session.scalar(
+                select(PayrollFirstWageTaxTreatment).where(
+                    PayrollFirstWageTaxTreatment.org_id == request.org_id,
+                    PayrollFirstWageTaxTreatment.idempotency_key == request.idempotency_key,
+                )
+            )
+            if concurrent is not None and concurrent.request_payload_hash == payload_hash:
+                return {
+                    "status": "registered",
+                    "treatment_id": str(concurrent.id),
+                    "idempotent_replay": True,
+                }
+            return {
+                "status": "rejected",
+                "errors": ["FIRST_WAGE_TAX_TREATMENT_CONCURRENT_WRITE_CONFLICT"],
+            }
+        self.session.add(
+            AuditLog(
+                org_id=request.org_id,
+                action="payroll_first_wage_tax_treatment_registered",
+                details={
+                    "treatment_id": str(treatment.id),
+                    "employee_id": str(request.employee_id),
+                    "tax_year": request.tax_year,
+                    "first_wage_month": request.first_wage_month,
+                    "treatment_state": request.treatment_state.value,
+                    "supersedes_treatment_id": (
+                        str(request.supersedes_treatment_id)
+                        if request.supersedes_treatment_id
+                        else None
+                    ),
+                    "legal_basis_url": self.FIRST_WAGE_TAX_TREATMENT_SOURCE_URL,
+                },
+            )
+        )
+        return {"status": "registered", "treatment_id": str(treatment.id)}
+
     @staticmethod
     def _contribution_actual_result(actual_set: PayrollContributionActualSet) -> dict[str, Any]:
         return {
@@ -4232,6 +4424,14 @@ class FinanceService:
                             payroll_batch_id=batch.id,
                         )
                     )
+                for treatment_id in calculation["first_wage_treatment_ids"]:
+                    self.session.add(
+                        PayrollFirstWageTaxTreatmentUse(
+                            org_id=request.org_id,
+                            treatment_id=treatment_id,
+                            payroll_batch_id=batch.id,
+                        )
+                    )
                 for prepared in calculation["lines"]:
                     self.session.add(
                         PayrollLine(org_id=request.org_id, payroll_batch_id=batch.id, **prepared)
@@ -4424,6 +4624,14 @@ class FinanceService:
                 )
             )
         )
+        stored_first_wage_treatment_ids = set(
+            self.session.scalars(
+                select(PayrollFirstWageTaxTreatmentUse.treatment_id).where(
+                    PayrollFirstWageTaxTreatmentUse.org_id == batch.org_id,
+                    PayrollFirstWageTaxTreatmentUse.payroll_batch_id == batch.id,
+                )
+            )
+        )
         lines = self.session.scalars(
             select(PayrollLine)
             .where(PayrollLine.payroll_batch_id == batch.id)
@@ -4462,6 +4670,8 @@ class FinanceService:
             or recalculated["calculation_hash"] != batch.calculation_hash
             or recalculated["policy_snapshot"] != batch.policy_snapshot
             or set(recalculated["actual_item_ids"]) != stored_actual_item_ids
+            or set(recalculated["first_wage_treatment_ids"])
+            != stored_first_wage_treatment_ids
         ):
             return PayrollResult(
                 status=PayrollResultStatus.REJECTED,
@@ -5385,6 +5595,7 @@ class FinanceService:
         prepared_lines: list[dict[str, Any]] = []
         input_snapshots: list[dict[str, Any]] = []
         actual_item_ids: set[uuid.UUID] = set()
+        first_wage_treatment_ids: set[uuid.UUID] = set()
         for item in request.employee_items:
             employee = self._employee_for_org(request.org_id, item.employee_id)
             if employee is None:
@@ -5497,6 +5708,17 @@ class FinanceService:
                         }
                     )
                     continue
+                first_wage_treatment = self._active_first_wage_tax_treatment(
+                    request.org_id, employee.id, tax_period.year
+                )
+                standard_deduction_start_month = None
+                if (
+                    first_wage_treatment is not None
+                    and tax_period.month >= first_wage_treatment.first_wage_month
+                ):
+                    first_wage_treatment_ids.add(first_wage_treatment.id)
+                    if first_wage_treatment.treatment_state == "eligible":
+                        standard_deduction_start_month = 1
                 policy_contribution = calculate_contributions(
                     contribution_policy,
                     ContributionBases(
@@ -5549,6 +5771,7 @@ class FinanceService:
                     special_additional_deduction_fen=payroll_input.special_additional_deduction_fen,
                     other_legal_deduction_fen=payroll_input.other_legal_deduction_fen,
                     tax_relief_fen=item.tax_relief_fen,
+                    standard_deduction_start_month=standard_deduction_start_month,
                 )
                 tax = calculate_cumulative_withholding(
                     tax_policy, tax_period, prior_state, tax_input
@@ -5570,6 +5793,20 @@ class FinanceService:
                         "contribution_actual_item_ids": [
                             str(actual.id) for actual in active_actuals
                         ],
+                        "first_wage_tax_treatment": (
+                            {
+                                "id": str(first_wage_treatment.id),
+                                "tax_year": first_wage_treatment.tax_year,
+                                "first_wage_month": first_wage_treatment.first_wage_month,
+                                "treatment_state": first_wage_treatment.treatment_state,
+                                "legal_basis_url": first_wage_treatment.legal_basis_url,
+                                "standard_deduction_start_month": (
+                                    standard_deduction_start_month
+                                ),
+                            }
+                            if first_wage_treatment is not None
+                            else None
+                        ),
                     }
                 )
             else:
@@ -5672,6 +5909,9 @@ class FinanceService:
                             ),
                             other_legal_deduction_fen=regular_tax_input.other_legal_deduction_fen,
                             tax_relief_fen=regular_tax_input.tax_relief_fen,
+                            standard_deduction_start_month=(
+                                regular_tax_input.standard_deduction_start_month
+                            ),
                         ),
                     )
                     selected = AnnualBonusTaxScenario(
@@ -5760,6 +6000,9 @@ class FinanceService:
                                     regular_tax_input.other_legal_deduction_fen
                                 ),
                                 tax_relief_fen=regular_tax_input.tax_relief_fen,
+                                standard_deduction_start_month=(
+                                    regular_tax_input.standard_deduction_start_month
+                                ),
                             ),
                         ).new_state
                 prepared_lines.append(
@@ -5810,6 +6053,7 @@ class FinanceService:
             "policy_snapshot": policy_snapshot,
             "lines": prepared_lines,
             "actual_item_ids": sorted(actual_item_ids, key=str),
+            "first_wage_treatment_ids": sorted(first_wage_treatment_ids, key=str),
         }
         calculation_hash = hashlib.sha256(
             json.dumps(
@@ -5858,6 +6102,7 @@ class FinanceService:
             "calculation_hash": calculation_hash,
             "lines": prepared_lines,
             "actual_item_ids": sorted(actual_item_ids, key=str),
+            "first_wage_treatment_ids": sorted(first_wage_treatment_ids, key=str),
             "summary": summary,
             "trace": trace,
         }
@@ -6295,6 +6540,17 @@ class FinanceService:
                 "INVALID_REGULAR_PAYROLL_DEPENDENCY",
                 "referenced regular payroll has no immutable employee facts",
             )
+        snapshot = next(
+            (
+                value
+                for value in batch.calculation_input.get("employee_snapshots", [])
+                if value.get("employee_id") == str(employee.id)
+            ),
+            None,
+        )
+        treatment_snapshot = (
+            snapshot.get("first_wage_tax_treatment") if snapshot is not None else None
+        )
         return CumulativeTaxPeriodInput(
             income_date=self._batch_tax_period(batch).end_date,
             withholding_start_date=self._required_tax_withholding_start_date(employee),
@@ -6306,6 +6562,12 @@ class FinanceService:
             special_additional_deduction_fen=line.special_additional_deduction_fen,
             other_legal_deduction_fen=line.other_legal_deduction_fen,
             tax_relief_fen=int(request_item.get("tax_relief_fen", 0)),
+            standard_deduction_start_month=(
+                int(treatment_snapshot["standard_deduction_start_month"])
+                if treatment_snapshot is not None
+                and treatment_snapshot.get("standard_deduction_start_month") is not None
+                else None
+            ),
         )
 
     def _posted_regular_tax_state_for_month(
@@ -6523,6 +6785,7 @@ class FinanceService:
             "special_additional_deduction_fen": value.special_additional_deduction_fen,
             "other_legal_deduction_fen": value.other_legal_deduction_fen,
             "tax_relief_fen": value.tax_relief_fen,
+            "standard_deduction_start_month": value.standard_deduction_start_month,
         }
 
     @classmethod

@@ -159,6 +159,10 @@ class CumulativeTaxPeriodInput:
     special_additional_deduction_fen: int
     other_legal_deduction_fen: int
     tax_relief_fen: int = 0
+    # Defaults to the first month of this withholding relationship.  A caller
+    # may move it earlier only through a separately evidenced statutory
+    # treatment, such as the annual first-wage rule.
+    standard_deduction_start_month: int | None = None
 
     def __post_init__(self) -> None:
         for field in (
@@ -173,6 +177,12 @@ class CumulativeTaxPeriodInput:
         if self.tax_exempt_income_fen > self.income_fen:
             raise CalculationValidationError(
                 "INVALID_TAX_INPUT", "tax_exempt_income_fen must not exceed income_fen"
+            )
+        if self.standard_deduction_start_month is not None and not (
+            1 <= self.standard_deduction_start_month <= 12
+        ):
+            raise CalculationValidationError(
+                "INVALID_TAX_INPUT", "standard_deduction_start_month must be between 1 and 12"
             )
 
 
@@ -233,26 +243,56 @@ def calculate_cumulative_withholding(
     # this tax year, including declared months with zero salary.  Employment and
     # tax registration are separate facts, so the employment start date must not
     # silently create tax months before the withholding relationship began.
-    first_month = (
+    withholding_first_month = (
         current.withholding_start_date.month
         if current.withholding_start_date.year == period.year
         else 1
     )
-    if current.withholding_start_date.year > period.year or first_month > period.month:
+    first_month = (
+        current.standard_deduction_start_month
+        if current.standard_deduction_start_month is not None
+        else withholding_first_month
+    )
+    if (
+        current.withholding_start_date.year > period.year
+        or first_month > period.month
+        or first_month > withholding_first_month
+    ):
         raise CalculationValidationError(
-            "INVALID_TAX_INPUT", "withholding_start_date must not follow the tax period"
+            "INVALID_TAX_INPUT",
+            "standard deduction start must not follow the withholding start or tax period",
         )
     withholding_months = period.month - first_month + 1
     cumulative_standard = policy.monthly_standard_deduction_fen * withholding_months
+    prior_standard_catch_up_fen = 0
     if prior_state.through_period is not None:
-        prior_first_month = first_month
-        prior_withholding_months = prior_state.through_period.month - prior_first_month + 1
-        expected_prior_standard = policy.monthly_standard_deduction_fen * prior_withholding_months
-        if prior_state.cumulative_standard_deduction_fen != expected_prior_standard:
+        treatment_prior_months = prior_state.through_period.month - first_month + 1
+        expected_treatment_prior_standard = (
+            policy.monthly_standard_deduction_fen * treatment_prior_months
+        )
+        default_prior_months = max(
+            0, prior_state.through_period.month - withholding_first_month + 1
+        )
+        expected_default_prior_standard = (
+            policy.monthly_standard_deduction_fen * default_prior_months
+        )
+        allowed_prior_standards = {expected_treatment_prior_standard}
+        if first_month < withholding_first_month:
+            # The employee-year treatment may be registered after an earlier
+            # payroll was posted without it.  That immutable prior state is a
+            # valid baseline; the full statutory deduction catches up in the
+            # current cumulative calculation instead of rewriting history.
+            allowed_prior_standards.add(expected_default_prior_standard)
+        if prior_state.cumulative_standard_deduction_fen not in allowed_prior_standards:
             raise CalculationValidationError(
                 "INVALID_TAX_STATE",
                 "prior cumulative standard deduction is inconsistent with withholding months",
             )
+        prior_standard_catch_up_fen = max(
+            0,
+            expected_treatment_prior_standard
+            - prior_state.cumulative_standard_deduction_fen,
+        )
     elif prior_state.cumulative_standard_deduction_fen != 0:
         raise CalculationValidationError(
             "INVALID_TAX_STATE",
@@ -307,7 +347,9 @@ def calculate_cumulative_withholding(
                 "cumulative_tax_exempt_income_fen": cumulative_exempt,
                 "cumulative_standard_deduction_fen": cumulative_standard,
                 "withholding_start_date": current.withholding_start_date.isoformat(),
+                "standard_deduction_start_month": first_month,
                 "withholding_months_in_tax_year": withholding_months,
+                "prior_standard_deduction_catch_up_fen": prior_standard_catch_up_fen,
                 "cumulative_employee_contributions_fen": cumulative_contributions,
                 "cumulative_special_additional_deduction_fen": cumulative_special,
                 "cumulative_other_legal_deduction_fen": cumulative_other,

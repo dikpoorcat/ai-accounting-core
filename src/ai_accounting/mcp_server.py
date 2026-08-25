@@ -107,6 +107,7 @@ from .schemas import (
     RegisterEmployeeRequest,
     RegisterEvidenceRequest,
     RegisterPayrollContributionActualRequest,
+    RegisterPayrollFirstWageTaxTreatmentRequest,
     RegisterPayrollOpeningStateRequest,
     RegisterPayrollPolicyVersionRequest,
     ReverseEventRequest,
@@ -624,6 +625,7 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                     "finance_register_employee_profile_version",
                     "finance_register_payroll_policy_version",
                     "finance_register_payroll_opening_state",
+                    "finance_register_payroll_first_wage_tax_treatment",
                     "finance_register_payroll_contribution_actual",
                     "finance_record_payroll_contribution_supplement",
                     "finance_preview_payroll",
@@ -935,6 +937,18 @@ def finance_register_payroll_opening_state(
     try:
         with SessionLocal.begin() as session:
             return FinanceService(session).register_payroll_opening_state(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_payroll_first_wage_tax_treatment(
+    request: RegisterPayrollFirstWageTaxTreatmentRequest,
+) -> dict[str, Any]:
+    """按员工和纳税年度登记有证据的首次工资累计减除费用待遇。"""
+    try:
+        with SessionLocal.begin() as session:
+            return FinanceService(session).register_payroll_first_wage_tax_treatment(request)
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 

@@ -176,6 +176,39 @@ def test_cumulative_withholding_is_zero_below_deduction_and_never_refunds() -> N
     assert no_refund.current_withholding_tax_fen == 0
 
 
+def test_first_wage_treatment_catches_up_without_rewriting_prior_payroll() -> None:
+    prior = CumulativeTaxState(
+        tax_year=2026,
+        through_period=YearMonth(2026, 6),
+        cumulative_income_fen=937_160,
+        cumulative_tax_exempt_income_fen=0,
+        cumulative_standard_deduction_fen=500_000,
+        cumulative_employee_contributions_fen=52_500,
+        cumulative_special_additional_deduction_fen=0,
+        cumulative_other_legal_deduction_fen=0,
+        cumulative_tax_relief_fen=0,
+        cumulative_withheld_tax_fen=11_540,
+    )
+    current = CumulativeTaxPeriodInput(
+        income_date=date(2026, 7, 31),
+        withholding_start_date=date(2026, 6, 1),
+        income_fen=1_230_790,
+        tax_exempt_income_fen=0,
+        employee_contributions_fen=52_500,
+        special_additional_deduction_fen=0,
+        other_legal_deduction_fen=0,
+        standard_deduction_start_month=1,
+    )
+
+    result = calculate_cumulative_withholding(
+        wage_tax_policy(), YearMonth(2026, 7), prior, current
+    )
+
+    assert result.current_withholding_tax_fen == 0
+    assert result.new_state.cumulative_standard_deduction_fen == 3_500_000
+    assert result.trace[0].values["prior_standard_deduction_catch_up_fen"] == 2_500_000
+
+
 def test_cumulative_withholding_carries_prior_month_state() -> None:
     january = calculate_cumulative_withholding(
         wage_tax_policy(),

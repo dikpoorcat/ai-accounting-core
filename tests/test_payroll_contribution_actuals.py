@@ -22,6 +22,7 @@ from ai_accounting.models import (
     PayrollContributionActualSet,
     PayrollContributionActualUse,
     PayrollContributionSupplement,
+    PayrollFirstWageTaxTreatmentUse,
     PayrollLine,
     PayrollPolicyVersion,
     Voucher,
@@ -34,6 +35,7 @@ from ai_accounting.schemas import (
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     RegisterPayrollContributionActualRequest,
+    RegisterPayrollFirstWageTaxTreatmentRequest,
     RegisterPayrollPolicyVersionRequest,
     ReverseEventRequest,
 )
@@ -621,3 +623,52 @@ def test_month_end_lists_specific_unapplied_insurance_kinds(
         fact["applied_to_current_payroll"]
         for fact in after["system_facts"]["contribution_actual_differences"]
     )
+
+
+def test_first_wage_tax_treatment_is_evidenced_and_used_by_payroll(
+    session: Session, organization: Organization
+) -> None:
+    service, employee_id, evidence = _setup_four_insurance_employee(session, organization)
+    registered = service.register_payroll_first_wage_tax_treatment(
+        RegisterPayrollFirstWageTaxTreatmentRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "first-wage-treatment-2026",
+                "employee_id": employee_id,
+                "tax_year": 2026,
+                "first_wage_month": 7,
+                "treatment_state": "eligible",
+                "declaration_date": "2026-08-25",
+                "confirmation_description": (
+                    "本年度此前未取得工资薪金，也未按累计预扣法预扣连续性劳务报酬个税"
+                ),
+                "evidence_references": [evidence.id],
+            }
+        )
+    )
+    assert registered["status"] == "registered"
+
+    preview = _preview(
+        service,
+        organization,
+        employee_id,
+        period="2026-07",
+        salary_fen=1_000_000,
+        key="first-wage-treatment-preview",
+        evidence=evidence,
+    )
+
+    assert preview.status == "calculated", preview.model_dump(mode="json")
+    assert preview.data["lines"][0]["individual_income_tax_fen"] == 0
+    batch = session.get(PayrollBatch, preview.batch_id)
+    assert batch is not None
+    snapshot = batch.calculation_input["employee_snapshots"][0][
+        "first_wage_tax_treatment"
+    ]
+    assert snapshot["standard_deduction_start_month"] == 1
+    use = session.scalar(
+        select(PayrollFirstWageTaxTreatmentUse).where(
+            PayrollFirstWageTaxTreatmentUse.payroll_batch_id == preview.batch_id
+        )
+    )
+    assert use is not None

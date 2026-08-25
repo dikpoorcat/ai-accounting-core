@@ -658,6 +658,34 @@ class PayrollContributionActualState(StrEnum):
     NOT_DECLARED = "not_declared"
 
 
+class PayrollFirstWageTaxTreatmentState(StrEnum):
+    ELIGIBLE = "eligible"
+    NOT_ELIGIBLE = "not_eligible"
+
+
+class RegisterPayrollFirstWageTaxTreatmentRequest(BaseModel):
+    """Register the evidenced annual first-wage cumulative-deduction treatment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    employee_id: uuid.UUID
+    tax_year: int = Field(ge=1900, le=9999)
+    first_wage_month: int = Field(ge=1, le=12)
+    treatment_state: PayrollFirstWageTaxTreatmentState
+    declaration_date: date
+    confirmation_description: str = Field(min_length=1, max_length=2000)
+    evidence_references: list[uuid.UUID] = Field(min_length=1)
+    supersedes_treatment_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def evidence_is_unique(self) -> RegisterPayrollFirstWageTaxTreatmentRequest:
+        if len(self.evidence_references) != len(set(self.evidence_references)):
+            raise ValueError("evidence_references must not contain duplicates")
+        return self
+
+
 class PayrollContributionActualItem(BaseModel):
     """One evidenced actual assessment, distinct from the company policy baseline."""
 

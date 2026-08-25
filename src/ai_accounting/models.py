@@ -834,6 +834,121 @@ class EmployeePayrollProfileVersion(Base):
     )
 
 
+class PayrollFirstWageTaxTreatment(Base):
+    """Evidenced employee-year treatment for the annual first-wage deduction rule."""
+
+    __tablename__ = "payroll_first_wage_tax_treatments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    tax_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    first_wage_month: Mapped[int] = mapped_column(Integer, nullable=False)
+    treatment_state: Mapped[str] = mapped_column(String(20), nullable=False)
+    declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    confirmation_description: Mapped[str] = mapped_column(Text, nullable=False)
+    legal_basis_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "employee_id"],
+            ["employees.org_id", "employees.id"],
+            name="fk_first_wage_treatment_org_employee",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_first_wage_treatment_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            ["payroll_first_wage_tax_treatments.org_id", "payroll_first_wage_tax_treatments.id"],
+            name="fk_first_wage_treatment_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_first_wage_treatment_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_first_wage_treatment_idempotency"
+        ),
+        CheckConstraint("tax_year BETWEEN 1900 AND 9999", name="ck_first_wage_treatment_year"),
+        CheckConstraint(
+            "first_wage_month BETWEEN 1 AND 12", name="ck_first_wage_treatment_month"
+        ),
+        CheckConstraint(
+            "treatment_state IN ('eligible','not_eligible')",
+            name="ck_first_wage_treatment_state",
+        ),
+    )
+
+
+Index(
+    "uq_first_wage_treatment_root",
+    PayrollFirstWageTaxTreatment.org_id,
+    PayrollFirstWageTaxTreatment.employee_id,
+    PayrollFirstWageTaxTreatment.tax_year,
+    unique=True,
+    postgresql_where=PayrollFirstWageTaxTreatment.supersedes_id.is_(None),
+    sqlite_where=PayrollFirstWageTaxTreatment.supersedes_id.is_(None),
+)
+
+
+class PayrollFirstWageTaxTreatmentEvidence(Base):
+    __tablename__ = "payroll_first_wage_tax_treatment_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    treatment_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "treatment_id"],
+            ["payroll_first_wage_tax_treatments.org_id", "payroll_first_wage_tax_treatments.id"],
+            name="fk_first_wage_treatment_evidence_org_treatment",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_first_wage_treatment_evidence_org_evidence",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class PayrollFirstWageTaxTreatmentUse(Base):
+    """Normalized dependency from a payroll draft to the employee-year treatment fact."""
+
+    __tablename__ = "payroll_first_wage_tax_treatment_uses"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    treatment_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    payroll_batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "treatment_id"],
+            ["payroll_first_wage_tax_treatments.org_id", "payroll_first_wage_tax_treatments.id"],
+            name="fk_first_wage_treatment_use_org_treatment",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "payroll_batch_id"],
+            ["payroll_batches.org_id", "payroll_batches.id"],
+            name="fk_first_wage_treatment_use_org_batch",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
 class PayrollContributionActualSet(Base):
     """Immutable evidenced actual assessment facts for an employee contribution month."""
 
