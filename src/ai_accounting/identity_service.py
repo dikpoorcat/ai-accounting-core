@@ -51,8 +51,12 @@ from .models import (
     OwnerSession,
 )
 
-SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
-SESSION_ABSOLUTE_TIMEOUT = timedelta(hours=8)
+# The private pilot runs on one owner's local Windows account and keeps only an
+# opaque token in Credential Manager.  Seven idle days avoid repeated prompts
+# during ordinary bookkeeping, while the fixed 30-day boundary still forces
+# periodic password reauthentication and is never extended by activity.
+SESSION_IDLE_TIMEOUT = timedelta(days=7)
+SESSION_ABSOLUTE_TIMEOUT = timedelta(days=30)
 AUTH_FAILURE_THRESHOLD = 5
 AUTH_FAILURE_BACKOFF_BASE = timedelta(seconds=30)
 AUTH_FAILURE_BACKOFF_MAX = timedelta(minutes=15)

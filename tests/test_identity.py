@@ -41,6 +41,7 @@ from ai_accounting.identity_schemas import (
 from ai_accounting.identity_service import (
     AUTH_FAILURE_BACKOFF_BASE,
     SESSION_ABSOLUTE_TIMEOUT,
+    SESSION_IDLE_TIMEOUT,
     IdentityService,
 )
 from ai_accounting.models import IdentityAuditEvent, OwnerAccount, OwnerRecoveryCode, OwnerSession
@@ -113,6 +114,11 @@ def test_session_token_is_deterministic_with_injected_csprng_and_only_hashes_for
     assert token
     assert token_sha256(token) == hashlib.sha256(token.encode("ascii")).hexdigest()
     assert token not in token_sha256(token)
+
+
+def test_private_pilot_session_timeouts_balance_continuity_and_reauthentication() -> None:
+    assert SESSION_IDLE_TIMEOUT.days == 7
+    assert SESSION_ABSOLUTE_TIMEOUT.days == 30
 
 
 def test_recovery_code_is_128_bit_grouped_and_matches_only_its_hash() -> None:

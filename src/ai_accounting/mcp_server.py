@@ -84,6 +84,7 @@ from .models import (
     Voucher,
     event_evidence,
 )
+from .owner_login_launcher import OwnerLoginWindowLauncher
 from .schemas import (
     DISABLED_EVENT_TYPES,
     EVENT_REQUIREMENTS,
@@ -124,6 +125,8 @@ _ACTIVE_TOOL_SESSION: ContextVar[Any | None] = ContextVar(
     "finance_mcp_active_tool_session", default=None
 )
 _MCP_CREDENTIAL_STORE: CredentialStore | None = None
+_OWNER_LOGIN_WINDOW_LAUNCHER = OwnerLoginWindowLauncher()
+_OWNER_LOGIN_WINDOW_ENABLED = False
 
 
 class _BorrowedSessionContext(AbstractContextManager[Any]):
@@ -234,6 +237,23 @@ def _rejected_identity(code: str) -> dict[str, Any]:
     return {"status": "rejected", "errors": [code]}
 
 
+def _authentication_required(*, login_name: str) -> dict[str, Any]:
+    """Fail closed while asking the local owner to renew the opaque session."""
+
+    if _OWNER_LOGIN_WINDOW_ENABLED and not _OWNER_LOGIN_WINDOW_LAUNCHER.request(
+        login_name=login_name
+    ):
+        logger.warning("Owner authentication is required but no login window could be launched")
+    return _rejected_identity("AUTHENTICATION_REQUIRED")
+
+
+def _set_owner_login_window_enabled(enabled: bool) -> None:
+    """Limit desktop side effects to the live MCP process, not in-process imports."""
+
+    global _OWNER_LOGIN_WINDOW_ENABLED
+    _OWNER_LOGIN_WINDOW_ENABLED = enabled
+
+
 def _begin_mcp_transaction() -> Any:
     begin = getattr(SessionLocal, "begin", None)
     if begin is not None:
@@ -271,11 +291,9 @@ def _secure_registered_data_tools() -> None:
                     session_token = _load_current_session_token()
                 except IdentityError as exc:
                     return _rejected_identity(exc.code)
-                if session_token is None:
-                    return _rejected_identity("AUTHENTICATION_REQUIRED")
             with _begin_mcp_transaction() as session:
-                owner_exists = session.scalar(select(OwnerAccount.id).limit(1)) is not None
-                if not owner_exists and environment == "development":
+                owner_account = session.scalar(select(OwnerAccount).limit(1))
+                if owner_account is None and environment == "development":
                     marker = _ACTIVE_TOOL_SESSION.set(session)
                     try:
                         return _original(*args, **kwargs)
@@ -287,7 +305,9 @@ def _secure_registered_data_tools() -> None:
                     except IdentityError as exc:
                         return _rejected_identity(exc.code)
                 if session_token is None:
-                    return _rejected_identity("AUTHENTICATION_REQUIRED")
+                    if owner_account is None:
+                        return _rejected_identity("AUTHENTICATION_REQUIRED")
+                    return _authentication_required(login_name=owner_account.login_name)
                 correlation_id = uuid.uuid4()
                 try:
                     context = IdentityService(session).authorize_execution(
@@ -299,7 +319,8 @@ def _secure_registered_data_tools() -> None:
                 except IdentityError as exc:
                     if exc.code == "ORGANIZATION_CONTEXT_MISMATCH":
                         return _rejected_identity("ORGANIZATION_CONTEXT_MISMATCH")
-                    return _rejected_identity("AUTHENTICATION_REQUIRED")
+                    assert owner_account is not None
+                    return _authentication_required(login_name=owner_account.login_name)
                 marker = _ACTIVE_TOOL_SESSION.set(session)
                 try:
                     if _is_write:
@@ -1915,8 +1936,10 @@ def main() -> None:
                     _initialize_mcp_credential_store(
                         environment=settings.finance_environment
                     )
+                    _set_owner_login_window_enabled(True)
                     mcp.run(transport="stdio")
                 finally:
+                    _set_owner_login_window_enabled(False)
                     _clear_mcp_credential_store()
         finally:
             # ``mcp.run`` normally owns the process lifetime.  Restoring only
@@ -1927,8 +1950,10 @@ def main() -> None:
         return
     try:
         _initialize_mcp_credential_store(environment=settings.finance_environment)
+        _set_owner_login_window_enabled(True)
         mcp.run(transport="stdio")
     finally:
+        _set_owner_login_window_enabled(False)
         _clear_mcp_credential_store()
 
 

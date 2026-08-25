@@ -246,6 +246,55 @@ def test_mcp_uses_current_local_session_on_every_enterprise_call(
         mcp_server._set_mcp_credential_store_for_tests(None)
 
 
+def test_mcp_authentication_required_requests_the_local_login_launcher(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id, _token = _provision(session)
+    session.commit()
+    factory = session.get_bind()
+    monkeypatch.setattr(
+        mcp_server,
+        "SessionLocal",
+        mcp_server._ContextAwareSessionFactory(  # type: ignore[attr-defined]
+            __import__("sqlalchemy.orm").orm.sessionmaker(
+                bind=factory, expire_on_commit=False
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "get_settings",
+        lambda: SimpleNamespace(finance_environment="production"),
+    )
+
+    class RecordingLauncher:
+        def __init__(self) -> None:
+            self.login_names: list[str] = []
+
+        def request(self, *, login_name: str) -> bool:
+            self.login_names.append(login_name)
+            return True
+
+    launcher = RecordingLauncher()
+    monkeypatch.setattr(mcp_server, "_OWNER_LOGIN_WINDOW_LAUNCHER", launcher)
+    mcp_server._set_owner_login_window_enabled(True)
+    mcp_server._set_mcp_credential_store_for_tests(InMemoryCredentialStore())
+    profile = mcp_server.mcp._tool_manager.get_tool("finance_get_profile")
+    assert profile is not None
+    try:
+        expected = {
+            "status": "rejected",
+            "errors": ["AUTHENTICATION_REQUIRED"],
+        }
+        assert profile.fn(org_id=str(org_id)) == expected
+        assert profile.fn(org_id=str(org_id)) == expected
+        assert launcher.login_names == ["owner", "owner"]
+    finally:
+        mcp_server._set_owner_login_window_enabled(False)
+        mcp_server._set_mcp_credential_store_for_tests(None)
+
+
 def test_mcp_credential_store_failure_is_stable_and_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

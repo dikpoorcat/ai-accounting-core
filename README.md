@@ -117,6 +117,11 @@ $trialOrgId = "将 finance-bootstrap 输出的 org_id 粘贴到这里"
 妥善保存设置时显示的一次性恢复码。登录成功后，当前运行中的 MCP 会在下一次企业数据工具
 调用时读取最新的本地会话令牌，无需重启 Codex。
 
+负责人会话连续 7 天未使用时失效，且无论是否持续使用都会在登录 30 天后强制失效。企业
+数据工具发现会话缺失或过期时会自动拉起并去重显示本地负责人登录窗口；密码只在该无回显
+窗口输入，不进入聊天、命令行参数或配置文件。登录成功后直接重试原操作即可，无需重启
+Codex。
+
 项目包含 `.codex/config.toml`，其命令、工作目录和证据目录按本仓库固定路径 `D:\GitHub\ai-accounting-core` 配置；如果仓库位于其他路径，需要同步修改这三个值。在 Codex 中信任并打开本仓库、确认 PostgreSQL 已启动和迁移完成后，重启 Codex 即可加载 `ai_accounting` MCP。Codex 官方配置说明见 [Model Context Protocol](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
 Docker Compose 中的数据库账号仅用于本机开发，不得复用于共享或生产环境。数据库端口只绑定到 `127.0.0.1`。
