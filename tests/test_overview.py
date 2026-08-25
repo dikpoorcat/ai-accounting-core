@@ -31,6 +31,7 @@ from ai_accounting.models import (
     PayrollBatch,
     PayrollLine,
     PayrollPolicyVersion,
+    PayrollSalaryActualDeductionAllocation,
     Settlement,
     UnifiedPayoutRun,
     UnifiedPayoutRunItem,
@@ -1162,6 +1163,236 @@ def test_overview_combines_controlled_workforce_costs_without_double_counting(
     assert "劳务批次计算的个人所得税" not in document
     assert "劳务报酬已按毛额支付，实际未代扣个人所得税" in document
     assert '"actual_withholding_tax_fen":"0"' in document
+
+
+def test_overview_reconciles_prior_period_salary_deductions_and_reversals(
+    session: Session,
+) -> None:
+    organization = _seed_overview_month(session)
+    evidence = session.scalar(select(Evidence).where(Evidence.org_id == organization.id))
+    assert evidence is not None
+    parties = [
+        Counterparty(
+            org_id=organization.id,
+            kind="employee",
+            name=f"员工 EMP00{index}",
+            external_ref=f"EMP00{index}",
+        )
+        for index in (1, 2)
+    ]
+    session.add_all(parties)
+    session.flush()
+    employees = [
+        Employee(
+            org_id=organization.id,
+            counterparty_id=party.id,
+            employee_code=f"EMP00{index}",
+            name=f"测试员工{index}",
+            employment_start_date=date(2026, 1, 1),
+        )
+        for index, party in enumerate(parties, start=1)
+    ]
+    policy = PayrollPolicyVersion(
+        org_id=organization.id,
+        region="CN-330000",
+        effective_from=date(2026, 1, 1),
+        version="overview-settlement-2026.1",
+        source_url="https://www.chinatax.gov.cn/",
+        parameters={},
+    )
+    session.add_all([*employees, policy])
+    session.flush()
+    profiles = [
+        EmployeePayrollProfileVersion(
+            org_id=organization.id,
+            employee_id=employee.id,
+            effective_from=date(2026, 1, 1),
+            expense_role="payroll_management_expense",
+            social_insurance_base_fen=0,
+            housing_fund_base_fen=0,
+        )
+        for employee in employees
+    ]
+    session.add_all(profiles)
+    session.flush()
+    role_names = {
+        "expense": "payroll_management_expense",
+        "salary": "employee_salary_payable",
+        "withheld_social": "withheld_employee_social_payable",
+        "employer_social": "employer_social_payable",
+        "bank": "bank",
+    }
+    accounts = {
+        key: session.scalar(
+            select(Account).where(
+                Account.org_id == organization.id,
+                Account.system_role == role,
+            )
+        )
+        for key, role in role_names.items()
+    }
+    assert all(accounts.values())
+    typed_accounts = {key: value for key, value in accounts.items() if value is not None}
+
+    prior_batch = _add_controlled_payroll_accrual(
+        session,
+        organization=organization,
+        employee=employees[0],
+        profile=profiles[0],
+        policy=policy,
+        accounts=typed_accounts,
+        number="202601-0001",
+        posting_date=date(2026, 1, 31),
+        payroll_period="2026-01",
+        version=1,
+        gross_salary_fen=5_000_000,
+        employee_social_insurance_fen=0,
+        employer_social_insurance_fen=0,
+    )
+    prior_lines = session.scalars(
+        select(PayrollLine).where(PayrollLine.payroll_batch_id == prior_batch.id)
+    ).all()
+    assert len(prior_lines) == 1
+    prior_lines[0].tax_reported_salary_fen = 2_500_000
+    prior_lines[0].gross_salary_fen = 2_500_000
+    prior_lines[0].net_salary_fen = 2_500_000
+    second_prior_line = PayrollLine(
+        org_id=organization.id,
+        payroll_batch_id=prior_batch.id,
+        employee_id=employees[1].id,
+        employee_payroll_profile_version_id=profiles[1].id,
+        tax_reported_salary_fen=2_500_000,
+        gross_salary_fen=2_500_000,
+        net_salary_fen=2_500_000,
+    )
+    session.add(second_prior_line)
+    session.flush()
+
+    _add_controlled_payroll_accrual(
+        session,
+        organization=organization,
+        employee=employees[0],
+        profile=profiles[0],
+        policy=policy,
+        accounts=typed_accounts,
+        number="202602-0003",
+        posting_date=date(2026, 2, 28),
+        payroll_period="2026-02",
+        version=1,
+        gross_salary_fen=6_855_472,
+        employee_social_insurance_fen=0,
+        employer_social_insurance_fen=528_000,
+    )
+    payment_event, payment_voucher = _add_test_voucher(
+        session,
+        organization=organization,
+        number="202602-0002",
+        event_type="unified_payout_run",
+        description="支付以前月份工资并确认两笔实际扣款",
+        facts={},
+        posting_date=date(2026, 2, 6),
+        lines=[
+            (typed_accounts["salary"], None, 5_000_000, 0),
+            (typed_accounts["bank"], None, 0, 4_895_000),
+            (typed_accounts["expense"], None, 0, 105_000),
+        ],
+    )
+    allocations = [
+        PayrollSalaryActualDeductionAllocation(
+            org_id=organization.id,
+            payroll_line_id=line.id,
+            payment_event_id=payment_event.id,
+            amount_fen=52_500,
+            expense_role="payroll_management_expense",
+        )
+        for line in (prior_lines[0], second_prior_line)
+    ]
+    session.add_all(allocations)
+    session.flush()
+
+    february = next(
+        month for month in build_overview_payload(session)["months"] if month["key"] == "2026-02"
+    )
+    compensation = february["workforce_cost"]["employee"]
+    assert compensation["breakdown_available"] is True
+    assert compensation["reason"] is None
+    assert compensation["controlled_total_fen"] == 7_383_472
+    assert compensation["settlement_adjustment_fen"] == -105_000
+    assert compensation["prior_period_settlement_adjustment_fen"] == -105_000
+    assert compensation["total_fen"] == 7_278_472
+    document = render_overview_document(build_overview_payload(session))
+    assert "以前月份工资结算调整" in document
+    assert "本月职工薪酬科目净额" in document
+    assert '"settlement_adjustment_fen":"-105000"' in document
+
+    generated = AccountingPeriodService(
+        session,
+        current_date=date(2026, 8, 17),
+    ).generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-03",
+            idempotency_key="overview-period-202603",
+            confirmation_note="经营概览工资结算调整冲正测试",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert generated.period_id is not None
+    reversal_event, reversal_voucher = _add_test_voucher(
+        session,
+        organization=organization,
+        number="202603-0001",
+        event_type="reversal",
+        description="冲正以前月份工资付款",
+        facts={},
+        posting_date=date(2026, 3, 5),
+        lines=[
+            (typed_accounts["bank"], None, 4_895_000, 0),
+            (typed_accounts["expense"], None, 105_000, 0),
+            (typed_accounts["salary"], None, 0, 5_000_000),
+        ],
+    )
+    payment_event.status = "reversed"
+    payment_event.reversed_by_event_id = reversal_event.id
+    payment_voucher.status = "reversed"
+    reversal_voucher.reversal_of_voucher_id = payment_voucher.id
+    for allocation in allocations:
+        allocation.reversed = True
+        allocation.reversed_by_event_id = reversal_event.id
+    session.flush()
+
+    months = build_overview_payload(session)["months"]
+    february_after_reversal = next(month for month in months if month["key"] == "2026-02")
+    march = next(month for month in months if month["key"] == "2026-03")
+    assert (
+        february_after_reversal["workforce_cost"]["employee"]["settlement_adjustment_fen"]
+        == -105_000
+    )
+    march_compensation = march["workforce_cost"]["employee"]
+    assert march_compensation["breakdown_available"] is True
+    assert march_compensation["controlled_total_fen"] == 0
+    assert march_compensation["settlement_adjustment_fen"] == 105_000
+    assert march_compensation["prior_period_settlement_adjustment_fen"] == 105_000
+    assert march_compensation["total_fen"] == 105_000
+
+    _add_test_voucher(
+        session,
+        organization=organization,
+        number="202602-0004",
+        event_type="expense_cash",
+        description="无法由工资批次或结算调整解释的职工薪酬差额",
+        facts={},
+        posting_date=date(2026, 2, 20),
+        lines=[
+            (typed_accounts["expense"], None, 1, 0),
+            (typed_accounts["bank"], None, 0, 1),
+        ],
+    )
+    unexplained = next(
+        month for month in build_overview_payload(session)["months"] if month["key"] == "2026-02"
+    )["workforce_cost"]["employee"]
+    assert unexplained["breakdown_available"] is False
+    assert "工资结算调整与职工薪酬科目净额不一致" in unexplained["reason"]
 
 
 @pytest.mark.parametrize(

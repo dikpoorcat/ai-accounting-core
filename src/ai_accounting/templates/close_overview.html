@@ -359,6 +359,19 @@
     .staff-cost-card.social { background: var(--green-soft); color: var(--green); }
     .staff-cost-card.labor { background: color-mix(in srgb, var(--blue-soft) 55%, var(--green-soft)); }
     .staff-cost-card strong { font-size: 23px; }
+    .staff-cost-reconciliation {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      margin: 12px 0 0;
+      padding: 1px;
+      border-radius: var(--radius-sm);
+      background: var(--line);
+    }
+    .staff-cost-reconciliation > div { display: grid; gap: 3px; padding: 11px 12px; background: var(--surface); }
+    .staff-cost-reconciliation dt { color: var(--muted); font-size: 12px; }
+    .staff-cost-reconciliation dd { margin: 0; font-weight: 800; }
     .staff-cost-note { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--muted); }
     .staff-cost-note.attention { background: var(--amber-soft); color: var(--amber); }
     .staff-periods { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -512,7 +525,7 @@
       .brand-name { max-width: calc(100vw - 88px); }
       .page { padding-top: 16px; }
       .hero { padding: 24px 20px; }
-      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .workforce-groups { grid-template-columns: 1fr; }
+      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .staff-cost-reconciliation, .workforce-groups { grid-template-columns: 1fr; }
       .section-heading, .title-row { align-items: flex-start; flex-direction: column; gap: 10px; }
       .staff-cost-total { justify-items: start; }
       .workforce-subtotal { justify-items: start; }
@@ -661,9 +674,10 @@
           <section class="workforce-group" aria-labelledby="employee-cost-title">
             <div class="workforce-group-heading">
               <div><h3 id="employee-cost-title">正式员工</h3><p>工资及公司承担的社保医保、公积金</p></div>
-              <div class="workforce-subtotal"><span>职工薪酬小计</span><strong id="employee-cost-total"></strong></div>
+              <div class="workforce-subtotal"><span>本月职工薪酬科目净额</span><strong id="employee-cost-total"></strong></div>
             </div>
             <div id="employee-cost-grid" class="staff-cost-grid"></div>
+            <dl id="employee-cost-reconciliation" class="staff-cost-reconciliation" hidden></dl>
             <p id="employee-cost-note" class="staff-cost-note"></p>
             <div id="employee-cost-periods" class="staff-periods" aria-label="正式员工职工薪酬来源期间"></div>
           </section>
@@ -945,10 +959,13 @@
 
         const employee = data.employee;
         const employeeGrid = byId("employee-cost-grid");
+        const employeeReconciliation = byId("employee-cost-reconciliation");
         const employeeNote = byId("employee-cost-note");
         const employeePeriods = byId("employee-cost-periods");
         byId("employee-cost-total").textContent = money(employee.total_fen);
         employeeGrid.replaceChildren();
+        employeeReconciliation.replaceChildren();
+        employeeReconciliation.hidden = true;
         employeePeriods.replaceChildren();
         employeeNote.className = "staff-cost-note";
         if (!employee.has_activity) {
@@ -969,14 +986,40 @@
             card.append(make("span", "", item[0]), make("strong", "", money(item[1])));
             employeeGrid.append(card);
           });
+          const settlementAdjustment = fen(employee.settlement_adjustment_fen);
+          const priorPeriodAdjustment = fen(employee.prior_period_settlement_adjustment_fen);
+          if (settlementAdjustment !== 0n) {
+            const adjustmentLabel = settlementAdjustment === priorPeriodAdjustment
+              ? "以前月份工资结算调整"
+              : "工资结算调整";
+            [
+              [month.short_label + "工资及公司社保", employee.controlled_total_fen],
+              [adjustmentLabel, employee.settlement_adjustment_fen],
+              ["本月职工薪酬科目净额", employee.total_fen]
+            ].forEach((item) => {
+              const reconciliationItem = make("div", "");
+              reconciliationItem.append(
+                make("dt", "", item[0]),
+                make("dd", "", money(item[1]))
+              );
+              employeeReconciliation.append(reconciliationItem);
+            });
+            employeeReconciliation.hidden = false;
+          }
           const personalSocial = fen(employee.employee_social_insurance_fen);
           const personalHousing = fen(employee.employee_housing_fund_fen);
           const personalParts = [];
           if (personalSocial !== 0n) personalParts.push("个人承担社保医保 " + money(personalSocial));
           if (personalHousing !== 0n) personalParts.push("个人承担住房公积金 " + money(personalHousing));
-          employeeNote.textContent = personalParts.length
+          const personalWithholdingNote = personalParts.length
             ? personalParts.join("、") + "，已包含在工资总额中，仅由工资代扣，不会重复计入公司成本。"
             : "本月没有从工资代扣的个人社保医保或住房公积金。";
+          const settlementNote = settlementAdjustment !== 0n
+            ? "工资结算调整已单列反映，不属于本月工资计提。"
+            : "";
+          employeeNote.textContent = [personalWithholdingNote, settlementNote]
+            .filter(Boolean)
+            .join(" ");
           renderCostPeriods(employeePeriods, employee.periods, "payroll_period", month);
         }
 

@@ -30,6 +30,7 @@ from .models import (
     Organization,
     PayrollBatch,
     PayrollLine,
+    PayrollSalaryActualDeductionAllocation,
     Settlement,
     UnifiedPayoutRun,
     UnifiedPayoutRunItem,
@@ -796,22 +797,34 @@ def _load_employee_compensation(
         + totals["employer_social_insurance_fen"]
         + totals["employer_housing_fund_fen"]
     )
+    settlement_adjustments = _load_employee_settlement_adjustments(
+        session,
+        org_id=org_id,
+        period=period,
+    )
+    settlement_adjustment_fen = settlement_adjustments["total_fen"]
     has_controlled_basis = bool(batch_ids)
-    breakdown_available = controlled_total_fen == total_fen and (
-        has_controlled_basis or total_fen == 0
+    has_reconciliation_basis = has_controlled_basis or settlement_adjustments["has_basis"]
+    breakdown_available = controlled_total_fen + settlement_adjustment_fen == total_fen and (
+        has_reconciliation_basis or total_fen == 0
     )
     if breakdown_available:
         reason = None
     elif not has_controlled_basis:
         reason = "现有历史数据缺少受控工资批次关联，明细不可拆。"
     else:
-        reason = "受控工资批次与职工薪酬科目净额不一致，明细不可拆。"
+        reason = "受控工资批次及工资结算调整与职工薪酬科目净额不一致，明细不可拆。"
     periods = sorted(by_payroll_period.values(), key=lambda item: item["payroll_period"])
     return {
-        "has_activity": total_fen != 0 or has_controlled_basis,
+        "has_activity": total_fen != 0 or has_reconciliation_basis,
         "breakdown_available": breakdown_available,
         "reason": reason,
         "total_fen": total_fen,
+        "controlled_total_fen": controlled_total_fen,
+        "settlement_adjustment_fen": settlement_adjustment_fen,
+        "prior_period_settlement_adjustment_fen": settlement_adjustments[
+            "prior_period_fen"
+        ],
         "gross_salary_fen": totals["gross_salary_fen"] if breakdown_available else None,
         "employer_social_insurance_fen": (
             totals["employer_social_insurance_fen"] if breakdown_available else None
@@ -832,6 +845,110 @@ def _load_employee_compensation(
         ),
         "batch_count": len(batch_ids),
         "periods": periods if breakdown_available else [],
+    }
+
+
+def _load_employee_settlement_adjustments(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    period: AccountingPeriod,
+) -> dict[str, int | bool]:
+    """Return signed expense adjustments from normalized salary settlements.
+
+    A payment credits the employee-compensation expense and therefore reduces
+    the period's expense.  A later reversal debits the same expense in its own
+    posting period.  Both effects remain visible in their original accounting
+    months even after the source payment is marked reversed.
+    """
+
+    payment_event = aliased(BusinessEvent, name="salary_adjustment_payment_event")
+    reversal_event = aliased(BusinessEvent, name="salary_adjustment_reversal_event")
+    rows = session.execute(
+        select(
+            PayrollSalaryActualDeductionAllocation.amount_fen,
+            PayrollBatch.payroll_period,
+            payment_event.posting_date.label("payment_posting_date"),
+            payment_event.status.label("payment_status"),
+            reversal_event.posting_date.label("reversal_posting_date"),
+            reversal_event.status.label("reversal_status"),
+        )
+        .join(
+            PayrollLine,
+            and_(
+                PayrollLine.org_id == PayrollSalaryActualDeductionAllocation.org_id,
+                PayrollLine.id == PayrollSalaryActualDeductionAllocation.payroll_line_id,
+            ),
+        )
+        .join(
+            PayrollBatch,
+            and_(
+                PayrollBatch.org_id == PayrollLine.org_id,
+                PayrollBatch.id == PayrollLine.payroll_batch_id,
+            ),
+        )
+        .join(
+            payment_event,
+            and_(
+                payment_event.org_id == PayrollSalaryActualDeductionAllocation.org_id,
+                payment_event.id == PayrollSalaryActualDeductionAllocation.payment_event_id,
+            ),
+        )
+        .outerjoin(
+            reversal_event,
+            and_(
+                reversal_event.org_id == PayrollSalaryActualDeductionAllocation.org_id,
+                reversal_event.id
+                == PayrollSalaryActualDeductionAllocation.reversed_by_event_id,
+            ),
+        )
+        .where(
+            PayrollSalaryActualDeductionAllocation.org_id == org_id,
+            PayrollSalaryActualDeductionAllocation.expense_role.in_(PAYROLL_EXPENSE_ROLES),
+            or_(
+                and_(
+                    payment_event.posting_date >= period.start_date,
+                    payment_event.posting_date <= period.end_date,
+                ),
+                and_(
+                    reversal_event.posting_date >= period.start_date,
+                    reversal_event.posting_date <= period.end_date,
+                ),
+            ),
+        )
+        .order_by(
+            payment_event.posting_date,
+            PayrollSalaryActualDeductionAllocation.id,
+        )
+    ).all()
+
+    period_key = f"{period.calendar_year:04d}-{period.calendar_month:02d}"
+    total_fen = 0
+    prior_period_fen = 0
+    effect_count = 0
+    for row in rows:
+        effects: list[int] = []
+        if (
+            period.start_date <= row.payment_posting_date <= period.end_date
+            and row.payment_status in FINAL_VOUCHER_STATUSES
+        ):
+            effects.append(-row.amount_fen)
+        if (
+            row.reversal_posting_date is not None
+            and period.start_date <= row.reversal_posting_date <= period.end_date
+            and row.reversal_status in FINAL_VOUCHER_STATUSES
+        ):
+            effects.append(row.amount_fen)
+        for effect in effects:
+            total_fen += effect
+            if row.payroll_period < period_key:
+                prior_period_fen += effect
+            effect_count += 1
+
+    return {
+        "total_fen": total_fen,
+        "prior_period_fen": prior_period_fen,
+        "has_basis": effect_count > 0,
     }
 
 
