@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from .agent_contract import MCP_SERVER_INSTRUCTIONS, agent_operating_protocol
 from .accounting_period_schemas import (
     ConfirmAccountingPeriodCloseRequest,
     GenerateAccountingPeriodRequest,
@@ -166,14 +167,7 @@ SessionLocal = _ContextAwareSessionFactory(SessionLocal)
 # before FastMCP instantiates Settings, avoiding a noisy warning and future failures.
 fastmcp_server.Settings.model_rebuild(_types_namespace=vars(fastmcp_server))
 
-mcp = FastMCP(
-    "ai-accounting-core",
-    instructions=(
-        "这是确定性财务内核，不是自由分录接口。先调用 finance_get_event_schema；"
-        "资料不完整时 finance_record_event 会返回 needs_information，必须向用户核实，"
-        "禁止猜测业务性质。所有金额使用整数分，日期使用 YYYY-MM-DD。"
-    ),
-)
+mcp = FastMCP("ai-accounting-core", instructions=MCP_SERVER_INSTRUCTIONS)
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
@@ -714,6 +708,7 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
         "event_requirements": (
             EVENT_REQUIREMENTS.get(event_type) if event_type else EVENT_REQUIREMENTS
         ),
+        "agent_operating_protocol": agent_operating_protocol(),
         "rules": {
             "amount_unit": "fen",
             "currency": "CNY",

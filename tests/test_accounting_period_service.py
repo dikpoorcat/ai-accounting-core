@@ -22,6 +22,7 @@ from ai_accounting.models import (
     AccountingPeriodAction,
     AccountingPeriodClose,
     BankReconciliationScopeAction,
+    BankTransaction,
     Borrowing,
     BorrowingInterestAccrual,
     BusinessEvent,
@@ -302,6 +303,21 @@ def test_pending_late_bank_warning_continues_each_later_month_and_direct_reversa
 def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> None:
     session = _session()
     organization, evidence = _organization_and_evidence(session)
+    session.add(
+        BankTransaction(
+            org_id=organization.id,
+            bank_account_code="100201",
+            fingerprint="b" * 64,
+            external_id="next-month-customer-inflow",
+            booking_date=date(2026, 4, 2),
+            amount_fen=149_400,
+            currency="CNY",
+            counterparty_name="次月回款客户",
+            memo="三月服务费",
+            source_sha256="c" * 64,
+        )
+    )
+    session.flush()
     service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
     generated = service.generate_accounting_period(
         GenerateAccountingPeriodRequest(
@@ -352,10 +368,32 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     )
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["state"] == "needs_attention"
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["due_now"] is True
-    assert "公司已确认承担" in item_by_code[
-        "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"
-    ]["owner_questions"][0]
+    completeness_item = item_by_code["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"]
+    assert completeness_item["system_facts"]["next_month_bank_inflow_count"] == 1
+    assert completeness_item["system_facts"]["next_month_bank_inflow_total_fen"] == 149_400
+    assert completeness_item["system_facts"]["next_month_revenue_cutoff_review_count"] == 1
+    assert completeness_item["system_facts"]["next_month_bank_inflows"] == [
+        {
+            "bank_transaction_id": str(
+                session.query(BankTransaction.id)
+                .filter(BankTransaction.external_id == "next-month-customer-inflow")
+                .scalar()
+            ),
+            "booking_date": "2026-04-02",
+            "amount_fen": 149_400,
+            "counterparty_name": "次月回款客户",
+            "memo": "三月服务费",
+            "current_match_event_id": None,
+            "current_match_event_type": None,
+            "settled_source_events": [],
+            "revenue_cutoff_state": "unmatched",
+        }
+    ]
+    assert "AI核对已提供材料后" in completeness_item["owner_questions"][0]
+    assert "除这些已提供材料外" in completeness_item["owner_questions"][1]
+    assert "泛泛询问代替材料核对" in checklist["ai_instruction"]
     assert "不得仅因数据库无记录" in checklist["ai_instruction"]
+    assert "不得把次月到账默认当作次月收入" in checklist["ai_instruction"]
     assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
     assert missing.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
     assert "review_facts.voucher_completeness_reviewed" in missing.missing_information[0].fields

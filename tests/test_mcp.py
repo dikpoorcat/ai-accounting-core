@@ -12,6 +12,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp.exceptions import ToolError
 
+from ai_accounting import mcp_server
+from ai_accounting.agent_contract import (
+    AI_OPERATING_PROTOCOL_VERSION,
+    EVIDENCE_FIRST_RUNTIME_INSTRUCTION,
+)
 from ai_accounting.mcp_server import mcp
 
 
@@ -84,6 +89,24 @@ def test_every_registered_tool_publishes_a_closed_top_level_envelope() -> None:
     tools = asyncio.run(mcp.list_tools())
     assert tools
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
+
+
+def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> None:
+    schema = mcp_server.finance_get_event_schema()
+    protocol = schema["agent_operating_protocol"]
+
+    assert protocol["version"] == AI_OPERATING_PROTOCOL_VERSION
+    assert [item["code"] for item in protocol["required_sequence"]] == [
+        "inspect_available_materials",
+        "derive_when_unique",
+        "identify_material_unknowns",
+        "ask_minimum_specific_question",
+        "submit_or_stop",
+    ]
+    assert "不得让用户代替AI" in protocol["prohibitions"][-1]
+    assert "除已提供并核对的材料外" in protocol["question_policy"]["final_fallback"]
+    assert EVIDENCE_FIRST_RUNTIME_INSTRUCTION in mcp.instructions
+    assert "agent_operating_protocol" in mcp.instructions
 
 
 @pytest.mark.parametrize(

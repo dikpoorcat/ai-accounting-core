@@ -35,6 +35,7 @@ from .accounting_periods import (
     close_calculation_payload,
     natural_month,
 )
+from .agent_contract import EVIDENCE_FIRST_RUNTIME_INSTRUCTION
 from .models import (
     EXECUTION_ATTRIBUTION_SESSION_KEY,
     Account,
@@ -946,6 +947,109 @@ class AccountingPeriodService:
         ).all()
         invoice_counts = {direction: int(count) for direction, count in invoice_rows}
 
+        next_month_start = self._next_month_date(period.start_date)
+        month_after_next_start = self._next_month_date(next_month_start)
+        next_month_inflow_rows = self.session.execute(
+            select(BankTransaction, BusinessEvent.id, BusinessEvent.event_type)
+            .outerjoin(
+                BankTransactionMatch,
+                (BankTransactionMatch.org_id == BankTransaction.org_id)
+                & (BankTransactionMatch.bank_transaction_id == BankTransaction.id)
+                & (BankTransactionMatch.invalidated_by_event_id.is_(None)),
+            )
+            .outerjoin(
+                BusinessEvent,
+                (BusinessEvent.org_id == BankTransactionMatch.org_id)
+                & (BusinessEvent.id == BankTransactionMatch.event_id)
+                & (BusinessEvent.status == "posted"),
+            )
+            .where(
+                BankTransaction.org_id == org_id,
+                BankTransaction.booking_date >= next_month_start,
+                BankTransaction.booking_date < month_after_next_start,
+                BankTransaction.amount_fen > 0,
+            )
+            .order_by(BankTransaction.booking_date, BankTransaction.id)
+        ).all()
+        matched_event_ids = [
+            event_id for _transaction, event_id, _event_type in next_month_inflow_rows if event_id
+        ]
+        settled_sources_by_payment_event: dict[uuid.UUID, list[dict[str, Any]]] = {}
+        if matched_event_ids:
+            settlement_rows = self.session.execute(
+                select(
+                    Settlement.payment_event_id,
+                    Settlement.amount_fen,
+                    BusinessEvent.id,
+                    BusinessEvent.posting_date,
+                    BusinessEvent.event_type,
+                )
+                .join(OpenItem, OpenItem.id == Settlement.open_item_id)
+                .join(BusinessEvent, BusinessEvent.id == OpenItem.source_event_id)
+                .where(
+                    Settlement.org_id == org_id,
+                    Settlement.payment_event_id.in_(matched_event_ids),
+                    Settlement.reversed.is_(False),
+                    BusinessEvent.status == "posted",
+                )
+                .order_by(Settlement.payment_event_id, BusinessEvent.posting_date, BusinessEvent.id)
+            ).all()
+            for payment_event_id, amount_fen, source_event_id, posting_date, event_type in (
+                settlement_rows
+            ):
+                settled_sources_by_payment_event.setdefault(payment_event_id, []).append(
+                    {
+                        "source_event_id": str(source_event_id),
+                        "source_posting_date": posting_date.isoformat(),
+                        "source_event_type": event_type,
+                        "settled_amount_fen": amount_fen,
+                    }
+                )
+
+        nonrevenue_receipt_types = {
+            "customer_advance",
+            "owner_loan_received",
+            "owner_contribution_received",
+            "borrowing_drawdown",
+            "refundable_deposit_return_received",
+            "internal_transfer",
+            "cash_bank_transfer",
+            "bank_interest_received",
+        }
+        next_month_inflows = [
+            {
+                "bank_transaction_id": str(transaction.id),
+                "booking_date": transaction.booking_date.isoformat(),
+                "amount_fen": transaction.amount_fen,
+                "counterparty_name": transaction.counterparty_name,
+                "memo": transaction.memo,
+                "current_match_event_id": str(event_id) if event_id else None,
+                "current_match_event_type": event_type,
+                "settled_source_events": settled_sources_by_payment_event.get(event_id, []),
+                "revenue_cutoff_state": (
+                    "recognized_in_or_before_period"
+                    if event_type == "customer_receipt"
+                    and any(
+                        source["source_posting_date"] <= period.end_date.isoformat()
+                        for source in settled_sources_by_payment_event.get(event_id, [])
+                    )
+                    else (
+                        "classified_nonrevenue_or_receipt_date_income"
+                        if event_type in nonrevenue_receipt_types
+                        else "unmatched"
+                        if event_type is None
+                        else "review_required"
+                    )
+                ),
+            }
+            for transaction, event_id, event_type in next_month_inflow_rows
+        ]
+        next_month_cutoff_review_items = [
+            item
+            for item in next_month_inflows
+            if item["revenue_cutoff_state"] in {"unmatched", "review_required"}
+        ]
+
         open_item_counts = self._open_item_counts_as_of(org_id, period.end_date)
 
         assets = list(
@@ -1200,10 +1304,26 @@ class AccountingPeriodService:
                     "event_type_counts": event_type_counts,
                     "input_invoice_count": invoice_counts.get("input", 0),
                     "output_invoice_count": invoice_counts.get("output", 0),
+                    "next_month_bank_inflow_count": len(next_month_inflows),
+                    "next_month_bank_inflow_total_fen": sum(
+                        item["amount_fen"] for item in next_month_inflows
+                    ),
+                    "next_month_revenue_cutoff_review_count": len(
+                        next_month_cutoff_review_items
+                    ),
+                    "next_month_bank_inflows": next_month_inflows,
                 },
                 "owner_questions": [
-                    "本月是否还有未提供的公司收付款、现金，或公司已确认承担但尚未报销入账的个人垫付款？",
-                    "本月是否有已开票或未开票收入、已收票费用、合同履约或退款？",
+                    *(
+                        [
+                            f"AI核对已提供材料后，发现次月仍有 "
+                            f"{len(next_month_cutoff_review_items)} 笔银行入账未能确定收入归属；"
+                            "请只确认清单列出的具体未决款项。"
+                        ]
+                        if next_month_cutoff_review_items
+                        else []
+                    ),
+                    "以上为AI对已提供材料的核对结果；如有具体错误请指出。除这些已提供材料外，是否还有尚未提供、会影响本月记账或报税的公司业务材料？",
                 ],
             },
             {
@@ -1561,7 +1681,10 @@ class AccountingPeriodService:
                 ],
             },
             "ai_instruction": (
-                "在确认月结前，逐项向负责人展示所有非 completed 项并记录回答；"
+                f"{EVIDENCE_FIRST_RUNTIME_INSTRUCTION}"
+                "在确认月结前，AI 必须向负责人展示逐项结论及具体未决事项；"
+                "若已导入次月银行流水，AI 必须先逐笔核对入账款是否属于本月已履约收入，"
+                "不得把次月到账默认当作次月收入；"
                 "不得仅因数据库无记录而代填没有员工、工资、税务、资产或其他业务；"
                 "不得向负责人展示 not_due 项的问题，季度和年度事项只在 schedule 指定月份触发。"
             ),
