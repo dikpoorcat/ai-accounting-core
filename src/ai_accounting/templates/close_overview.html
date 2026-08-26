@@ -500,8 +500,20 @@
     .check-item span:last-child { color: var(--muted); font-size: 13px; }
     .proof-list { display: grid; gap: 8px; margin-top: 12px; }
     .proof-list li { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-    .report-panel { border-color: color-mix(in srgb, var(--blue) 38%, var(--line)); }
-    .report-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+    .report-panel {
+      border-color: color-mix(in srgb, var(--blue) 38%, var(--line));
+      box-shadow: 0 12px 34px rgba(23, 93, 156, .055);
+    }
+    .report-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .report-heading-copy { max-width: 710px; }
+    .report-heading-copy .muted { margin: 7px 0 0; }
+    .report-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 9px; }
+    #report-period { min-width: 214px; }
     .report-action {
       display: inline-flex;
       align-items: center;
@@ -517,18 +529,69 @@
       cursor: pointer;
     }
     .report-action.secondary { background: var(--surface); color: var(--green); }
-    .report-action[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
-    .report-state { margin-top: 15px; padding: 15px; border-radius: var(--radius-md); background: var(--surface-soft); }
+    .report-action:disabled { opacity: .45; cursor: not-allowed; }
+    .report-status-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 9px;
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .report-state { margin-top: 10px; padding: 17px; border-radius: var(--radius-md); background: var(--surface-soft); }
+    .report-state.complete { background: var(--green-soft); color: var(--green); }
+    .report-state.in-progress { background: var(--blue-soft); color: var(--blue); }
     .report-state.attention { background: var(--amber-soft); color: var(--amber); }
     .report-state.error { background: var(--red-soft); color: var(--red); }
+    .report-state-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
     .report-state p { margin: 7px 0 0; }
-    .report-blockers { margin: 10px 0 0; padding-left: 20px; }
+    .report-readiness { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; margin-top: 14px; }
+    .report-readiness-item { padding: 13px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); }
+    .report-readiness-item.has-details { grid-column: span 2; }
+    .report-readiness-head { display: flex; align-items: center; gap: 8px; }
+    .report-readiness-mark { width: 23px; height: 23px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; background: var(--green-soft); color: var(--green); font-weight: 850; }
+    .report-readiness-item.attention .report-readiness-mark { background: var(--amber-soft); color: var(--amber); }
+    .report-readiness-item.pending .report-readiness-mark { background: var(--blue-soft); color: var(--blue); }
+    .report-readiness-item p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+    .report-readiness-details { display: grid; gap: 7px; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); list-style: none; }
+    .report-readiness-details li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
+    .report-readiness-details li > div { display: grid; gap: 2px; min-width: 0; }
+    .report-readiness-details span { color: var(--muted); font-size: 12px; }
+    .report-readiness-details strong:last-child { grid-row: 1 / 3; grid-column: 2; align-self: center; }
     .report-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
     .report-summary article { display: grid; gap: 6px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-soft); }
     .report-summary span { color: var(--muted); font-size: 12px; }
     .report-summary strong { font-size: 20px; }
-    .report-checks { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
-    .report-checks .status-chip { min-height: 25px; font-size: 12px; }
+    .report-draft-note { margin: 12px 0 0; color: var(--amber); font-size: 13px; }
+    .report-review { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+    .report-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .report-expand { border: 0; background: transparent; color: var(--green); padding: 4px 0; font-weight: 750; cursor: pointer; }
+    .report-full { margin-top: 14px; }
+    .report-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+    .report-tab { min-height: 36px; padding: 7px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; }
+    .report-tab[aria-selected="true"] { border-color: var(--green); background: var(--green-soft); color: var(--green); font-weight: 750; }
+    .report-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 13px 0 8px; }
+    .report-table-toolbar label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; cursor: pointer; }
+    .report-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+    .report-table { width: 100%; min-width: 650px; border-collapse: collapse; background: var(--surface); }
+    .report-table th { position: sticky; top: 0; background: var(--surface-soft); }
+    .report-table th:first-child { width: 54%; }
+    .report-table .report-line { width: 58px; text-align: center; color: var(--muted); }
+    .report-table tr.total-row td { background: color-mix(in srgb, var(--green-soft) 58%, var(--surface)); font-weight: 750; }
+    .report-checks { margin-top: 16px; }
+    .report-checks > summary { margin: 0; }
+    .report-check-summary { display: inline-flex; align-items: center; gap: 9px; }
+    .report-checks[open] > summary { margin-bottom: 10px; }
+    .report-check-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .report-check-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; align-items: center; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-soft); }
+    .report-check-item .check-mark { width: 22px; height: 22px; }
+    .report-check-item.error .check-mark { background: var(--red-soft); color: var(--red); }
+    .report-technical { margin-top: 14px; }
+    .report-technical-grid { display: grid; grid-template-columns: minmax(150px, .45fr) minmax(0, 1.55fr); gap: 7px 16px; margin: 12px 0 0; }
+    .report-technical-grid dt { color: var(--muted); }
+    .report-technical-grid dd { margin: 0; overflow-wrap: anywhere; }
+    .report-technical-list { margin: 4px 0 0; padding-left: 20px; }
     .footer { padding: 28px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
     .no-periods { padding: 70px 20px; text-align: center; }
     .no-periods .brand-mark { margin: 0 auto 16px; }
@@ -543,6 +606,9 @@
       .validation-copy { border-right: 0; border-bottom: 1px solid var(--line); }
       .check-grid { padding: 0 24px 24px; }
       .group-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .report-heading { align-items: flex-start; flex-direction: column; }
+      .report-toolbar { justify-content: flex-start; }
+      .report-readiness { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 720px) {
       .topbar { position: static; }
@@ -554,7 +620,7 @@
       .brand-name { max-width: calc(100vw - 88px); }
       .page { padding-top: 16px; }
       .hero { padding: 24px 20px; }
-      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .staff-cost-reconciliation, .workforce-groups, .report-summary { grid-template-columns: 1fr; }
+      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .staff-cost-reconciliation, .workforce-groups, .report-summary, .report-readiness, .report-check-list { grid-template-columns: 1fr; }
       .section-heading, .title-row { align-items: flex-start; flex-direction: column; gap: 10px; }
       .staff-cost-total { justify-items: start; }
       .workforce-subtotal { justify-items: start; }
@@ -584,6 +650,19 @@
       .validation-copy, .check-grid { padding: 18px; }
       .check-grid { padding-top: 0; }
       .proof-list li { display: grid; gap: 3px; }
+      .report-toolbar { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+      #report-period { min-width: 0; width: 100%; grid-column: 1 / -1; }
+      .report-action { width: 100%; }
+      .report-review-heading, .report-table-toolbar { align-items: flex-start; flex-direction: column; }
+      .report-table-wrap { overflow-x: auto; }
+      .report-table { display: table; width: 100%; min-width: 650px; }
+      .report-table thead { position: static; width: auto; height: auto; overflow: visible; clip: auto; display: table-header-group; }
+      .report-table tbody { display: table-row-group; }
+      .report-table tr { display: table-row; padding: 0; border: 0; border-radius: 0; background: transparent; }
+      .report-table th, .report-table td { display: table-cell; width: auto; padding: 10px 9px; border-bottom: 1px solid var(--line); }
+      .report-table td::before { content: none; }
+      .report-technical-grid { grid-template-columns: 1fr; }
+      .report-readiness-item.has-details { grid-column: auto; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
@@ -665,6 +744,54 @@
           <p id="priority-note" class="muted"></p>
         </div>
         <div id="priority-list" class="priority-list"></div>
+      </section>
+
+      <section id="quarterly-report-section" class="section panel panel-pad report-panel" aria-labelledby="quarterly-report-title">
+        <div class="report-heading">
+          <div class="report-heading-copy">
+            <p class="eyebrow">季度申报准备</p>
+            <h2 id="quarterly-report-title">小企业会计准则季度财务报表</h2>
+            <p class="muted">根据已结账账务生成已填充的 Excel 文件，供手工导入电子税务局；不会自动申报。</p>
+          </div>
+          <div class="report-toolbar">
+            <select id="report-period" class="control" aria-label="季度报表期间"></select>
+            <button id="report-preview" class="report-action secondary" type="button">重新核对</button>
+            <button id="report-download" class="report-action" type="button" disabled>导出</button>
+          </div>
+        </div>
+        <div class="report-status-meta">
+          <span id="report-status-badge" class="status-chip neutral">等待核对</span>
+          <span id="report-checked-at">报表期间独立于上方月份</span>
+        </div>
+        <div id="report-state" class="report-state" role="status" aria-live="polite">
+          <div class="report-state-heading"><strong id="report-state-title">正在准备季度报表</strong></div>
+          <p id="report-state-note">正在核对关账快照、报表分类、所得税确认和三表勾稽关系…</p>
+        </div>
+        <div id="report-readiness" class="report-readiness" aria-label="季度报表准备度" hidden></div>
+        <p id="report-draft-note" class="report-draft-note" hidden>以下金额为当前试算，不可用于申报或导出。</p>
+        <div id="report-summary" class="report-summary" hidden></div>
+        <div id="report-review" class="report-review" hidden>
+          <div class="report-review-heading">
+            <button id="report-expand" class="report-expand" type="button" aria-expanded="false" aria-controls="report-full">查看完整三表 ↓</button>
+            <span id="report-check-summary" class="muted"></span>
+          </div>
+          <div id="report-full" class="report-full" hidden>
+            <div id="report-tabs" class="report-tabs" role="tablist" aria-label="季度财务报表"></div>
+            <div class="report-table-toolbar">
+              <strong id="report-table-title"></strong>
+              <label><input id="report-show-all" type="checkbox"> 显示全部行（含零值）</label>
+            </div>
+            <div id="report-table" class="report-table-wrap"></div>
+            <details id="report-checks-disclosure" class="disclosure report-checks">
+              <summary><span class="report-check-summary"><strong>勾稽核对</strong><span id="report-check-count" class="status-chip neutral"></span></span></summary>
+              <div id="report-checks" class="report-check-list"></div>
+            </details>
+            <details class="disclosure report-technical">
+              <summary>查看计算依据与技术信息</summary>
+              <dl id="report-technical" class="report-technical-grid"></dl>
+            </details>
+          </div>
+        </div>
       </section>
 
       <section class="section panel panel-pad" aria-labelledby="activity-title">
@@ -768,34 +895,6 @@
         <div id="open-categories" class="open-categories"></div>
       </section>
 
-      <section id="quarterly-report-section" class="section panel panel-pad report-panel" aria-labelledby="quarterly-report-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">税务局导入准备文件</p>
-            <h2 id="quarterly-report-title">小企业会计准则季度财务报表</h2>
-            <p class="muted">只读生成资产负债表、利润表和现金流量表；下载不会写入数据库，也不会自动申报。</p>
-          </div>
-          <div class="report-toolbar">
-            <select id="report-year" class="control" aria-label="报表年度"></select>
-            <select id="report-quarter" class="control" aria-label="报表季度">
-              <option value="1">第一季度</option>
-              <option value="2">第二季度</option>
-              <option value="3">第三季度</option>
-              <option value="4">第四季度</option>
-            </select>
-            <button id="report-preview" class="report-action secondary" type="button">重新计算</button>
-            <a id="report-download" class="report-action" href="#" aria-disabled="true">下载税局模板</a>
-          </div>
-        </div>
-        <div id="report-state" class="report-state" role="status" aria-live="polite">
-          <strong id="report-state-title">等待计算</strong>
-          <p id="report-state-note">请选择年度和季度。</p>
-          <ul id="report-blockers" class="report-blockers" hidden></ul>
-        </div>
-        <div id="report-summary" class="report-summary" hidden></div>
-        <div id="report-checks" class="report-checks" hidden></div>
-      </section>
-
       <section id="validation-panel" class="section panel validation-panel" aria-labelledby="validation-title">
         <div class="validation-copy">
           <p class="eyebrow">账务一致性与待处理事项分开判断</p>
@@ -864,9 +963,10 @@
 
       let currentMonth = null;
       let openActivityKey = null;
+      let currentReport = null;
+      let activeStatementKey = null;
       const periodSelect = byId("period-select");
-      const reportYear = byId("report-year");
-      const reportQuarter = byId("report-quarter");
+      const reportPeriod = byId("report-period");
       const reportDownload = byId("report-download");
       byId("company-name").textContent = payload.company;
       byId("disclaimer").textContent = payload.disclaimer;
@@ -880,101 +980,310 @@
         ? requestedPeriod
         : (payload.default_period || "");
 
-      const reportYears = [...new Set(payload.months.map((month) => month.key.slice(0, 4)))].sort();
-      reportYears.forEach((year) => {
-        const option = make("option", "", year + " 年");
-        option.value = year;
-        reportYear.append(option);
+      const quarterNames = ["", "一", "二", "三", "四"];
+      const quarterEntries = new Map();
+      payload.months.forEach((month) => {
+        const [yearText, monthText] = month.key.split("-");
+        const quarter = Math.ceil(Number(monthText) / 3);
+        const key = yearText + "-Q" + quarter;
+        if (!quarterEntries.has(key)) quarterEntries.set(key, { key, year: yearText, quarter, months: [] });
+        quarterEntries.get(key).months.push(month);
       });
-      const completedQuarters = [];
-      reportYears.forEach((year) => {
-        for (let quarter = 1; quarter <= 4; quarter += 1) {
-          const months = [1, 2, 3].map((offset) => String((quarter - 1) * 3 + offset).padStart(2, "0"));
-          if (months.every((month) => payload.months.some((item) => item.key === year + "-" + month && item.status === "closed"))) {
-            completedQuarters.push([year, quarter]);
-          }
-        }
+      const reports = [...quarterEntries.values()].sort((left, right) => left.key.localeCompare(right.key));
+      reports.forEach((entry) => {
+        entry.complete = entry.months.length === 3 && entry.months.every((month) => month.status === "closed");
+        const option = make("option", "", entry.year + " 年第" + quarterNames[entry.quarter] + "季度 · " + (entry.complete ? "已关账" : "进行中"));
+        option.value = entry.key;
+        reportPeriod.append(option);
       });
-      const defaultQuarter = completedQuarters[completedQuarters.length - 1];
-      if (defaultQuarter) {
-        reportYear.value = defaultQuarter[0];
-        reportQuarter.value = String(defaultQuarter[1]);
-      } else if (reportYears.length) {
-        reportYear.value = reportYears[reportYears.length - 1];
+      const currentMonthQuarter = periodSelect.value
+        ? periodSelect.value.slice(0, 4) + "-Q" + Math.ceil(Number(periodSelect.value.slice(5, 7)) / 3)
+        : null;
+      const selectedCompleted = reports.find((entry) => entry.key === currentMonthQuarter && entry.complete);
+      const completedReports = reports.filter((entry) => entry.complete);
+      const defaultReport = selectedCompleted || completedReports[completedReports.length - 1] || reports[reports.length - 1];
+      if (defaultReport) {
+        reportPeriod.value = defaultReport.key;
+      } else {
+        reportPeriod.disabled = true;
       }
 
+      const reportMoney = (value) => value === undefined || value === null || fen(value) === 0n ? "—" : money(value);
       const setReportDownload = (enabled) => {
-        const year = reportYear.value;
-        const quarter = reportQuarter.value;
-        reportDownload.setAttribute("aria-disabled", String(!enabled));
-        reportDownload.href = enabled
-          ? "/financial-reports/quarterly.xlsx?year=" + encodeURIComponent(year) + "&quarter=" + encodeURIComponent(quarter)
-          : "#";
+        reportDownload.disabled = !enabled;
+      };
+
+      const setReportState = (status, badge, title, note) => {
+        const state = byId("report-state");
+        const badgeNode = byId("report-status-badge");
+        state.className = "report-state" + ({ ready: " complete", blocked: " attention", in_progress: " in-progress", error: " error" }[status] || "");
+        badgeNode.className = "status-chip" + ({ blocked: " attention", error: " error", in_progress: " neutral", not_applicable: " neutral" }[status] || "");
+        badgeNode.textContent = badge;
+        byId("report-state-title").textContent = title;
+        byId("report-state-note").textContent = note;
+      };
+
+      const resetReportViews = () => {
+        currentReport = null;
+        activeStatementKey = null;
+        setReportDownload(false);
+        ["report-readiness", "report-summary", "report-review"].forEach((id) => {
+          const node = byId(id);
+          node.hidden = true;
+          if (id !== "report-review") node.replaceChildren();
+        });
+        byId("report-draft-note").hidden = true;
+        byId("report-full").hidden = true;
+        byId("report-expand").setAttribute("aria-expanded", "false");
+        byId("report-expand").textContent = "查看完整三表 ↓";
+        byId("report-tabs").replaceChildren();
+        byId("report-table").replaceChildren();
+        byId("report-checks").replaceChildren();
+        byId("report-checks-disclosure").open = false;
+        byId("report-technical").replaceChildren();
+      };
+
+      const renderReportError = (kind, details) => {
+        resetReportViews();
+        const content = ({
+          version: ["本地看板服务版本过旧，需要重启", "当前页面需要新版季度报表接口。请从仓库虚拟环境重启 8765 本地服务后再试。"],
+          service: ["季度报表服务暂时不可用", "服务已记录本次错误" + (details && details.error_id ? "（编号 " + details.error_id + "）" : "") + "，请稍后重新核对。"],
+          invalid: ["季度报表响应无法识别", "服务返回了不完整的数据，请重启本地看板服务后再试。"],
+          period: ["报表期间无效", "请选择已有会计期间对应的季度。"],
+          network: ["无法连接季度报表服务", "请确认本地看板服务仍在运行，然后重新核对。"]
+        })[kind] || ["季度报表读取失败", "请稍后重新核对。"];
+        setReportState("error", "服务异常", content[0], content[1]);
+        byId("report-checked-at").textContent = "本次核对未完成";
+      };
+
+      const renderReadiness = (items) => {
+        const container = byId("report-readiness");
+        container.replaceChildren();
+        (items || []).forEach((item) => {
+          const card = make("article", "report-readiness-item " + item.state + (item.details && item.details.length ? " has-details" : ""));
+          const heading = make("div", "report-readiness-head");
+          heading.append(make("span", "report-readiness-mark", item.state === "pass" ? "✓" : item.state === "pending" ? "…" : "!"), make("strong", "", item.label));
+          card.append(heading, make("p", "", item.summary));
+          if (item.details && item.details.length) {
+            const list = make("ul", "report-readiness-details");
+            item.details.forEach((detail) => {
+              const li = make("li", "");
+              const copy = make("div", "");
+              copy.append(make("strong", "", detail.primary || "待处理事项"));
+              if (detail.secondary) copy.append(make("span", "", detail.secondary));
+              li.append(copy);
+              if (detail.amount_fen !== undefined && detail.amount_fen !== null) li.append(make("strong", "", money(detail.amount_fen)));
+              list.append(li);
+            });
+            card.append(list);
+          }
+          container.append(card);
+        });
+        container.hidden = !container.childElementCount;
+      };
+
+      const renderReportSummary = (summary) => {
+        const container = byId("report-summary");
+        container.replaceChildren();
+        const cards = [
+          ["资产负债表", "资产合计", summary.assets_total_fen, "负债和所有者权益 " + reportMoney(summary.liabilities_equity_total_fen)],
+          ["利润表", "本季度净利润", summary.current_net_profit_fen, "本年累计 " + reportMoney(summary.year_to_date_net_profit_fen)],
+          ["现金流量表", "本季度现金净增加额", summary.current_cash_change_fen, "期末现金 " + reportMoney(summary.ending_cash_fen)]
+        ];
+        cards.forEach((item) => {
+          if (item[2] === undefined || item[2] === null) return;
+          const card = make("article", "");
+          card.append(make("span", "", item[0] + " · " + item[1]), make("strong", "", money(item[2])), make("span", "", item[3]));
+          container.append(card);
+        });
+        container.hidden = !container.childElementCount;
+      };
+
+      const renderReportChecks = (checks) => {
+        const container = byId("report-checks");
+        container.replaceChildren();
+        (checks.items || []).forEach((item) => {
+          const row = make("div", "report-check-item" + (item.passed ? "" : " error"));
+          row.append(make("span", "check-mark", item.passed ? "✓" : "×"), make("span", "", item.label));
+          container.append(row);
+        });
+        byId("report-check-count").textContent = checks.passed + " / " + checks.total + " 项通过";
+        byId("report-check-count").className = "status-chip" + (checks.passed === checks.total ? "" : " error");
+        byId("report-check-summary").textContent = checks.total ? checks.passed + " 项勾稽已通过" : "暂无勾稽结果";
+      };
+
+      const addTechnicalTerm = (label, value) => {
+        if (value === undefined || value === null || value === "") return;
+        const list = byId("report-technical");
+        list.append(make("dt", "", label));
+        const description = make("dd", "");
+        if (Array.isArray(value)) {
+          const values = make("ul", "report-technical-list");
+          value.forEach((item) => values.append(make("li", "", String(item))));
+          description.append(values);
+        } else {
+          description.textContent = String(value);
+        }
+        list.append(description);
+      };
+
+      const renderTechnical = (technical) => {
+        byId("report-technical").replaceChildren();
+        addTechnicalTerm("计算哈希", technical.calculation_hash);
+        addTechnicalTerm("Excel 文件", technical.template && technical.template.file_name);
+        addTechnicalTerm("模板版本", technical.template && technical.template.profile);
+        addTechnicalTerm("模板 SHA-256", technical.template && technical.template.sha256);
+        addTechnicalTerm("计算规则", technical.rule && technical.rule.version);
+        addTechnicalTerm("结账快照", (technical.source_close_hashes || []).length + " 份");
+        addTechnicalTerm("报表分类", technical.classification_count + " 项");
+        addTechnicalTerm("所得税确认", technical.income_tax_confirmation_count + " 项");
+        if (technical.requirement_codes && technical.requirement_codes.length) addTechnicalTerm("待办代码", technical.requirement_codes);
+        if (technical.errors && technical.errors.length) addTechnicalTerm("错误代码", technical.errors);
+      };
+
+      const renderStatement = (statementKey) => {
+        if (!currentReport) return;
+        const statement = currentReport.statements.find((item) => item.key === statementKey);
+        if (!statement) return;
+        activeStatementKey = statement.key;
+        document.querySelectorAll(".report-tab").forEach((button) => {
+          const selected = button.dataset.statement === statement.key;
+          button.setAttribute("aria-selected", String(selected));
+          button.tabIndex = selected ? 0 : -1;
+        });
+        byId("report-table-title").textContent = statement.label + (currentReport.draft ? " · 当前试算" : "");
+        const table = make("table", "report-table");
+        const thead = make("thead", "");
+        const headRow = make("tr", "");
+        headRow.append(make("th", "", "项目"), make("th", "report-line", "行次"));
+        statement.columns.forEach((column) => headRow.append(make("th", "number", column.label)));
+        thead.append(headRow);
+        const tbody = make("tbody", "");
+        statement.rows.forEach((row) => {
+          if (!byId("report-show-all").checked && !row.has_amount && !row.is_total) return;
+          const tr = make("tr", row.is_total ? "total-row" : "");
+          tr.append(cell("项目", row.name), cell("行次", String(row.line), "report-line"));
+          statement.columns.forEach((column) => tr.append(cell(column.label, reportMoney(row.values[column.key]), "number")));
+          tbody.append(tr);
+        });
+        table.append(thead, tbody);
+        byId("report-table").replaceChildren(table);
+      };
+
+      const renderStatementTabs = (statements) => {
+        const tabs = byId("report-tabs");
+        tabs.replaceChildren();
+        statements.forEach((statement, index) => {
+          const button = make("button", "report-tab", statement.label);
+          button.type = "button";
+          button.role = "tab";
+          button.dataset.statement = statement.key;
+          button.setAttribute("aria-selected", String(index === 0));
+          button.tabIndex = index === 0 ? 0 : -1;
+          button.addEventListener("click", () => renderStatement(statement.key));
+          tabs.append(button);
+        });
+        if (statements.length) renderStatement(statements[0].key);
+      };
+
+      const renderQuarterlyReport = (report) => {
+        resetReportViews();
+        currentReport = report;
+        const status = report.status === "ready" ? "ready" : report.status;
+        setReportState(status, report.status_label, report.headline, report.message);
+        byId("report-checked-at").textContent = "核对于 " + new Date(report.checked_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        renderReadiness(report.readiness);
+        renderReportSummary(report.summary || {});
+        byId("report-draft-note").hidden = !report.draft;
+        if (report.statements && report.statements.length) {
+          byId("report-review").hidden = false;
+          renderStatementTabs(report.statements);
+          renderReportChecks(report.checks || { passed: 0, total: 0, items: [] });
+          renderTechnical(report.technical || {});
+        }
+        setReportDownload(Boolean(report.export && report.export.available));
       };
 
       const previewQuarterlyReport = async () => {
-        const state = byId("report-state");
-        const blockers = byId("report-blockers");
-        const summary = byId("report-summary");
-        const checks = byId("report-checks");
-        state.className = "report-state";
-        byId("report-state-title").textContent = "正在计算季度三表";
-        byId("report-state-note").textContent = "核对关账快照、分类、所得税确认和勾稽关系…";
-        blockers.hidden = true;
-        blockers.replaceChildren();
-        summary.hidden = true;
-        summary.replaceChildren();
-        checks.hidden = true;
-        checks.replaceChildren();
-        setReportDownload(false);
-        if (!reportYear.value) {
-          state.classList.add("attention");
-          byId("report-state-title").textContent = "没有可用年度";
-          byId("report-state-note").textContent = "请先生成并关闭会计期间。";
+        resetReportViews();
+        if (Number(payload.capabilities && payload.capabilities.quarterly_report_ui) !== 2) {
+          renderReportError("version");
           return;
         }
+        if (!reportPeriod.value) {
+          setReportState("not_applicable", "无可用季度", "还没有可核对的季度", "请先生成会计期间；季度报表不会创建或修改账务数据。");
+          byId("report-checked-at").textContent = "没有可用报表期间";
+          return;
+        }
+        setReportState("in_progress", "正在核对", "正在准备季度报表", "正在核对关账快照、报表分类、所得税确认和三表勾稽关系…");
+        byId("report-checked-at").textContent = "正在读取只读数据";
         try {
-          const url = "/api/financial-statements/quarterly?year=" + encodeURIComponent(reportYear.value) + "&quarter=" + encodeURIComponent(reportQuarter.value);
+          const [year, quarterText] = reportPeriod.value.split("-Q");
+          const url = "/api/overview/quarterly-report?year=" + encodeURIComponent(year) + "&quarter=" + encodeURIComponent(quarterText);
           const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
-          if (!response.ok) throw new Error("HTTP_" + response.status);
-          const report = await response.json();
-          if (report.status !== "calculated") {
-            state.classList.add(report.status === "needs_information" ? "attention" : "error");
-            byId("report-state-title").textContent = report.status === "needs_information" ? "还不能生成税局模板" : "季度报表计算失败";
-            byId("report-state-note").textContent = "请先通过受控内核补齐下列事项；本页面不会修改账务数据。";
-            const items = report.missing_information || [];
-            items.forEach((item) => {
-              const li = make("li", "", item.message + "（" + item.code + "）");
-              blockers.append(li);
-            });
-            (report.errors || []).forEach((code) => blockers.append(make("li", "", code)));
-            blockers.hidden = blockers.childElementCount === 0;
-            return;
+          if (!response.ok) {
+            let details = {};
+            try { details = await response.json(); } catch (_error) { /* status determines the message */ }
+            const error = new Error("HTTP_" + response.status);
+            error.kind = response.status === 404 ? "version" : response.status === 400 ? "period" : "service";
+            error.details = details;
+            throw error;
           }
-          const statements = report.data.statements;
-          const balance = statements.balance_sheet;
-          const profit = statements.profit_statement;
-          const cash = statements.cash_flow_statement;
-          state.classList.add("complete");
-          byId("report-state-title").textContent = "三表已计算且勾稽通过";
-          byId("report-state-note").textContent = "报表哈希 " + report.calculation_hash + "；可下载固定税局模板。";
-          [
-            ["资产负债表", "资产合计", balance["30"].ending_fen, "负债和所有者权益 " + money(balance["53"].ending_fen)],
-            ["利润表", "本季度净利润", profit["32"].current_fen, "本年累计 " + money(profit["32"].year_to_date_fen)],
-            ["现金流量表", "本季度现金净增加额", cash["20"].current_fen, "期末现金 " + money(cash["22"].current_fen)]
-          ].forEach((item) => {
-            const card = make("article", "");
-            card.append(make("span", "", item[0] + " · " + item[1]), make("strong", "", money(item[2])), make("span", "", item[3]));
-            summary.append(card);
-          });
-          summary.hidden = false;
-          report.data.checks.forEach((item) => checks.append(make("span", "status-chip" + (item.passed ? "" : " error"), (item.passed ? "✓ " : "× ") + item.code)));
-          checks.hidden = false;
-          setReportDownload(true);
-        } catch (_error) {
-          state.classList.add("error");
-          byId("report-state-title").textContent = "季度报表读取失败";
-          byId("report-state-note").textContent = "请刷新页面后重试，或检查本地服务和数据库迁移状态。";
+          let report;
+          try { report = await response.json(); } catch (_error) {
+            const error = new Error("INVALID_REPORT_RESPONSE");
+            error.kind = "invalid";
+            throw error;
+          }
+          if (report.schema_version !== 1) {
+            const error = new Error("REPORT_SCHEMA_MISMATCH");
+            error.kind = "invalid";
+            throw error;
+          }
+          renderQuarterlyReport(report);
+        } catch (error) {
+          renderReportError(error.kind || "network", error.details);
+        }
+      };
+
+      const exportQuarterlyReport = async () => {
+        if (!currentReport || !currentReport.export || !currentReport.export.available) return;
+        const buttonText = reportDownload.textContent;
+        reportDownload.disabled = true;
+        reportDownload.textContent = "正在导出…";
+        try {
+          const period = currentReport.period;
+          const url = "/financial-reports/quarterly.xlsx?year=" + encodeURIComponent(period.year) + "&quarter=" + encodeURIComponent(period.quarter) + "&calculation_hash=" + encodeURIComponent(currentReport.export.calculation_hash);
+          const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+          if (!response.ok) {
+            let details = {};
+            try { details = await response.json(); } catch (_error) { /* handled below */ }
+            if (response.status === 409 && (details.errors || []).includes("REPORT_PREVIEW_STALE")) {
+              await previewQuarterlyReport();
+              byId("report-state-title").textContent = "报表数据已更新，请再次确认后导出";
+              byId("report-state-note").textContent = details.message || "报表数据已变化，请重新核对。";
+              return;
+            }
+            const error = new Error("EXPORT_HTTP_" + response.status);
+            error.kind = response.status === 404 ? "version" : "service";
+            error.details = details;
+            throw error;
+          }
+          const blob = await response.blob();
+          const href = URL.createObjectURL(blob);
+          const link = make("a", "");
+          link.href = href;
+          link.download = currentReport.export.file_name;
+          document.body.append(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(href);
+          byId("report-state-note").textContent = "已导出已填充的 Excel 导入文件；请在电子税务局手工导入并逐项复核。";
+        } catch (error) {
+          renderReportError(error.kind || "network", error.details);
+        } finally {
+          reportDownload.textContent = buttonText;
+          setReportDownload(Boolean(currentReport && currentReport.export && currentReport.export.available));
         }
       };
 
@@ -1551,10 +1860,28 @@
         if (month) renderMonth(month);
       });
       byId("report-preview").addEventListener("click", previewQuarterlyReport);
-      reportYear.addEventListener("change", () => setReportDownload(false));
-      reportQuarter.addEventListener("change", () => setReportDownload(false));
-      reportDownload.addEventListener("click", (event) => {
-        if (reportDownload.getAttribute("aria-disabled") === "true") event.preventDefault();
+      reportPeriod.addEventListener("change", previewQuarterlyReport);
+      reportDownload.addEventListener("click", exportQuarterlyReport);
+      byId("report-expand").addEventListener("click", () => {
+        const button = byId("report-expand");
+        const expanded = button.getAttribute("aria-expanded") !== "true";
+        button.setAttribute("aria-expanded", String(expanded));
+        button.textContent = expanded ? "收起完整三表 ↑" : "查看完整三表 ↓";
+        byId("report-full").hidden = !expanded;
+        if (expanded && activeStatementKey) renderStatement(activeStatementKey);
+      });
+      byId("report-show-all").addEventListener("change", () => {
+        if (activeStatementKey) renderStatement(activeStatementKey);
+      });
+      byId("report-tabs").addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const tabs = [...document.querySelectorAll(".report-tab")];
+        if (!tabs.length) return;
+        const current = Math.max(0, tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true"));
+        const target = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault();
+        tabs[target].focus();
+        renderStatement(tabs[target].dataset.statement);
       });
       byId("refresh-button").addEventListener("click", () => {
         const url = new URL(window.location.href);

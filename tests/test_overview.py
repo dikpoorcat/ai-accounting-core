@@ -1867,6 +1867,20 @@ def test_overview_document_embeds_data_without_script_breakout(session: Session)
     assert 'focusSection(byId("activity-detail"))' not in document
     assert 'new URLSearchParams(window.location.search).get("period")' in document
     assert 'url.searchParams.set("period", periodSelect.value)' in document
+    assert '"quarterly_report_ui":2' in document
+    assert "季度申报准备" in document
+    assert "根据已结账账务生成已填充的 Excel 文件" in document
+    assert (
+        'id="report-download" class="report-action" type="button" disabled>导出</button>'
+        in document
+    )
+    assert "重新核对" in document
+    assert "查看完整三表" in document
+    assert 'id="report-checks-disclosure"' in document
+    assert 'byId("report-checks-disclosure").open = false;' in document
+    assert "下载税局模板" not in document
+    assert "/api/overview/quarterly-report" in document
+    assert "REPORT_PREVIEW_STALE" in document
     assert "BigInt" in document
     assert '"total_debit_fen":"10000"' in document
     assert '"assets_fen":"9007199254740993"' in document
