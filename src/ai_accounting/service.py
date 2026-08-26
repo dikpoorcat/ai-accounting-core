@@ -1341,6 +1341,7 @@ class FinanceService:
             tax_role = {
                 "vat": "vat_payable",
                 "surtax": "surtax_payable",
+                "enterprise_income_tax": "enterprise_income_tax_payable",
             }[request.details["tax_type"]]
             entries = [
                 Entry(account_role=tax_role, debit_fen=amount),
@@ -2611,6 +2612,7 @@ class FinanceService:
             role = {
                 "vat": "vat_payable",
                 "surtax": "surtax_payable",
+                "enterprise_income_tax": "enterprise_income_tax_payable",
             }[request.details["tax_type"]]
             payable = max(0, -account_balance_fen(self.session, request.org_id, role))
             if self._amount(request) > payable:
@@ -2939,8 +2941,9 @@ class FinanceService:
         if event_type == EventType.TAX_PAYMENT and request.details.get("tax_type") not in {
             "vat",
             "surtax",
+            "enterprise_income_tax",
         }:
-            missing.append("details.tax_type ('vat' or 'surtax')")
+            missing.append("details.tax_type ('vat', 'surtax', or 'enterprise_income_tax')")
         expense_events = {
             EventType.EXPENSE_CASH,
             EventType.EXPENSE_PAYABLE,
@@ -2954,6 +2957,8 @@ class FinanceService:
             if request.amounts.expense_account_role is None:
                 missing.append("amounts.expense_account_role")
             elif request.amounts.expense_account_role not in {
+                "service_cost",
+                "sales_expense",
                 "general_expense",
                 "finance_expense",
                 "labor_service_cost",

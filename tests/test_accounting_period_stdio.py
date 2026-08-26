@@ -584,6 +584,21 @@ def test_zero_voucher_month_closes_through_real_stdio(
                     },
                 )
                 assert generated["status"] == "posted", generated
+                income_tax = await _call(
+                    client,
+                    "finance_confirm_enterprise_income_tax_quarter",
+                    {
+                        "org_id": org_id,
+                        "year": 2026,
+                        "quarter": 2,
+                        "treatment": "zero",
+                        "amount_fen": 0,
+                        "idempotency_key": "stdio-zero-q2-income-tax",
+                        "confirmation_note": "明确确认第二季度企业所得税费用为零",
+                        "evidence_references": [evidence_id],
+                    },
+                )
+                assert income_tax["status"] == "posted", income_tax
                 close_facts = {
                     "org_id": org_id,
                     "period_id": generated["period_id"],

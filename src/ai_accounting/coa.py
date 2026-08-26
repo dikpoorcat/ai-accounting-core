@@ -23,9 +23,12 @@ DEFAULT_ACCOUNTS = [
     ("2241", "其他应付款—股东", "liability", "credit", "owner_payable"),
     ("3001", "实收资本", "equity", "credit", "paid_in_capital"),
     ("5001", "主营业务收入", "revenue", "credit", "service_revenue"),
+    ("5401", "主营业务成本", "expense", "debit", "service_cost"),
     ("5403", "税金及附加", "expense", "debit", "taxes_and_surcharges"),
+    ("5601", "销售费用", "expense", "debit", "sales_expense"),
     ("5602", "管理费用", "expense", "debit", "general_expense"),
     ("5603", "财务费用", "expense", "debit", "finance_expense"),
+    ("5801", "所得税费用", "expense", "debit", "enterprise_income_tax_expense"),
     ("6301", "营业外收入", "revenue", "credit", "tax_relief_income"),
     ("560201", "管理费用—职工薪酬", "expense", "debit", "payroll_management_expense"),
     ("560101", "销售费用—职工薪酬", "expense", "debit", "payroll_sales_expense"),
@@ -118,6 +121,13 @@ DEFAULT_ACCOUNTS = [
     ("2001", "短期借款", "liability", "credit", "short_term_borrowing"),
     ("2501", "长期借款", "liability", "credit", "long_term_borrowing"),
     ("2601", "应付利息", "liability", "credit", "interest_payable"),
+    (
+        "222105",
+        "应交税费—应交企业所得税",
+        "liability",
+        "credit",
+        "enterprise_income_tax_payable",
+    ),
     ("560301", "财务费用—利息", "expense", "debit", "borrowing_interest_expense"),
 ]
 

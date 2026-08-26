@@ -20,8 +20,9 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0027_period_close_perf"]
+    assert scripts.get_heads() == ["0028_quarterly_statements"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0028_quarterly_statements",
         "0027_period_close_perf",
         "0026_salary_petty_recovery",
         "0025_payroll_tax_declaration",
@@ -83,7 +84,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0027_period_close_perf"
+                == "0028_quarterly_statements"
             )
             organization_columns = {
                 column["name"] for column in inspect(connection).get_columns("organizations")
@@ -118,6 +119,8 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
                 "labor_service_persons",
                 "labor_remuneration_batches",
                 "unified_payout_runs",
+                "financial_statement_classifications",
+                "enterprise_income_tax_quarter_confirmations",
             } <= set(inspect(connection).get_table_names())
             payout_item_columns = {
                 column["name"]
@@ -166,7 +169,7 @@ def test_sqlite_baseline_and_forward_revision_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0027_period_close_perf"
+                == "0028_quarterly_statements"
             )
     finally:
         engine.dispose()

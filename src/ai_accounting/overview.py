@@ -92,6 +92,7 @@ EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
     "labor_withholding_tax_payment": ("labor", "劳务个税缴纳"),
     "tax_payment": ("tax", "税费缴纳"),
     "tax_relief": ("tax", "税费减免"),
+    "enterprise_income_tax_assessment": ("tax", "企业所得税季度确认"),
     "fixed_asset": ("assets", "固定资产事项"),
     "fixed_asset_acquisition": ("assets", "固定资产购置"),
     "fixed_asset_activation": ("assets", "固定资产启用"),
@@ -177,7 +178,7 @@ def build_overview_payload(
         "generated_at": datetime.now(UTC).isoformat(),
         "default_period": default_period,
         "months": months,
-        "disclaimer": ("私有试用经营概览 · 非正式财务报表、法定账簿或纳税申报结果"),
+        "disclaimer": ("私有试用经营概览 · 季度报表仅为申报准备文件，不替代负责人复核或纳税申报"),
     }
 
 

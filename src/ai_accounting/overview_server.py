@@ -9,12 +9,15 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from .database import make_engine
+from .financial_statement_schemas import PreviewQuarterlyFinancialStatementsRequest
+from .financial_statements import FinancialStatementService
+from .models import Organization
 from .overview import build_overview_payload
 
 LOCAL_OVERVIEW_HOST = "127.0.0.1"
@@ -73,6 +76,46 @@ def load_overview_document(
             transaction.rollback()
 
 
+def load_quarterly_financial_statement(
+    engine: Engine,
+    *,
+    year: int,
+    quarter: int,
+    org_id: uuid.UUID | None = None,
+    export_xlsx: bool = False,
+) -> tuple[dict[str, Any], bytes | None]:
+    """Calculate a quarterly report in a transaction that is always rolled back."""
+
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            if engine.dialect.name == "postgresql":
+                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            with Session(bind=connection, expire_on_commit=False) as session:
+                selected_org_id = org_id
+                if selected_org_id is None:
+                    org_ids = list(
+                        session.scalars(select(Organization.id).order_by(Organization.created_at))
+                    )
+                    if len(org_ids) != 1:
+                        raise ValueError("OVERVIEW_ORGANIZATION_SELECTION_REQUIRED")
+                    selected_org_id = org_ids[0]
+                request = PreviewQuarterlyFinancialStatementsRequest(
+                    org_id=selected_org_id,
+                    year=year,
+                    quarter=quarter,
+                )
+                service = FinancialStatementService(session)
+                if export_xlsx:
+                    result, workbook = service.export_quarterly_xlsx(request)
+                else:
+                    result = service.preview_quarterly(request)
+                    workbook = None
+                return result.model_dump(mode="json"), workbook
+        finally:
+            transaction.rollback()
+
+
 def make_overview_handler(
     engine: Engine,
     *,
@@ -88,10 +131,21 @@ def make_overview_handler(
             self._serve(send_body=False)
 
         def _serve(self, *, send_body: bool) -> None:
-            path = urlsplit(self.path).path
+            parsed_url = urlsplit(self.path)
+            path = parsed_url.path
             if path == "/favicon.ico":
                 self.send_response(HTTPStatus.NO_CONTENT)
                 self.end_headers()
+                return
+            if path in {
+                "/api/financial-statements/quarterly",
+                "/financial-reports/quarterly.xlsx",
+            }:
+                self._serve_quarterly_report(
+                    query=parse_qs(parsed_url.query),
+                    export_xlsx=path.endswith(".xlsx"),
+                    send_body=send_body,
+                )
                 return
             if path not in {"/", "/index.html"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -121,11 +175,98 @@ def make_overview_handler(
                 "default-src 'none'; "
                 "style-src 'unsafe-inline'; "
                 "script-src 'unsafe-inline'; "
+                "connect-src 'self'; "
                 "img-src data:; "
                 "base-uri 'none'; "
                 "form-action 'none'; "
                 "frame-ancestors 'none'",
             )
+            self.end_headers()
+            if send_body:
+                self.wfile.write(body)
+
+        def _serve_quarterly_report(
+            self,
+            *,
+            query: dict[str, list[str]],
+            export_xlsx: bool,
+            send_body: bool,
+        ) -> None:
+            try:
+                year_values = query.get("year", [])
+                quarter_values = query.get("quarter", [])
+                if len(year_values) != 1 or len(quarter_values) != 1:
+                    raise ValueError("REPORT_PERIOD_REQUIRED")
+                year = int(year_values[0])
+                quarter = int(quarter_values[0])
+                if not 1 <= year <= 9999 or quarter not in {1, 2, 3, 4}:
+                    raise ValueError("REPORT_PERIOD_INVALID")
+                result, workbook = load_quarterly_financial_statement(
+                    engine,
+                    org_id=org_id,
+                    year=year,
+                    quarter=quarter,
+                    export_xlsx=export_xlsx,
+                )
+            except (TypeError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"status": "rejected", "errors": ["REPORT_PERIOD_INVALID"]},
+                    send_body=send_body,
+                )
+                return
+            except Exception as exc:
+                print(f"FINANCIAL_STATEMENT_RENDER_FAILED={type(exc).__name__}: {exc}")
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "status": "rejected",
+                        "errors": ["FINANCIAL_STATEMENT_RENDER_FAILED"],
+                    },
+                    send_body=send_body,
+                )
+                return
+            if not export_xlsx:
+                self._write_json(HTTPStatus.OK, result, send_body=send_body)
+                return
+            if workbook is None:
+                self._write_json(HTTPStatus.CONFLICT, result, send_body=send_body)
+                return
+            unicode_name = f"财务报表报送与信息采集（小企业会计准则）月季报_{year}Q{quarter}.xlsx"
+            ascii_name = f"small_enterprise_financial_statements_{year}Q{quarter}.xlsx"
+            self.send_response(HTTPStatus.OK)
+            self.send_header(
+                "Content-Type",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            self.send_header("Content-Length", str(len(workbook)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header(
+                "Content-Disposition",
+                f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(unicode_name)}",
+            )
+            self.end_headers()
+            if send_body:
+                self.wfile.write(workbook)
+
+        def _write_json(
+            self,
+            status: HTTPStatus,
+            payload: dict[str, Any],
+            *,
+            send_body: bool,
+        ) -> None:
+            body = json.dumps(
+                _stringify_fen_values(payload),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             if send_body:
                 self.wfile.write(body)

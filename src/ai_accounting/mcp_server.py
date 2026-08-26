@@ -49,6 +49,12 @@ from .credential_store import CredentialStore, WindowsCredentialStore
 from .database import SessionLocal
 from .evidence import register_evidence
 from .execution_attribution import persist_execution_attribution
+from .financial_statement_schemas import (
+    ConfirmEnterpriseIncomeTaxQuarterRequest,
+    ConfirmFinancialStatementClassificationRequest,
+    GetFinancialStatementRequirementsRequest,
+    PreviewQuarterlyFinancialStatementsRequest,
+)
 from .identity import ExecutorIdentity, ExecutorKind, IdentityError
 from .identity_service import IdentityService
 from .intangible_asset_schemas import (
@@ -493,6 +499,14 @@ def _accounting_period_service(session: Any) -> Any:
     return AccountingPeriodService(session)
 
 
+def _financial_statement_service(session: Any) -> Any:
+    """Load the quarterly statement engine only when one of its tools is invoked."""
+
+    from .financial_statements import FinancialStatementService
+
+    return FinancialStatementService(session)
+
+
 def _labor_remuneration_service(session: Any) -> Any:
     """Load the non-employee labor workflow only when invoked."""
 
@@ -705,6 +719,20 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 ],
                 "generic_event_writer": "controlled_by_period_status",
                 "reopen_entry": "not_available",
+            },
+            "quarterly_financial_statements": {
+                "status": "enabled",
+                "accounting_standard": "small_enterprise",
+                "filing_cycle": "quarterly",
+                "entry_tools": [
+                    "finance_preview_quarterly_financial_statements",
+                    "finance_get_financial_statement_requirements",
+                    "finance_confirm_financial_statement_classification",
+                    "finance_confirm_enterprise_income_tax_quarter",
+                ],
+                "xlsx_download": "local_read_only_overview",
+                "annual_report": "not_available",
+                "automatic_tax_submission": "not_available",
             },
         },
         # Return the schema actually advertised by FastMCP, including its strict
@@ -1539,6 +1567,70 @@ def finance_get_accounting_periods(
             return (
                 _accounting_period_service(session)
                 .get_accounting_periods(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_quarterly_financial_statements(
+    request: PreviewQuarterlyFinancialStatementsRequest,
+) -> dict[str, Any]:
+    """只读计算小企业会计准则季度三表、勾稽检查、来源结账哈希和报表哈希。"""
+    try:
+        with SessionLocal() as session:
+            return (
+                _financial_statement_service(session)
+                .preview_quarterly(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_financial_statement_requirements(
+    request: GetFinancialStatementRequirementsRequest,
+) -> dict[str, Any]:
+    """列出季度报表待分类凭证行、待确认企业所得税及其他阻断项。"""
+    try:
+        with SessionLocal() as session:
+            return (
+                _financial_statement_service(session)
+                .get_requirements(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_financial_statement_classification(
+    request: ConfirmFinancialStatementClassificationRequest,
+) -> dict[str, Any]:
+    """按凭证行确认受控报表明细分配；更正时新增版本，不修改历史记录。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _financial_statement_service(session)
+                .confirm_classification(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_enterprise_income_tax_quarter(
+    request: ConfirmEnterpriseIncomeTaxQuarterRequest,
+) -> dict[str, Any]:
+    """显式确认季度企业所得税为不适用、零费用、计提或冲减；金额处理受控入账。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _financial_statement_service(session)
+                .confirm_enterprise_income_tax(request)
                 .model_dump(mode="json")
             )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:

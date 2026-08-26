@@ -500,6 +500,35 @@
     .check-item span:last-child { color: var(--muted); font-size: 13px; }
     .proof-list { display: grid; gap: 8px; margin-top: 12px; }
     .proof-list li { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    .report-panel { border-color: color-mix(in srgb, var(--blue) 38%, var(--line)); }
+    .report-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+    .report-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 7px 13px;
+      border: 1px solid var(--green);
+      border-radius: 10px;
+      background: var(--green);
+      color: #fff;
+      font-weight: 750;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .report-action.secondary { background: var(--surface); color: var(--green); }
+    .report-action[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+    .report-state { margin-top: 15px; padding: 15px; border-radius: var(--radius-md); background: var(--surface-soft); }
+    .report-state.attention { background: var(--amber-soft); color: var(--amber); }
+    .report-state.error { background: var(--red-soft); color: var(--red); }
+    .report-state p { margin: 7px 0 0; }
+    .report-blockers { margin: 10px 0 0; padding-left: 20px; }
+    .report-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
+    .report-summary article { display: grid; gap: 6px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-soft); }
+    .report-summary span { color: var(--muted); font-size: 12px; }
+    .report-summary strong { font-size: 20px; }
+    .report-checks { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .report-checks .status-chip { min-height: 25px; font-size: 12px; }
     .footer { padding: 28px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
     .no-periods { padding: 70px 20px; text-align: center; }
     .no-periods .brand-mark { margin: 0 auto 16px; }
@@ -525,7 +554,7 @@
       .brand-name { max-width: calc(100vw - 88px); }
       .page { padding-top: 16px; }
       .hero { padding: 24px 20px; }
-      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .staff-cost-reconciliation, .workforce-groups { grid-template-columns: 1fr; }
+      .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .staff-cost-reconciliation, .workforce-groups, .report-summary { grid-template-columns: 1fr; }
       .section-heading, .title-row { align-items: flex-start; flex-direction: column; gap: 10px; }
       .staff-cost-total { justify-items: start; }
       .workforce-subtotal { justify-items: start; }
@@ -739,6 +768,34 @@
         <div id="open-categories" class="open-categories"></div>
       </section>
 
+      <section id="quarterly-report-section" class="section panel panel-pad report-panel" aria-labelledby="quarterly-report-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">税务局导入准备文件</p>
+            <h2 id="quarterly-report-title">小企业会计准则季度财务报表</h2>
+            <p class="muted">只读生成资产负债表、利润表和现金流量表；下载不会写入数据库，也不会自动申报。</p>
+          </div>
+          <div class="report-toolbar">
+            <select id="report-year" class="control" aria-label="报表年度"></select>
+            <select id="report-quarter" class="control" aria-label="报表季度">
+              <option value="1">第一季度</option>
+              <option value="2">第二季度</option>
+              <option value="3">第三季度</option>
+              <option value="4">第四季度</option>
+            </select>
+            <button id="report-preview" class="report-action secondary" type="button">重新计算</button>
+            <a id="report-download" class="report-action" href="#" aria-disabled="true">下载税局模板</a>
+          </div>
+        </div>
+        <div id="report-state" class="report-state" role="status" aria-live="polite">
+          <strong id="report-state-title">等待计算</strong>
+          <p id="report-state-note">请选择年度和季度。</p>
+          <ul id="report-blockers" class="report-blockers" hidden></ul>
+        </div>
+        <div id="report-summary" class="report-summary" hidden></div>
+        <div id="report-checks" class="report-checks" hidden></div>
+      </section>
+
       <section id="validation-panel" class="section panel validation-panel" aria-labelledby="validation-title">
         <div class="validation-copy">
           <p class="eyebrow">账务一致性与待处理事项分开判断</p>
@@ -808,6 +865,9 @@
       let currentMonth = null;
       let openActivityKey = null;
       const periodSelect = byId("period-select");
+      const reportYear = byId("report-year");
+      const reportQuarter = byId("report-quarter");
+      const reportDownload = byId("report-download");
       byId("company-name").textContent = payload.company;
       byId("disclaimer").textContent = payload.disclaimer;
       const requestedPeriod = new URLSearchParams(window.location.search).get("period");
@@ -819,6 +879,104 @@
       periodSelect.value = payload.months.some((month) => month.key === requestedPeriod)
         ? requestedPeriod
         : (payload.default_period || "");
+
+      const reportYears = [...new Set(payload.months.map((month) => month.key.slice(0, 4)))].sort();
+      reportYears.forEach((year) => {
+        const option = make("option", "", year + " 年");
+        option.value = year;
+        reportYear.append(option);
+      });
+      const completedQuarters = [];
+      reportYears.forEach((year) => {
+        for (let quarter = 1; quarter <= 4; quarter += 1) {
+          const months = [1, 2, 3].map((offset) => String((quarter - 1) * 3 + offset).padStart(2, "0"));
+          if (months.every((month) => payload.months.some((item) => item.key === year + "-" + month && item.status === "closed"))) {
+            completedQuarters.push([year, quarter]);
+          }
+        }
+      });
+      const defaultQuarter = completedQuarters[completedQuarters.length - 1];
+      if (defaultQuarter) {
+        reportYear.value = defaultQuarter[0];
+        reportQuarter.value = String(defaultQuarter[1]);
+      } else if (reportYears.length) {
+        reportYear.value = reportYears[reportYears.length - 1];
+      }
+
+      const setReportDownload = (enabled) => {
+        const year = reportYear.value;
+        const quarter = reportQuarter.value;
+        reportDownload.setAttribute("aria-disabled", String(!enabled));
+        reportDownload.href = enabled
+          ? "/financial-reports/quarterly.xlsx?year=" + encodeURIComponent(year) + "&quarter=" + encodeURIComponent(quarter)
+          : "#";
+      };
+
+      const previewQuarterlyReport = async () => {
+        const state = byId("report-state");
+        const blockers = byId("report-blockers");
+        const summary = byId("report-summary");
+        const checks = byId("report-checks");
+        state.className = "report-state";
+        byId("report-state-title").textContent = "正在计算季度三表";
+        byId("report-state-note").textContent = "核对关账快照、分类、所得税确认和勾稽关系…";
+        blockers.hidden = true;
+        blockers.replaceChildren();
+        summary.hidden = true;
+        summary.replaceChildren();
+        checks.hidden = true;
+        checks.replaceChildren();
+        setReportDownload(false);
+        if (!reportYear.value) {
+          state.classList.add("attention");
+          byId("report-state-title").textContent = "没有可用年度";
+          byId("report-state-note").textContent = "请先生成并关闭会计期间。";
+          return;
+        }
+        try {
+          const url = "/api/financial-statements/quarterly?year=" + encodeURIComponent(reportYear.value) + "&quarter=" + encodeURIComponent(reportQuarter.value);
+          const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+          if (!response.ok) throw new Error("HTTP_" + response.status);
+          const report = await response.json();
+          if (report.status !== "calculated") {
+            state.classList.add(report.status === "needs_information" ? "attention" : "error");
+            byId("report-state-title").textContent = report.status === "needs_information" ? "还不能生成税局模板" : "季度报表计算失败";
+            byId("report-state-note").textContent = "请先通过受控内核补齐下列事项；本页面不会修改账务数据。";
+            const items = report.missing_information || [];
+            items.forEach((item) => {
+              const li = make("li", "", item.message + "（" + item.code + "）");
+              blockers.append(li);
+            });
+            (report.errors || []).forEach((code) => blockers.append(make("li", "", code)));
+            blockers.hidden = blockers.childElementCount === 0;
+            return;
+          }
+          const statements = report.data.statements;
+          const balance = statements.balance_sheet;
+          const profit = statements.profit_statement;
+          const cash = statements.cash_flow_statement;
+          state.classList.add("complete");
+          byId("report-state-title").textContent = "三表已计算且勾稽通过";
+          byId("report-state-note").textContent = "报表哈希 " + report.calculation_hash + "；可下载固定税局模板。";
+          [
+            ["资产负债表", "资产合计", balance["30"].ending_fen, "负债和所有者权益 " + money(balance["53"].ending_fen)],
+            ["利润表", "本季度净利润", profit["32"].current_fen, "本年累计 " + money(profit["32"].year_to_date_fen)],
+            ["现金流量表", "本季度现金净增加额", cash["20"].current_fen, "期末现金 " + money(cash["22"].current_fen)]
+          ].forEach((item) => {
+            const card = make("article", "");
+            card.append(make("span", "", item[0] + " · " + item[1]), make("strong", "", money(item[2])), make("span", "", item[3]));
+            summary.append(card);
+          });
+          summary.hidden = false;
+          report.data.checks.forEach((item) => checks.append(make("span", "status-chip" + (item.passed ? "" : " error"), (item.passed ? "✓ " : "× ") + item.code)));
+          checks.hidden = false;
+          setReportDownload(true);
+        } catch (_error) {
+          state.classList.add("error");
+          byId("report-state-title").textContent = "季度报表读取失败";
+          byId("report-state-note").textContent = "请刷新页面后重试，或检查本地服务和数据库迁移状态。";
+        }
+      };
 
       const resetExpandedContent = () => {
         openActivityKey = null;
@@ -1392,6 +1550,12 @@
         const month = payload.months.find((item) => item.key === periodSelect.value);
         if (month) renderMonth(month);
       });
+      byId("report-preview").addEventListener("click", previewQuarterlyReport);
+      reportYear.addEventListener("change", () => setReportDownload(false));
+      reportQuarter.addEventListener("change", () => setReportDownload(false));
+      reportDownload.addEventListener("click", (event) => {
+        if (reportDownload.getAttribute("aria-disabled") === "true") event.preventDefault();
+      });
       byId("refresh-button").addEventListener("click", () => {
         const url = new URL(window.location.href);
         url.searchParams.set("period", periodSelect.value);
@@ -1426,6 +1590,7 @@
       } else {
         const initial = payload.months.find((item) => item.key === periodSelect.value) || payload.months[payload.months.length - 1];
         renderMonth(initial);
+        previewQuarterlyReport();
       }
     })();
   </script>

@@ -54,6 +54,7 @@ from .models import (
     BusinessEvent,
     Counterparty,
     Employee,
+    EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
     ExecutionAttribution,
     FixedAsset,
@@ -86,7 +87,7 @@ from .models import (
 )
 from .tax import calculate_tax_period
 
-_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.4"
+_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.5"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
 _PERIODIC_REVIEW_SOURCE_URLS = {
     "vat_filing_period": (
@@ -842,6 +843,41 @@ class AccountingPeriodService:
             not voucher_issues,
             len(voucher_issues),
         )
+        if (
+            org.accounting_standard == "small_enterprise"
+            and org.filing_cycle == "quarterly"
+            and period.calendar_month in {3, 6, 9, 12}
+        ):
+            quarter = (period.calendar_month - 1) // 3 + 1
+            income_tax_confirmation = self.session.scalar(
+                select(EnterpriseIncomeTaxQuarterConfirmation).where(
+                    EnterpriseIncomeTaxQuarterConfirmation.org_id == request.org_id,
+                    EnterpriseIncomeTaxQuarterConfirmation.calendar_year == period.calendar_year,
+                    EnterpriseIncomeTaxQuarterConfirmation.calendar_quarter == quarter,
+                )
+            )
+            income_tax_event_status = None
+            if (
+                income_tax_confirmation is not None
+                and income_tax_confirmation.business_event_id is not None
+            ):
+                income_tax_event_status = self.session.scalar(
+                    select(BusinessEvent.status).where(
+                        BusinessEvent.org_id == request.org_id,
+                        BusinessEvent.id == income_tax_confirmation.business_event_id,
+                    )
+                )
+            income_tax_confirmed = income_tax_confirmation is not None and (
+                income_tax_confirmation.business_event_id is None
+                or income_tax_event_status == "posted"
+            )
+            self._add_check(
+                checks,
+                blockers,
+                "ACCOUNTING_PERIOD_ENTERPRISE_INCOME_TAX_CONFIRMED",
+                income_tax_confirmed,
+                0 if income_tax_confirmed else 1,
+            )
         module_checks = self._module_checks(request.org_id, period)
         for _name, result in module_checks.items():
             if result["blocking"]:

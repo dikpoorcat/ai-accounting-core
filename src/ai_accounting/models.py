@@ -4415,6 +4415,177 @@ class LaborRemunerationEventLink(Base):
     )
 
 
+class FinancialStatementClassification(Base):
+    """Append-only reporting allocation for one ambiguous expense voucher line."""
+
+    __tablename__ = "financial_statement_classifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    voucher_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    parent_role: Mapped[str] = mapped_column(String(50), nullable=False)
+    allocations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    allocation_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    allocation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_references: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_financial_statement_classification_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["voucher_line_id"],
+            ["voucher_lines.id"],
+            name="fk_financial_statement_classification_voucher_line",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            [
+                "financial_statement_classifications.org_id",
+                "financial_statement_classifications.id",
+            ],
+            name="fk_financial_statement_classification_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_financial_statement_classification_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_financial_statement_classification_org_id"),
+        UniqueConstraint(
+            "org_id",
+            "idempotency_key",
+            name="uq_financial_statement_classification_idempotency",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "supersedes_id",
+            name="uq_financial_statement_classification_supersedes",
+        ),
+        CheckConstraint(
+            "parent_role IN ('general_expense','sales_expense','finance_expense')",
+            name="ck_financial_statement_classification_parent_role",
+        ),
+        CheckConstraint(
+            "length(allocation_payload) > 0 AND length(allocation_hash) = 64",
+            name="ck_financial_statement_classification_payload",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) BETWEEN 1 AND 200 AND length(request_payload_hash) = 64",
+            name="ck_financial_statement_classification_request",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_financial_statement_classification_note",
+        ),
+        CheckConstraint(
+            "allocation_hash ~ '^[0-9a-f]{64}$' AND request_payload_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_financial_statement_classification_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+
+class EnterpriseIncomeTaxQuarterConfirmation(Base):
+    """Immutable accountant-approved enterprise-income-tax fact for one quarter."""
+
+    __tablename__ = "enterprise_income_tax_quarter_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    calendar_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    calendar_quarter: Mapped[int] = mapped_column(Integer, nullable=False)
+    treatment: Mapped[str] = mapped_column(String(30), nullable=False)
+    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    posting_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_references: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_enterprise_income_tax_confirmation_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "business_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_enterprise_income_tax_confirmation_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_enterprise_income_tax_confirmation_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_enterprise_income_tax_confirmation_org_id"),
+        UniqueConstraint(
+            "org_id",
+            "calendar_year",
+            "calendar_quarter",
+            name="uq_enterprise_income_tax_confirmation_period",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "idempotency_key",
+            name="uq_enterprise_income_tax_confirmation_idempotency",
+        ),
+        CheckConstraint(
+            "calendar_year BETWEEN 1 AND 9999 AND calendar_quarter BETWEEN 1 AND 4",
+            name="ck_enterprise_income_tax_confirmation_period",
+        ),
+        CheckConstraint(
+            "treatment IN ('not_applicable','zero','accrue','reduce')",
+            name="ck_enterprise_income_tax_confirmation_treatment",
+        ),
+        CheckConstraint(
+            "(treatment IN ('not_applicable','zero') AND amount_fen = 0 "
+            "AND posting_date IS NULL AND business_event_id IS NULL) OR "
+            "(treatment IN ('accrue','reduce') AND amount_fen > 0 "
+            "AND posting_date IS NOT NULL AND business_event_id IS NOT NULL)",
+            name="ck_enterprise_income_tax_confirmation_shape",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) BETWEEN 1 AND 200 "
+            "AND length(request_payload_hash) = 64 "
+            "AND length(calculation_payload) > 0 AND length(calculation_hash) = 64",
+            name="ck_enterprise_income_tax_confirmation_payload",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_enterprise_income_tax_confirmation_note",
+        ),
+        CheckConstraint(
+            "request_payload_hash ~ '^[0-9a-f]{64}$' AND calculation_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_enterprise_income_tax_confirmation_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+
 class ZeroTaxPeriodConfirmation(Base):
     """Immutable confirmation of a deterministic all-zero VAT/surtax period.
 
@@ -5589,7 +5760,9 @@ _ATTRIBUTED_ROOT_TYPES = (
     BusinessEvent,
     Employee,
     EmployeePayrollProfileVersion,
+    EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
+    FinancialStatementClassification,
     LaborExternalDeclarationConfirmation,
     LaborRemunerationBatch,
     LaborServicePerson,
@@ -5657,6 +5830,21 @@ def _enforce_orm_execution_attribution(
             raise ValueError("BUSINESS_EXECUTION_ATTRIBUTION_IMMUTABLE")
 
 
+@event.listens_for(Session, "before_flush")
+def _enforce_financial_statement_facts_append_only(
+    session: Session, _flush_context: object, _instances: object
+) -> None:
+    fact_types = (
+        FinancialStatementClassification,
+        EnterpriseIncomeTaxQuarterConfirmation,
+    )
+    if any(isinstance(item, fact_types) for item in session.deleted):
+        raise ValueError("FINANCIAL_STATEMENT_FACT_IMMUTABLE")
+    for item in session.dirty:
+        if isinstance(item, fact_types) and session.is_modified(item):
+            raise ValueError("FINANCIAL_STATEMENT_FACT_IMMUTABLE")
+
+
 Index("ix_open_items_org_status", OpenItem.org_id, OpenItem.item_type, OpenItem.status)
 Index(
     "ix_open_items_payable_category",
@@ -5667,6 +5855,14 @@ Index(
     OpenItem.status,
 )
 Index("ix_events_org_posting", BusinessEvent.org_id, BusinessEvent.posting_date)
+Index(
+    "uq_financial_statement_classification_initial",
+    FinancialStatementClassification.org_id,
+    FinancialStatementClassification.voucher_line_id,
+    unique=True,
+    postgresql_where=FinancialStatementClassification.supersedes_id.is_(None),
+    sqlite_where=FinancialStatementClassification.supersedes_id.is_(None),
+)
 Index(
     "uq_bank_transaction_match_current",
     BankTransactionMatch.org_id,

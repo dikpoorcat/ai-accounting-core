@@ -322,7 +322,7 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     EventType.TAX_PAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
-        "required_details": ["tax_type=vat|surtax"],
+        "required_details": ["tax_type=vat|surtax|enterprise_income_tax"],
         "constraint": "cannot exceed posted tax payable balance",
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
@@ -596,7 +596,7 @@ class EventDetails(BaseModel):
     refund_kind: Literal["advance", "sale_return"] | None = None
     paid_now: bool | None = None
     reimbursement_kind: Literal["expense", "refundable_deposit"] | None = None
-    tax_type: Literal["vat", "surtax"] | None = None
+    tax_type: Literal["vat", "surtax", "enterprise_income_tax"] | None = None
     original_event_id: uuid.UUID | None = None
     unallocated_treatment: Literal["advance"] | None = None
     recognition_source: Literal["contract_liability"] | None = None

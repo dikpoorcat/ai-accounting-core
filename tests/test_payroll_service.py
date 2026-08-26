@@ -17,6 +17,11 @@ from ai_accounting.accounting_period_schemas import (
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
+from ai_accounting.financial_statement_schemas import (
+    ConfirmEnterpriseIncomeTaxQuarterRequest,
+    EnterpriseIncomeTaxTreatment,
+)
+from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.models import (
     BankTransaction,
     EmployeePayrollProfileVersion,
@@ -224,6 +229,19 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
         "bank_reconciliation_scope_confirmed_at",
         configured_at,
     )
+    income_tax = FinancialStatementService(session).confirm_enterprise_income_tax(
+        ConfirmEnterpriseIncomeTaxQuarterRequest(
+            org_id=organization.id,
+            year=2026,
+            quarter=3,
+            treatment=EnterpriseIncomeTaxTreatment.ZERO,
+            amount_fen=0,
+            idempotency_key="payroll-period-q3-income-tax",
+            confirmation_note="明确确认第三季度企业所得税费用为零",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert income_tax.status == "posted"
     close_facts = PreviewAccountingPeriodCloseRequest(
         org_id=organization.id,
         period_id=generated.period_id,
