@@ -221,6 +221,7 @@ def test_explicit_tax_facts_keep_balanced_voucher_and_tax_derivation(
         "net_sales_fen": 10_000,
         "vat_fen": 100,
         "exemption_eligible": False,
+        "vat_recognition": "payable",
     }
     voucher = session.get(Voucher, result.voucher_id)
     assert voucher is not None

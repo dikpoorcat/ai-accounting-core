@@ -40,6 +40,9 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_register_employee_profile_version",
         "finance_register_payroll_policy_version",
         "finance_register_payroll_opening_state",
+        "finance_register_payroll_first_wage_tax_treatment",
+        "finance_register_payroll_contribution_actual",
+        "finance_record_payroll_contribution_supplement",
         "finance_preview_payroll",
         "finance_confirm_payroll",
         "finance_get_payroll_batch",
@@ -104,6 +107,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "inspect_available_materials",
         "derive_when_unique",
         "identify_material_unknowns",
+        "separate_contribution_policy_actual_and_cash",
+        "apply_first_wage_tax_treatment_only_with_evidence",
         "ask_minimum_specific_question",
         "submit_or_stop",
     ]

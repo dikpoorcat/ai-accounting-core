@@ -83,6 +83,7 @@ EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
     "employee_reimbursement_payment": ("employee_reimbursement", "报销付款"),
     "payroll": ("payroll", "工资事项"),
     "payroll_accrual": ("payroll", "工资计提"),
+    "payroll_contribution_supplement": ("payroll", "社保公积金实缴情补录"),
     "salary_payment": ("payroll", "工资结算"),
     "social_insurance_payment": ("payroll", "社保缴纳"),
     "housing_fund_payment": ("payroll", "公积金缴纳"),
