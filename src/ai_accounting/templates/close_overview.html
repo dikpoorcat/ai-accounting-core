@@ -881,7 +881,7 @@
         </button>
       </section>
 
-      <section id="priority-section" class="section priority-panel" aria-labelledby="priority-title">
+      <section id="priority-section" class="section priority-panel" aria-labelledby="priority-title" hidden>
         <div>
           <p class="eyebrow">先看这里</p>
           <h2 id="priority-title"></h2>
@@ -1509,14 +1509,16 @@
       const renderPriority = (month) => {
         const section = byId("priority-section");
         const list = byId("priority-list");
+        const currentOpenItems = month.open_items.current_outstanding || month.open_items;
         list.replaceChildren();
         const items = [];
         if (!month.validation.integrity_valid) items.push(["账务一致性异常", "请先查看下方失败校验项", "error"]);
         if (month.cash.unmatched_count) items.push([month.cash.unmatched_count + " 笔流水待识别", "不能当作已确认业务", "pending"]);
         if (month.cash.pending_late_count) items.push([month.cash.pending_late_count + " 笔迟到流水待处理", "需按迟到证据流程处理", "pending"]);
         if (month.status !== "closed") items.push([month.short_label + "尚未关账", "当前期间仍可补录或更正", "pending"]);
-        if (month.open_items.total_count) items.push(["期末有待收待付", "待收 " + money(month.open_items.receivable_fen) + " · 待付 " + money(month.open_items.payable_fen), "neutral"]);
-        if (!items.length) items.push(["本月没有待处理提醒", "账务、流水和关账快照状态一致", "pass"]);
+        if (month.status !== "closed" && currentOpenItems.total_count) items.push(["目前仍有待收待付", "截至最新入账：待收 " + money(currentOpenItems.receivable_fen) + " · 待付 " + money(currentOpenItems.payable_fen), "neutral"]);
+        section.hidden = !items.length;
+        if (section.hidden) return;
         items.forEach((item) => {
           const card = make("article", "priority-item");
           card.append(make("strong", "", item[0]), make("span", "muted", item[1]));

@@ -1811,6 +1811,14 @@ def test_overview_separates_employee_payables_and_refundable_deposits(
     assert (supplier_payables["count"], supplier_payables["outstanding_fen"]) == (1, 5_000)
     assert month["open_items"]["receivable_fen"] == 22_000
     assert month["open_items"]["payable_fen"] == 12_500
+    current_outstanding = month["open_items"]["current_outstanding"]
+    assert current_outstanding == {
+        "receivable_count": 3,
+        "receivable_fen": 22_000,
+        "payable_count": 1,
+        "payable_fen": 5_000,
+        "total_count": 4,
+    }
     assert month["represented_voucher_count"] == month["voucher_count"]
     fund_group = next(
         group for group in month["activity_groups"] if group["key"] == "fund_movement"
@@ -1862,6 +1870,12 @@ def test_overview_document_embeds_data_without_script_breakout(session: Session)
     assert "分录摘要" not in document
     assert "期末待收 / 待付" in document
     assert "期末往来事项" in document
+    assert "month.open_items.current_outstanding || month.open_items" in document
+    assert 'month.status !== "closed" && currentOpenItems.total_count' in document
+    assert "目前仍有待收待付" in document
+    assert "section.hidden = !items.length;" in document
+    assert 'items.push(["本月没有待处理提醒"' not in document
+    assert 'items.push(["期末有待收待付"' not in document
     assert 'id="long-assets-card"' in document
     assert 'aria-label="查看期末待收待付事项"' in document
     assert 'focusSection(byId("activity-detail"))' not in document

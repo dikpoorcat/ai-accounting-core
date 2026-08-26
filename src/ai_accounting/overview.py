@@ -245,7 +245,15 @@ def _build_month(
     open_items = _load_open_items(
         session,
         org_id=organization.id,
-        end_date=period.end_date,
+        origin_end_date=period.end_date,
+        as_of_date=period.end_date,
+        counterparties=counterparties,
+    )
+    current_open_items = _load_open_items(
+        session,
+        org_id=organization.id,
+        origin_end_date=period.end_date,
+        as_of_date=None,
         counterparties=counterparties,
     )
     refundable_deposits = _load_refundable_deposits(
@@ -256,7 +264,10 @@ def _build_month(
         voucher_records=voucher_records,
     )
     open_items["refundable_deposit_receivables"] = refundable_deposits["balances"]
+    current_open_items["refundable_deposit_receivables"] = refundable_deposits["current_balances"]
     open_items = _finalize_open_items(open_items)
+    current_open_items = _finalize_open_items(current_open_items)
+    open_items["current_outstanding"] = _open_item_totals(current_open_items)
     fixed_assets = _load_fixed_assets(
         session,
         org_id=organization.id,
@@ -1352,9 +1363,15 @@ def _load_open_items(
     session: Session,
     *,
     org_id: uuid.UUID,
-    end_date: Any,
+    origin_end_date: Any,
+    as_of_date: Any | None,
     counterparties: dict[uuid.UUID, str],
 ) -> dict[str, Any]:
+    """Value items originating by ``origin_end_date`` at a later reporting cutoff.
+
+    ``as_of_date=None`` means all formally posted settlement and reversal history.
+    """
+
     source_reversal = aliased(BusinessEvent)
     rows = session.execute(
         select(
@@ -1396,14 +1413,14 @@ def _load_open_items(
         )
         .where(
             OpenItem.org_id == org_id,
-            BusinessEvent.posting_date <= end_date,
+            BusinessEvent.posting_date <= origin_end_date,
         )
         .order_by(Counterparty.name, Voucher.voucher_number)
     ).all()
 
     payment_event = aliased(BusinessEvent)
     settlement_reversal = aliased(BusinessEvent)
-    settlement_rows = session.execute(
+    settlement_query = (
         select(
             Settlement.open_item_id,
             Settlement.amount_fen,
@@ -1423,14 +1440,14 @@ def _load_open_items(
                 settlement_reversal.id == Settlement.reversed_by_event_id,
             ),
         )
-        .where(
-            Settlement.org_id == org_id,
-            payment_event.posting_date <= end_date,
-        )
-    ).all()
+        .where(Settlement.org_id == org_id)
+    )
+    if as_of_date is not None:
+        settlement_query = settlement_query.where(payment_event.posting_date <= as_of_date)
+    settlement_rows = session.execute(settlement_query).all()
     settled_by_open_item: dict[uuid.UUID, int] = defaultdict(int)
     for open_item_id, amount_fen, reversal_date in settlement_rows:
-        if reversal_date is None or reversal_date > end_date:
+        if reversal_date is None or (as_of_date is not None and reversal_date > as_of_date):
             settled_by_open_item[open_item_id] += amount_fen
 
     category_items: dict[str, list[dict[str, Any]]] = {
@@ -1452,7 +1469,9 @@ def _load_open_items(
         party_kind,
         source_reversal_date,
     ) in rows:
-        if source_reversal_date is not None and source_reversal_date <= end_date:
+        if source_reversal_date is not None and (
+            as_of_date is None or source_reversal_date <= as_of_date
+        ):
             continue
         settled_fen = settled_by_open_item[open_item.id]
         outstanding_fen = open_item.original_amount_fen - settled_fen
@@ -1554,6 +1573,16 @@ def _finalize_open_items(open_items: dict[str, Any]) -> dict[str, Any]:
         }
     )
     return open_items
+
+
+def _open_item_totals(open_items: dict[str, Any]) -> dict[str, int]:
+    return {
+        "receivable_count": open_items["receivable_count"],
+        "receivable_fen": open_items["receivable_fen"],
+        "payable_count": open_items["payable_count"],
+        "payable_fen": open_items["payable_fen"],
+        "total_count": open_items["total_count"],
+    }
 
 
 def _load_fixed_assets(
@@ -1784,66 +1813,21 @@ def _load_refundable_deposits(
     counterparties: dict[uuid.UUID, str],
     voucher_records: list[tuple[Voucher, dict[str, Any]]],
 ) -> dict[str, Any]:
-    cumulative_vouchers = session.scalars(
-        select(Voucher)
-        .where(
-            Voucher.org_id == org_id,
-            Voucher.posting_date <= period.end_date,
-            Voucher.status.in_(FINAL_VOUCHER_STATUSES),
-        )
-        .options(
-            selectinload(Voucher.lines).joinedload(VoucherLine.account),
-            joinedload(Voucher.event),
-        )
-        .order_by(Voucher.posting_date, Voucher.voucher_number)
-    ).all()
-    deposit_voucher_ids = {
-        voucher.id for voucher in cumulative_vouchers if _is_refundable_deposit_event(voucher.event)
-    }
-    balance_by_party: dict[str, int] = defaultdict(int)
-    source_references: dict[str, set[str]] = defaultdict(set)
-    for voucher in cumulative_vouchers:
-        deposit_related = (
-            voucher.id in deposit_voucher_ids
-            or voucher.reversal_of_voucher_id in deposit_voucher_ids
-        )
-        if not deposit_related:
-            continue
-        for line in voucher.lines:
-            if line.account.system_role != "employee_receivable" or line.counterparty_id is None:
-                continue
-            party = counterparties.get(line.counterparty_id, "未命名保证金对方")
-            balance_by_party[party] += line.debit_fen - line.credit_fen
-            if voucher.id in deposit_voucher_ids and line.debit_fen > 0:
-                source_references[party].add(voucher.voucher_number)
-
-    groups = []
-    balance_items = []
-    for party, outstanding_fen in balance_by_party.items():
-        if outstanding_fen <= 0:
-            continue
-        references = sorted(source_references[party])
-        groups.append(
-            {
-                "party": party,
-                "count": len(references) or 1,
-                "outstanding_fen": outstanding_fen,
-                "open_count": len(references) or 1,
-                "partial_count": 0,
-            }
-        )
-        balance_items.append(
-            {
-                "voucher": "、".join(references) if references else "账面余额",
-                "party": party,
-                "description": "可退保证金账面余额",
-                "status": "open",
-                "item_type": "receivable",
-                "outstanding_fen": outstanding_fen,
-            }
-        )
-    groups.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
-    balance_items.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
+    balances = _load_refundable_deposit_balances(
+        session,
+        org_id=org_id,
+        origin_end_date=period.end_date,
+        as_of_date=period.end_date,
+        counterparties=counterparties,
+    )
+    current_balances = _load_refundable_deposit_balances(
+        session,
+        org_id=org_id,
+        origin_end_date=period.end_date,
+        as_of_date=None,
+        counterparties=counterparties,
+    )
+    balance_by_party = {group["party"]: group["outstanding_fen"] for group in balances["groups"]}
 
     added_rows = []
     return_rows = []
@@ -1901,14 +1885,9 @@ def _load_refundable_deposits(
         [*added_rows, *return_rows],
         key=lambda item: (item["date"], item["reference"]),
     )
-    balances = {
-        "count": len(balance_items),
-        "outstanding_fen": sum(item["outstanding_fen"] for item in balance_items),
-        "groups": groups,
-        "items": balance_items,
-    }
     return {
         "balances": balances,
+        "current_balances": current_balances,
         "activity": {
             "added_count": len(added_rows),
             "added_fen": sum(item["amount_fen"] for item in added_rows),
@@ -1925,11 +1904,116 @@ def _load_refundable_deposits(
     }
 
 
+def _load_refundable_deposit_balances(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    origin_end_date: Any,
+    as_of_date: Any | None,
+    counterparties: dict[uuid.UUID, str],
+) -> dict[str, Any]:
+    """Value the refundable-deposit cohort formed by ``origin_end_date``."""
+
+    query = (
+        select(Voucher)
+        .where(
+            Voucher.org_id == org_id,
+            Voucher.status.in_(FINAL_VOUCHER_STATUSES),
+        )
+        .options(
+            selectinload(Voucher.lines).joinedload(VoucherLine.account),
+            joinedload(Voucher.event),
+        )
+        .order_by(Voucher.posting_date, Voucher.voucher_number)
+    )
+    if as_of_date is not None:
+        query = query.where(Voucher.posting_date <= as_of_date)
+    vouchers = session.scalars(query).all()
+    source_voucher_ids = {
+        voucher.id
+        for voucher in vouchers
+        if voucher.posting_date <= origin_end_date
+        and _is_refundable_deposit_source_event(voucher.event)
+    }
+    return_voucher_ids = {
+        voucher.id
+        for voucher in vouchers
+        if voucher.event.event_type == "refundable_deposit_return_received"
+    }
+    refundable_voucher_ids = source_voucher_ids | return_voucher_ids
+    source_party_ids = {
+        line.counterparty_id
+        for voucher in vouchers
+        if voucher.id in source_voucher_ids
+        for line in voucher.lines
+        if line.account.system_role == "employee_receivable"
+        and line.counterparty_id is not None
+        and line.debit_fen > 0
+    }
+
+    balance_by_party: dict[str, int] = defaultdict(int)
+    source_references: dict[str, set[str]] = defaultdict(set)
+    for voucher in vouchers:
+        deposit_related = (
+            voucher.id in refundable_voucher_ids
+            or voucher.reversal_of_voucher_id in refundable_voucher_ids
+        )
+        if not deposit_related:
+            continue
+        for line in voucher.lines:
+            if (
+                line.account.system_role != "employee_receivable"
+                or line.counterparty_id not in source_party_ids
+            ):
+                continue
+            party = counterparties.get(line.counterparty_id, "未命名保证金对方")
+            balance_by_party[party] += line.debit_fen - line.credit_fen
+            if voucher.id in source_voucher_ids and line.debit_fen > 0:
+                source_references[party].add(voucher.voucher_number)
+
+    groups = []
+    items = []
+    for party, outstanding_fen in balance_by_party.items():
+        if outstanding_fen <= 0:
+            continue
+        references = sorted(source_references[party])
+        groups.append(
+            {
+                "party": party,
+                "count": len(references) or 1,
+                "outstanding_fen": outstanding_fen,
+                "open_count": len(references) or 1,
+                "partial_count": 0,
+            }
+        )
+        items.append(
+            {
+                "voucher": "、".join(references) if references else "账面余额",
+                "party": party,
+                "description": "可退保证金账面余额",
+                "status": "open",
+                "item_type": "receivable",
+                "outstanding_fen": outstanding_fen,
+            }
+        )
+    groups.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
+    items.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
+    return {
+        "count": len(items),
+        "outstanding_fen": sum(item["outstanding_fen"] for item in items),
+        "groups": groups,
+        "items": items,
+    }
+
+
 def _is_refundable_deposit_event(event: BusinessEvent) -> bool:
-    if event.event_type in {
-        "refundable_deposit_paid",
-        "refundable_deposit_return_received",
-    }:
+    if event.event_type == "refundable_deposit_return_received":
+        return True
+    return _is_refundable_deposit_source_event(event)
+
+
+def _is_refundable_deposit_source_event(event: BusinessEvent) -> bool:
+    if event.event_type == "refundable_deposit_paid":
         return True
     if event.event_type != "employee_reimbursement":
         return False
