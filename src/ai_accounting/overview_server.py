@@ -25,6 +25,7 @@ from .overview import build_overview_payload
 LOCAL_OVERVIEW_HOST = "127.0.0.1"
 DEFAULT_OVERVIEW_PORT = 8765
 QUARTERLY_REPORT_UI_VERSION = 2
+OVERVIEW_WORKSPACE_UI_VERSION = 1
 _CALCULATION_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
 _OVERVIEW_TEMPLATE = (
     resources.files("ai_accounting")
@@ -82,6 +83,7 @@ _STATEMENT_PRESENTATION = {
 def render_overview_document(payload: dict[str, Any]) -> str:
     capabilities = dict(payload.get("capabilities", {}))
     capabilities["quarterly_report_ui"] = QUARTERLY_REPORT_UI_VERSION
+    capabilities["overview_workspace_ui"] = OVERVIEW_WORKSPACE_UI_VERSION
     document_payload = {**payload, "capabilities": capabilities}
     serialized = json.dumps(
         _stringify_fen_values(document_payload),

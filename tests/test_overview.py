@@ -1865,13 +1865,64 @@ def test_overview_document_embeds_data_without_script_breakout(session: Session)
     assert 'id="long-assets-card"' in document
     assert 'aria-label="查看期末待收待付事项"' in document
     assert 'focusSection(byId("activity-detail"))' not in document
-    assert 'new URLSearchParams(window.location.search).get("period")' in document
-    assert 'url.searchParams.set("period", periodSelect.value)' in document
+    assert 'const requestedPeriod = initialSearch.get("period")' in document
+    assert 'const requestedReportPeriod = initialSearch.get("report_period")' in document
+    assert 'url.searchParams.set("module", moduleKey)' in document
+    assert 'periodParam: "period"' in document
+    assert 'periodParam: "report_period"' in document
+    assert "url.searchParams.set(definition.periodParam, period)" in document
     assert '"quarterly_report_ui":2' in document
+    assert '"overview_workspace_ui":1' in document
+    assert 'id="module-nav"' in document
+    assert 'id="sidebar-toggle"' in document
+    assert 'aria-controls="workspace-sidebar"' in document
+    assert 'finance-overview-sidebar' in document
+    assert (
+        '.app-shell.sidebar-collapsed { grid-template-columns: 64px minmax(0, 1fr); }'
+        in document
+    )
+    assert 'button.title = collapsed ? "展开侧边栏" : "收起侧边栏";' in document
+    assert 'class="sidebar-icon sidebar-toggle-icon"' in document
+    assert 'class="module-link-label">经营简报</span>' in document
+    assert 'class="module-link-label">财务报表</span>' in document
+    assert 'id="theme-button-label" class="control-label"' in document
+    assert 'id="brand-initial" class="brand-mark"' in document
+    assert "本地财务工作台" not in document
+    assert 'Array.from(String(payload.company || "公").trim())[0] || "公"' in document
+    assert "本地只读 · 不会自动申报或修改账务" not in document
+    assert "transition: grid-template-columns" not in document
+    assert ".sidebar-toggle-icon { transition:" not in document
+    assert ".sidebar-icon { width: 19px; height: 19px; display: block;" in document
+    assert "padding: 24px 12px 18px;" in document
+    assert ".sidebar-collapsed .workspace-sidebar { padding: 24px 11px 18px 12px; }" in document
+    assert (
+        ".sidebar-collapsed .sidebar-footer { width: 40px; align-self: center;"
+        " justify-items: center; padding-top: 18px; }" in document
+    )
+    assert "height: 40px;\n      min-height: 40px;" in document
+    assert "#theme-button { width: 100%; height: 40px; min-height: 40px;" in document
+    assert (
+        ".module-nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));"
+        in document
+    )
+    assert 'data-module-target="brief"' in document
+    assert 'data-module-target="reports"' in document
+    assert 'data-module-view="brief"' in document
+    assert 'data-module-view="reports"' in document
+    assert ".brand-mark {\n      width: 40px;\n      height: 40px;" in document
+    assert ".sidebar-collapsed .brand-mark {" not in document
+    assert 'class="module-link-mark"' not in document
+    assert "target.onActivate();" in document
+    assert "if (reportInitialized) return;" in document
+    assert 'activateModule(requestedModule, { historyMode: "replace" })' in document
+    assert document.index('id="module-reports"') > document.index('id="validation-panel"')
+    initialization = document[document.rindex("if (!payload.months.length)") :]
+    assert "previewQuarterlyReport();" not in initialization
     assert "季度申报准备" in document
     assert "根据已结账账务生成已填充的 Excel 文件" in document
     assert (
-        'id="report-download" class="report-action" type="button" disabled>导出</button>'
+        'id="report-download" class="report-action" type="button" disabled>'
+        "导出</button>"
         in document
     )
     assert "重新核对" in document

@@ -73,35 +73,37 @@
     }
     .skip-link:focus { top: 12px; }
     :focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
-    .topbar {
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 236px minmax(0, 1fr);
+    }
+    .workspace-sidebar {
       position: sticky;
       top: 0;
       z-index: 30;
-      border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
-      background: color-mix(in srgb, var(--page) 91%, transparent);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 12px 18px;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 94%, transparent);
       backdrop-filter: blur(18px);
     }
-    .topbar-inner {
-      width: min(calc(100% - 40px), var(--max));
-      min-height: 72px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 24px;
-    }
-    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .workspace-main { min-width: 0; }
+    .brand { min-height: 64px; display: flex; align-items: center; gap: 12px; min-width: 0; }
     .brand-mark {
       width: 40px;
       height: 40px;
       display: grid;
       place-items: center;
       flex: 0 0 auto;
-      border-radius: 13px;
+      border-radius: 12px;
       background: var(--surface-strong);
       color: var(--page);
+      font-size: 18px;
       font-weight: 800;
-      box-shadow: var(--shadow);
+      line-height: 1;
     }
     .brand-copy { min-width: 0; }
     .brand-label, .eyebrow {
@@ -114,13 +116,52 @@
     }
     .brand-name {
       display: block;
-      max-width: 470px;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
       font-size: 14px;
     }
-    .toolbar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+    .module-nav { display: grid; gap: 7px; margin-top: 32px; }
+    .module-link {
+      height: 40px;
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 11px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      text-decoration: none;
+    }
+    .module-link:hover { border-color: var(--green); color: var(--green); }
+    .module-link[aria-current="page"] { border-color: var(--green); background: var(--green-soft); color: var(--green); font-weight: 750; }
+    .sidebar-icon { width: 19px; height: 19px; display: block; flex: 0 0 auto; }
+    .theme-icon-sun { display: none; }
+    :root[data-theme="dark"] .theme-icon-moon { display: none; }
+    :root[data-theme="dark"] .theme-icon-sun { display: block; }
+    #sidebar-toggle {
+      position: absolute;
+      top: 22px;
+      right: -14px;
+      z-index: 2;
+      width: 28px;
+      height: 28px;
+      min-height: 28px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border-radius: 999px;
+      background: var(--surface);
+      box-shadow: 0 5px 16px rgba(28, 43, 35, .11);
+    }
+    #sidebar-toggle .sidebar-icon { width: 16px; height: 16px; display: block; }
+    .sidebar-footer { display: grid; gap: 8px; margin-top: auto; padding-top: 18px; border-top: 1px solid var(--line); }
+    .module-toolbar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
     .control {
       min-height: 38px;
       border: 1px solid var(--line-strong);
@@ -130,6 +171,7 @@
     }
     button.control { cursor: pointer; }
     button.control:hover { border-color: var(--green); color: var(--green); }
+    #theme-button { width: 100%; height: 40px; min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 8px; }
     #period-select { min-width: 156px; }
     .period-badge, .status-chip, .event-state, .direction-chip {
       display: inline-flex;
@@ -154,10 +196,21 @@
     }
     .status-chip.neutral { background: var(--surface-soft); color: var(--muted); }
     .page {
-      width: min(calc(100% - 40px), var(--max));
+      width: min(calc(100% - 48px), var(--max));
       margin: 0 auto;
       padding: 30px 0 44px;
     }
+    .module-view { min-width: 0; }
+    .module-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 20px;
+    }
+    .module-header-copy { min-width: 0; }
+    .module-header h1 { margin: 3px 0 2px; font-size: clamp(26px, 3vw, 38px); line-height: 1.16; }
+    .module-description { max-width: 720px; margin: 0; color: var(--muted); }
     .hero {
       position: relative;
       overflow: hidden;
@@ -594,10 +647,29 @@
     .report-technical-list { margin: 4px 0 0; padding-left: 20px; }
     .footer { padding: 28px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
     .no-periods { padding: 70px 20px; text-align: center; }
-    .no-periods .brand-mark { margin: 0 auto 16px; }
+    @media (min-width: 901px) {
+      .app-shell.sidebar-collapsed { grid-template-columns: 64px minmax(0, 1fr); }
+      .sidebar-collapsed .workspace-sidebar { padding: 24px 11px 18px 12px; }
+      .sidebar-collapsed .workspace-sidebar .brand { width: 40px; align-self: center; justify-content: center; }
+      .sidebar-collapsed .brand-copy { display: none; }
+      .sidebar-collapsed .module-nav { margin-top: 32px; justify-items: center; }
+      .sidebar-collapsed .module-link,
+      .sidebar-collapsed .sidebar-footer .control {
+        width: 40px;
+        height: 40px;
+        min-height: 40px;
+        justify-content: center;
+        padding: 0;
+      }
+      .sidebar-collapsed .module-link-label,
+      .sidebar-collapsed .control-label { display: none; }
+      .sidebar-collapsed .sidebar-toggle-icon { transform: rotate(180deg); }
+      .sidebar-collapsed .sidebar-footer { width: 40px; align-self: center; justify-items: center; padding-top: 18px; }
+      .sidebar-collapsed #theme-button { width: 40px; display: grid; place-items: center; gap: 0; }
+    }
     @media (max-width: 980px) {
-      .topbar-inner { align-items: flex-start; padding: 13px 0; }
-      .toolbar { flex-wrap: wrap; justify-content: flex-end; }
+      .module-header { align-items: flex-start; flex-direction: column; }
+      .module-toolbar { flex-wrap: wrap; justify-content: flex-start; }
       .hero { grid-template-columns: 1fr; }
       .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .activity-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -610,14 +682,36 @@
       .report-toolbar { justify-content: flex-start; }
       .report-readiness { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
+    @media (max-width: 900px) {
+      .app-shell { display: block; }
+      .workspace-sidebar {
+        height: auto;
+        padding: 12px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand-mark { display: none; }
+      .workspace-sidebar .brand { padding-right: 112px; }
+      .brand-name { max-width: min(64vw, 520px); -webkit-line-clamp: 1; }
+      .module-nav {
+        display: flex;
+        gap: 7px;
+        margin-top: 11px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .module-nav::-webkit-scrollbar { display: none; }
+      .module-link { min-width: 136px; flex: 1 0 auto; }
+      .sidebar-footer { position: absolute; top: 14px; right: 12px; margin: 0; padding: 0; border: 0; }
+      #sidebar-toggle { display: none; }
+      #theme-button { width: auto; }
+      .page { padding-top: 22px; }
+    }
     @media (max-width: 720px) {
-      .topbar { position: static; }
-      .topbar-inner, .page { width: min(calc(100% - 24px), var(--max)); }
-      .topbar-inner { display: grid; gap: 12px; }
-      .toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; justify-content: stretch; }
+      .page { width: min(calc(100% - 24px), var(--max)); }
+      .module-header { gap: 14px; }
+      .module-toolbar { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; justify-content: stretch; }
       #period-select { min-width: 0; width: 100%; }
-      #theme-button { grid-column: 1 / -1; justify-self: start; }
-      .brand-name { max-width: calc(100vw - 88px); }
       .page { padding-top: 16px; }
       .hero { padding: 24px 20px; }
       .kpi-grid, .overview-grid, .activity-grid, .priority-list, .open-summary, .check-grid, .group-grid, .staff-cost-grid, .staff-cost-reconciliation, .workforce-groups, .report-summary, .report-readiness, .report-check-list { grid-template-columns: 1fr; }
@@ -664,6 +758,19 @@
       .report-technical-grid { grid-template-columns: 1fr; }
       .report-readiness-item.has-details { grid-column: auto; }
     }
+    @media (max-width: 430px) {
+      .workspace-sidebar .brand { padding-right: 82px; }
+      .brand-label { display: none; }
+      .brand-name { max-width: calc(100vw - 152px); font-size: 13px; }
+      #theme-button { padding-inline: 9px; }
+      .module-nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); overflow: visible; }
+      .module-link { min-width: 0; width: 100%; justify-content: center; gap: 6px; padding-inline: 6px; }
+      .module-link .sidebar-icon { width: 17px; height: 17px; }
+      .module-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
+      #period-select { grid-column: 1 / -1; }
+      #refresh-button { grid-column: 2; }
+      #period-status { grid-column: 1; grid-row: 2; justify-self: start; }
+    }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
     }
@@ -671,36 +778,73 @@
 </head>
 <body>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
-  <header class="topbar">
-    <div class="topbar-inner">
+  <div class="app-shell">
+    <header id="workspace-sidebar" class="workspace-sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">账</span>
+        <span id="brand-initial" class="brand-mark" aria-hidden="true"></span>
         <div class="brand-copy">
-          <p class="brand-label">老板经营简报</p>
           <strong id="company-name" class="brand-name"></strong>
         </div>
       </div>
-      <div class="toolbar">
-        <select id="period-select" class="control" aria-label="查看月份"></select>
-        <span id="period-status" class="period-badge" role="status"></span>
-        <button id="refresh-button" class="control" type="button">刷新数据</button>
-        <button id="theme-button" class="control" type="button" aria-pressed="false">切换深色外观</button>
+      <button id="sidebar-toggle" class="control" type="button" aria-controls="workspace-sidebar" aria-expanded="true" aria-label="收起侧边栏" title="收起侧边栏">
+        <svg class="sidebar-icon sidebar-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m14 6-6 6 6 6" />
+        </svg>
+      </button>
+      <nav id="module-nav" class="module-nav" aria-label="看板模块">
+        <a id="module-brief-link" class="module-link" data-module-target="brief" href="?module=brief" aria-label="经营简报" title="经营简报">
+          <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M4 19V9M10 19V5M16 19v-7M3 19h18" />
+          </svg>
+          <span class="module-link-label">经营简报</span>
+        </a>
+        <a id="module-reports-link" class="module-link" data-module-target="reports" href="?module=reports" aria-label="财务报表" title="财务报表">
+          <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6" />
+          </svg>
+          <span class="module-link-label">财务报表</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="theme-button" class="control" type="button" aria-label="切换深色外观" aria-pressed="false" title="切换深色外观">
+          <svg class="sidebar-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 15.2A8 8 0 0 1 8.8 4 8 8 0 1 0 20 15.2Z" />
+          </svg>
+          <svg class="sidebar-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.5" />
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+          </svg>
+          <span id="theme-button-label" class="control-label">深色外观</span>
+        </button>
       </div>
-    </div>
-  </header>
+    </header>
 
-  <main id="main-content" class="page">
-    <section id="no-periods" class="panel no-periods" hidden>
-      <span class="brand-mark" aria-hidden="true">账</span>
-      <h1>还没有可查看的月份</h1>
-      <p class="muted">生成首个会计期间后，这里会出现只读经营简报。</p>
-    </section>
+    <div class="workspace-main">
+      <main id="main-content" class="page">
+        <section id="module-brief" class="module-view" data-module-view="brief" aria-labelledby="brief-module-title">
+          <header class="module-header">
+            <div class="module-header-copy">
+              <p class="eyebrow">经营简报</p>
+              <h1 id="brief-module-title" tabindex="-1">月度经营与财务概览</h1>
+              <p class="module-description">按月份查看经营结果、资金动向、往来事项和账务状态。</p>
+            </div>
+            <div class="module-toolbar" aria-label="经营简报操作">
+              <select id="period-select" class="control" aria-label="查看月份"></select>
+              <span id="period-status" class="period-badge" role="status"></span>
+              <button id="refresh-button" class="control" type="button">刷新数据</button>
+            </div>
+          </header>
 
-    <div id="dashboard">
+          <section id="no-periods" class="panel no-periods" hidden>
+            <h2>还没有可查看的月份</h2>
+            <p class="muted">生成首个会计期间后，这里会出现只读经营简报。</p>
+          </section>
+
+          <div id="dashboard">
       <section class="hero" aria-labelledby="main-title">
         <div>
           <p id="source-note" class="eyebrow"></p>
-          <h1 id="main-title"></h1>
+          <h2 id="main-title"></h2>
           <p id="hero-note" class="hero-note"></p>
           <div class="status-rail" aria-label="本月状态">
             <span id="ledger-chip" class="status-chip"></span>
@@ -744,54 +888,6 @@
           <p id="priority-note" class="muted"></p>
         </div>
         <div id="priority-list" class="priority-list"></div>
-      </section>
-
-      <section id="quarterly-report-section" class="section panel panel-pad report-panel" aria-labelledby="quarterly-report-title">
-        <div class="report-heading">
-          <div class="report-heading-copy">
-            <p class="eyebrow">季度申报准备</p>
-            <h2 id="quarterly-report-title">小企业会计准则季度财务报表</h2>
-            <p class="muted">根据已结账账务生成已填充的 Excel 文件，供手工导入电子税务局；不会自动申报。</p>
-          </div>
-          <div class="report-toolbar">
-            <select id="report-period" class="control" aria-label="季度报表期间"></select>
-            <button id="report-preview" class="report-action secondary" type="button">重新核对</button>
-            <button id="report-download" class="report-action" type="button" disabled>导出</button>
-          </div>
-        </div>
-        <div class="report-status-meta">
-          <span id="report-status-badge" class="status-chip neutral">等待核对</span>
-          <span id="report-checked-at">报表期间独立于上方月份</span>
-        </div>
-        <div id="report-state" class="report-state" role="status" aria-live="polite">
-          <div class="report-state-heading"><strong id="report-state-title">正在准备季度报表</strong></div>
-          <p id="report-state-note">正在核对关账快照、报表分类、所得税确认和三表勾稽关系…</p>
-        </div>
-        <div id="report-readiness" class="report-readiness" aria-label="季度报表准备度" hidden></div>
-        <p id="report-draft-note" class="report-draft-note" hidden>以下金额为当前试算，不可用于申报或导出。</p>
-        <div id="report-summary" class="report-summary" hidden></div>
-        <div id="report-review" class="report-review" hidden>
-          <div class="report-review-heading">
-            <button id="report-expand" class="report-expand" type="button" aria-expanded="false" aria-controls="report-full">查看完整三表 ↓</button>
-            <span id="report-check-summary" class="muted"></span>
-          </div>
-          <div id="report-full" class="report-full" hidden>
-            <div id="report-tabs" class="report-tabs" role="tablist" aria-label="季度财务报表"></div>
-            <div class="report-table-toolbar">
-              <strong id="report-table-title"></strong>
-              <label><input id="report-show-all" type="checkbox"> 显示全部行（含零值）</label>
-            </div>
-            <div id="report-table" class="report-table-wrap"></div>
-            <details id="report-checks-disclosure" class="disclosure report-checks">
-              <summary><span class="report-check-summary"><strong>勾稽核对</strong><span id="report-check-count" class="status-chip neutral"></span></span></summary>
-              <div id="report-checks" class="report-check-list"></div>
-            </details>
-            <details class="disclosure report-technical">
-              <summary>查看计算依据与技术信息</summary>
-              <dl id="report-technical" class="report-technical-grid"></dl>
-            </details>
-          </div>
-        </div>
       </section>
 
       <section class="section panel panel-pad" aria-labelledby="activity-title">
@@ -906,10 +1002,72 @@
           </details>
         </div>
         <div id="check-grid" class="check-grid"></div>
-      </section>
+              </section>
+            </div>
+        </section>
+
+        <section id="module-reports" class="module-view" data-module-view="reports" aria-labelledby="reports-module-title" hidden>
+          <header class="module-header">
+            <div class="module-header-copy">
+              <p class="eyebrow">财务报表</p>
+              <h1 id="reports-module-title" tabindex="-1">季度财务报表</h1>
+              <p class="module-description">核对已结账季度的三张财务报表，并导出已填充的电子税务局 Excel 导入文件。</p>
+            </div>
+            <div class="report-toolbar" aria-label="财务报表操作">
+              <select id="report-period" class="control" aria-label="季度报表期间"></select>
+              <button id="report-preview" class="report-action secondary" type="button">重新核对</button>
+              <button id="report-download" class="report-action" type="button" disabled>导出</button>
+            </div>
+          </header>
+
+          <section id="quarterly-report-section" class="panel panel-pad report-panel" aria-labelledby="quarterly-report-title">
+            <div class="report-heading">
+              <div class="report-heading-copy">
+                <p class="eyebrow">小企业会计准则 · 季度申报准备</p>
+                <h2 id="quarterly-report-title">申报准备状态</h2>
+                <p class="muted">根据已结账账务生成已填充的 Excel 文件，供手工导入电子税务局；不会自动申报。</p>
+              </div>
+            </div>
+            <div class="report-status-meta">
+              <span id="report-status-badge" class="status-chip neutral">等待核对</span>
+              <span id="report-checked-at">进入财务报表后开始核对</span>
+            </div>
+            <div id="report-state" class="report-state" role="status" aria-live="polite">
+              <div class="report-state-heading"><strong id="report-state-title">等待核对季度报表</strong></div>
+              <p id="report-state-note">选择季度后，将核对关账快照、报表分类、所得税确认和三表勾稽关系。</p>
+            </div>
+            <div id="report-readiness" class="report-readiness" aria-label="季度报表准备度" hidden></div>
+            <p id="report-draft-note" class="report-draft-note" hidden>以下金额为当前试算，不可用于申报或导出。</p>
+            <div id="report-summary" class="report-summary" hidden></div>
+            <div id="report-review" class="report-review" hidden>
+              <div class="report-review-heading">
+                <button id="report-expand" class="report-expand" type="button" aria-expanded="false" aria-controls="report-full">查看完整三表 ↓</button>
+                <span id="report-check-summary" class="muted"></span>
+              </div>
+              <div id="report-full" class="report-full" hidden>
+                <div id="report-tabs" class="report-tabs" role="tablist" aria-label="季度财务报表"></div>
+                <div class="report-table-toolbar">
+                  <strong id="report-table-title"></strong>
+                  <label><input id="report-show-all" type="checkbox"> 显示全部行（含零值）</label>
+                </div>
+                <div id="report-table" class="report-table-wrap"></div>
+                <details id="report-checks-disclosure" class="disclosure report-checks">
+                  <summary><span class="report-check-summary"><strong>勾稽核对</strong><span id="report-check-count" class="status-chip neutral"></span></span></summary>
+                  <div id="report-checks" class="report-check-list"></div>
+                </details>
+                <details class="disclosure report-technical">
+                  <summary>查看计算依据与技术信息</summary>
+                  <dl id="report-technical" class="report-technical-grid"></dl>
+                </details>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <footer id="disclaimer" class="footer"></footer>
+      </main>
     </div>
-    <footer id="disclaimer" class="footer"></footer>
-  </main>
+  </div>
 
   <script id="overview-data" type="application/json">__OVERVIEW_DATA__</script>
   <script>
@@ -965,12 +1123,43 @@
       let openActivityKey = null;
       let currentReport = null;
       let activeStatementKey = null;
+      let reportInitialized = false;
       const periodSelect = byId("period-select");
       const reportPeriod = byId("report-period");
       const reportDownload = byId("report-download");
+      const moduleDefinitions = new Map([
+        ["brief", {
+          label: "经营简报",
+          periodParam: "period",
+          getPeriod: () => periodSelect.value,
+          view: byId("module-brief"),
+          link: byId("module-brief-link"),
+          heading: byId("brief-module-title"),
+          onActivate: () => {}
+        }],
+        ["reports", {
+          label: "财务报表",
+          periodParam: "report_period",
+          getPeriod: () => reportPeriod.value,
+          view: byId("module-reports"),
+          link: byId("module-reports-link"),
+          heading: byId("reports-module-title"),
+          onActivate: () => {
+            if (reportInitialized) return;
+            reportInitialized = true;
+            previewQuarterlyReport();
+          }
+        }]
+      ]);
       byId("company-name").textContent = payload.company;
+      byId("brand-initial").textContent = Array.from(String(payload.company || "公").trim())[0] || "公";
       byId("disclaimer").textContent = payload.disclaimer;
-      const requestedPeriod = new URLSearchParams(window.location.search).get("period");
+      const initialSearch = new URLSearchParams(window.location.search);
+      const requestedPeriod = initialSearch.get("period");
+      const requestedReportPeriod = initialSearch.get("report_period");
+      const requestedModule = moduleDefinitions.has(initialSearch.get("module"))
+        ? initialSearch.get("module")
+        : "brief";
       payload.months.forEach((month) => {
         const option = make("option", "", month.label);
         option.value = month.key;
@@ -1002,8 +1191,9 @@
       const selectedCompleted = reports.find((entry) => entry.key === currentMonthQuarter && entry.complete);
       const completedReports = reports.filter((entry) => entry.complete);
       const defaultReport = selectedCompleted || completedReports[completedReports.length - 1] || reports[reports.length - 1];
-      if (defaultReport) {
-        reportPeriod.value = defaultReport.key;
+      const requestedReport = reports.find((entry) => entry.key === requestedReportPeriod);
+      if (requestedReport || defaultReport) {
+        reportPeriod.value = (requestedReport || defaultReport).key;
       } else {
         reportPeriod.disabled = true;
       }
@@ -1846,6 +2036,64 @@
         byId("voucher-view").hidden = true;
       };
 
+      const moduleUrl = (moduleKey) => {
+        const url = new URL(window.location.origin + window.location.pathname);
+        const definition = moduleDefinitions.get(moduleKey);
+        url.searchParams.set("module", moduleKey);
+        const period = definition && definition.getPeriod();
+        if (definition && period) {
+          url.searchParams.set(definition.periodParam, period);
+        }
+        return url;
+      };
+
+      const syncModuleLinks = () => {
+        moduleDefinitions.forEach((definition, moduleKey) => {
+          const url = moduleUrl(moduleKey);
+          definition.link.href = url.pathname + url.search;
+        });
+      };
+
+      const activateModule = (moduleKey, options = {}) => {
+        const targetKey = moduleDefinitions.has(moduleKey) ? moduleKey : "brief";
+        const target = moduleDefinitions.get(targetKey);
+        moduleDefinitions.forEach((definition, key) => {
+          const active = key === targetKey;
+          definition.view.hidden = !active;
+          if (active) definition.link.setAttribute("aria-current", "page");
+          else definition.link.removeAttribute("aria-current");
+        });
+        document.title = target.label + " · " + payload.company;
+        syncModuleLinks();
+        if (options.historyMode) {
+          const method = options.historyMode === "replace" ? "replaceState" : "pushState";
+          window.history[method]({ module: targetKey }, "", moduleUrl(targetKey));
+        }
+        target.onActivate();
+        if (options.focus) {
+          target.heading.focus({ preventScroll: true });
+          window.scrollTo({ top: 0, behavior: "auto" });
+        }
+      };
+
+      const restoreLocationState = () => {
+        const search = new URLSearchParams(window.location.search);
+        const monthKey = search.get("period");
+        const month = payload.months.find((item) => item.key === monthKey);
+        if (month && periodSelect.value !== month.key) {
+          periodSelect.value = month.key;
+          renderMonth(month);
+        }
+        const reportKey = search.get("report_period");
+        const report = reports.find((item) => item.key === reportKey);
+        if (report && reportPeriod.value !== report.key) {
+          reportPeriod.value = report.key;
+          reportInitialized = false;
+          currentReport = null;
+        }
+        activateModule(search.get("module"), { focus: true });
+      };
+
       document.querySelectorAll("[data-view]").forEach((button) => {
         button.addEventListener("click", () => {
           resetExpandedContent();
@@ -1857,10 +2105,20 @@
       });
       periodSelect.addEventListener("change", () => {
         const month = payload.months.find((item) => item.key === periodSelect.value);
-        if (month) renderMonth(month);
+        if (month) {
+          renderMonth(month);
+          activateModule("brief", { historyMode: "push" });
+        }
       });
-      byId("report-preview").addEventListener("click", previewQuarterlyReport);
-      reportPeriod.addEventListener("change", previewQuarterlyReport);
+      byId("report-preview").addEventListener("click", () => {
+        reportInitialized = true;
+        previewQuarterlyReport();
+      });
+      reportPeriod.addEventListener("change", () => {
+        reportInitialized = true;
+        activateModule("reports", { historyMode: "push" });
+        previewQuarterlyReport();
+      });
       reportDownload.addEventListener("click", exportQuarterlyReport);
       byId("report-expand").addEventListener("click", () => {
         const button = byId("report-expand");
@@ -1884,24 +2142,51 @@
         renderStatement(tabs[target].dataset.statement);
       });
       byId("refresh-button").addEventListener("click", () => {
-        const url = new URL(window.location.href);
-        url.searchParams.set("period", periodSelect.value);
-        window.location.assign(url);
+        window.location.assign(moduleUrl("brief"));
       });
+      document.querySelectorAll("[data-module-target]").forEach((link) => {
+        link.addEventListener("click", (event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          activateModule(link.dataset.moduleTarget, { historyMode: "push", focus: true });
+        });
+      });
+      window.addEventListener("popstate", restoreLocationState);
+      const desktopSidebar = window.matchMedia("(min-width: 901px)");
+      let sidebarCollapsedPreference = localStorage.getItem("finance-overview-sidebar") === "collapsed";
+      const applySidebarState = () => {
+        const collapsed = desktopSidebar.matches && sidebarCollapsedPreference;
+        document.querySelector(".app-shell").classList.toggle("sidebar-collapsed", collapsed);
+        const button = byId("sidebar-toggle");
+        button.setAttribute("aria-expanded", String(!collapsed));
+        button.setAttribute("aria-label", collapsed ? "展开侧边栏" : "收起侧边栏");
+        button.title = collapsed ? "展开侧边栏" : "收起侧边栏";
+      };
+      byId("sidebar-toggle").addEventListener("click", () => {
+        sidebarCollapsedPreference = !document.querySelector(".app-shell").classList.contains("sidebar-collapsed");
+        localStorage.setItem("finance-overview-sidebar", sidebarCollapsedPreference ? "collapsed" : "expanded");
+        applySidebarState();
+      });
+      desktopSidebar.addEventListener("change", applySidebarState);
+      applySidebarState();
       byId("theme-button").addEventListener("click", () => {
         const root = document.documentElement;
         const dark = root.dataset.theme !== "dark";
         root.dataset.theme = dark ? "dark" : "light";
         const button = byId("theme-button");
         button.setAttribute("aria-pressed", String(dark));
-        button.textContent = dark ? "切换浅色外观" : "切换深色外观";
+        button.setAttribute("aria-label", dark ? "切换浅色外观" : "切换深色外观");
+        button.title = dark ? "切换浅色外观" : "切换深色外观";
+        byId("theme-button-label").textContent = dark ? "浅色外观" : "深色外观";
         localStorage.setItem("finance-overview-theme", root.dataset.theme);
       });
       const savedTheme = localStorage.getItem("finance-overview-theme");
       if (savedTheme === "dark") {
         document.documentElement.dataset.theme = "dark";
         byId("theme-button").setAttribute("aria-pressed", "true");
-        byId("theme-button").textContent = "切换浅色外观";
+        byId("theme-button").setAttribute("aria-label", "切换浅色外观");
+        byId("theme-button").title = "切换浅色外观";
+        byId("theme-button-label").textContent = "浅色外观";
       }
       byId("long-assets-card").addEventListener("click", () => focusSection(byId("position-panel")));
       byId("open-items-card").addEventListener("click", () => focusSection(byId("open-items-section")));
@@ -1917,8 +2202,8 @@
       } else {
         const initial = payload.months.find((item) => item.key === periodSelect.value) || payload.months[payload.months.length - 1];
         renderMonth(initial);
-        previewQuarterlyReport();
       }
+      activateModule(requestedModule, { historyMode: "replace" });
     })();
   </script>
 </body>
