@@ -109,6 +109,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "identify_material_unknowns",
         "separate_contribution_policy_actual_and_cash",
         "apply_first_wage_tax_treatment_only_with_evidence",
+        "generate_period_close_management_commentary",
         "ask_minimum_specific_question",
         "submit_or_stop",
     ]
@@ -116,6 +117,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "除已提供并核对的材料外" in protocol["question_policy"]["final_fallback"]
     assert EVIDENCE_FIRST_RUNTIME_INSTRUCTION in mcp.instructions
     assert "agent_operating_protocol" in mcp.instructions
+    assert "management_commentary" in mcp.instructions
+    assert "不得把看板指标简单拼接" in mcp.instructions
 
 
 @pytest.mark.parametrize(

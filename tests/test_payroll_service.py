@@ -252,6 +252,10 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
         ConfirmAccountingPeriodCloseRequest(
             **close_facts.model_dump(),
             calculation_hash=close_preview.calculation_hash,
+            management_commentary_context_hash=close_preview.data[
+                "assistant_review_checklist"
+            ]["management_commentary"]["context_hash"],
+            management_commentary="九月经营情况已基于关账上下文完成分析。",
             idempotency_key="payroll-period-close",
             review_facts=AccountingPeriodReviewFacts(
                 voucher_completeness_reviewed=True,

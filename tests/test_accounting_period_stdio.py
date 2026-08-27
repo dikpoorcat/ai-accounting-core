@@ -363,6 +363,10 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                     {
                         **close_facts,
                         "calculation_hash": preview["calculation_hash"],
+                        "management_commentary_context_hash": preview["data"][
+                            "assistant_review_checklist"
+                        ]["management_commentary"]["context_hash"],
+                        "management_commentary": "七月经营情况已基于关账上下文完成分析。",
                         "owner_approval_id": owner_approval_id,
                         "idempotency_key": "stdio-period-close-july",
                         "review_facts": {
@@ -620,6 +624,10 @@ def test_zero_voucher_month_closes_through_real_stdio(
                     {
                         **close_facts,
                         "calculation_hash": preview["calculation_hash"],
+                        "management_commentary_context_hash": preview["data"][
+                            "assistant_review_checklist"
+                        ]["management_commentary"]["context_hash"],
+                        "management_commentary": "本月尚无经营活动，现有事实不足以评价经营表现。",
                         "owner_approval_id": owner_approval_id,
                         "idempotency_key": "stdio-zero-close-june",
                         "review_facts": {
@@ -811,6 +819,10 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
             ConfirmAccountingPeriodCloseRequest(
                 **close_facts.model_dump(),
                 calculation_hash=close_preview.calculation_hash,
+                management_commentary_context_hash=close_preview.data[
+                    "assistant_review_checklist"
+                ]["management_commentary"]["context_hash"],
+                management_commentary="七月经营情况已基于关账上下文完成分析。",
                 idempotency_key="payroll-stdio-close-july",
                 review_facts=AccountingPeriodReviewFacts(
                     voucher_completeness_reviewed=True,

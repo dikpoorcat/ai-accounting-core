@@ -421,6 +421,10 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                         ConfirmAccountingPeriodCloseRequest(
                             **preview_request.model_dump(),
                             calculation_hash=preview.calculation_hash,
+                            management_commentary_context_hash=preview.data[
+                                "assistant_review_checklist"
+                            ]["management_commentary"]["context_hash"],
+                            management_commentary="七月经营情况已基于关账上下文完成分析。",
                             owner_approval_id=owner_approval_id,
                             idempotency_key="pg-close-july",
                             review_facts=AccountingPeriodReviewFacts(
@@ -691,6 +695,10 @@ def test_postgres_close_vs_close_is_linearized(
                             ConfirmAccountingPeriodCloseRequest(
                                 **preview_request.model_dump(),
                                 calculation_hash=preview.calculation_hash,
+                                management_commentary_context_hash=preview.data[
+                                    "assistant_review_checklist"
+                                ]["management_commentary"]["context_hash"],
+                                management_commentary="七月经营情况已基于关账上下文完成分析。",
                                 owner_approval_id=owner_approval_id,
                                 idempotency_key=key,
                                 review_facts=AccountingPeriodReviewFacts(
@@ -809,6 +817,10 @@ def test_postgres_close_vs_post_is_linearized(
                             ConfirmAccountingPeriodCloseRequest(
                                 **preview_request.model_dump(),
                                 calculation_hash=preview.calculation_hash,
+                                management_commentary_context_hash=preview.data[
+                                    "assistant_review_checklist"
+                                ]["management_commentary"]["context_hash"],
+                                management_commentary="七月经营情况已基于关账上下文完成分析。",
                                 owner_approval_id=owner_approval_id,
                                 idempotency_key="pg-post-close-close",
                                 review_facts=AccountingPeriodReviewFacts(
@@ -1277,6 +1289,10 @@ def test_postgres_owner_close_vs_raw_payroll_is_linearized(
                             ConfirmAccountingPeriodCloseRequest(
                                 **request.model_dump(),
                                 calculation_hash=preview.calculation_hash,
+                                management_commentary_context_hash=preview.data[
+                                    "assistant_review_checklist"
+                                ]["management_commentary"]["context_hash"],
+                                management_commentary="本月经营情况已基于关账上下文完成分析。",
                                 owner_approval_id=owner_approval_id,
                                 idempotency_key="owner-close-payroll-close",
                                 review_facts=AccountingPeriodReviewFacts(
@@ -1406,6 +1422,10 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                         ConfirmAccountingPeriodCloseRequest(
                             **preview_request.model_dump(),
                             calculation_hash=preview.calculation_hash,
+                            management_commentary_context_hash=preview.data[
+                                "assistant_review_checklist"
+                            ]["management_commentary"]["context_hash"],
+                            management_commentary="七月经营情况已基于关账上下文完成分析。",
                             idempotency_key="extra-close-july",
                             review_facts=AccountingPeriodReviewFacts(
                                 voucher_completeness_reviewed=True,

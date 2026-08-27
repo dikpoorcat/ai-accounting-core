@@ -308,6 +308,10 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                             ConfirmAccountingPeriodCloseRequest(
                                 **preview_request.model_dump(),
                                 calculation_hash=close_preview.calculation_hash,
+                                management_commentary_context_hash=close_preview.data[
+                                    "assistant_review_checklist"
+                                ]["management_commentary"]["context_hash"],
+                                management_commentary="本月经营情况已基于关账上下文完成分析。",
                                 owner_approval_id=approval.id,
                                 idempotency_key=(
                                     f"postgres-close-2026-{period.calendar_month:02d}"

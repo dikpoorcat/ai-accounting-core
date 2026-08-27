@@ -730,7 +730,7 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                     "finance_confirm_financial_statement_classification",
                     "finance_confirm_enterprise_income_tax_quarter",
                 ],
-                "xlsx_download": "local_read_only_overview",
+                "xlsx_download": "local_read_only_dashboard",
                 "annual_report": "not_available",
                 "automatic_tax_submission": "not_available",
             },
@@ -1529,7 +1529,7 @@ def finance_generate_accounting_period(
 def finance_preview_accounting_period_close(
     request: PreviewAccountingPeriodCloseRequest,
 ) -> dict[str, Any]:
-    """只读复核自然月；另返回AI必须逐项提示负责人的月末建议清单和关账哈希。"""
+    """只读复核自然月；返回月末清单、关账哈希及AI经营解读的证据上下文与写作要求。"""
     try:
         with SessionLocal() as session:
             return (
@@ -1545,7 +1545,7 @@ def finance_preview_accounting_period_close(
 def finance_confirm_accounting_period_close(
     request: ConfirmAccountingPeriodCloseRequest,
 ) -> dict[str, Any]:
-    """用预览哈希、完整复核声明和证据幂等确认关账；不提供重开入口。"""
+    """用预览哈希、完整复核声明、证据及AI经营解读幂等确认关账；不提供重开入口。"""
     try:
         with SessionLocal.begin() as session:
             return (

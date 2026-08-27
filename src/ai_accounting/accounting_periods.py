@@ -19,6 +19,7 @@ ACCOUNTING_PERIOD_CLOSE_SOURCE_URLS = (
     "https://kjs.mof.gov.cn/zhengcefabu/202408/P020240805635126967297.pdf",
 )
 ACCOUNTING_PERIOD_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.1"
+MANAGEMENT_COMMENTARY_PROMPT_VERSION = "period_close_management_commentary_v1"
 CHINA_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 
 

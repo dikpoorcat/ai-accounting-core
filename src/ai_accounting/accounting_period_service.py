@@ -28,6 +28,7 @@ from .accounting_periods import (
     ACCOUNTING_PERIOD_CLOSE_EFFECTIVE_FROM,
     ACCOUNTING_PERIOD_CLOSE_RULE_VERSION,
     ACCOUNTING_PERIOD_CLOSE_SOURCE_URLS,
+    MANAGEMENT_COMMENTARY_PROMPT_VERSION,
     canonical_json,
     canonical_sha256,
     china_current_date,
@@ -45,6 +46,7 @@ from .models import (
     AccountingPeriodClose,
     AccountingPeriodCloseApproval,
     AccountingPeriodCloseBankReconciliation,
+    AccountingPeriodCloseCommentary,
     AccountingPeriodCloseSource,
     BankReconciliation,
     BankTransaction,
@@ -614,6 +616,19 @@ class AccountingPeriodService:
                 errors=["ACCOUNTING_PERIOD_CALCULATION_STALE"],
                 period_id=period.id,
             )
+        if (
+            snapshot["management_commentary_context_hash"]
+            != request.management_commentary_context_hash
+        ):
+            return self._failure_action(
+                request.org_id,
+                "period_close",
+                request.idempotency_key,
+                payload_hash,
+                AccountingPeriodResultStatus.REJECTED,
+                errors=["ACCOUNTING_PERIOD_COMMENTARY_CONTEXT_STALE"],
+                period_id=period.id,
+            )
         if snapshot["blockers"]:
             return self._failure_action(
                 request.org_id,
@@ -670,6 +685,17 @@ class AccountingPeriodService:
         )
         self.session.add(close)
         self.session.flush()
+        self.session.add(
+            AccountingPeriodCloseCommentary(
+                org_id=request.org_id,
+                close_id=close.id,
+                commentary=request.management_commentary,
+                prompt_version=MANAGEMENT_COMMENTARY_PROMPT_VERSION,
+                context_payload=snapshot["management_commentary_context"],
+                context_hash=snapshot["management_commentary_context_hash"],
+                generation_method="close_ai_agent",
+            )
+        )
         self.session.add_all(
             [
                 AccountingPeriodCloseSource(
@@ -707,6 +733,11 @@ class AccountingPeriodService:
         period.closed_at = close.confirmed_at
         period.close_id = close.id
         self.session.flush()
+        result_data = dict(snapshot["data"])
+        result_data["management_commentary"] = request.management_commentary
+        result_data["management_commentary_context_hash"] = snapshot[
+            "management_commentary_context_hash"
+        ]
         return self._result(
             AccountingPeriodResultStatus.POSTED,
             period_id=period.id,
@@ -714,7 +745,7 @@ class AccountingPeriodService:
             close_id=close.id,
             calculation_hash=close.calculation_hash,
             trace=snapshot["trace"] + [{"stage": "period_close_posted", "close_id": str(close.id)}],
-            data=snapshot["data"],
+            data=result_data,
         )
 
     def _owner_close_approval_required(self, org_id: uuid.UUID) -> bool:
@@ -910,6 +941,34 @@ class AccountingPeriodService:
             module_checks=module_checks,
             review_counts=review_counts,
         )
+        management_commentary_context = self._management_commentary_context(period)
+        management_commentary_context_hash = canonical_sha256(
+            management_commentary_context
+        )
+        assistant_review_checklist["management_commentary"] = {
+            "required_for_close": True,
+            "prompt_version": MANAGEMENT_COMMENTARY_PROMPT_VERSION,
+            "context_hash": management_commentary_context_hash,
+            "context": management_commentary_context,
+            "instruction": (
+                "基于 context 生成一段供负责人阅读的月度经营解读。不要逐项复述看板数字；"
+                "应提炼经营阶段、环比变化、损益与现金差异的原因、回款或付款节奏，以及最值得"
+                "关注的经营风险。只使用 context 中能够证明的事实，无法证明的原因不得猜测。"
+            ),
+            "success_criteria": [
+                "用 2 至 4 个短句写成一个自然段，通常控制在 120 至 300 个汉字",
+                "至少给出一个综合判断或因果关系，而不是罗列收入、费用、余额和笔数",
+                "存在上月数据时优先说明趋势；区分权责发生制损益与银行现金变动",
+                "区分股东投入等融资流入与经营回款，区分本月收入与以前月份应收款回收",
+                "仅点出一至两个最重要的后续关注事项，不重复账务一致和流水匹配状态",
+                "无业务或证据不足时明确说明无法评价经营表现，不编造积极或消极结论",
+            ],
+        }
+        assistant_review_checklist["ai_instruction"] += (
+            "完成逐项月末复核后，AI 必须按 management_commentary 的 instruction、"
+            "success_criteria 和 context 生成经营解读，并在确认关账时原样提交 commentary "
+            "及 context_hash；不得用看板指标拼接文本代替分析。"
+        )
         previous = prior[-1] if prior else None
         previous_close_hash = None
         if previous is not None and previous.close_id is not None:
@@ -944,6 +1003,8 @@ class AccountingPeriodService:
             "sources": sources,
             "previous_close_hash": previous_close_hash,
             "bank_reconciliations": bank_reconciliations,
+            "management_commentary_context": management_commentary_context,
+            "management_commentary_context_hash": management_commentary_context_hash,
             "trace": [
                 {"stage": "period_close_snapshot", "period_id": str(period.id)},
                 {"stage": "system_checks_completed", "blocker_codes": blockers},
@@ -954,6 +1015,155 @@ class AccountingPeriodService:
                 "blocker_codes": blockers,
                 "assistant_review_checklist": assistant_review_checklist,
             },
+        }
+
+    def _management_commentary_context(
+        self,
+        period: AccountingPeriod,
+    ) -> dict[str, Any]:
+        """Build a compact, deterministic evidence bundle for the close commentary."""
+
+        from .dashboard_assets import build_assets_data
+        from .dashboard_brief import (
+            _build_activity_groups,
+            _counterparty_names,
+            _finalize_open_items,
+            _load_account_balances,
+            _load_open_items,
+            _load_refundable_deposit_balances,
+            _load_vouchers,
+            _position_metrics,
+            _result_metrics,
+        )
+        from .dashboard_employees import build_employees_data
+        from .dashboard_funds import build_bank_activity
+
+        organization = self.session.get(Organization, period.org_id)
+        if organization is None:
+            raise _PeriodDecision("ORGANIZATION_NOT_FOUND")
+
+        def project(target: AccountingPeriod, *, include_actions: bool) -> dict[str, Any]:
+            counterparties = _counterparty_names(self.session, organization.id)
+            voucher_records = _load_vouchers(
+                self.session,
+                org_id=organization.id,
+                period=target,
+                counterparties=counterparties,
+            )
+            month_balances = _load_account_balances(
+                self.session,
+                org_id=organization.id,
+                start_date=target.start_date,
+                end_date=target.end_date,
+            )
+            cumulative_balances = _load_account_balances(
+                self.session,
+                org_id=organization.id,
+                start_date=None,
+                end_date=target.end_date,
+            )
+            position = _position_metrics(cumulative_balances)
+            month_result = _result_metrics(month_balances)
+            cumulative_result = _result_metrics(cumulative_balances)
+            cash = build_bank_activity(
+                self.session,
+                org_id=organization.id,
+                period=target,
+            )
+            workforce = build_employees_data(
+                self.session,
+                organization=organization,
+                period=target,
+            )["workforce_cost"]
+            assets = build_assets_data(
+                self.session,
+                organization=organization,
+                period=target,
+            )
+            open_items = _load_open_items(
+                self.session,
+                org_id=organization.id,
+                origin_end_date=target.end_date,
+                as_of_date=target.end_date,
+                counterparties=counterparties,
+            )
+            open_items["refundable_deposit_receivables"] = (
+                _load_refundable_deposit_balances(
+                    self.session,
+                    org_id=organization.id,
+                    origin_end_date=target.end_date,
+                    as_of_date=target.end_date,
+                    counterparties=counterparties,
+                )
+            )
+            open_items = _finalize_open_items(open_items)
+            activity_groups = _build_activity_groups(voucher_records)
+            actions = (
+                [
+                    {
+                        "category": group["label"],
+                        "title": row["title"],
+                        "subject": row["subject"],
+                        "description": row["description"],
+                        "amount_fen": row["amount_fen"],
+                        "party": row["party"],
+                    }
+                    for group in activity_groups
+                    for row in group["rows"]
+                ]
+                if include_actions
+                else []
+            )
+            return {
+                "period_month": f"{target.calendar_year:04d}-{target.calendar_month:02d}",
+                "voucher_count": len(voucher_records),
+                "revenue_fen": month_result["revenue_fen"],
+                "expense_fen": month_result["expense_fen"],
+                "result_fen": month_result["result_fen"],
+                "cumulative_result_fen": cumulative_result["result_fen"],
+                "bank_balance_fen": position["bank_fen"],
+                "bank_inflow_fen": cash["inflow_fen"],
+                "bank_outflow_fen": cash["outflow_fen"],
+                "bank_net_fen": cash["net_fen"],
+                "assets_fen": position["assets_fen"],
+                "liabilities_fen": position["liabilities_fen"],
+                "capital_fen": position["capital_fen"],
+                "fixed_asset_net_fen": assets["fixed_asset_net_fen"],
+                "workforce_total_fen": workforce["total_fen"],
+                "employee_cost_fen": workforce["employee"]["total_fen"],
+                "personal_labor_cost_fen": workforce["personal_labor"]["total_fen"],
+                "receivable_fen": open_items["receivable_fen"],
+                "receivable_count": open_items["receivable_count"],
+                "payable_fen": open_items["payable_fen"],
+                "payable_count": open_items["payable_count"],
+                "open_item_categories": [
+                    {
+                        "label": category["label"],
+                        "count": category["count"],
+                        "outstanding_fen": category["outstanding_fen"],
+                        "parties": [group["party"] for group in category["groups"]],
+                    }
+                    for category in open_items["categories"]
+                    if category["count"]
+                ],
+                "business_actions": actions,
+            }
+
+        previous = self.session.scalar(
+            select(AccountingPeriod)
+            .where(
+                AccountingPeriod.org_id == period.org_id,
+                AccountingPeriod.start_date < period.start_date,
+            )
+            .order_by(AccountingPeriod.start_date.desc(), AccountingPeriod.id.desc())
+            .limit(1)
+        )
+        return {
+            "version": "period_close_management_context_v1",
+            "current_period": project(period, include_actions=True),
+            "previous_period": (
+                project(previous, include_actions=False) if previous is not None else None
+            ),
         }
 
     def _assistant_review_checklist(

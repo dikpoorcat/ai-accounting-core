@@ -26,6 +26,7 @@ from ai_accounting.models import (
     AccountingPeriod,
     AccountingPeriodAction,
     AccountingPeriodClose,
+    AccountingPeriodCloseCommentary,
     BankReconciliationScopeAction,
     BankTransaction,
     Borrowing,
@@ -401,12 +402,26 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     assert "不得仅因数据库无记录" in checklist["ai_instruction"]
     assert "不得把次月到账默认当作次月收入" in checklist["ai_instruction"]
     assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
+    commentary_prompt = checklist["management_commentary"]
+    assert commentary_prompt["required_for_close"] is True
+    assert commentary_prompt["prompt_version"] == "period_close_management_commentary_v1"
+    assert len(commentary_prompt["context_hash"]) == 64
+    assert commentary_prompt["context"]["current_period"]["period_month"] == "2026-03"
+    assert "不要逐项复述看板数字" in commentary_prompt["instruction"]
+    assert any("损益与银行现金变动" in item for item in commentary_prompt["success_criteria"])
+    assert "不得用看板指标拼接文本代替分析" in checklist["ai_instruction"]
     assert missing.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
+    assert missing.missing_information[0].fields[:2] == [
+        "management_commentary_context_hash",
+        "management_commentary",
+    ]
     assert "review_facts.voucher_completeness_reviewed" in missing.missing_information[0].fields
     action = session.get(AccountingPeriodAction, missing.action_id)
     assert action is not None
     assert action.input_facts == {}
     assert action.missing_information == [
+        "management_commentary_context_hash",
+        "management_commentary",
         "review_facts.voucher_completeness_reviewed",
         "review_facts.bank_reconciliation_reviewed",
         "review_facts.open_items_reviewed",
@@ -627,6 +642,10 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     close_request = ConfirmAccountingPeriodCloseRequest(
         **preview_request.model_dump(),
         calculation_hash=preview.calculation_hash,
+        management_commentary_context_hash=preview.data[
+            "assistant_review_checklist"
+        ]["management_commentary"]["context_hash"],
+        management_commentary="本月尚无经营活动，现有事实不足以评价经营表现。",
         idempotency_key="empty-close",
         confirmation_note="确认本月无业务",
         evidence_references=[evidence.id],
@@ -640,12 +659,21 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
         ),
     )
 
+    stale_commentary = service.confirm_accounting_period_close(
+        close_request.model_copy(
+            update={
+                "idempotency_key": "empty-close-stale-commentary",
+                "management_commentary_context_hash": "0" * 64,
+            }
+        )
+    )
     closed = service.confirm_accounting_period_close(close_request)
     replay = service.confirm_accounting_period_close(close_request)
     repeated = service.confirm_accounting_period_close(
         close_request.model_copy(update={"idempotency_key": "empty-close-again"})
     )
     close = session.get(AccountingPeriodClose, closed.close_id)
+    commentary = session.query(AccountingPeriodCloseCommentary).one()
 
     assert preview.status is AccountingPeriodResultStatus.CALCULATED
     checklist_items = {
@@ -655,6 +683,8 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert checklist_items["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"][
         "completed"
     ] is False
+    assert stale_commentary.status is AccountingPeriodResultStatus.REJECTED
+    assert stale_commentary.errors == ["ACCOUNTING_PERIOD_COMMENTARY_CONTEXT_STALE"]
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
     assert closed.data["calculation"]["checker_version"] == (
@@ -675,6 +705,12 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
         "ACCOUNTING_PERIOD_UNMATCHED_BANK_REVIEW",
     ]
     assert close is not None
+    assert commentary.close_id == close.id
+    assert commentary.commentary == "本月尚无经营活动，现有事实不足以评价经营表现。"
+    assert commentary.prompt_version == "period_close_management_commentary_v1"
+    assert commentary.generation_method == "close_ai_agent"
+    assert commentary.context_hash == close_request.management_commentary_context_hash
+    assert closed.data["management_commentary"] == commentary.commentary
     assert (
         close.voucher_count,
         close.line_count,

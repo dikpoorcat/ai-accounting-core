@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import re
 import threading
 import uuid
@@ -16,22 +17,33 @@ from urllib.parse import parse_qs, quote, urlsplit
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from .dashboard_assets import load_assets_dashboard
+from .dashboard_brief import load_brief_dashboard
+from .dashboard_common import (
+    DashboardDataError,
+    load_dashboard_context,
+    resolve_dashboard_organization,
+)
+from .dashboard_employees import load_employees_dashboard
+from .dashboard_funds import load_funds_dashboard
 from .database import make_engine
 from .financial_statement_schemas import PreviewQuarterlyFinancialStatementsRequest
 from .financial_statements import FinancialStatementService
-from .models import AccountingPeriod, Organization
-from .overview import build_overview_payload
+from .models import AccountingPeriod
 
-LOCAL_OVERVIEW_HOST = "127.0.0.1"
-DEFAULT_OVERVIEW_PORT = 8765
-QUARTERLY_REPORT_UI_VERSION = 2
-OVERVIEW_WORKSPACE_UI_VERSION = 1
+LOCAL_DASHBOARD_HOST = "127.0.0.1"
+DEFAULT_DASHBOARD_PORT = 8765
 _CALCULATION_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
-_OVERVIEW_TEMPLATE = (
-    resources.files("ai_accounting")
-    .joinpath("templates/close_overview.html")
-    .read_text(encoding="utf-8")
-)
+_DASHBOARD_STATIC_ROOT = resources.files("ai_accounting").joinpath("static/dashboard")
+_DASHBOARD_VUE_INDEX = _DASHBOARD_STATIC_ROOT.joinpath("index.html").read_text(encoding="utf-8")
+_DASHBOARD_VUE_ROUTES = {"/", "/index.html", "/funds", "/employees", "/assets", "/reports"}
+_DASHBOARD_ASSET_PATH_PATTERN = re.compile(r"/assets/[A-Za-z0-9._-]+")
+_DASHBOARD_PAGE_LOADERS = {
+    "/api/dashboard/brief": ("BRIEF", load_brief_dashboard),
+    "/api/dashboard/funds": ("FUNDS", load_funds_dashboard),
+    "/api/dashboard/employees": ("EMPLOYEES", load_employees_dashboard),
+    "/api/dashboard/assets": ("ASSETS", load_assets_dashboard),
+}
 
 _READINESS_GROUPS = (
     ("period", "期间与年初数"),
@@ -80,22 +92,6 @@ _STATEMENT_PRESENTATION = {
 }
 
 
-def render_overview_document(payload: dict[str, Any]) -> str:
-    capabilities = dict(payload.get("capabilities", {}))
-    capabilities["quarterly_report_ui"] = QUARTERLY_REPORT_UI_VERSION
-    capabilities["overview_workspace_ui"] = OVERVIEW_WORKSPACE_UI_VERSION
-    document_payload = {**payload, "capabilities": capabilities}
-    serialized = json.dumps(
-        _stringify_fen_values(document_payload),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    serialized = (
-        serialized.replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    )
-    return _OVERVIEW_TEMPLATE.replace("__OVERVIEW_DATA__", serialized)
-
-
 def _stringify_fen_values(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, dict):
         return {
@@ -112,23 +108,6 @@ def _stringify_fen_values(value: Any, *, key: str | None = None) -> Any:
     ):
         return str(value)
     return value
-
-
-def load_overview_document(
-    engine: Engine,
-    *,
-    org_id: uuid.UUID | None = None,
-) -> str:
-    with engine.connect() as connection:
-        transaction = connection.begin()
-        try:
-            if engine.dialect.name == "postgresql":
-                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-            with Session(bind=connection, expire_on_commit=False) as session:
-                payload = build_overview_payload(session, org_id=org_id)
-            return render_overview_document(payload)
-        finally:
-            transaction.rollback()
 
 
 def load_quarterly_financial_statement(
@@ -148,7 +127,7 @@ def load_quarterly_financial_statement(
                 connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             with Session(bind=connection, expire_on_commit=False) as session:
                 selected_org_id = org_id
-                selected_org_id = _resolve_overview_org_id(session, selected_org_id)
+                selected_org_id = _resolve_dashboard_org_id(session, selected_org_id)
                 request = PreviewQuarterlyFinancialStatementsRequest(
                     org_id=selected_org_id,
                     year=year,
@@ -180,7 +159,7 @@ def load_quarterly_report_view(
             if engine.dialect.name == "postgresql":
                 connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             with Session(bind=connection, expire_on_commit=False) as session:
-                selected_org_id = _resolve_overview_org_id(session, org_id)
+                selected_org_id = _resolve_dashboard_org_id(session, org_id)
                 request = PreviewQuarterlyFinancialStatementsRequest(
                     org_id=selected_org_id,
                     year=year,
@@ -208,16 +187,11 @@ def load_quarterly_report_view(
             transaction.rollback()
 
 
-def _resolve_overview_org_id(
+def _resolve_dashboard_org_id(
     session: Session,
     org_id: uuid.UUID | None,
 ) -> uuid.UUID:
-    if org_id is not None:
-        return org_id
-    org_ids = list(session.scalars(select(Organization.id).order_by(Organization.created_at)))
-    if len(org_ids) != 1:
-        raise ValueError("OVERVIEW_ORGANIZATION_SELECTION_REQUIRED")
-    return org_ids[0]
+    return resolve_dashboard_organization(session, org_id).id
 
 
 def build_quarterly_report_view(
@@ -509,13 +483,13 @@ def _check_views(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def make_overview_handler(
+def make_dashboard_handler(
     engine: Engine,
     *,
     org_id: uuid.UUID | None = None,
 ) -> type[BaseHTTPRequestHandler]:
-    class OverviewHandler(BaseHTTPRequestHandler):
-        server_version = "FinanceOverview/0.1"
+    class DashboardHandler(BaseHTTPRequestHandler):
+        server_version = "FinanceDashboard/0.1"
 
         def do_GET(self) -> None:
             self._serve(send_body=True)
@@ -530,7 +504,19 @@ def make_overview_handler(
                 self.send_response(HTTPStatus.NO_CONTENT)
                 self.end_headers()
                 return
-            if path == "/api/overview/quarterly-report":
+            if path == "/api/dashboard/context":
+                self._serve_dashboard_context(send_body=send_body)
+                return
+            if path in _DASHBOARD_PAGE_LOADERS:
+                page_name, loader = _DASHBOARD_PAGE_LOADERS[path]
+                self._serve_dashboard_page(
+                    page_name=page_name,
+                    loader=loader,
+                    query=parse_qs(parsed_url.query),
+                    send_body=send_body,
+                )
+                return
+            if path == "/api/dashboard/quarterly-report":
                 self._serve_quarterly_report_view(
                     query=parse_qs(parsed_url.query),
                     send_body=send_body,
@@ -546,23 +532,16 @@ def make_overview_handler(
                     send_body=send_body,
                 )
                 return
-            if path not in {"/", "/index.html"}:
+            if path.startswith("/assets/"):
+                self._serve_vue_asset(path=path, send_body=send_body)
+                return
+            if path not in _DASHBOARD_VUE_ROUTES:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            try:
-                document = load_overview_document(engine, org_id=org_id)
-            except Exception as exc:
-                print(f"OVERVIEW_RENDER_FAILED={type(exc).__name__}: {exc}")
-                body = "本地经营概览读取失败，请检查数据库连接和迁移状态。".encode()
-                self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                if send_body:
-                    self.wfile.write(body)
-                return
-            body = document.encode("utf-8")
+            self._serve_vue_index(send_body=send_body)
+
+        def _serve_vue_index(self, *, send_body: bool) -> None:
+            body = _DASHBOARD_VUE_INDEX.encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -572,17 +551,121 @@ def make_overview_handler(
             self.send_header(
                 "Content-Security-Policy",
                 "default-src 'none'; "
-                "style-src 'unsafe-inline'; "
-                "script-src 'unsafe-inline'; "
+                "style-src 'self'; "
+                "script-src 'self'; "
                 "connect-src 'self'; "
-                "img-src data:; "
+                "frame-src 'self'; "
+                "img-src 'self' data:; "
                 "base-uri 'none'; "
                 "form-action 'none'; "
                 "frame-ancestors 'none'",
             )
             self.end_headers()
             if send_body:
-                self.wfile.write(body)
+                self._write_body(body)
+
+        def _serve_dashboard_context(self, *, send_body: bool) -> None:
+            try:
+                payload = load_dashboard_context(engine, org_id=org_id)
+            except DashboardDataError as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "status": "error",
+                        "errors": [exc.code],
+                        "message": "无法确定要查看的企业。",
+                    },
+                    send_body=send_body,
+                )
+                return
+            except Exception as exc:
+                print(f"DASHBOARD_CONTEXT_FAILED={type(exc).__name__}: {exc}")
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "status": "error",
+                        "errors": ["DASHBOARD_CONTEXT_FAILED"],
+                        "message": "财务工作台期间信息加载失败。",
+                    },
+                    send_body=send_body,
+                )
+                return
+            self._write_json(HTTPStatus.OK, payload, send_body=send_body)
+
+        def _serve_dashboard_page(
+            self,
+            *,
+            page_name: str,
+            loader: Any,
+            query: dict[str, list[str]],
+            send_body: bool,
+        ) -> None:
+            try:
+                period_values = query.get("period", [])
+                if len(period_values) > 1:
+                    raise DashboardDataError("DASHBOARD_PERIOD_INVALID")
+                period_key = period_values[0] if period_values else None
+                payload = loader(engine, period_key=period_key, org_id=org_id)
+            except DashboardDataError as exc:
+                status = (
+                    HTTPStatus.NOT_FOUND
+                    if exc.code == "DASHBOARD_PERIOD_NOT_FOUND"
+                    else HTTPStatus.BAD_REQUEST
+                )
+                messages = {
+                    "DASHBOARD_PERIOD_INVALID": "请选择有效的会计月份。",
+                    "DASHBOARD_PERIOD_NOT_FOUND": "没有找到所选会计月份。",
+                    "DASHBOARD_ORGANIZATION_NOT_FOUND": "没有找到可查看的企业。",
+                    "DASHBOARD_ORGANIZATION_SELECTION_REQUIRED": "无法唯一确定要查看的企业。",
+                }
+                self._write_json(
+                    status,
+                    {
+                        "status": "error",
+                        "errors": [exc.code],
+                        "message": messages.get(exc.code, "财务工作台请求无效。"),
+                    },
+                    send_body=send_body,
+                )
+                return
+            except Exception as exc:
+                error_code = f"DASHBOARD_{page_name}_FAILED"
+                print(f"{error_code}={type(exc).__name__}: {exc}")
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "status": "error",
+                        "errors": [error_code],
+                        "message": "财务工作台页面数据加载失败。",
+                    },
+                    send_body=send_body,
+                )
+                return
+            self._write_json(HTTPStatus.OK, payload, send_body=send_body)
+
+        def _serve_vue_asset(self, *, path: str, send_body: bool) -> None:
+            if not _DASHBOARD_ASSET_PATH_PATTERN.fullmatch(path):
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            asset = _DASHBOARD_STATIC_ROOT.joinpath(*path.removeprefix("/").split("/"))
+            if not asset.is_file():
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            body = asset.read_bytes()
+            content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+            if content_type.startswith("text/") or content_type in {
+                "application/javascript",
+                "application/json",
+            }:
+                content_type += "; charset=utf-8"
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            if send_body:
+                self._write_body(body)
 
         def _serve_quarterly_report(
             self,
@@ -677,7 +760,7 @@ def make_overview_handler(
             )
             self.end_headers()
             if send_body:
-                self.wfile.write(workbook)
+                self._write_body(workbook)
 
         def _serve_quarterly_report_view(
             self,
@@ -742,12 +825,21 @@ def make_overview_handler(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             if send_body:
+                self._write_body(body)
+
+        def _write_body(self, body: bytes) -> None:
+            try:
                 self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                # Vue aborts an obsolete period request when the user switches quickly.
+                # The response is intentionally discarded, so the local server should
+                # not report the expected client disconnect as an application failure.
+                return
 
         def log_message(self, format: str, *args: object) -> None:
-            print("OVERVIEW_HTTP=" + (format % args))
+            print("DASHBOARD_HTTP=" + (format % args))
 
-    return OverviewHandler
+    return DashboardHandler
 
 
 def _parse_report_period(query: dict[str, list[str]]) -> tuple[int, int]:
@@ -764,9 +856,9 @@ def _parse_report_period(query: dict[str, list[str]]) -> tuple[int, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="serve a read-only owner overview on the local computer"
+        description="serve the local read-only finance dashboard"
     )
-    parser.add_argument("--port", type=int, default=DEFAULT_OVERVIEW_PORT)
+    parser.add_argument("--port", type=int, default=DEFAULT_DASHBOARD_PORT)
     parser.add_argument("--org-id", type=uuid.UUID)
     parser.add_argument(
         "--no-open",
@@ -778,15 +870,14 @@ def main() -> None:
         parser.error("--port must be between 0 and 65535")
 
     engine = make_engine()
-    load_overview_document(engine, org_id=args.org_id)
     server = ThreadingHTTPServer(
-        (LOCAL_OVERVIEW_HOST, args.port),
-        make_overview_handler(engine, org_id=args.org_id),
+        (LOCAL_DASHBOARD_HOST, args.port),
+        make_dashboard_handler(engine, org_id=args.org_id),
     )
     actual_port = server.server_address[1]
-    url = f"http://{LOCAL_OVERVIEW_HOST}:{actual_port}/"
-    print(f"FINANCE_OVERVIEW_URL={url}")
-    print("FINANCE_OVERVIEW_MODE=READ_ONLY_LOCAL")
+    url = f"http://{LOCAL_DASHBOARD_HOST}:{actual_port}/"
+    print(f"FINANCE_DASHBOARD_URL={url}")
+    print("FINANCE_DASHBOARD_MODE=READ_ONLY_LOCAL")
     if not args.no_open:
         opener = threading.Timer(0.2, webbrowser.open, args=(url,))
         opener.daemon = True

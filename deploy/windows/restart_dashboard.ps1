@@ -9,11 +9,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
-$overviewLauncher = Join-Path $repositoryRoot ".venv\Scripts\finance-overview.exe"
-$overviewUrl = "http://127.0.0.1:$Port/"
+$dashboardLauncher = Join-Path $repositoryRoot ".venv\Scripts\finance-dashboard.exe"
+$dashboardUrl = "http://127.0.0.1:$Port/"
 
-if (-not (Test-Path -LiteralPath $overviewLauncher -PathType Leaf)) {
-    throw "找不到经营概览启动程序：$overviewLauncher。请先完成本仓库虚拟环境安装。"
+if (-not (Test-Path -LiteralPath $dashboardLauncher -PathType Leaf)) {
+    throw "找不到财务看板启动程序：$dashboardLauncher。请先同步本仓库虚拟环境。"
 }
 
 $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
@@ -27,7 +27,7 @@ foreach ($listenerProcessId in $listenerProcessIds) {
     }
 
     $commandLine = [string]$listenerProcess.CommandLine
-    if ($commandLine.IndexOf($overviewLauncher, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    if ($commandLine.IndexOf($dashboardLauncher, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
         throw "端口 $Port 正被其他程序占用（PID $listenerProcessId），为避免误停进程，已取消重启。"
     }
 
@@ -41,11 +41,11 @@ foreach ($managedProcess in $managedProcesses) {
 
 $logDirectory = Join-Path ([IO.Path]::GetTempPath()) "ai-accounting-core"
 [IO.Directory]::CreateDirectory($logDirectory) | Out-Null
-$stdoutLog = Join-Path $logDirectory "finance-overview-$Port.stdout.log"
-$stderrLog = Join-Path $logDirectory "finance-overview-$Port.stderr.log"
+$stdoutLog = Join-Path $logDirectory "finance-dashboard-$Port.stdout.log"
+$stderrLog = Join-Path $logDirectory "finance-dashboard-$Port.stderr.log"
 
-$overviewProcess = Start-Process `
-    -FilePath $overviewLauncher `
+$dashboardProcess = Start-Process `
+    -FilePath $dashboardLauncher `
     -ArgumentList "--port", $Port, "--no-open" `
     -WorkingDirectory $repositoryRoot `
     -WindowStyle Hidden `
@@ -53,7 +53,7 @@ $overviewProcess = Start-Process `
     -RedirectStandardError $stderrLog `
     -PassThru
 
-$overviewListener = $null
+$dashboardListener = $null
 for ($attempt = 0; $attempt -lt 40; $attempt++) {
     $newListeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
     foreach ($newListener in $newListeners) {
@@ -61,40 +61,40 @@ for ($attempt = 0; $attempt -lt 40; $attempt++) {
         if (
             $null -ne $newListenerProcess -and
             ([string]$newListenerProcess.CommandLine).IndexOf(
-                $overviewLauncher,
+                $dashboardLauncher,
                 [StringComparison]::OrdinalIgnoreCase
             ) -ge 0
         ) {
-            $overviewListener = $newListenerProcess
+            $dashboardListener = $newListenerProcess
             break
         }
     }
 
-    if ($null -ne $overviewListener) {
+    if ($null -ne $dashboardListener) {
         break
     }
     Start-Sleep -Milliseconds 250
 }
 
-if ($null -eq $overviewListener) {
-    throw "经营概览未能在预期时间内就绪。错误日志：$stderrLog"
+if ($null -eq $dashboardListener) {
+    throw "财务看板未能在预期时间内就绪。错误日志：$stderrLog"
 }
 
 try {
-    $response = Invoke-WebRequest -Uri $overviewUrl -UseBasicParsing -TimeoutSec 15
+    $response = Invoke-WebRequest -Uri $dashboardUrl -UseBasicParsing -TimeoutSec 15
 }
 catch {
-    throw "经营概览已经监听端口，但页面检查失败。错误日志：$stderrLog"
+    throw "财务看板已经监听端口，但页面检查失败。错误日志：$stderrLog"
 }
 
 if ($response.StatusCode -ne 200) {
-    throw "经营概览页面检查返回 HTTP $($response.StatusCode)。错误日志：$stderrLog"
+    throw "财务看板页面检查返回 HTTP $($response.StatusCode)。错误日志：$stderrLog"
 }
 
 if ($OpenBrowser) {
-    Start-Process $overviewUrl
+    Start-Process $dashboardUrl
 }
 
-Write-Host "经营概览已重启：$overviewUrl"
-Write-Host "进程 PID：$($overviewListener.ProcessId)"
+Write-Host "财务看板已重启：$dashboardUrl"
+Write-Host "进程 PID：$($dashboardListener.ProcessId)"
 Write-Host "错误日志：$stderrLog"

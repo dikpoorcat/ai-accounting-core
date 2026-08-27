@@ -2079,6 +2079,52 @@ class AccountingPeriodClose(Base):
     )
 
 
+class AccountingPeriodCloseCommentary(Base):
+    """Immutable AI interpretation bound to one deterministic close snapshot."""
+
+    __tablename__ = "accounting_period_close_commentaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    close_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    commentary: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    context_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    context_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    generation_method: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "close_id"],
+            ["accounting_period_closes.org_id", "accounting_period_closes.id"],
+            name="fk_period_close_commentary_org_close",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_period_close_commentary_org_id"),
+        CheckConstraint(
+            "length(trim(commentary)) BETWEEN 1 AND 2000",
+            name="ck_period_close_commentary_text",
+        ),
+        CheckConstraint(
+            "length(prompt_version) BETWEEN 1 AND 80",
+            name="ck_period_close_commentary_prompt_version",
+        ),
+        CheckConstraint(
+            "length(context_hash) = 64",
+            name="ck_period_close_commentary_context_hash_length",
+        ),
+        CheckConstraint(
+            "context_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_period_close_commentary_context_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "generation_method IN ('close_ai_agent','historical_ai_backfill')",
+            name="ck_period_close_commentary_generation_method",
+        ),
+    )
+
+
 class AccountingPeriodCloseApproval(Base):
     """Password-reauthenticated owner approval bound to one close preview hash."""
 

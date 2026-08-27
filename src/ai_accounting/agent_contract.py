@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v2"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v4"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -24,6 +24,9 @@ MCP_SERVER_INSTRUCTIONS = (
     "这是确定性记账内核，不是自由分录接口。调用企业数据工具前先调用 "
     "finance_get_event_schema，并遵守其 agent_operating_protocol。"
     f"{EVIDENCE_FIRST_RUNTIME_INSTRUCTION}"
+    "关账预览返回 management_commentary 时，必须严格依据其中的 context、instruction "
+    "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
+    "解读应形成综合判断，不得把看板指标简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
     "所有金额使用整数分，日期使用 YYYY-MM-DD。"
 )
@@ -73,6 +76,15 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "证据或负责人确认。不得通过提前员工入职日、伪造个税期初状态或默认为所有"
                     "新员工适用来得到税额；符合条件时按国家税务总局公告2020年第13号从当年1月"
                     "起累计5000元/月。"
+                ),
+            },
+            {
+                "code": "generate_period_close_management_commentary",
+                "instruction": (
+                    "每次关账必须使用预览提供的 management_commentary 上下文和版本化要求生成"
+                    "月度经营解读：提炼经营阶段、环比趋势、损益与现金差异、回款付款节奏和"
+                    "一至两个关键风险；不得复述看板、不得猜测 context 不能证明的原因，并将"
+                    "原文及 context_hash 一并提交给确认关账工具。"
                 ),
             },
             {

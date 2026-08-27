@@ -953,6 +953,10 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                         ConfirmAccountingPeriodCloseRequest(
                             **preview_request.model_dump(),
                             calculation_hash=preview.calculation_hash,
+                            management_commentary_context_hash=preview.data[
+                                "assistant_review_checklist"
+                            ]["management_commentary"]["context_hash"],
+                            management_commentary="七月经营情况已基于关账上下文完成分析。",
                             owner_approval_id=owner_approval_id,
                             idempotency_key="close-july",
                             review_facts=AccountingPeriodReviewFacts(
@@ -2491,6 +2495,10 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                         ConfirmAccountingPeriodCloseRequest(
                             **close_request.model_dump(),
                             calculation_hash=close_preview.calculation_hash,
+                            management_commentary_context_hash=close_preview.data[
+                                "assistant_review_checklist"
+                            ]["management_commentary"]["context_hash"],
+                            management_commentary="七月经营情况已基于关账上下文完成分析。",
                             owner_approval_id=owner_approval_id,
                             idempotency_key="late-matrix-close-july",
                             review_facts=AccountingPeriodReviewFacts(
@@ -3257,6 +3265,10 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                             period_id=august_period_id,
                             closing_date=date(2026, 7, 31),
                             calculation_hash=close_snapshot.calculation_hash,
+                            management_commentary_context_hash=close_snapshot.data[
+                                "assistant_review_checklist"
+                            ]["management_commentary"]["context_hash"],
+                            management_commentary="八月经营情况已基于关账上下文完成分析。",
                             owner_approval_id=owner_approval_id,
                             idempotency_key="close-wins-close-august",
                             review_facts=AccountingPeriodReviewFacts(
@@ -3417,6 +3429,12 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                                 period_id=september_period_id,
                                 closing_date=date(2026, 8, 31),
                                 calculation_hash=september_close_preview.calculation_hash,
+                                management_commentary_context_hash=(
+                                    september_close_preview.data[
+                                        "assistant_review_checklist"
+                                    ]["management_commentary"]["context_hash"]
+                                ),
+                                management_commentary="九月经营情况已基于关账上下文完成分析。",
                                 owner_approval_id=owner_approval_id,
                                 idempotency_key="import-wins-stale-close",
                                 review_facts=AccountingPeriodReviewFacts(

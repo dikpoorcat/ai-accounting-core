@@ -589,6 +589,10 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
         ConfirmAccountingPeriodCloseRequest(
             **preview_request.model_dump(),
             calculation_hash=preview.calculation_hash,
+            management_commentary_context_hash=preview.data[
+                "assistant_review_checklist"
+            ]["management_commentary"]["context_hash"],
+            management_commentary="七月经营情况已基于关账上下文完成分析。",
             owner_approval_id=owner_approval_id,
             idempotency_key="close-2026-07",
             review_facts=AccountingPeriodReviewFacts(
@@ -718,6 +722,10 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
         ConfirmAccountingPeriodCloseRequest(
             **close_preview_request.model_dump(),
             calculation_hash=close_preview.calculation_hash,
+            management_commentary_context_hash=close_preview.data[
+                "assistant_review_checklist"
+            ]["management_commentary"]["context_hash"],
+            management_commentary="七月经营情况已基于关账上下文完成分析。",
             owner_approval_id=owner_approval_id,
             idempotency_key="tax-close-2026-07",
             review_facts=AccountingPeriodReviewFacts(

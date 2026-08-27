@@ -117,13 +117,18 @@ class PreviewAccountingPeriodCloseRequest(BaseModel):
 
 class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    management_commentary_context_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    management_commentary: str | None = Field(default=None, min_length=1, max_length=1200)
     owner_approval_id: uuid.UUID | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
     review_facts: AccountingPeriodReviewFacts = Field(default_factory=AccountingPeriodReviewFacts)
     confirmation_note: str | None = Field(default=None, min_length=1, max_length=2000)
     evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
 
-    @field_validator("idempotency_key", "confirmation_note")
+    @field_validator("idempotency_key", "confirmation_note", "management_commentary")
     @classmethod
     def reject_blank_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -136,7 +141,13 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     def missing_information(self) -> list[AccountingPeriodInformationRequirement]:
         fields = [
             name
-            for name in ("calculation_hash", "idempotency_key", "confirmation_note")
+            for name in (
+                "calculation_hash",
+                "management_commentary_context_hash",
+                "management_commentary",
+                "idempotency_key",
+                "confirmation_note",
+            )
             if getattr(self, name) is None
         ]
         fields.extend(f"review_facts.{name}" for name in self.review_facts.missing_fields())
@@ -147,8 +158,8 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
                 AccountingPeriodInformationRequirement(
                     code="ACCOUNTING_PERIOD_CLOSE_CONFIRMATION_REQUIRED",
                     message=(
-                        "preview hash, idempotency key, all review declarations, "
-                        "note and evidence are required"
+                        "preview and commentary context hashes, AI management commentary, "
+                        "idempotency key, all review declarations, note and evidence are required"
                     ),
                     fields=fields,
                 )

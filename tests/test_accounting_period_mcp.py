@@ -298,6 +298,10 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             ConfirmAccountingPeriodCloseRequest(
                 **preview_request.model_dump(),
                 calculation_hash=preview["calculation_hash"],
+                management_commentary_context_hash=preview["data"][
+                    "assistant_review_checklist"
+                ]["management_commentary"]["context_hash"],
+                management_commentary="七月经营情况已基于关账上下文完成分析。",
                 idempotency_key="mcp-close-2026-07-without-owner-approval",
                 review_facts=AccountingPeriodReviewFacts(
                     voucher_completeness_reviewed=True,
@@ -338,6 +342,10 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             ConfirmAccountingPeriodCloseRequest(
                 **preview_request.model_dump(),
                 calculation_hash=preview["calculation_hash"],
+                management_commentary_context_hash=preview["data"][
+                    "assistant_review_checklist"
+                ]["management_commentary"]["context_hash"],
+                management_commentary="七月经营情况已基于关账上下文完成分析。",
                 owner_approval_id=owner_approval_id,
                 idempotency_key="mcp-close-2026-07",
                 review_facts=AccountingPeriodReviewFacts(

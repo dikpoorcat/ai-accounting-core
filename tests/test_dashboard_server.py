@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from datetime import date
@@ -10,9 +11,9 @@ from urllib.request import urlopen
 
 import pytest
 
-from ai_accounting import overview_server
+from ai_accounting import dashboard_server
+from ai_accounting.dashboard_server import build_quarterly_report_view, make_dashboard_handler
 from ai_accounting.models import AccountingPeriod
-from ai_accounting.overview_server import build_quarterly_report_view, make_overview_handler
 
 
 def _calculated_result(*, calculation_hash: str = "a" * 64) -> dict[str, object]:
@@ -206,16 +207,62 @@ def test_quarterly_report_view_distinguishes_in_progress_and_not_applicable() ->
 
 
 @pytest.fixture
-def overview_http_server(monkeypatch: pytest.MonkeyPatch):
+def dashboard_http_server(monkeypatch: pytest.MonkeyPatch):
     calculation_hash = "a" * 64
 
     def fake_loader(*_args, **_kwargs):
         return _calculated_result(calculation_hash=calculation_hash), b"xlsx-bytes"
 
-    monkeypatch.setattr(overview_server, "load_quarterly_financial_statement", fake_loader)
+    def fake_context_loader(*_args, **_kwargs):
+        return {
+            "schema_version": 1,
+            "company": "测试服务公司",
+            "generated_at": "2026-08-27T00:00:00+00:00",
+            "default_period": "2026-03",
+            "periods": [
+                {
+                    "key": "2026-03",
+                    "year": 2026,
+                    "month": 3,
+                    "label": "2026 年 3 月",
+                    "short_label": "3 月",
+                    "status": "closed",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-31",
+                    "closed_at": "2026-04-01T00:00:00+00:00",
+                }
+            ],
+            "default_quarter": "2026-Q1",
+            "quarters": [
+                {
+                    "key": "2026-Q1",
+                    "year": 2026,
+                    "quarter": 1,
+                    "label": "2026 年第 1 季度",
+                    "complete": True,
+                }
+            ],
+            "disclaimer": "私有试用",
+        }
+
+    def fake_page_loader(*_args, period_key=None, **_kwargs):
+        return {
+            "schema_version": 1,
+            "selected_period": {"key": period_key or "2026-03"},
+            "data": {"total_fen": 9_007_199_254_740_993},
+        }
+
+    monkeypatch.setattr(dashboard_server, "load_quarterly_financial_statement", fake_loader)
+    monkeypatch.setattr(dashboard_server, "load_dashboard_context", fake_context_loader)
+    for path, (page_name, _loader) in dashboard_server._DASHBOARD_PAGE_LOADERS.items():
+        monkeypatch.setitem(
+            dashboard_server._DASHBOARD_PAGE_LOADERS,
+            path,
+            (page_name, fake_page_loader),
+        )
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0),
-        make_overview_handler(object()),
+        make_dashboard_handler(object()),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -233,8 +280,89 @@ def _http_error_json(url: str) -> tuple[int, dict[str, object]]:
     return caught.value.code, json.loads(caught.value.read())
 
 
-def test_quarterly_export_requires_matching_preview_hash(overview_http_server) -> None:
-    base_url, calculation_hash = overview_http_server
+def test_dashboard_handler_ignores_expected_client_disconnect() -> None:
+    class AbortedWriter:
+        def write(self, _body: bytes) -> None:
+            raise ConnectionAbortedError
+
+    handler_type = make_dashboard_handler(object())
+    handler = handler_type.__new__(handler_type)
+    handler.wfile = AbortedWriter()
+
+    handler._write_body(b"obsolete response")
+
+
+def test_dashboard_http_serves_vue_routes_and_assets(
+    dashboard_http_server,
+) -> None:
+    base_url, _calculation_hash = dashboard_http_server
+
+    with urlopen(base_url + "/funds") as response:  # noqa: S310 - local test server
+        assert response.status == 200
+        document = response.read().decode("utf-8")
+        assert '<div id="app"></div>' in document
+        content_security_policy = response.headers["Content-Security-Policy"]
+        assert "script-src 'self'" in content_security_policy
+        assert "frame-src 'self'" in content_security_policy
+        assert "'unsafe-inline'" not in content_security_policy
+
+    script_match = re.search(r'src="(/assets/[^"]+\.js)"', document)
+    assert script_match is not None
+    with urlopen(base_url + script_match.group(1)) as response:  # noqa: S310
+        assert response.status == 200
+        assert "javascript" in response.headers["Content-Type"]
+        assert response.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+        assert response.read()
+
+    with pytest.raises(HTTPError) as caught:
+        urlopen(base_url + "/legacy")  # noqa: S310 - removed compatibility route
+    assert caught.value.code == 404
+
+
+def test_dashboard_http_serves_shared_context(dashboard_http_server) -> None:
+    base_url, _calculation_hash = dashboard_http_server
+
+    with urlopen(base_url + "/api/dashboard/context") as response:  # noqa: S310
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        payload = json.loads(response.read())
+
+    assert payload["company"] == "测试服务公司"
+    assert payload["default_period"] == "2026-03"
+    assert payload["quarters"][0]["complete"] is True
+
+
+@pytest.mark.parametrize("page", ["brief", "funds", "employees", "assets"])
+def test_dashboard_http_serves_one_selected_page_with_string_fen(
+    dashboard_http_server,
+    page: str,
+) -> None:
+    base_url, _calculation_hash = dashboard_http_server
+
+    with urlopen(  # noqa: S310
+        f"{base_url}/api/dashboard/{page}?period=2026-03"
+    ) as response:
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        payload = json.loads(response.read())
+
+    assert payload["selected_period"]["key"] == "2026-03"
+    assert payload["data"]["total_fen"] == "9007199254740993"
+
+
+def test_dashboard_http_rejects_duplicate_page_period(dashboard_http_server) -> None:
+    base_url, _calculation_hash = dashboard_http_server
+
+    status, payload = _http_error_json(
+        base_url + "/api/dashboard/funds?period=2026-02&period=2026-03"
+    )
+
+    assert status == 400
+    assert payload["errors"] == ["DASHBOARD_PERIOD_INVALID"]
+
+
+def test_quarterly_export_requires_matching_preview_hash(dashboard_http_server) -> None:
+    base_url, calculation_hash = dashboard_http_server
     endpoint = f"{base_url}/financial-reports/quarterly.xlsx?year=2026&quarter=1"
 
     status, missing_hash = _http_error_json(endpoint)

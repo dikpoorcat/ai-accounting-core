@@ -340,6 +340,10 @@ def _close(
         ConfirmAccountingPeriodCloseRequest(
             **preview_request.model_dump(),
             calculation_hash=preview.calculation_hash,
+            management_commentary_context_hash=preview.data[
+                "assistant_review_checklist"
+            ]["management_commentary"]["context_hash"],
+            management_commentary=f"2026 年 {month} 月经营情况已基于关账上下文完成分析。",
             owner_approval_id=approval.id,
             idempotency_key=f"pilot-close-2026-{month:02d}",
             review_facts=_review_facts(),
