@@ -378,11 +378,10 @@ onBeforeUnmount(() => controller?.abort());
 
 <style scoped>
 .employees-page {
-  width: min(calc(100% - 48px), 1280px);
-  height: 100%;
+  width: min(calc(100% - 48px), 1320px);
+  min-height: 100%;
   margin: 0 auto;
-  padding: 42px 0 64px;
-  overflow-y: auto;
+  padding: 25px 0 46px;
 }
 
 .muted,
@@ -391,17 +390,17 @@ small {
 }
 
 .eyebrow {
-  margin: 0 0 6px;
+  margin: 0 0 5px;
   color: var(--accent);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
 }
 
 .panel,
 .state-panel {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
@@ -409,7 +408,8 @@ small {
 .state-panel {
   display: grid;
   gap: 7px;
-  padding: 24px;
+  padding: 28px;
+  border-radius: 18px;
 }
 
 .state-panel span {
@@ -418,7 +418,7 @@ small {
 
 .state-panel.error,
 .employee-card.attention {
-  border-color: color-mix(in srgb, #b86b2d 52%, var(--line));
+  border-color: color-mix(in srgb, var(--warning) 52%, var(--line));
 }
 
 .state-panel button,
@@ -435,29 +435,43 @@ small {
   width: max-content;
   margin-top: 5px;
   padding: 0 14px;
+  border: 0;
+  background: var(--accent);
+  color: var(--surface);
   cursor: pointer;
 }
 
 .people-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
-  gap: 22px;
-  padding: clamp(24px, 4vw, 42px);
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: linear-gradient(135deg, var(--accent-soft), var(--surface));
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.75fr);
+  gap: 25px;
+  min-height: 198px;
+  padding: 23px 25px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%),
+    linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));
+  box-shadow: var(--shadow-soft);
 }
 
 .people-hero p {
-  margin-block: 8px 0;
+  margin-block: 7px 0;
+  font-size: 12px;
+}
+
+.people-hero > div:first-child > span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .people-headcount {
   display: block;
-  margin: 10px 0 8px;
-  font-size: clamp(44px, 6vw, 70px);
+  margin: 7px 0 3px;
+  color: var(--accent);
+  font-size: clamp(36px, 4.5vw, 48px);
   line-height: 1;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.04em;
 }
 
 .people-headcount small {
@@ -467,11 +481,13 @@ small {
 }
 
 .people-cost {
-  align-self: end;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  display: grid;
+  align-content: center;
+  align-self: stretch;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface) 83%, transparent);
 }
 
 .people-cost span,
@@ -487,42 +503,92 @@ small {
   font-size: 12px;
 }
 
+.people-cost small,
+.people-kpi small {
+  font-size: 11px;
+}
+
 .people-cost strong {
   display: block;
   margin: 7px 0;
+  color: var(--accent);
   font-size: 27px;
 }
 
 .people-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .people-kpi {
-  min-height: 132px;
-  padding: 18px;
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 126px;
+  align-content: space-between;
+  gap: 4px;
+  overflow: hidden;
+  padding: 15px 16px;
   border: 1px solid var(--line);
-  border-radius: 13px;
+  border-radius: 16px;
   background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.people-kpi::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent);
+  content: "";
+}
+
+.people-kpi:nth-child(1)::before {
+  background: var(--info);
+}
+
+.people-kpi:nth-child(2)::before {
+  background: var(--gold);
+}
+
+.people-kpi:nth-child(3)::before {
+  background: var(--warning);
 }
 
 .people-kpi strong {
   display: block;
-  margin: 10px 0 6px;
-  font-size: 24px;
+  margin: 4px 0;
+  color: var(--accent);
+  font-size: clamp(20px, 2vw, 27px);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.people-kpi:nth-child(1) strong {
+  color: var(--info);
+}
+
+.people-kpi:nth-child(2) strong {
+  color: var(--gold);
+}
+
+.people-kpi:nth-child(3) strong {
+  color: var(--warning);
 }
 
 .attention-panel,
 .employee-section,
 .identity-note {
-  margin-top: 18px;
-  padding: 22px;
+  margin-top: 12px;
+  padding: 18px;
 }
 
 .attention-panel {
-  border-color: color-mix(in srgb, #b86b2d 45%, var(--line));
+  border-color: color-mix(in srgb, var(--warning) 52%, var(--line));
 }
 
 .attention-panel ul {
@@ -547,18 +613,27 @@ small {
   margin: 0;
 }
 
+.section-heading h2 {
+  font-size: 20px;
+}
+
+.section-heading > strong {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .attention-count {
-  padding: 5px 10px;
+  padding: 3px 9px;
   border-radius: 999px;
-  background: color-mix(in srgb, #b86b2d 14%, var(--surface));
-  color: #9b551f;
-  font-size: 13px;
-  font-weight: 700;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .employee-toolbar {
   align-items: center;
-  margin: 18px 0 14px;
+  margin: 14px 0 12px;
 }
 
 .employee-toolbar p {
@@ -573,15 +648,15 @@ small {
 .employee-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .employee-card {
   min-width: 0;
-  padding: 18px;
+  padding: 16px;
   border: 1px solid var(--line);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--surface) 90%, var(--background));
+  border-radius: 12px;
+  background: var(--surface-soft);
 }
 
 .employee-name,
@@ -669,7 +744,7 @@ small {
 }
 
 .employee-status.not_declared::before {
-  background: #b86b2d;
+  background: var(--warning);
 }
 
 .employee-profile {
@@ -712,9 +787,10 @@ small {
 }
 
 .empty-result {
-  padding: 28px;
+  padding: 24px;
   border: 1px dashed var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
+  background: var(--surface-soft);
   text-align: center;
 }
 
@@ -734,13 +810,19 @@ small {
 
 @media (max-width: 760px) {
   .employees-page {
-    width: min(calc(100% - 32px), 1280px);
-    padding-top: 28px;
+    width: min(calc(100% - 24px), 1320px);
+    padding: 16px 0 24px;
   }
 
   .people-hero,
   .people-kpi-grid {
     grid-template-columns: 1fr;
+  }
+
+  .people-hero {
+    gap: 13px;
+    padding: 19px;
+    border-radius: 17px;
   }
 
   .employee-toolbar,
@@ -753,6 +835,7 @@ small {
   .employee-toolbar select {
     width: 100%;
     min-width: 0;
+    min-height: 44px;
   }
 
   .employee-amount {

@@ -460,49 +460,28 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .brief-page {
-  --brief-page: #f5f7f4;
-  --brief-surface: #ffffff;
-  --brief-soft: #f1f5f1;
-  --brief-text: #18221b;
-  --brief-muted: #68746c;
-  --brief-line: #dce5dd;
-  --brief-line-strong: #c7d3c9;
-  --brief-green: #15754a;
-  --brief-green-soft: #e5f3ea;
-  --brief-blue: #236d9c;
-  --brief-blue-soft: #e7f2f8;
-  --brief-gold: #956e19;
-  --brief-gold-soft: #f7efd8;
-  --brief-amber: #96610b;
-  --brief-amber-soft: #fff1d4;
-  --brief-red: #b4443e;
-  --brief-red-soft: #fbe7e4;
-  --brief-shadow: 0 8px 28px rgb(25 55 37 / 5%);
+  --brief-page: var(--background);
+  --brief-surface: var(--surface);
+  --brief-soft: var(--surface-soft);
+  --brief-text: var(--text);
+  --brief-muted: var(--muted);
+  --brief-line: var(--line);
+  --brief-line-strong: var(--line-strong);
+  --brief-green: var(--accent);
+  --brief-green-soft: var(--accent-soft);
+  --brief-blue: var(--info);
+  --brief-blue-soft: var(--info-soft);
+  --brief-gold: var(--gold);
+  --brief-gold-soft: var(--gold-soft);
+  --brief-amber: var(--warning);
+  --brief-amber-soft: var(--warning-soft);
+  --brief-red: var(--danger);
+  --brief-red-soft: var(--danger-soft);
+  --brief-shadow: var(--shadow-soft);
   width: min(calc(100% - 48px), 1320px);
   margin: 0 auto;
   padding: 25px 0 46px;
   color: var(--brief-text);
-}
-
-:global(:root[data-theme="dark"] .brief-page) {
-  --brief-page: #0e1511;
-  --brief-surface: #161f1a;
-  --brief-soft: #1c2922;
-  --brief-text: #eef4f0;
-  --brief-muted: #a6b3ab;
-  --brief-line: #314038;
-  --brief-line-strong: #46594e;
-  --brief-green: #78d6a6;
-  --brief-green-soft: #173b2a;
-  --brief-blue: #8bc9ed;
-  --brief-blue-soft: #173347;
-  --brief-gold: #ddbd6c;
-  --brief-gold-soft: #382f19;
-  --brief-amber: #f0c16b;
-  --brief-amber-soft: #42331a;
-  --brief-red: #f19a92;
-  --brief-red-soft: #432320;
-  --brief-shadow: 0 10px 32px rgb(0 0 0 / 20%);
 }
 
 .state-panel {
@@ -548,13 +527,6 @@ onBeforeUnmount(() => {
     radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--brief-green) 11%, transparent), transparent 32%),
     linear-gradient(125deg, var(--brief-surface), color-mix(in srgb, var(--brief-green-soft) 66%, var(--brief-surface)));
   box-shadow: var(--brief-shadow);
-}
-
-:global(:root[data-theme="dark"] .cockpit) {
-  border-color: #2f5d46;
-  background:
-    radial-gradient(circle at 7% 10%, rgb(108 207 157 / 12%), transparent 32%),
-    linear-gradient(125deg, #16271e, #102118);
 }
 
 .cockpit-meta,

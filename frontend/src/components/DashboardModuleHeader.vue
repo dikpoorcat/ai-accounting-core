@@ -121,6 +121,10 @@ h1 {
   font-size: 13px;
 }
 
+select.control {
+  cursor: pointer;
+}
+
 .refresh {
   cursor: pointer;
 }
@@ -153,13 +157,8 @@ h1 {
 }
 
 .period-status.open {
-  background: #fff1d2;
-  color: #8b5b00;
-}
-
-:global(:root[data-theme="dark"] .period-status.open) {
-  background: #493819;
-  color: #f2c46f;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .header-progress {

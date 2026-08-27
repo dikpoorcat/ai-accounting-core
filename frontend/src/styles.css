@@ -10,8 +10,16 @@
   --line-strong: #c8d2ca;
   --accent: #16754b;
   --accent-soft: #e6f3eb;
+  --info: #236d9c;
+  --info-soft: #e7f2f8;
+  --gold: #956e19;
+  --gold-soft: #f7efd8;
+  --warning: #96610b;
+  --warning-soft: #fff1d4;
+  --danger: #b4443e;
+  --danger-soft: #fbe7e4;
   --focus: #23679e;
-  --shadow-soft: 0 8px 28px rgb(27 48 35 / 7%);
+  --shadow-soft: 0 8px 28px rgb(25 55 37 / 5%);
 }
 
 :root[data-theme="dark"] {
@@ -26,8 +34,16 @@
   --line-strong: #45564c;
   --accent: #78d6a6;
   --accent-soft: #173b2a;
+  --info: #8bc9ed;
+  --info-soft: #173347;
+  --gold: #ddbd6c;
+  --gold-soft: #382f19;
+  --warning: #f0c16b;
+  --warning-soft: #42331a;
+  --danger: #f19a92;
+  --danger-soft: #432320;
   --focus: #8ac2eb;
-  --shadow-soft: 0 10px 34px rgb(0 0 0 / 23%);
+  --shadow-soft: 0 10px 32px rgb(0 0 0 / 20%);
 }
 
 * {
@@ -118,6 +134,7 @@ button {
   width: 38px;
   height: 38px;
   flex: 0 0 auto;
+  margin-left: 1px;
   place-items: center;
   border-radius: 12px;
   background: linear-gradient(145deg, #1b8055, #0f6040);
@@ -183,8 +200,9 @@ button {
 
 .module-link {
   position: relative;
+  height: 40px;
   gap: 9px;
-  padding: 8px 11px;
+  padding: 8px 11px 8px 9.5px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
@@ -241,9 +259,9 @@ button {
 
 .theme-button {
   width: 100%;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
-  padding: 7px 11px;
+  padding: 7px 11px 7px 9.5px;
 }
 
 .theme-button:hover,
@@ -270,6 +288,10 @@ button {
     width: 40px;
     align-self: center;
     justify-content: center;
+  }
+
+  .sidebar-collapsed .brand-mark {
+    margin-left: 0;
   }
 
   .sidebar-collapsed .brand-copy,
