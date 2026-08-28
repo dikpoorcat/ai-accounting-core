@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { RouterLink, RouterView } from "vue-router";
+import { RouterLink, RouterView, useRoute } from "vue-router";
 
 import { useDashboardContext } from "./composables/useDashboardContext";
 
@@ -14,6 +14,7 @@ const navItems = [
   { name: "reports", label: "财务报表", path: "/reports", icon: "report" },
 ] as const;
 
+const route = useRoute();
 const savedTheme = localStorage.getItem("finance-dashboard-theme");
 const theme = ref<Theme>(savedTheme === "dark" ? "dark" : "light");
 const { context, load: loadContext } = useDashboardContext();
@@ -78,7 +79,7 @@ function toggleSidebar() {
         <RouterLink
           v-for="item in navItems"
           :key="item.name"
-          :to="item.path"
+          :to="{ path: item.path, query: route.query }"
           class="module-link"
           :aria-label="item.label"
           :title="item.label"

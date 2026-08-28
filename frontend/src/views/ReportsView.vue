@@ -137,8 +137,12 @@ const technicalRows = computed<TechnicalRow[]>(() => {
 });
 
 function routeQuarter(): string | null {
-  const value = route.query.period;
-  return typeof value === "string" ? value : null;
+  const value = route.query.quarter;
+  if (typeof value === "string") return value;
+  const legacyValue = route.query.period;
+  return typeof legacyValue === "string" && /^\d{4}-Q[1-4]$/.test(legacyValue)
+    ? legacyValue
+    : null;
 }
 
 async function synchronizeQuarter(force = false) {
@@ -157,8 +161,15 @@ async function synchronizeQuarter(force = false) {
     const target = currentContext.quarters.some((item) => item.key === requested)
       ? (requested as string)
       : (currentContext.default_quarter ?? currentContext.quarters.at(-1)?.key ?? "");
-    if (requested !== target) {
-      await router.replace({ query: { ...route.query, period: target } });
+    const legacyQuarter = !route.query.quarter && requested === route.query.period;
+    if (requested !== target || legacyQuarter) {
+      await router.replace({
+        query: {
+          ...route.query,
+          period: legacyQuarter ? (currentContext.default_period ?? undefined) : route.query.period,
+          quarter: target,
+        },
+      });
       return;
     }
     if (force || selectedQuarter.value !== target || report.value === null) {
@@ -211,7 +222,7 @@ async function preview(quarterKey: string) {
 
 function changeQuarter(value: string) {
   if (!value || value === routeQuarter()) return;
-  void router.push({ query: { ...route.query, period: value } });
+  void router.push({ query: { ...route.query, quarter: value } });
 }
 
 async function refresh() {
@@ -296,7 +307,7 @@ onMounted(() => {
 });
 
 watch(
-  () => route.query.period,
+  () => route.query.quarter,
   () => {
     if (mounted) void synchronizeQuarter();
   },
