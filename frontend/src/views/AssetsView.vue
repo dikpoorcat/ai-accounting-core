@@ -527,7 +527,7 @@ onBeforeUnmount(() => {
 .asset-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0 12px; }
 .asset-toolbar p { margin: 0; color: var(--muted); }
 .control { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); }
-.asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
 .asset-card { padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
 .asset-card:hover, .asset-card:focus-within, .asset-card[open] { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); }
 .asset-card-summary { display: block; padding: 16px; border-radius: inherit; cursor: pointer; list-style: none; }
