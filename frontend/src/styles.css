@@ -121,6 +121,19 @@ button {
   backdrop-filter: blur(18px);
 }
 
+.sidebar-scroll-area {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  margin-inline: -4px;
+  padding-inline: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
 .brand {
   display: flex;
   min-height: 60px;
@@ -342,6 +355,10 @@ button {
     padding: 11px 12px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .sidebar-scroll-area {
+    display: contents;
   }
 
   .brand {
