@@ -20,7 +20,7 @@ const { context, load: loadContext } = useDashboardContext();
 const response = ref<EmployeesDashboardResponse | null>(null);
 const loading = ref(false);
 const error = ref("");
-const filter = ref<EmployeeFilter>("all");
+const filter = ref<EmployeeFilter>("in_period");
 let controller: AbortController | null = null;
 let initialized = false;
 
@@ -273,11 +273,11 @@ onBeforeUnmount(() => controller?.abort());
         <div class="employee-toolbar">
           <p class="muted">{{ filterLabel }} · 显示 {{ filteredEmployees.length }} 人</p>
           <select v-model="filter" class="control" aria-label="筛选员工">
-            <option value="all">全部已登记员工</option>
             <option value="in_period">本月核算范围内</option>
             <option value="payroll">本月有已过账工资</option>
             <option value="no_payroll">本月暂无已过账工资</option>
             <option value="ended">本月前已结束核算</option>
+            <option value="all">全部已登记员工</option>
           </select>
         </div>
 
