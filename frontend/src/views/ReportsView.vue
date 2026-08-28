@@ -849,15 +849,15 @@ tr.total td { background: var(--accent-soft); font-weight: 750; }
 .template-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding: 14px; border: 1px solid #cbd5e1; border-radius: 10px; background: #e9edf1; }
 .tax-template-sheet { width: 780px; box-sizing: border-box; padding: 26px 30px 32px; background: #fff; color: #171717; box-shadow: 0 2px 10px rgb(15 23 42 / 10%); font-family: SimSun, "Songti SC", serif; }
 .tax-template-sheet.balance-sheet { width: 1120px; }
-.template-title-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; min-height: 62px; }
-.template-title-row h3 { grid-column: 2; margin: 0; font-family: inherit; font-size: 21px; font-weight: 700; letter-spacing: .04em; text-align: center; }
-.template-title-row span { grid-column: 3; justify-self: end; margin-bottom: 3px; color: #4b5563; font-size: 12px; }
-.template-meta-grid { display: grid; grid-template-columns: 150px minmax(230px, 1fr) 150px minmax(230px, 1fr); border-top: 2px solid #444; border-left: 2px solid #444; font-size: 12px; }
+.template-title-row { position: relative; display: flex; min-height: 76px; align-items: center; justify-content: center; padding-bottom: 14px; }
+.template-title-row h3 { margin: 0; font-family: inherit; font-size: 20px; font-weight: 700; letter-spacing: .02em; text-align: center; white-space: nowrap; }
+.template-title-row span { position: absolute; right: 0; bottom: 7px; color: #4b5563; font-size: 12px; white-space: nowrap; }
+.template-meta-grid { display: grid; grid-template-columns: 135px minmax(190px, 1fr) 135px minmax(190px, 1fr); border-top: 2px solid #444; border-left: 2px solid #444; font-size: 12px; }
 .template-meta-grid > * { min-height: 38px; display: flex; align-items: center; justify-content: center; padding: 7px 10px; border-right: 1px solid #555; border-bottom: 1px solid #555; }
 .template-meta-grid > :nth-child(4n) { border-right-width: 2px; }
 .template-meta-grid > :nth-last-child(-n + 4) { border-bottom-width: 2px; }
 .template-meta-label { background: #e0e0e0; font-weight: 400; }
-.template-meta-grid strong { justify-content: flex-start; background: #f8f8f8; font-family: Arial, "Microsoft YaHei", sans-serif; font-weight: 500; }
+.template-meta-grid strong { min-width: 0; justify-content: flex-start; overflow-wrap: anywhere; background: #f8f8f8; font-family: Arial, "Microsoft YaHei", sans-serif; font-weight: 500; }
 .tax-template-table { width: 100%; min-width: 0; margin: 0; border-collapse: collapse; border-right: 2px solid #444; border-bottom: 2px solid #444; background: #fff; color: #171717; font-size: 12px; table-layout: fixed; }
 .tax-template-table th, .tax-template-table td { position: static; height: 36px; padding: 6px 8px; border-right: 1px solid #555; border-bottom: 1px solid #555; background: #fff; color: #171717; font-weight: 400; line-height: 1.35; }
 .tax-template-table th { background: #e0e0e0; font-weight: 700; text-align: center; }
