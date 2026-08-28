@@ -283,6 +283,13 @@ button {
   color: var(--accent);
 }
 
+.app-version {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
 .workspace-main {
   min-width: 0;
   background: var(--background);
@@ -309,7 +316,8 @@ button {
 
   .sidebar-collapsed .brand-copy,
   .sidebar-collapsed .module-link-label,
-  .sidebar-collapsed .control-label {
+  .sidebar-collapsed .control-label,
+  .sidebar-collapsed .app-version {
     display: none;
   }
 
@@ -401,6 +409,10 @@ button {
     margin: 0;
     padding: 0;
     border: 0;
+  }
+
+  .app-version {
+    display: none;
   }
 
   .theme-button {

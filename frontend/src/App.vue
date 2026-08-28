@@ -7,6 +7,7 @@ import { useDashboardContext } from "./composables/useDashboardContext";
 
 type Theme = "light" | "dark";
 
+const appVersion = __APP_VERSION__;
 const navItems = [
   { name: "brief", label: "经营简报", path: "/", icon: "chart" },
   { name: "funds", label: "资金", path: "/funds", icon: "wallet" },
@@ -146,6 +147,7 @@ async function selectPeriod(periodKey: string) {
             </svg>
             <span class="control-label">{{ theme === "dark" ? "浅色外观" : "深色外观" }}</span>
           </button>
+          <small class="app-version">{{ appVersion }}</small>
         </div>
       </div>
     </header>
