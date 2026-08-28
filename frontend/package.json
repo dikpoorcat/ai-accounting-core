@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "type-check": "vue-tsc --noEmit",
-    "build": "npm run type-check && vite build"
+    "build": "npm run type-check && vite build",
+    "build:release": "npm run type-check && vite build --mode release"
   },
   "dependencies": {
     "vue": "^3.5.0",

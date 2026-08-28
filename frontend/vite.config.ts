@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [vue()],
   server: {
     proxy: {
@@ -10,7 +10,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../src/ai_accounting/static/dashboard",
+    outDir: mode === "release" ? "../src/ai_accounting/static/dashboard" : "dist",
     emptyOutDir: true,
   },
-});
+}));

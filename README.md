@@ -156,7 +156,7 @@ Vue 3、Vite、TypeScript 和 Vue Router；“经营简报”“资金”“员�
 已关闭月份如保存了与关账快照绑定的经营解读，“经营简报”会优先展示该不可变原文；未关账
 月份及没有历史解读的旧快照使用页面基于当期只读数据生成的简要结论。
 
-修改前端源码后需要重新生成 Python 包内使用的静态资源：
+修改前端源码后，日常使用以下命令执行类型检查和本地构建：
 
 ```powershell
 Set-Location .\frontend
@@ -165,9 +165,13 @@ npm run build
 Set-Location ..
 ```
 
-构建产物写入 `src/ai_accounting/static/dashboard/`；运行 `finance-dashboard` 时不需要
-Node.js。本地执行 `npm run dev` 可以直接查看页面；调用 API 或报表下载时，Vite 会把
-请求代理到默认运行在 `http://127.0.0.1:8765/` 的 `finance-dashboard` 服务。
+日常构建产物写入已被 Git 忽略的 `frontend/dist/`，不会更新 Python 包内的静态资源。
+需要在本地运行 `finance-dashboard` 或准备一版发布资源时，改用 `npm run build:release`，它会
+更新同样被 Git 忽略的 `src/ai_accounting/static/dashboard/`。确认需要把该版资源纳入仓库时，
+再显式执行 `git add -f src/ai_accounting/static/dashboard` 后单独提交。运行
+`finance-dashboard` 使用最近一次本地发布构建，且运行时不需要 Node.js。本地执行
+`npm run dev` 可以直接查看页面；调用 API 或报表下载时，Vite 会把请求代理到默认运行在
+`http://127.0.0.1:8765/` 的 `finance-dashboard` 服务。
 
 如果找不到原启动窗口，或修改页面后需要重启，可在仓库目录运行：
 
