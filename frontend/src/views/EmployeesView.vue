@@ -285,65 +285,64 @@ onBeforeUnmount(() => controller?.abort());
           当前筛选条件下没有员工记录。
         </div>
         <div v-else class="employee-grid">
-          <article
+          <details
             v-for="item in filteredEmployees"
             :key="item.code"
             class="employee-card"
             :class="{ attention: employeeHasAttention(item) }"
           >
-            <div class="employee-card-head">
-              <div class="employee-name">
-                <span>{{ item.code }}</span>
-                <h3>{{ item.name }}</h3>
+            <summary class="employee-card-summary">
+              <div class="employee-card-head">
+                <div class="employee-name">
+                  <span>{{ item.code }}</span>
+                  <h3>{{ item.name }}</h3>
+                </div>
+                <div class="employee-amount">
+                  <span>本月公司成本</span>
+                  <strong>{{ formatFen(item.company_cost_fen) }}</strong>
+                </div>
               </div>
-              <div class="employee-amount">
-                <span>本月公司成本</span>
-                <strong>{{ formatFen(item.company_cost_fen) }}</strong>
+
+              <div class="employee-meta">
+                <span>{{ item.period_state_label }}</span>
+                <span>
+                  核算日期 {{ item.employment_start_date }} 至
+                  {{ item.employment_end_date || "未设结束日" }}
+                </span>
+                <span v-if="item.has_payroll_activity">
+                  {{ item.batch_count }} 个已过账工资批次<span v-if="item.payroll_periods.length">
+                    · 归属期 {{ item.payroll_periods.join("、") }}</span
+                  >
+                </span>
+                <span v-else>本月暂无已过账工资</span>
               </div>
-            </div>
 
-            <div class="employee-meta">
-              <span>{{ item.period_state_label }}</span>
-              <span>
-                核算日期 {{ item.employment_start_date }} 至
-                {{ item.employment_end_date || "未设结束日" }}
-              </span>
-              <span v-if="item.has_payroll_activity">
-                {{ item.batch_count }} 个已过账工资批次<span v-if="item.payroll_periods.length">
-                  · 归属期 {{ item.payroll_periods.join("、") }}</span
-                >
-              </span>
-              <span v-else>本月暂无已过账工资</span>
-            </div>
-
-            <div class="employee-pay-grid">
-              <div><span>工资毛额</span><strong>{{ formatFen(item.gross_salary_fen) }}</strong></div>
-              <div><span>报税工资</span><strong>{{ formatFen(item.tax_reported_salary_fen) }}</strong></div>
-              <div><span>全年一次性奖金</span><strong>{{ formatFen(item.annual_bonus_fen) }}</strong></div>
-              <div><span>公司社保</span><strong>{{ formatFen(item.employer_social_insurance_fen) }}</strong></div>
-              <div><span>公司公积金</span><strong>{{ formatFen(item.employer_housing_fund_fen) }}</strong></div>
-              <div>
-                <span>个人社保公积金</span>
-                <strong>{{ formatFen(fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen)) }}</strong>
+              <div class="employee-pay-grid">
+                <div><span>工资毛额</span><strong>{{ formatFen(item.gross_salary_fen) }}</strong></div>
+                <div><span>报税工资</span><strong>{{ formatFen(item.tax_reported_salary_fen) }}</strong></div>
+                <div><span>全年一次性奖金</span><strong>{{ formatFen(item.annual_bonus_fen) }}</strong></div>
+                <div><span>公司社保</span><strong>{{ formatFen(item.employer_social_insurance_fen) }}</strong></div>
+                <div><span>公司公积金</span><strong>{{ formatFen(item.employer_housing_fund_fen) }}</strong></div>
+                <div>
+                  <span>个人社保公积金</span>
+                  <strong>{{ formatFen(fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen)) }}</strong>
+                </div>
+                <div><span>个人所得税</span><strong>{{ formatFen(item.individual_income_tax_fen) }}</strong></div>
+                <div><span>个人扣减合计</span><strong>{{ formatFen(item.personal_deduction_fen) }}</strong></div>
+                <div><span>到手金额</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div>
               </div>
-              <div><span>个人所得税</span><strong>{{ formatFen(item.individual_income_tax_fen) }}</strong></div>
-              <div><span>个人扣减合计</span><strong>{{ formatFen(item.personal_deduction_fen) }}</strong></div>
-              <div><span>到手金额</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div>
-            </div>
 
-            <div class="employee-status-row">
-              <span class="employee-status" :class="[item.period_state, item.declaration_state]">
-                {{ item.declaration_label }}
-              </span>
-              <span>
-                {{ item.expense_areas.length ? `费用归属：${item.expense_areas.join("、")}` : "暂无费用归属" }}
-              </span>
-            </div>
+              <div class="employee-status-row">
+                <span class="employee-status" :class="[item.period_state, item.declaration_state]">
+                  {{ item.declaration_label }}
+                </span>
+                <span>
+                  {{ item.expense_areas.length ? `费用归属：${item.expense_areas.join("、")}` : "暂无费用归属" }}
+                </span>
+              </div>
+            </summary>
 
-            <details class="employee-profile">
-              <summary>
-                {{ item.profile_available ? "查看月末有效工资核算配置" : "本月末无有效工资核算配置" }}
-              </summary>
+            <div class="employee-profile">
               <dl v-if="item.profile_available" class="employee-profile-grid">
                 <div>
                   <dt>社保</dt>
@@ -364,8 +363,8 @@ onBeforeUnmount(() => controller?.abort());
               <p v-else class="muted">
                 当前月份末未找到有效的工资核算配置；页面不会据此推断参保、缴存或税务口径。
               </p>
-            </details>
-          </article>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -653,10 +652,28 @@ small {
 
 .employee-card {
   min-width: 0;
-  padding: 16px;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-soft);
+}
+
+.employee-card:hover,
+.employee-card:focus-within,
+.employee-card[open] {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--line));
+}
+
+.employee-card-summary {
+  display: block;
+  padding: 16px;
+  border-radius: inherit;
+  cursor: pointer;
+  list-style: none;
+}
+
+.employee-card-summary::-webkit-details-marker {
+  display: none;
 }
 
 .employee-name,
@@ -748,21 +765,20 @@ small {
 }
 
 .employee-profile {
-  margin-top: 11px;
-}
-
-.employee-profile summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 650;
+  margin: 0 16px 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 .employee-profile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 14px;
-  margin: 12px 0 0;
+  margin: 0;
+}
+
+.employee-profile > p {
+  margin: 0;
 }
 
 .employee-profile-grid div {

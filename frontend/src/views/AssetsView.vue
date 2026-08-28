@@ -417,59 +417,58 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-if="filteredItems.length" class="asset-grid">
-            <article
+            <details
               v-for="item in filteredItems"
               :key="`${item.asset_type}-${item.code}`"
               class="asset-card"
               :class="item.status"
             >
-              <div class="asset-card-head">
-                <div class="asset-name">
-                  <span>{{ assetTypeLabel(item) }} · {{ item.code }}</span><h3>{{ item.name }}</h3>
-                </div>
-                <div class="book-value">
-                  <span>期末卡片账面价值</span><strong>{{ formatFen(item.book_value_fen) }}</strong>
-                </div>
-              </div>
-              <div class="asset-meta">
-                <span>{{ item.category_label }}</span><span>{{ item.status_label }}</span>
-                <span>取得日期 {{ item.acquisition_date }}</span>
-                <span>{{ availabilityLabel(item) }}</span>
-              </div>
-              <div class="value-grid">
-                <div><span>资产原值</span><strong>{{ formatFen(item.cost_fen) }}</strong></div>
-                <div>
-                  <span>{{ chargeLabel(item) }}</span>
-                  <strong>{{ formatFen(item.accumulated_charge_fen) }}</strong>
-                </div>
-                <div>
-                  <span>{{ chargeLabel(item, true) }}</span>
-                  <strong>{{ formatFen(item.month_charge_fen) }}</strong>
-                </div>
-              </div>
-              <div
-                class="progress"
-                role="progressbar"
-                aria-label="累计折旧或摊销占资产原值比例"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                :aria-valuenow="chargeProgress(item)"
-              >
-                <span :style="{ width: `${chargeProgress(item)}%` }"></span>
-              </div>
-              <div class="status-row">
-                <span class="asset-status" :class="item.status">{{ item.status_label }}</span>
-                <span>{{ chargeNote(item) }}</span>
-              </div>
-              <details class="asset-detail">
-                <summary>查看资产卡片信息</summary>
-                <dl>
-                  <div v-for="row in assetDetails(item)" :key="row.label">
-                    <dt>{{ row.label }}</dt><dd>{{ row.value }}</dd>
+              <summary class="asset-card-summary">
+                <div class="asset-card-head">
+                  <div class="asset-name">
+                    <span>{{ assetTypeLabel(item) }} · {{ item.code }}</span><h3>{{ item.name }}</h3>
                   </div>
-                </dl>
-              </details>
-            </article>
+                  <div class="book-value">
+                    <span>期末卡片账面价值</span><strong>{{ formatFen(item.book_value_fen) }}</strong>
+                  </div>
+                </div>
+                <div class="asset-meta">
+                  <span>{{ item.category_label }}</span><span>{{ item.status_label }}</span>
+                  <span>取得日期 {{ item.acquisition_date }}</span>
+                  <span>{{ availabilityLabel(item) }}</span>
+                </div>
+                <div class="value-grid">
+                  <div><span>资产原值</span><strong>{{ formatFen(item.cost_fen) }}</strong></div>
+                  <div>
+                    <span>{{ chargeLabel(item) }}</span>
+                    <strong>{{ formatFen(item.accumulated_charge_fen) }}</strong>
+                  </div>
+                  <div>
+                    <span>{{ chargeLabel(item, true) }}</span>
+                    <strong>{{ formatFen(item.month_charge_fen) }}</strong>
+                  </div>
+                </div>
+                <div
+                  class="progress"
+                  role="progressbar"
+                  aria-label="累计折旧或摊销占资产原值比例"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  :aria-valuenow="chargeProgress(item)"
+                >
+                  <span :style="{ width: `${chargeProgress(item)}%` }"></span>
+                </div>
+                <div class="status-row">
+                  <span class="asset-status" :class="item.status">{{ item.status_label }}</span>
+                  <span>{{ chargeNote(item) }}</span>
+                </div>
+              </summary>
+              <dl class="asset-detail">
+                <div v-for="row in assetDetails(item)" :key="row.label">
+                  <dt>{{ row.label }}</dt><dd>{{ row.value }}</dd>
+                </div>
+              </dl>
+            </details>
           </div>
           <div v-else class="empty-filter">当前筛选条件下没有资产卡片。</div>
         </section>
@@ -529,7 +528,10 @@ onBeforeUnmount(() => {
 .asset-toolbar p { margin: 0; color: var(--muted); }
 .control { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); }
 .asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.asset-card { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.asset-card { padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.asset-card:hover, .asset-card:focus-within, .asset-card[open] { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); }
+.asset-card-summary { display: block; padding: 16px; border-radius: inherit; cursor: pointer; list-style: none; }
+.asset-card-summary::-webkit-details-marker { display: none; }
 .asset-card.pending_activation { border-style: dashed; border-color: var(--accent); }
 .asset-card.disposed, .asset-card.retired { opacity: .82; }
 .asset-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -550,14 +552,12 @@ onBeforeUnmount(() => {
 .asset-status::before { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--accent); content: ""; }
 .asset-status.pending_activation::before { background: var(--info); }
 .asset-status.disposed::before, .asset-status.retired::before { background: var(--muted); }
-.asset-detail { margin-top: 10px; }
-.asset-detail summary { color: var(--accent); cursor: pointer; font-size: 13px; font-weight: 700; }
-.asset-detail dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 12px 0 0; }
-.asset-detail dl div { display: grid; gap: 2px; }
+.asset-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0 16px 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.asset-detail div { display: grid; gap: 2px; }
 .asset-detail dt { color: var(--muted); font-size: 11px; }
 .asset-detail dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 700; }
 .empty-filter { padding: 24px; border-radius: 12px; background: var(--surface-soft); color: var(--muted); text-align: center; }
 .note { color: var(--muted); font-size: 13px; }
 @media (max-width: 980px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .asset-grid { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .value-grid { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head, .status-row { align-items: flex-start; flex-direction: column; } .control { width: 100%; min-height: 44px; } .book-value { justify-items: start; } .asset-detail dl { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .value-grid { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head, .status-row { align-items: flex-start; flex-direction: column; } .control { width: 100%; min-height: 44px; } .book-value { justify-items: start; } .asset-detail { grid-template-columns: 1fr; } }
 </style>

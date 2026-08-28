@@ -115,44 +115,43 @@ function formatDate(value: string) {
         </dl>
       </article>
 
-      <article id="position-overview" class="overview-card position-card" tabindex="-1">
-        <header>
-          <div>
-            <p>公司目前有什么、欠什么</p>
-            <h3>财务位置</h3>
-          </div>
-          <strong>资产 {{ formatFen(position.assets_fen) }}</strong>
-        </header>
-        <div class="components">
-          <div
-            v-for="([label, key], index) in components"
-            :key="key"
-            :class="['component-row', { subdued: !fen(position[key]) }]"
-          >
-            <span>{{ label }}</span>
-            <div class="track">
-              <span :style="{ width: `${componentRatio(position[key])}%` }" :data-index="index" />
+      <details id="position-overview" class="overview-card position-card" tabindex="-1">
+        <summary class="position-summary">
+          <header>
+            <div>
+              <p>公司目前有什么、欠什么</p>
+              <h3>财务位置</h3>
             </div>
-            <strong>{{ formatFen(position[key]) }}</strong>
+            <strong>资产 {{ formatFen(position.assets_fen) }}</strong>
+          </header>
+          <div class="components">
+            <div
+              v-for="([label, key], index) in components"
+              :key="key"
+              :class="['component-row', { subdued: !fen(position[key]) }]"
+            >
+              <span>{{ label }}</span>
+              <div class="track">
+                <span :style="{ width: `${componentRatio(position[key])}%` }" :data-index="index" />
+              </div>
+              <strong>{{ formatFen(position[key]) }}</strong>
+            </div>
           </div>
-        </div>
-        <p class="equation">
-          资产 {{ formatFen(position.assets_fen) }} = 负债 {{ formatFen(position.liabilities_fen) }} + 所有者权益
-          {{ formatFen(position.capital_fen) }} {{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }} 累计差额
-          {{ formatPositiveFen(position.cumulative_result_fen) }}
-        </p>
-        <details class="proof">
-          <summary>查看长期资产原值与累计折旧、摊销</summary>
-          <ul>
-            <li><span>固定资产原值</span><strong>{{ formatFen(position.fixed_asset_cost_fen) }}</strong></li>
-            <li><span>减：累计折旧</span><strong>{{ formatFen(position.accumulated_depreciation_fen) }}</strong></li>
-            <li><span>固定资产净值</span><strong>{{ formatFen(position.fixed_asset_net_fen) }}</strong></li>
-            <li><span>无形资产原值</span><strong>{{ formatFen(position.intangible_asset_cost_fen) }}</strong></li>
-            <li><span>减：累计摊销</span><strong>{{ formatFen(position.accumulated_amortization_fen) }}</strong></li>
-            <li><span>无形资产净值</span><strong>{{ formatFen(position.intangible_asset_net_fen) }}</strong></li>
-          </ul>
-        </details>
-      </article>
+          <p class="equation">
+            资产 {{ formatFen(position.assets_fen) }} = 负债 {{ formatFen(position.liabilities_fen) }} + 所有者权益
+            {{ formatFen(position.capital_fen) }} {{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }} 累计差额
+            {{ formatPositiveFen(position.cumulative_result_fen) }}
+          </p>
+        </summary>
+        <ul class="proof">
+          <li><span>固定资产原值</span><strong>{{ formatFen(position.fixed_asset_cost_fen) }}</strong></li>
+          <li><span>减：累计折旧</span><strong>{{ formatFen(position.accumulated_depreciation_fen) }}</strong></li>
+          <li><span>固定资产净值</span><strong>{{ formatFen(position.fixed_asset_net_fen) }}</strong></li>
+          <li><span>无形资产原值</span><strong>{{ formatFen(position.intangible_asset_cost_fen) }}</strong></li>
+          <li><span>减：累计摊销</span><strong>{{ formatFen(position.accumulated_amortization_fen) }}</strong></li>
+          <li><span>无形资产净值</span><strong>{{ formatFen(position.intangible_asset_net_fen) }}</strong></li>
+        </ul>
+      </details>
     </div>
   </section>
 </template>
@@ -248,7 +247,7 @@ h3 {
 }
 
 .pending-bank ul,
-.proof ul {
+.proof {
   display: grid;
   gap: 7px;
   margin: 12px 0 0;
@@ -294,6 +293,28 @@ h3 {
   border: 1px solid var(--brief-line);
   border-radius: 16px;
   background: var(--brief-soft);
+}
+
+.position-card {
+  padding: 0;
+}
+
+.position-card:hover,
+.position-card:focus-within,
+.position-card[open] {
+  border-color: color-mix(in srgb, var(--brief-green) 48%, var(--brief-line));
+}
+
+.position-summary {
+  display: block;
+  padding: 15px;
+  border-radius: inherit;
+  cursor: pointer;
+  list-style: none;
+}
+
+.position-summary::-webkit-details-marker {
+  display: none;
 }
 
 .overview-card header > strong {
@@ -407,14 +428,9 @@ h3 {
 }
 
 .proof {
-  margin-top: 10px;
-}
-
-.proof summary {
-  color: var(--brief-green);
-  font-size: 12px;
-  font-weight: 750;
-  cursor: pointer;
+  margin: 0 15px 15px;
+  padding-top: 12px;
+  border-top: 1px solid var(--brief-line);
 }
 
 .proof li {
@@ -458,10 +474,5 @@ h3 {
     grid-column: 1 / -1;
   }
 
-  .proof summary {
-    display: flex;
-    min-height: 44px;
-    align-items: center;
-  }
 }
 </style>
