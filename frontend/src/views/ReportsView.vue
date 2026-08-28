@@ -8,6 +8,7 @@ import {
   fetchQuarterlyWorkbook,
   type QuarterlyReport,
   type ReportStatement,
+  type ReportStatementRow,
 } from "../api/reports";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
@@ -25,6 +26,35 @@ interface TechnicalRow {
   value: string | string[];
 }
 
+interface StatementTemplateMeta {
+  title: string;
+  formCode: string;
+}
+
+type BalanceTemplateCell =
+  | { kind: "section"; label: string }
+  | { kind: "row"; row: ReportStatementRow }
+  | { kind: "blank" };
+
+const statementTemplateMeta: Record<string, StatementTemplateMeta> = {
+  balance_sheet: {
+    title: "资产负债表（适用执行小企业会计准则的企业）",
+    formCode: "会小企01表",
+  },
+  profit_statement: {
+    title: "利润表_月季报（适用执行小企业会计准则的企业）",
+    formCode: "会小企02表",
+  },
+  cash_flow_statement: {
+    title: "现金流量表_月季报（适用执行小企业会计准则的企业）",
+    formCode: "会小企03表",
+  },
+};
+
+const templateNumberFormatter = new Intl.NumberFormat("zh-CN", {
+  maximumFractionDigits: 0,
+});
+
 const route = useRoute();
 const router = useRouter();
 const { context, load: loadContext } = useDashboardContext();
@@ -36,7 +66,7 @@ const errorMessage = ref("");
 const exportNotice = ref("");
 const exportNoticeKind = ref<"success" | "attention" | "error">("success");
 const statementsExpanded = ref(false);
-const showAllRows = ref(false);
+const taxTemplateMode = ref(false);
 const activeStatementKey = ref("");
 let mounted = false;
 let previewController: AbortController | null = null;
@@ -96,17 +126,50 @@ const summaryCards = computed<SummaryCard[]>(() => {
 });
 const activeStatement = computed<ReportStatement | null>(() => {
   if (!report.value) return null;
-  return (
-    report.value.statements.find((item) => item.key === activeStatementKey.value) ??
-    report.value.statements[0] ??
-    null
-  );
+  return report.value.statements.find((item) => item.key === activeStatementKey.value) ?? null;
 });
 const visibleStatementRows = computed(() => {
   if (!activeStatement.value) return [];
   return activeStatement.value.rows.filter(
-    (row) => showAllRows.value || row.has_amount || row.is_total,
+    (row) => taxTemplateMode.value || row.has_amount || row.is_total,
   );
+});
+const activeTemplateMeta = computed<StatementTemplateMeta | null>(() => {
+  if (!activeStatement.value) return null;
+  return statementTemplateMeta[activeStatement.value.key] ?? null;
+});
+const templateQuarterStart = computed(() => {
+  const period = report.value?.period;
+  if (!period) return "";
+  const firstMonth = String((period.quarter - 1) * 3 + 1).padStart(2, "0");
+  return period.quarter_start ?? `${period.year}-${firstMonth}-01`;
+});
+const balanceTemplateRows = computed(() => {
+  const statement = activeStatement.value;
+  if (statement?.key !== "balance_sheet") return [];
+  const byLine = new Map(statement.rows.map((row) => [row.line, row]));
+  const rowCell = (line: number): BalanceTemplateCell => {
+    const row = byLine.get(line);
+    return row ? { kind: "row", row } : { kind: "blank" };
+  };
+  const section = (label: string): BalanceTemplateCell => ({ kind: "section", label });
+  const blank = (): BalanceTemplateCell => ({ kind: "blank" });
+  const left: BalanceTemplateCell[] = [
+    section("流动资产："),
+    ...Array.from({ length: 15 }, (_, index) => rowCell(index + 1)),
+    section("非流动资产："),
+    ...Array.from({ length: 15 }, (_, index) => rowCell(index + 16)),
+  ];
+  const right: BalanceTemplateCell[] = [
+    section("流动负债："),
+    ...Array.from({ length: 11 }, (_, index) => rowCell(index + 31)),
+    section("非流动负债："),
+    ...Array.from({ length: 6 }, (_, index) => rowCell(index + 42)),
+    ...Array.from({ length: 6 }, blank),
+    section("所有者权益（或股东权益）："),
+    ...Array.from({ length: 6 }, (_, index) => rowCell(index + 48)),
+  ];
+  return left.map((leftCell, index) => ({ left: leftCell, right: right[index] }));
 });
 const technicalRows = computed<TechnicalRow[]>(() => {
   const technical = report.value?.technical;
@@ -204,9 +267,9 @@ async function preview(quarterKey: string) {
     );
     if (previewController !== controller) return;
     report.value = result;
-    activeStatementKey.value = result.statements[0]?.key ?? "";
+    activeStatementKey.value = "";
     statementsExpanded.value = false;
-    showAllRows.value = false;
+    taxTemplateMode.value = false;
   } catch (error: unknown) {
     if (previewController === controller) {
       const message = dashboardErrorMessage(error);
@@ -282,8 +345,61 @@ function statementValue(value: string | null | undefined) {
   return value === null || value === undefined ? "—" : formatFen(value);
 }
 
+function templateStatementValue(value: string | null | undefined) {
+  if (value === null || value === undefined) return "";
+  const amount = BigInt(value);
+  const negative = amount < 0n;
+  const absolute = negative ? -amount : amount;
+  const yuan = absolute / 100n;
+  const cents = String(absolute % 100n).padStart(2, "0");
+  return `${negative ? "-" : ""}${templateNumberFormatter.format(yuan)}.${cents}`;
+}
+
+function templateSectionLabel(statementKey: string, line: number) {
+  if (statementKey !== "cash_flow_statement") return "";
+  return (
+    {
+      1: "一、经营活动产生的现金流量：",
+      8: "二、投资活动产生的现金流量：",
+      14: "三、筹资活动产生的现金流量：",
+    } as Record<number, string>
+  )[line] ?? "";
+}
+
+function templateRowName(statementKey: string, row: ReportStatementRow) {
+  const prefixes =
+    statementKey === "profit_statement"
+      ? ({ 1: "一、", 2: "减：", 21: "二、", 22: "加：", 24: "减：", 30: "三、", 31: "减：", 32: "四、" } as Record<number, string>)
+      : statementKey === "cash_flow_statement"
+        ? ({ 20: "四、", 21: "加：", 22: "五、" } as Record<number, string>)
+        : {};
+  return `${prefixes[row.line] ?? ""}${row.name}`;
+}
+
+function isNegative(value: string | null | undefined) {
+  return value !== null && value !== undefined && BigInt(value) < 0n;
+}
+
+function balanceTemplateCellValue(cell: BalanceTemplateCell, columnIndex: number) {
+  if (cell.kind !== "row") return "";
+  const column = activeStatement.value?.columns[columnIndex];
+  return column ? templateStatementValue(cell.row.values[column.key]) : "";
+}
+
+function balanceTemplateCellIsNegative(cell: BalanceTemplateCell, columnIndex: number) {
+  if (cell.kind !== "row") return false;
+  const column = activeStatement.value?.columns[columnIndex];
+  return column ? isNegative(cell.row.values[column.key]) : false;
+}
+
 function selectStatement(key: string) {
+  if (statementsExpanded.value && activeStatementKey.value === key) {
+    statementsExpanded.value = false;
+    activeStatementKey.value = "";
+    return;
+  }
   activeStatementKey.value = key;
+  statementsExpanded.value = true;
 }
 
 function handleTabKey(event: KeyboardEvent, index: number) {
@@ -298,7 +414,8 @@ function handleTabKey(event: KeyboardEvent, index: number) {
   if (event.key === "ArrowLeft") nextIndex = (index - 1 + statements.length) % statements.length;
   if (event.key === "ArrowRight") nextIndex = (index + 1) % statements.length;
   activeStatementKey.value = statements[nextIndex].key;
-  void nextTick(() => document.getElementById(`report-tab-${nextIndex}`)?.focus());
+  statementsExpanded.value = true;
+  void nextTick(() => document.getElementById(`report-statement-button-${nextIndex}`)?.focus());
 }
 
 onMounted(() => {
@@ -423,43 +540,167 @@ onBeforeUnmount(() => {
 
         <section v-if="report.statements.length" class="report-review">
           <div class="review-heading">
-            <button
-              class="expand-button"
-              type="button"
-              :aria-expanded="statementsExpanded"
-              aria-controls="report-full"
-              @click="statementsExpanded = !statementsExpanded"
-            >
-              {{ statementsExpanded ? "收起完整三表 ↑" : "查看完整三表 ↓" }}
-            </button>
-            <span>
+            <div>
+              <strong>完整财务报表</strong>
+              <span>选择一张报表查看明细</span>
+            </div>
+            <span class="check-summary">
               {{ report.checks.total ? `${report.checks.passed} 项勾稽已通过` : "暂无勾稽结果" }}
             </span>
           </div>
 
-          <div v-if="statementsExpanded" id="report-full" class="report-full">
-            <div class="tabs" role="tablist" aria-label="季度财务报表">
-              <button
-                v-for="(statement, index) in report.statements"
-                :id="`report-tab-${index}`"
-                :key="statement.key"
-                type="button"
-                role="tab"
-                :aria-selected="activeStatement?.key === statement.key"
-                :tabindex="activeStatement?.key === statement.key ? 0 : -1"
-                @click="selectStatement(statement.key)"
-                @keydown="handleTabKey($event, index)"
-              >
-                {{ statement.label }}
-              </button>
-            </div>
+          <div class="statement-buttons" role="tablist" aria-label="季度财务报表">
+            <button
+              v-for="(statement, index) in report.statements"
+              :id="`report-statement-button-${index}`"
+              :key="statement.key"
+              type="button"
+              role="tab"
+              :class="{ active: activeStatement?.key === statement.key }"
+              :aria-selected="activeStatement?.key === statement.key"
+              :aria-expanded="activeStatement?.key === statement.key && statementsExpanded"
+              :aria-controls="activeStatement?.key === statement.key ? 'report-full' : undefined"
+              :tabindex="activeStatement?.key === statement.key || !activeStatement ? 0 : -1"
+              @click="selectStatement(statement.key)"
+              @keydown="handleTabKey($event, index)"
+            >
+              <span class="statement-number">{{ String(index + 1).padStart(2, "0") }}</span>
+              <span class="statement-button-copy">
+                <strong>{{ statement.label }}</strong>
+                <small>{{ activeStatement?.key === statement.key ? "收起报表" : "查看完整报表" }}</small>
+              </span>
+              <span class="statement-arrow" aria-hidden="true">
+                {{ activeStatement?.key === statement.key ? "↑" : "↓" }}
+              </span>
+            </button>
+          </div>
 
+          <div v-if="statementsExpanded" id="report-full" class="report-full">
             <template v-if="activeStatement">
               <div class="table-toolbar">
                 <strong>{{ activeStatement.label }}{{ report.draft ? " · 当前试算" : "" }}</strong>
-                <label><input v-model="showAllRows" type="checkbox" /> 显示全部行（含零值）</label>
+                <label class="template-switch">
+                  <span class="switch-copy">
+                    <strong>税务局模板格式</strong>
+                    <small>按导入 Excel 版式显示全部项目</small>
+                  </span>
+                  <input v-model="taxTemplateMode" type="checkbox" role="switch" />
+                  <span class="switch-track" aria-hidden="true"><span></span></span>
+                </label>
               </div>
-              <div class="table-wrap">
+
+              <div v-if="taxTemplateMode && activeTemplateMeta" class="template-wrap">
+                <div
+                  class="tax-template-sheet"
+                  :class="{ 'balance-sheet': activeStatement.key === 'balance_sheet' }"
+                >
+                  <div class="template-title-row">
+                    <h3>{{ activeTemplateMeta.title }}</h3>
+                    <span>{{ activeTemplateMeta.formCode }}　单位：元</span>
+                  </div>
+                  <div class="template-meta-grid">
+                    <span class="template-meta-label">纳税人识别号</span>
+                    <strong>{{ report.organization?.taxpayer_identification_number || "—" }}</strong>
+                    <span class="template-meta-label">纳税人名称</span>
+                    <strong>{{ report.organization?.name || context?.company || "—" }}</strong>
+                    <span class="template-meta-label">所属期起</span>
+                    <strong>{{ templateQuarterStart }}</strong>
+                    <span class="template-meta-label">所属期止</span>
+                    <strong>{{ report.period.quarter_end }}</strong>
+                  </div>
+
+                  <table
+                    v-if="activeStatement.key === 'balance_sheet'"
+                    class="tax-template-table balance-template-table"
+                  >
+                    <thead>
+                      <tr>
+                        <th>资产</th><th class="line">行次</th>
+                        <th v-for="column in activeStatement.columns" :key="`asset-${column.key}`" class="number">
+                          {{ column.label }}
+                        </th>
+                        <th>负债和所有者权益</th><th class="line">行次</th>
+                        <th v-for="column in activeStatement.columns" :key="`liability-${column.key}`" class="number">
+                          {{ column.label }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(pair, rowIndex) in balanceTemplateRows" :key="rowIndex">
+                        <template v-for="(cell, sideIndex) in [pair.left, pair.right]" :key="sideIndex">
+                          <td
+                            class="template-item"
+                            :class="{
+                              section: cell.kind === 'section',
+                              blank: cell.kind === 'blank',
+                              total: cell.kind === 'row' && cell.row.is_total,
+                            }"
+                          >
+                            {{ cell.kind === "section" ? cell.label : cell.kind === "row" ? cell.row.name : "" }}
+                          </td>
+                          <td
+                            class="line"
+                            :class="{
+                              section: cell.kind === 'section',
+                              blank: cell.kind === 'blank',
+                              total: cell.kind === 'row' && cell.row.is_total,
+                            }"
+                          >
+                            {{ cell.kind === "row" ? cell.row.line : "" }}
+                          </td>
+                          <td
+                            v-for="columnIndex in 2"
+                            :key="columnIndex"
+                            class="number"
+                            :class="{
+                              negative: balanceTemplateCellIsNegative(cell, columnIndex - 1),
+                              section: cell.kind === 'section',
+                              blank: cell.kind === 'blank',
+                              total: cell.kind === 'row' && cell.row.is_total,
+                            }"
+                          >
+                            {{ balanceTemplateCellValue(cell, columnIndex - 1) }}
+                          </td>
+                        </template>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <table v-else class="tax-template-table">
+                    <thead>
+                      <tr>
+                        <th>项目</th><th class="line">行次</th>
+                        <th v-for="column in activeStatement.columns" :key="column.key" class="number">
+                          {{ column.key === "current_fen" ? "本期金额" : column.label }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template v-for="row in activeStatement.rows" :key="row.line">
+                        <tr v-if="templateSectionLabel(activeStatement.key, row.line)" class="template-section-row">
+                          <td :colspan="activeStatement.columns.length + 2">
+                            {{ templateSectionLabel(activeStatement.key, row.line) }}
+                          </td>
+                        </tr>
+                        <tr :class="{ total: row.is_total }">
+                          <td>{{ templateRowName(activeStatement.key, row) }}</td>
+                          <td class="line">{{ row.line }}</td>
+                          <td
+                            v-for="column in activeStatement.columns"
+                            :key="column.key"
+                            class="number"
+                            :class="{ negative: isNegative(row.values[column.key]) }"
+                          >
+                            {{ templateStatementValue(row.values[column.key]) }}
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div v-else class="table-wrap">
                 <table>
                   <thead>
                     <tr>
@@ -570,13 +811,33 @@ onBeforeUnmount(() => {
 .draft-note { margin: 0; padding: 10px 13px; border-radius: 10px; background: var(--warning-soft); color: var(--warning); font-size: 12px; }
 .report-review { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-soft); }
 .review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; }
-.expand-button { min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--accent); cursor: pointer; font-weight: 750; }
-.report-full { min-width: 0; margin-top: 12px; }
-.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
-.tabs button { min-height: 36px; padding: 7px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); cursor: pointer; }
-.tabs button[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 750; }
-.table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 12px 0 8px; }
-.table-toolbar label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.review-heading > div { display: grid; gap: 3px; }
+.review-heading > div > strong { color: var(--text); font-size: 16px; }
+.check-summary { padding: 5px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 750; }
+.statement-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.statement-buttons button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 88px; align-items: center; gap: 12px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-soft); color: var(--text); cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.statement-buttons button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); transform: translateY(-1px); }
+.statement-buttons button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 2px; }
+.statement-buttons button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.statement-number { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 850; }
+.statement-buttons button.active .statement-number { background: var(--accent); color: var(--surface); }
+.statement-button-copy { display: grid; gap: 4px; min-width: 0; }
+.statement-button-copy strong { font-size: 16px; }
+.statement-button-copy small { color: var(--muted); font-size: 11px; }
+.statement-arrow { color: var(--muted); font-size: 18px; }
+.statement-buttons button.active .statement-arrow { color: var(--accent); }
+.report-full { min-width: 0; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 10px; }
+.template-switch { position: relative; display: flex; align-items: center; gap: 10px; color: var(--muted); cursor: pointer; }
+.switch-copy { display: grid; justify-items: end; gap: 1px; }
+.switch-copy strong { color: var(--text); font-size: 12px; }
+.switch-copy small { font-size: 10px; }
+.template-switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.switch-track { position: relative; width: 42px; height: 24px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-soft); transition: border-color .16s ease, background .16s ease; }
+.switch-track span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); box-shadow: 0 1px 3px rgb(0 0 0 / 18%); transition: transform .16s ease, background .16s ease; }
+.template-switch input:checked + .switch-track { border-color: var(--accent); background: var(--accent); }
+.template-switch input:checked + .switch-track span { background: var(--surface); transform: translateX(18px); }
+.template-switch input:focus-visible + .switch-track { outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 2px; }
 .table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
 table { width: 100%; min-width: 650px; border-collapse: collapse; background: var(--surface); font-size: 12px; }
 th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }
@@ -585,6 +846,31 @@ th:first-child { width: 54%; }
 .line { width: 58px; color: var(--muted); text-align: center; }
 .number { text-align: right; font-variant-numeric: tabular-nums; }
 tr.total td { background: var(--accent-soft); font-weight: 750; }
+.template-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding: 14px; border: 1px solid #cbd5e1; border-radius: 10px; background: #e9edf1; }
+.tax-template-sheet { width: 780px; box-sizing: border-box; padding: 26px 30px 32px; background: #fff; color: #171717; box-shadow: 0 2px 10px rgb(15 23 42 / 10%); font-family: SimSun, "Songti SC", serif; }
+.tax-template-sheet.balance-sheet { width: 1120px; }
+.template-title-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; min-height: 62px; }
+.template-title-row h3 { grid-column: 2; margin: 0; font-family: inherit; font-size: 21px; font-weight: 700; letter-spacing: .04em; text-align: center; }
+.template-title-row span { grid-column: 3; justify-self: end; margin-bottom: 3px; color: #4b5563; font-size: 12px; }
+.template-meta-grid { display: grid; grid-template-columns: 150px minmax(230px, 1fr) 150px minmax(230px, 1fr); border-top: 2px solid #444; border-left: 2px solid #444; font-size: 12px; }
+.template-meta-grid > * { min-height: 38px; display: flex; align-items: center; justify-content: center; padding: 7px 10px; border-right: 1px solid #555; border-bottom: 1px solid #555; }
+.template-meta-grid > :nth-child(4n) { border-right-width: 2px; }
+.template-meta-grid > :nth-last-child(-n + 4) { border-bottom-width: 2px; }
+.template-meta-label { background: #e0e0e0; font-weight: 400; }
+.template-meta-grid strong { justify-content: flex-start; background: #f8f8f8; font-family: Arial, "Microsoft YaHei", sans-serif; font-weight: 500; }
+.tax-template-table { width: 100%; min-width: 0; margin: 0; border-collapse: collapse; border-right: 2px solid #444; border-bottom: 2px solid #444; background: #fff; color: #171717; font-size: 12px; table-layout: fixed; }
+.tax-template-table th, .tax-template-table td { position: static; height: 36px; padding: 6px 8px; border-right: 1px solid #555; border-bottom: 1px solid #555; background: #fff; color: #171717; font-weight: 400; line-height: 1.35; }
+.tax-template-table th { background: #e0e0e0; font-weight: 700; text-align: center; }
+.tax-template-table th:first-child { width: 46%; }
+.balance-template-table th:first-child, .balance-template-table th:nth-child(5) { width: 22%; }
+.balance-template-table th:nth-child(2), .balance-template-table th:nth-child(6) { width: 4.5%; }
+.balance-template-table th:nth-child(3), .balance-template-table th:nth-child(4), .balance-template-table th:nth-child(7), .balance-template-table th:nth-child(8) { width: 13.25%; }
+.tax-template-table .line { color: #171717; text-align: center; }
+.tax-template-table .number { color: #374151; text-align: right; }
+.tax-template-table .negative { color: #b42318; }
+.tax-template-table td.section, .tax-template-table td.blank, .tax-template-table td.total, .tax-template-table tr.total td, .template-section-row td { background: #e0e0e0; color: #171717; }
+.tax-template-table td.total, .tax-template-table tr.total td, .template-section-row td { font-weight: 700; }
+.template-item { text-align: left; }
 .disclosure { margin-top: 14px; }
 .disclosure summary { display: flex; min-height: 36px; align-items: center; gap: 9px; color: var(--accent); cursor: pointer; }
 .disclosure summary span { padding: 4px 8px; border-radius: 999px; background: var(--accent-soft); font-size: 11px; }
@@ -597,6 +883,6 @@ tr.total td { background: var(--accent-soft); font-weight: 750; }
 .technical dt { color: var(--muted); }
 .technical dd { margin: 0; overflow-wrap: anywhere; }
 .technical ul { margin: 0; padding-left: 20px; }
-@media (max-width: 960px) { .readiness { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-grid { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .readiness, .check-list { grid-template-columns: 1fr; } .readiness-item.detailed { grid-column: auto; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .tabs button, .expand-button, .disclosure summary { min-height: 44px; } .technical dl { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .readiness { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-grid, .statement-buttons { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .readiness, .check-list { grid-template-columns: 1fr; } .readiness-item.detailed { grid-column: auto; } .report-review { padding: 14px; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .switch-copy { justify-items: start; } .statement-buttons button, .disclosure summary { min-height: 64px; } .technical dl { grid-template-columns: 1fr; } }
 </style>

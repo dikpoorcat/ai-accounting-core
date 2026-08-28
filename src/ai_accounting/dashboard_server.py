@@ -209,6 +209,8 @@ def build_quarterly_report_view(
     raw_status = result.get("status")
     requirements = result.get("missing_information") or []
     errors = result.get("errors") or []
+    organization = data.get("organization") or {}
+    quarter_start = date(year, (quarter - 1) * 3 + 1, 1)
     quarter_end = _quarter_end(year, quarter)
     today = current_date or datetime.now().astimezone().date()
     not_applicable_errors = {
@@ -251,10 +253,17 @@ def build_quarterly_report_view(
         "headline": headline,
         "message": message,
         "checked_at": datetime.now(UTC).isoformat(),
+        "organization": {
+            "name": organization.get("name"),
+            "taxpayer_identification_number": organization.get(
+                "taxpayer_identification_number"
+            ),
+        },
         "period": {
             "year": year,
             "quarter": quarter,
             "label": f"{year} 年第 {quarter} 季度",
+            "quarter_start": quarter_start.isoformat(),
             "quarter_end": quarter_end.isoformat(),
         },
         "readiness": (

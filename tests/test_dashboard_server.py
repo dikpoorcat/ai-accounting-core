@@ -23,6 +23,10 @@ def _calculated_result(*, calculation_hash: str = "a" * 64) -> dict[str, object]
         "missing_information": [],
         "errors": [],
         "data": {
+            "organization": {
+                "name": "报表测试企业",
+                "taxpayer_identification_number": "91330106MA1234567T",
+            },
             "statements": {
                 "balance_sheet": {
                     "1": {"name": "货币资金", "ending_fen": 70_000, "beginning_fen": 0},
@@ -92,6 +96,11 @@ def test_quarterly_report_view_exposes_ready_summary_and_chinese_checks() -> Non
         "ending_cash_fen": 70_000,
     }
     assert view["checks"]["items"][0]["label"] == "期末资产与负债及所有者权益相等"
+    assert view["organization"] == {
+        "name": "报表测试企业",
+        "taxpayer_identification_number": "91330106MA1234567T",
+    }
+    assert view["period"]["quarter_start"] == "2026-01-01"
     assert view["export"]["available"] is True
     assert "2026Q1.xlsx" in view["export"]["file_name"]
     balance = view["statements"][0]

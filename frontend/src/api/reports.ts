@@ -63,10 +63,15 @@ export interface QuarterlyReport {
   headline: string;
   message: string;
   checked_at: string;
+  organization?: {
+    name: string | null;
+    taxpayer_identification_number: string | null;
+  };
   period: {
     year: number;
     quarter: number;
     label: string;
+    quarter_start?: string;
     quarter_end: string;
   };
   readiness: ReportReadinessItem[];
