@@ -13,7 +13,6 @@ const emit = defineEmits<{
 }>();
 
 const monthOrder = [1, 4, 7, 10, 2, 5, 8, 11, 3, 6, 9, 12] as const;
-const viewedYear = ref<number | null>(null);
 const pageIndex = ref(0);
 
 const years = computed(() =>
@@ -29,21 +28,26 @@ const yearPages = computed(() => {
 });
 
 const visibleYears = computed(() => yearPages.value[pageIndex.value] ?? []);
+const visibleYearRange = computed(() => {
+  const first = visibleYears.value.at(0);
+  const last = visibleYears.value.at(-1);
+  if (first === undefined || last === undefined) return "";
+  if (first === last) return String(first);
+  const lastLabel =
+    Math.floor(first / 100) === Math.floor(last / 100) ? String(last).slice(-2) : last;
+  return `${first}–${lastLabel}`;
+});
 const selectedPeriodInfo = computed(() =>
   props.periods.find((period) => period.key === props.selectedPeriod),
 );
-const selectedPeriodLabel = computed(() => {
-  const period = selectedPeriodInfo.value;
-  if (!period) return "尚未选择月份";
-  return `${period.year}年${String(period.month).padStart(2, "0")}月`;
-});
 
-const monthSlots = computed(() =>
-  monthOrder.map((month) => ({
-    month,
-    period: props.periods.find(
-      (period) => period.year === viewedYear.value && period.month === month,
-    ),
+const visibleYearMatrices = computed(() =>
+  visibleYears.value.map((year) => ({
+    year,
+    months: monthOrder.map((month) => ({
+      month,
+      period: props.periods.find((period) => period.year === year && period.month === month),
+    })),
   })),
 );
 
@@ -54,7 +58,6 @@ watch(
   [() => props.periods, () => props.selectedPeriod],
   () => {
     const selectedYear = selectedPeriodInfo.value?.year ?? years.value.at(-1) ?? null;
-    viewedYear.value = selectedYear;
     const selectedPage = yearPages.value.findIndex((page) => page.includes(selectedYear ?? -1));
     pageIndex.value = selectedPage >= 0 ? selectedPage : Math.max(yearPages.value.length - 1, 0);
   },
@@ -64,29 +67,22 @@ watch(
 function showEarlierYears() {
   if (!canShowEarlier.value) return;
   pageIndex.value -= 1;
-  viewedYear.value = visibleYears.value.at(-1) ?? null;
 }
 
 function showLaterYears() {
   if (!canShowLater.value) return;
   pageIndex.value += 1;
-  viewedYear.value = visibleYears.value.at(0) ?? null;
 }
 
-function monthLabel(month: number, period?: DashboardPeriod) {
-  const label = `${viewedYear.value ?? ""}年${month}月`;
+function monthLabel(year: number, month: number, period?: DashboardPeriod) {
+  const label = `${year}年${month}月`;
   if (!period) return `${label}，暂无可查看数据`;
   return period.key === props.selectedPeriod ? `${label}，当前选择` : `查看${label}`;
 }
 </script>
 
 <template>
-  <section v-if="periods.length" class="month-picker" aria-labelledby="month-picker-title">
-    <div class="month-picker-heading">
-      <strong id="month-picker-title">快速选月</strong>
-      <span>当前 {{ selectedPeriodLabel }}</span>
-    </div>
-
+  <section v-if="periods.length" class="month-picker" aria-label="快速选月">
     <div class="year-pager">
       <button
         class="year-arrow"
@@ -99,30 +95,13 @@ function monthLabel(month: number, period?: DashboardPeriod) {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
       </button>
 
-      <div
-        class="year-options"
-        role="group"
-        aria-label="选择要浏览的年份"
-        :style="{ gridTemplateColumns: `repeat(${visibleYears.length}, minmax(0, 1fr))` }"
+      <strong
+        class="year-page-label"
+        aria-live="polite"
+        :aria-label="`当前显示${visibleYears.join('、')}年`"
       >
-        <button
-          v-for="year in visibleYears"
-          :key="year"
-          type="button"
-          :class="[
-            'year-option',
-            {
-              'is-viewed': year === viewedYear,
-              'has-selected-period': year === selectedPeriodInfo?.year,
-            },
-          ]"
-          :aria-pressed="year === viewedYear"
-          :aria-label="`${year}年${year === selectedPeriodInfo?.year ? '，当前月份所在年份' : ''}`"
-          @click="viewedYear = year"
-        >
-          {{ year }}
-        </button>
-      </div>
+        {{ visibleYearRange }}
+      </strong>
 
       <button
         class="year-arrow"
@@ -136,23 +115,37 @@ function monthLabel(month: number, period?: DashboardPeriod) {
       </button>
     </div>
 
-    <div class="quarter-labels" aria-hidden="true">
-      <span>Q1</span><span>Q2</span><span>Q3</span><span>Q4</span>
-    </div>
-
-    <div class="month-grid" :aria-label="`${viewedYear}年月份`">
-      <button
-        v-for="slot in monthSlots"
-        :key="slot.month"
-        type="button"
-        :class="['month-button', { 'is-current': slot.period?.key === selectedPeriod }]"
-        :disabled="!slot.period"
-        :aria-label="monthLabel(slot.month, slot.period)"
-        :aria-current="slot.period?.key === selectedPeriod ? 'date' : undefined"
-        @click="slot.period && emit('select', slot.period.key)"
+    <div class="year-matrices">
+      <div
+        v-for="matrix in visibleYearMatrices"
+        :key="matrix.year"
+        class="year-matrix"
+        role="group"
+        :aria-label="`${matrix.year}年月份`"
       >
-        {{ slot.month }}月
-      </button>
+        <div class="year-matrix-heading">
+          <strong>{{ matrix.year }}年</strong>
+        </div>
+
+        <div class="quarter-labels" aria-hidden="true">
+          <span>Q1</span><span>Q2</span><span>Q3</span><span>Q4</span>
+        </div>
+
+        <div class="month-grid">
+          <button
+            v-for="slot in matrix.months"
+            :key="slot.month"
+            type="button"
+            :class="['month-button', { 'is-current': slot.period?.key === selectedPeriod }]"
+            :disabled="!slot.period"
+            :aria-label="monthLabel(matrix.year, slot.month, slot.period)"
+            :aria-current="slot.period?.key === selectedPeriod ? 'date' : undefined"
+            @click="slot.period && emit('select', slot.period.key)"
+          >
+            {{ slot.month }}月
+          </button>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -160,42 +153,17 @@ function monthLabel(month: number, period?: DashboardPeriod) {
 <style scoped>
 .month-picker {
   flex: 0 0 auto;
-  margin-top: 16px;
-  padding-top: 15px;
-  border-top: 1px solid var(--line);
-}
-
-.month-picker-heading {
-  display: grid;
-  gap: 1px;
-  padding: 0 3px;
-}
-
-.month-picker-heading strong {
-  font-size: 13px;
-  letter-spacing: 0.02em;
-}
-
-.month-picker-heading span {
-  color: var(--muted);
-  font-size: 11px;
+  margin-top: 14px;
 }
 
 .year-pager {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 26px;
-  gap: 4px;
-  align-items: center;
-  margin-top: 10px;
-}
-
-.year-options {
-  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
   gap: 3px;
+  align-items: center;
 }
 
 .year-arrow,
-.year-option,
 .month-button {
   border: 1px solid transparent;
   background: transparent;
@@ -205,8 +173,8 @@ function monthLabel(month: number, period?: DashboardPeriod) {
 
 .year-arrow {
   display: grid;
-  width: 26px;
-  height: 28px;
+  width: 24px;
+  height: 26px;
   padding: 0;
   place-items: center;
   border-color: var(--line);
@@ -226,8 +194,8 @@ function monthLabel(month: number, period?: DashboardPeriod) {
 
 .year-arrow:hover:not(:disabled),
 .year-arrow:focus-visible,
-.year-option:hover,
-.year-option:focus-visible {
+.month-button:hover:not(:disabled),
+.month-button:focus-visible {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -237,31 +205,33 @@ function monthLabel(month: number, period?: DashboardPeriod) {
   cursor: not-allowed;
 }
 
-.year-option {
-  position: relative;
-  min-width: 0;
-  height: 28px;
-  padding: 0 2px;
-  border-radius: 8px;
-  font-size: 11px;
-}
-
-.year-option.is-viewed {
-  border-color: var(--line-strong);
-  background: var(--surface-soft);
+.year-page-label {
+  overflow: hidden;
   color: var(--text);
-  font-weight: 750;
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.year-option.has-selected-period::after {
-  position: absolute;
-  right: 4px;
-  bottom: 3px;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--accent);
-  content: "";
+.year-matrices {
+  display: grid;
+  gap: 13px;
+  margin-top: 8px;
+}
+
+.year-matrix {
+  min-width: 0;
+}
+
+.year-matrix-heading {
+  min-height: 18px;
+  padding: 0 2px;
+}
+
+.year-matrix-heading strong {
+  font-size: 12px;
 }
 
 .quarter-labels,
@@ -272,7 +242,7 @@ function monthLabel(month: number, period?: DashboardPeriod) {
 }
 
 .quarter-labels {
-  margin: 10px 0 4px;
+  margin: 5px 0 4px;
   color: var(--muted);
   font-size: 10px;
   font-weight: 700;
@@ -282,18 +252,12 @@ function monthLabel(month: number, period?: DashboardPeriod) {
 
 .month-button {
   min-width: 0;
-  height: 31px;
+  height: 30px;
   padding: 0;
   border-color: var(--line);
   border-radius: 8px;
   background: var(--surface);
   font-size: 11px;
-}
-
-.month-button:hover:not(:disabled),
-.month-button:focus-visible {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 .month-button.is-current {
