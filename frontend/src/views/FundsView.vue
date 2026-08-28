@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { dashboardErrorMessage } from "../api/client";
@@ -23,6 +23,8 @@ const {
 
 const selectedPeriod = ref("");
 const selectedAccount = ref("");
+const selectedBankAccount = ref("");
+const selectedDetailView = ref<"book" | "bank">("book");
 const funds = ref<FundsData | null>(null);
 const selectedPeriodLabel = ref("");
 const loading = ref(false);
@@ -32,12 +34,21 @@ let activeRequest: AbortController | null = null;
 
 const periods = computed(() => context.value?.periods ?? []);
 const pageError = computed(() => requestError.value || contextError.value);
+const detailViews = ["book", "bank"] as const;
 const visibleMovements = computed(() => {
   if (!funds.value) return [];
   if (!selectedAccount.value) return funds.value.movements;
   return funds.value.movements.filter(
     (item) => item.account_code === selectedAccount.value,
   );
+});
+const bankAccounts = computed(
+  () => funds.value?.accounts.filter((account) => account.type === "bank") ?? [],
+);
+const visibleBankRows = computed(() => {
+  const rows = funds.value?.bank_statement.rows ?? [];
+  if (!selectedBankAccount.value) return rows;
+  return rows.filter((item) => item.account_code === selectedBankAccount.value);
 });
 const attentionItems = computed(() => {
   if (!funds.value) return [];
@@ -92,6 +103,7 @@ async function loadFunds(periodKey: string) {
     funds.value = response.data;
     selectedPeriodLabel.value = response.selected_period?.label ?? "";
     selectedAccount.value = "";
+    selectedBankAccount.value = "";
   } catch (error: unknown) {
     if (controller.signal.aborted) return;
     requestError.value = dashboardErrorMessage(error);
@@ -151,6 +163,25 @@ function bankStateLabel(state: BankStatementState): string {
     pending_late: "迟到流水待处理",
     handled_late: "迟到流水已处理",
   }[state];
+}
+
+function selectDetailView(view: "book" | "bank") {
+  selectedDetailView.value = view;
+}
+
+function handleDetailTabKey(event: KeyboardEvent, index: number) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  let nextIndex = index;
+  if (event.key === "Home") nextIndex = 0;
+  if (event.key === "End") nextIndex = detailViews.length - 1;
+  if (event.key === "ArrowLeft") {
+    nextIndex = (index - 1 + detailViews.length) % detailViews.length;
+  }
+  if (event.key === "ArrowRight") nextIndex = (index + 1) % detailViews.length;
+  const nextView = detailViews[nextIndex];
+  selectedDetailView.value = nextView;
+  void nextTick(() => document.getElementById(`fund-detail-tab-${nextView}`)?.focus());
 }
 
 function reconciliationAttention(state: string): boolean {
@@ -355,87 +386,154 @@ onBeforeUnmount(() => activeRequest?.abort());
           </ul>
         </section>
 
-        <section class="panel section-panel" aria-labelledby="fund-movements-title">
-          <div class="section-heading">
+        <section class="panel section-panel" aria-labelledby="fund-details-title">
+          <div class="section-heading detail-heading">
             <div>
-              <p class="eyebrow">来自正式凭证 · 已确认入账</p>
-              <h2 id="fund-movements-title">本月资金明细</h2>
+              <p class="eyebrow">账面与银行数据 · 分口径查看</p>
+              <h2 id="fund-details-title">资金明细</h2>
             </div>
-            <strong>{{ funds.movement_count }} 条账户分录</strong>
+            <div class="detail-switch" role="tablist" aria-label="选择资金明细口径">
+              <button
+                id="fund-detail-tab-book"
+                type="button"
+                role="tab"
+                :aria-selected="selectedDetailView === 'book'"
+                aria-controls="fund-detail-panel-book"
+                :tabindex="selectedDetailView === 'book' ? 0 : -1"
+                @click="selectDetailView('book')"
+                @keydown="handleDetailTabKey($event, 0)"
+              >
+                账面明细
+              </button>
+              <button
+                id="fund-detail-tab-bank"
+                type="button"
+                role="tab"
+                :aria-selected="selectedDetailView === 'bank'"
+                aria-controls="fund-detail-panel-bank"
+                :aria-label="bankAttentionCount ? `银行流水，${bankAttentionCount} 笔待处理` : '银行流水'"
+                :tabindex="selectedDetailView === 'bank' ? 0 : -1"
+                @click="selectDetailView('bank')"
+                @keydown="handleDetailTabKey($event, 1)"
+              >
+                银行流水
+                <span v-if="bankAttentionCount" class="detail-tab-alert" aria-hidden="true">
+                  {{ bankAttentionCount }}
+                </span>
+              </button>
+            </div>
           </div>
-          <div class="table-toolbar">
-            <p class="muted">账户互转会分别出现在转出与转入账户，但不计入上方对外流入、流出。</p>
-            <select v-model="selectedAccount" class="control" aria-label="筛选资金账户">
-              <option value="">全部账户</option>
-              <option v-for="account in funds.accounts" :key="account.code" :value="account.code">
-                {{ account.name }}（{{ account.code }}）
-              </option>
-            </select>
+          <div
+            v-if="selectedDetailView === 'book'"
+            id="fund-detail-panel-book"
+            role="tabpanel"
+            aria-labelledby="fund-detail-tab-book"
+            tabindex="0"
+          >
+            <div class="detail-toolbar">
+              <div>
+                <strong>{{ funds.movement_count }} 条账户分录</strong>
+                <p class="muted">
+                  来自正式凭证 · 已确认入账。账户互转会分别出现在转出与转入账户，但不计入上方对外流入、流出。
+                </p>
+              </div>
+              <select v-model="selectedAccount" class="control" aria-label="筛选账面资金账户">
+                <option value="">全部账户</option>
+                <option v-for="account in funds.accounts" :key="account.code" :value="account.code">
+                  {{ account.name }}（{{ account.code }}）
+                </option>
+              </select>
+            </div>
+            <div v-if="visibleMovements.length" class="table-wrap">
+              <table class="book-detail-table">
+                <thead>
+                  <tr>
+                    <th class="date-column">日期</th>
+                    <th class="account-column">账户</th>
+                    <th>业务与摘要</th>
+                    <th class="party-column">往来对象</th>
+                    <th class="direction-column">方向</th>
+                    <th class="number amount-column">金额</th>
+                    <th class="reference-column">凭证</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(item, index) in visibleMovements" :key="`${index}-${item.reference}-${item.account_code}`">
+                    <td class="date-column">{{ formatDate(item.date) }}</td>
+                    <td class="account-column">{{ item.account_name }}（{{ item.account_code }}）</td>
+                    <td>{{ item.type }} · {{ item.summary }}<template v-if="item.internal_transfer"> · 账户互转</template></td>
+                    <td class="party-column">{{ item.party }}</td>
+                    <td class="direction-column"><span class="direction" :class="item.direction">{{ item.direction === "inflow" ? "流入" : "流出" }}</span></td>
+                    <td class="number amount-column">{{ movementAmount(item.direction, item.amount_fen) }}</td>
+                    <td class="reference-column">{{ item.reference }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p v-else class="empty">{{ selectedAccount ? "本月该账户没有已入账资金变动。" : "本月没有已入账资金变动。" }}</p>
           </div>
-          <div v-if="visibleMovements.length" class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>日期</th><th>账户</th><th>业务与摘要</th><th>往来对象</th><th>方向</th><th class="number">金额</th><th>凭证</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="(item, index) in visibleMovements" :key="`${index}-${item.reference}-${item.account_code}`">
-                  <td>{{ formatDate(item.date) }}</td>
-                  <td>{{ item.account_name }}（{{ item.account_code }}）</td>
-                  <td>{{ item.type }} · {{ item.summary }}<template v-if="item.internal_transfer"> · 账户互转</template></td>
-                  <td>{{ item.party }}</td>
-                  <td><span class="direction" :class="item.direction">{{ item.direction === "inflow" ? "流入" : "流出" }}</span></td>
-                  <td class="number">{{ movementAmount(item.direction, item.amount_fen) }}</td>
-                  <td>{{ item.reference }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p v-else class="empty">{{ selectedAccount ? "本月该账户没有已入账资金变动。" : "本月没有已入账资金变动。" }}</p>
-        </section>
 
-        <section class="panel section-panel" aria-labelledby="bank-statement-title">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">来自已导入银行流水 · 与账面分开展示</p>
-              <h2 id="bank-statement-title">银行流水明细</h2>
+          <div
+            v-else
+            id="fund-detail-panel-bank"
+            role="tabpanel"
+            aria-labelledby="fund-detail-tab-bank"
+            tabindex="0"
+          >
+            <div class="detail-toolbar">
+              <div>
+                <span class="status-chip" :class="{ attention: bankAttentionCount }">
+                  <template v-if="!funds.bank_statement.transaction_count">本月无银行流水</template>
+                  <template v-else-if="bankAttentionCount">{{ bankAttentionCount }} 笔待处理</template>
+                  <template v-else>流水均已处理</template>
+                </span>
+                <p class="muted">
+                  <template v-if="funds.bank_statement.transaction_count">
+                    来自已导入银行流水 · 共 {{ funds.bank_statement.transaction_count }} 笔 · 流入
+                    {{ formatFen(funds.bank_statement.inflow_fen) }} · 流出
+                    {{ formatFen(funds.bank_statement.outflow_fen) }} · 普通流水匹配
+                    {{ funds.bank_statement.matched_count }}/{{ funds.bank_statement.ordinary_count }} 笔。未匹配流水不代表已确认业务。
+                  </template>
+                  <template v-else>本月没有已导入的银行流水；现金变动仍以账面明细为准。</template>
+                </p>
+              </div>
+              <select v-model="selectedBankAccount" class="control" aria-label="筛选银行流水账户">
+                <option value="">全部银行账户</option>
+                <option v-for="account in bankAccounts" :key="account.code" :value="account.code">
+                  {{ account.name }}（{{ account.code }}）
+                </option>
+              </select>
             </div>
-            <span class="status-chip" :class="{ attention: bankAttentionCount }">
-              <template v-if="!funds.bank_statement.transaction_count">本月无银行流水</template>
-              <template v-else-if="bankAttentionCount">{{ bankAttentionCount }} 笔待处理</template>
-              <template v-else>流水均已处理</template>
-            </span>
+            <div v-if="visibleBankRows.length" class="table-wrap">
+              <table class="bank-detail-table">
+                <thead>
+                  <tr>
+                    <th class="date-column">日期</th>
+                    <th class="account-column">银行账户</th>
+                    <th>对方与摘要</th>
+                    <th class="direction-column">方向</th>
+                    <th class="number amount-column">金额</th>
+                    <th class="state-column">处理状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="(item, index) in visibleBankRows"
+                    :key="`${index}-${item.date}-${item.account_code}`"
+                    :class="{ 'attention-row': ['unmatched', 'invalid_match', 'pending_late'].includes(item.state) }"
+                  >
+                    <td class="date-column">{{ formatDate(item.date) }}</td>
+                    <td class="account-column">{{ item.account_name }}（{{ item.account_code }}）</td>
+                    <td>{{ item.party }} · {{ item.memo }}</td>
+                    <td class="direction-column"><span class="direction" :class="item.direction">{{ item.direction === "inflow" ? "流入" : "流出" }}</span></td>
+                    <td class="number amount-column">{{ movementAmount(item.direction, item.amount_fen) }}</td>
+                    <td class="state-column">{{ bankStateLabel(item.state) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p v-else class="empty">{{ selectedBankAccount ? "本月该账户没有可展示的银行流水。" : "本月没有可展示的银行流水。" }}</p>
           </div>
-          <p class="muted">
-            <template v-if="funds.bank_statement.transaction_count">
-              共 {{ funds.bank_statement.transaction_count }} 笔 · 流入
-              {{ formatFen(funds.bank_statement.inflow_fen) }} · 流出
-              {{ formatFen(funds.bank_statement.outflow_fen) }} · 普通流水匹配
-              {{ funds.bank_statement.matched_count }}/{{ funds.bank_statement.ordinary_count }} 笔。
-            </template>
-            <template v-else>本月没有已导入的银行流水；现金变动仍以正式凭证资金明细为准。</template>
-          </p>
-          <div v-if="funds.bank_statement.rows.length" class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>日期</th><th>银行账户</th><th>对方与摘要</th><th>方向</th><th class="number">金额</th><th>处理状态</th></tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(item, index) in funds.bank_statement.rows"
-                  :key="`${index}-${item.date}-${item.account_code}`"
-                  :class="{ 'attention-row': ['unmatched', 'invalid_match', 'pending_late'].includes(item.state) }"
-                >
-                  <td>{{ formatDate(item.date) }}</td>
-                  <td>{{ item.account_name }}（{{ item.account_code }}）</td>
-                  <td>{{ item.party }} · {{ item.memo }}</td>
-                  <td><span class="direction" :class="item.direction">{{ item.direction === "inflow" ? "流入" : "流出" }}</span></td>
-                  <td class="number">{{ movementAmount(item.direction, item.amount_fen) }}</td>
-                  <td>{{ bankStateLabel(item.state) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p v-else class="empty">本月没有可展示的银行流水。</p>
         </section>
       </div>
     </div>
@@ -672,6 +770,66 @@ onBeforeUnmount(() => activeRequest?.abort());
   font-size: 12px;
 }
 
+.detail-heading {
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.detail-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.detail-switch button {
+  display: inline-flex;
+  min-width: 104px;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.detail-switch button[aria-selected="true"] {
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.detail-switch button:focus-visible,
+[role="tabpanel"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.detail-tab-alert {
+  display: inline-grid;
+  min-width: 19px;
+  min-height: 19px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+}
+
 .account-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -786,17 +944,30 @@ onBeforeUnmount(() => activeRequest?.abort());
   padding-left: 21px;
 }
 
-.table-toolbar {
+.detail-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 18px;
   margin-bottom: 12px;
 }
 
-.table-toolbar p {
-  margin: 0;
+.detail-toolbar > div {
+  min-width: 0;
+}
+
+.detail-toolbar strong {
   font-size: 12px;
+}
+
+.detail-toolbar p {
+  margin: 5px 0 0;
+  font-size: 12px;
+}
+
+.detail-toolbar .control {
+  flex: 0 0 auto;
+  max-width: min(100%, 320px);
 }
 
 .control {
@@ -820,6 +991,45 @@ table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+}
+
+.book-detail-table {
+  min-width: 1100px;
+}
+
+.bank-detail-table {
+  min-width: 980px;
+}
+
+.date-column {
+  width: 90px;
+  white-space: nowrap;
+}
+
+.account-column {
+  width: 210px;
+}
+
+.party-column {
+  width: 150px;
+}
+
+.direction-column {
+  width: 64px;
+  white-space: nowrap;
+}
+
+.amount-column {
+  width: 112px;
+}
+
+.reference-column {
+  width: 100px;
+}
+
+.state-column {
+  width: 86px;
+  white-space: nowrap;
 }
 
 th,
@@ -900,10 +1110,18 @@ tbody tr:last-child td {
   }
 
   .section-heading,
-  .table-toolbar,
+  .detail-toolbar,
   .account-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .detail-switch {
+    width: 100%;
+  }
+
+  .detail-switch button {
+    min-width: 0;
   }
 
   .account-balance {
@@ -914,8 +1132,9 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
-  .table-toolbar .control {
+  .detail-toolbar .control {
     width: 100%;
+    max-width: none;
     min-height: 44px;
   }
 }
