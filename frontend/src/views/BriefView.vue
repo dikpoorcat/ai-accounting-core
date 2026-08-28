@@ -312,12 +312,9 @@ onBeforeUnmount(() => {
 
         <aside class="action-queue" aria-label="需要处理">
           <header>
-            <div>
-              <span>需要处理</span>
-              <strong>{{ priorities.length ? `${priorities.length} 项` : "本月状态正常" }}</strong>
-            </div>
+            <span class="queue-title">需要处理</span>
             <span :class="['queue-count', { healthy: !priorities.length }]">
-              {{ priorities.length || "✓" }}
+              {{ priorities.length ? `${priorities.length}项` : "✓" }}
             </span>
           </header>
           <div v-if="priorities.length" class="priority-list">
@@ -623,11 +620,7 @@ onBeforeUnmount(() => {
   gap: 13px;
 }
 
-.action-queue header > div {
-  display: grid;
-}
-
-.action-queue header span:first-child,
+.queue-title,
 .healthy-summary span,
 .priority-list small {
   color: var(--brief-muted);
