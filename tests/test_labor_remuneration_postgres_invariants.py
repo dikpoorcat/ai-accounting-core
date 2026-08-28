@@ -59,7 +59,7 @@ def _evidence(session, org_id, marker: str) -> Evidence:
     return evidence
 
 
-def test_postgres_gross_unwithheld_migration_installs_and_restores_invariants() -> None:
+def test_postgres_formal_baseline_installs_labor_invariants() -> None:
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         database_url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
@@ -101,34 +101,6 @@ def test_postgres_gross_unwithheld_migration_installs_and_restores_invariants() 
                 assert "unified_payout_run" in final_event_wrapper
                 assert "labor_withholding_tax_payment" in final_event_wrapper
 
-            command.downgrade(config, "0014_labor_gross_unwithheld")
-            with engine.connect() as connection:
-                restored_final_event_wrapper = connection.scalar(
-                    text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_final_business_event_0014(uuid)'::regprocedure)"
-                    )
-                )
-                assert "labor_remuneration_accrual" not in restored_final_event_wrapper
-                assert "unified_payout_run" not in restored_final_event_wrapper
-                assert "labor_withholding_tax_payment" not in restored_final_event_wrapper
-            command.upgrade(config, "head")
-
-            command.downgrade(config, "0013_labor_remuneration")
-            downgraded_columns = {
-                column["name"] for column in inspect(engine).get_columns("unified_payout_run_items")
-            }
-            assert "settlement_mode" not in downgraded_columns
-            with engine.connect() as connection:
-                restored = connection.scalar(
-                    text(
-                        "SELECT pg_get_functiondef("
-                        "'finance_assert_unified_payout_0013(uuid)'::regprocedure)"
-                    )
-                )
-                assert "theoretical_individual_income_tax_fen" not in restored
-                assert "UNIFIED_PAYOUT_WITHHOLDING_EXCEPTION_EVIDENCE_MISMATCH" not in restored
-            command.upgrade(config, "head")
         finally:
             engine.dispose()
 

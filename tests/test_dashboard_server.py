@@ -251,7 +251,7 @@ def dashboard_http_server(monkeypatch: pytest.MonkeyPatch):
                     "complete": True,
                 }
             ],
-            "disclaimer": "私有试用",
+            "disclaimer": "内部财务工作台",
         }
 
     def fake_page_loader(*_args, period_key=None, **_kwargs):

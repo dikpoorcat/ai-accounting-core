@@ -249,7 +249,7 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 "INSERT INTO payroll_policy_versions "
                 "(id, org_id, region, supersedes_id, effective_from, effective_to, version, "
                 "source_url, parameters, created_at) "
-                "SELECT :id, :org_id, region, :policy_id, '2026-05-01', '2026-05-31', "
+                "SELECT :id, :org_id, region, :policy_id, '2026-04-01', '2026-04-30', "
                 "'r6-direct-policy', source_url, parameters, now() "
                 "FROM payroll_policy_versions WHERE id = :policy_id"
             ),

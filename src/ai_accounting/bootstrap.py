@@ -11,7 +11,7 @@ from .models import Organization
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Initialize one private-pilot organization")
+    parser = argparse.ArgumentParser(description="Initialize one local organization")
     parser.add_argument("--name", required=True, help="Organization name")
     parser.add_argument(
         "--taxpayer-identification-number",

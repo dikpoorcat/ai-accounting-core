@@ -620,7 +620,7 @@ def test_r5_006_first_shared_agency_is_safe_across_connections(
             select(Counterparty).where(
                 Counterparty.org_id == org_id,
                 Counterparty.kind == "other",
-                Counterparty.name == "法定缴费机构 社保局",
+                Counterparty.external_ref == "SOCIAL-01",
             )
         ).all()
         assert len(agencies) == 1

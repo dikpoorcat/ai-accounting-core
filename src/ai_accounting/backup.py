@@ -1,4 +1,4 @@
-"""Deterministic, offline backup primitives for the private-pilot deployment.
+"""Deterministic, offline backup primitives for the local deployment.
 
 This module intentionally does not start or stop services, read credentials, execute
 ``pg_dump``, or delete anything.  The deployment wrapper owns those side effects.  It

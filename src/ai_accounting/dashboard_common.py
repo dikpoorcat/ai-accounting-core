@@ -128,7 +128,7 @@ def load_dashboard_context(
             "default_quarter": default_quarter,
             "quarters": quarters,
             "disclaimer": (
-                "私有试用财务工作台 · 季度报表仅为申报准备文件，"
+                "内部财务工作台 · 季度报表仅为申报准备文件，"
                 "不替代负责人复核或纳税申报"
             ),
         }

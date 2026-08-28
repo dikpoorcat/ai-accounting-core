@@ -1914,7 +1914,7 @@ class AccountingPeriodService:
                     else (
                         "系统尚未形成本申报期税额计算记录；零税额也不能仅凭空记录推断。"
                         if tax_period_count == 0
-                        else "系统已有税期计算记录，但私有试用内核不替代税务系统中的实际申报。"
+                        else "系统已有税期计算记录，但本内核不替代税务系统中的实际申报。"
                     )
                 ),
                 "system_facts": {

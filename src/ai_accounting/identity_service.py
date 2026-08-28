@@ -51,7 +51,7 @@ from .models import (
     OwnerSession,
 )
 
-# The private pilot runs on one owner's local Windows account and keeps only an
+# The single-enterprise deployment uses one owner's local Windows account and keeps only an
 # opaque token in Credential Manager.  Seven idle days avoid repeated prompts
 # during ordinary bookkeeping, while the fixed 30-day boundary still forces
 # periodic password reauthentication and is never extended by activity.

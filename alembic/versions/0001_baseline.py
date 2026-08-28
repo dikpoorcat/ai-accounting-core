@@ -1,8 +1,8 @@
 """Create the complete accounting-core schema from one fresh-database baseline.
 
-Revision ID: 0001_baseline
+Revision ID: 0001_formal_baseline
 Revises:
-Create Date: 2026-08-13
+Create Date: 2026-08-28
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0001_baseline"
+revision = "0001_formal_baseline"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -24,87 +24,8 @@ depends_on = None
 
 _BASELINE_DIR = Path(__file__).resolve().parents[1] / "baseline"
 _FIXED_ASSET_TAX_RULE_ID = uuid.UUID("04c1ac27-aca0-439a-8224-f19634d391a5")
-_CREATED_AT = datetime(2026, 8, 13, tzinfo=UTC)
-
-_TABLES_IN_DEPENDENCY_ORDER = (
-    "organizations",
-    "tax_determinism_extension_actions",
-    "tax_rules",
-    "accounting_period_calendars",
-    "accounts",
-    "counterparties",
-    "fixed_asset_tax_rule_migration_actions",
-    "owner_accounts",
-    "payroll_batch_version_sequences",
-    "payroll_version_guards",
-    "voucher_sequences",
-    "fixed_asset_account_migration_actions",
-    "intangible_borrowing_account_migration_actions",
-    "owner_recovery_codes",
-    "owner_sessions",
-    "payroll_account_migration_actions",
-    "execution_attributions",
-    "identity_audit_events",
-    "accounting_period_actions",
-    "bank_reconciliation_scope_actions",
-    "bank_statement_import_actions",
-    "business_events",
-    "employees",
-    "evidence",
-    "payroll_policy_versions",
-    "account_bank_reconciliation_scope_history",
-    "accounting_period_action_evidence",
-    "accounting_periods",
-    "audit_logs",
-    "bank_reconciliation_scope_action_evidence",
-    "bank_statement_import_action_evidence",
-    "bank_statement_import_failures",
-    "borrowings",
-    "business_event_dependencies",
-    "employee_payroll_profile_versions",
-    "event_evidence",
-    "fixed_assets",
-    "intangible_assets",
-    "invoices",
-    "open_items",
-    "payroll_batches",
-    "payroll_opening_states",
-    "payroll_tax_year_guards",
-    "tax_periods",
-    "vouchers",
-    "accounting_period_closes",
-    "accounting_period_dependency_migration_actions",
-    "bank_reconciliation_actions",
-    "borrowing_interest_accruals",
-    "fixed_asset_activations",
-    "intangible_asset_amortizations",
-    "intangible_asset_retirements",
-    "payroll_batch_evidence",
-    "payroll_event_links",
-    "payroll_lines",
-    "payroll_tax_state_slots",
-    "settlements",
-    "tax_period_sources",
-    "voucher_lines",
-    "accounting_period_close_sources",
-    "annual_bonus_usages",
-    "bank_reconciliation_failures",
-    "bank_reconciliations",
-    "bank_transactions",
-    "borrowing_payments",
-    "fixed_asset_depreciations",
-    "fixed_asset_disposals",
-    "payroll_withholding_allocations",
-    "payroll_withholding_entitlements",
-    "accounting_period_close_bank_reconciliations",
-    "bank_reconciliation_evidence",
-    "bank_reconciliation_import_actions",
-    "bank_reconciliation_transactions",
-    "bank_transaction_matches",
-    "late_bank_evidence_actions",
-    "payroll_withholding_payment_allocations",
-    "late_bank_evidence_action_evidence",
-)
+_LABOR_REMUNERATION_TAX_POLICY_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000013")
+_CREATED_AT = datetime(2026, 8, 28, tzinfo=UTC)
 
 
 def _read_asset(name: str) -> str:
@@ -179,6 +100,64 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
         ],
     )
 
+    labor_policy_versions = sa.table(
+        "labor_remuneration_tax_policy_versions",
+        sa.column("id", sa.Uuid()),
+        sa.column("code", sa.String()),
+        sa.column("version", sa.String()),
+        sa.column("effective_from", sa.Date()),
+        sa.column("effective_to", sa.Date()),
+        sa.column("primary_source_url", sa.Text()),
+        sa.column("invoice_withholding_source_url", sa.Text()),
+        sa.column("legal_filing_source_url", sa.Text()),
+        sa.column("parameters", sa.JSON()),
+    )
+    op.bulk_insert(
+        labor_policy_versions,
+        [
+            {
+                "id": _LABOR_REMUNERATION_TAX_POLICY_ID,
+                "code": "cn_resident_labor_remuneration_withholding",
+                "version": "2019.1",
+                "effective_from": date(2019, 1, 1),
+                "effective_to": None,
+                "primary_source_url": "https://12366.chinatax.gov.cn/bzds/070/070-5-4.html",
+                "invoice_withholding_source_url": (
+                    "https://zhejiang.chinatax.gov.cn/art/2025/3/25/art_13314_634526.html"
+                ),
+                "legal_filing_source_url": (
+                    "https://www.chinatax.gov.cn/n810219/n810744/n3752930/"
+                    "n3752974/c3970366/content.html"
+                ),
+                "parameters": {
+                    "small_payment_threshold_fen": 400000,
+                    "fixed_expense_deduction_fen": 80000,
+                    "large_payment_expense_rate": "0.20",
+                    "withholding_brackets": [
+                        {
+                            "upper_taxable_income_fen": 2000000,
+                            "rate": "0.20",
+                            "quick_deduction_fen": 0,
+                        },
+                        {
+                            "upper_taxable_income_fen": 5000000,
+                            "rate": "0.30",
+                            "quick_deduction_fen": 200000,
+                        },
+                        {
+                            "upper_taxable_income_fen": None,
+                            "rate": "0.40",
+                            "quick_deduction_fen": 700000,
+                        },
+                    ],
+                    "rounding": "half_up_to_fen",
+                    "filing_due_rule": "day_15_of_following_month",
+                    "student_internship_method_supported": False,
+                },
+            }
+        ],
+    )
+
     if op.get_bind().dialect.name == "postgresql":
         extension_actions = sa.table(
             "tax_determinism_extension_actions",
@@ -231,7 +210,10 @@ def upgrade() -> None:
 
 def _drop_postgresql_objects(owned_extensions: set[str]) -> None:
     bind = op.get_bind()
-    for table_name in reversed(_TABLES_IN_DEPENDENCY_ORDER):
+    table_names = sa.inspect(bind).get_table_names(schema="public")
+    for table_name in sorted(table_names, reverse=True):
+        if table_name == "alembic_version":
+            continue
         bind.exec_driver_sql(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
 
     functions = bind.execute(
@@ -269,7 +251,14 @@ def downgrade() -> None:
         _drop_postgresql_objects(owned_extensions)
         return
     if bind.dialect.name == "sqlite":
-        for table_name in reversed(_TABLES_IN_DEPENDENCY_ORDER):
-            bind.exec_driver_sql(f'DROP TABLE IF EXISTS "{table_name}"')
+        bind.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        try:
+            table_names = sa.inspect(bind).get_table_names()
+            for table_name in sorted(table_names, reverse=True):
+                if table_name == "alembic_version":
+                    continue
+                bind.exec_driver_sql(f'DROP TABLE IF EXISTS "{table_name}"')
+        finally:
+            bind.exec_driver_sql("PRAGMA foreign_keys=ON")
         return
     raise RuntimeError(f"UNSUPPORTED_BASELINE_DIALECT:{bind.dialect.name}")

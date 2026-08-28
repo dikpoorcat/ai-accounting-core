@@ -788,17 +788,17 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             )
         )
         assert profile["status"] == "registered"
-        # A payroll period can have distinct tax-policy snapshots when payment
-        # dates straddle a lawful effective-date boundary.  Contribution rules
-        # still select the period-end policy, while the frozen batch policy ID
-        # records the actual tax policy used on each payment date.
+        # Regular payroll selects its tax policy at the payroll-period end,
+        # while a separately taxed annual bonus selects at its payment date.
+        # A lawful boundary between those dates can therefore freeze distinct
+        # statutory agencies into two otherwise compatible payable sources.
         first_parameters = deepcopy(payroll_parameters())
         first_policy = service.register_payroll_policy_version(
             RegisterPayrollPolicyVersionRequest(
                 org_id=organization.id,
                 region="R5 政策边界地区",
                 effective_from=date(2025, 7, 1),
-                effective_to=date(2026, 3, 5),
+                effective_to=date(2026, 3, 30),
                 version="r5-policy-agency-v1",
                 source_url=(
                     "https://www.chinatax.gov.cn/chinatax/n810341/n810765/n3359382/"
@@ -817,7 +817,7 @@ def test_r5_007_incompatible_policy_and_agency_reject_before_any_settlement(
             RegisterPayrollPolicyVersionRequest(
                 org_id=organization.id,
                 region="R5 政策边界地区",
-                effective_from=date(2026, 3, 6),
+                effective_from=date(2026, 3, 31),
                 effective_to=date(2026, 6, 30),
                 version="r5-policy-agency-v2",
                 source_url=(

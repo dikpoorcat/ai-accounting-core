@@ -64,6 +64,29 @@ CREATE TABLE accounting_period_calendars (
 	CONSTRAINT ck_accounting_period_calendar_rule CHECK (length(trim(rule_version)) > 0),
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT
 );
+CREATE TABLE "accounting_period_close_approvals" (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	period_id CHAR(32) NOT NULL,
+	owner_account_id CHAR(32) NOT NULL,
+	owner_session_id CHAR(32) NOT NULL,
+	owner_credential_version INTEGER NOT NULL,
+	calculation_hash VARCHAR(64) NOT NULL,
+	confirmation_method VARCHAR(40) NOT NULL,
+	confirmed_at DATETIME NOT NULL,
+	expires_at DATETIME NOT NULL,
+	consumed_at DATETIME,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_period_close_approval_method CHECK (confirmation_method = 'local_password_reauthentication'),
+	CONSTRAINT ck_period_close_approval_credential_version CHECK (owner_credential_version >= 1),
+	CONSTRAINT fk_period_close_approval_owner_session FOREIGN KEY(org_id, owner_account_id, owner_session_id, owner_credential_version) REFERENCES owner_sessions (org_id, owner_account_id, id, credential_version) ON DELETE RESTRICT,
+	CONSTRAINT uq_period_close_approval_org_id UNIQUE (org_id, id),
+	CONSTRAINT fk_period_close_approval_org_period FOREIGN KEY(org_id, period_id) REFERENCES accounting_periods (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_period_close_approval_expiry CHECK (expires_at > confirmed_at),
+	CONSTRAINT fk_period_close_approval_org_owner FOREIGN KEY(org_id, owner_account_id) REFERENCES owner_accounts (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_period_close_approval_consumed_at CHECK (consumed_at IS NULL OR consumed_at >= confirmed_at),
+	CONSTRAINT ck_period_close_approval_hash_length CHECK (length(calculation_hash) = 64)
+);
 CREATE TABLE accounting_period_close_bank_reconciliations (
 	org_id CHAR(32) NOT NULL,
 	close_id CHAR(32) NOT NULL,
@@ -76,6 +99,25 @@ CREATE TABLE accounting_period_close_bank_reconciliations (
 	CONSTRAINT fk_period_close_bank_reconciliation_org_reconciliation FOREIGN KEY(org_id, reconciliation_id) REFERENCES bank_reconciliations (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT ck_period_close_bank_reconciliation_hash CHECK (length(reconciliation_hash_at_close) = 64),
 	UNIQUE (reconciliation_id)
+);
+CREATE TABLE accounting_period_close_commentaries (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	close_id CHAR(32) NOT NULL,
+	commentary TEXT NOT NULL,
+	prompt_version VARCHAR(80) NOT NULL,
+	context_payload JSON NOT NULL,
+	context_hash VARCHAR(64) NOT NULL,
+	generation_method VARCHAR(40) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_period_close_commentary_org_close FOREIGN KEY(org_id, close_id) REFERENCES accounting_period_closes (org_id, id) ON DELETE RESTRICT,
+	UNIQUE (close_id),
+	CONSTRAINT uq_period_close_commentary_org_id UNIQUE (org_id, id),
+	CONSTRAINT ck_period_close_commentary_text CHECK (length(trim(commentary)) BETWEEN 1 AND 2000),
+	CONSTRAINT ck_period_close_commentary_prompt_version CHECK (length(prompt_version) BETWEEN 1 AND 80),
+	CONSTRAINT ck_period_close_commentary_context_hash_length CHECK (length(context_hash) = 64),
+	CONSTRAINT ck_period_close_commentary_generation_method CHECK (generation_method IN ('close_ai_agent','historical_ai_backfill'))
 );
 CREATE TABLE accounting_period_close_sources (
 	close_id CHAR(32) NOT NULL,
@@ -99,7 +141,7 @@ CREATE TABLE accounting_period_close_sources (
 	CONSTRAINT ck_period_close_source_event_status CHECK (event_status_at_close IN ('posted','reversed')),
 	CONSTRAINT ck_period_close_source_balanced CHECK (debit_fen > 0 AND debit_fen = credit_fen)
 );
-CREATE TABLE accounting_period_closes (
+CREATE TABLE "accounting_period_closes" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	period_id CHAR(32) NOT NULL,
@@ -117,17 +159,20 @@ CREATE TABLE accounting_period_closes (
 	line_count INTEGER NOT NULL,
 	total_debit_fen BIGINT NOT NULL,
 	total_credit_fen BIGINT NOT NULL,
+	owner_approval_id CHAR(32),
 	PRIMARY KEY (id),
-	CONSTRAINT fk_accounting_period_close_org_period FOREIGN KEY(org_id, period_id) REFERENCES accounting_periods (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_period_close_counts CHECK (voucher_count >= 0 AND line_count >= 0),
+	CONSTRAINT ck_period_close_previous_hash_length CHECK (previous_close_hash IS NULL OR length(previous_close_hash) = 64),
 	CONSTRAINT fk_accounting_period_close_org_action FOREIGN KEY(org_id, action_id) REFERENCES accounting_period_actions (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT uq_accounting_period_close_org_id UNIQUE (org_id, id),
-	CONSTRAINT ck_period_close_payload CHECK (length(calculation_payload) > 0),
-	CONSTRAINT ck_period_close_hash_length CHECK (length(calculation_hash) = 64),
-	CONSTRAINT ck_period_close_previous_hash_length CHECK (previous_close_hash IS NULL OR length(previous_close_hash) = 64),
-	CONSTRAINT ck_period_close_counts CHECK (voucher_count >= 0 AND line_count >= 0),
 	CONSTRAINT ck_period_close_totals CHECK (total_debit_fen >= 0 AND total_debit_fen = total_credit_fen),
-	UNIQUE (period_id),
-	UNIQUE (action_id)
+	CONSTRAINT ck_period_close_hash_length CHECK (length(calculation_hash) = 64),
+	CONSTRAINT fk_accounting_period_close_org_period FOREIGN KEY(org_id, period_id) REFERENCES accounting_periods (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_period_close_payload CHECK (length(calculation_payload) > 0),
+	CONSTRAINT uq_accounting_period_close_owner_approval UNIQUE (owner_approval_id),
+	CONSTRAINT fk_accounting_period_close_org_owner_approval FOREIGN KEY(org_id, owner_approval_id) REFERENCES accounting_period_close_approvals (org_id, id) ON DELETE RESTRICT,
+	UNIQUE (action_id),
+	UNIQUE (period_id)
 );
 CREATE TABLE accounting_period_dependency_migration_actions (
 	dependency_id CHAR(32) NOT NULL,
@@ -630,7 +675,7 @@ CREATE TABLE business_events (
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE,
 	FOREIGN KEY(reversed_by_event_id) REFERENCES business_events (id) ON DELETE RESTRICT
 );
-CREATE TABLE counterparties (
+CREATE TABLE "counterparties" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	kind VARCHAR(30) NOT NULL,
@@ -639,10 +684,30 @@ CREATE TABLE counterparties (
 	PRIMARY KEY (id),
 	CONSTRAINT uq_counterparty_identity UNIQUE (org_id, kind, name),
 	CONSTRAINT uq_counterparty_org_id UNIQUE (org_id, id),
-	CONSTRAINT ck_counterparty_kind CHECK (kind IN ('customer','supplier','employee','owner','other')),
+	CONSTRAINT ck_counterparty_kind CHECK (kind IN ('customer','supplier','employee','owner','other','labor_person')),
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE
 );
-CREATE TABLE employee_payroll_profile_versions (
+CREATE TABLE deferred_output_vat_transfers (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	source_event_id CHAR(32) NOT NULL,
+	source_open_item_id CHAR(32) NOT NULL,
+	transfer_event_id CHAR(32) NOT NULL,
+	amount_fen BIGINT NOT NULL,
+	tax_obligation_date DATE NOT NULL,
+	accounting_rule_version VARCHAR(50) NOT NULL,
+	accounting_rule_source_url TEXT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_deferred_vat_transfer_amount CHECK (amount_fen > 0),
+	CONSTRAINT ck_deferred_vat_transfer_rule_text CHECK (length(trim(accounting_rule_version)) > 0 AND length(trim(accounting_rule_source_url)) > 0),
+	CONSTRAINT fk_deferred_vat_transfer_org_source_event FOREIGN KEY(org_id, source_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_deferred_vat_transfer_org_open_item FOREIGN KEY(org_id, source_open_item_id) REFERENCES open_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_deferred_vat_transfer_org_transfer_event FOREIGN KEY(org_id, transfer_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_deferred_vat_transfer_source_event UNIQUE (org_id, source_event_id, transfer_event_id),
+	CONSTRAINT uq_deferred_vat_transfer_org_id UNIQUE (org_id, id)
+);
+CREATE TABLE "employee_payroll_profile_versions" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	employee_id CHAR(32) NOT NULL,
@@ -652,21 +717,23 @@ CREATE TABLE employee_payroll_profile_versions (
 	expense_role VARCHAR(50) NOT NULL,
 	social_insurance_base_fen BIGINT NOT NULL,
 	housing_fund_base_fen BIGINT NOT NULL,
-	resident_employee BOOLEAN NOT NULL,
+	resident_employee BOOLEAN,
 	execution_attribution_id CHAR(32),
 	created_at DATETIME NOT NULL,
+	social_insurance_participating BOOLEAN DEFAULT 1 NOT NULL,
+	housing_fund_participating BOOLEAN DEFAULT 1 NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT fk_payroll_profile_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_profile_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_profile_supersedes FOREIGN KEY(org_id, employee_id, supersedes_id) REFERENCES employee_payroll_profile_versions (org_id, employee_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_payroll_profile_org_id UNIQUE (org_id, id),
-	CONSTRAINT uq_payroll_profile_org_employee_id UNIQUE (org_id, employee_id, id),
 	CONSTRAINT uq_payroll_profile_successor UNIQUE (supersedes_id),
+	CONSTRAINT uq_payroll_profile_org_id UNIQUE (org_id, id),
+	CONSTRAINT fk_payroll_profile_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_employee_payroll_profile_bases CHECK (social_insurance_base_fen >= 0 AND housing_fund_base_fen >= 0),
+	CONSTRAINT uq_payroll_profile_org_employee_id UNIQUE (org_id, employee_id, id),
 	CONSTRAINT ck_employee_payroll_profile_dates CHECK (effective_to IS NULL OR effective_from <= effective_to),
-	CONSTRAINT ck_employee_payroll_profile_expense_role CHECK (expense_role IN ('payroll_management_expense','payroll_sales_expense','payroll_service_cost')),
-	CONSTRAINT ck_employee_payroll_profile_bases CHECK (social_insurance_base_fen >= 0 AND housing_fund_base_fen >= 0)
+	CONSTRAINT fk_payroll_profile_supersedes FOREIGN KEY(org_id, employee_id, supersedes_id) REFERENCES employee_payroll_profile_versions (org_id, employee_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payroll_profile_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_employee_payroll_profile_expense_role CHECK (expense_role IN ('payroll_management_expense','payroll_sales_expense','payroll_service_cost'))
 );
-CREATE TABLE employees (
+CREATE TABLE "employees" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	counterparty_id CHAR(32) NOT NULL,
@@ -677,14 +744,49 @@ CREATE TABLE employees (
 	status VARCHAR(20) NOT NULL,
 	execution_attribution_id CHAR(32),
 	created_at DATETIME NOT NULL,
+	prior_labor_person_id CHAR(32),
+	tax_withholding_start_date DATE,
 	PRIMARY KEY (id),
+	CONSTRAINT ck_employee_status CHECK (status IN ('active','inactive','terminated')),
 	CONSTRAINT fk_employee_org_counterparty FOREIGN KEY(org_id, counterparty_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_employee_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_employee_org_id UNIQUE (org_id, id),
 	CONSTRAINT uq_employee_org_code UNIQUE (org_id, employee_code),
+	CONSTRAINT fk_employee_org_prior_labor_person FOREIGN KEY(org_id, prior_labor_person_id) REFERENCES labor_service_persons (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_employee_prior_labor_person UNIQUE (prior_labor_person_id),
+	CONSTRAINT uq_employee_org_id UNIQUE (org_id, id),
 	CONSTRAINT uq_employee_counterparty UNIQUE (counterparty_id),
+	CONSTRAINT fk_employee_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT ck_employee_employment_dates CHECK (employment_end_date IS NULL OR employment_start_date <= employment_end_date),
-	CONSTRAINT ck_employee_status CHECK (status IN ('active','inactive','terminated'))
+	CONSTRAINT ck_employee_tax_withholding_start CHECK (tax_withholding_start_date IS NULL OR employment_start_date <= tax_withholding_start_date)
+);
+CREATE TABLE enterprise_income_tax_quarter_confirmations (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	calendar_year INTEGER NOT NULL,
+	calendar_quarter INTEGER NOT NULL,
+	treatment VARCHAR(30) NOT NULL,
+	amount_fen BIGINT NOT NULL,
+	posting_date DATE,
+	business_event_id CHAR(32),
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	calculation_payload TEXT NOT NULL,
+	calculation_hash VARCHAR(64) NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	evidence_references JSON NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_enterprise_income_tax_confirmation_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_enterprise_income_tax_confirmation_event FOREIGN KEY(org_id, business_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_enterprise_income_tax_confirmation_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_enterprise_income_tax_confirmation_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_enterprise_income_tax_confirmation_period UNIQUE (org_id, calendar_year, calendar_quarter),
+	CONSTRAINT uq_enterprise_income_tax_confirmation_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT ck_enterprise_income_tax_confirmation_period CHECK (calendar_year BETWEEN 1 AND 9999 AND calendar_quarter BETWEEN 1 AND 4),
+	CONSTRAINT ck_enterprise_income_tax_confirmation_treatment CHECK (treatment IN ('not_applicable','zero','accrue','reduce')),
+	CONSTRAINT ck_enterprise_income_tax_confirmation_shape CHECK ((treatment IN ('not_applicable','zero') AND amount_fen = 0 AND posting_date IS NULL AND business_event_id IS NULL) OR (treatment IN ('accrue','reduce') AND amount_fen > 0 AND posting_date IS NOT NULL AND business_event_id IS NOT NULL)),
+	CONSTRAINT ck_enterprise_income_tax_confirmation_payload CHECK (length(idempotency_key) BETWEEN 1 AND 200 AND length(request_payload_hash) = 64 AND length(calculation_payload) > 0 AND length(calculation_hash) = 64),
+	CONSTRAINT ck_enterprise_income_tax_confirmation_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000)
 );
 CREATE TABLE event_evidence (
 	event_id CHAR(32) NOT NULL,
@@ -740,6 +842,34 @@ CREATE TABLE execution_attributions (
 	CONSTRAINT ck_execution_attribution_executor_version CHECK (length(executor_version) BETWEEN 1 AND 100),
 	CONSTRAINT ck_execution_attribution_tool_name CHECK (length(tool_name) BETWEEN 1 AND 100)
 );
+CREATE TABLE financial_statement_classifications (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	voucher_line_id CHAR(32) NOT NULL,
+	parent_role VARCHAR(50) NOT NULL,
+	allocations JSON NOT NULL,
+	allocation_payload TEXT NOT NULL,
+	allocation_hash VARCHAR(64) NOT NULL,
+	supersedes_id CHAR(32),
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	evidence_references JSON NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_financial_statement_classification_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_financial_statement_classification_voucher_line FOREIGN KEY(voucher_line_id) REFERENCES voucher_lines (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_financial_statement_classification_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES financial_statement_classifications (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_financial_statement_classification_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_financial_statement_classification_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_financial_statement_classification_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT uq_financial_statement_classification_supersedes UNIQUE (org_id, supersedes_id),
+	CONSTRAINT ck_financial_statement_classification_parent_role CHECK (parent_role IN ('general_expense','sales_expense','finance_expense')),
+	CONSTRAINT ck_financial_statement_classification_payload CHECK (length(allocation_payload) > 0 AND length(allocation_hash) = 64),
+	CONSTRAINT ck_financial_statement_classification_request CHECK (length(idempotency_key) BETWEEN 1 AND 200 AND length(request_payload_hash) = 64),
+	CONSTRAINT ck_financial_statement_classification_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000)
+);
 CREATE TABLE fixed_asset_account_migration_actions (
 	org_id CHAR(32) NOT NULL,
 	account_id CHAR(32) NOT NULL,
@@ -750,7 +880,7 @@ CREATE TABLE fixed_asset_account_migration_actions (
 	CONSTRAINT fk_fixed_asset_account_action_org_account FOREIGN KEY(org_id, account_id) REFERENCES accounts (org_id, id) ON DELETE CASCADE,
 	CONSTRAINT ck_fixed_asset_account_action CHECK (action IN ('created','bound'))
 );
-CREATE TABLE fixed_asset_activations (
+CREATE TABLE "fixed_asset_activations" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	asset_id CHAR(32) NOT NULL,
@@ -764,17 +894,66 @@ CREATE TABLE fixed_asset_activations (
 	accounting_rule_version VARCHAR(50) NOT NULL,
 	accounting_rule_source_url TEXT NOT NULL,
 	created_at DATETIME NOT NULL,
+	depreciation_group_code VARCHAR(100),
+	depreciation_rounding_policy VARCHAR(50) DEFAULT 'round_half_up_card_v1' NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT fk_fixed_asset_activation_org_asset FOREIGN KEY(org_id, asset_id) REFERENCES fixed_assets (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_fixed_asset_activation_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_fixed_asset_activation_org_id UNIQUE (org_id, id),
-	CONSTRAINT ck_asset_activation_method CHECK (depreciation_method = 'straight_line'),
-	CONSTRAINT ck_asset_activation_life CHECK (useful_life_months >= 13),
-	CONSTRAINT ck_asset_activation_residual CHECK (residual_value_fen >= 0),
 	CONSTRAINT ck_asset_activation_benefit_area CHECK (benefit_area IN ('management','sales','service_delivery')),
+	CONSTRAINT uq_fixed_asset_activation_org_id UNIQUE (org_id, id),
+	CONSTRAINT ck_asset_activation_life CHECK (useful_life_months >= 13),
+	CONSTRAINT ck_asset_activation_method CHECK (depreciation_method = 'straight_line'),
+	CONSTRAINT fk_fixed_asset_activation_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_asset_activation_residual CHECK (residual_value_fen >= 0),
+	CONSTRAINT fk_fixed_asset_activation_org_asset FOREIGN KEY(org_id, asset_id) REFERENCES fixed_assets (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_asset_activation_group_code CHECK (depreciation_group_code IS NULL OR length(trim(depreciation_group_code)) > 0),
+	CONSTRAINT ck_asset_activation_rounding_policy CHECK (depreciation_rounding_policy IN ('floor_final_remainder_v1','round_half_up_card_v1','round_half_up_group_v1')),
 	UNIQUE (event_id)
 );
-CREATE TABLE fixed_asset_depreciations (
+CREATE TABLE fixed_asset_cost_sources (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	asset_id CHAR(32) NOT NULL,
+	event_id CHAR(32) NOT NULL,
+	open_item_id CHAR(32) NOT NULL,
+	source_key VARCHAR(200) NOT NULL,
+	employee_id CHAR(32) NOT NULL,
+	amount_fen BIGINT NOT NULL,
+	due_date DATE NOT NULL,
+	description VARCHAR(500) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_fixed_asset_cost_source_amount CHECK (amount_fen > 0),
+	CONSTRAINT ck_fixed_asset_cost_source_key CHECK (length(trim(source_key)) > 0),
+	CONSTRAINT ck_fixed_asset_cost_source_description CHECK (length(trim(description)) > 0),
+	CONSTRAINT fk_fixed_asset_cost_source_org_asset FOREIGN KEY(org_id, asset_id) REFERENCES fixed_assets (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_fixed_asset_cost_source_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_fixed_asset_cost_source_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_fixed_asset_cost_source_org_open_item FOREIGN KEY(org_id, open_item_id) REFERENCES open_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_fixed_asset_cost_source_event_key UNIQUE (org_id, event_id, source_key),
+	CONSTRAINT uq_fixed_asset_cost_source_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_fixed_asset_cost_source_open_item UNIQUE (open_item_id)
+);
+CREATE TABLE fixed_asset_depreciation_batches (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	event_id CHAR(32) NOT NULL,
+	period_start DATE NOT NULL,
+	posting_date DATE NOT NULL,
+	asset_count INTEGER NOT NULL,
+	total_amount_fen BIGINT NOT NULL,
+	calculation_hash VARCHAR(64) NOT NULL,
+	accounting_rule_version VARCHAR(50) NOT NULL,
+	accounting_rule_source_url TEXT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_fixed_asset_depreciation_batch_count CHECK (asset_count > 0),
+	CONSTRAINT ck_fixed_asset_depreciation_batch_amount CHECK (total_amount_fen > 0),
+	CONSTRAINT ck_fixed_asset_depreciation_batch_hash_length CHECK (length(calculation_hash) = 64),
+	CONSTRAINT ck_fixed_asset_depreciation_batch_posting_month CHECK (strftime('%Y-%m', posting_date) = strftime('%Y-%m', period_start)),
+	CONSTRAINT fk_fixed_asset_depreciation_batch_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_fixed_asset_depreciation_batch_event UNIQUE (event_id),
+	CONSTRAINT uq_fixed_asset_depreciation_batch_org_id UNIQUE (org_id, id)
+);
+CREATE TABLE "fixed_asset_depreciations" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	asset_id CHAR(32) NOT NULL,
@@ -789,17 +968,19 @@ CREATE TABLE fixed_asset_depreciations (
 	accounting_rule_version VARCHAR(50) NOT NULL,
 	accounting_rule_source_url TEXT NOT NULL,
 	created_at DATETIME NOT NULL,
+	batch_id CHAR(32),
 	PRIMARY KEY (id),
-	CONSTRAINT fk_fixed_asset_depreciation_org_asset FOREIGN KEY(org_id, asset_id) REFERENCES fixed_assets (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_fixed_asset_depreciation_org_activation FOREIGN KEY(org_id, activation_id) REFERENCES fixed_asset_activations (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_fixed_asset_depreciation_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_fixed_asset_depreciation_org_id UNIQUE (org_id, id),
-	CONSTRAINT ck_fixed_asset_depreciation_sequence CHECK (sequence_no > 0),
 	CONSTRAINT ck_fixed_asset_depreciation_amount CHECK (amount_fen > 0),
+	CONSTRAINT fk_fixed_asset_depreciation_org_asset FOREIGN KEY(org_id, asset_id) REFERENCES fixed_assets (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT ck_fixed_asset_depreciation_accumulated CHECK (accumulated_after_fen >= amount_fen),
 	CONSTRAINT ck_fixed_asset_depreciation_hash_length CHECK (length(calculation_hash) = 64),
+	CONSTRAINT fk_fixed_asset_depreciation_org_activation FOREIGN KEY(org_id, activation_id) REFERENCES fixed_asset_activations (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_fixed_asset_depreciation_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT ck_fixed_asset_depreciation_posting_month CHECK (strftime('%Y-%m', posting_date) = strftime('%Y-%m', period_start)),
-	UNIQUE (event_id)
+	CONSTRAINT ck_fixed_asset_depreciation_sequence CHECK (sequence_no > 0),
+	CONSTRAINT uq_fixed_asset_depreciation_org_id UNIQUE (org_id, id),
+	CONSTRAINT fk_fixed_asset_depreciation_org_batch FOREIGN KEY(org_id, batch_id) REFERENCES fixed_asset_depreciation_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_fixed_asset_depreciation_event_asset UNIQUE (org_id, event_id, asset_id)
 );
 CREATE TABLE fixed_asset_disposals (
 	id CHAR(32) NOT NULL,
@@ -849,7 +1030,7 @@ CREATE TABLE fixed_asset_tax_rule_migration_actions (
 	CONSTRAINT ck_fixed_asset_tax_rule_action CHECK (action = 'created'),
 	FOREIGN KEY(tax_rule_id) REFERENCES tax_rules (id) ON DELETE RESTRICT
 );
-CREATE TABLE fixed_assets (
+CREATE TABLE "fixed_assets" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	asset_code VARCHAR(100) NOT NULL,
@@ -864,25 +1045,27 @@ CREATE TABLE fixed_assets (
 	installation_and_direct_cost_fen BIGINT NOT NULL,
 	cost_fen BIGINT NOT NULL,
 	supplier_id CHAR(32) NOT NULL,
-	settlement_method VARCHAR(20) NOT NULL,
+	settlement_method VARCHAR(40) NOT NULL,
 	payment_date DATE,
 	due_date DATE,
 	acquisition_event_id CHAR(32) NOT NULL,
 	accounting_rule_version VARCHAR(50) NOT NULL,
 	accounting_rule_source_url TEXT NOT NULL,
 	created_at DATETIME NOT NULL,
+	reimbursing_employee_id CHAR(32),
 	PRIMARY KEY (id),
-	CONSTRAINT fk_fixed_asset_org_supplier FOREIGN KEY(org_id, supplier_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_fixed_asset_org_acquisition_event FOREIGN KEY(org_id, acquisition_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_fixed_asset_org_id UNIQUE (org_id, id),
-	CONSTRAINT uq_fixed_asset_org_code UNIQUE (org_id, asset_code),
-	CONSTRAINT ck_fixed_asset_category CHECK (category IN ('production_equipment','tools_furniture','transport','electronic','other_movable_tangible')),
-	CONSTRAINT ck_fixed_asset_expected_use CHECK (expected_use_over_one_year IS TRUE),
-	CONSTRAINT ck_fixed_asset_cost_components_nonnegative CHECK (purchase_price_fen >= 0 AND noncreditable_tax_fen >= 0 AND transport_and_handling_fen >= 0 AND installation_and_direct_cost_fen >= 0),
-	CONSTRAINT ck_fixed_asset_cost_positive CHECK (cost_fen > 0),
 	CONSTRAINT ck_fixed_asset_cost_components_total CHECK (cost_fen = purchase_price_fen + noncreditable_tax_fen + transport_and_handling_fen + installation_and_direct_cost_fen),
-	CONSTRAINT ck_fixed_asset_settlement_method CHECK (settlement_method IN ('bank','payable')),
-	CONSTRAINT ck_fixed_asset_settlement_dates CHECK ((settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL) OR (settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL)),
+	CONSTRAINT uq_fixed_asset_org_id UNIQUE (org_id, id),
+	CONSTRAINT fk_fixed_asset_org_acquisition_event FOREIGN KEY(org_id, acquisition_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_fixed_asset_cost_positive CHECK (cost_fen > 0),
+	CONSTRAINT fk_fixed_asset_org_supplier FOREIGN KEY(org_id, supplier_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_fixed_asset_expected_use CHECK (expected_use_over_one_year IS TRUE),
+	CONSTRAINT uq_fixed_asset_org_code UNIQUE (org_id, asset_code),
+	CONSTRAINT ck_fixed_asset_cost_components_nonnegative CHECK (purchase_price_fen >= 0 AND noncreditable_tax_fen >= 0 AND transport_and_handling_fen >= 0 AND installation_and_direct_cost_fen >= 0),
+	CONSTRAINT ck_fixed_asset_category CHECK (category IN ('production_equipment','tools_furniture','transport','electronic','other_movable_tangible')),
+	CONSTRAINT fk_fixed_asset_org_reimbursing_employee FOREIGN KEY(org_id, reimbursing_employee_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_fixed_asset_settlement_method CHECK (settlement_method IN ('bank','payable','employee_payable','allocated_employee_payables')),
+	CONSTRAINT ck_fixed_asset_settlement_dates CHECK ((settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL AND reimbursing_employee_id IS NULL) OR (settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL AND reimbursing_employee_id IS NULL) OR (settlement_method = 'employee_payable' AND payment_date IS NULL AND due_date IS NOT NULL AND reimbursing_employee_id IS NOT NULL) OR (settlement_method = 'allocated_employee_payables' AND payment_date IS NULL AND due_date IS NULL AND reimbursing_employee_id IS NULL)),
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE,
 	UNIQUE (acquisition_event_id)
 );
@@ -1043,6 +1226,255 @@ CREATE TABLE invoices (
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE,
 	FOREIGN KEY(event_id) REFERENCES business_events (id) ON DELETE RESTRICT
 );
+CREATE TABLE labor_external_declaration_confirmations (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	labor_line_id CHAR(32) NOT NULL,
+	declaration_date DATE NOT NULL,
+	external_declaration_reference VARCHAR(200) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_declaration_org_line FOREIGN KEY(org_id, labor_line_id) REFERENCES labor_remuneration_lines (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_declaration_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	UNIQUE (labor_line_id),
+	CONSTRAINT uq_labor_declaration_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_labor_declaration_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT ck_labor_declaration_request_hash CHECK (length(request_payload_hash) = 64)
+);
+CREATE TABLE labor_external_declaration_evidence (
+	org_id CHAR(32) NOT NULL,
+	confirmation_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, confirmation_id, evidence_id),
+	CONSTRAINT fk_labor_declaration_evidence_org_confirmation FOREIGN KEY(org_id, confirmation_id) REFERENCES labor_external_declaration_confirmations (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_declaration_evidence_org_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE labor_remuneration_batch_evidence (
+	org_id CHAR(32) NOT NULL,
+	batch_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, batch_id, evidence_id),
+	CONSTRAINT fk_labor_batch_evidence_org_batch FOREIGN KEY(org_id, batch_id) REFERENCES labor_remuneration_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_batch_evidence_org_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE labor_remuneration_batches (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	remuneration_period VARCHAR(7) NOT NULL,
+	status VARCHAR(20) NOT NULL,
+	calculation_hash VARCHAR(64) NOT NULL,
+	calculation_input JSON NOT NULL,
+	calculation_trace JSON NOT NULL,
+	policy_version_id CHAR(32) NOT NULL,
+	policy_snapshot JSON NOT NULL,
+	business_date DATE NOT NULL,
+	posting_date DATE NOT NULL,
+	planned_payment_date DATE NOT NULL,
+	business_event_id CHAR(32),
+	confirmed_at DATETIME,
+	confirmation_note TEXT,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_batch_tax_policy FOREIGN KEY(policy_version_id) REFERENCES labor_remuneration_tax_policy_versions (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_batch_org_event FOREIGN KEY(org_id, business_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_batch_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	UNIQUE (business_event_id),
+	CONSTRAINT uq_labor_batch_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_labor_batch_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT ck_labor_batch_status CHECK (status IN ('calculated','posted','reversed','superseded')),
+	CONSTRAINT ck_labor_batch_period CHECK (length(remuneration_period) = 7 AND substr(remuneration_period, 5, 1) = '-' AND substr(remuneration_period, 6, 2) BETWEEN '01' AND '12'),
+	CONSTRAINT ck_labor_batch_hash CHECK (length(calculation_hash) = 64),
+	CONSTRAINT ck_labor_batch_request_hash CHECK (length(request_payload_hash) = 64)
+);
+CREATE TABLE labor_remuneration_event_links (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	event_id CHAR(32) NOT NULL,
+	batch_id CHAR(32) NOT NULL,
+	labor_line_id CHAR(32),
+	source_open_item_id CHAR(32),
+	source_payment_event_id CHAR(32),
+	link_kind VARCHAR(30) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_event_link_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_event_link_org_batch FOREIGN KEY(org_id, batch_id) REFERENCES labor_remuneration_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_event_link_org_line FOREIGN KEY(org_id, labor_line_id) REFERENCES labor_remuneration_lines (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_event_link_org_open_item FOREIGN KEY(org_id, source_open_item_id) REFERENCES open_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_event_link_org_source_payment FOREIGN KEY(org_id, source_payment_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_labor_event_link UNIQUE (event_id, batch_id, labor_line_id, link_kind),
+	CONSTRAINT ck_labor_event_link_kind CHECK (link_kind IN ('accrual','payment','tax_payment','reversal'))
+);
+CREATE TABLE labor_remuneration_lines (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	batch_id CHAR(32) NOT NULL,
+	labor_person_id CHAR(32) NOT NULL,
+	counterparty_id CHAR(32) NOT NULL,
+	service_start_date DATE NOT NULL,
+	service_end_date DATE NOT NULL,
+	fixed_fee_fen BIGINT NOT NULL,
+	commission_fen BIGINT NOT NULL,
+	gross_remuneration_fen BIGINT NOT NULL,
+	expense_role VARCHAR(50) NOT NULL,
+	tax_identity VARCHAR(20) NOT NULL,
+	income_grouping VARCHAR(30) NOT NULL,
+	is_full_time_student BOOLEAN NOT NULL,
+	expense_deduction_fen BIGINT NOT NULL,
+	taxable_income_fen BIGINT NOT NULL,
+	withholding_rate NUMERIC(6, 5) NOT NULL,
+	quick_deduction_fen BIGINT NOT NULL,
+	withholding_tax_fen BIGINT NOT NULL,
+	net_payment_fen BIGINT NOT NULL,
+	external_declaration_status VARCHAR(30) NOT NULL,
+	external_declaration_reference VARCHAR(200),
+	calculation_trace JSON NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_line_org_batch FOREIGN KEY(org_id, batch_id) REFERENCES labor_remuneration_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_line_org_person FOREIGN KEY(org_id, labor_person_id) REFERENCES labor_service_persons (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_line_org_counterparty FOREIGN KEY(org_id, counterparty_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_labor_line_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_labor_line_batch_person UNIQUE (batch_id, labor_person_id),
+	CONSTRAINT ck_labor_line_dates CHECK (service_start_date <= service_end_date),
+	CONSTRAINT ck_labor_line_gross CHECK (fixed_fee_fen >= 0 AND commission_fen >= 0 AND gross_remuneration_fen > 0 AND gross_remuneration_fen = fixed_fee_fen + commission_fen),
+	CONSTRAINT ck_labor_line_expense_role CHECK (expense_role IN ('labor_management_expense','labor_sales_expense','labor_service_cost')),
+	CONSTRAINT ck_labor_line_resident CHECK (tax_identity = 'resident'),
+	CONSTRAINT ck_labor_line_grouping CHECK (income_grouping IN ('single_occurrence','continuous_monthly')),
+	CONSTRAINT ck_labor_line_not_student CHECK (is_full_time_student IS FALSE),
+	CONSTRAINT ck_labor_line_calculation CHECK (expense_deduction_fen >= 0 AND taxable_income_fen >= 0 AND withholding_tax_fen >= 0 AND net_payment_fen >= 0 AND expense_deduction_fen + taxable_income_fen = gross_remuneration_fen AND net_payment_fen = gross_remuneration_fen - withholding_tax_fen),
+	CONSTRAINT ck_labor_line_declaration_status CHECK (external_declaration_status IN ('not_due','pending','confirmed')),
+	CONSTRAINT ck_labor_line_declaration_reference CHECK ((external_declaration_status = 'confirmed' AND external_declaration_reference IS NOT NULL) OR (external_declaration_status <> 'confirmed' AND external_declaration_reference IS NULL))
+);
+CREATE TABLE labor_remuneration_tax_policy_versions (
+	id CHAR(32) NOT NULL,
+	code VARCHAR(80) NOT NULL,
+	version VARCHAR(50) NOT NULL,
+	effective_from DATE NOT NULL,
+	effective_to DATE,
+	primary_source_url TEXT NOT NULL,
+	invoice_withholding_source_url TEXT NOT NULL,
+	legal_filing_source_url TEXT NOT NULL,
+	parameters JSON NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_labor_tax_policy_code_version UNIQUE (code, version),
+	CONSTRAINT ck_labor_tax_policy_dates CHECK (effective_to IS NULL OR effective_from <= effective_to)
+);
+CREATE TABLE labor_service_person_end_action_evidence (
+	org_id CHAR(32) NOT NULL,
+	action_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, action_id, evidence_id),
+	CONSTRAINT fk_labor_person_end_evidence_org_action FOREIGN KEY(org_id, action_id) REFERENCES labor_service_person_end_actions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_person_end_evidence_org_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE labor_service_person_end_actions (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	labor_person_id CHAR(32) NOT NULL,
+	relationship_end_date DATE NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_person_end_action_org_person FOREIGN KEY(org_id, labor_person_id) REFERENCES labor_service_persons (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_person_end_action_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_labor_person_end_action_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_labor_person_end_action_person UNIQUE (labor_person_id),
+	CONSTRAINT uq_labor_person_end_action_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT ck_labor_person_end_action_request_hash CHECK (length(request_payload_hash) = 64)
+);
+CREATE TABLE labor_service_person_evidence (
+	org_id CHAR(32) NOT NULL,
+	labor_person_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, labor_person_id, evidence_id),
+	CONSTRAINT fk_labor_person_evidence_org_person FOREIGN KEY(org_id, labor_person_id) REFERENCES labor_service_persons (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_person_evidence_org_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE labor_service_persons (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	counterparty_id CHAR(32) NOT NULL,
+	person_code VARCHAR(100) NOT NULL,
+	name VARCHAR(200) NOT NULL,
+	relationship_start_date DATE NOT NULL,
+	relationship_end_date DATE,
+	status VARCHAR(20) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_person_org_counterparty FOREIGN KEY(org_id, counterparty_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_person_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_labor_person_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_labor_person_org_code UNIQUE (org_id, person_code),
+	CONSTRAINT uq_labor_person_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT uq_labor_person_counterparty UNIQUE (counterparty_id),
+	CONSTRAINT ck_labor_person_dates CHECK (relationship_end_date IS NULL OR relationship_start_date <= relationship_end_date),
+	CONSTRAINT ck_labor_person_status CHECK (status IN ('active','ended')),
+	CONSTRAINT ck_labor_person_status_dates CHECK ((status = 'active' AND relationship_end_date IS NULL) OR (status = 'ended' AND relationship_end_date IS NOT NULL)),
+	CONSTRAINT ck_labor_person_request_hash CHECK (length(request_payload_hash) = 64)
+);
+CREATE TABLE labor_withholding_entitlements (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	labor_line_id CHAR(32) NOT NULL,
+	amount_fen BIGINT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_withholding_org_line FOREIGN KEY(org_id, labor_line_id) REFERENCES labor_remuneration_lines (org_id, id) ON DELETE RESTRICT,
+	UNIQUE (labor_line_id),
+	CONSTRAINT uq_labor_withholding_org_id UNIQUE (org_id, id),
+	CONSTRAINT ck_labor_withholding_amount CHECK (amount_fen >= 0)
+);
+CREATE TABLE labor_withholding_open_item_sources (
+	org_id CHAR(32) NOT NULL,
+	open_item_id CHAR(32) NOT NULL,
+	entitlement_id CHAR(32) NOT NULL,
+	labor_line_id CHAR(32) NOT NULL,
+	payment_event_id CHAR(32) NOT NULL,
+	amount_fen BIGINT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, open_item_id),
+	CONSTRAINT fk_labor_tax_source_org_open_item FOREIGN KEY(org_id, open_item_id) REFERENCES open_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_tax_source_org_entitlement FOREIGN KEY(org_id, entitlement_id) REFERENCES labor_withholding_entitlements (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_tax_source_org_line FOREIGN KEY(org_id, labor_line_id) REFERENCES labor_remuneration_lines (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_tax_source_org_payment FOREIGN KEY(org_id, payment_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	UNIQUE (entitlement_id),
+	CONSTRAINT ck_labor_tax_source_amount CHECK (amount_fen > 0)
+);
+CREATE TABLE labor_withholding_tax_payment_allocations (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	entitlement_id CHAR(32) NOT NULL,
+	open_item_id CHAR(32) NOT NULL,
+	payment_event_id CHAR(32) NOT NULL,
+	amount_fen BIGINT NOT NULL,
+	reversed BOOLEAN NOT NULL,
+	reversed_by_event_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_labor_tax_allocation_org_entitlement FOREIGN KEY(org_id, entitlement_id) REFERENCES labor_withholding_entitlements (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_tax_allocation_org_open_item FOREIGN KEY(org_id, open_item_id) REFERENCES open_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_tax_allocation_org_payment FOREIGN KEY(org_id, payment_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_labor_tax_allocation_org_reversal FOREIGN KEY(org_id, reversed_by_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_labor_tax_entitlement_event UNIQUE (entitlement_id, payment_event_id),
+	CONSTRAINT ck_labor_tax_allocation_amount CHECK (amount_fen > 0),
+	CONSTRAINT ck_labor_tax_allocation_reversal CHECK ((reversed IS FALSE AND reversed_by_event_id IS NULL) OR (reversed IS TRUE AND reversed_by_event_id IS NOT NULL))
+);
 CREATE TABLE late_bank_evidence_action_evidence (
 	org_id CHAR(32) NOT NULL,
 	action_id CHAR(32) NOT NULL,
@@ -1093,7 +1525,7 @@ CREATE TABLE late_bank_evidence_actions (
 	CONSTRAINT ck_late_bank_action_payload_shape CHECK ((status = 'posted' AND action_type IS NOT NULL AND calculation_payload IS NOT NULL AND calculation_hash IS NOT NULL AND handling_period_id IS NOT NULL AND original_close_id IS NOT NULL AND original_close_hash IS NOT NULL AND explanation IS NOT NULL AND length(trim(explanation)) BETWEEN 1 AND 2000 AND error_code IS NULL AND error_field_path IS NULL AND error_count = 0) OR (status = 'rejected' AND action_type IS NULL AND calculation_payload IS NULL AND calculation_hash IS NULL AND handling_period_id IS NULL AND original_close_id IS NULL AND original_close_hash IS NULL AND target_event_id IS NULL AND result_event_id IS NULL AND result_voucher_id IS NULL AND workflow_name IS NULL AND explanation IS NULL AND error_code IS NOT NULL AND error_count > 0)),
 	CONSTRAINT ck_late_bank_action_result_shape CHECK (status <> 'posted' OR (action_type = 'evidence_only' AND target_event_id IS NOT NULL AND result_event_id IS NULL AND result_voucher_id IS NULL AND workflow_name IS NULL) OR (action_type = 'omitted_entry' AND target_event_id IS NULL AND result_event_id IS NOT NULL AND result_voucher_id IS NOT NULL AND workflow_name IS NOT NULL AND length(trim(workflow_name)) > 0))
 );
-CREATE TABLE open_items (
+CREATE TABLE "open_items" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	counterparty_id CHAR(32) NOT NULL,
@@ -1107,22 +1539,22 @@ CREATE TABLE open_items (
 	payable_agency_code VARCHAR(100),
 	insurance_kind VARCHAR(50),
 	PRIMARY KEY (id),
-	CONSTRAINT fk_open_item_org_counterparty FOREIGN KEY(org_id, counterparty_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_open_item_org_source_event FOREIGN KEY(org_id, source_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_open_item_org_id UNIQUE (org_id, id),
-	CONSTRAINT ck_open_item_type CHECK (item_type IN ('receivable','payable')),
-	CONSTRAINT ck_open_item_original CHECK (original_amount_fen > 0),
-	CONSTRAINT ck_open_item_settled_positive CHECK (settled_amount_fen >= 0),
 	CONSTRAINT ck_open_item_no_oversettlement CHECK (settled_amount_fen <= original_amount_fen),
-	CONSTRAINT ck_open_item_status CHECK (status IN ('open','partial','settled','reversed')),
-	CONSTRAINT ck_open_item_payable_category CHECK (payable_category IS NULL OR (item_type = 'payable' AND payable_category IN ('salary','employer_social','withheld_employee_social','employer_housing','withheld_employee_housing','individual_income_tax'))),
 	CONSTRAINT ck_open_item_payable_metadata CHECK (payable_category IS NOT NULL OR (payable_agency_code IS NULL AND insurance_kind IS NULL)),
+	CONSTRAINT ck_open_item_type CHECK (item_type IN ('receivable','payable')),
+	CONSTRAINT ck_open_item_settled_positive CHECK (settled_amount_fen >= 0),
+	CONSTRAINT uq_open_item_org_id UNIQUE (org_id, id),
+	CONSTRAINT ck_open_item_original CHECK (original_amount_fen > 0),
+	CONSTRAINT fk_open_item_org_source_event FOREIGN KEY(org_id, source_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_open_item_status CHECK (status IN ('open','partial','settled','reversed')),
+	CONSTRAINT fk_open_item_org_counterparty FOREIGN KEY(org_id, counterparty_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT ck_open_item_statutory_payable_target CHECK (payable_category NOT IN ('employer_social','withheld_employee_social','employer_housing','withheld_employee_housing') OR (payable_agency_code IS NOT NULL AND insurance_kind IS NOT NULL)),
-	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE,
+	CONSTRAINT ck_open_item_payable_category CHECK (payable_category IS NULL OR (item_type = 'payable' AND payable_category IN ('salary','employer_social','withheld_employee_social','employer_housing','withheld_employee_housing','individual_income_tax','labor_remuneration','labor_individual_income_tax'))),
+	FOREIGN KEY(source_event_id) REFERENCES business_events (id) ON DELETE RESTRICT,
 	FOREIGN KEY(counterparty_id) REFERENCES counterparties (id) ON DELETE RESTRICT,
-	FOREIGN KEY(source_event_id) REFERENCES business_events (id) ON DELETE RESTRICT
+	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE
 );
-CREATE TABLE organizations (
+CREATE TABLE "organizations" (
 	id CHAR(32) NOT NULL,
 	name VARCHAR(200) NOT NULL,
 	taxpayer_type VARCHAR(30) NOT NULL,
@@ -1135,13 +1567,16 @@ CREATE TABLE organizations (
 	bank_reconciliation_scope_current_action_id CHAR(32),
 	bank_reconciliation_scope_confirmed_at DATETIME,
 	created_at DATETIME NOT NULL,
+	taxpayer_identification_number VARCHAR(18) NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT ck_org_small_scale CHECK (taxpayer_type = 'small_scale'),
-	CONSTRAINT ck_org_filing_cycle CHECK (filing_cycle IN ('monthly', 'quarterly')),
-	CONSTRAINT ck_org_urban_rate CHECK (urban_maintenance_rate IN (0.07, 0.05, 0.01)),
 	CONSTRAINT ck_org_accounting_period_control CHECK (accounting_period_control_enabled IS TRUE OR accounting_period_control_start_date IS NULL),
+	CONSTRAINT ck_org_filing_cycle CHECK (filing_cycle IN ('monthly', 'quarterly')),
+	CONSTRAINT ck_org_small_scale CHECK (taxpayer_type = 'small_scale'),
+	CONSTRAINT ck_org_bank_reconciliation_scope_confirmation CHECK ((bank_reconciliation_scope_current_action_id IS NULL AND bank_reconciliation_scope_confirmed_at IS NULL) OR (bank_reconciliation_scope_current_action_id IS NOT NULL AND bank_reconciliation_scope_confirmed_at IS NOT NULL)),
 	CONSTRAINT fk_org_bank_reconciliation_scope_current_action FOREIGN KEY(id, bank_reconciliation_scope_current_action_id) REFERENCES bank_reconciliation_scope_actions (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT ck_org_bank_reconciliation_scope_confirmation CHECK ((bank_reconciliation_scope_current_action_id IS NULL AND bank_reconciliation_scope_confirmed_at IS NULL) OR (bank_reconciliation_scope_current_action_id IS NOT NULL AND bank_reconciliation_scope_confirmed_at IS NOT NULL))
+	CONSTRAINT ck_org_urban_rate CHECK (urban_maintenance_rate IN (0.07, 0.05, 0.01)),
+	CONSTRAINT ck_org_taxpayer_identification_number_length CHECK (length(taxpayer_identification_number) = 18),
+	CONSTRAINT ck_org_taxpayer_identification_number_uppercase CHECK (taxpayer_identification_number = upper(taxpayer_identification_number))
 );
 CREATE TABLE owner_accounts (
 	id CHAR(32) NOT NULL,
@@ -1297,7 +1732,109 @@ CREATE TABLE payroll_batches (
 	UNIQUE (business_event_id),
 	UNIQUE (reversal_of_batch_id)
 );
-CREATE TABLE payroll_event_links (
+CREATE TABLE payroll_contribution_actual_evidence (
+	org_id CHAR(32) NOT NULL,
+	actual_set_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, actual_set_id, evidence_id),
+	CONSTRAINT fk_contribution_actual_evidence_org_set FOREIGN KEY(org_id, actual_set_id) REFERENCES payroll_contribution_actual_sets (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_actual_evidence_org_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE payroll_contribution_actual_items (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	actual_set_id CHAR(32) NOT NULL,
+	employee_id CHAR(32) NOT NULL,
+	contribution_period VARCHAR(7) NOT NULL,
+	contribution_group VARCHAR(30) NOT NULL,
+	insurance_kind VARCHAR(50) NOT NULL,
+	actual_state VARCHAR(20) NOT NULL,
+	employee_amount_fen BIGINT NOT NULL,
+	employer_amount_fen BIGINT NOT NULL,
+	supersedes_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_contribution_actual_item_group CHECK (contribution_group IN ('social_insurance','housing_fund')),
+	CONSTRAINT ck_contribution_actual_item_state CHECK (actual_state IN ('declared','not_declared')),
+	CONSTRAINT ck_contribution_actual_item_amounts CHECK (employee_amount_fen >= 0 AND employer_amount_fen >= 0),
+	CONSTRAINT ck_contribution_actual_item_non_declaration_zero CHECK (actual_state <> 'not_declared' OR (employee_amount_fen = 0 AND employer_amount_fen = 0)),
+	CONSTRAINT fk_contribution_actual_item_org_set FOREIGN KEY(org_id, actual_set_id) REFERENCES payroll_contribution_actual_sets (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_actual_item_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_actual_item_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES payroll_contribution_actual_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_contribution_actual_item_org_id UNIQUE (org_id, id),
+	UNIQUE (supersedes_id),
+	CONSTRAINT uq_contribution_actual_item_set_kind UNIQUE (actual_set_id, contribution_group, insurance_kind)
+);
+CREATE TABLE payroll_contribution_actual_sets (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	employee_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	contribution_period VARCHAR(7) NOT NULL,
+	declaration_date DATE NOT NULL,
+	reason_code VARCHAR(40) NOT NULL,
+	reason_description TEXT NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_contribution_actual_set_period CHECK (length(contribution_period) = 7 AND substr(contribution_period, 5, 1) = '-' AND substr(contribution_period, 6, 2) BETWEEN '01' AND '12'),
+	CONSTRAINT ck_contribution_actual_set_reason CHECK (reason_code IN ('late_enrollment','missing_declaration','partial_declaration','agency_assessment','documented_correction','other_documented')),
+	CONSTRAINT fk_contribution_actual_set_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_actual_set_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_contribution_actual_set_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_contribution_actual_set_idempotency UNIQUE (org_id, idempotency_key)
+);
+CREATE TABLE payroll_contribution_actual_uses (
+	org_id CHAR(32) NOT NULL,
+	actual_item_id CHAR(32) NOT NULL,
+	payroll_batch_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, actual_item_id, payroll_batch_id),
+	CONSTRAINT fk_contribution_actual_use_org_item FOREIGN KEY(org_id, actual_item_id) REFERENCES payroll_contribution_actual_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_actual_use_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE payroll_contribution_supplement_items (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	supplement_id CHAR(32) NOT NULL,
+	contribution_group VARCHAR(30) NOT NULL,
+	insurance_kind VARCHAR(50) NOT NULL,
+	employee_amount_fen BIGINT NOT NULL,
+	employer_amount_fen BIGINT NOT NULL,
+	employee_amount_treatment VARCHAR(30) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_contribution_supplement_item_group CHECK (contribution_group IN ('social_insurance','housing_fund')),
+	CONSTRAINT ck_contribution_supplement_item_amounts CHECK (employee_amount_fen >= 0 AND employer_amount_fen >= 0 AND employee_amount_fen + employer_amount_fen > 0),
+	CONSTRAINT ck_contribution_supplement_item_treatment CHECK (employee_amount_treatment IN ('employer_borne','employee_receivable')),
+	CONSTRAINT fk_contribution_supplement_item_org_supplement FOREIGN KEY(org_id, supplement_id) REFERENCES payroll_contribution_supplements (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_contribution_supplement_item_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_contribution_supplement_item_kind UNIQUE (supplement_id, contribution_group, insurance_kind)
+);
+CREATE TABLE payroll_contribution_supplements (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	event_id CHAR(32) NOT NULL,
+	employee_id CHAR(32) NOT NULL,
+	source_payroll_batch_id CHAR(32) NOT NULL,
+	contribution_period VARCHAR(7) NOT NULL,
+	assessment_reference VARCHAR(200) NOT NULL,
+	reason_code VARCHAR(40) NOT NULL,
+	reason_description TEXT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_contribution_supplement_period CHECK (length(contribution_period) = 7 AND substr(contribution_period, 5, 1) = '-' AND substr(contribution_period, 6, 2) BETWEEN '01' AND '12'),
+	CONSTRAINT ck_contribution_supplement_reason CHECK (reason_code IN ('late_enrollment','missing_declaration','agency_assessment','documented_correction','other_documented')),
+	CONSTRAINT fk_contribution_supplement_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_supplement_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_supplement_org_source_batch FOREIGN KEY(org_id, source_payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
+	UNIQUE (event_id),
+	CONSTRAINT uq_contribution_supplement_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_contribution_supplement_assessment UNIQUE (org_id, employee_id, assessment_reference)
+);
+CREATE TABLE "payroll_event_links" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	event_id CHAR(32) NOT NULL,
@@ -1307,24 +1844,63 @@ CREATE TABLE payroll_event_links (
 	link_kind VARCHAR(40) NOT NULL,
 	created_at DATETIME NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT fk_payroll_event_link_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_event_link_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT fk_payroll_event_link_org_source_payment FOREIGN KEY(org_id, source_payment_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT fk_payroll_event_link_org_source_open_item FOREIGN KEY(org_id, source_open_item_id) REFERENCES open_items (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT ck_payroll_event_link_kind CHECK (link_kind IN ('payroll_accrual','salary_payment','statutory_payment','reversal'))
+	CONSTRAINT fk_payroll_event_link_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payroll_event_link_org_event FOREIGN KEY(org_id, event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payroll_event_link_kind CHECK (link_kind IN ('payroll_accrual','salary_payment','contribution_supplement','statutory_payment','reversal'))
 );
-CREATE TABLE payroll_lines (
+CREATE TABLE payroll_first_wage_tax_treatment_evidence (
+	org_id CHAR(32) NOT NULL,
+	treatment_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, treatment_id, evidence_id),
+	CONSTRAINT fk_first_wage_treatment_evidence_org_treatment FOREIGN KEY(org_id, treatment_id) REFERENCES payroll_first_wage_tax_treatments (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_first_wage_treatment_evidence_org_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE payroll_first_wage_tax_treatment_uses (
+	org_id CHAR(32) NOT NULL,
+	treatment_id CHAR(32) NOT NULL,
+	payroll_batch_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, treatment_id, payroll_batch_id),
+	CONSTRAINT fk_first_wage_treatment_use_org_treatment FOREIGN KEY(org_id, treatment_id) REFERENCES payroll_first_wage_tax_treatments (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_first_wage_treatment_use_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE payroll_first_wage_tax_treatments (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	employee_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	tax_year INTEGER NOT NULL,
+	first_wage_month INTEGER NOT NULL,
+	treatment_state VARCHAR(20) NOT NULL,
+	declaration_date DATE NOT NULL,
+	confirmation_description TEXT NOT NULL,
+	legal_basis_url VARCHAR(1000) NOT NULL,
+	supersedes_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_first_wage_treatment_year CHECK (tax_year BETWEEN 1900 AND 9999),
+	CONSTRAINT ck_first_wage_treatment_month CHECK (first_wage_month BETWEEN 1 AND 12),
+	CONSTRAINT ck_first_wage_treatment_state CHECK (treatment_state IN ('eligible','not_eligible')),
+	CONSTRAINT fk_first_wage_treatment_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_first_wage_treatment_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_first_wage_treatment_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES payroll_first_wage_tax_treatments (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_first_wage_treatment_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_first_wage_treatment_idempotency UNIQUE (org_id, idempotency_key),
+	UNIQUE (supersedes_id)
+);
+CREATE TABLE "payroll_lines" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	payroll_batch_id CHAR(32) NOT NULL,
 	regular_payroll_batch_id CHAR(32),
 	employee_id CHAR(32) NOT NULL,
 	employee_payroll_profile_version_id CHAR(32) NOT NULL,
-	base_salary_fen BIGINT NOT NULL,
-	performance_pay_fen BIGINT NOT NULL,
-	taxable_allowance_fen BIGINT NOT NULL,
-	tax_exempt_income_fen BIGINT NOT NULL,
-	attendance_deduction_fen BIGINT NOT NULL,
 	special_additional_deduction_fen BIGINT NOT NULL,
 	other_legal_deduction_fen BIGINT NOT NULL,
 	annual_bonus_fen BIGINT NOT NULL,
@@ -1340,17 +1916,20 @@ CREATE TABLE payroll_lines (
 	gross_salary_fen BIGINT NOT NULL,
 	net_salary_fen BIGINT NOT NULL,
 	calculation_trace JSON NOT NULL,
+	tax_reported_salary_fen BIGINT,
+	wage_tax_declaration_state VARCHAR(20) NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT fk_payroll_line_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_line_org_regular_batch FOREIGN KEY(org_id, regular_payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_line_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_line_org_employee_profile FOREIGN KEY(org_id, employee_id, employee_payroll_profile_version_id) REFERENCES employee_payroll_profile_versions (org_id, employee_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_payroll_line_org_id UNIQUE (org_id, id),
 	CONSTRAINT uq_payroll_line_org_batch_employee_id UNIQUE (org_id, payroll_batch_id, employee_id, id),
+	CONSTRAINT fk_payroll_line_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payroll_line_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payroll_line_net_salary CHECK (net_salary_fen = gross_salary_fen - employee_social_insurance_fen - employee_housing_fund_fen - individual_income_tax_fen AND net_salary_fen >= 0),
+	CONSTRAINT fk_payroll_line_org_regular_batch FOREIGN KEY(org_id, regular_payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payroll_line_nonnegative_amounts CHECK ((tax_reported_salary_fen IS NULL OR tax_reported_salary_fen >= 0) AND special_additional_deduction_fen >= 0 AND other_legal_deduction_fen >= 0 AND annual_bonus_fen >= 0 AND employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 AND employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0),
+	CONSTRAINT uq_payroll_line_org_id UNIQUE (org_id, id),
 	CONSTRAINT uq_payroll_line_employee UNIQUE (payroll_batch_id, employee_id),
-	CONSTRAINT ck_payroll_line_nonnegative_amounts CHECK (base_salary_fen >= 0 AND performance_pay_fen >= 0 AND taxable_allowance_fen >= 0 AND tax_exempt_income_fen >= 0 AND attendance_deduction_fen >= 0 AND special_additional_deduction_fen >= 0 AND other_legal_deduction_fen >= 0 AND annual_bonus_fen >= 0 AND employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 AND employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0),
-	CONSTRAINT ck_payroll_line_gross_salary CHECK (gross_salary_fen = base_salary_fen + performance_pay_fen + taxable_allowance_fen + tax_exempt_income_fen + annual_bonus_fen - attendance_deduction_fen AND gross_salary_fen > 0),
-	CONSTRAINT ck_payroll_line_net_salary CHECK (net_salary_fen = gross_salary_fen - employee_social_insurance_fen - employee_housing_fund_fen - individual_income_tax_fen AND net_salary_fen >= 0)
+	CONSTRAINT fk_payroll_line_org_employee_profile FOREIGN KEY(org_id, employee_id, employee_payroll_profile_version_id) REFERENCES employee_payroll_profile_versions (org_id, employee_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payroll_line_gross_salary CHECK (((wage_tax_declaration_state = 'declared' AND tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND gross_salary_fen = tax_reported_salary_fen) OR (wage_tax_declaration_state = 'not_declared' AND tax_reported_salary_fen IS NULL AND annual_bonus_fen = 0 AND gross_salary_fen = 0) OR (wage_tax_declaration_state = 'not_applicable' AND tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND gross_salary_fen = annual_bonus_fen))),
+	CONSTRAINT ck_payroll_line_wage_tax_declaration_state CHECK (wage_tax_declaration_state IN ('declared','not_declared','not_applicable'))
 );
 CREATE TABLE payroll_opening_states (
 	id CHAR(32) NOT NULL,
@@ -1402,6 +1981,25 @@ CREATE TABLE payroll_policy_versions (
 	CONSTRAINT fk_payroll_policy_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT ck_payroll_policy_dates CHECK (effective_to IS NULL OR effective_from <= effective_to),
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE
+);
+CREATE TABLE payroll_salary_actual_deduction_allocations (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	payroll_line_id CHAR(32) NOT NULL,
+	payment_event_id CHAR(32) NOT NULL,
+	amount_fen BIGINT NOT NULL,
+	expense_role VARCHAR(50) NOT NULL,
+	reversed BOOLEAN DEFAULT 0 NOT NULL,
+	reversed_by_event_id CHAR(32),
+	created_at DATETIME NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_salary_actual_deduction_org_line FOREIGN KEY(org_id, payroll_line_id) REFERENCES payroll_lines (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_salary_actual_deduction_org_payment_event FOREIGN KEY(org_id, payment_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_salary_actual_deduction_org_reversal_event FOREIGN KEY(org_id, reversed_by_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_salary_actual_deduction_line_event UNIQUE (org_id, payroll_line_id, payment_event_id),
+	CONSTRAINT ck_salary_actual_deduction_positive CHECK (amount_fen > 0),
+	CONSTRAINT ck_salary_actual_deduction_expense_role CHECK (expense_role IN ('payroll_management_expense','payroll_sales_expense','payroll_service_cost')),
+	CONSTRAINT ck_salary_actual_deduction_reversal CHECK ((reversed IS FALSE AND reversed_by_event_id IS NULL) OR (reversed IS TRUE AND reversed_by_event_id IS NOT NULL))
 );
 CREATE TABLE payroll_tax_state_slots (
 	id CHAR(32) NOT NULL,
@@ -1571,6 +2169,94 @@ CREATE TABLE tax_rules (
 	CONSTRAINT uq_tax_rule_version UNIQUE (code, jurisdiction, version),
 	CONSTRAINT ck_tax_rule_dates CHECK (effective_to IS NULL OR effective_from <= effective_to)
 );
+CREATE TABLE unified_payout_run_bank_transactions (
+	org_id CHAR(32) NOT NULL,
+	payout_run_id CHAR(32) NOT NULL,
+	bank_transaction_id CHAR(32) NOT NULL,
+	created_at DATETIME NOT NULL,
+	PRIMARY KEY (org_id, payout_run_id, bank_transaction_id),
+	CONSTRAINT fk_payout_bank_org_run FOREIGN KEY(org_id, payout_run_id) REFERENCES unified_payout_runs (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payout_bank_org_transaction FOREIGN KEY(org_id, bank_transaction_id) REFERENCES bank_transactions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_payout_bank_run_transaction UNIQUE (payout_run_id, bank_transaction_id)
+);
+CREATE TABLE unified_payout_run_evidence (
+	org_id CHAR(32) NOT NULL,
+	payout_run_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, payout_run_id, evidence_id),
+	CONSTRAINT fk_payout_evidence_org_run FOREIGN KEY(org_id, payout_run_id) REFERENCES unified_payout_runs (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payout_evidence_org_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE "unified_payout_run_items" (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	payout_run_id CHAR(32) NOT NULL,
+	item_kind VARCHAR(20) NOT NULL,
+	source_open_item_id CHAR(32) NOT NULL,
+	payroll_line_id CHAR(32),
+	labor_line_id CHAR(32),
+	counterparty_id CHAR(32) NOT NULL,
+	gross_amount_fen BIGINT NOT NULL,
+	employee_social_insurance_fen BIGINT NOT NULL,
+	employee_housing_fund_fen BIGINT NOT NULL,
+	individual_income_tax_fen BIGINT NOT NULL,
+	net_amount_fen BIGINT NOT NULL,
+	withholding_components JSON NOT NULL,
+	created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	settlement_mode VARCHAR(50) NOT NULL,
+	theoretical_individual_income_tax_fen BIGINT NOT NULL,
+	unwithheld_individual_income_tax_fen BIGINT NOT NULL,
+	actual_salary_deduction_fen BIGINT NOT NULL,
+	salary_petty_cash_recovery_fen BIGINT DEFAULT '0' NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT fk_payout_item_org_labor_line FOREIGN KEY(org_id, labor_line_id) REFERENCES labor_remuneration_lines (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payout_item_settlement_mode CHECK ((item_kind = 'salary' AND unwithheld_individual_income_tax_fen = 0) OR (item_kind = 'labor' AND settlement_mode = 'net_after_withholding' AND individual_income_tax_fen = theoretical_individual_income_tax_fen AND unwithheld_individual_income_tax_fen = 0) OR (item_kind = 'labor' AND settlement_mode = 'gross_paid_without_withholding' AND individual_income_tax_fen = 0 AND unwithheld_individual_income_tax_fen = theoretical_individual_income_tax_fen)),
+	CONSTRAINT fk_payout_item_org_payroll_line FOREIGN KEY(org_id, payroll_line_id) REFERENCES payroll_lines (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_payout_item_run_source UNIQUE (payout_run_id, source_open_item_id),
+	CONSTRAINT fk_payout_item_org_run FOREIGN KEY(org_id, payout_run_id) REFERENCES unified_payout_runs (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payout_item_org_open_item FOREIGN KEY(org_id, source_open_item_id) REFERENCES open_items (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payout_item_org_counterparty FOREIGN KEY(org_id, counterparty_id) REFERENCES counterparties (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_payout_item_org_id UNIQUE (org_id, id),
+	CONSTRAINT ck_payout_item_source_kind CHECK ((item_kind = 'salary' AND payroll_line_id IS NOT NULL AND labor_line_id IS NULL AND settlement_mode = 'not_applicable') OR (item_kind = 'labor' AND payroll_line_id IS NULL AND labor_line_id IS NOT NULL AND actual_salary_deduction_fen = 0 AND salary_petty_cash_recovery_fen = 0 AND settlement_mode IN ('net_after_withholding','gross_paid_without_withholding'))),
+	CONSTRAINT ck_payout_item_totals CHECK (gross_amount_fen > 0 AND employee_social_insurance_fen >= 0 AND employee_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0 AND actual_salary_deduction_fen >= 0 AND salary_petty_cash_recovery_fen >= 0 AND salary_petty_cash_recovery_fen <= employee_social_insurance_fen + employee_housing_fund_fen + individual_income_tax_fen AND theoretical_individual_income_tax_fen >= individual_income_tax_fen AND unwithheld_individual_income_tax_fen = theoretical_individual_income_tax_fen - individual_income_tax_fen AND net_amount_fen = gross_amount_fen - employee_social_insurance_fen - employee_housing_fund_fen - individual_income_tax_fen - actual_salary_deduction_fen + salary_petty_cash_recovery_fen AND net_amount_fen >= 0),
+	CONSTRAINT ck_payout_item_petty_recovery CHECK (salary_petty_cash_recovery_fen = 0 OR (item_kind = 'salary' AND actual_salary_deduction_fen = 0 AND salary_petty_cash_recovery_fen = employee_social_insurance_fen + employee_housing_fund_fen + individual_income_tax_fen))
+);
+CREATE TABLE "unified_payout_runs" (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	status VARCHAR(20) NOT NULL,
+	calculation_hash VARCHAR(64) NOT NULL,
+	calculation_input JSON NOT NULL,
+	calculation_trace JSON NOT NULL,
+	bank_account_code VARCHAR(30) NOT NULL,
+	bank_transaction_id CHAR(32) NOT NULL,
+	business_date DATE NOT NULL,
+	payment_date DATE NOT NULL,
+	posting_date DATE NOT NULL,
+	gross_total_fen BIGINT NOT NULL,
+	withholding_total_fen BIGINT NOT NULL,
+	net_total_fen BIGINT NOT NULL,
+	business_event_id CHAR(32),
+	confirmed_at DATETIME,
+	confirmation_note TEXT,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	salary_petty_cash_recovery_total_fen BIGINT DEFAULT '0' NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_payout_run_status CHECK (status IN ('calculated','posted','reversed','superseded')),
+	CONSTRAINT uq_payout_run_org_id UNIQUE (org_id, id),
+	CONSTRAINT fk_payout_run_org_event FOREIGN KEY(org_id, business_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payout_run_org_bank_transaction FOREIGN KEY(org_id, bank_transaction_id) REFERENCES bank_transactions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payout_run_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payout_run_request_hash CHECK (length(request_payload_hash) = 64),
+	CONSTRAINT ck_payout_run_hash CHECK (length(calculation_hash) = 64),
+	CONSTRAINT uq_payout_run_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT ck_payout_run_totals CHECK (gross_total_fen > 0 AND withholding_total_fen >= 0 AND net_total_fen > 0 AND salary_petty_cash_recovery_total_fen >= 0 AND salary_petty_cash_recovery_total_fen <= withholding_total_fen AND net_total_fen = gross_total_fen - withholding_total_fen + salary_petty_cash_recovery_total_fen),
+	UNIQUE (business_event_id)
+);
 CREATE TABLE voucher_lines (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
@@ -1620,110 +2306,197 @@ CREATE TABLE vouchers (
 	FOREIGN KEY(event_id) REFERENCES business_events (id) ON DELETE RESTRICT,
 	FOREIGN KEY(reversal_of_voucher_id) REFERENCES vouchers (id) ON DELETE RESTRICT
 );
-CREATE INDEX ix_owner_accounts_org_id ON owner_accounts (org_id);
-CREATE INDEX ix_accounts_org_id ON accounts (org_id);
-CREATE INDEX ix_counterparties_org_id ON counterparties (org_id);
-CREATE INDEX ix_accounting_period_calendars_org_id ON accounting_period_calendars (org_id);
-CREATE INDEX ix_owner_sessions_owner_account_id ON owner_sessions (owner_account_id);
-CREATE INDEX ix_owner_sessions_org_id ON owner_sessions (org_id);
-CREATE INDEX ix_owner_recovery_codes_org_id ON owner_recovery_codes (org_id);
-CREATE UNIQUE INDEX uq_owner_recovery_code_current ON owner_recovery_codes (owner_account_id) WHERE used_at IS NULL AND invalidated_at IS NULL;
-CREATE INDEX ix_owner_recovery_codes_owner_account_id ON owner_recovery_codes (owner_account_id);
-CREATE INDEX ix_identity_audit_events_org_id ON identity_audit_events (org_id);
-CREATE INDEX ix_identity_audit_events_request_correlation_id ON identity_audit_events (request_correlation_id);
-CREATE INDEX ix_execution_attributions_org_id ON execution_attributions (org_id);
-CREATE INDEX ix_bank_reconciliation_scope_actions_org_id ON bank_reconciliation_scope_actions (org_id);
-CREATE INDEX ix_employees_org_id ON employees (org_id);
-CREATE INDEX ix_payroll_policy_versions_org_id ON payroll_policy_versions (org_id);
-CREATE INDEX ix_payroll_policy_effective ON payroll_policy_versions (org_id, region, effective_from, effective_to);
-CREATE INDEX ix_accounting_period_actions_org_id ON accounting_period_actions (org_id);
-CREATE INDEX ix_evidence_org_id ON evidence (org_id);
-CREATE INDEX ix_business_events_posting_date ON business_events (posting_date);
-CREATE INDEX ix_events_org_posting ON business_events (org_id, posting_date);
-CREATE INDEX ix_business_events_event_type ON business_events (event_type);
-CREATE INDEX ix_business_events_org_id ON business_events (org_id);
-CREATE INDEX ix_bank_statement_import_actions_org_id ON bank_statement_import_actions (org_id);
-CREATE INDEX ix_event_evidence_org_id ON event_evidence (org_id);
+CREATE TABLE zero_tax_period_confirmations (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	start_date DATE NOT NULL,
+	end_date DATE NOT NULL,
+	adjustment_posting_date DATE NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	rule_version VARCHAR(50) NOT NULL,
+	calculation JSON NOT NULL,
+	calculation_hash VARCHAR(64) NOT NULL,
+	calculation_hash_payload TEXT NOT NULL,
+	filing_cycle_snapshot VARCHAR(20) NOT NULL,
+	jurisdiction_snapshot VARCHAR(100) NOT NULL,
+	urban_maintenance_rate_snapshot NUMERIC(6, 5) NOT NULL,
+	vat_rule_id CHAR(32) NOT NULL,
+	surtax_rule_id CHAR(32) NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_zero_tax_confirmation_dates CHECK (start_date <= end_date),
+	CONSTRAINT ck_zero_tax_confirmation_posting_date CHECK (adjustment_posting_date >= end_date),
+	CONSTRAINT ck_zero_tax_confirmation_idempotency_length CHECK (length(idempotency_key) BETWEEN 1 AND 200),
+	CONSTRAINT ck_zero_tax_confirmation_request_hash_length CHECK (length(request_payload_hash) = 64),
+	CONSTRAINT ck_zero_tax_confirmation_hash_length CHECK (length(calculation_hash) = 64),
+	CONSTRAINT ck_zero_tax_confirmation_hash_payload_nonempty CHECK (length(calculation_hash_payload) > 0),
+	CONSTRAINT ck_zero_tax_confirmation_filing_cycle CHECK (filing_cycle_snapshot IN ('monthly','quarterly')),
+	CONSTRAINT ck_zero_tax_confirmation_urban_rate CHECK (urban_maintenance_rate_snapshot IN (0.07, 0.05, 0.01)),
+	CONSTRAINT fk_zero_tax_confirmation_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_zero_tax_confirmation_vat_rule FOREIGN KEY(vat_rule_id) REFERENCES tax_rules (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_zero_tax_confirmation_surtax_rule FOREIGN KEY(surtax_rule_id) REFERENCES tax_rules (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_zero_tax_confirmation_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_zero_tax_confirmation_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_zero_tax_confirmation_idempotency UNIQUE (org_id, idempotency_key)
+);
 CREATE INDEX ix_account_bank_reconciliation_scope_history_account_id ON account_bank_reconciliation_scope_history (account_id);
 CREATE INDEX ix_account_bank_reconciliation_scope_history_org_id ON account_bank_reconciliation_scope_history (org_id);
-CREATE INDEX ix_employee_payroll_profile_versions_org_id ON employee_payroll_profile_versions (org_id);
-CREATE INDEX ix_employee_payroll_profile_effective ON employee_payroll_profile_versions (employee_id, effective_from, effective_to);
-CREATE INDEX ix_employee_payroll_profile_versions_employee_id ON employee_payroll_profile_versions (employee_id);
-CREATE INDEX ix_payroll_batches_org_id ON payroll_batches (org_id);
-CREATE UNIQUE INDEX uq_payroll_regular_posted_period ON payroll_batches (org_id, payroll_period) WHERE batch_kind = 'regular' AND status = 'posted' AND reversal_of_batch_id IS NULL;
-CREATE INDEX ix_payroll_batch_org_period ON payroll_batches (org_id, batch_kind, payroll_period, status);
-CREATE INDEX ix_payroll_opening_states_org_id ON payroll_opening_states (org_id);
-CREATE INDEX ix_payroll_opening_states_employee_id ON payroll_opening_states (employee_id);
-CREATE INDEX ix_accounting_periods_org_id ON accounting_periods (org_id);
+CREATE INDEX ix_accounting_period_actions_org_id ON accounting_period_actions (org_id);
+CREATE INDEX ix_accounting_period_calendars_org_id ON accounting_period_calendars (org_id);
+CREATE INDEX ix_accounting_period_close_approvals_org_id ON accounting_period_close_approvals (org_id);
+CREATE INDEX ix_accounting_period_close_approvals_period_id ON accounting_period_close_approvals (period_id);
+CREATE INDEX ix_accounting_period_close_commentaries_org_id ON accounting_period_close_commentaries (org_id);
+CREATE INDEX ix_accounting_period_close_sources_org_id ON accounting_period_close_sources (org_id);
+CREATE INDEX ix_accounting_period_closes_org_id ON accounting_period_closes (org_id);
 CREATE INDEX ix_accounting_periods_calendar_id ON accounting_periods (calendar_id);
-CREATE INDEX ix_fixed_assets_org_id ON fixed_assets (org_id);
-CREATE INDEX ix_intangible_assets_org_id ON intangible_assets (org_id);
+CREATE INDEX ix_accounting_periods_org_id ON accounting_periods (org_id);
+CREATE INDEX ix_accounts_org_id ON accounts (org_id);
+CREATE INDEX ix_annual_bonus_usages_employee_id ON annual_bonus_usages (employee_id);
+CREATE INDEX ix_annual_bonus_usages_org_id ON annual_bonus_usages (org_id);
+CREATE INDEX ix_audit_logs_org_id ON audit_logs (org_id);
+CREATE INDEX ix_bank_reconciliation_actions_org_id ON bank_reconciliation_actions (org_id);
+CREATE INDEX ix_bank_reconciliation_period_account ON bank_reconciliations (org_id, period_id, bank_account_code, version);
+CREATE INDEX ix_bank_reconciliation_scope_actions_org_id ON bank_reconciliation_scope_actions (org_id);
+CREATE INDEX ix_bank_reconciliations_org_id ON bank_reconciliations (org_id);
+CREATE INDEX ix_bank_statement_import_actions_org_id ON bank_statement_import_actions (org_id);
+CREATE INDEX ix_bank_transaction_account_fingerprint ON bank_transactions (org_id, bank_account_code, fingerprint);
+CREATE INDEX ix_bank_transaction_matches_bank_transaction_id ON bank_transaction_matches (bank_transaction_id);
+CREATE INDEX ix_bank_transaction_matches_event_id ON bank_transaction_matches (event_id);
+CREATE INDEX ix_bank_transaction_matches_org_id ON bank_transaction_matches (org_id);
+CREATE INDEX ix_bank_transaction_original_period_pending_late ON bank_transactions (org_id, original_period_id, id) WHERE is_late IS 1;
+CREATE INDEX ix_bank_transactions_org_id ON bank_transactions (org_id);
+CREATE INDEX ix_borrowing_interest_accruals_borrowing_id ON borrowing_interest_accruals (borrowing_id);
+CREATE INDEX ix_borrowing_interest_accruals_org_id ON borrowing_interest_accruals (org_id);
+CREATE INDEX ix_borrowing_payments_accrual_id ON borrowing_payments (accrual_id);
+CREATE INDEX ix_borrowing_payments_borrowing_id ON borrowing_payments (borrowing_id);
+CREATE INDEX ix_borrowing_payments_org_id ON borrowing_payments (org_id);
 CREATE INDEX ix_borrowings_org_id ON borrowings (org_id);
 CREATE INDEX ix_business_event_dependencies_org_id ON business_event_dependencies (org_id);
 CREATE INDEX ix_business_event_dependencies_parent_event_id ON business_event_dependencies (parent_event_id);
-CREATE INDEX ix_invoices_org_id ON invoices (org_id);
-CREATE INDEX ix_tax_periods_org_id ON tax_periods (org_id);
-CREATE INDEX ix_open_items_counterparty_id ON open_items (counterparty_id);
-CREATE INDEX ix_open_items_org_status ON open_items (org_id, item_type, status);
-CREATE INDEX ix_open_items_payable_category ON open_items (org_id, payable_category, payable_agency_code, insurance_kind, status);
-CREATE INDEX ix_open_items_org_id ON open_items (org_id);
-CREATE INDEX ix_vouchers_posting_date ON vouchers (posting_date);
-CREATE INDEX ix_vouchers_org_id ON vouchers (org_id);
-CREATE INDEX ix_audit_logs_org_id ON audit_logs (org_id);
-CREATE INDEX ix_payroll_lines_org_id ON payroll_lines (org_id);
-CREATE INDEX ix_payroll_lines_employee_id ON payroll_lines (employee_id);
-CREATE INDEX ix_payroll_lines_payroll_batch_id ON payroll_lines (payroll_batch_id);
-CREATE INDEX ix_payroll_tax_state_slots_org_id ON payroll_tax_state_slots (org_id);
-CREATE INDEX ix_payroll_tax_state_slots_employee_id ON payroll_tax_state_slots (employee_id);
-CREATE INDEX ix_accounting_period_closes_org_id ON accounting_period_closes (org_id);
+CREATE INDEX ix_business_events_event_type ON business_events (event_type);
+CREATE INDEX ix_business_events_org_id ON business_events (org_id);
+CREATE INDEX ix_business_events_posting_date ON business_events (posting_date);
+CREATE INDEX ix_counterparties_org_id ON counterparties (org_id);
+CREATE INDEX ix_deferred_output_vat_transfers_org_id ON deferred_output_vat_transfers (org_id);
+CREATE INDEX ix_deferred_output_vat_transfers_source_event_id ON deferred_output_vat_transfers (source_event_id);
+CREATE INDEX ix_deferred_output_vat_transfers_source_open_item_id ON deferred_output_vat_transfers (source_open_item_id);
+CREATE INDEX ix_deferred_output_vat_transfers_transfer_event_id ON deferred_output_vat_transfers (transfer_event_id);
+CREATE INDEX ix_employee_payroll_profile_effective ON employee_payroll_profile_versions (employee_id, effective_from, effective_to);
+CREATE INDEX ix_employee_payroll_profile_versions_employee_id ON employee_payroll_profile_versions (employee_id);
+CREATE INDEX ix_employee_payroll_profile_versions_org_id ON employee_payroll_profile_versions (org_id);
+CREATE INDEX ix_employees_org_id ON employees (org_id);
+CREATE INDEX ix_enterprise_income_tax_quarter_confirmations_org_id ON enterprise_income_tax_quarter_confirmations (org_id);
+CREATE INDEX ix_event_evidence_org_id ON event_evidence (org_id);
+CREATE INDEX ix_events_org_posting ON business_events (org_id, posting_date);
+CREATE INDEX ix_evidence_org_id ON evidence (org_id);
+CREATE INDEX ix_execution_attributions_org_id ON execution_attributions (org_id);
+CREATE INDEX ix_financial_statement_classifications_org_id ON financial_statement_classifications (org_id);
+CREATE INDEX ix_financial_statement_classifications_voucher_line_id ON financial_statement_classifications (voucher_line_id);
+CREATE INDEX ix_fixed_asset_activation_org_group ON fixed_asset_activations (org_id, depreciation_group_code);
 CREATE INDEX ix_fixed_asset_activations_asset_id ON fixed_asset_activations (asset_id);
 CREATE INDEX ix_fixed_asset_activations_org_id ON fixed_asset_activations (org_id);
+CREATE INDEX ix_fixed_asset_cost_sources_asset_id ON fixed_asset_cost_sources (asset_id);
+CREATE INDEX ix_fixed_asset_cost_sources_event_id ON fixed_asset_cost_sources (event_id);
+CREATE INDEX ix_fixed_asset_cost_sources_org_id ON fixed_asset_cost_sources (org_id);
+CREATE INDEX ix_fixed_asset_depreciation_batches_org_id ON fixed_asset_depreciation_batches (org_id);
+CREATE INDEX ix_fixed_asset_depreciations_activation_id ON fixed_asset_depreciations (activation_id);
+CREATE INDEX ix_fixed_asset_depreciations_asset_id ON fixed_asset_depreciations (asset_id);
+CREATE INDEX ix_fixed_asset_depreciations_batch_id ON fixed_asset_depreciations (batch_id);
+CREATE INDEX ix_fixed_asset_depreciations_event_id ON fixed_asset_depreciations (event_id);
+CREATE INDEX ix_fixed_asset_depreciations_org_id ON fixed_asset_depreciations (org_id);
+CREATE INDEX ix_fixed_asset_disposals_activation_id ON fixed_asset_disposals (activation_id);
+CREATE INDEX ix_fixed_asset_disposals_asset_id ON fixed_asset_disposals (asset_id);
+CREATE INDEX ix_fixed_asset_disposals_org_id ON fixed_asset_disposals (org_id);
+CREATE INDEX ix_fixed_assets_org_id ON fixed_assets (org_id);
+CREATE INDEX ix_identity_audit_events_org_id ON identity_audit_events (org_id);
+CREATE INDEX ix_identity_audit_events_request_correlation_id ON identity_audit_events (request_correlation_id);
 CREATE INDEX ix_intangible_asset_amortizations_asset_id ON intangible_asset_amortizations (asset_id);
 CREATE INDEX ix_intangible_asset_amortizations_org_id ON intangible_asset_amortizations (org_id);
-CREATE INDEX ix_intangible_asset_retirements_org_id ON intangible_asset_retirements (org_id);
 CREATE INDEX ix_intangible_asset_retirements_asset_id ON intangible_asset_retirements (asset_id);
-CREATE INDEX ix_borrowing_interest_accruals_borrowing_id ON borrowing_interest_accruals (borrowing_id);
-CREATE INDEX ix_borrowing_interest_accruals_org_id ON borrowing_interest_accruals (org_id);
+CREATE INDEX ix_intangible_asset_retirements_org_id ON intangible_asset_retirements (org_id);
+CREATE INDEX ix_intangible_assets_org_id ON intangible_assets (org_id);
+CREATE INDEX ix_invoices_org_id ON invoices (org_id);
+CREATE INDEX ix_labor_external_declaration_confirmations_org_id ON labor_external_declaration_confirmations (org_id);
+CREATE INDEX ix_labor_remuneration_batches_org_id ON labor_remuneration_batches (org_id);
+CREATE INDEX ix_labor_remuneration_event_links_org_id ON labor_remuneration_event_links (org_id);
+CREATE INDEX ix_labor_remuneration_lines_batch_id ON labor_remuneration_lines (batch_id);
+CREATE INDEX ix_labor_remuneration_lines_org_id ON labor_remuneration_lines (org_id);
+CREATE INDEX ix_labor_service_person_end_actions_org_id ON labor_service_person_end_actions (org_id);
+CREATE INDEX ix_labor_service_persons_org_id ON labor_service_persons (org_id);
+CREATE INDEX ix_labor_withholding_entitlements_org_id ON labor_withholding_entitlements (org_id);
+CREATE INDEX ix_labor_withholding_tax_payment_allocations_org_id ON labor_withholding_tax_payment_allocations (org_id);
+CREATE INDEX ix_late_bank_action_pending_projection ON late_bank_evidence_actions (org_id, handling_period_id, bank_transaction_id);
+CREATE INDEX ix_late_bank_evidence_actions_bank_transaction_id ON late_bank_evidence_actions (bank_transaction_id);
+CREATE INDEX ix_late_bank_evidence_actions_org_id ON late_bank_evidence_actions (org_id);
+CREATE INDEX ix_open_items_counterparty_id ON open_items (counterparty_id);
+CREATE INDEX ix_open_items_org_id ON open_items (org_id);
+CREATE INDEX ix_open_items_org_status ON open_items (org_id, item_type, status);
+CREATE INDEX ix_open_items_payable_category ON open_items (org_id, payable_category, payable_agency_code, insurance_kind, status);
+CREATE INDEX ix_owner_accounts_org_id ON owner_accounts (org_id);
+CREATE INDEX ix_owner_recovery_codes_org_id ON owner_recovery_codes (org_id);
+CREATE INDEX ix_owner_recovery_codes_owner_account_id ON owner_recovery_codes (owner_account_id);
+CREATE INDEX ix_owner_sessions_org_id ON owner_sessions (org_id);
+CREATE INDEX ix_owner_sessions_owner_account_id ON owner_sessions (owner_account_id);
+CREATE INDEX ix_payroll_batch_org_period ON payroll_batches (org_id, batch_kind, payroll_period, status);
+CREATE INDEX ix_payroll_batches_org_id ON payroll_batches (org_id);
+CREATE INDEX ix_payroll_contribution_actual_items_actual_set_id ON payroll_contribution_actual_items (actual_set_id);
+CREATE INDEX ix_payroll_contribution_actual_items_contribution_period ON payroll_contribution_actual_items (contribution_period);
+CREATE INDEX ix_payroll_contribution_actual_items_employee_id ON payroll_contribution_actual_items (employee_id);
+CREATE INDEX ix_payroll_contribution_actual_items_org_id ON payroll_contribution_actual_items (org_id);
+CREATE INDEX ix_payroll_contribution_actual_sets_contribution_period ON payroll_contribution_actual_sets (contribution_period);
+CREATE INDEX ix_payroll_contribution_actual_sets_employee_id ON payroll_contribution_actual_sets (employee_id);
+CREATE INDEX ix_payroll_contribution_actual_sets_org_id ON payroll_contribution_actual_sets (org_id);
+CREATE INDEX ix_payroll_contribution_supplement_items_org_id ON payroll_contribution_supplement_items (org_id);
+CREATE INDEX ix_payroll_contribution_supplement_items_supplement_id ON payroll_contribution_supplement_items (supplement_id);
+CREATE INDEX ix_payroll_contribution_supplements_contribution_period ON payroll_contribution_supplements (contribution_period);
+CREATE INDEX ix_payroll_contribution_supplements_employee_id ON payroll_contribution_supplements (employee_id);
+CREATE INDEX ix_payroll_contribution_supplements_org_id ON payroll_contribution_supplements (org_id);
+CREATE INDEX ix_payroll_contribution_supplements_source_payroll_batch_id ON payroll_contribution_supplements (source_payroll_batch_id);
 CREATE INDEX ix_payroll_event_links_org_id ON payroll_event_links (org_id);
-CREATE UNIQUE INDEX uq_payroll_event_link_without_source ON payroll_event_links (org_id, event_id, link_kind) WHERE source_payment_event_id IS NULL AND source_open_item_id IS NULL;
-CREATE UNIQUE INDEX uq_payroll_event_link_salary_source ON payroll_event_links (org_id, event_id, link_kind, source_open_item_id) WHERE source_payment_event_id IS NULL AND source_open_item_id IS NOT NULL;
-CREATE UNIQUE INDEX uq_payroll_event_link_payment_source ON payroll_event_links (org_id, event_id, link_kind, source_payment_event_id, source_open_item_id) WHERE source_payment_event_id IS NOT NULL AND source_open_item_id IS NOT NULL;
-CREATE UNIQUE INDEX uq_payroll_event_link_reversal_source ON payroll_event_links (org_id, event_id, link_kind, source_payment_event_id) WHERE source_payment_event_id IS NOT NULL AND source_open_item_id IS NULL;
-CREATE INDEX ix_tax_period_sources_tax_period_id ON tax_period_sources (tax_period_id);
-CREATE INDEX ix_tax_period_sources_source_event_id ON tax_period_sources (source_event_id);
-CREATE INDEX ix_bank_reconciliation_actions_org_id ON bank_reconciliation_actions (org_id);
-CREATE INDEX ix_settlements_org_id ON settlements (org_id);
-CREATE INDEX ix_voucher_lines_org_id ON voucher_lines (org_id);
-CREATE INDEX ix_voucher_lines_voucher_id ON voucher_lines (voucher_id);
+CREATE INDEX ix_payroll_first_wage_tax_treatments_employee_id ON payroll_first_wage_tax_treatments (employee_id);
+CREATE INDEX ix_payroll_first_wage_tax_treatments_org_id ON payroll_first_wage_tax_treatments (org_id);
+CREATE INDEX ix_payroll_first_wage_tax_treatments_tax_year ON payroll_first_wage_tax_treatments (tax_year);
+CREATE INDEX ix_payroll_lines_employee_id ON payroll_lines (employee_id);
+CREATE INDEX ix_payroll_lines_org_id ON payroll_lines (org_id);
+CREATE INDEX ix_payroll_lines_payroll_batch_id ON payroll_lines (payroll_batch_id);
+CREATE INDEX ix_payroll_opening_states_employee_id ON payroll_opening_states (employee_id);
+CREATE INDEX ix_payroll_opening_states_org_id ON payroll_opening_states (org_id);
+CREATE INDEX ix_payroll_policy_effective ON payroll_policy_versions (org_id, region, effective_from, effective_to);
+CREATE INDEX ix_payroll_policy_versions_org_id ON payroll_policy_versions (org_id);
+CREATE INDEX ix_payroll_tax_state_slots_employee_id ON payroll_tax_state_slots (employee_id);
+CREATE INDEX ix_payroll_tax_state_slots_org_id ON payroll_tax_state_slots (org_id);
 CREATE INDEX ix_payroll_withholding_allocations_org_id ON payroll_withholding_allocations (org_id);
 CREATE INDEX ix_payroll_withholding_entitlements_org_id ON payroll_withholding_entitlements (org_id);
 CREATE INDEX ix_payroll_withholding_entitlements_payroll_line_id ON payroll_withholding_entitlements (payroll_line_id);
-CREATE INDEX ix_annual_bonus_usages_org_id ON annual_bonus_usages (org_id);
-CREATE INDEX ix_annual_bonus_usages_employee_id ON annual_bonus_usages (employee_id);
-CREATE INDEX ix_accounting_period_close_sources_org_id ON accounting_period_close_sources (org_id);
-CREATE INDEX ix_fixed_asset_depreciations_activation_id ON fixed_asset_depreciations (activation_id);
-CREATE INDEX ix_fixed_asset_depreciations_org_id ON fixed_asset_depreciations (org_id);
-CREATE INDEX ix_fixed_asset_depreciations_asset_id ON fixed_asset_depreciations (asset_id);
-CREATE INDEX ix_fixed_asset_disposals_asset_id ON fixed_asset_disposals (asset_id);
-CREATE INDEX ix_fixed_asset_disposals_activation_id ON fixed_asset_disposals (activation_id);
-CREATE INDEX ix_fixed_asset_disposals_org_id ON fixed_asset_disposals (org_id);
-CREATE INDEX ix_borrowing_payments_org_id ON borrowing_payments (org_id);
-CREATE INDEX ix_borrowing_payments_borrowing_id ON borrowing_payments (borrowing_id);
-CREATE INDEX ix_borrowing_payments_accrual_id ON borrowing_payments (accrual_id);
-CREATE INDEX ix_bank_transaction_original_period_pending_late ON bank_transactions (org_id, original_period_id, id) WHERE is_late IS 1;
-CREATE UNIQUE INDEX uq_bank_transaction_account_source_row ON bank_transactions (org_id, bank_account_code, row_identity_sha256) WHERE row_identity_sha256 IS NOT NULL;
-CREATE INDEX ix_bank_transaction_account_fingerprint ON bank_transactions (org_id, bank_account_code, fingerprint);
-CREATE INDEX ix_bank_transactions_org_id ON bank_transactions (org_id);
-CREATE UNIQUE INDEX uq_bank_transaction_account_external_id ON bank_transactions (org_id, bank_account_code, external_id) WHERE external_id IS NOT NULL;
-CREATE INDEX ix_bank_reconciliations_org_id ON bank_reconciliations (org_id);
-CREATE INDEX ix_bank_reconciliation_period_account ON bank_reconciliations (org_id, period_id, bank_account_code, version);
-CREATE INDEX ix_payroll_withholding_payment_allocations_org_id ON payroll_withholding_payment_allocations (org_id);
 CREATE INDEX ix_payroll_withholding_payment_allocations_entitlement_id ON payroll_withholding_payment_allocations (entitlement_id);
+CREATE INDEX ix_payroll_withholding_payment_allocations_org_id ON payroll_withholding_payment_allocations (org_id);
 CREATE INDEX ix_payroll_withholding_payment_allocations_payment_event_id ON payroll_withholding_payment_allocations (payment_event_id);
-CREATE INDEX ix_late_bank_evidence_actions_org_id ON late_bank_evidence_actions (org_id);
-CREATE INDEX ix_late_bank_evidence_actions_bank_transaction_id ON late_bank_evidence_actions (bank_transaction_id);
-CREATE INDEX ix_late_bank_action_pending_projection ON late_bank_evidence_actions (org_id, handling_period_id, bank_transaction_id);
-CREATE INDEX ix_bank_transaction_matches_bank_transaction_id ON bank_transaction_matches (bank_transaction_id);
-CREATE INDEX ix_bank_transaction_matches_org_id ON bank_transaction_matches (org_id);
-CREATE INDEX ix_bank_transaction_matches_event_id ON bank_transaction_matches (event_id);
+CREATE INDEX ix_salary_actual_deduction_org_event ON payroll_salary_actual_deduction_allocations (org_id, payment_event_id);
+CREATE INDEX ix_salary_actual_deduction_org_line ON payroll_salary_actual_deduction_allocations (org_id, payroll_line_id);
+CREATE INDEX ix_settlements_org_id ON settlements (org_id);
+CREATE INDEX ix_tax_period_sources_source_event_id ON tax_period_sources (source_event_id);
+CREATE INDEX ix_tax_period_sources_tax_period_id ON tax_period_sources (tax_period_id);
+CREATE INDEX ix_tax_periods_org_id ON tax_periods (org_id);
+CREATE INDEX ix_unified_payout_run_items_org_id ON unified_payout_run_items (org_id);
+CREATE INDEX ix_unified_payout_run_items_payout_run_id ON unified_payout_run_items (payout_run_id);
+CREATE INDEX ix_unified_payout_runs_org_id ON unified_payout_runs (org_id);
+CREATE INDEX ix_voucher_lines_org_id ON voucher_lines (org_id);
+CREATE INDEX ix_voucher_lines_voucher_id ON voucher_lines (voucher_id);
+CREATE INDEX ix_vouchers_org_id ON vouchers (org_id);
+CREATE INDEX ix_vouchers_posting_date ON vouchers (posting_date);
+CREATE INDEX ix_zero_tax_period_confirmations_org_id ON zero_tax_period_confirmations (org_id);
+CREATE UNIQUE INDEX uq_active_payout_run_bank_transaction ON unified_payout_runs (org_id, bank_transaction_id) WHERE status IN ('calculated','posted');
+CREATE UNIQUE INDEX uq_bank_transaction_account_external_id ON bank_transactions (org_id, bank_account_code, external_id) WHERE external_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_bank_transaction_account_source_row ON bank_transactions (org_id, bank_account_code, row_identity_sha256) WHERE row_identity_sha256 IS NOT NULL;
 CREATE UNIQUE INDEX uq_bank_transaction_match_current ON bank_transaction_matches (org_id, bank_transaction_id) WHERE invalidated_by_event_id IS NULL;
+CREATE UNIQUE INDEX uq_contribution_actual_root_kind ON payroll_contribution_actual_items (org_id, employee_id, contribution_period, contribution_group, insurance_kind) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_financial_statement_classification_initial ON financial_statement_classifications (org_id, voucher_line_id) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_first_wage_treatment_root ON payroll_first_wage_tax_treatments (org_id, employee_id, tax_year) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_owner_recovery_code_current ON owner_recovery_codes (owner_account_id) WHERE used_at IS NULL AND invalidated_at IS NULL;
+CREATE UNIQUE INDEX uq_payroll_event_link_payment_source ON payroll_event_links (org_id, event_id, link_kind, source_payment_event_id, source_open_item_id) WHERE source_payment_event_id IS NOT NULL AND source_open_item_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_payroll_event_link_reversal_source ON payroll_event_links (org_id, event_id, link_kind, source_payment_event_id) WHERE source_payment_event_id IS NOT NULL AND source_open_item_id IS NULL;
+CREATE UNIQUE INDEX uq_payroll_event_link_salary_source ON payroll_event_links (org_id, event_id, link_kind, source_open_item_id) WHERE source_payment_event_id IS NULL AND source_open_item_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_payroll_event_link_without_source ON payroll_event_links (org_id, event_id, link_kind) WHERE source_payment_event_id IS NULL AND source_open_item_id IS NULL;
+CREATE UNIQUE INDEX uq_payroll_regular_posted_period ON payroll_batches (org_id, payroll_period) WHERE batch_kind = 'regular' AND status = 'posted' AND reversal_of_batch_id IS NULL;
