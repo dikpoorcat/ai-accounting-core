@@ -16,6 +16,7 @@ from .backup import BackupError
 from .backup_integration import BackupIntegrationError
 
 _DRIVE_REMOVABLE = 2
+_MOVEFILE_REPLACE_EXISTING = 0x00000001
 _MOVEFILE_WRITE_THROUGH = 0x00000008
 
 
@@ -209,6 +210,48 @@ class WindowsWriteThroughPublisher:
                 raise BackupError("BACKUP_PUBLISH_STATE_INVALID")
             raise BackupError("BACKUP_PUBLISH_FAILED")
 
+    def replace_file(self, replacement: Path, current: Path, root: Path) -> None:
+        """Durably publish one verified file, atomically replacing its predecessor."""
+
+        root_path = root.resolve(strict=True)
+        replacement_path = replacement.resolve(strict=True)
+        try:
+            current_parent = current.parent.resolve(strict=True)
+        except OSError as exc:
+            raise BackupError("BACKUP_PORTABLE_REPLACE_STATE_INVALID") from exc
+        if (
+            replacement_path.parent != root_path
+            or current_parent != root_path
+            or replacement_path == current
+            or not replacement_path.is_file()
+            or replacement_path.is_symlink()
+            or current.is_symlink()
+        ):
+            raise BackupError("BACKUP_PORTABLE_REPLACE_STATE_INVALID")
+        if current.exists():
+            current_path = current.resolve(strict=True)
+            if (
+                current_path.parent != root_path
+                or not current_path.is_file()
+                or current_path.is_symlink()
+            ):
+                raise BackupError("BACKUP_PORTABLE_REPLACE_STATE_INVALID")
+        if not self._replace_write_through(replacement_path, current):
+            if not replacement.exists() or current.is_symlink():
+                raise BackupError("BACKUP_PORTABLE_REPLACE_STATE_INVALID")
+            raise BackupError("BACKUP_PORTABLE_REPLACE_FAILED")
+        try:
+            published = current.resolve(strict=True)
+        except OSError as exc:
+            raise BackupError("BACKUP_PORTABLE_REPLACE_STATE_INVALID") from exc
+        if (
+            replacement.exists()
+            or published.parent != root_path
+            or not published.is_file()
+            or published.is_symlink()
+        ):
+            raise BackupError("BACKUP_PORTABLE_REPLACE_STATE_INVALID")
+
     def durable_directory_preflight(self, root: Path) -> None:
         """Prove a flushed directory can be renamed write-through and reopened."""
         checked_root = root.resolve(strict=True)
@@ -251,6 +294,15 @@ class WindowsWriteThroughPublisher:
                 str(source),
                 str(destination),
                 _MOVEFILE_WRITE_THROUGH,
+            )
+        )
+
+    def _replace_write_through(self, source: Path, destination: Path) -> bool:
+        return bool(
+            self._kernel32.MoveFileExW(
+                str(source),
+                str(destination),
+                _MOVEFILE_REPLACE_EXISTING | _MOVEFILE_WRITE_THROUGH,
             )
         )
 

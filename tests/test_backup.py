@@ -17,6 +17,7 @@ from ai_accounting.backup import (
     BackupRequest,
     DatabaseDumpMetadata,
     EvidenceSnapshot,
+    create_online_backup,
     create_portable_backup_archive,
     create_stopped_backup,
     extract_portable_backup_archive,
@@ -196,6 +197,43 @@ def test_backup_rejects_nonstopped_service_before_creating_a_partial_directory(
     with pytest.raises(BackupError, match="BACKUP_SERVICE_NOT_STOPPED"):
         create_stopped_backup(tmp_path / "media", request, FakeDumpAdapter())
     assert not (tmp_path / "media" / "backup-20260811.partial").exists()
+
+
+def test_online_backup_accepts_live_snapshot_without_weakening_stopped_backup(
+    tmp_path: Path,
+) -> None:
+    evidence_root, source = _source(tmp_path)
+    request = replace(
+        _request(evidence_root, source),
+        precondition=BackupPrecondition(
+            service_stopped=False,
+            active_business_connections=2,
+        ),
+    )
+
+    verified = create_online_backup(
+        tmp_path / "live-media",
+        request,
+        FakeDumpAdapter(),
+        clock=lambda: _clock(11),
+    )
+
+    assert verified.backup_directory.name == "backup-20260811.complete"
+    with pytest.raises(BackupError, match="BACKUP_SERVICE_NOT_STOPPED"):
+        create_stopped_backup(tmp_path / "stopped-media", request, FakeDumpAdapter())
+
+    with pytest.raises(BackupError, match="BACKUP_ONLINE_PRECONDITION_INVALID"):
+        create_online_backup(
+            tmp_path / "invalid-live-media",
+            replace(
+                request,
+                precondition=BackupPrecondition(
+                    service_stopped=True,
+                    active_business_connections=0,
+                ),
+            ),
+            FakeDumpAdapter(),
+        )
 
 
 def test_backup_rejects_missing_tampered_and_path_escaping_evidence(tmp_path: Path) -> None:

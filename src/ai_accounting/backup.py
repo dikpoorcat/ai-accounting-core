@@ -327,6 +327,57 @@ def create_stopped_backup(
         raise BackupError("BACKUP_SERVICE_NOT_STOPPED")
     if request.precondition.active_business_connections != 0:
         raise BackupError("BACKUP_ACTIVE_CONNECTIONS")
+    return _create_backup_contents(
+        backup_root,
+        request,
+        dump_adapter,
+        clock=clock,
+        max_evidence_bytes=max_evidence_bytes,
+        max_database_dump_bytes=max_database_dump_bytes,
+        publisher=publisher,
+    )
+
+
+def create_online_backup(
+    backup_root: Path,
+    request: BackupRequest,
+    dump_adapter: DatabaseDumpAdapter,
+    *,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    max_evidence_bytes: int = DEFAULT_MAX_EVIDENCE_BYTES,
+    max_database_dump_bytes: int = DEFAULT_MAX_DATABASE_DUMP_BYTES,
+    publisher: BackupPublisher | None = None,
+) -> BackupVerification:
+    """Publish a consistent live PostgreSQL snapshot after a committed close.
+
+    The integration layer must hold an exported REPEATABLE READ, READ ONLY
+    snapshot through both evidence projection and pg_dump. Unlike the formal
+    stopped-service backup, concurrent runtime connections are expected here.
+    """
+    _validate_request(request, max_evidence_bytes, max_database_dump_bytes)
+    if request.precondition.service_stopped:
+        raise BackupError("BACKUP_ONLINE_PRECONDITION_INVALID")
+    return _create_backup_contents(
+        backup_root,
+        request,
+        dump_adapter,
+        clock=clock,
+        max_evidence_bytes=max_evidence_bytes,
+        max_database_dump_bytes=max_database_dump_bytes,
+        publisher=publisher,
+    )
+
+
+def _create_backup_contents(
+    backup_root: Path,
+    request: BackupRequest,
+    dump_adapter: DatabaseDumpAdapter,
+    *,
+    clock: Callable[[], datetime],
+    max_evidence_bytes: int,
+    max_database_dump_bytes: int,
+    publisher: BackupPublisher | None,
+) -> BackupVerification:
 
     try:
         root = ensure_directory_in_root(backup_root, backup_root)

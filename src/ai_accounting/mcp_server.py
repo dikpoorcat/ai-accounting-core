@@ -44,9 +44,11 @@ from .borrowing_schemas import (
     PreviewBorrowingInterestRequest,
     RepayBorrowingPrincipalRequest,
 )
+from .close_backup import CloseBackupError, CloseBackupRuntime, CloseBackupService
 from .company_router import CompanyRoutingError, assert_runtime_role
 from .company_router import router as company_router
 from .company_schemas import (
+    ConfigureCloseBackupRequest,
     ConfirmCompanyProfileChangeRequest,
     ConfirmCompanyStatusChangeRequest,
     CreateCompanyRequest,
@@ -205,6 +207,8 @@ REVERSAL_WRITE = ToolAnnotations(
 )
 
 _GLOBAL_COMPANY_TOOLS = {
+    "finance_get_close_backup_configuration",
+    "finance_configure_close_backup",
     "finance_list_companies",
     "finance_create_company",
     "finance_preview_company_profile_change",
@@ -213,6 +217,8 @@ _GLOBAL_COMPANY_TOOLS = {
     "finance_confirm_company_status_change",
 }
 _GLOBAL_COMPANY_TOOLS_WITHOUT_ORG = {
+    "finance_get_close_backup_configuration",
+    "finance_configure_close_backup",
     "finance_list_companies",
     "finance_create_company",
 }
@@ -386,6 +392,36 @@ def _secure_registered_data_tools() -> None:
                             factory = company_router.factory_for(registry)
                         except CompanyRoutingError as exc:
                             return _rejected_identity(exc.code)
+                        close_backup_service: CloseBackupService | None = None
+                        close_backup_runtime: CloseBackupRuntime | None = None
+                        if _tool_name == "finance_confirm_accounting_period_close":
+                            close_backup_service = CloseBackupService(
+                                session,
+                                context=context,
+                                settings=settings,
+                            )
+                            try:
+                                close_backup_runtime = close_backup_service.require_ready()
+                            except CloseBackupError as exc:
+                                if (
+                                    exc.code
+                                    == "ACCOUNTING_PERIOD_CLOSE_BACKUP_LOCATION_REQUIRED"
+                                ):
+                                    return {
+                                        "status": "needs_information",
+                                        "errors": [exc.code],
+                                        "missing_information": [
+                                            {
+                                                "code": exc.code,
+                                                "message": (
+                                                    "the owner must choose a local automatic "
+                                                    "close-backup directory first"
+                                                ),
+                                                "fields": ["backup_directory"],
+                                            }
+                                        ],
+                                    }
+                                return _rejected_identity(exc.code)
                         business_scope = factory.begin() if _is_write else factory()
                         with business_scope as business_session:
                             marker = _ACTIVE_TOOL_SESSION.set(business_session)
@@ -396,10 +432,41 @@ def _secure_registered_data_tools() -> None:
                                         context=context,
                                         tool_name=_tool_name,
                                     ):
-                                        return _original(*args, **kwargs)
-                                return _original(*args, **kwargs)
+                                        tool_result = _original(*args, **kwargs)
+                                else:
+                                    tool_result = _original(*args, **kwargs)
                             finally:
                                 _ACTIVE_TOOL_SESSION.reset(marker)
+                        if (
+                            _tool_name == "finance_confirm_accounting_period_close"
+                            and isinstance(tool_result, dict)
+                            and tool_result.get("status") == "posted"
+                            and close_backup_service is not None
+                            and close_backup_runtime is not None
+                        ):
+                            try:
+                                close_id = uuid.UUID(str(tool_result["close_id"]))
+                                period_id = uuid.UUID(str(tool_result["period_id"]))
+                                bound = inspect.signature(_original).bind_partial(
+                                    *args, **kwargs
+                                )
+                                close_request = bound.arguments.get("request")
+                                period_month = close_request.closing_date.strftime("%Y-%m")
+                            except (KeyError, TypeError, ValueError, AttributeError):
+                                return _rejected_identity(
+                                    "ACCOUNTING_PERIOD_CLOSE_BACKUP_IDENTITY_MISMATCH"
+                                )
+                            tool_result = dict(tool_result)
+                            tool_result["close_backup"] = (
+                                close_backup_service.backup_committed_close(
+                                    registry=registry,
+                                    close_id=close_id,
+                                    period_id=period_id,
+                                    period_month=period_month,
+                                    runtime=close_backup_runtime,
+                                )
+                            )
+                        return tool_result
                     finally:
                         _ACTIVE_EXECUTION_CONTEXT.reset(context_marker)
                         _ACTIVE_CATALOG_SESSION.reset(catalog_marker)
@@ -600,6 +667,18 @@ def _company_service() -> CompanyService:
     if catalog_session is None or context is None:
         raise CompanyLifecycleError("MULTI_COMPANY_CONTEXT_REQUIRED")
     return CompanyService(catalog_session, context=context)
+
+
+def _close_backup_service() -> CloseBackupService:
+    catalog_session = _ACTIVE_CATALOG_SESSION.get()
+    context = _ACTIVE_EXECUTION_CONTEXT.get()
+    if catalog_session is None or context is None:
+        raise CloseBackupError("MULTI_COMPANY_CONTEXT_REQUIRED")
+    return CloseBackupService(
+        catalog_session,
+        context=context,
+        settings=get_settings(),
+    )
 
 
 def _bank_statement_service(session: Any) -> Any:
@@ -806,6 +885,11 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 ],
                 "generic_event_writer": "controlled_by_period_status",
                 "reopen_entry": "not_available",
+                "automatic_company_backup_after_close": True,
+                "backup_configuration_tools": [
+                    "finance_get_close_backup_configuration",
+                    "finance_configure_close_backup",
+                ],
             },
             "quarterly_financial_statements": {
                 "status": "enabled",
@@ -845,6 +929,26 @@ def finance_list_companies(include_archived: bool = False) -> dict[str, Any]:
     try:
         return _company_service().list_companies(include_archived=include_archived)
     except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_close_backup_configuration() -> dict[str, Any]:
+    """读取负责人已确定的关账自动备份目录和当前就绪状态。"""
+    try:
+        return _close_backup_service().get_configuration()
+    except CloseBackupError as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_configure_close_backup(
+    request: ConfigureCloseBackupRequest,
+) -> dict[str, Any]:
+    """由负责人确认一个本机目录，后续每次成功关账自动备份对应公司。"""
+    try:
+        return _close_backup_service().configure(request)
+    except CloseBackupError as exc:
         return {"status": "rejected", "errors": [exc.code]}
 
 

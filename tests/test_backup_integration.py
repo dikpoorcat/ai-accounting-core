@@ -541,6 +541,18 @@ def test_any_remaining_runtime_session_blocks_snapshot() -> None:
             pytest.fail("snapshot must not be yielded")
 
 
+def test_online_close_snapshot_allows_runtime_sessions_but_keeps_all_other_checks() -> None:
+    connection = SnapshotConnection(active=2)
+    with postgres_backup_snapshot(
+        SnapshotProvider(connection),
+        _endpoint(),
+        runtime_role="finance_runtime",
+        require_no_runtime_connections=False,
+    ) as snapshot:
+        assert snapshot.snapshot_id == "00000003-0000001B-1"
+        assert snapshot.evidence[0].sha256 == "a" * 64
+
+
 def test_any_extra_finance_backup_role_membership_blocks_snapshot() -> None:
     connection = SnapshotConnection(
         memberships=[("pg_monitor",), ("pg_read_all_data",), ("pg_signal_backend",)]
@@ -668,6 +680,26 @@ def test_windows_publisher_api_failure_leaves_partial_unpublished(tmp_path: Path
         publisher.publish(partial, complete, tmp_path)
     assert partial.is_dir()
     assert not complete.exists()
+
+
+def test_windows_publisher_replaces_file_only_after_write_through_move(
+    tmp_path: Path,
+) -> None:
+    replacement = tmp_path / ".replacement"
+    current = tmp_path / "company.finance-company.zip"
+    replacement.write_bytes(b"new")
+    current.write_bytes(b"old")
+    publisher = object.__new__(WindowsWriteThroughPublisher)
+
+    def replace_write_through(source: Path, destination: Path) -> bool:
+        os.replace(source, destination)
+        return True
+
+    publisher._replace_write_through = replace_write_through  # type: ignore[method-assign]
+    publisher.replace_file(replacement, current, tmp_path)
+
+    assert current.read_bytes() == b"new"
+    assert not replacement.exists()
 
 
 class FunctionStub:

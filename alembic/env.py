@@ -67,7 +67,9 @@ _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
 }
 
 _CATALOG_TABLES = {
+    "accounting_period_close_backups",
     "catalog_metadata",
+    "close_backup_location_versions",
     "company_registry",
     "company_lifecycle_actions",
 }

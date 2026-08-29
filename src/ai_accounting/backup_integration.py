@@ -32,6 +32,7 @@ from .backup import (
     BackupVerification,
     DatabaseDumpMetadata,
     EvidenceSnapshot,
+    create_online_backup,
     create_stopped_backup,
     verify_backup,
 )
@@ -382,6 +383,7 @@ def postgres_backup_snapshot(
     include_evidence: bool = True,
     forbid_identity_tables: bool = False,
     allowed_database_names: frozenset[str] | None = None,
+    require_no_runtime_connections: bool = True,
 ) -> Iterator[DatabaseBackupSnapshot]:
     """Hold one exported read-only snapshot through evidence projection and pg_dump."""
     if endpoint.username != _FINANCE_BACKUP_ROLE or not _IDENTIFIER_PATTERN.fullmatch(runtime_role):
@@ -412,7 +414,7 @@ def postgres_backup_snapshot(
                 ).fetchone()
                 if active is None or not isinstance(active[0], int):
                     raise BackupIntegrationError("BACKUP_CONNECTION_CHECK_FAILED")
-                if active[0] != 0:
+                if require_no_runtime_connections and active[0] != 0:
                     raise BackupIntegrationError("BACKUP_ACTIVE_CONNECTIONS")
                 source_identity = connection.execute(
                     """
@@ -532,6 +534,54 @@ def create_integrated_stopped_backup(
                 adapter_factory(snapshot.snapshot_id),
                 publisher=publisher,
             )
+
+
+def create_integrated_online_backup(
+    backup_root: Path,
+    *,
+    backup_id: str,
+    evidence_root: Path,
+    endpoint: PostgresEndpoint,
+    runtime_role: str,
+    connection_provider: BackupDatabaseConnectionProvider,
+    adapter_factory: Callable[[str], PgDumpAdapter],
+    publisher: BackupPublisher,
+    org_id: str,
+    database_identity: str,
+    allowed_database_names: frozenset[str],
+) -> BackupVerification:
+    """Create one company-only live backup after its close transaction commits."""
+    with postgres_backup_snapshot(
+        connection_provider,
+        endpoint,
+        runtime_role=runtime_role,
+        include_evidence=True,
+        forbid_identity_tables=True,
+        allowed_database_names=allowed_database_names,
+        require_no_runtime_connections=False,
+    ) as snapshot:
+        return create_online_backup(
+            backup_root,
+            BackupRequest(
+                backup_id=backup_id,
+                purpose="daily",
+                precondition=BackupPrecondition(
+                    service_stopped=False,
+                    active_business_connections=0,
+                ),
+                evidence_root=evidence_root,
+                evidence=snapshot.evidence,
+                database=DatabaseDumpMetadata(
+                    schema_revision=snapshot.schema_revision,
+                    source_system_identifier=snapshot.source_system_identifier,
+                ),
+                artifact_type="company",
+                org_id=org_id,
+                database_identity=database_identity,
+            ),
+            adapter_factory(snapshot.snapshot_id),
+            publisher=publisher,
+        )
 
 
 @dataclass(frozen=True)

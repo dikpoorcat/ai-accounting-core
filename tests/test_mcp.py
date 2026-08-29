@@ -27,6 +27,8 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_get_event_schema",
         "finance_list_companies",
         "finance_create_company",
+        "finance_get_close_backup_configuration",
+        "finance_configure_close_backup",
         "finance_preview_company_profile_change",
         "finance_confirm_company_profile_change",
         "finance_preview_company_status_change",

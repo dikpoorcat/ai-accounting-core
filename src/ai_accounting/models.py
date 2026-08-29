@@ -172,6 +172,87 @@ class CompanyLifecycleAction(Base):
     )
 
 
+class CloseBackupLocationVersion(Base):
+    """Append-only owner choice for automatic post-close backup storage."""
+
+    __tablename__ = "close_backup_location_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    backup_directory: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_credential_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    executor_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    executor_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    executor_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_close_backup_location_version"),
+        CheckConstraint(
+            "length(request_payload_hash) = 64",
+            name="ck_close_backup_location_request_hash",
+        ),
+        CheckConstraint(
+            "owner_credential_version >= 1",
+            name="ck_close_backup_location_credential_version",
+        ),
+    )
+
+
+class AccountingPeriodCloseBackup(Base):
+    """Catalog audit for the non-transactional filesystem side of a close."""
+
+    __tablename__ = "accounting_period_close_backups"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("company_registry.org_id", ondelete="RESTRICT"), index=True
+    )
+    close_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    period_month: Mapped[str] = mapped_column(String(7), nullable=False)
+    database_identity: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    location_version_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("close_backup_location_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    archive_file: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archive_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "close_id", name="uq_close_backup_org_close"),
+        CheckConstraint(
+            "status IN ('pending','running','completed','failed')",
+            name="ck_close_backup_status",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_close_backup_attempt_count"),
+        CheckConstraint(
+            "length(period_month) = 7 AND substr(period_month, 5, 1) = '-'",
+            name="ck_close_backup_period_month",
+        ),
+        CheckConstraint(
+            "(status = 'completed' AND archive_file IS NOT NULL "
+            "AND archive_sha256 IS NOT NULL AND manifest_sha256 IS NOT NULL "
+            "AND error_code IS NULL AND completed_at IS NOT NULL) OR "
+            "(status <> 'completed' AND archive_file IS NULL "
+            "AND archive_sha256 IS NULL AND manifest_sha256 IS NULL)",
+            name="ck_close_backup_completion",
+        ),
+    )
+
+
 event_evidence = Table(
     "event_evidence",
     Base.metadata,

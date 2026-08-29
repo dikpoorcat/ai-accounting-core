@@ -53,6 +53,8 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 - `finance_create_company(request)`
 - `finance_preview_company_profile_change` / `finance_confirm_company_profile_change`
 - `finance_preview_company_status_change` / `finance_confirm_company_status_change`
+- `finance_get_close_backup_configuration`
+- `finance_configure_close_backup`
 
 创建必须显式提供幂等键、名称、18 位统一社会信用代码、首个资料生效日、月度/季度申报周期、`0.07`/`0.05`/`0.01` 城建税率和确认说明。数据库名与身份由系统生成。失败数据库不会自动删除，同一幂等键可在 `attention_required` 状态下恢复重试。
 
@@ -73,6 +75,30 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 ```
 
 ## 独立备份与移交
+
+### 关账自动单公司备份
+
+首次关账前，负责人与 AI 确定一个本机目录，AI 调用
+`finance_configure_close_backup`，显式提交绝对路径、幂等键和负责人的确认说明。目录不存在时只会
+创建路径的最后一级；父目录必须已经存在。该位置以不可变版本记录在目录库中，后续改位置会追加
+新版本；目录库继续保留历史关账所用位置版本及备份尝试的审计归因，文件系统不保留历史包。
+
+`finance_confirm_accounting_period_close` 在写入前检查目录、专用 `finance_backup` 凭据和
+PostgreSQL 17 `pg_dump`/`pg_restore`；未就绪时不会关账。关账业务事务提交后，系统使用只读
+`REPEATABLE READ` 导出快照，复制该公司实际引用的证据，验证清单和所有摘要，并生成
+`<统一社会信用代码>.finance-company.zip`。同一公司始终只有这个当前包：系统先在同一目录生成
+并完整验证替换包，再以写穿方式原子替换旧包，最后清理能够验证为同一 `org_id` 的旧命名包；
+任一步在替换前失败都会保留旧包。这个包不含目录库身份秘密，可以按下文的 `verify-portable`、
+`unpack` 和 `import-company` 流程恢复或移交。
+
+自动备份与业务库事务不能组成跨数据库/文件系统原子事务。若故障发生在关账提交之后，关账仍
+明确返回 `posted`，同时 `close_backup.status=failed`；AI 使用完全相同的关账幂等请求重试即可
+继续备份，不会生成第二次关账。每个关账的尝试次数、结果、文件摘要和所用位置版本都在目录库审计。
+
+部署可通过 `FINANCE_POSTGRES_BIN_DIR` 指定 PostgreSQL 17 客户端目录；未指定时依次从 `PATH`、
+`C:\Program Files\PostgreSQL\17\bin` 和 `C:\PostgreSQL\17\bin` 发现。
+
+### 手工停止服务备份与移交
 
 以下命令分别生成目录包、单公司包或全部相互独立的包：
 
@@ -113,4 +139,4 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 
 导入会创建新的物理数据库，并验证当前 business head、唯一企业、数据库身份、证据摘要及不存在身份秘密表；经摘要复验的证据会安装到目标内容寻址目录并重写库内路径。目标目录存在相同 `org_id` 或纳税人识别号时拒绝。导出不改变源公司；对方确认导入成功后，源端负责人再单独归档。
 
-所有正式备份继续要求停止服务、确认无目标运行连接、可验证 `pg_dump` 和定期恢复演练。备份目录所在介质、加密、异地复制与保留周期由部署负责人决定；程序只验证目录可用、写穿透发布、内容摘要和恢复完整性。备份角色只应获准连接目录及已登记业务数据库。
+手工 `create` 仍用于升级前、整套目录或明确移交场景，并继续要求停止服务和确认无目标运行连接；关账自动单公司备份则在业务事务提交后使用 PostgreSQL 一致性在线快照，不停止 MCP。两类备份都验证 `pg_dump` 归档、证据和内容摘要。备份目录所在介质、加密、异地复制与保留周期由负责人决定；备份角色只应获准连接目录及已登记业务数据库。

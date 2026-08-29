@@ -98,6 +98,11 @@ def test_production_settings_require_distinct_urls_and_absolute_roots(tmp_path: 
         )
     with pytest.raises(SettingsConfigurationError):
         _production_settings(tmp_path, finance_bank_import_dir=Path("data/incoming/bank"))
+    with pytest.raises(
+        SettingsConfigurationError,
+        match="PRODUCTION_FINANCE_POSTGRES_BIN_DIR_ABSOLUTE_PATH_REQUIRED",
+    ):
+        _production_settings(tmp_path, finance_postgres_bin_dir=Path("postgres/bin"))
     with pytest.raises(SettingsConfigurationError):
         _production_settings(
             tmp_path,

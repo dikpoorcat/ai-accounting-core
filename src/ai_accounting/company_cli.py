@@ -64,7 +64,9 @@ _IDENTITY_TABLES = (
 _CATALOG_TABLES = frozenset(
     {
         "alembic_version",
+        "accounting_period_close_backups",
         "catalog_metadata",
+        "close_backup_location_versions",
         "company_registry",
         "company_lifecycle_actions",
         *_IDENTITY_TABLES,
@@ -623,7 +625,7 @@ def _catalog_target_precheck(url: URL, *, org_id: uuid.UUID) -> None:
             registered = connection.execute(
                 text("SELECT org_id FROM company_registry ORDER BY org_id")
             ).scalars().all()
-        if revisions != ["0002_company_primary"] or registered not in ([], [org_id]):
+        if revisions != ["0003_close_backup"] or registered not in ([], [org_id]):
             raise CompanyCliError("COMPANY_MIGRATION_CATALOG_HISTORY_UNKNOWN")
     finally:
         engine.dispose()

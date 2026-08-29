@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     finance_evidence_dir: Path = Path("data/evidence")
     finance_evidence_import_dir: Path | None = None
     finance_bank_import_dir: Path | None = None
+    # Optional PostgreSQL 17 client directory used by automatic post-close
+    # backups. If omitted, the service discovers pg_dump/pg_restore from PATH
+    # and the standard Windows PostgreSQL 17 installation directories.
+    finance_postgres_bin_dir: Path | None = None
     finance_max_evidence_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
     finance_max_bank_import_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
 
@@ -72,6 +76,14 @@ class Settings(BaseSettings):
             "FINANCE_EVIDENCE_IMPORT_DIR"
         ]
         self.finance_bank_import_dir = normalized_roots["FINANCE_BANK_IMPORT_DIR"]
+        if self.finance_postgres_bin_dir is not None:
+            if not self.finance_postgres_bin_dir.is_absolute():
+                raise SettingsConfigurationError(
+                    "PRODUCTION_FINANCE_POSTGRES_BIN_DIR_ABSOLUTE_PATH_REQUIRED"
+                )
+            self.finance_postgres_bin_dir = Path(
+                os.path.abspath(os.fspath(self.finance_postgres_bin_dir))
+            )
         try:
             self.finance_evidence_dir.relative_to(self.finance_storage_dir)
         except ValueError as exc:

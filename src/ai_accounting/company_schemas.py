@@ -81,3 +81,21 @@ class PreviewCompanyStatusChangeRequest(BaseModel):
 class ConfirmCompanyStatusChangeRequest(PreviewCompanyStatusChangeRequest):
     idempotency_key: str = Field(min_length=1, max_length=200)
     calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ConfigureCloseBackupRequest(BaseModel):
+    """Owner-confirmed local destination used after every successful close."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backup_directory: str = Field(min_length=3, max_length=2048)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    confirmation_note: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("backup_directory", "idempotency_key", "confirmation_note")
+    @classmethod
+    def strip_close_backup_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("required text is blank")
+        return stripped
