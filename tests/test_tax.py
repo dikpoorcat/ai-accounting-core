@@ -26,10 +26,32 @@ from ai_accounting.schemas import (
 )
 from ai_accounting.service import FinanceService
 from ai_accounting.tax import (
+    _below_threshold,
+    _threshold_expression,
+    active_surtax_rule,
+    active_tax_rule,
     calculate_tax_period,
     canonical_tax_calculation_json,
     split_tax_inclusive,
 )
+
+
+def test_historical_tax_rule_versions_are_selected_by_effective_date(
+    session: Session, organization: Organization
+) -> None:
+    assert active_tax_rule(session, organization, date(2022, 9, 20)).version == "2022.15"
+    assert active_surtax_rule(session, organization, date(2022, 9, 20)).version == (
+        "2022.10-ZJ.4"
+    )
+    assert active_tax_rule(session, organization, date(2025, 6, 30)).version == "2023.19"
+    assert active_tax_rule(session, organization, date(2026, 6, 30)).version == "2026.1"
+
+
+def test_threshold_operator_preserves_historical_inclusive_boundary() -> None:
+    assert _below_threshold(10_000_000, 10_000_000, "at_or_below") is True
+    assert _threshold_expression("at_or_below") == "net_sales_fen <= threshold_fen"
+    assert _below_threshold(10_000_000, 10_000_000, "strictly_below") is False
+    assert _threshold_expression("strictly_below") == "net_sales_fen < threshold_fen"
 
 
 def add_taxable_event(

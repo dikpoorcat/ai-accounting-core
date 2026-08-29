@@ -41,6 +41,7 @@ def _config(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Config:
     monkeypatch.setenv("DATABASE_URL", database_url)
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
+    config.attributes["database_url_override"] = database_url
     return config
 
 

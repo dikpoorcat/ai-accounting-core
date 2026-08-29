@@ -299,6 +299,8 @@ def test_old_snapshot_reverses_after_all_organization_tax_configuration_changes(
         select(TaxRule).where(
             TaxRule.jurisdiction == organization.jurisdiction,
             TaxRule.code.in_(("small_scale_vat_2026_2027", "small_scale_surtax_2023_2027")),
+            TaxRule.effective_from <= Q1_START,
+            (TaxRule.effective_to.is_(None) | (TaxRule.effective_to >= Q1_START)),
         )
     ).all()
     assert len(rules) == 2

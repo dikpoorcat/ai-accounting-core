@@ -60,6 +60,22 @@ def _rule_snapshot(rule: TaxRule) -> dict[str, Any]:
     }
 
 
+def _below_threshold(net_sales_fen: int, threshold_fen: int, operator: str) -> bool:
+    if operator == "strictly_below":
+        return net_sales_fen < threshold_fen
+    if operator == "at_or_below":
+        return net_sales_fen <= threshold_fen
+    raise ValueError("TAX_RULE_THRESHOLD_OPERATOR_INVALID")
+
+
+def _threshold_expression(operator: str) -> str:
+    if operator == "strictly_below":
+        return "net_sales_fen < threshold_fen"
+    if operator == "at_or_below":
+        return "net_sales_fen <= threshold_fen"
+    raise ValueError("TAX_RULE_THRESHOLD_OPERATOR_INVALID")
+
+
 @dataclass(frozen=True)
 class TaxPeriodResult:
     start_date: date
@@ -289,7 +305,8 @@ def calculate_tax_period(
     gross_sales = sum(row["gross_fen"] for row in taxable_rows)
     net_sales = sum(row["net_fen"] for row in taxable_rows)
     vat_accrued = sum(row["vat_fen"] for row in taxable_rows)
-    below_threshold = net_sales < threshold_fen
+    threshold_operator = str(params["threshold_operator"])
+    below_threshold = _below_threshold(net_sales, threshold_fen, threshold_operator)
     vat_relief = max(
         0,
         (
@@ -353,7 +370,7 @@ def calculate_tax_period(
         {
             "rule": rule.code,
             "version": rule.version,
-            "threshold_operator": "net_sales_fen < threshold_fen",
+            "threshold_operator": _threshold_expression(threshold_operator),
             "below_threshold": below_threshold,
             "taxable_event_count": len(taxable_rows),
             "adjustment_posting_date": adjustment_posting_date.isoformat(),

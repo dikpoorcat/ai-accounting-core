@@ -136,6 +136,39 @@ TAX_RULES = [
     {
         "code": "small_scale_vat_2026_2027",
         "jurisdiction": "CN",
+        "effective_from": date(2022, 4, 1),
+        "effective_to": date(2022, 12, 31),
+        "version": "2022.15",
+        "source_url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5202026/content.html",
+        "parameters": {
+            "monthly_threshold_fen": 15_000_000,
+            "quarterly_threshold_fen": 45_000_000,
+            "standard_rate_percent": "3",
+            "reduced_rate_percent": "0",
+            "threshold_operator": "at_or_below",
+            "basis_source_urls": [
+                "https://jiangsu.chinatax.gov.cn/art/2022/3/24/art_22639_404403.html"
+            ],
+        },
+    },
+    {
+        "code": "small_scale_vat_2026_2027",
+        "jurisdiction": "CN",
+        "effective_from": date(2023, 1, 1),
+        "effective_to": date(2025, 12, 31),
+        "version": "2023.19",
+        "source_url": "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5210457/content.html",
+        "parameters": {
+            "monthly_threshold_fen": 10_000_000,
+            "quarterly_threshold_fen": 30_000_000,
+            "standard_rate_percent": "3",
+            "reduced_rate_percent": "1",
+            "threshold_operator": "at_or_below",
+        },
+    },
+    {
+        "code": "small_scale_vat_2026_2027",
+        "jurisdiction": "CN",
         "effective_from": date(2026, 1, 1),
         "effective_to": date(2027, 12, 31),
         "version": "2026.1",
@@ -146,6 +179,24 @@ TAX_RULES = [
             "standard_rate_percent": "3",
             "reduced_rate_percent": "1",
             "threshold_operator": "strictly_below",
+        },
+    },
+    {
+        "code": "small_scale_surtax_2023_2027",
+        "jurisdiction": "CN",
+        "effective_from": date(2022, 1, 1),
+        "effective_to": date(2022, 12, 31),
+        "version": "2022.10-ZJ.4",
+        "source_url": "https://zhejiang.chinatax.gov.cn/art/2022/3/22/art_12793_541127.html",
+        "parameters": {
+            "small_tax_reduction_factor": "0.5",
+            "education_surcharge_rate": "0.03",
+            "local_education_surcharge_rate": "0.02",
+            "basis_source_urls": [
+                "https://zhejiang.chinatax.gov.cn/art/2022/3/7/art_8409_82432.html",
+                "https://fgk.chinatax.gov.cn/zcfgk/c100009/c5193055/content.html",
+                "https://www.chinatax.gov.cn/chinatax/n810214/n810641/n2985871/c101728/c5160742/content.html",
+            ],
         },
     },
     {

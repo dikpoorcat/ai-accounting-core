@@ -19,8 +19,9 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0002_multi_company_business"]
+    assert scripts.get_heads() == ["0003_historical_tax_rules"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0003_historical_tax_rules",
         "0002_multi_company_business",
         "0001_formal_baseline",
     ]
@@ -52,7 +53,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0002_multi_company_business"
+                == "0003_historical_tax_rules"
             )
             organization_columns = {
                 column["name"] for column in inspect(connection).get_columns("organizations")
@@ -139,7 +140,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0002_multi_company_business"
+                == "0003_historical_tax_rules"
             )
     finally:
         engine.dispose()

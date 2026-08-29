@@ -47,6 +47,7 @@ def _config(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Config:
     monkeypatch.setenv("DATABASE_URL", database_url)
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
+    config.attributes["database_url_override"] = database_url
     return config
 
 
@@ -415,7 +416,10 @@ def test_tax_determinism_commit_guards_and_concurrency(
                            :vat_rule_id,
                        (SELECT id FROM tax_rules
                          WHERE code = 'small_scale_surtax_2023_2027'
-                           AND jurisdiction = 'CN'),
+                           AND jurisdiction = 'CN'
+                           AND effective_from <= DATE '2026-06-30'
+                           AND COALESCE(effective_to, 'infinity'::date)
+                               >= DATE '2026-04-02'),
                        adjustment.id, DATE '2026-06-30', :created_at
                   FROM adjustment
                 """,

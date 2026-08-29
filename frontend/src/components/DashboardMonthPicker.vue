@@ -21,8 +21,8 @@ const years = computed(() =>
 
 const yearPages = computed(() => {
   const pages: number[][] = [];
-  for (let end = years.value.length; end > 0; end -= 3) {
-    pages.unshift(years.value.slice(Math.max(0, end - 3), end));
+  for (let start = 0; start < years.value.length; start += 3) {
+    pages.push(years.value.slice(start, start + 3));
   }
   return pages;
 });
@@ -33,9 +33,7 @@ const visibleYearRange = computed(() => {
   const last = visibleYears.value.at(-1);
   if (first === undefined || last === undefined) return "";
   if (first === last) return String(first);
-  const lastLabel =
-    Math.floor(first / 100) === Math.floor(last / 100) ? String(last).slice(-2) : last;
-  return `${first}–${lastLabel}`;
+  return `${first}–${last}`;
 });
 const selectedPeriodInfo = computed(() =>
   props.periods.find((period) => period.key === props.selectedPeriod),
