@@ -137,26 +137,25 @@ async function selectCompany(orgId: string) {
       <div class="sidebar-scroll-area">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">{{ brandInitial }}</span>
-          <div class="brand-copy">
+          <div v-if="companies.length" class="company-switcher">
+            <strong class="company-switcher-name" aria-hidden="true">{{ companyName }}</strong>
+            <select
+              :value="currentCompany?.org_id"
+              aria-label="切换公司"
+              @change="selectCompany(($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="company in companies" :key="company.org_id" :value="company.org_id">
+                {{ company.name }}{{ company.status === "archived" ? "（已归档）" : "" }}
+              </option>
+            </select>
+            <small v-if="currentCompany?.status === 'archived'" class="archived-company-badge">
+              只读 · 已归档
+            </small>
+          </div>
+          <div v-else class="brand-copy">
             <strong class="brand-name">{{ companyName }}</strong>
           </div>
         </div>
-
-        <label v-if="!sidebarCollapsed && companies.length" class="company-switcher">
-          <span>当前公司</span>
-          <select
-            :value="currentCompany?.org_id"
-            aria-label="切换公司"
-            @change="selectCompany(($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="company in companies" :key="company.org_id" :value="company.org_id">
-              {{ company.name }}{{ company.status === "archived" ? "（已归档）" : "" }}
-            </option>
-          </select>
-          <small v-if="currentCompany?.status === 'archived'" class="archived-company-badge">
-            只读 · 已归档
-          </small>
-        </label>
 
         <nav class="module-nav" aria-label="看板模块">
           <RouterLink
