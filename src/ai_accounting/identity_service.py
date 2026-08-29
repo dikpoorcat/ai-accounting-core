@@ -44,6 +44,8 @@ from .identity_schemas import (
     OwnerSessionRevokeRequest,
 )
 from .models import (
+    CatalogMetadata,
+    CompanyRegistry,
     IdentityAuditEvent,
     Organization,
     OwnerAccount,
@@ -51,8 +53,8 @@ from .models import (
     OwnerSession,
 )
 
-# The single-enterprise deployment uses one owner's local Windows account and keeps only an
-# opaque token in Credential Manager.  Seven idle days avoid repeated prompts
+# The deployment uses one global owner's local Windows account and keeps only an
+# opaque token in Credential Manager. Seven idle days avoid repeated prompts
 # during ordinary bookkeeping, while the fixed 30-day boundary still forces
 # periodic password reauthentication and is never extended by activity.
 SESSION_IDLE_TIMEOUT = timedelta(days=7)
@@ -92,7 +94,12 @@ class IdentityService:
             password=password,
             login_name=request.login_name,
         )
-        if self.session.get(Organization, request.org_id) is None:
+        organization_exists = (
+            self.session.get(CompanyRegistry, request.org_id) is not None
+            if self.session.info.get("catalog_mode")
+            else self.session.get(Organization, request.org_id) is not None
+        )
+        if not organization_exists:
             raise IdentityError("IDENTITY_ORGANIZATION_NOT_FOUND")
         if self.session.scalar(select(OwnerAccount.id).limit(1)) is not None:
             raise IdentityError("IDENTITY_OWNER_ALREADY_PROVISIONED")
@@ -234,8 +241,18 @@ class IdentityService:
         )
         if not isinstance(executor, ExecutorIdentity):
             raise IdentityError("IDENTITY_EXECUTOR_INVALID")
+        execution_org_id = expected_org_id or account.org_id
+        catalog_instance_id = uuid.UUID(int=0)
+        if self.session.info.get("catalog_mode"):
+            registry = self.session.get(CompanyRegistry, execution_org_id)
+            if registry is None:
+                raise IdentityError("ORGANIZATION_CONTEXT_MISMATCH")
+            metadata = self.session.get(CatalogMetadata, 1)
+            if metadata is None:
+                raise IdentityError("IDENTITY_CATALOG_UNAVAILABLE")
+            catalog_instance_id = metadata.catalog_instance_id
         return ExecutionContext(
-            org_id=account.org_id,
+            org_id=execution_org_id,
             owner_account_id=account.id,
             owner_session_id=owner_session.id,
             owner_credential_version=account.credential_version,
@@ -243,6 +260,7 @@ class IdentityService:
             executor_name=executor.executor_name,
             executor_version=executor.executor_version,
             request_correlation_id=request_correlation_id,
+            catalog_instance_id=catalog_instance_id,
         )
 
     def revoke_session(self, request: OwnerSessionRevokeRequest) -> None:
@@ -417,7 +435,11 @@ class IdentityService:
         if locked is None:
             raise IdentityError("IDENTITY_SESSION_INVALID")
         owner_session, account = locked
-        if expected_org_id is not None and account.org_id != expected_org_id:
+        if (
+            expected_org_id is not None
+            and not self.session.info.get("catalog_mode")
+            and account.org_id != expected_org_id
+        ):
             raise IdentityError("ORGANIZATION_CONTEXT_MISMATCH")
         expiry_reason = _session_expiry_reason(owner_session, account, now)
         if expiry_reason is not None:
@@ -573,11 +595,23 @@ class IdentityService:
     def _audit_unknown_login_failure(self, *, correlation_id: uuid.UUID, now: datetime) -> None:
         """Record an opaque failure only when this is an initialized singleton deployment."""
 
-        organizations = self.session.scalars(select(Organization).limit(2)).all()
-        if len(organizations) != 1:
+        if self.session.info.get("catalog_mode"):
+            organizations = self.session.scalars(
+                select(CompanyRegistry).order_by(CompanyRegistry.created_at).limit(1)
+            ).all()
+        else:
+            organizations = self.session.scalars(select(Organization).limit(2)).all()
+        if not organizations or (
+            not self.session.info.get("catalog_mode") and len(organizations) != 1
+        ):
             return
+        org_id = (
+            organizations[0].org_id
+            if isinstance(organizations[0], CompanyRegistry)
+            else organizations[0].id
+        )
         self._audit(
-            org_id=organizations[0].id,
+            org_id=org_id,
             owner_account_id=None,
             session_id=None,
             event_type="login_failed",

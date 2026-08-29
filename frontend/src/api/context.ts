@@ -21,14 +21,22 @@ export interface DashboardQuarter {
 }
 
 export interface DashboardContext {
-  schema_version: 1;
+  schema_version: 2;
   company: string;
+  companies: DashboardCompany[];
+  current_company: DashboardCompany;
   generated_at: string;
   default_period: string | null;
   periods: DashboardPeriod[];
   default_quarter: string | null;
   quarters: DashboardQuarter[];
   disclaimer: string;
+}
+
+export interface DashboardCompany {
+  org_id: string;
+  name: string;
+  status: "active" | "archived";
 }
 
 export function fetchDashboardContext(signal?: AbortSignal) {

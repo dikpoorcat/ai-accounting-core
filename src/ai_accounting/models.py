@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     Date,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     Uuid,
     and_,
     event,
+    inspect,
     select,
     text,
 )
@@ -35,6 +37,139 @@ from .taxpayer_identity import normalize_taxpayer_identification_number
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+CATALOG_SINGLETON_ID = 1
+LEGACY_CATALOG_INSTANCE_ID = uuid.UUID(int=0)
+COMPANY_STATUSES = (
+    "provisioning",
+    "active",
+    "changing",
+    "archived",
+    "attention_required",
+)
+
+
+class CatalogMetadata(Base):
+    """Identity of the local catalog database, never copied in a company handoff."""
+
+    __tablename__ = "catalog_metadata"
+
+    singleton_key: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    catalog_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, unique=True, default=uuid.uuid4
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        CheckConstraint("singleton_key = 1", name="ck_catalog_metadata_singleton"),
+    )
+
+
+class CompanyRegistry(Base):
+    """Safe catalog routing data; raw URLs and credentials are never persisted."""
+
+    __tablename__ = "company_registry"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    database_name: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    database_identity: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    taxpayer_identification_number: Mapped[str] = mapped_column(String(18), nullable=False)
+    profile_effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    filing_cycle: Mapped[str] = mapped_column(String(20), nullable=False)
+    urban_maintenance_rate: Mapped[Decimal] = mapped_column(Numeric(6, 5), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "taxpayer_identification_number",
+            name="uq_company_registry_taxpayer_identification_number",
+        ),
+        CheckConstraint(
+            "status IN ('provisioning','active','changing','archived','attention_required')",
+            name="ck_company_registry_status",
+        ),
+        CheckConstraint(
+            "database_name = 'finance' OR "
+            "database_name ~ '^finance_company_[0-9a-f]{32}$'",
+            name="ck_company_registry_database_name",
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            "filing_cycle IN ('monthly','quarterly')",
+            name="ck_company_registry_filing_cycle",
+        ),
+        CheckConstraint(
+            "urban_maintenance_rate IN (0.07,0.05,0.01)",
+            name="ck_company_registry_urban_rate",
+        ),
+        CheckConstraint(
+            "(status = 'archived' AND archived_at IS NOT NULL) OR "
+            "(status <> 'archived' AND archived_at IS NULL)",
+            name="ck_company_registry_archive_state",
+        ),
+        Index(
+            "uq_company_registry_single_primary",
+            "is_primary",
+            unique=True,
+            postgresql_where=text("is_primary"),
+            sqlite_where=text("is_primary = 1"),
+        ),
+    )
+
+    @validates("taxpayer_identification_number")
+    def validate_registry_taxpayer_id(self, _key: str, value: str) -> str:
+        return normalize_taxpayer_identification_number(value)
+
+
+class CompanyLifecycleAction(Base):
+    """Idempotent catalog-owned audit trail for cross-database lifecycle work."""
+
+    __tablename__ = "company_lifecycle_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    input_facts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    calculation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_credential_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    executor_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    executor_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    executor_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id",
+            "action_type",
+            "idempotency_key",
+            name="uq_company_lifecycle_org_idempotency",
+        ),
+        CheckConstraint(
+            "action_type IN ('create','profile_change','status_change','import')",
+            name="ck_company_lifecycle_action_type",
+        ),
+        CheckConstraint(
+            "status IN ('started','completed','failed')",
+            name="ck_company_lifecycle_status",
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64 AND "
+            "(calculation_hash IS NULL OR length(calculation_hash) = 64)",
+            name="ck_company_lifecycle_hashes",
+        ),
+    )
 
 
 event_evidence = Table(
@@ -131,6 +266,88 @@ class Organization(Base):
 
     @validates("taxpayer_identification_number")
     def validate_taxpayer_identification_number(self, _key: str, value: str) -> str:
+        return normalize_taxpayer_identification_number(value)
+
+
+class OrganizationDatabaseMetadata(Base):
+    """Singleton binding that prevents a catalog route from reaching the wrong database."""
+
+    __tablename__ = "organization_database_metadata"
+
+    singleton_key: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    database_identity: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    current_catalog_instance_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_approval_required: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"], ["organizations.id"], name="fk_org_database_metadata_org"
+        ),
+        CheckConstraint("singleton_key = 1", name="ck_org_database_metadata_singleton"),
+    )
+
+
+class OrganizationProfileVersion(Base):
+    """Append-only, effective-dated organization and tax configuration."""
+
+    __tablename__ = "organization_profile_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    taxpayer_identification_number: Mapped[str] = mapped_column(String(18), nullable=False)
+    taxpayer_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    filing_cycle: Mapped[str] = mapped_column(String(20), nullable=False)
+    jurisdiction: Mapped[str] = mapped_column(String(100), nullable=False)
+    urban_maintenance_rate: Mapped[Decimal] = mapped_column(Numeric(6, 5), nullable=False)
+    accounting_standard: Mapped[str] = mapped_column(String(50), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    lifecycle_action_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"], ["organizations.id"], name="fk_org_profile_version_org"
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_org_profile_version_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_org_profile_version_org_id"),
+        UniqueConstraint(
+            "org_id", "effective_from", name="uq_org_profile_version_effective_from"
+        ),
+        CheckConstraint("taxpayer_type = 'small_scale'", name="ck_org_profile_small_scale"),
+        CheckConstraint("jurisdiction = 'CN'", name="ck_org_profile_jurisdiction"),
+        CheckConstraint(
+            "accounting_standard = 'small_enterprise'",
+            name="ck_org_profile_accounting_standard",
+        ),
+        CheckConstraint(
+            "filing_cycle IN ('monthly','quarterly')", name="ck_org_profile_filing_cycle"
+        ),
+        CheckConstraint(
+            "urban_maintenance_rate IN (0.07,0.05,0.01)",
+            name="ck_org_profile_urban_rate",
+        ),
+        CheckConstraint(
+            "length(taxpayer_identification_number) = 18 AND "
+            "taxpayer_identification_number = upper(taxpayer_identification_number)",
+            name="ck_org_profile_taxpayer_id",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) > 0", name="ck_org_profile_confirmation_note"
+        ),
+    )
+
+    @validates("taxpayer_identification_number")
+    def validate_profile_taxpayer_id(self, _key: str, value: str) -> str:
         return normalize_taxpayer_identification_number(value)
 
 
@@ -389,6 +606,9 @@ class ExecutionAttribution(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    catalog_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, default=lambda: LEGACY_CATALOG_INSTANCE_ID
+    )
     owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     owner_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     owner_credential_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -2132,6 +2352,9 @@ class AccountingPeriodCloseApproval(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    catalog_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, nullable=False, default=lambda: LEGACY_CATALOG_INSTANCE_ID
+    )
     period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     owner_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
@@ -3299,6 +3522,30 @@ class Evidence(Base):
             dialect="postgresql"
         ),
         CheckConstraint("size_bytes >= 0", name="ck_evidence_size"),
+    )
+
+
+class OrganizationProfileVersionEvidence(Base):
+    __tablename__ = "organization_profile_version_evidence"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    profile_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "profile_version_id"],
+            ["organization_profile_versions.org_id", "organization_profile_versions.id"],
+            name="fk_org_profile_evidence_version",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"],
+            ["evidence.org_id", "evidence.id"],
+            name="fk_org_profile_evidence_evidence",
+            ondelete="RESTRICT",
+        ),
     )
 
 
@@ -5821,6 +6068,18 @@ _ATTRIBUTED_ROOT_TYPES = (
 )
 
 
+def _owner_attribution_mode(session: Session) -> bool:
+    connection = session.connection()
+    schema = inspect(connection)
+    if schema.has_table("organization_database_metadata") and session.scalar(
+        select(OrganizationDatabaseMetadata.singleton_key).limit(1)
+    ) is not None:
+        return True
+    return schema.has_table("owner_accounts") and (
+        session.scalar(select(OwnerAccount.id).limit(1)) is not None
+    )
+
+
 @event.listens_for(Session, "before_flush")
 def _enforce_orm_execution_attribution(
     session: Session,
@@ -5847,7 +6106,7 @@ def _enforce_orm_execution_attribution(
         if not isinstance(root, _ATTRIBUTED_ROOT_TYPES):
             continue
         if owner_mode is None:
-            owner_mode = session.scalar(select(OwnerAccount.id).limit(1)) is not None
+            owner_mode = _owner_attribution_mode(session)
         supplied = root.execution_attribution_id
         if expected is not None:
             if supplied is not None and supplied != expected:
@@ -5864,7 +6123,7 @@ def _enforce_orm_execution_attribution(
                 root.execution_attribution_id = expected
             else:
                 if owner_mode is None:
-                    owner_mode = session.scalar(select(OwnerAccount.id).limit(1)) is not None
+                    owner_mode = _owner_attribution_mode(session)
                 if owner_mode:
                     raise ValueError("BUSINESS_EXECUTION_ATTRIBUTION_REQUIRED")
         history = attributes.get_history(root, "execution_attribution_id")
@@ -5889,6 +6148,18 @@ def _enforce_financial_statement_facts_append_only(
     for item in session.dirty:
         if isinstance(item, fact_types) and session.is_modified(item):
             raise ValueError("FINANCIAL_STATEMENT_FACT_IMMUTABLE")
+
+
+@event.listens_for(Session, "before_flush")
+def _enforce_organization_profile_append_only(
+    session: Session, _flush_context: object, _instances: object
+) -> None:
+    immutable_types = (OrganizationProfileVersion, OrganizationProfileVersionEvidence)
+    if any(isinstance(item, immutable_types) for item in session.deleted):
+        raise ValueError("ORGANIZATION_PROFILE_IMMUTABLE")
+    for item in session.dirty:
+        if isinstance(item, immutable_types) and session.is_modified(item):
+            raise ValueError("ORGANIZATION_PROFILE_IMMUTABLE")
 
 
 Index("ix_open_items_org_status", OpenItem.org_id, OpenItem.item_type, OpenItem.status)

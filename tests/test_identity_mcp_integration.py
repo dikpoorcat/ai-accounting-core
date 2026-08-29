@@ -100,12 +100,27 @@ def test_only_event_schema_is_public_and_all_data_tools_fail_closed(
         }
 
     store.save_session_token(SecretStr(token))
+    company_tool_names = {
+        "finance_list_companies",
+        "finance_create_company",
+        "finance_preview_company_profile_change",
+        "finance_confirm_company_profile_change",
+        "finance_preview_company_status_change",
+        "finance_confirm_company_status_change",
+    }
+    company_tools = [tool for tool in data_tools if tool.name in company_tool_names]
+    for tool in company_tools:
+        assert tool.fn(**_dummy_arguments(tool.fn, org_id)) == {
+            "status": "rejected",
+            "errors": ["MULTI_COMPANY_NOT_CONFIGURED"],
+        }
+    organization_tools = [tool for tool in data_tools if tool.name not in company_tool_names]
     wrong_org = uuid.uuid4()
     with Session(factory) as check:
         before = check.scalar(select(OwnerSession))
         assert before is not None
         session_state = (before.last_seen_at, before.idle_expires_at, before.revoked_at)
-    for tool in data_tools:
+    for tool in organization_tools:
         assert tool.fn(**_dummy_arguments(tool.fn, wrong_org)) == {
             "status": "rejected",
             "errors": ["ORGANIZATION_CONTEXT_MISMATCH"],

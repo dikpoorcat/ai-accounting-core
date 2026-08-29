@@ -19,7 +19,13 @@ class Settings(BaseSettings):
 
     finance_environment: Literal["development", "production"] = "development"
     database_url: str = DEVELOPMENT_DATABASE_URL
+    # In multi-company mode DATABASE_URL targets the global catalog and this
+    # URL supplies the same-cluster runtime credentials for company databases.
+    # Only the database component is replaced, using a validated catalog value.
+    finance_company_database_url: str | None = None
     finance_migration_database_url: str | None = None
+    # Maintenance-database connection used only by deterministic provisioning.
+    finance_provisioning_database_url: str | None = None
     finance_storage_dir: Path = Path("data")
     finance_service_lock_file: Path = Path("data/service.lock")
     finance_evidence_dir: Path = Path("data/evidence")
@@ -42,6 +48,8 @@ class Settings(BaseSettings):
         _validate_production_database_urls(
             self.database_url,
             self.finance_migration_database_url,
+            company_url=self.finance_company_database_url,
+            provisioning_url=self.finance_provisioning_database_url,
         )
         required_roots = {
             "FINANCE_STORAGE_DIR": self.finance_storage_dir,
@@ -81,6 +89,10 @@ class Settings(BaseSettings):
         """URL used by the application process."""
         return self.database_url
 
+    @property
+    def multi_company_enabled(self) -> bool:
+        return self.finance_company_database_url is not None
+
     def migration_database_url(self, configured_url: str | None = None) -> str:
         """URL used by Alembic, preserving explicit development test configuration."""
         if self.finance_migration_database_url is not None:
@@ -94,13 +106,29 @@ class SettingsConfigurationError(ValueError):
     """Caller-safe production configuration failure without echoing secrets."""
 
 
-def _validate_production_database_urls(runtime_url: str, migration_url: str) -> None:
+def _validate_production_database_urls(
+    runtime_url: str,
+    migration_url: str,
+    *,
+    company_url: str | None = None,
+    provisioning_url: str | None = None,
+) -> None:
     try:
         runtime = make_url(runtime_url)
         migration = make_url(migration_url)
     except ArgumentError as exc:
         raise SettingsConfigurationError("PRODUCTION_DATABASE_URL_INVALID") from exc
-    for name, parsed in (("DATABASE_URL", runtime), ("FINANCE_MIGRATION_DATABASE_URL", migration)):
+    parsed_urls = [("DATABASE_URL", runtime), ("FINANCE_MIGRATION_DATABASE_URL", migration)]
+    try:
+        company = make_url(company_url) if company_url is not None else None
+        provisioning = make_url(provisioning_url) if provisioning_url is not None else None
+    except ArgumentError as exc:
+        raise SettingsConfigurationError("PRODUCTION_DATABASE_URL_INVALID") from exc
+    if company is not None:
+        parsed_urls.append(("FINANCE_COMPANY_DATABASE_URL", company))
+    if provisioning is not None:
+        parsed_urls.append(("FINANCE_PROVISIONING_DATABASE_URL", provisioning))
+    for name, parsed in parsed_urls:
         if parsed.get_backend_name() != "postgresql":
             raise SettingsConfigurationError(f"PRODUCTION_{name}_POSTGRESQL_REQUIRED")
         if not parsed.username or not parsed.password:
@@ -117,10 +145,31 @@ def _validate_production_database_urls(runtime_url: str, migration_url: str) -> 
             )
     if runtime.username == migration.username:
         raise SettingsConfigurationError("PRODUCTION_DATABASE_ACCOUNTS_MUST_DIFFER")
-    runtime_target = (runtime.host, runtime.port, runtime.database)
-    migration_target = (migration.host, migration.port, migration.database)
-    if runtime_target != migration_target:
-        raise SettingsConfigurationError("PRODUCTION_DATABASE_TARGETS_MUST_MATCH")
+    if company is None:
+        runtime_target = (runtime.host, runtime.port, runtime.database)
+        migration_target = (migration.host, migration.port, migration.database)
+        if runtime_target != migration_target:
+            raise SettingsConfigurationError("PRODUCTION_DATABASE_TARGETS_MUST_MATCH")
+        if provisioning is not None:
+            raise SettingsConfigurationError(
+                "PRODUCTION_PROVISIONING_DATABASE_REQUIRES_MULTI_COMPANY"
+            )
+        return
+
+    if provisioning is None:
+        raise SettingsConfigurationError(
+            "PRODUCTION_PROVISIONING_DATABASE_URL_REQUIRED"
+        )
+    cluster = (runtime.host, runtime.port or 5432)
+    if any(
+        (item.host, item.port or 5432) != cluster
+        for item in (migration, company, provisioning)
+    ):
+        raise SettingsConfigurationError("PRODUCTION_DATABASE_CLUSTER_MISMATCH")
+    if company.username != runtime.username or company.password != runtime.password:
+        raise SettingsConfigurationError("PRODUCTION_COMPANY_RUNTIME_ACCOUNT_MISMATCH")
+    if provisioning.username != migration.username:
+        raise SettingsConfigurationError("PRODUCTION_PROVISIONING_ACCOUNT_MISMATCH")
 
 
 def _is_loopback_database_host(host: str | None) -> bool:

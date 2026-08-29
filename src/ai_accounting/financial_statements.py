@@ -49,6 +49,7 @@ from .models import (
     Voucher,
     VoucherLine,
 )
+from .organization_profiles import profile_as_of
 from .service import FinanceService
 
 ACCOUNTING_RULE_VERSION = "small-enterprise-statements-2013-v1"
@@ -371,17 +372,22 @@ class FinancialStatementService(FinanceService):
                 FinancialStatementResultStatus.REJECTED,
                 errors=["ORGANIZATION_NOT_FOUND"],
             )
-        if organization.accounting_standard != "small_enterprise":
+        quarter_start, quarter_end, year_start = _quarter_dates(request.year, request.quarter)
+        profile = profile_as_of(
+            self.session,
+            org_id=request.org_id,
+            as_of=quarter_end,
+        )
+        if profile.accounting_standard != "small_enterprise":
             return self._statement_result(
                 FinancialStatementResultStatus.REJECTED,
                 errors=["FINANCIAL_STATEMENT_ACCOUNTING_STANDARD_UNSUPPORTED"],
             )
-        if organization.filing_cycle != "quarterly":
+        if profile.filing_cycle != "quarterly":
             return self._statement_result(
                 FinancialStatementResultStatus.REJECTED,
                 errors=["FINANCIAL_STATEMENT_FILING_CYCLE_UNSUPPORTED"],
             )
-        quarter_start, quarter_end, year_start = _quarter_dates(request.year, request.quarter)
         missing: list[FinancialStatementInformationRequirement] = []
         control_start = organization.accounting_period_control_start_date
         if control_start is None or control_start > year_start:
@@ -490,10 +496,10 @@ class FinancialStatementService(FinanceService):
         payload = {
             "organization": {
                 "org_id": str(organization.id),
-                "name": organization.name,
-                "taxpayer_identification_number": organization.taxpayer_identification_number,
-                "accounting_standard": organization.accounting_standard,
-                "filing_cycle": organization.filing_cycle,
+                "name": profile.name,
+                "taxpayer_identification_number": profile.taxpayer_identification_number,
+                "accounting_standard": profile.accounting_standard,
+                "filing_cycle": profile.filing_cycle,
             },
             "period": {
                 "year": request.year,

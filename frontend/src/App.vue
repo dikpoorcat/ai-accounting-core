@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
 import DashboardMonthPicker from "./components/DashboardMonthPicker.vue";
@@ -20,8 +20,10 @@ const route = useRoute();
 const router = useRouter();
 const savedTheme = localStorage.getItem("finance-dashboard-theme");
 const theme = ref<Theme>(savedTheme === "dark" ? "dark" : "light");
-const { context, load: loadContext } = useDashboardContext();
+const { context, load: loadContext, cancel: cancelContext } = useDashboardContext();
 const companyName = computed(() => context.value?.company || "只读财务工作台");
+const companies = computed(() => context.value?.companies ?? []);
+const currentCompany = computed(() => context.value?.current_company ?? null);
 const sidebarCollapsed = ref(
   localStorage.getItem("finance-dashboard-sidebar") === "collapsed",
 );
@@ -35,9 +37,49 @@ const selectedPeriod = computed(() => {
   return periods.value.at(-1)?.key ?? "";
 });
 
-onMounted(() => {
-  void loadContext().catch(() => undefined);
-});
+watch(
+  () => route.query.org_id,
+  async (routeOrgId) => {
+    const saved = localStorage.getItem("finance-dashboard-org-id");
+    if (typeof routeOrgId !== "string" && saved) {
+      await router.replace({ query: { ...route.query, org_id: saved } });
+      return;
+    }
+    cancelContext();
+    try {
+      const loaded = await loadContext(true);
+      if (route.query.org_id !== routeOrgId) return;
+      const selectedOrgId = loaded.current_company.org_id;
+      localStorage.setItem("finance-dashboard-org-id", selectedOrgId);
+      const period =
+        typeof route.query.period === "string" &&
+        loaded.periods.some((item) => item.key === route.query.period)
+          ? route.query.period
+          : (loaded.default_period ?? undefined);
+      const quarter =
+        typeof route.query.quarter === "string" &&
+        loaded.quarters.some((item) => item.key === route.query.quarter)
+          ? route.query.quarter
+          : undefined;
+      if (
+        route.query.org_id !== selectedOrgId ||
+        route.query.period !== period ||
+        route.query.quarter !== quarter
+      ) {
+        await router.replace({
+          query: { ...route.query, org_id: selectedOrgId, period, quarter },
+        });
+      }
+    } catch (caught: unknown) {
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      if (saved && routeOrgId === saved) {
+        localStorage.removeItem("finance-dashboard-org-id");
+        await router.replace({ query: { ...route.query, org_id: undefined } });
+      }
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   theme,
@@ -63,6 +105,14 @@ function toggleSidebar() {
 async function selectPeriod(periodKey: string) {
   if (route.query.period === periodKey) return;
   await router.push({ query: { ...route.query, period: periodKey } });
+}
+
+async function selectCompany(orgId: string) {
+  if (route.query.org_id === orgId) return;
+  cancelContext();
+  await router.push({
+    query: { ...route.query, org_id: orgId, period: undefined, quarter: undefined },
+  });
 }
 </script>
 
@@ -91,6 +141,22 @@ async function selectPeriod(periodKey: string) {
             <strong class="brand-name">{{ companyName }}</strong>
           </div>
         </div>
+
+        <label v-if="!sidebarCollapsed && companies.length" class="company-switcher">
+          <span>当前公司</span>
+          <select
+            :value="currentCompany?.org_id"
+            aria-label="切换公司"
+            @change="selectCompany(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="company in companies" :key="company.org_id" :value="company.org_id">
+              {{ company.name }}{{ company.status === "archived" ? "（已归档）" : "" }}
+            </option>
+          </select>
+          <small v-if="currentCompany?.status === 'archived'" class="archived-company-badge">
+            只读 · 已归档
+          </small>
+        </label>
 
         <nav class="module-nav" aria-label="看板模块">
           <RouterLink

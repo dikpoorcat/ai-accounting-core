@@ -38,6 +38,7 @@ finance-bootstrap = "ai_accounting.bootstrap:main"
 finance-login = "ai_accounting.identity_cli:main"
 finance-backup = "ai_accounting.backup_cli:main"
 finance-dashboard = "ai_accounting.dashboard_server:main"
+finance-company = "ai_accounting.company_cli:main"
 
 [tool.uv]
 # Keep local and CI lock-file resolution on the same audited uv release.
@@ -45,6 +46,7 @@ required-version = "==0.12.3"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ai_accounting"]
+artifacts = ["src/ai_accounting/static/dashboard/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

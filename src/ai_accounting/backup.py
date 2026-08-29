@@ -14,6 +14,7 @@ import os
 import re
 import stat
 import uuid
+import zipfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -98,6 +99,9 @@ class BackupRequest:
     evidence_root: Path
     evidence: tuple[EvidenceSnapshot, ...]
     database: DatabaseDumpMetadata
+    artifact_type: str | None = None
+    org_id: str | None = None
+    database_identity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,193 @@ class BackupVerification:
     schema_revision: str
     source_system_identifier: str
     evidence: tuple[EvidenceSnapshot, ...]
+    artifact_type: str | None = None
+    org_id: str | None = None
+    database_identity: str | None = None
+    purpose: str | None = None
+
+
+@dataclass(frozen=True)
+class PortableBackupVerification:
+    """Verification result for a single-file transport wrapper."""
+
+    archive_file: Path
+    archive_sha256: str
+    backup_id: str
+    manifest_sha256: str
+    database_sha256: str
+    database_size_bytes: int
+    evidence_count: int
+    artifact_type: str | None
+    org_id: str | None
+    database_identity: str | None
+    purpose: str
+
+
+def create_portable_backup_archive(
+    backup_root: Path,
+    backup_directory: Path,
+    archive_file: Path,
+) -> PortableBackupVerification:
+    """Wrap one verified complete backup in a transfer-safe ZIP file."""
+
+    verified = verify_backup(backup_root, backup_directory)
+    source = verified.backup_directory
+    try:
+        parent = archive_file.parent.resolve(strict=True)
+    except OSError as exc:
+        raise BackupError("BACKUP_PORTABLE_STORAGE_UNAVAILABLE") from exc
+    destination = parent / archive_file.name
+    partial = parent / f"{archive_file.name}.partial"
+    if destination.exists() or partial.exists():
+        raise BackupError("BACKUP_PORTABLE_ALREADY_EXISTS")
+
+    members = [
+        _MANIFEST_NAME,
+        _MANIFEST_DIGEST_NAME,
+        _DATABASE_ARCHIVE_NAME,
+        *(f"evidence/{item.sha256}" for item in verified.evidence),
+    ]
+    try:
+        with zipfile.ZipFile(
+            partial,
+            mode="x",
+            compression=zipfile.ZIP_STORED,
+            allowZip64=True,
+        ) as archive:
+            for member in members:
+                path, _size = _portable_source_file(source, member)
+                archive.write(path, arcname=member)
+        _flush_file(partial)
+        os.replace(partial, destination)
+        _flush_directory(parent)
+    except BackupError:
+        raise
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise BackupError("BACKUP_PORTABLE_STORAGE_UNAVAILABLE") from exc
+    return verify_portable_backup_archive(destination)
+
+
+def verify_portable_backup_archive(
+    archive_file: Path,
+) -> PortableBackupVerification:
+    """Verify a portable company archive without trusting ZIP paths or metadata."""
+
+    try:
+        archive_path = archive_file.resolve(strict=True)
+        archive_stat = archive_path.lstat()
+    except OSError as exc:
+        raise BackupError("BACKUP_PORTABLE_UNAVAILABLE") from exc
+    if not stat.S_ISREG(archive_stat.st_mode):
+        raise BackupError("BACKUP_PORTABLE_UNAVAILABLE")
+    try:
+        with zipfile.ZipFile(archive_path, mode="r", allowZip64=True) as archive:
+            infos = archive.infolist()
+            names = [item.filename for item in infos]
+            if len(names) != len(set(names)) or any(
+                not _valid_portable_member(item) for item in infos
+            ):
+                raise BackupError("BACKUP_PORTABLE_INVALID")
+            info_by_name = {item.filename: item for item in infos}
+            manifest_info = info_by_name.get(_MANIFEST_NAME)
+            digest_info = info_by_name.get(_MANIFEST_DIGEST_NAME)
+            if manifest_info is None or digest_info is None:
+                raise BackupError("BACKUP_PORTABLE_INVALID")
+            if manifest_info.file_size > MAX_MANIFEST_BYTES or digest_info.file_size > 65:
+                raise BackupError("BACKUP_PORTABLE_INVALID")
+            manifest_bytes = archive.read(manifest_info)
+            digest_bytes = archive.read(digest_info)
+            try:
+                expected_manifest_digest = digest_bytes.decode(
+                    "ascii", errors="strict"
+                ).strip()
+            except UnicodeDecodeError as exc:
+                raise BackupError("BACKUP_PORTABLE_INVALID") from exc
+            actual_manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
+            if (
+                not _SHA256_PATTERN.fullmatch(expected_manifest_digest)
+                or actual_manifest_digest != expected_manifest_digest
+            ):
+                raise BackupError("BACKUP_MANIFEST_HASH_MISMATCH")
+            manifest = _parse_manifest(manifest_bytes)
+            database = manifest["database"]
+            evidence = manifest["evidence"]
+            expected_members = {
+                _MANIFEST_NAME,
+                _MANIFEST_DIGEST_NAME,
+                database["path"],
+                *(item["path"] for item in evidence),
+            }
+            if set(names) != expected_members:
+                raise BackupError("BACKUP_PORTABLE_INVALID")
+            _verify_portable_content(
+                archive,
+                info_by_name[database["path"]],
+                expected_sha256=database["sha256"],
+                expected_size=database["size_bytes"],
+                max_bytes=DEFAULT_MAX_DATABASE_DUMP_BYTES,
+                error_code="BACKUP_DATABASE_ARCHIVE_HASH_MISMATCH",
+            )
+            for item in evidence:
+                _verify_portable_content(
+                    archive,
+                    info_by_name[item["path"]],
+                    expected_sha256=item["sha256"],
+                    expected_size=item["size_bytes"],
+                    max_bytes=DEFAULT_MAX_EVIDENCE_BYTES,
+                    error_code="BACKUP_EVIDENCE_COPY_MISMATCH",
+                )
+            artifact = manifest.get("artifact")
+    except BackupError:
+        raise
+    except (OSError, KeyError, zipfile.BadZipFile, zipfile.LargeZipFile) as exc:
+        raise BackupError("BACKUP_PORTABLE_INVALID") from exc
+    return PortableBackupVerification(
+        archive_file=archive_path,
+        archive_sha256=_hash_existing_file(archive_path),
+        backup_id=manifest["backup_id"],
+        manifest_sha256=actual_manifest_digest,
+        database_sha256=database["sha256"],
+        database_size_bytes=database["size_bytes"],
+        evidence_count=len(evidence),
+        artifact_type=artifact.get("type") if isinstance(artifact, dict) else None,
+        org_id=artifact.get("org_id") if isinstance(artifact, dict) else None,
+        database_identity=(
+            artifact.get("database_identity") if isinstance(artifact, dict) else None
+        ),
+        purpose=manifest["purpose"],
+    )
+
+
+def extract_portable_backup_archive(
+    archive_file: Path,
+    destination_root: Path,
+) -> BackupVerification:
+    """Securely extract one verified portable archive for the existing importer."""
+
+    portable = verify_portable_backup_archive(archive_file)
+    try:
+        root = ensure_directory_in_root(destination_root, destination_root)
+    except PathSecurityError as exc:
+        raise BackupError("BACKUP_STORAGE_UNAVAILABLE") from exc
+    partial = root / f"{portable.backup_id}.partial"
+    complete = root / f"{portable.backup_id}.complete"
+    if partial.exists() or complete.exists():
+        raise BackupError("BACKUP_ALREADY_EXISTS")
+    _create_partial_directory(partial, root)
+    try:
+        with zipfile.ZipFile(portable.archive_file, mode="r", allowZip64=True) as archive:
+            for info in archive.infolist():
+                target = partial.joinpath(*info.filename.split("/"))
+                ensure_directory_in_root(target.parent, root)
+                _stream_zip_member(archive, info, target)
+        verify_backup(root, partial, allow_partial=True)
+        _publish_partial(partial, complete, root)
+        return verify_backup(root, complete)
+    except BackupError:
+        raise
+    except (OSError, PathSecurityError, zipfile.BadZipFile) as exc:
+        raise BackupError("BACKUP_PORTABLE_INVALID") from exc
 
 
 def create_stopped_backup(
@@ -161,17 +352,23 @@ def create_stopped_backup(
             max_database_dump_bytes=max_database_dump_bytes,
         )
         created_at = _utc_clock(clock)
-        manifest = _canonical_json(
-            {
-                "backup_id": request.backup_id,
-                "created_at": _format_datetime(created_at),
-                "database": database_entry,
-                "evidence": evidence_entries,
-                "format_version": 1,
-                "purpose": request.purpose,
-                "status": "complete",
+        manifest_payload: dict[str, object] = {
+            "backup_id": request.backup_id,
+            "created_at": _format_datetime(created_at),
+            "database": database_entry,
+            "evidence": evidence_entries,
+            "format_version": 1,
+            "purpose": request.purpose,
+            "status": "complete",
+        }
+        if request.artifact_type is not None:
+            manifest_payload["format_version"] = 2
+            manifest_payload["artifact"] = {
+                "type": request.artifact_type,
+                "org_id": request.org_id,
+                "database_identity": request.database_identity,
             }
-        )
+        manifest = _canonical_json(manifest_payload)
         write_new_regular_file_in_root(
             partial / _MANIFEST_NAME,
             root,
@@ -272,6 +469,7 @@ def verify_backup(
         if digest != entry["sha256"]:
             raise BackupError("BACKUP_EVIDENCE_COPY_MISMATCH")
 
+    artifact = manifest.get("artifact")
     return BackupVerification(
         backup_directory=directory,
         backup_id=manifest["backup_id"],
@@ -291,6 +489,12 @@ def verify_backup(
             )
             for entry in evidence
         ),
+        artifact_type=artifact.get("type") if isinstance(artifact, dict) else None,
+        org_id=artifact.get("org_id") if isinstance(artifact, dict) else None,
+        database_identity=(
+            artifact.get("database_identity") if isinstance(artifact, dict) else None
+        ),
+        purpose=manifest["purpose"],
     )
 
 
@@ -337,6 +541,96 @@ def select_retention_prune_candidates(
     return tuple(path for _, path in sorted(candidates, key=lambda pair: (pair[0], pair[1].name)))
 
 
+def _portable_source_file(source: Path, member: str) -> tuple[Path, int]:
+    path = source.joinpath(*member.split("/"))
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(source.resolve(strict=True))
+        item_stat = resolved.lstat()
+    except (OSError, ValueError) as exc:
+        raise BackupError("BACKUP_PORTABLE_INVALID") from exc
+    if not stat.S_ISREG(item_stat.st_mode):
+        raise BackupError("BACKUP_PORTABLE_INVALID")
+    return resolved, item_stat.st_size
+
+
+def _valid_portable_member(info: zipfile.ZipInfo) -> bool:
+    name = info.filename
+    unix_mode = (info.external_attr >> 16) & 0xFFFF
+    return (
+        bool(name)
+        and not info.is_dir()
+        and "\\" not in name
+        and ":" not in name
+        and not name.startswith("/")
+        and all(part not in {"", ".", ".."} for part in name.split("/"))
+        and not stat.S_ISLNK(unix_mode)
+    )
+
+
+def _verify_portable_content(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    expected_sha256: str,
+    expected_size: int,
+    max_bytes: int,
+    error_code: str,
+) -> None:
+    if info.file_size != expected_size or info.file_size > max_bytes:
+        raise BackupError(error_code)
+    digest = hashlib.sha256()
+    consumed = 0
+    with archive.open(info, mode="r") as stream:
+        while chunk := stream.read(1024 * 1024):
+            consumed += len(chunk)
+            if consumed > expected_size or consumed > max_bytes:
+                raise BackupError(error_code)
+            digest.update(chunk)
+    if consumed != expected_size or digest.hexdigest() != expected_sha256:
+        raise BackupError(error_code)
+
+
+def _stream_zip_member(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    target: Path,
+) -> None:
+    try:
+        with archive.open(info, mode="r") as source, target.open("xb") as destination:
+            consumed = 0
+            while chunk := source.read(1024 * 1024):
+                consumed += len(chunk)
+                if consumed > info.file_size:
+                    raise BackupError("BACKUP_PORTABLE_INVALID")
+                destination.write(chunk)
+            destination.flush()
+            os.fsync(destination.fileno())
+        if consumed != info.file_size:
+            raise BackupError("BACKUP_PORTABLE_INVALID")
+    except FileExistsError as exc:
+        raise BackupError("BACKUP_PORTABLE_INVALID") from exc
+
+
+def _hash_existing_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError as exc:
+        raise BackupError("BACKUP_PORTABLE_UNAVAILABLE") from exc
+    return digest.hexdigest()
+
+
+def _flush_file(path: Path) -> None:
+    try:
+        with path.open("r+b") as file_handle:
+            os.fsync(file_handle.fileno())
+    except OSError as exc:
+        raise BackupError("BACKUP_PORTABLE_STORAGE_UNAVAILABLE") from exc
+
+
 def _validate_request(
     request: BackupRequest,
     max_evidence_bytes: int,
@@ -344,8 +638,19 @@ def _validate_request(
 ) -> None:
     if not _BACKUP_ID_PATTERN.fullmatch(request.backup_id):
         raise BackupError("BACKUP_ID_INVALID")
-    if request.purpose not in {"daily", "pre_upgrade"}:
+    if request.purpose not in {"daily", "pre_upgrade", "handoff"}:
         raise BackupError("BACKUP_PURPOSE_INVALID")
+    if request.artifact_type is not None:
+        if request.artifact_type not in {"company", "catalog"}:
+            raise BackupError("BACKUP_ARTIFACT_INVALID")
+        if request.artifact_type == "company":
+            try:
+                uuid.UUID(request.org_id or "")
+                uuid.UUID(request.database_identity or "")
+            except ValueError as exc:
+                raise BackupError("BACKUP_ARTIFACT_INVALID") from exc
+        elif request.org_id is not None or request.database_identity is not None:
+            raise BackupError("BACKUP_ARTIFACT_INVALID")
     if max_evidence_bytes <= 0 or max_database_dump_bytes <= 0:
         raise BackupError("BACKUP_SIZE_LIMIT_INVALID")
     if request.precondition.active_business_connections < 0:
@@ -510,7 +815,7 @@ def _flush_directory(directory: Path) -> None:
     if os.name == "nt":
         # Python cannot open a directory handle suitable for FlushFileBuffers on all
         # supported Windows filesystems.  The production Windows wrapper must use a
-        # write-through move on the encrypted removable volume after this core returns.
+        # write-through move on the deployment-owner-selected volume after this core returns.
         return
     try:
         descriptor = os.open(directory, os.O_RDONLY)
@@ -760,11 +1065,13 @@ def _parse_manifest(content: bytes) -> dict[str, object]:
         "purpose",
         "status",
     }
+    if parsed.get("format_version") == 2:
+        required.add("artifact")
     if set(parsed) != required:
         raise BackupError("BACKUP_MANIFEST_INVALID")
     if (
-        parsed["format_version"] != 1
-        or parsed["purpose"] not in {"daily", "pre_upgrade"}
+        parsed["format_version"] not in {1, 2}
+        or parsed["purpose"] not in {"daily", "pre_upgrade", "handoff"}
         or parsed["status"] != "complete"
         or not isinstance(parsed["backup_id"], str)
         or not _BACKUP_ID_PATTERN.fullmatch(parsed["backup_id"])
@@ -776,7 +1083,29 @@ def _parse_manifest(content: bytes) -> dict[str, object]:
     _parse_datetime(parsed["created_at"])
     _validate_database_manifest(parsed["database"])
     _validate_evidence_manifest(parsed["evidence"])
+    if parsed["format_version"] == 2:
+        _validate_artifact_manifest(parsed["artifact"])
     return parsed
+
+
+def _validate_artifact_manifest(value: object) -> None:
+    if not isinstance(value, dict) or set(value) != {
+        "type",
+        "org_id",
+        "database_identity",
+    }:
+        raise BackupError("BACKUP_MANIFEST_INVALID")
+    if value["type"] == "catalog":
+        if value["org_id"] is not None or value["database_identity"] is not None:
+            raise BackupError("BACKUP_MANIFEST_INVALID")
+        return
+    if value["type"] != "company":
+        raise BackupError("BACKUP_MANIFEST_INVALID")
+    try:
+        uuid.UUID(str(value["org_id"]))
+        uuid.UUID(str(value["database_identity"]))
+    except ValueError as exc:
+        raise BackupError("BACKUP_MANIFEST_INVALID") from exc
 
 
 def _validate_database_manifest(database: dict[object, object]) -> None:

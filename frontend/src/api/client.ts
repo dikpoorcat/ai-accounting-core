@@ -14,7 +14,7 @@ export async function requestJson<T>(
   path: string,
   options: { signal?: AbortSignal } = {},
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(withCurrentCompany(path), {
     headers: { Accept: "application/json" },
     signal: options.signal,
   });
@@ -31,6 +31,15 @@ export async function requestJson<T>(
     throw new DashboardApiError(response.status, code, message);
   }
   return payload as T;
+}
+
+export function withCurrentCompany(path: string): string {
+  const target = new URL(path, window.location.origin);
+  const current = new URLSearchParams(window.location.search).get("org_id");
+  if (current && !target.searchParams.has("org_id")) {
+    target.searchParams.set("org_id", current);
+  }
+  return `${target.pathname}${target.search}${target.hash}`;
 }
 
 export function dashboardErrorMessage(error: unknown): string {

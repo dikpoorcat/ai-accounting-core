@@ -44,6 +44,16 @@ from .borrowing_schemas import (
     PreviewBorrowingInterestRequest,
     RepayBorrowingPrincipalRequest,
 )
+from .company_router import CompanyRoutingError, assert_runtime_role
+from .company_router import router as company_router
+from .company_schemas import (
+    ConfirmCompanyProfileChangeRequest,
+    ConfirmCompanyStatusChangeRequest,
+    CreateCompanyRequest,
+    PreviewCompanyProfileChangeRequest,
+    PreviewCompanyStatusChangeRequest,
+)
+from .company_service import CompanyLifecycleError, CompanyService
 from .config import get_settings
 from .credential_store import CredentialStore, WindowsCredentialStore
 from .database import SessionLocal
@@ -55,7 +65,7 @@ from .financial_statement_schemas import (
     GetFinancialStatementRequirementsRequest,
     PreviewQuarterlyFinancialStatementsRequest,
 )
-from .identity import ExecutorIdentity, ExecutorKind, IdentityError
+from .identity import ExecutionContext, ExecutorIdentity, ExecutorKind, IdentityError
 from .identity_service import IdentityService
 from .intangible_asset_schemas import (
     AcquireIntangibleAssetRequest,
@@ -134,6 +144,12 @@ SERVER_MCP_EXECUTOR = ExecutorIdentity(
 _ACTIVE_TOOL_SESSION: ContextVar[Any | None] = ContextVar(
     "finance_mcp_active_tool_session", default=None
 )
+_ACTIVE_CATALOG_SESSION: ContextVar[Any | None] = ContextVar(
+    "finance_mcp_active_catalog_session", default=None
+)
+_ACTIVE_EXECUTION_CONTEXT: ContextVar[ExecutionContext | None] = ContextVar(
+    "finance_mcp_active_execution_context", default=None
+)
 _MCP_CREDENTIAL_STORE: CredentialStore | None = None
 _OWNER_LOGIN_WINDOW_LAUNCHER = OwnerLoginWindowLauncher()
 _OWNER_LOGIN_WINDOW_ENABLED = False
@@ -187,6 +203,19 @@ IDEMPOTENT_WRITE = ToolAnnotations(
 REVERSAL_WRITE = ToolAnnotations(
     readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
 )
+
+_GLOBAL_COMPANY_TOOLS = {
+    "finance_list_companies",
+    "finance_create_company",
+    "finance_preview_company_profile_change",
+    "finance_confirm_company_profile_change",
+    "finance_preview_company_status_change",
+    "finance_confirm_company_status_change",
+}
+_GLOBAL_COMPANY_TOOLS_WITHOUT_ORG = {
+    "finance_list_companies",
+    "finance_create_company",
+}
 
 
 def _set_mcp_credential_store_for_tests(store: CredentialStore | None) -> None:
@@ -283,11 +312,20 @@ def _secure_registered_data_tools() -> None:
             _is_write: bool = is_write,
             **kwargs: Any,
         ) -> dict[str, Any]:
+            settings = get_settings()
+            multi_company_enabled = bool(
+                getattr(settings, "multi_company_enabled", False)
+            )
+            is_global_company_tool = _tool_name in _GLOBAL_COMPANY_TOOLS
             try:
-                requested_org_id = _tool_org_id(_original, args, kwargs)
+                requested_org_id = (
+                    None
+                    if _tool_name in _GLOBAL_COMPANY_TOOLS_WITHOUT_ORG
+                    else _tool_org_id(_original, args, kwargs)
+                )
             except ValueError:
                 return _rejected_identity("INVALID_REQUEST")
-            environment = get_settings().finance_environment
+            environment = settings.finance_environment
             session_token: SecretStr | None = None
             if environment != "development":
                 try:
@@ -295,8 +333,14 @@ def _secure_registered_data_tools() -> None:
                 except IdentityError as exc:
                     return _rejected_identity(exc.code)
             with _begin_mcp_transaction() as session:
+                if multi_company_enabled:
+                    session.info["catalog_mode"] = True
                 owner_account = session.scalar(select(OwnerAccount).limit(1))
-                if owner_account is None and environment == "development":
+                if (
+                    owner_account is None
+                    and environment == "development"
+                    and not multi_company_enabled
+                ):
                     marker = _ACTIVE_TOOL_SESSION.set(session)
                     try:
                         return _original(*args, **kwargs)
@@ -324,6 +368,41 @@ def _secure_registered_data_tools() -> None:
                         return _rejected_identity("ORGANIZATION_CONTEXT_MISMATCH")
                     assert owner_account is not None
                     return _authentication_required(login_name=owner_account.login_name)
+                if is_global_company_tool and not multi_company_enabled:
+                    return _rejected_identity("MULTI_COMPANY_NOT_CONFIGURED")
+                if multi_company_enabled:
+                    catalog_marker = _ACTIVE_CATALOG_SESSION.set(session)
+                    context_marker = _ACTIVE_EXECUTION_CONTEXT.set(context)
+                    try:
+                        if is_global_company_tool:
+                            return _original(*args, **kwargs)
+                        assert requested_org_id is not None
+                        try:
+                            registry = company_router.resolve(
+                                session,
+                                requested_org_id,
+                                for_write=_is_write,
+                            )
+                            factory = company_router.factory_for(registry)
+                        except CompanyRoutingError as exc:
+                            return _rejected_identity(exc.code)
+                        business_scope = factory.begin() if _is_write else factory()
+                        with business_scope as business_session:
+                            marker = _ACTIVE_TOOL_SESSION.set(business_session)
+                            try:
+                                if _is_write:
+                                    with persist_execution_attribution(
+                                        business_session,
+                                        context=context,
+                                        tool_name=_tool_name,
+                                    ):
+                                        return _original(*args, **kwargs)
+                                return _original(*args, **kwargs)
+                            finally:
+                                _ACTIVE_TOOL_SESSION.reset(marker)
+                    finally:
+                        _ACTIVE_EXECUTION_CONTEXT.reset(context_marker)
+                        _ACTIVE_CATALOG_SESSION.reset(catalog_marker)
                 marker = _ACTIVE_TOOL_SESSION.set(session)
                 try:
                     if _is_write:
@@ -513,6 +592,14 @@ def _labor_remuneration_service(session: Any) -> Any:
     from .labor_remuneration_service import LaborRemunerationService
 
     return LaborRemunerationService(session)
+
+
+def _company_service() -> CompanyService:
+    catalog_session = _ACTIVE_CATALOG_SESSION.get()
+    context = _ACTIVE_EXECUTION_CONTEXT.get()
+    if catalog_session is None or context is None:
+        raise CompanyLifecycleError("MULTI_COMPANY_CONTEXT_REQUIRED")
+    return CompanyService(catalog_session, context=context)
 
 
 def _bank_statement_service(session: Any) -> Any:
@@ -750,6 +837,68 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
             "ambiguous_facts": "return needs_information",
         },
     }
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_list_companies(include_archived: bool = False) -> dict[str, Any]:
+    """列出当前本地负责人可访问的公司；可选包含已归档的只读公司。"""
+    try:
+        return _company_service().list_companies(include_archived=include_archived)
+    except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_create_company(request: CreateCompanyRequest) -> dict[str, Any]:
+    """按系统生成的物理数据库名幂等创建并初始化一家公司。"""
+    try:
+        return _company_service().create_company(request)
+    except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_company_profile_change(
+    request: PreviewCompanyProfileChangeRequest,
+) -> dict[str, Any]:
+    """预览未来生效的完整企业资料版本并返回确定性确认哈希。"""
+    try:
+        return _company_service().preview_profile_change(request)
+    except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_company_profile_change(
+    request: ConfirmCompanyProfileChangeRequest,
+) -> dict[str, Any]:
+    """用相同计算哈希、证据和幂等键确认一个未来企业资料版本。"""
+    try:
+        return _company_service().confirm_profile_change(request)
+    except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_company_status_change(
+    request: PreviewCompanyStatusChangeRequest,
+) -> dict[str, Any]:
+    """预览公司归档或恢复，并返回确定性确认哈希。"""
+    try:
+        return _company_service().preview_status_change(request)
+    except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_company_status_change(
+    request: ConfirmCompanyStatusChangeRequest,
+) -> dict[str, Any]:
+    """确认公司归档或恢复；归档只阻断写入，不物理删除数据库。"""
+    try:
+        return _company_service().confirm_status_change(request)
+    except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        return {"status": "rejected", "errors": [exc.code]}
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
@@ -2057,6 +2206,11 @@ _sanitize_tool_errors(
 
 def main() -> None:
     settings = get_settings()
+    if settings.finance_environment == "production" and getattr(
+        settings, "multi_company_enabled", False
+    ):
+        with SessionLocal() as catalog_session:
+            assert_runtime_role(catalog_session.connection())
     if settings.finance_environment == "production":
         # The legacy path-based CSV/XLSX writer remains importable for isolated
         # development regression only.  It must not appear in a formal server's

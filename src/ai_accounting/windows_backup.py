@@ -1,4 +1,4 @@
-"""Windows-only encrypted removable-media and durable-publish boundaries."""
+"""Windows backup-storage inspection and durable-publish boundaries."""
 
 from __future__ import annotations
 
@@ -260,7 +260,7 @@ def preflight_windows_backup_root(
     facts_provider: WindowsVolumeFactsProvider,
     publisher: WindowsWriteThroughPublisher,
 ) -> WindowsVolumeFacts:
-    """Require a real encrypted removable volume and a durable directory publish."""
+    """Optional policy helper requiring encrypted removable media."""
     try:
         root = backup_root.resolve(strict=True)
     except OSError as exc:

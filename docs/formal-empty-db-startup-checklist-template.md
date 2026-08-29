@@ -2,7 +2,7 @@
 
 # 正式空库启动检查单模板
 
-仅适用于单企业内部正式使用的全新空数据库；当前有效约束以仓库根目录 [`AGENTS.md`](../AGENTS.md) 为准。
+此清单只保留给迁移前的单库部署验收。多公司目录及独立公司业务库应使用 [`multi-company-operations.md`](multi-company-operations.md) 的受控创建或迁移流程；当前有效约束以仓库根目录 [`AGENTS.md`](../AGENTS.md) 为准。
 
 - [ ] 已确认目标数据库没有未知历史业务数据，也不是已删除的旧 Alembic revision；否则停止并等待用户决定处理方式。
 - [ ] 已确认使用隔离的本地 PostgreSQL 17 实例和正式使用所需的存储目录；不复用共享环境。

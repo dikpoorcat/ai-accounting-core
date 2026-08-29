@@ -181,14 +181,15 @@ def test_tax_determinism_commit_guards_and_concurrency(
                 org_id = organization.id
                 source_event_id = source.event_id
 
-            # Historical rule protection must not depend on mutable organization config.
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text(
-                        "UPDATE organizations SET jurisdiction = 'CN-DRIFTED' WHERE id = :org_id"
-                    ),
-                    {"org_id": org_id},
-                )
+            # The current organization row is now a guarded projection of the
+            # immutable profile-version history, so direct configuration drift
+            # is rejected before historical tax-rule protections are exercised.
+            _assert_sql_rejected(
+                engine,
+                "UPDATE organizations SET jurisdiction = 'CN-DRIFTED' WHERE id = :org_id",
+                "ORGANIZATION_PROFILE_PROJECTION_INVALID",
+                org_id=org_id,
+            )
             _assert_sql_rejected(
                 engine,
                 "UPDATE tax_rules SET source_url = source_url || '#drifted' WHERE id = :id",
@@ -201,12 +202,6 @@ def test_tax_determinism_commit_guards_and_concurrency(
                 "TAX_RULE_IMMUTABLE",
                 id=referenced_rule_id,
             )
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text("UPDATE organizations SET jurisdiction = 'CN' WHERE id = :org_id"),
-                    {"org_id": org_id},
-                )
-
             with Session(engine) as session:
                 preview = _preview(
                     FinanceService(session),
@@ -491,18 +486,7 @@ def test_tax_determinism_commit_guards_and_concurrency(
             assert sorted(rule_outcomes) == ["conflict", "inserted"]
 
             # A canonical period reversal releases the source period only after commit.
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text(
-                        """
-                        UPDATE organizations
-                           SET filing_cycle = 'monthly', jurisdiction = 'CN-CHANGED',
-                               urban_maintenance_rate = 0.05
-                         WHERE id = :org_id
-                        """
-                    ),
-                    {"org_id": org_id},
-                )
+            # Organization tax configuration remains on its immutable versioned profile.
             with Session(engine) as session:
                 reversed_period = FinanceService(session).reverse_event(
                     ReverseEventRequest(
@@ -516,18 +500,6 @@ def test_tax_determinism_commit_guards_and_concurrency(
                 assert reversed_period.status == "posted", reversed_period.errors
                 session.commit()
                 assert session.get(TaxPeriod, period_id).status == "reversed"
-                session.execute(
-                    sa.text(
-                        """
-                        UPDATE organizations
-                           SET filing_cycle = 'quarterly', jurisdiction = 'CN',
-                               urban_maintenance_rate = 0.07
-                         WHERE id = :org_id
-                        """
-                    ),
-                    {"org_id": org_id},
-                )
-                session.commit()
                 reversed_source = FinanceService(session).reverse_event(
                     ReverseEventRequest(
                         org_id=org_id,
@@ -718,8 +690,10 @@ def test_tax_determinism_commit_guards_and_concurrency(
             assert source_outcome == ("posted", [])
             assert confirm_outcome == ("rejected", ["TAX_PERIOD_CALCULATION_STALE"])
 
-            # Confirmation reloads organization configuration only after a
-            # concurrent configuration transaction commits its row-locked update.
+            # Profile-backed configuration cannot be changed by updating the
+            # latest organization projection directly. Lifecycle concurrency is
+            # covered by the multi-company PostgreSQL suite; here the rejected
+            # bypass leaves the preview hash valid for confirmation.
             with Session(engine) as session:
                 q4_source = FinanceService(session).record_event(
                     _sale_request(
@@ -735,82 +709,20 @@ def test_tax_determinism_commit_guards_and_concurrency(
                 q4_hash = str(q4_preview["calculation_hash"])
                 session.commit()
 
-            config_locked = Event()
-            allow_config_commit = Event()
-            config_confirm_started = Event()
-
-            def update_config_while_locked() -> str:
-                with engine.connect() as connection:
-                    transaction = connection.begin()
-                    connection.execute(
-                        sa.text("SELECT id FROM organizations WHERE id = :org_id FOR UPDATE"),
-                        {"org_id": org_id},
-                    )
-                    connection.execute(
-                        sa.text(
-                            "UPDATE organizations SET urban_maintenance_rate = 0.05 "
-                            "WHERE id = :org_id"
-                        ),
-                        {"org_id": org_id},
-                    )
-                    config_locked.set()
-                    assert allow_config_commit.wait(timeout=10)
-                    transaction.commit()
-                return "committed"
-
-            def confirm_q4_after_config_lock() -> tuple[str, list[str]]:
-                assert config_locked.wait(timeout=10)
-                with Session(engine) as session:
-                    config_confirm_started.set()
-                    result = _confirm(
-                        FinanceService(session),
-                        org_id,
-                        date(2026, 4, 1),
-                        date(2026, 6, 30),
-                        q4_hash,
-                        "tax-integrity-q4-confirm-stale-config",
-                    )
-                    try:
-                        session.commit()
-                    except DBAPIError:
-                        session.rollback()
-                        return "raw_error", []
-                    return str(result.status), result.errors
-
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                config_future = pool.submit(update_config_while_locked)
-                assert config_locked.wait(timeout=10)
-                config_confirm_future = pool.submit(confirm_q4_after_config_lock)
-                assert config_confirm_started.wait(timeout=10)
-                allow_config_commit.set()
-                assert config_future.result(timeout=10) == "committed"
-                config_confirm_outcome = config_confirm_future.result(timeout=10)
-            assert config_confirm_outcome == (
-                "rejected",
-                ["TAX_PERIOD_CALCULATION_STALE"],
+            _assert_sql_rejected(
+                engine,
+                "UPDATE organizations SET urban_maintenance_rate = 0.05 WHERE id = :org_id",
+                "ORGANIZATION_PROFILE_PROJECTION_INVALID",
+                org_id=org_id,
             )
-            with engine.begin() as connection:
-                connection.execute(
-                    sa.text(
-                        "UPDATE organizations SET urban_maintenance_rate = 0.07 WHERE id = :org_id"
-                    ),
-                    {"org_id": org_id},
-                )
-
             with Session(engine) as session:
-                restored_preview = _preview(
-                    FinanceService(session),
-                    org_id,
-                    date(2026, 4, 1),
-                    date(2026, 6, 30),
-                )
                 restored_q2 = _confirm(
                     FinanceService(session),
                     org_id,
                     date(2026, 4, 1),
                     date(2026, 6, 30),
-                    str(restored_preview["calculation_hash"]),
-                    "tax-integrity-q2-restored-after-races",
+                    q4_hash,
+                    "tax-integrity-q2-after-rejected-profile-bypass",
                 )
                 assert restored_q2.status == "posted", restored_q2.errors
                 session.commit()

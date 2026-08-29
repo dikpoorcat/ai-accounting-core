@@ -17,10 +17,14 @@ from urllib.parse import parse_qs, quote, urlsplit
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from .company_router import CompanyRoutingError, assert_runtime_role
+from .company_router import router as company_router
+from .config import get_settings
 from .dashboard_assets import load_assets_dashboard
 from .dashboard_brief import load_brief_dashboard
 from .dashboard_common import (
     DashboardDataError,
+    dashboard_session,
     load_dashboard_context,
     resolve_dashboard_organization,
 )
@@ -29,7 +33,7 @@ from .dashboard_funds import load_funds_dashboard
 from .database import make_engine
 from .financial_statement_schemas import PreviewQuarterlyFinancialStatementsRequest
 from .financial_statements import FinancialStatementService
-from .models import AccountingPeriod
+from .models import AccountingPeriod, CompanyRegistry
 
 LOCAL_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 8765
@@ -192,6 +196,145 @@ def _resolve_dashboard_org_id(
     org_id: uuid.UUID | None,
 ) -> uuid.UUID:
     return resolve_dashboard_organization(session, org_id).id
+
+
+def _query_org_id(
+    query: dict[str, list[str]],
+    *,
+    fixed_org_id: uuid.UUID | None,
+    allow_default: bool,
+) -> uuid.UUID | None:
+    values = query.get("org_id", [])
+    if len(values) > 1:
+        raise DashboardDataError("DASHBOARD_ORGANIZATION_INVALID")
+    try:
+        requested = uuid.UUID(values[0]) if values else None
+    except ValueError as exc:
+        raise DashboardDataError("DASHBOARD_ORGANIZATION_INVALID") from exc
+    if fixed_org_id is not None:
+        if requested is not None and requested != fixed_org_id:
+            raise DashboardDataError("DASHBOARD_ORGANIZATION_FIXED")
+        return fixed_org_id
+    if requested is None and not allow_default:
+        raise DashboardDataError("DASHBOARD_ORGANIZATION_REQUIRED")
+    return requested
+
+
+def _dashboard_business_target(
+    catalog_engine: Engine,
+    *,
+    query: dict[str, list[str]],
+    fixed_org_id: uuid.UUID | None,
+    allow_default: bool = False,
+) -> tuple[Engine, uuid.UUID | None]:
+    if not get_settings().multi_company_enabled:
+        requested = _query_org_id(
+            query,
+            fixed_org_id=fixed_org_id,
+            allow_default=True,
+        )
+        return catalog_engine, requested
+    requested = _query_org_id(
+        query,
+        fixed_org_id=fixed_org_id,
+        allow_default=allow_default,
+    )
+    with dashboard_session(catalog_engine) as catalog_session:
+        if requested is None:
+            registry = catalog_session.scalar(
+                select(CompanyRegistry)
+                .where(CompanyRegistry.status == "active")
+                .order_by(
+                    CompanyRegistry.is_primary.desc(),
+                    CompanyRegistry.created_at,
+                    CompanyRegistry.org_id,
+                )
+                .limit(1)
+            )
+            if registry is None:
+                raise DashboardDataError("DASHBOARD_ORGANIZATION_NOT_FOUND")
+        else:
+            try:
+                registry = company_router.resolve(
+                    catalog_session,
+                    requested,
+                    for_write=False,
+                )
+            except CompanyRoutingError as exc:
+                raise DashboardDataError(exc.code) from exc
+        return company_router.engine_for(registry), registry.org_id
+
+
+def load_multi_company_dashboard_context(
+    catalog_engine: Engine,
+    *,
+    query: dict[str, list[str]],
+    fixed_org_id: uuid.UUID | None,
+) -> dict[str, Any]:
+    if not get_settings().multi_company_enabled:
+        selected_org_id = _query_org_id(
+            query,
+            fixed_org_id=fixed_org_id,
+            allow_default=True,
+        )
+        payload = load_dashboard_context(catalog_engine, org_id=selected_org_id)
+        resolved_org_id = str(selected_org_id or payload.get("org_id") or "")
+        return {
+            **payload,
+            "schema_version": 2,
+            "companies": [
+                {
+                    "org_id": resolved_org_id,
+                    "name": payload["company"],
+                    "status": "active",
+                }
+            ],
+            "current_company": {
+                "org_id": resolved_org_id,
+                "name": payload["company"],
+                "status": "active",
+            },
+        }
+    business_engine, selected_org_id = _dashboard_business_target(
+        catalog_engine,
+        query=query,
+        fixed_org_id=fixed_org_id,
+        allow_default=True,
+    )
+    assert selected_org_id is not None
+    with dashboard_session(catalog_engine) as catalog_session:
+        companies = list(
+            catalog_session.scalars(
+                select(CompanyRegistry)
+                .where(CompanyRegistry.status.in_(["active", "archived"]))
+                .order_by(
+                    CompanyRegistry.is_primary.desc(),
+                    CompanyRegistry.display_name,
+                    CompanyRegistry.org_id,
+                )
+            )
+        )
+        selected = next(item for item in companies if item.org_id == selected_org_id)
+        if fixed_org_id is not None:
+            companies = [selected]
+    payload = load_dashboard_context(business_engine, org_id=selected_org_id)
+    return {
+        **payload,
+        "schema_version": 2,
+        "companies": [
+            {
+                "org_id": str(item.org_id),
+                "name": item.display_name,
+                "status": item.status,
+            }
+            for item in companies
+        ],
+        "current_company": {
+            "org_id": str(selected.org_id),
+            "name": selected.display_name,
+            "status": selected.status,
+        },
+    }
 
 
 def build_quarterly_report_view(
@@ -514,7 +657,10 @@ def make_dashboard_handler(
                 self.end_headers()
                 return
             if path == "/api/dashboard/context":
-                self._serve_dashboard_context(send_body=send_body)
+                self._serve_dashboard_context(
+                    query=parse_qs(parsed_url.query),
+                    send_body=send_body,
+                )
                 return
             if path in _DASHBOARD_PAGE_LOADERS:
                 page_name, loader = _DASHBOARD_PAGE_LOADERS[path]
@@ -573,9 +719,18 @@ def make_dashboard_handler(
             if send_body:
                 self._write_body(body)
 
-        def _serve_dashboard_context(self, *, send_body: bool) -> None:
+        def _serve_dashboard_context(
+            self,
+            *,
+            query: dict[str, list[str]],
+            send_body: bool,
+        ) -> None:
             try:
-                payload = load_dashboard_context(engine, org_id=org_id)
+                payload = load_multi_company_dashboard_context(
+                    engine,
+                    query=query,
+                    fixed_org_id=org_id,
+                )
             except DashboardDataError as exc:
                 self._write_json(
                     HTTPStatus.BAD_REQUEST,
@@ -614,7 +769,16 @@ def make_dashboard_handler(
                 if len(period_values) > 1:
                     raise DashboardDataError("DASHBOARD_PERIOD_INVALID")
                 period_key = period_values[0] if period_values else None
-                payload = loader(engine, period_key=period_key, org_id=org_id)
+                business_engine, selected_org_id = _dashboard_business_target(
+                    engine,
+                    query=query,
+                    fixed_org_id=org_id,
+                )
+                payload = loader(
+                    business_engine,
+                    period_key=period_key,
+                    org_id=selected_org_id,
+                )
             except DashboardDataError as exc:
                 status = (
                     HTTPStatus.NOT_FOUND
@@ -702,9 +866,14 @@ def make_dashboard_handler(
                         )
                         return
                     expected_hash = hash_values[0]
-                result, workbook = load_quarterly_financial_statement(
+                business_engine, selected_org_id = _dashboard_business_target(
                     engine,
-                    org_id=org_id,
+                    query=query,
+                    fixed_org_id=org_id,
+                )
+                result, workbook = load_quarterly_financial_statement(
+                    business_engine,
+                    org_id=selected_org_id,
                     year=year,
                     quarter=quarter,
                     export_xlsx=export_xlsx,
@@ -779,9 +948,14 @@ def make_dashboard_handler(
         ) -> None:
             try:
                 year, quarter = _parse_report_period(query)
-                view = load_quarterly_report_view(
+                business_engine, selected_org_id = _dashboard_business_target(
                     engine,
-                    org_id=org_id,
+                    query=query,
+                    fixed_org_id=org_id,
+                )
+                view = load_quarterly_report_view(
+                    business_engine,
+                    org_id=selected_org_id,
                     year=year,
                     quarter=quarter,
                 )
@@ -879,6 +1053,12 @@ def main() -> None:
         parser.error("--port must be between 0 and 65535")
 
     engine = make_engine()
+    settings = get_settings()
+    if settings.finance_environment == "production" and getattr(
+        settings, "multi_company_enabled", False
+    ):
+        with engine.connect() as connection:
+            assert_runtime_role(connection)
     server = ThreadingHTTPServer(
         (LOCAL_DASHBOARD_HOST, args.port),
         make_dashboard_handler(engine, org_id=args.org_id),

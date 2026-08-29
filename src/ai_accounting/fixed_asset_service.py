@@ -49,6 +49,7 @@ from .models import (
     Voucher,
     event_evidence,
 )
+from .organization_profiles import profile_as_of
 from .schemas import (
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
@@ -2064,7 +2065,11 @@ class FixedAssetService(FinanceService):
     def _active_used_fixed_asset_vat_rule(
         self, org_id: uuid.UUID, obligation_date: date
     ) -> TaxRule:
-        organization = self.session.get(Organization, org_id)
+        organization = profile_as_of(
+            self.session,
+            org_id=org_id,
+            as_of=obligation_date,
+        )
         rule = self.session.scalar(
             select(TaxRule).where(
                 TaxRule.code == USED_FIXED_ASSET_VAT_RULE_CODE,

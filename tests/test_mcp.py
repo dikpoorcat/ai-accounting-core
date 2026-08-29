@@ -25,6 +25,12 @@ def test_mcp_exposes_only_domain_tools() -> None:
     assert names == {
         "finance_get_profile",
         "finance_get_event_schema",
+        "finance_list_companies",
+        "finance_create_company",
+        "finance_preview_company_profile_change",
+        "finance_confirm_company_profile_change",
+        "finance_preview_company_status_change",
+        "finance_confirm_company_status_change",
         "finance_register_evidence",
         "finance_import_bank_statement",
         "finance_preview_bank_statement_import",
@@ -259,6 +265,24 @@ class EmptyCredentialStore:
     def load_session_token(self):
         return None
 
+class FakeSession:
+    def __init__(self):
+        self.info = {}
+
+    def scalar(self, _statement):
+        return SimpleNamespace(login_name="owner")
+
+class FakeTransaction:
+    def __enter__(self):
+        return FakeSession()
+
+    def __exit__(self, *_args):
+        return None
+
+class FakeSessionFactory:
+    def begin(self):
+        return FakeTransaction()
+
 mcp_server.get_settings = lambda: SimpleNamespace(
     finance_environment="production",
     finance_service_lock_file="injected-test-service.lock",
@@ -266,6 +290,10 @@ mcp_server.get_settings = lambda: SimpleNamespace(
 mcp_server.WindowsCredentialStore = EmptyCredentialStore
 mcp_server.WindowsCurrentUserOnlyAclVerifier = object
 mcp_server.acquire_windows_service_lease = lambda *args, **kwargs: nullcontext()
+mcp_server.SessionLocal = FakeSessionFactory()
+mcp_server._OWNER_LOGIN_WINDOW_LAUNCHER = SimpleNamespace(
+    request=lambda **_kwargs: True
+)
 mcp_server.main()
 """
         parameters = StdioServerParameters(

@@ -90,6 +90,9 @@ class ExecutionContext:
     executor_name: str
     executor_version: str
     request_correlation_id: uuid.UUID
+    # Zero is reserved for legacy single-database tests and is replaced by the
+    # real catalog identity for every routed multi-company operation.
+    catalog_instance_id: uuid.UUID = uuid.UUID(int=0)
 
 
 def normalize_login_name(value: str) -> str:

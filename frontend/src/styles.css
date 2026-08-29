@@ -283,6 +283,29 @@ button {
   color: var(--accent);
 }
 
+.company-switcher {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.company-switcher select {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.archived-company-badge {
+  color: var(--warning);
+  font-weight: 700;
+}
+
 .app-version {
   color: var(--muted);
   font-size: 10px;

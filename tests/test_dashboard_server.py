@@ -6,6 +6,7 @@ import threading
 import uuid
 from datetime import date
 from http.server import ThreadingHTTPServer
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
@@ -217,6 +218,11 @@ def test_quarterly_report_view_distinguishes_in_progress_and_not_applicable() ->
 
 @pytest.fixture
 def dashboard_http_server(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        dashboard_server,
+        "get_settings",
+        lambda: SimpleNamespace(multi_company_enabled=False),
+    )
     calculation_hash = "a" * 64
 
     def fake_loader(*_args, **_kwargs):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -30,7 +31,9 @@ def persist_execution_attribution(
     """
 
     attribution = ExecutionAttribution(
+        id=uuid.uuid4(),
         org_id=context.org_id,
+        catalog_instance_id=context.catalog_instance_id,
         owner_account_id=context.owner_account_id,
         owner_session_id=context.owner_session_id,
         owner_credential_version=context.owner_credential_version,
@@ -41,16 +44,17 @@ def persist_execution_attribution(
         request_correlation_id=context.request_correlation_id,
     )
     session.add(attribution)
-    session.flush()
-    previous = session.info.get(EXECUTION_ATTRIBUTION_SESSION_KEY)
-    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution.id
     if session.get_bind().dialect.name == "postgresql":
-        session.execute(
+        session.connection().execute(
             text("SELECT set_config('finance.execution_attribution_id', :value, true)"),
             {"value": str(attribution.id)},
         )
+    session.flush()
+    previous = session.info.get(EXECUTION_ATTRIBUTION_SESSION_KEY)
+    session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = attribution.id
     try:
         yield attribution
+        session.flush()
     finally:
         if previous is None:
             session.info.pop(EXECUTION_ATTRIBUTION_SESSION_KEY, None)

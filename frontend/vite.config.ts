@@ -22,13 +22,7 @@ function withVersionPrefix(version: string) {
 
 function dashboardVersion() {
   try {
-    const exactTag = gitDescribe(["describe", "--tags", "--exact-match"]);
-    if (exactTag) return withVersionPrefix(exactTag);
-  } catch {
-    // Continue with a commit-specific version when HEAD is not tagged.
-  }
-  try {
-    const description = gitDescribe(["describe", "--tags", "--long", "--always"]);
+    const description = gitDescribe(["describe", "--tags", "--always", "--dirty"]);
     if (description) return withVersionPrefix(description);
   } catch {
     // Release archives may not contain Git metadata.

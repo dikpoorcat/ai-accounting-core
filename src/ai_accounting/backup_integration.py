@@ -3,7 +3,7 @@
 DEC-035 A trusts the validated local production configuration, runtime database
 account, and current Windows account.  The types here keep passwords out of
 URLs, argv, process output, manifests, and object reprs while the narrower
-database, service-lease, filesystem, and removable-media gates fail closed.
+database, service-lease, and filesystem gates fail closed.
 """
 
 from __future__ import annotations
@@ -379,6 +379,9 @@ def postgres_backup_snapshot(
     endpoint: PostgresEndpoint,
     *,
     runtime_role: str,
+    include_evidence: bool = True,
+    forbid_identity_tables: bool = False,
+    allowed_database_names: frozenset[str] | None = None,
 ) -> Iterator[DatabaseBackupSnapshot]:
     """Hold one exported read-only snapshot through evidence projection and pg_dump."""
     if endpoint.username != _FINANCE_BACKUP_ROLE or not _IDENTIFIER_PATTERN.fullmatch(runtime_role):
@@ -393,7 +396,10 @@ def postgres_backup_snapshot(
                 if current_user is None or current_user[0] != _FINANCE_BACKUP_ROLE:
                     raise BackupIntegrationError("BACKUP_DATABASE_ROLE_INVALID")
                 _assert_finance_backup_role_is_minimal(connection)
-                _assert_finance_backup_database_connect_is_minimal(connection)
+                _assert_finance_backup_database_connect_is_minimal(
+                    connection,
+                    allowed_database_names=allowed_database_names,
+                )
                 active = connection.execute(
                     """
                     SELECT count(*)
@@ -425,13 +431,30 @@ def postgres_backup_snapshot(
                 ).fetchall()
                 if len(revisions) != 1 or not isinstance(revisions[0][0], str):
                     raise BackupIntegrationError("BACKUP_SCHEMA_REVISION_INVALID")
-                rows = connection.execute(
-                    """
-                    SELECT id::text, sha256, size_bytes, storage_path
-                    FROM evidence
-                    ORDER BY id::text, sha256
-                    """
-                ).fetchall()
+                if forbid_identity_tables:
+                    secret_tables = connection.execute(
+                        """
+                        SELECT count(*) FROM pg_catalog.pg_tables
+                        WHERE schemaname = 'public'
+                          AND tablename IN (
+                            'owner_accounts', 'owner_sessions',
+                            'owner_recovery_codes', 'identity_audit_events'
+                          )
+                        """
+                    ).fetchone()
+                    if secret_tables is None or secret_tables[0] != 0:
+                        raise BackupIntegrationError("BACKUP_COMPANY_IDENTITY_TABLE_FORBIDDEN")
+                rows = (
+                    connection.execute(
+                        """
+                        SELECT id::text, sha256, size_bytes, storage_path
+                        FROM evidence
+                        ORDER BY id::text, sha256
+                        """
+                    ).fetchall()
+                    if include_evidence
+                    else []
+                )
                 evidence = tuple(
                     EvidenceSnapshot(
                         evidence_id=row[0],
@@ -472,11 +495,20 @@ def create_integrated_stopped_backup(
     connection_provider: BackupDatabaseConnectionProvider,
     adapter_factory: Callable[[str], PgDumpAdapter],
     publisher: BackupPublisher,
+    artifact_type: str | None = None,
+    org_id: str | None = None,
+    database_identity: str | None = None,
+    allowed_database_names: frozenset[str] | None = None,
 ) -> BackupVerification:
     """Create one stopped-service backup without accepting a password or URL."""
     with service_lease.acquire_backup_lease():
         with postgres_backup_snapshot(
-            connection_provider, endpoint, runtime_role=runtime_role
+            connection_provider,
+            endpoint,
+            runtime_role=runtime_role,
+            include_evidence=artifact_type != "catalog",
+            forbid_identity_tables=artifact_type == "company",
+            allowed_database_names=allowed_database_names,
         ) as snapshot:
             return create_stopped_backup(
                 backup_root,
@@ -493,6 +525,9 @@ def create_integrated_stopped_backup(
                         schema_revision=snapshot.schema_revision,
                         source_system_identifier=snapshot.source_system_identifier,
                     ),
+                    artifact_type=artifact_type,
+                    org_id=org_id,
+                    database_identity=database_identity,
                 ),
                 adapter_factory(snapshot.snapshot_id),
                 publisher=publisher,
@@ -600,7 +635,11 @@ def _assert_finance_backup_role_is_minimal(connection: Any) -> None:
         raise BackupIntegrationError("BACKUP_DATABASE_ROLE_MEMBERSHIP_INVALID")
 
 
-def _assert_finance_backup_database_connect_is_minimal(connection: Any) -> None:
+def _assert_finance_backup_database_connect_is_minimal(
+    connection: Any,
+    *,
+    allowed_database_names: frozenset[str] | None = None,
+) -> None:
     databases = connection.execute(
         """
         SELECT datname
@@ -611,7 +650,12 @@ def _assert_finance_backup_database_connect_is_minimal(connection: Any) -> None:
         """
     ).fetchall()
     current = connection.execute("SELECT current_database()").fetchone()
-    if current is None or databases != [(current[0],)]:
+    expected = (
+        [(name,) for name in sorted(allowed_database_names)]
+        if allowed_database_names is not None
+        else [(current[0],)] if current is not None else []
+    )
+    if current is None or databases != expected or current[0] not in {row[0] for row in expected}:
         raise BackupIntegrationError("BACKUP_DATABASE_ROLE_CONNECT_PRIVILEGES_INVALID")
 
 

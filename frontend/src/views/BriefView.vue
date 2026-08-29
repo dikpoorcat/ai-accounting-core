@@ -232,9 +232,21 @@ function bankContext() {
 }
 
 watch(
-  () => route.query.period,
+  () => route.query.org_id,
   (value, previous) => {
-    if (initialized && value !== previous) void loadData(typeof value === "string" ? value : null);
+    if (!initialized || value === previous) return;
+    controller?.abort();
+    response.value = null;
+    loading.value = false;
+  },
+);
+watch(
+  () => [context.value?.current_company.org_id, route.query.period] as const,
+  ([orgId, period], [previousOrgId, previousPeriod]) => {
+    if (!initialized || !orgId) return;
+    if (orgId !== previousOrgId || period !== previousPeriod) {
+      void loadData(typeof period === "string" ? period : null);
+    }
   },
 );
 watch(data, async () => {

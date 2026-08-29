@@ -189,9 +189,24 @@ function reconciliationAttention(state: string): boolean {
 }
 
 watch(
+  () => route.query.org_id,
+  (value, previous) => {
+    if (value === previous) return;
+    activeRequest?.abort();
+    funds.value = null;
+    selectedPeriod.value = "";
+    selectedPeriodLabel.value = "";
+    loading.value = false;
+  },
+);
+
+watch(
   () => [context.value, route.query.period] as const,
-  ([dashboardContext]) => {
+  ([dashboardContext], previous) => {
     if (!dashboardContext) return;
+    const previousContext = previous?.[0];
+    const companyChanged =
+      dashboardContext.current_company.org_id !== previousContext?.current_company.org_id;
     const requested = routePeriod();
     const requestedExists = dashboardContext.periods.some(
       (item) => item.key === requested,
@@ -208,7 +223,7 @@ watch(
       void router.replace({ query: { ...route.query, period: target } });
       return;
     }
-    if (selectedPeriod.value !== target) {
+    if (companyChanged || selectedPeriod.value !== target) {
       selectedPeriod.value = target;
       void loadFunds(target);
     }

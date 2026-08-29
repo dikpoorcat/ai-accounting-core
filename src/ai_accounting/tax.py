@@ -11,7 +11,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import BusinessEvent, Organization, TaxRule
+from .models import BusinessEvent, Organization, OrganizationProfileVersion, TaxRule
+from .organization_profiles import profile_as_of
 
 
 def round_fen(value: Decimal) -> int:
@@ -100,7 +101,7 @@ class TaxPeriodResult:
 
 def _active_rule(
     session: Session,
-    organization: Organization,
+    organization: Organization | OrganizationProfileVersion,
     on_date: date,
     *,
     code: str,
@@ -121,7 +122,11 @@ def _active_rule(
     return rules[0]
 
 
-def active_tax_rule(session: Session, organization: Organization, on_date: date) -> TaxRule:
+def active_tax_rule(
+    session: Session,
+    organization: Organization | OrganizationProfileVersion,
+    on_date: date,
+) -> TaxRule:
     return _active_rule(
         session,
         organization,
@@ -131,7 +136,11 @@ def active_tax_rule(session: Session, organization: Organization, on_date: date)
     )
 
 
-def active_surtax_rule(session: Session, organization: Organization, on_date: date) -> TaxRule:
+def active_surtax_rule(
+    session: Session,
+    organization: Organization | OrganizationProfileVersion,
+    on_date: date,
+) -> TaxRule:
     return _active_rule(
         session,
         organization,
@@ -149,7 +158,7 @@ def _rules_overlap(first: TaxRule, second: TaxRule) -> bool:
 
 def _period_rule(
     session: Session,
-    organization: Organization,
+    organization: Organization | OrganizationProfileVersion,
     start_date: date,
     end_date: date,
     *,
@@ -185,7 +194,9 @@ def _period_rule(
 
 
 def _validate_natural_period(
-    organization: Organization, start_date: date, end_date: date
+    organization: Organization | OrganizationProfileVersion,
+    start_date: date,
+    end_date: date,
 ) -> None:
     if organization.filing_cycle == "monthly":
         expected_end = date(
@@ -220,12 +231,17 @@ def calculate_tax_period(
     end_date: date,
     adjustment_posting_date: date,
 ) -> TaxPeriodResult:
-    _validate_natural_period(organization, start_date, end_date)
+    profile = profile_as_of(
+        session,
+        org_id=organization.id,
+        as_of=start_date,
+    )
+    _validate_natural_period(profile, start_date, end_date)
     if adjustment_posting_date < end_date:
         raise ValueError("TAX_PERIOD_ADJUSTMENT_POSTING_DATE_INVALID")
     rule = _period_rule(
         session,
-        organization,
+        profile,
         start_date,
         end_date,
         code="small_scale_vat_2026_2027",
@@ -233,7 +249,7 @@ def calculate_tax_period(
     )
     surtax_rule = _period_rule(
         session,
-        organization,
+        profile,
         start_date,
         end_date,
         code="small_scale_surtax_2023_2027",
@@ -241,7 +257,7 @@ def calculate_tax_period(
     )
     params = rule.parameters
     surtax_params = surtax_rule.parameters
-    threshold_key = f"{organization.filing_cycle}_threshold_fen"
+    threshold_key = f"{profile.filing_cycle}_threshold_fen"
     threshold_fen = int(params[threshold_key])
 
     events = session.scalars(
@@ -285,7 +301,7 @@ def calculate_tax_period(
     vat_payable = max(0, vat_accrued - vat_relief)
 
     reduction = Decimal(str(surtax_params["small_tax_reduction_factor"]))
-    urban = round_fen(Decimal(vat_payable) * organization.urban_maintenance_rate * reduction)
+    urban = round_fen(Decimal(vat_payable) * profile.urban_maintenance_rate * reduction)
     education = round_fen(
         Decimal(vat_payable)
         * Decimal(str(surtax_params["education_surcharge_rate"]))
@@ -313,10 +329,10 @@ def calculate_tax_period(
     calculation_hash_input = {
         "organization": {
             "id": str(organization.id),
-            "filing_cycle": organization.filing_cycle,
-            "jurisdiction": organization.jurisdiction,
+            "filing_cycle": profile.filing_cycle,
+            "jurisdiction": profile.jurisdiction,
             "urban_maintenance_rate": _five_place_rate(
-                organization.urban_maintenance_rate
+                profile.urban_maintenance_rate
             ),
         },
         "period": {
@@ -346,7 +362,7 @@ def calculate_tax_period(
             "rule": surtax_rule.code,
             "version": surtax_rule.version,
             "reduction_factor": str(reduction),
-            "urban_maintenance_rate": _five_place_rate(organization.urban_maintenance_rate),
+            "urban_maintenance_rate": _five_place_rate(profile.urban_maintenance_rate),
         },
         {"events": taxable_rows},
         {"stage": "calculation_hash", "sha256": calculation_hash},
@@ -355,7 +371,7 @@ def calculate_tax_period(
         start_date=start_date,
         end_date=end_date,
         adjustment_posting_date=adjustment_posting_date,
-        filing_cycle=organization.filing_cycle,
+        filing_cycle=profile.filing_cycle,
         **calculation,
         rule_version=f"{rule.version}+{surtax_rule.version}",
         source_url=rule.source_url,

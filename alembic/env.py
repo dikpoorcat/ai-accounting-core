@@ -3,26 +3,42 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, inspect, pool
 from sqlalchemy.engine import make_url
 
 from ai_accounting import models  # noqa: F401
-from ai_accounting.config import get_settings
+from ai_accounting.config import DEVELOPMENT_DATABASE_URL, get_settings
 from ai_accounting.database import Base
 from alembic import context
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+database_url_override = config.attributes.get("database_url_override")
+configured_database_url = config.get_main_option("sqlalchemy.url")
+environment_database_url = os.getenv("DATABASE_URL")
+if database_url_override:
+    migration_database_url = database_url_override
+elif environment_database_url:
+    migration_database_url = get_settings().migration_database_url(
+        environment_database_url
+    )
+elif configured_database_url != DEVELOPMENT_DATABASE_URL:
+    # Programmatic callers (especially isolated migration and invariant tests)
+    # deliberately replace alembic.ini's checked-in development placeholder.
+    migration_database_url = configured_database_url
+else:
+    migration_database_url = get_settings().migration_database_url(
+        configured_database_url
+    )
 config.set_main_option(
     "sqlalchemy.url",
-    get_settings().migration_database_url(
-        os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
-    ),
+    migration_database_url,
 )
 target_metadata = Base.metadata
 
 _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
+    "ck_company_registry_database_name",
     "ck_owner_account_password_hash_shape",
     "ck_owner_account_login_ascii",
     "ck_owner_recovery_code_lowerhex",
@@ -50,9 +66,36 @@ _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
     "ck_period_close_commentary_context_hash_lower_hex",
 }
 
+_CATALOG_TABLES = {
+    "catalog_metadata",
+    "company_registry",
+    "company_lifecycle_actions",
+}
+_IDENTITY_TABLES = {
+    "identity_audit_events",
+    "owner_accounts",
+    "owner_recovery_codes",
+    "owner_sessions",
+}
 
-def _include_object_for_dialect(dialect_name: str):
+
+def _include_object_for_dialect(dialect_name: str, *, identity_split: bool = False):
     def include_object(_object, name, type_, _reflected, _compare_to):
+        table_name = (
+            name
+            if type_ == "table"
+            else getattr(getattr(_object, "table", None), "name", None)
+        )
+        if table_name in _CATALOG_TABLES:
+            return False
+        if identity_split and table_name in _IDENTITY_TABLES:
+            return False
+        if identity_split and type_ == "foreign_key_constraint":
+            if any(
+                element.target_fullname.split(".", 1)[0] in _IDENTITY_TABLES
+                for element in getattr(_object, "elements", ())
+            ):
+                return False
         return not (
             dialect_name != "postgresql"
             and type_ == "check_constraint"
@@ -70,7 +113,8 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         include_object=_include_object_for_dialect(
-            make_url(config.get_main_option("sqlalchemy.url")).get_backend_name()
+            make_url(config.get_main_option("sqlalchemy.url")).get_backend_name(),
+            identity_split=bool(config.attributes.get("identity_split_verified")),
         ),
     )
     with context.begin_transaction():
@@ -84,11 +128,21 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        inspector = inspect(connection)
+        identity_split = inspector.has_table(
+            "organization_database_metadata"
+        ) and not inspector.has_table("owner_accounts")
+        # Inspector reads autobegin a SQLAlchemy transaction. End that read
+        # transaction so Alembic owns and commits the migration transaction.
+        connection.rollback()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
-            include_object=_include_object_for_dialect(connection.dialect.name),
+            include_object=_include_object_for_dialect(
+                connection.dialect.name,
+                identity_split=identity_split,
+            ),
         )
         with context.begin_transaction():
             context.run_migrations()

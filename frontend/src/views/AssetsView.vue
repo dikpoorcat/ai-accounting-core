@@ -265,9 +265,18 @@ onMounted(() => {
 });
 
 watch(
-  () => route.query.period,
-  () => {
-    if (mounted) void synchronizePeriod();
+  () => route.query.org_id,
+  (value, previous) => {
+    if (!mounted || value === previous) return;
+    activeController?.abort();
+    response.value = null;
+    loading.value = false;
+  },
+);
+watch(
+  () => [context.value?.current_company.org_id, route.query.period] as const,
+  ([orgId], [previousOrgId]) => {
+    if (mounted && orgId) void synchronizePeriod(orgId !== previousOrgId);
   },
 );
 

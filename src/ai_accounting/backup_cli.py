@@ -14,9 +14,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import SecretStr
+from sqlalchemy import select
 from sqlalchemy.engine import make_url
 
-from .backup import BackupError
+from .backup import (
+    BackupError,
+    create_portable_backup_archive,
+    extract_portable_backup_archive,
+    verify_portable_backup_archive,
+)
 from .backup_credentials import (
     BackupCredentialError,
     CredentialManagerConnectionProvider,
@@ -30,12 +36,12 @@ from .backup_integration import (
     create_integrated_stopped_backup,
 )
 from .config import SettingsConfigurationError, get_settings
+from .database import SessionLocal
+from .models import CompanyRegistry
 from .service_lease import ServiceLeaseError, WindowsBackupServiceLease
 from .windows_backup import (
     WindowsCurrentUserOnlyAclVerifier,
-    WindowsVolumeInspector,
     WindowsWriteThroughPublisher,
-    preflight_windows_backup_root,
 )
 
 
@@ -79,15 +85,34 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = _StableArgumentParser(description="Encrypted stopped-service backup")
+    parser = _StableArgumentParser(description="Verifiable stopped-service backup")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("credential-set", help="store finance_backup password securely")
     commands.add_parser("credential-delete", help="delete finance_backup password")
     create = commands.add_parser("create", help="create one stopped-service backup")
     create.add_argument("--backup-root", required=True, type=Path)
-    create.add_argument("--purpose", choices=("daily", "pre_upgrade"), required=True)
+    create.add_argument(
+        "--purpose", choices=("daily", "pre_upgrade", "handoff"), required=True
+    )
+    target = create.add_mutually_exclusive_group()
+    target.add_argument("--org-id", type=uuid.UUID)
+    target.add_argument("--catalog", action="store_true")
+    target.add_argument("--all", action="store_true")
     create.add_argument("--backup-id")
     create.add_argument("--pg-bin-dir", required=True, type=Path)
+    pack = commands.add_parser("pack", help="wrap one verified backup as one ZIP file")
+    pack.add_argument("--backup-root", required=True, type=Path)
+    pack.add_argument("--backup-directory", required=True, type=Path)
+    pack.add_argument("--output", required=True, type=Path)
+    unpack = commands.add_parser(
+        "unpack", help="verify and securely extract one portable ZIP file"
+    )
+    unpack.add_argument("--file", required=True, type=Path)
+    unpack.add_argument("--output-root", required=True, type=Path)
+    verify_portable = commands.add_parser(
+        "verify-portable", help="verify every byte in one portable ZIP file"
+    )
+    verify_portable.add_argument("--file", required=True, type=Path)
     return parser
 
 
@@ -97,6 +122,26 @@ def _dispatch(args: argparse.Namespace) -> None:
     elif args.command == "credential-delete":
         WindowsFinanceBackupCredentialStore().delete_password()
         print("BACKUP_CREDENTIAL_DELETED")
+    elif args.command == "pack":
+        result = create_portable_backup_archive(
+            args.backup_root, args.backup_directory, args.output
+        )
+        print(
+            f"BACKUP_PORTABLE_COMPLETE {result.archive_file} "
+            f"{result.archive_sha256}"
+        )
+    elif args.command == "unpack":
+        result = extract_portable_backup_archive(args.file, args.output_root)
+        print(
+            f"BACKUP_PORTABLE_EXTRACTED {result.backup_directory} "
+            f"{result.manifest_sha256}"
+        )
+    elif args.command == "verify-portable":
+        result = verify_portable_backup_archive(args.file)
+        print(
+            f"BACKUP_PORTABLE_VERIFIED {result.backup_id} "
+            f"{result.archive_sha256}"
+        )
     else:
         _create(args)
 
@@ -117,13 +162,50 @@ def _create(args: argparse.Namespace) -> None:
     settings = _load_production_settings()
     backup_root = _absolute_required(args.backup_root, "BACKUP_ROOT_ABSOLUTE_PATH_REQUIRED")
     pg_bin_dir = _absolute_required(args.pg_bin_dir, "BACKUP_PG_BIN_ABSOLUTE_PATH_REQUIRED")
-    endpoint = PostgresEndpoint(
-        host=settings.database_host,
-        port=settings.database_port,
-        database=settings.database_name,
-        username="finance_backup",
-        application_name="finance-backup-cli",
-    )
+    configured = get_settings()
+    targets: list[tuple[str, str, str | None, str | None]] = []
+    allowed_database_names: frozenset[str] | None = None
+    if configured.multi_company_enabled:
+        if not (args.org_id or args.catalog or args.all):
+            raise BackupCliError("BACKUP_TARGET_REQUIRED")
+        with SessionLocal() as catalog_session:
+            registries = catalog_session.scalars(
+                select(CompanyRegistry)
+                .where(CompanyRegistry.status.in_(["active", "archived"]))
+                .order_by(CompanyRegistry.org_id)
+            ).all()
+            registry_by_org = {item.org_id: item for item in registries}
+            allowed_database_names = frozenset(
+                {settings.database_name, *(item.database_name for item in registries)}
+            )
+            if args.catalog or args.all:
+                targets.append(("catalog", settings.database_name, None, None))
+            if args.org_id:
+                registry = registry_by_org.get(args.org_id)
+                if registry is None:
+                    raise BackupCliError("BACKUP_COMPANY_NOT_FOUND")
+                targets.append(
+                    (
+                        "company",
+                        registry.database_name,
+                        str(registry.org_id),
+                        str(registry.database_identity),
+                    )
+                )
+            elif args.all:
+                targets.extend(
+                    (
+                        "company",
+                        item.database_name,
+                        str(item.org_id),
+                        str(item.database_identity),
+                    )
+                    for item in registries
+                )
+    else:
+        if args.org_id or args.catalog or args.all:
+            raise BackupCliError("BACKUP_MULTI_COMPANY_NOT_CONFIGURED")
+        targets.append(("legacy", settings.database_name, None, None))
     verifier = WindowsCurrentUserOnlyAclVerifier()
     credential_store = WindowsFinanceBackupCredentialStore()
     pgpass_provider = WindowsProtectedPgPassProvider(
@@ -132,32 +214,49 @@ def _create(args: argparse.Namespace) -> None:
         verifier,
     )
     publisher = WindowsWriteThroughPublisher()
-    preflight_windows_backup_root(
-        backup_root,
-        WindowsVolumeInspector(),
-        publisher,
-    )
+    # Storage location, encryption, retention, and media handling are deployment-owner
+    # policy.  The CLI still proves that the selected existing directory supports the
+    # write-through publication primitive before it starts a database snapshot.
+    publisher.durable_directory_preflight(backup_root)
     service_lease = WindowsBackupServiceLease(settings.service_lock_file, verifier)
-    verification = create_integrated_stopped_backup(
-        backup_root,
-        backup_id=args.backup_id or _new_backup_id(),
-        purpose=args.purpose,
-        evidence_root=settings.evidence_dir,
-        endpoint=endpoint,
-        runtime_role=settings.runtime_role,
-        service_lease=service_lease,
-        connection_provider=CredentialManagerConnectionProvider(credential_store),
-        adapter_factory=lambda snapshot_id: PgDumpAdapter(
-            endpoint,
-            snapshot_id,
-            pgpass_provider,
-            verifier,
-            pg_dump_executable=pg_bin_dir / "pg_dump.exe",
-            pg_restore_executable=pg_bin_dir / "pg_restore.exe",
-        ),
-        publisher=publisher,
-    )
-    print(f"BACKUP_COMPLETE {verification.backup_id} {verification.manifest_sha256}")
+    base_backup_id = args.backup_id or _new_backup_id()
+    for artifact_type, database_name, org_id, database_identity in targets:
+        endpoint = PostgresEndpoint(
+            host=settings.database_host,
+            port=settings.database_port,
+            database=database_name,
+            username="finance_backup",
+            application_name="finance-backup-cli",
+        )
+        backup_id = (
+            base_backup_id
+            if len(targets) == 1
+            else f"{base_backup_id[:48]}-{artifact_type}-{(org_id or 'global')[:8]}"
+        )
+        verification = create_integrated_stopped_backup(
+            backup_root,
+            backup_id=backup_id,
+            purpose=args.purpose,
+            evidence_root=settings.evidence_dir,
+            endpoint=endpoint,
+            runtime_role=settings.runtime_role,
+            service_lease=service_lease,
+            connection_provider=CredentialManagerConnectionProvider(credential_store),
+            adapter_factory=lambda snapshot_id, target=endpoint: PgDumpAdapter(
+                target,
+                snapshot_id,
+                pgpass_provider,
+                verifier,
+                pg_dump_executable=pg_bin_dir / "pg_dump.exe",
+                pg_restore_executable=pg_bin_dir / "pg_restore.exe",
+            ),
+            publisher=publisher,
+            artifact_type=artifact_type if artifact_type != "legacy" else None,
+            org_id=org_id,
+            database_identity=database_identity,
+            allowed_database_names=allowed_database_names,
+        )
+        print(f"BACKUP_COMPLETE {verification.backup_id} {verification.manifest_sha256}")
 
 
 def _load_production_settings() -> _BackupCliSettings:

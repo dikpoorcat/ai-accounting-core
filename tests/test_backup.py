@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
+import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,10 +17,14 @@ from ai_accounting.backup import (
     BackupRequest,
     DatabaseDumpMetadata,
     EvidenceSnapshot,
+    create_portable_backup_archive,
     create_stopped_backup,
+    extract_portable_backup_archive,
     select_retention_prune_candidates,
     verify_backup,
+    verify_portable_backup_archive,
 )
+from ai_accounting.company_cli import _install_imported_evidence
 
 _SOURCE_SYSTEM_IDENTIFIER = "7612345678901234567"
 
@@ -97,6 +103,85 @@ def test_backup_is_deterministic_complete_and_does_not_leak_source_paths_or_secr
     assert "postgresql" not in text
     assert "finance_backup" not in text
     assert verify_backup(tmp_path / "media-one", first.backup_directory) == first
+
+
+def test_handoff_import_installs_evidence_in_target_content_store(tmp_path: Path) -> None:
+    evidence_root, source = _source(tmp_path)
+    backup_root = tmp_path / "portable-media"
+    verified = create_stopped_backup(
+        backup_root,
+        replace(_request(evidence_root, source), purpose="handoff"),
+        FakeDumpAdapter(),
+        clock=lambda: _clock(11),
+    )
+    target_root = tmp_path / "target-evidence"
+    target_root.mkdir()
+
+    installed = _install_imported_evidence(
+        verified.evidence,
+        backup_root=backup_root,
+        evidence_root=target_root,
+        max_evidence_bytes=1024,
+    )
+
+    evidence_id = uuid.UUID(verified.evidence[0].evidence_id)
+    destination = Path(installed[evidence_id])
+    assert destination.read_bytes() == source.read_bytes()
+    assert destination.relative_to(target_root).parts == (
+        verified.evidence[0].sha256[:2],
+        verified.evidence[0].sha256[2:4],
+        verified.evidence[0].sha256,
+    )
+    assert (
+        _install_imported_evidence(
+            verified.evidence,
+            backup_root=backup_root,
+            evidence_root=target_root,
+            max_evidence_bytes=1024,
+        )
+        == installed
+    )
+
+
+def test_portable_archive_is_one_verified_file_and_extracts_for_import(
+    tmp_path: Path,
+) -> None:
+    evidence_root, source = _source(tmp_path)
+    backup_root = tmp_path / "backup-root"
+    verified = create_stopped_backup(
+        backup_root,
+        replace(
+            _request(evidence_root, source),
+            purpose="handoff",
+            artifact_type="company",
+            org_id="74299243-c333-43d9-9807-4f2336cd984c",
+            database_identity="f3a7301c-fe09-44a6-a865-6e8c22ed6d60",
+        ),
+        FakeDumpAdapter(),
+        clock=lambda: _clock(11),
+    )
+    archive_file = tmp_path / "company.finance-company.zip"
+
+    portable = create_portable_backup_archive(
+        backup_root, verified.backup_directory, archive_file
+    )
+
+    assert portable == verify_portable_backup_archive(archive_file)
+    assert portable.org_id == "74299243-c333-43d9-9807-4f2336cd984c"
+    assert portable.evidence_count == 1
+    extraction_root = tmp_path / "extracted"
+    extraction_root.mkdir()
+    extracted = extract_portable_backup_archive(archive_file, extraction_root)
+    assert extracted.manifest_sha256 == verified.manifest_sha256
+    assert extracted.database_sha256 == verified.database_sha256
+    assert extracted.evidence[0].sha256 == verified.evidence[0].sha256
+
+    tampered = tmp_path / "tampered.zip"
+    tampered.write_bytes(archive_file.read_bytes())
+    with zipfile.ZipFile(tampered, mode="a") as archive:
+        archive.writestr("../escape", b"not allowed")
+    with pytest.raises(BackupError, match="BACKUP_PORTABLE_INVALID"):
+        verify_portable_backup_archive(tampered)
 
 
 def test_backup_rejects_nonstopped_service_before_creating_a_partial_directory(

@@ -71,6 +71,7 @@ from .models import (
     ZeroTaxPeriodConfirmation,
     event_evidence,
 )
+from .organization_profiles import profile_as_of
 from .payroll import (
     AnnualBonusScenarioInput,
     AnnualBonusTaxPolicy,
@@ -7591,6 +7592,11 @@ class FinanceService:
                 rule_version=tax_result.rule_version,
                 trace=tax_result.trace,
             )
+        tax_profile = profile_as_of(
+            self.session,
+            org_id=request.org_id,
+            as_of=request.start_date,
+        )
 
         if conflict := self._active_tax_period_conflict(request, lock=True):
             return FinanceResult(
@@ -7629,10 +7635,10 @@ class FinanceService:
                 calculation=tax_result.to_dict(),
                 calculation_hash=tax_result.calculation_hash,
                 calculation_hash_payload=tax_result.calculation_hash_payload,
-                filing_cycle_snapshot=organization.filing_cycle,
-                jurisdiction_snapshot=organization.jurisdiction,
+                filing_cycle_snapshot=tax_profile.filing_cycle,
+                jurisdiction_snapshot=tax_profile.jurisdiction,
                 urban_maintenance_rate_snapshot=Decimal(
-                    format(organization.urban_maintenance_rate, ".5f")
+                    format(tax_profile.urban_maintenance_rate, ".5f")
                 ),
                 vat_rule_id=uuid.UUID(tax_result.vat_rule_id),
                 surtax_rule_id=uuid.UUID(tax_result.surtax_rule_id),
@@ -7675,10 +7681,10 @@ class FinanceService:
             calculation=tax_result.to_dict(),
             calculation_hash=tax_result.calculation_hash,
             calculation_hash_payload=tax_result.calculation_hash_payload,
-            filing_cycle_snapshot=organization.filing_cycle,
-            jurisdiction_snapshot=organization.jurisdiction,
+            filing_cycle_snapshot=tax_profile.filing_cycle,
+            jurisdiction_snapshot=tax_profile.jurisdiction,
             urban_maintenance_rate_snapshot=Decimal(
-                format(organization.urban_maintenance_rate, ".5f")
+                format(tax_profile.urban_maintenance_rate, ".5f")
             ),
             vat_rule_id=uuid.UUID(tax_result.vat_rule_id),
             surtax_rule_id=uuid.UUID(tax_result.surtax_rule_id),

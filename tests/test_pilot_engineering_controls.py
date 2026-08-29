@@ -35,6 +35,7 @@ def test_supply_chain_controls_pin_dependencies_actions_and_vulnerability_gate()
     assert lock_file.is_file()
     assert "[tool.uv]" in pyproject
     assert 'required-version = "==0.12.3"' in pyproject
+    assert 'artifacts = ["src/ai_accounting/static/dashboard/**"]' in pyproject
     assert "uv sync --locked --all-extras" in workflow
     assert "continue-on-error" not in workflow
     assert "uv run pip-audit --format json --output pip-audit.json" in workflow
@@ -125,6 +126,48 @@ def test_production_settings_require_distinct_urls_and_absolute_roots(tmp_path: 
             database_url="postgresql+psycopg://runtime:secret@db.example/finance",
             finance_migration_database_url=(
                 "postgresql+psycopg://migrator:secret@db.example/finance"
+            ),
+        )
+
+
+def test_production_multi_company_urls_share_cluster_and_role_boundaries(
+    tmp_path: Path,
+) -> None:
+    settings = _production_settings(
+        tmp_path,
+        database_url="postgresql+psycopg://runtime:secret@localhost/finance_catalog",
+        finance_company_database_url=(
+            "postgresql+psycopg://runtime:secret@localhost/finance"
+        ),
+        finance_provisioning_database_url=(
+            "postgresql+psycopg://migrator:secret@localhost/postgres"
+        ),
+    )
+    assert settings.multi_company_enabled is True
+
+    with pytest.raises(
+        SettingsConfigurationError,
+        match="PRODUCTION_PROVISIONING_DATABASE_URL_REQUIRED",
+    ):
+        _production_settings(
+            tmp_path,
+            database_url="postgresql+psycopg://runtime:secret@localhost/finance_catalog",
+            finance_company_database_url=(
+                "postgresql+psycopg://runtime:secret@localhost/finance"
+            ),
+        )
+    with pytest.raises(
+        SettingsConfigurationError,
+        match="PRODUCTION_COMPANY_RUNTIME_ACCOUNT_MISMATCH",
+    ):
+        _production_settings(
+            tmp_path,
+            database_url="postgresql+psycopg://runtime:secret@localhost/finance_catalog",
+            finance_company_database_url=(
+                "postgresql+psycopg://other:secret@localhost/finance"
+            ),
+            finance_provisioning_database_url=(
+                "postgresql+psycopg://migrator:secret@localhost/postgres"
             ),
         )
 

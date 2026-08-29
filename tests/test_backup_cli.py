@@ -56,6 +56,8 @@ def _production_settings(tmp_path: Path) -> Settings:
         finance_migration_database_url=(
             "postgresql+psycopg://migration:test-migration-only@127.0.0.1:5432/finance"
         ),
+        finance_company_database_url=None,
+        finance_provisioning_database_url=None,
         finance_storage_dir=tmp_path,
         finance_service_lock_file=tmp_path / "service.lock",
         finance_evidence_dir=tmp_path / "evidence",
@@ -217,7 +219,7 @@ def test_cli_argument_failure_is_one_stable_code_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_create_cli_reaches_removable_media_preflight_after_validated_settings(
+def test_create_cli_reaches_durable_directory_preflight_after_validated_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -245,15 +247,17 @@ def test_create_cli_reaches_removable_media_preflight_after_validated_settings(
         "WindowsFinanceBackupCredentialStore",
         lambda: credential_store,
     )
-    monkeypatch.setattr(backup_cli, "WindowsVolumeInspector", object)
-    monkeypatch.setattr(backup_cli, "WindowsWriteThroughPublisher", object)
+    class RejectingPublisher:
+        def durable_directory_preflight(self, root: Path) -> None:
+            del root
+            called.append("preflight")
+            raise backup_cli.BackupIntegrationError(
+                "BACKUP_DURABLE_PUBLISH_PREFLIGHT_FAILED"
+            )
 
-    def reject_unencrypted_media(*args: object) -> None:
-        del args
-        called.append("preflight")
-        raise backup_cli.BackupIntegrationError("BACKUP_VOLUME_NOT_ENCRYPTED")
-
-    monkeypatch.setattr(backup_cli, "preflight_windows_backup_root", reject_unencrypted_media)
+    monkeypatch.setattr(
+        backup_cli, "WindowsWriteThroughPublisher", lambda: RejectingPublisher()
+    )
     monkeypatch.setattr(
         backup_cli, "create_integrated_stopped_backup", unexpected("integrated-backup")
     )
@@ -276,7 +280,7 @@ def test_create_cli_reaches_removable_media_preflight_after_validated_settings(
     output = capsys.readouterr()
     assert exited.value.code == 1
     assert output.out == ""
-    assert output.err == "BACKUP_VOLUME_NOT_ENCRYPTED\n"
+    assert output.err == "BACKUP_DURABLE_PUBLISH_PREFLIGHT_FAILED\n"
     assert called == ["preflight"]
     assert not media.exists()
     assert not pg_bin.exists()
@@ -306,7 +310,7 @@ def test_create_cli_rejects_nonproduction_before_windows_or_credential_access(
         backup_cli, "WindowsFinanceBackupCredentialStore", unexpected("credential")
     )
     monkeypatch.setattr(
-        backup_cli, "preflight_windows_backup_root", unexpected("preflight")
+        backup_cli, "WindowsWriteThroughPublisher", unexpected("publisher")
     )
 
     with pytest.raises(SystemExit) as exited:
@@ -361,12 +365,13 @@ def test_create_cli_missing_dedicated_credential_fails_after_preflight_and_lease
     monkeypatch.setattr(
         backup_cli, "WindowsFinanceBackupCredentialStore", lambda: credential_store
     )
-    monkeypatch.setattr(backup_cli, "WindowsVolumeInspector", object)
-    monkeypatch.setattr(backup_cli, "WindowsWriteThroughPublisher", object)
+    class RecordingPublisher:
+        def durable_directory_preflight(self, root: Path) -> None:
+            del root
+            called.append("preflight")
+
     monkeypatch.setattr(
-        backup_cli,
-        "preflight_windows_backup_root",
-        lambda *args: called.append("preflight"),
+        backup_cli, "WindowsWriteThroughPublisher", lambda: RecordingPublisher()
     )
     monkeypatch.setattr(backup_cli, "WindowsBackupServiceLease", lambda *args: lease)
 

@@ -72,6 +72,7 @@ from .models import (
     LaborRemunerationLine,
     OpenItem,
     Organization,
+    OrganizationDatabaseMetadata,
     OwnerAccount,
     PayrollBatch,
     PayrollContributionActualItem,
@@ -87,6 +88,7 @@ from .models import (
     ZeroTaxPeriodConfirmation,
     accounting_period_action_evidence,
 )
+from .organization_profiles import profile_as_of
 from .tax import calculate_tax_period
 
 _BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.5"
@@ -749,6 +751,12 @@ class AccountingPeriodService:
         )
 
     def _owner_close_approval_required(self, org_id: uuid.UUID) -> bool:
+        database_metadata = self.session.get(OrganizationDatabaseMetadata, 1)
+        if database_metadata is not None:
+            return (
+                database_metadata.org_id == org_id
+                and database_metadata.owner_approval_required
+            )
         return (
             self.session.scalar(
                 select(OwnerAccount.id).where(OwnerAccount.org_id == org_id).limit(1)
@@ -794,6 +802,7 @@ class AccountingPeriodService:
             or approval.owner_account_id != attribution.owner_account_id
             or approval.owner_session_id != attribution.owner_session_id
             or approval.owner_credential_version != attribution.owner_credential_version
+            or approval.catalog_instance_id != attribution.catalog_instance_id
         ):
             return None
         return approval
@@ -875,8 +884,18 @@ class AccountingPeriodService:
             len(voucher_issues),
         )
         if (
-            org.accounting_standard == "small_enterprise"
-            and org.filing_cycle == "quarterly"
+            profile_as_of(
+                self.session,
+                org_id=request.org_id,
+                as_of=period.end_date,
+            ).accounting_standard
+            == "small_enterprise"
+            and profile_as_of(
+                self.session,
+                org_id=request.org_id,
+                as_of=period.end_date,
+            ).filing_cycle
+            == "quarterly"
             and period.calendar_month in {3, 6, 9, 12}
         ):
             quarter = (period.calendar_month - 1) // 3 + 1
@@ -1181,7 +1200,11 @@ class AccountingPeriodService:
 
         period_month = f"{period.calendar_year:04d}-{period.calendar_month:02d}"
         organization = self.session.get(Organization, org_id)
-        filing_cycle = organization.filing_cycle if organization is not None else "monthly"
+        filing_cycle = profile_as_of(
+            self.session,
+            org_id=org_id,
+            as_of=period.end_date,
+        ).filing_cycle
         event_type_counts: dict[str, int] = {}
         for source in voucher_sources:
             event_type = str(source["event_type"])

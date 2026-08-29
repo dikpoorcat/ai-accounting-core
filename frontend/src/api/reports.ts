@@ -1,4 +1,4 @@
-import { DashboardApiError, requestJson } from "./client";
+import { DashboardApiError, requestJson, withCurrentCompany } from "./client";
 
 export type ReportStatus =
   | "ready"
@@ -146,7 +146,7 @@ export async function fetchQuarterlyWorkbook(
     quarter: String(report.period.quarter),
     calculation_hash: calculationHash,
   });
-  const response = await fetch(`/financial-reports/quarterly.xlsx?${query}`, {
+  const response = await fetch(withCurrentCompany(`/financial-reports/quarterly.xlsx?${query}`), {
     headers: {
       Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     },

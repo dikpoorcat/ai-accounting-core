@@ -121,6 +121,7 @@ def load_dashboard_context(
         )
         return {
             "schema_version": 1,
+            "org_id": str(organization.id),
             "company": organization.name,
             "generated_at": datetime.now(UTC).isoformat(),
             "default_period": period_items[-1]["key"] if period_items else None,

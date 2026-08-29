@@ -424,9 +424,19 @@ onMounted(() => {
 });
 
 watch(
-  () => route.query.quarter,
-  () => {
-    if (mounted) void synchronizeQuarter();
+  () => route.query.org_id,
+  (value, previous) => {
+    if (!mounted || value === previous) return;
+    previewController?.abort();
+    exportController?.abort();
+    report.value = null;
+    loading.value = false;
+  },
+);
+watch(
+  () => [context.value?.current_company.org_id, route.query.quarter] as const,
+  ([orgId], [previousOrgId]) => {
+    if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId);
   },
 );
 

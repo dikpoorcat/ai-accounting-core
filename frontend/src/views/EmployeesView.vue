@@ -162,9 +162,18 @@ function participationLabel(
 }
 
 watch(
-  () => route.query.period,
-  () => {
-    if (initialized) void loadPeriod(routePeriod());
+  () => route.query.org_id,
+  (value, previous) => {
+    if (!initialized || value === previous) return;
+    controller?.abort();
+    response.value = null;
+    loading.value = false;
+  },
+);
+watch(
+  () => [context.value?.current_company.org_id, route.query.period] as const,
+  ([orgId], [previousOrgId]) => {
+    if (initialized && orgId) void loadPeriod(routePeriod(), orgId !== previousOrgId);
   },
 );
 
