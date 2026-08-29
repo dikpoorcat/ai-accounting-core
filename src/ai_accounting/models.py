@@ -1715,6 +1715,7 @@ class PayrollLine(Base):
     employee_payroll_profile_version_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     wage_tax_declaration_state: Mapped[str] = mapped_column(String(20), default="declared")
     tax_reported_salary_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    tax_reporting_difference_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     special_additional_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     other_legal_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
     annual_bonus_fen: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -1775,19 +1776,24 @@ class PayrollLine(Base):
             "other_legal_deduction_fen >= 0 AND annual_bonus_fen >= 0 AND "
             "employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 AND "
             "employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0 AND "
-            "individual_income_tax_fen >= 0",
+            "individual_income_tax_fen >= 0 AND gross_salary_fen >= 0",
             name="ck_payroll_line_nonnegative_amounts",
         ),
         CheckConstraint(
             "((wage_tax_declaration_state = 'declared' AND "
             "tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND "
-            "gross_salary_fen = tax_reported_salary_fen) OR "
+            "((gross_salary_fen = tax_reported_salary_fen AND "
+            "tax_reporting_difference_reason IS NULL) OR "
+            "(gross_salary_fen <> tax_reported_salary_fen AND "
+            "tax_reporting_difference_reason IS NOT NULL AND "
+            "length(trim(tax_reporting_difference_reason)) BETWEEN 1 AND 2000))) OR "
             "(wage_tax_declaration_state = 'not_declared' AND "
             "tax_reported_salary_fen IS NULL AND annual_bonus_fen = 0 AND "
-            "gross_salary_fen = 0) OR "
+            "gross_salary_fen = 0 AND tax_reporting_difference_reason IS NULL) OR "
             "(wage_tax_declaration_state = 'not_applicable' AND "
             "tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND "
-            "gross_salary_fen = annual_bonus_fen))",
+            "gross_salary_fen = annual_bonus_fen AND "
+            "tax_reporting_difference_reason IS NULL))",
             name="ck_payroll_line_gross_salary",
         ),
         CheckConstraint(

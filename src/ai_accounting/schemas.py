@@ -653,6 +653,21 @@ class PayrollEmployeeItem(BaseModel):
         title="报税工资",
         description="负责人最终确认并准备向税务客户端申报的工资金额；常规工资必填，可为 0。",
     )
+    accounting_gross_salary_fen: Fen | None = Field(
+        default=None,
+        title="账务应发工资",
+        description=(
+            "账务上实际形成的应发工资。省略时与报税工资相同；如与报税工资不同，"
+            "必须同时提供差异原因和工资批次证据。"
+        ),
+    )
+    tax_reporting_difference_reason: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2000,
+        title="账税工资差异原因",
+        description="仅在账务应发工资与报税工资不一致时填写的负责人确认事实。",
+    )
     special_additional_deduction_fen: Fen = 0
     other_legal_deduction_fen: Fen = 0
     tax_relief_fen: Fen = 0
@@ -1075,6 +1090,45 @@ class PreviewPayrollRequest(BaseModel):
                     raise ValueError(
                         "not_declared regular payroll cannot include wage-tax amounts or deductions"
                     )
+                if (
+                    item.wage_tax_declaration_state
+                    == PayrollWageTaxDeclarationState.NOT_DECLARED
+                    and (
+                        item.accounting_gross_salary_fen not in {None, 0}
+                        or item.tax_reporting_difference_reason is not None
+                    )
+                ):
+                    raise ValueError(
+                        "not_declared regular payroll cannot include accounting wage-tax "
+                        "difference facts"
+                    )
+                if (
+                    item.wage_tax_declaration_state
+                    == PayrollWageTaxDeclarationState.DECLARED
+                    and item.tax_reported_salary_fen is not None
+                ):
+                    accounting_gross = (
+                        item.accounting_gross_salary_fen
+                        if item.accounting_gross_salary_fen is not None
+                        else item.tax_reported_salary_fen
+                    )
+                    differs = accounting_gross != item.tax_reported_salary_fen
+                    if differs and not (
+                        item.tax_reporting_difference_reason
+                        and item.tax_reporting_difference_reason.strip()
+                    ):
+                        raise ValueError(
+                            "tax_reporting_difference_reason is required when accounting gross "
+                            "salary differs from tax-reported salary"
+                        )
+                    if not differs and item.tax_reporting_difference_reason is not None:
+                        raise ValueError(
+                            "tax_reporting_difference_reason requires a wage reporting difference"
+                        )
+                    if differs and not self.evidence_references:
+                        raise ValueError(
+                            "evidence_references are required for a wage reporting difference"
+                        )
             if any(item.regular_payroll_batch_id is not None for item in self.employee_items):
                 raise ValueError(
                     "regular_payroll_batch_id is only available for annual_bonus payroll"
@@ -1092,6 +1146,8 @@ class PreviewPayrollRequest(BaseModel):
                 raise ValueError("annual_bonus_fen must be positive for annual_bonus payroll")
             if any(
                 item.tax_reported_salary_fen is not None
+                or item.accounting_gross_salary_fen is not None
+                or item.tax_reporting_difference_reason is not None
                 or item.special_additional_deduction_fen
                 or item.other_legal_deduction_fen
                 or item.tax_relief_fen

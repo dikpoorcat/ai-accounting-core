@@ -537,6 +537,116 @@ def test_zero_tax_reported_salary_posts_company_borne_social_in_payroll_period(
     assert_balanced(session, confirmed.voucher_id)
 
 
+def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
+    session: Session, organization: Organization
+) -> None:
+    employee_id = register_payroll_facts(session, organization)
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="a" * 64,
+        original_name="wage-tax-difference.txt",
+        media_type="text/plain",
+        source="owner_confirmation",
+        size_bytes=1,
+        storage_path="test/wage-tax-difference.txt",
+    )
+    session.add(evidence)
+    session.flush()
+    service = FinanceService(session)
+    preview = service.preview_payroll(
+        PreviewPayrollRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "wage-tax-difference-preview",
+                "batch_kind": "regular",
+                "payroll_period": "2026-03",
+                "posting_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "evidence_references": [evidence.id],
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "tax_reported_salary_fen": 500_000,
+                        "accounting_gross_salary_fen": 150_000,
+                        "tax_reporting_difference_reason": (
+                            "历史申报数不形成实际工资债务；账务工资按个人缴费扣款确认。"
+                        ),
+                        "special_additional_deduction_fen": 0,
+                        "other_legal_deduction_fen": 0,
+                    }
+                ],
+            }
+        )
+    )
+    assert preview.status == "calculated", preview.model_dump(mode="json")
+    assert preview.data["summary"] == {
+        "gross_salary_fen": 150_000,
+        "net_salary_fen": 0,
+        "employer_social_insurance_fen": 160_000,
+        "employer_housing_fund_fen": 70_000,
+        "individual_income_tax_fen": 0,
+    }
+    line_payload = preview.data["lines"][0]
+    assert line_payload["tax_reported_salary_fen"] == 500_000
+    assert line_payload["gross_salary_fen"] == 150_000
+    reconciliation = next(
+        entry
+        for entry in line_payload["trace"]
+        if entry["step"] == "wage_tax_reporting_reconciliation"
+    )
+    assert reconciliation["values"] == {
+        "accounting_gross_salary_fen": 150_000,
+        "tax_reported_salary_fen": 500_000,
+        "difference_fen": -350_000,
+        "difference_reason": "历史申报数不形成实际工资债务；账务工资按个人缴费扣款确认。",
+    }
+    tax_state = next(
+        entry for entry in line_payload["trace"] if entry["step"] == "tax_state_after"
+    )
+    assert tax_state["values"]["cumulative_income_fen"] == 500_000
+
+    confirmed = service.confirm_payroll(
+        ConfirmPayrollRequest(
+            org_id=organization.id,
+            batch_id=preview.batch_id,
+            calculation_hash=preview.calculation_hash,
+            idempotency_key="wage-tax-difference-confirm",
+        )
+    )
+    assert confirmed.status == "posted", confirmed.errors
+    assert_balanced(session, confirmed.voucher_id)
+
+
+def test_wage_reporting_difference_requires_reason_and_evidence() -> None:
+    base = {
+        "org_id": uuid.uuid4(),
+        "idempotency_key": "wage-tax-difference-validation",
+        "batch_kind": "regular",
+        "payroll_period": "2026-03",
+        "posting_date": "2026-03-31",
+        "payment_date": "2026-03-31",
+        "employee_items": [
+            {
+                "employee_id": uuid.uuid4(),
+                "tax_reported_salary_fen": 500_000,
+                "accounting_gross_salary_fen": 150_000,
+                "special_additional_deduction_fen": 0,
+                "other_legal_deduction_fen": 0,
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="tax_reporting_difference_reason"):
+        PreviewPayrollRequest.model_validate(base)
+
+    base["employee_items"][0]["tax_reporting_difference_reason"] = "负责人确认差异"
+    with pytest.raises(ValueError, match="evidence_references"):
+        PreviewPayrollRequest.model_validate(base)
+
+    base["evidence_references"] = [uuid.uuid4()]
+    validated = PreviewPayrollRequest.model_validate(base)
+    assert validated.employee_items[0].accounting_gross_salary_fen == 150_000
+
+
 def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
     session: Session, organization: Organization
 ) -> None:

@@ -1,4 +1,4 @@
-"""Pure reconciliation of an owner-approved tax-reported salary fact."""
+"""Pure reconciliation of owner-approved accounting and tax-reported wage facts."""
 
 from __future__ import annotations
 
@@ -19,9 +19,12 @@ class RegularPayrollInput:
     tax_reported_salary_fen: int
     special_additional_deduction_fen: int
     other_legal_deduction_fen: int
+    accounting_gross_salary_fen: int | None = None
 
     def __post_init__(self) -> None:
         require_fen(self.tax_reported_salary_fen, "tax_reported_salary_fen")
+        if self.accounting_gross_salary_fen is not None:
+            require_fen(self.accounting_gross_salary_fen, "accounting_gross_salary_fen")
         for field in (
             "special_additional_deduction_fen",
             "other_legal_deduction_fen",
@@ -34,7 +37,11 @@ class RegularPayrollInput:
 
     @property
     def gross_salary_fen(self) -> int:
-        return self.tax_reported_salary_fen
+        return (
+            self.accounting_gross_salary_fen
+            if self.accounting_gross_salary_fen is not None
+            else self.tax_reported_salary_fen
+        )
 
 
 @dataclass(frozen=True)
@@ -60,7 +67,7 @@ def calculate_regular_payroll(
     income_tax: CumulativeTaxResult,
     contribution_burden: ContributionBurdenResult | None = None,
 ) -> RegularPayrollResult:
-    """Reconcile tax-reported salary, contributions, tax, and net cash pay."""
+    """Reconcile accounting gross salary, reported tax facts, and net cash pay."""
 
     if contribution_burden is None:
         contribution_burden = allocate_contribution_burden(
@@ -95,6 +102,11 @@ def calculate_regular_payroll(
                 step="net_pay_reconciliation",
                 values={
                     "gross_salary_fen": payroll_input.gross_salary_fen,
+                    "tax_reported_salary_fen": payroll_input.tax_reported_salary_fen,
+                    "tax_reporting_difference_fen": (
+                        payroll_input.gross_salary_fen
+                        - payroll_input.tax_reported_salary_fen
+                    ),
                     "employee_contributions_fen": contribution_burden.employee_total_fen,
                     "employer_borne_employee_contributions_fen": (
                         contribution_burden.employer_borne_employee_contributions_fen

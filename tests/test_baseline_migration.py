@@ -19,8 +19,9 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0003_historical_tax_rules"]
+    assert scripts.get_heads() == ["0004_payroll_wage_tax_difference"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0004_payroll_wage_tax_difference",
         "0003_historical_tax_rules",
         "0002_multi_company_business",
         "0001_formal_baseline",
@@ -53,7 +54,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0003_historical_tax_rules"
+                == "0004_payroll_wage_tax_difference"
             )
             organization_columns = {
                 column["name"] for column in inspect(connection).get_columns("organizations")
@@ -95,9 +96,11 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
             payroll_line_columns = {
                 column["name"] for column in inspect(connection).get_columns("payroll_lines")
             }
-            assert {"tax_reported_salary_fen", "wage_tax_declaration_state"} <= (
-                payroll_line_columns
-            )
+            assert {
+                "tax_reported_salary_fen",
+                "tax_reporting_difference_reason",
+                "wage_tax_declaration_state",
+            } <= payroll_line_columns
             assert {
                 "base_salary_fen",
                 "performance_pay_fen",
@@ -140,7 +143,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0003_historical_tax_rules"
+                == "0004_payroll_wage_tax_difference"
             )
     finally:
         engine.dispose()

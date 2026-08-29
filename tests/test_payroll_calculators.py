@@ -430,6 +430,17 @@ def test_regular_payroll_reconciles_gross_deductions_tax_and_net_pay() -> None:
     assert result.trace[0].step == "net_pay_reconciliation"
 
 
+def test_regular_payroll_keeps_accounting_gross_distinct_from_reported_income() -> None:
+    payroll_input = RegularPayrollInput(
+        tax_reported_salary_fen=500_000,
+        accounting_gross_salary_fen=150_000,
+        special_additional_deduction_fen=0,
+        other_legal_deduction_fen=0,
+    )
+    assert payroll_input.taxable_income_fen == 500_000
+    assert payroll_input.gross_salary_fen == 150_000
+
+
 def test_regular_payroll_rejects_a_negative_tax_reported_salary() -> None:
     with pytest.raises(CalculationValidationError, match="tax_reported_salary_fen"):
         RegularPayrollInput(

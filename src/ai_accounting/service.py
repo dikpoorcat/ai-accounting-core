@@ -5737,6 +5737,7 @@ class FinanceService:
                     tax_reported_salary_fen=item.tax_reported_salary_fen or 0,
                     special_additional_deduction_fen=item.special_additional_deduction_fen,
                     other_legal_deduction_fen=item.other_legal_deduction_fen,
+                    accounting_gross_salary_fen=item.accounting_gross_salary_fen,
                 )
                 shortfall_treatment = EmployeeContributionShortfallTreatment(
                     contribution_parameters.get(
@@ -5823,7 +5824,7 @@ class FinanceService:
                 tax_input = CumulativeTaxPeriodInput(
                     income_date=period.end_date,
                     withholding_start_date=employee.tax_withholding_start_date,
-                    income_fen=payroll_input.gross_salary_fen,
+                    income_fen=payroll_input.taxable_income_fen,
                     tax_exempt_income_fen=0,
                     employee_contributions_fen=contribution_burden.employee_total_fen,
                     special_additional_deduction_fen=payroll_input.special_additional_deduction_fen,
@@ -5845,6 +5846,11 @@ class FinanceService:
                         "employee_id": str(employee.id),
                         "profile": profile_snapshot,
                         "wage_tax_declaration_state": "declared",
+                        "accounting_gross_salary_fen": payroll_input.gross_salary_fen,
+                        "tax_reported_salary_fen": payroll_input.tax_reported_salary_fen,
+                        "tax_reporting_difference_reason": (
+                            item.tax_reporting_difference_reason
+                        ),
                         "tax_withholding_start_date": (
                             employee.tax_withholding_start_date.isoformat()
                         ),
@@ -6907,6 +6913,17 @@ class FinanceService:
             *self._trace_dicts(burden.trace),
             *self._trace_dicts(result.income_tax_result.trace),
             *self._trace_dicts(result.trace),
+            {
+                "step": "wage_tax_reporting_reconciliation",
+                "values": {
+                    "accounting_gross_salary_fen": result.gross_salary_fen,
+                    "tax_reported_salary_fen": item.tax_reported_salary_fen,
+                    "difference_fen": (
+                        result.gross_salary_fen - (item.tax_reported_salary_fen or 0)
+                    ),
+                    "difference_reason": item.tax_reporting_difference_reason,
+                },
+            },
             {"step": "tax_state_after", "values": self._tax_state_dict(tax_state)},
         ]
         return {
@@ -6914,6 +6931,7 @@ class FinanceService:
             "employee_payroll_profile_version_id": profile.id,
             "wage_tax_declaration_state": "declared",
             "tax_reported_salary_fen": item.tax_reported_salary_fen,
+            "tax_reporting_difference_reason": item.tax_reporting_difference_reason,
             "special_additional_deduction_fen": item.special_additional_deduction_fen,
             "other_legal_deduction_fen": item.other_legal_deduction_fen,
             "annual_bonus_fen": 0,
@@ -6958,6 +6976,7 @@ class FinanceService:
             "employee_payroll_profile_version_id": profile.id,
             "wage_tax_declaration_state": "not_declared",
             "tax_reported_salary_fen": None,
+            "tax_reporting_difference_reason": None,
             "special_additional_deduction_fen": item.special_additional_deduction_fen,
             "other_legal_deduction_fen": item.other_legal_deduction_fen,
             "annual_bonus_fen": 0,
@@ -7006,6 +7025,7 @@ class FinanceService:
             "regular_payroll_batch_id": regular_payroll_batch_id,
             "wage_tax_declaration_state": "not_applicable",
             "tax_reported_salary_fen": None,
+            "tax_reporting_difference_reason": None,
             "special_additional_deduction_fen": 0,
             "other_legal_deduction_fen": 0,
             "annual_bonus_fen": item.annual_bonus_fen,
@@ -7314,6 +7334,7 @@ class FinanceService:
             "employee_id": str(line.employee_id),
             "wage_tax_declaration_state": line.wage_tax_declaration_state,
             "tax_reported_salary_fen": line.tax_reported_salary_fen,
+            "tax_reporting_difference_reason": line.tax_reporting_difference_reason,
             "annual_bonus_fen": line.annual_bonus_fen,
             "employee_social_insurance_fen": line.employee_social_insurance_fen,
             "employer_social_insurance_fen": line.employer_social_insurance_fen,
@@ -7829,6 +7850,7 @@ class FinanceService:
                 employee_payroll_profile_version_id=source.employee_payroll_profile_version_id,
                 wage_tax_declaration_state=source.wage_tax_declaration_state,
                 tax_reported_salary_fen=source.tax_reported_salary_fen,
+                tax_reporting_difference_reason=source.tax_reporting_difference_reason,
                 special_additional_deduction_fen=source.special_additional_deduction_fen,
                 other_legal_deduction_fen=source.other_legal_deduction_fen,
                 annual_bonus_fen=source.annual_bonus_fen,
