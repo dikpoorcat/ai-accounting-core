@@ -127,6 +127,25 @@ class GetAccountingPeriodCloseApprovalRequest(RequestAccountingPeriodCloseApprov
     pass
 
 
+class ConfigureHistoricalTestCloseModeRequest(BaseModel):
+    """Explicit temporary control for a disposable historical rebuild database."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    enabled: StrictBool
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    confirmation_note: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("idempotency_key", "confirmation_note")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+
 class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     management_commentary_context_hash: str | None = Field(

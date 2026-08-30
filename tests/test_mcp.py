@@ -93,6 +93,8 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_request_accounting_period_close_approval_window",
         "finance_get_accounting_period_close_approval",
         "finance_confirm_accounting_period_close",
+        "finance_configure_historical_test_close_mode",
+        "finance_confirm_historical_test_period_close",
         "finance_get_accounting_periods",
         "finance_preview_quarterly_financial_statements",
         "finance_get_financial_statement_requirements",
@@ -126,6 +128,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "separate_contribution_policy_actual_and_cash",
         "apply_first_wage_tax_treatment_only_with_evidence",
         "generate_period_close_management_commentary",
+        "batch_historical_test_close_only_when_explicit",
         "launch_visible_close_approval_window",
         "verify_automatic_close_backup",
         "ask_minimum_specific_question",
@@ -147,6 +150,9 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "finance_get_close_backup_configuration" in mcp.instructions
     assert "close_backup.status=failed" in mcp.instructions
     assert "另写临时备份脚本" in mcp.instructions
+    assert "finance_configure_historical_test_close_mode" in mcp.instructions
+    assert "finance_confirm_historical_test_period_close" in mcp.instructions
+    assert "close_backup.status=deferred" in mcp.instructions
 
 
 def test_close_approval_window_and_result_are_exposed_as_mcp_tools(

@@ -9,12 +9,14 @@ from typing import Any
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import SecretStr
+from sqlalchemy import select
 
 from ai_accounting import mcp_server
 from ai_accounting.accounting_period_schemas import (
     AccountingPeriodResult,
     AccountingPeriodResultStatus,
     AccountingPeriodReviewFacts,
+    ConfigureHistoricalTestCloseModeRequest,
     ConfirmAccountingPeriodCloseRequest,
     GenerateAccountingPeriodRequest,
     GetAccountingPeriodsRequest,
@@ -29,7 +31,13 @@ from ai_accounting.credential_store import InMemoryCredentialStore
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
 from ai_accounting.identity_service import IdentityService
-from ai_accounting.models import AccountingPeriodCloseApproval, Evidence, OwnerAccount
+from ai_accounting.models import (
+    AccountingPeriodCloseApproval,
+    AuditLog,
+    Evidence,
+    OrganizationDatabaseMetadata,
+    OwnerAccount,
+)
 from ai_accounting.schemas import RecordEventRequest
 
 PERIOD_TOOL_NAMES = {
@@ -192,6 +200,126 @@ def test_accounting_period_tools_delegate_to_period_service(
         GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-08")
     )["status"] == "calculated"
     assert [name for name, _ in calls] == ["generate", "preview", "confirm", "get"]
+
+
+def test_historical_test_close_mode_requires_explicit_audited_enablement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    try:
+        with factory.begin() as session:
+            organization = seed_organization(
+                session,
+                taxpayer_identification_number="91330106MA1234567T",
+                name="历史测试批量关账模式",
+            )
+            metadata = OrganizationDatabaseMetadata(
+                org_id=organization.id,
+                database_identity=uuid.uuid4(),
+                current_catalog_instance_id=uuid.uuid4(),
+                owner_approval_required=False,
+            )
+            session.add(metadata)
+            session.flush()
+            org_id = organization.id
+        monkeypatch.setattr(
+            mcp_server,
+            "SessionLocal",
+            mcp_server._ContextAwareSessionFactory(factory),
+        )
+
+        rejected = mcp_server.finance_confirm_historical_test_period_close(
+            ConfirmAccountingPeriodCloseRequest(
+                org_id=org_id,
+                period_id=uuid.uuid4(),
+                closing_date=date(2026, 7, 31),
+            )
+        )
+        assert rejected["status"] == "rejected"
+        assert rejected["errors"] == ["HISTORICAL_TEST_CLOSE_MODE_REQUIRED"]
+
+        enabled = mcp_server.finance_configure_historical_test_close_mode(
+            ConfigureHistoricalTestCloseModeRequest(
+                org_id=org_id,
+                enabled=True,
+                idempotency_key="enable-historical-test-close-mode",
+                confirmation_note="负责人明确将本库指定为可重建测试库。",
+            )
+        )
+        assert enabled["status"] == "posted"
+        assert enabled["historical_test_close_mode_enabled"] is True
+        assert enabled["owner_approval_required"] is False
+        assert enabled["idempotent_replay"] is False
+
+        repeated = mcp_server.finance_configure_historical_test_close_mode(
+            ConfigureHistoricalTestCloseModeRequest(
+                org_id=org_id,
+                enabled=True,
+                idempotency_key="enable-historical-test-close-mode",
+                confirmation_note="负责人明确将本库指定为可重建测试库。",
+            )
+        )
+        assert repeated["idempotent_replay"] is True
+
+        class FakeCloseService:
+            def confirm_accounting_period_close(
+                self, _request: ConfirmAccountingPeriodCloseRequest
+            ) -> AccountingPeriodResult:
+                return AccountingPeriodResult(status=AccountingPeriodResultStatus.POSTED)
+
+        monkeypatch.setattr(mcp_server, "_accounting_period_service", lambda _: FakeCloseService())
+        historical_close = mcp_server.finance_confirm_historical_test_period_close(
+            ConfirmAccountingPeriodCloseRequest(
+                org_id=org_id,
+                period_id=uuid.uuid4(),
+                closing_date=date(2026, 7, 31),
+            )
+        )
+        assert historical_close["status"] == "posted"
+        assert historical_close["close_backup"] == {
+            "status": "deferred",
+            "reason": "historical_test_rebuild_batch",
+        }
+
+        disabled = mcp_server.finance_configure_historical_test_close_mode(
+            ConfigureHistoricalTestCloseModeRequest(
+                org_id=org_id,
+                enabled=False,
+                idempotency_key="disable-historical-test-close-mode",
+                confirmation_note="批次完成，恢复普通关账授权。",
+            )
+        )
+        assert disabled["status"] == "posted"
+        assert disabled["historical_test_close_mode_enabled"] is False
+        assert disabled["owner_approval_required"] is True
+
+        with factory() as session:
+            audit_actions = list(
+                session.scalars(
+                    select(AuditLog.action)
+                    .where(
+                        AuditLog.org_id == org_id,
+                        AuditLog.action.in_(
+                            (
+                                "historical_test_close_mode_enabled",
+                                "historical_test_close_mode_disabled",
+                            )
+                        ),
+                    )
+                    .order_by(AuditLog.created_at, AuditLog.id)
+                )
+            )
+            metadata = session.get(OrganizationDatabaseMetadata, 1)
+            assert metadata is not None
+            assert metadata.owner_approval_required is True
+        assert audit_actions == [
+            "historical_test_close_mode_enabled",
+            "historical_test_close_mode_disabled",
+        ]
+    finally:
+        engine.dispose()
 
 
 def test_all_accounting_period_mcp_handlers_run_against_sqlite(

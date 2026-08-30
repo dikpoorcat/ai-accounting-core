@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v7"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v8"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -42,6 +42,17 @@ CLOSE_BACKUP_RUNTIME_INSTRUCTION = (
     "备份脚本或把手工复制文件当成成功。持续失败时应报告稳定错误码和已关账但备份未完成的状态。"
 )
 
+HISTORICAL_TEST_BATCH_CLOSE_RUNTIME_INSTRUCTION = (
+    "只有负责人明确说明当前公司数据库是可丢弃并将由回放重建的测试库，且明确要求批量处理时，"
+    "AI才可调用 finance_configure_historical_test_close_mode 启用临时历史测试关账模式。"
+    "在该模式中必须按操作类型分阶段覆盖全部可用月份：先一次性只读预检，再批量补同类前置"
+    "事项，最后使用 finance_confirm_historical_test_period_close 连续关账；期间不得逐月更新"
+    "回放资料或执行备份，close_backup.status=deferred 是该专用入口的预期结果。批次完成或中止"
+    "后必须立即关闭该模式，再统一补回放和备份。预检中由现有材料和系统事实明显证明正常的"
+    "事项由AI直接确认，只把会改变处理或确需负责人知悉的特殊异常汇总一次，禁止逐月复述看板"
+    "已有数字。普通正式库和普通关账仍必须使用密码复核及自动备份，不得调用该专用入口。"
+)
+
 MCP_SERVER_INSTRUCTIONS = (
     "这是确定性记账内核，不是自由分录接口。调用企业数据工具前先调用 "
     "finance_get_event_schema，并遵守其 agent_operating_protocol。"
@@ -50,6 +61,7 @@ MCP_SERVER_INSTRUCTIONS = (
     "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
     "解读应形成一至两个短句的简明综合判断，不得把看板指标或关账清单简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
+    f"{HISTORICAL_TEST_BATCH_CLOSE_RUNTIME_INSTRUCTION}"
     f"{CLOSE_APPROVAL_RUNTIME_INSTRUCTION}"
     f"{CLOSE_BACKUP_RUNTIME_INSTRUCTION}"
     "所有金额使用整数分，日期使用 YYYY-MM-DD。"
@@ -113,6 +125,10 @@ def agent_operating_protocol() -> dict[str, Any]:
                 ),
             },
             {
+                "code": "batch_historical_test_close_only_when_explicit",
+                "instruction": HISTORICAL_TEST_BATCH_CLOSE_RUNTIME_INSTRUCTION,
+            },
+            {
                 "code": "launch_visible_close_approval_window",
                 "instruction": CLOSE_APPROVAL_RUNTIME_INSTRUCTION,
             },
@@ -151,6 +167,7 @@ def agent_operating_protocol() -> dict[str, Any]:
             "不得重复询问已由材料和内核事实唯一证明的事项。",
             "不得让用户代替AI完成银行流水、规范化数据和既有事件之间的核对。",
             "不得在隐藏或不可见的终端通道中等待负责人输入关账密码。",
-            "不得绕过内核关账自动备份、以临时脚本或手工文件复制替代其完成状态。",
+            "除负责人明确启用的历史测试关账模式外，不得绕过内核关账自动备份、以临时脚本或"
+            "手工文件复制替代其完成状态。",
         ],
     }

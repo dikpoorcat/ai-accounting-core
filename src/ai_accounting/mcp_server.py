@@ -17,9 +17,10 @@ from mcp.types import ToolAnnotations
 from pydantic import ConfigDict, SecretStr, ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, SQLAlchemyError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from .accounting_period_schemas import (
+    ConfigureHistoricalTestCloseModeRequest,
     ConfirmAccountingPeriodCloseRequest,
     GenerateAccountingPeriodRequest,
     GetAccountingPeriodCloseApprovalRequest,
@@ -101,6 +102,7 @@ from .models import (
     LaborRemunerationTaxPolicyVersion,
     OpenItem,
     Organization,
+    OrganizationDatabaseMetadata,
     OwnerAccount,
     PayrollBatch,
     PayrollEventLink,
@@ -965,6 +967,10 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 "backup_configuration_tools": [
                     "finance_get_close_backup_configuration",
                     "finance_configure_close_backup",
+                ],
+                "historical_test_rebuild_tools": [
+                    "finance_configure_historical_test_close_mode",
+                    "finance_confirm_historical_test_period_close",
                 ],
             },
             "quarterly_financial_statements": {
@@ -1983,6 +1989,114 @@ def finance_confirm_accounting_period_close(
             )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_configure_historical_test_close_mode(
+    request: ConfigureHistoricalTestCloseModeRequest,
+) -> dict[str, Any]:
+    """显式启停可重建测试库的临时批量关账模式；正式库不得启用。"""
+
+    try:
+        with SessionLocal.begin() as session:
+            metadata = session.get(OrganizationDatabaseMetadata, 1)
+            if metadata is None or metadata.org_id != request.org_id:
+                return _rejected_identity("ORGANIZATION_DATABASE_IDENTITY_MISMATCH")
+            current_mode_enabled = _historical_test_close_mode_enabled(
+                session, request.org_id, metadata=metadata
+            )
+            target_owner_approval_required = not request.enabled
+            idempotent_replay = current_mode_enabled == request.enabled and (
+                metadata.owner_approval_required == target_owner_approval_required
+            )
+            if not idempotent_replay:
+                metadata.owner_approval_required = target_owner_approval_required
+                session.add(
+                    AuditLog(
+                        org_id=request.org_id,
+                        event_id=None,
+                        action=(
+                            "historical_test_close_mode_enabled"
+                            if request.enabled
+                            else "historical_test_close_mode_disabled"
+                        ),
+                        details={
+                            "idempotency_key": request.idempotency_key,
+                            "confirmation_note": request.confirmation_note,
+                            "owner_approval_required": target_owner_approval_required,
+                        },
+                    )
+                )
+                session.flush()
+            return {
+                "status": "posted",
+                "org_id": str(request.org_id),
+                "historical_test_close_mode_enabled": request.enabled,
+                "owner_approval_required": target_owner_approval_required,
+                "idempotent_replay": idempotent_replay,
+            }
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_historical_test_period_close(
+    request: ConfirmAccountingPeriodCloseRequest,
+) -> dict[str, Any]:
+    """仅在显式测试模式中关账并把备份标记为延后；正常正式关账不得调用。"""
+
+    try:
+        with SessionLocal.begin() as session:
+            metadata = session.get(OrganizationDatabaseMetadata, 1)
+            if metadata is None or metadata.org_id != request.org_id:
+                return _rejected_identity("ORGANIZATION_DATABASE_IDENTITY_MISMATCH")
+            if not _historical_test_close_mode_enabled(session, request.org_id, metadata=metadata):
+                return _rejected_identity("HISTORICAL_TEST_CLOSE_MODE_REQUIRED")
+            if request.owner_approval_id is not None:
+                return _rejected_identity("HISTORICAL_TEST_CLOSE_OWNER_APPROVAL_FORBIDDEN")
+            result = (
+                _accounting_period_service(session)
+                .confirm_accounting_period_close(request)
+                .model_dump(mode="json")
+            )
+            if result.get("status") == "posted":
+                result["close_backup"] = {
+                    "status": "deferred",
+                    "reason": "historical_test_rebuild_batch",
+                }
+            return result
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+def _historical_test_close_mode_enabled(
+    session: Session,
+    org_id: uuid.UUID,
+    *,
+    metadata: OrganizationDatabaseMetadata | None = None,
+) -> bool:
+    if metadata is None:
+        metadata = session.get(OrganizationDatabaseMetadata, 1)
+    if metadata is None or metadata.org_id != org_id:
+        return False
+    latest_action = session.scalar(
+        select(AuditLog.action)
+        .where(
+            AuditLog.org_id == org_id,
+            AuditLog.action.in_(
+                (
+                    "historical_test_close_mode_enabled",
+                    "historical_test_close_mode_disabled",
+                )
+            ),
+        )
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(1)
+    )
+    return (
+        metadata.owner_approval_required is False
+        and latest_action == "historical_test_close_mode_enabled"
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)
