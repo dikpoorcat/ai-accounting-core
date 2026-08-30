@@ -1396,6 +1396,7 @@ class FinanceService:
             category_amounts = self._payroll_payment_allocations(
                 request, {"employer_social", "withheld_employee_social"}
             )
+            late_fee_fen = int(request.details.social_insurance_late_fee_fen or 0)
             entries = [
                 Entry(
                     account_role="employer_social_payable",
@@ -1410,8 +1411,19 @@ class FinanceService:
                 )
                 for _ in range(category_amounts["withheld_employee_social"] > 0)
             )
+            if late_fee_fen:
+                entries.append(
+                    Entry(
+                        account_role="social_insurance_late_fee_expense",
+                        debit_fen=late_fee_fen,
+                    )
+                )
             entries.append(Entry(account_code=request.bank_account_code, credit_fen=amount))
-            derived = {"payable_categories": sorted(category_amounts), "allocated_fen": amount}
+            derived = {
+                "payable_categories": sorted(category_amounts),
+                "allocated_fen": amount - late_fee_fen,
+                "social_insurance_late_fee_fen": late_fee_fen,
+            }
 
         elif event_type == EventType.HOUSING_FUND_PAYMENT:
             category_amounts = self._payroll_payment_allocations(
@@ -1686,7 +1698,14 @@ class FinanceService:
 
         if not request.allocations:
             raise ValueError("payroll payment requires allocations")
-        if sum(item.amount_fen for item in request.allocations) != self._amount(request):
+        expected_allocation_fen = self._amount(request)
+        if request.event_type is EventType.SOCIAL_INSURANCE_PAYMENT:
+            expected_allocation_fen -= int(
+                request.details.social_insurance_late_fee_fen or 0
+            )
+        if expected_allocation_fen <= 0:
+            raise ValueError("social insurance late fee must be less than amount_fen")
+        if sum(item.amount_fen for item in request.allocations) != expected_allocation_fen:
             raise ValueError("payroll payment allocations must equal amount_fen")
         totals = {category: 0 for category in allowed_categories}
         for allocation in request.allocations:
@@ -2903,10 +2922,26 @@ class FinanceService:
 
         if self._payroll_payment_categories(event_type) is not None:
             allocated = sum(item.amount_fen for item in request.allocations)
+            statutory_late_fee_fen = (
+                int(request.details.social_insurance_late_fee_fen or 0)
+                if event_type is EventType.SOCIAL_INSURANCE_PAYMENT
+                else 0
+            )
             if not request.allocations:
                 missing.append("allocations")
-            elif event_type != EventType.SALARY_PAYMENT and amount and allocated != amount:
+            elif (
+                event_type != EventType.SALARY_PAYMENT
+                and amount
+                and allocated + statutory_late_fee_fen != amount
+            ):
                 missing.append("allocations whose total equals the payment")
+            if statutory_late_fee_fen:
+                if not request.bank_transaction_references:
+                    missing.append("bank_transaction_references")
+                if not request.evidence_references:
+                    missing.append("evidence_references")
+                if not request.description:
+                    missing.append("description")
             if event_type == EventType.SALARY_PAYMENT:
                 withholding_ids = {
                     item.open_item_id for item in request.salary_withholding_allocations
@@ -3070,15 +3105,40 @@ class FinanceService:
             )
         )
         if existing is not None:
-            same = (
+            same_identity_and_employment = (
                 existing.name == request.name
                 and existing.employment_start_date == request.employment_start_date
-                and existing.tax_withholding_start_date == request.tax_withholding_start_date
                 and existing.employment_end_date == request.employment_end_date
                 and existing.status == request.status
                 and existing.prior_labor_person_id == request.prior_labor_person_id
             )
-            if not same:
+            if not same_identity_and_employment:
+                return {"status": "rejected", "errors": ["EMPLOYEE_CODE_ALREADY_EXISTS"]}
+            if (
+                existing.tax_withholding_start_date is None
+                and request.tax_withholding_start_date is not None
+            ):
+                existing.tax_withholding_start_date = request.tax_withholding_start_date
+                self.session.add(
+                    AuditLog(
+                        org_id=request.org_id,
+                        action="payroll_employee_tax_withholding_start_registered",
+                        details={
+                            "employee_id": str(existing.id),
+                            "employee_code": existing.employee_code,
+                            "tax_withholding_start_date": (
+                                request.tax_withholding_start_date.isoformat()
+                            ),
+                        },
+                    )
+                )
+                self.session.flush()
+                return {
+                    "status": "registered",
+                    "employee_id": str(existing.id),
+                    "tax_withholding_start_date_registered": True,
+                }
+            if existing.tax_withholding_start_date != request.tax_withholding_start_date:
                 return {"status": "rejected", "errors": ["EMPLOYEE_CODE_ALREADY_EXISTS"]}
             return {
                 "status": "registered",

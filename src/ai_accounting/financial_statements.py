@@ -201,6 +201,7 @@ _NONOPERATING_INCOME_ROLES = {"tax_relief_income", "fixed_asset_disposal_gain"}
 _NONOPERATING_EXPENSE_ROLES = {
     "fixed_asset_disposal_loss",
     "intangible_asset_retirement_loss",
+    "social_insurance_late_fee_expense",
 }
 _TAX_PAYABLE_ROLES = {
     "vat_payable",
@@ -1326,11 +1327,13 @@ class FinancialStatementService(FinanceService):
                     continue
                 event_type = row0.event.event_type
                 source_event_id = row0.event.id
+                source_event = row0.event
                 if event_type == "reversal" and row0.voucher.reversal_of_voucher_id is not None:
                     original = by_voucher.get(row0.voucher.reversal_of_voucher_id)
                     if original:
                         event_type = original[0].event.event_type
                         source_event_id = original[0].event.id
+                        source_event = original[0].event
                 if event_type in {"internal_transfer", "cash_bank_transfer"}:
                     continue
                 if event_type in {
@@ -1364,11 +1367,16 @@ class FinancialStatementService(FinanceService):
                     self._allocate_unified_payout_cash(
                         result, source_event_id, -cash_delta, missing
                     )
-                elif event_type in {
-                    "salary_payment",
-                    "social_insurance_payment",
-                    "housing_fund_payment",
-                }:
+                elif event_type == "social_insurance_payment":
+                    late_fee_fen = int(
+                        source_event.facts.get("derived", {}).get(
+                            "social_insurance_late_fee_fen", 0
+                        )
+                    )
+                    signed_late_fee_fen = late_fee_fen if cash_delta < 0 else -late_fee_fen
+                    result[4] += -cash_delta - signed_late_fee_fen
+                    result[6] += signed_late_fee_fen
+                elif event_type in {"salary_payment", "housing_fund_payment"}:
                     result[4] += -cash_delta
                 elif event_type in {
                     "tax_payment",

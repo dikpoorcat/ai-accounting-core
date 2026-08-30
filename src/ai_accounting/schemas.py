@@ -348,7 +348,11 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     EventType.SOCIAL_INSURANCE_PAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
-        "allocations": "required; social-insurance payables only; total must equal payment",
+        "allocations": (
+            "required; social-insurance payables only; total plus an explicitly evidenced "
+            "details.social_insurance_late_fee_fen must equal payment"
+        ),
+        "optional_details": ["social_insurance_late_fee_fen"],
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
@@ -601,6 +605,7 @@ class EventDetails(BaseModel):
     unallocated_treatment: Literal["advance"] | None = None
     recognition_source: Literal["contract_liability"] | None = None
     other_income_kind: Literal["retained_verification_payment"] | None = None
+    social_insurance_late_fee_fen: PositiveFen | None = None
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
@@ -1916,6 +1921,17 @@ class RecordEventRequest(BaseModel):
         ):
             raise ValueError(
                 "salary_actual_deduction_allocations are only accepted for salary payment"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def social_late_fee_is_social_payment_only(self) -> RecordEventRequest:
+        if (
+            self.details.social_insurance_late_fee_fen is not None
+            and self.event_type is not EventType.SOCIAL_INSURANCE_PAYMENT
+        ):
+            raise ValueError(
+                "social_insurance_late_fee_fen is only accepted for social insurance payment"
             )
         return self
 

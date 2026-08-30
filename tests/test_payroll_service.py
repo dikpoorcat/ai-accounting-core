@@ -23,7 +23,9 @@ from ai_accounting.financial_statement_schemas import (
 )
 from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.models import (
+    AuditLog,
     BankTransaction,
+    Employee,
     EmployeePayrollProfileVersion,
     Evidence,
     OpenItem,
@@ -44,6 +46,57 @@ from ai_accounting.schemas import (
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
+
+
+def test_register_employee_can_add_tax_withholding_start_date_once(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    initial = service.register_employee(
+        RegisterEmployeeRequest(
+            org_id=organization.id,
+            employee_code="E-TAX-START-LATER",
+            name="后补扣缴日期员工",
+            employment_start_date=date(2026, 7, 1),
+            tax_withholding_start_date=None,
+        )
+    )
+    employee_id = uuid.UUID(initial["employee_id"])
+
+    enriched_request = RegisterEmployeeRequest(
+        org_id=organization.id,
+        employee_code="E-TAX-START-LATER",
+        name="后补扣缴日期员工",
+        employment_start_date=date(2026, 7, 1),
+        tax_withholding_start_date=date(2026, 7, 1),
+    )
+    enriched = service.register_employee(enriched_request)
+    assert enriched == {
+        "status": "registered",
+        "employee_id": str(employee_id),
+        "tax_withholding_start_date_registered": True,
+    }
+    assert session.get(Employee, employee_id).tax_withholding_start_date == date(2026, 7, 1)
+    assert (
+        session.scalar(
+            select(AuditLog).where(
+                AuditLog.org_id == organization.id,
+                AuditLog.action == "payroll_employee_tax_withholding_start_registered",
+            )
+        )
+        is not None
+    )
+
+    replay = service.register_employee(enriched_request)
+    assert replay["idempotent_replay"] is True
+
+    conflicting = service.register_employee(
+        enriched_request.model_copy(update={"tax_withholding_start_date": date(2026, 8, 1)})
+    )
+    assert conflicting == {
+        "status": "rejected",
+        "errors": ["EMPLOYEE_CODE_ALREADY_EXISTS"],
+    }
 
 
 def payroll_parameters() -> dict[str, object]:
@@ -958,3 +1011,93 @@ def test_payroll_accrual_is_gross_salary_and_payment_events_are_category_bound(
     assert reversal_batch.calculation_hash != original_batch.calculation_hash
     assert reversal_batch.idempotency_key != original_batch.idempotency_key
     assert reversal_batch.version > original_batch.version
+
+
+def test_social_insurance_payment_can_separate_evidenced_late_fee(
+    session: Session, organization: Organization
+) -> None:
+    service, confirmed = preview_and_confirm(session, organization)
+    social_items = session.scalars(
+        select(OpenItem).where(
+            OpenItem.source_event_id == confirmed.event_id,
+            OpenItem.payable_category == "employer_social",
+        )
+    ).all()
+    assert sum(item.original_amount_fen for item in social_items) == 160_000
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256=uuid.uuid5(organization.id, "social-late-fee-evidence").hex * 2,
+        original_name="social-late-fee.txt",
+        media_type="text/plain",
+        source="test",
+        size_bytes=1,
+        storage_path=f"tests/{organization.id}/social-late-fee.txt",
+        metadata_json={},
+    )
+    session.add(evidence)
+    session.flush()
+    bank = add_bank_row(session, organization, -160_500, "social-with-late-fee")
+    common = {
+        "org_id": organization.id,
+        "event_type": "social_insurance_payment",
+        "business_dates": {
+            "business_date": "2026-03-05",
+            "payment_date": "2026-03-05",
+            "posting_date": "2026-03-05",
+        },
+        "amounts": {"amount_fen": 160_500},
+        "bank_account_code": "1002",
+        "bank_transaction_references": [{"id": bank.id}],
+        "allocations": [
+            {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
+            for item in social_items
+        ],
+        "details": {"social_insurance_late_fee_fen": 500},
+        "description": "社保本金1600元及滞纳金5元合并扣款",
+    }
+    missing = service.record_event(
+        RecordEventRequest.model_validate(
+            common | {"idempotency_key": "social-late-fee-missing-evidence"}
+        )
+    )
+    assert missing.status == "needs_information"
+    assert missing.missing_information == ["evidence_references"]
+
+    payment = service.record_event(
+        RecordEventRequest.model_validate(
+            common
+            | {
+                "idempotency_key": "social-late-fee-payment",
+                "evidence_references": [evidence.id],
+            }
+        )
+    )
+    assert payment.status == "posted", payment.errors
+    assert payment.data["derived"] == {
+        "payable_categories": ["employer_social", "withheld_employee_social"],
+        "allocated_fen": 160_000,
+        "social_insurance_late_fee_fen": 500,
+    }
+    voucher = session.get(Voucher, payment.voucher_id)
+    assert voucher is not None
+    by_role = {
+        line.account.system_role: (line.debit_fen, line.credit_fen)
+        for line in voucher.lines
+    }
+    assert by_role["employer_social_payable"] == (160_000, 0)
+    assert by_role["social_insurance_late_fee_expense"] == (500, 0)
+    assert by_role["bank"] == (0, 160_500)
+    assert all(item.status == "settled" for item in social_items)
+    assert bank.matched_event_id == payment.event_id
+
+    with pytest.raises(
+        ValueError,
+        match="social_insurance_late_fee_fen is only accepted for social insurance payment",
+    ):
+        RecordEventRequest.model_validate(
+            common
+            | {
+                "idempotency_key": "housing-with-social-late-fee",
+                "event_type": "housing_fund_payment",
+            }
+        )

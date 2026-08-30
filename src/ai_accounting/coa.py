@@ -88,6 +88,13 @@ DEFAULT_ACCOUNTS = [
     ("1606", "固定资产清理", "asset", "debit", "fixed_asset_clearance"),
     ("630101", "营业外收入—固定资产处置", "revenue", "credit", "fixed_asset_disposal_gain"),
     ("571101", "营业外支出—固定资产处置", "expense", "debit", "fixed_asset_disposal_loss"),
+    (
+        "571103",
+        "营业外支出—社保滞纳金",
+        "expense",
+        "debit",
+        "social_insurance_late_fee_expense",
+    ),
     ("1701", "无形资产", "asset", "debit", "intangible_asset_cost"),
     ("1702", "累计摊销", "asset", "credit", "accumulated_amortization"),
     (
