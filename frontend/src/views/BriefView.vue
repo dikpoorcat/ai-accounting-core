@@ -12,6 +12,14 @@ import BriefWorkforceSection from "../components/brief/BriefWorkforceSection.vue
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
+type PriorityAction = "bank-details";
+type PriorityItem = {
+  title: string;
+  note: string;
+  state: "error" | "attention" | "neutral";
+  action?: PriorityAction;
+};
+
 const route = useRoute();
 const router = useRouter();
 const { context, load: loadContext } = useDashboardContext();
@@ -45,7 +53,7 @@ const sectionLinks = computed(() => {
 });
 const priorities = computed(() => {
   if (!data.value || !response.value?.selected_period) return [];
-  const items: Array<{ title: string; note: string; state: "error" | "attention" | "neutral" }> = [];
+  const items: PriorityItem[] = [];
   if (!data.value.validation.integrity_valid) {
     items.push({ title: "账务一致性异常", note: "请优先查看失败的校验项", state: "error" });
   }
@@ -54,6 +62,7 @@ const priorities = computed(() => {
       title: `${data.value.cash.unmatched_count} 笔流水待识别`,
       note: "尚不能当作已确认业务",
       state: "attention",
+      action: "bank-details",
     });
   }
   if (data.value.cash.pending_late_count) {
@@ -162,6 +171,15 @@ async function initialize() {
 
 function changePeriod(value: string) {
   void router.push({ query: { ...route.query, period: value } });
+}
+
+function runPriorityAction(action: PriorityAction) {
+  if (action !== "bank-details") return;
+  void router.push({
+    name: "funds",
+    query: { ...route.query, period: selectedPeriod.value || undefined },
+    hash: "#bank-details",
+  });
 }
 
 function focusSection(id: string) {
@@ -330,13 +348,20 @@ onBeforeUnmount(() => {
             </span>
           </header>
           <div v-if="priorities.length" class="priority-list">
-            <article v-for="item in priorities" :key="item.title" :class="item.state">
+            <component
+              :is="item.action ? 'button' : 'article'"
+              v-for="item in priorities"
+              :key="item.title"
+              :class="[item.state, { 'priority-action': item.action }]"
+              :type="item.action ? 'button' : undefined"
+              @click="item.action && runPriorityAction(item.action)"
+            >
               <span aria-hidden="true" />
               <div>
                 <strong>{{ item.title }}</strong>
                 <small>{{ item.note }}</small>
               </div>
-            </article>
+            </component>
           </div>
           <div v-else class="healthy-summary">
             <strong>{{ data.validation.title }}</strong>
@@ -657,32 +682,55 @@ onBeforeUnmount(() => {
   margin-top: 9px;
 }
 
-.priority-list article {
+.priority-list article,
+.priority-list .priority-action {
   display: grid;
   grid-template-columns: 6px minmax(0, 1fr);
   gap: 9px;
   align-items: center;
+  width: 100%;
   padding: 7px 9px;
+  border: 0;
   border-radius: 9px;
   background: var(--brief-soft);
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
-.priority-list article > span {
+.priority-list .priority-action {
+  cursor: pointer;
+}
+
+.priority-list .priority-action:hover {
+  background: color-mix(in srgb, var(--brief-soft) 72%, var(--brief-amber-soft));
+}
+
+.priority-list .priority-action:focus-visible {
+  outline: 2px solid var(--brief-amber);
+  outline-offset: 2px;
+}
+
+.priority-list article > span,
+.priority-list .priority-action > span {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--brief-muted);
 }
 
-.priority-list article.attention > span {
+.priority-list article.attention > span,
+.priority-list .priority-action.attention > span {
   background: var(--brief-amber);
 }
 
-.priority-list article.error > span {
+.priority-list article.error > span,
+.priority-list .priority-action.error > span {
   background: var(--brief-red);
 }
 
 .priority-list article > div,
+.priority-list .priority-action > div,
 .healthy-summary {
   display: grid;
 }

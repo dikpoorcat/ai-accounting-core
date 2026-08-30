@@ -89,6 +89,17 @@ function routePeriod(): string | null {
   return typeof route.query.period === "string" ? route.query.period : null;
 }
 
+async function revealBankDetails() {
+  if (route.hash !== "#bank-details" || !funds.value) return;
+  selectedDetailView.value = "bank";
+  await nextTick();
+  document.getElementById("bank-details")?.scrollIntoView({
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    block: "start",
+  });
+  document.getElementById("fund-detail-tab-bank")?.focus({ preventScroll: true });
+}
+
 async function loadFunds(periodKey: string) {
   activeRequest?.abort();
   const controller = new AbortController();
@@ -104,6 +115,7 @@ async function loadFunds(periodKey: string) {
     selectedPeriodLabel.value = response.selected_period?.label ?? "";
     selectedAccount.value = "";
     selectedBankAccount.value = "";
+    void revealBankDetails();
   } catch (error: unknown) {
     if (controller.signal.aborted) return;
     requestError.value = dashboardErrorMessage(error);
@@ -198,6 +210,12 @@ watch(
     selectedPeriodLabel.value = "";
     loading.value = false;
   },
+);
+
+watch(
+  () => route.hash,
+  () => void revealBankDetails(),
+  { immediate: true },
 );
 
 watch(
@@ -401,7 +419,7 @@ onBeforeUnmount(() => activeRequest?.abort());
           </ul>
         </section>
 
-        <section class="panel section-panel" aria-labelledby="fund-details-title">
+        <section id="bank-details" class="panel section-panel" aria-labelledby="fund-details-title">
           <div class="section-heading detail-heading">
             <div>
               <p class="eyebrow">账面与银行数据 · 分口径查看</p>
