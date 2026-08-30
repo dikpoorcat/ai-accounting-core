@@ -219,7 +219,7 @@ Set-Location ..
 
 1. `finance_generate_accounting_period` 从企业开始记账的任意过去月份起逐月连续生成；不能跳月，也不能生成 Asia/Shanghai 当前月之后的月份。
 2. `finance_preview_accounting_period_close` 只读重算本月凭证、账户发生额、固定资产折旧、无形资产摊销、借款计息、工资批次及人工复核计数，并返回 SHA-256 计算哈希；同时在 `data.assistant_review_checklist` 返回面向 AI 的建议清单，区分“系统已完成”“发现待处理”“必须由负责人确认”和“本期尚未到期”。其中 `management_commentary` 还提供版本化的只读证据上下文、写作要求和 `context_hash`。清单按企业申报周期触发：按季事项仅在 3、6、9、12 月检查，企业所得税汇算清缴与工商年报在每年 5 月集中提醒，按年事项在 12 月集中检查；未到期项目不得逐月重复询问。
-3. AI 完成材料核对和月末清单后，必须严格依据 `management_commentary.context`、`instruction` 和 `success_criteria` 生成月度经营解读：提炼经营阶段、环比变化、损益与现金差异、回款付款节奏及一至两个关键风险，不得逐项复述看板或猜测上下文不能证明的原因。负责人审阅完整月末清单和该解读并明确同意关账后，必须在本地窗口核对月份及当前预览哈希，并输入负责人密码复核。无需抄写确认短语；密码验证通过后签发一个与企业、月份及预览哈希绑定、30 分钟内且仅可使用一次的 `owner_approval_id`：
+3. AI 完成材料核对和月末清单后，必须严格依据 `management_commentary.context`、`instruction` 和 `success_criteria` 生成简短月度经营结论：用一至两个短句概括总体经营结果、最主要驱动和最多一个后续关注点，通常只在理解结论确有必要时引用关键金额；不得逐项复述看板、关账清单或猜测上下文不能证明的原因。负责人审阅完整月末清单和该结论并明确同意关账后，必须在本地窗口核对月份及当前预览哈希，并输入负责人密码复核。无需抄写确认短语；密码验证通过后签发一个与企业、月份及预览哈希绑定、30 分钟内且仅可使用一次的 `owner_approval_id`：
 
    ```powershell
    .\.venv\Scripts\python.exe -m ai_accounting.identity_cli approve-close-window --org-id $trialOrgId --period-id "预览返回的 period_id" --calculation-hash "预览返回的 calculation_hash" --login-name owner

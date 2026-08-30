@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v6"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v7"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -48,7 +48,7 @@ MCP_SERVER_INSTRUCTIONS = (
     f"{EVIDENCE_FIRST_RUNTIME_INSTRUCTION}"
     "关账预览返回 management_commentary 时，必须严格依据其中的 context、instruction "
     "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
-    "解读应形成综合判断，不得把看板指标简单拼接成结论。"
+    "解读应形成一至两个短句的简明综合判断，不得把看板指标或关账清单简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
     f"{CLOSE_APPROVAL_RUNTIME_INSTRUCTION}"
     f"{CLOSE_BACKUP_RUNTIME_INSTRUCTION}"
@@ -106,9 +106,10 @@ def agent_operating_protocol() -> dict[str, Any]:
                 "code": "generate_period_close_management_commentary",
                 "instruction": (
                     "每次关账必须使用预览提供的 management_commentary 上下文和版本化要求生成"
-                    "月度经营解读：提炼经营阶段、环比趋势、损益与现金差异、回款付款节奏和"
-                    "一至两个关键风险；不得复述看板、不得猜测 context 不能证明的原因，并将"
-                    "原文及 context_hash 一并提交给确认关账工具。"
+                    "简短月度经营结论：用一至两个短句概括总体经营结果、最主要驱动和最多一个"
+                    "后续关注点；只有理解结论确有必要时才引用关键金额，不得复述看板或关账"
+                    "清单，不得猜测 context 不能证明的原因，并将原文及 context_hash 一并提交"
+                    "给确认关账工具。"
                 ),
             },
             {

@@ -138,7 +138,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert EVIDENCE_FIRST_RUNTIME_INSTRUCTION in mcp.instructions
     assert "agent_operating_protocol" in mcp.instructions
     assert "management_commentary" in mcp.instructions
-    assert "不得把看板指标简单拼接" in mcp.instructions
+    assert "一至两个短句的简明综合判断" in mcp.instructions
+    assert "不得把看板指标或关账清单简单拼接" in mcp.instructions
     assert "finance_request_accounting_period_close_approval_window" in mcp.instructions
     assert "finance_get_accounting_period_close_approval" in mcp.instructions
     assert "AI 记账内核 - 关账密码确认" in mcp.instructions

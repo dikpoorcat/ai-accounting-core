@@ -404,11 +404,12 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
     commentary_prompt = checklist["management_commentary"]
     assert commentary_prompt["required_for_close"] is True
-    assert commentary_prompt["prompt_version"] == "period_close_management_commentary_v1"
+    assert commentary_prompt["prompt_version"] == "period_close_management_commentary_v2"
     assert len(commentary_prompt["context_hash"]) == 64
     assert commentary_prompt["context"]["current_period"]["period_month"] == "2026-03"
     assert "不要逐项复述看板数字" in commentary_prompt["instruction"]
-    assert any("损益与银行现金变动" in item for item in commentary_prompt["success_criteria"])
+    assert any("1 至 2 个短句" in item for item in commentary_prompt["success_criteria"])
+    assert any("最多点出一个" in item for item in commentary_prompt["success_criteria"])
     assert "不得用看板指标拼接文本代替分析" in checklist["ai_instruction"]
     assert missing.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
     assert missing.missing_information[0].fields[:2] == [
@@ -707,7 +708,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert close is not None
     assert commentary.close_id == close.id
     assert commentary.commentary == "本月尚无经营活动，现有事实不足以评价经营表现。"
-    assert commentary.prompt_version == "period_close_management_commentary_v1"
+    assert commentary.prompt_version == "period_close_management_commentary_v2"
     assert commentary.generation_method == "close_ai_agent"
     assert commentary.context_hash == close_request.management_commentary_context_hash
     assert closed.data["management_commentary"] == commentary.commentary
