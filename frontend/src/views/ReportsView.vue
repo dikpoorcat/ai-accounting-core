@@ -36,6 +36,18 @@ type BalanceTemplateCell =
   | { kind: "row"; row: ReportStatementRow }
   | { kind: "blank" };
 
+type PeriodReference = {
+  readonly key: string;
+  readonly year: number;
+  readonly month: number;
+};
+
+type QuarterReference = {
+  readonly key: string;
+  readonly year: number;
+  readonly quarter: number;
+};
+
 const statementTemplateMeta: Record<string, StatementTemplateMeta> = {
   balance_sheet: {
     title: "资产负债表（适用执行小企业会计准则的企业）",
@@ -208,6 +220,31 @@ function routeQuarter(): string | null {
     : null;
 }
 
+function quarterKeyForPeriod(period: PeriodReference) {
+  return `${period.year}-Q${Math.ceil(period.month / 3)}`;
+}
+
+function latestPeriodForQuarter(
+  currentContext: {
+    readonly periods: readonly PeriodReference[];
+    readonly quarters: readonly QuarterReference[];
+  },
+  quarterKey: string,
+) {
+  const quarter = currentContext.quarters.find((item) => item.key === quarterKey);
+  if (!quarter) return null;
+  return currentContext.periods.reduce<PeriodReference | null>((latest, period) => {
+    if (
+      period.year !== quarter.year ||
+      Math.ceil(period.month / 3) !== quarter.quarter ||
+      (latest !== null && period.month <= latest.month)
+    ) {
+      return latest;
+    }
+    return period;
+  }, null);
+}
+
 async function synchronizeQuarter(force = false) {
   try {
     const currentContext = await loadContext();
@@ -220,16 +257,24 @@ async function synchronizeQuarter(force = false) {
       errorMessage.value = "";
       return;
     }
-    const requested = routeQuarter();
-    const target = currentContext.quarters.some((item) => item.key === requested)
-      ? (requested as string)
-      : (currentContext.default_quarter ?? currentContext.quarters.at(-1)?.key ?? "");
-    const legacyQuarter = !route.query.quarter && requested === route.query.period;
-    if (requested !== target || legacyQuarter) {
+    const selectedPeriod = currentContext.periods.find((item) => item.key === route.query.period);
+    const periodQuarter = selectedPeriod ? quarterKeyForPeriod(selectedPeriod) : null;
+    const requestedQuarter = routeQuarter();
+    const target = periodQuarter && currentContext.quarters.some((item) => item.key === periodQuarter)
+      ? periodQuarter
+      : currentContext.quarters.some((item) => item.key === requestedQuarter)
+        ? (requestedQuarter as string)
+        : (currentContext.default_quarter ?? currentContext.quarters.at(-1)?.key ?? "");
+    const targetPeriod =
+      selectedPeriod?.key ??
+      latestPeriodForQuarter(currentContext, target)?.key ??
+      currentContext.default_period ??
+      undefined;
+    if (route.query.quarter !== target || route.query.period !== targetPeriod) {
       await router.replace({
         query: {
           ...route.query,
-          period: legacyQuarter ? (currentContext.default_period ?? undefined) : route.query.period,
+          period: targetPeriod,
           quarter: target,
         },
       });
@@ -284,8 +329,12 @@ async function preview(quarterKey: string) {
 }
 
 function changeQuarter(value: string) {
-  if (!value || value === routeQuarter()) return;
-  void router.push({ query: { ...route.query, quarter: value } });
+  if (!value) return;
+  const latestPeriod = context.value ? latestPeriodForQuarter(context.value, value) : null;
+  if (value === routeQuarter() && latestPeriod?.key === route.query.period) return;
+  void router.push({
+    query: { ...route.query, period: latestPeriod?.key ?? route.query.period, quarter: value },
+  });
 }
 
 async function refresh() {
@@ -434,7 +483,7 @@ watch(
   },
 );
 watch(
-  () => [context.value?.current_company.org_id, route.query.quarter] as const,
+  () => [context.value?.current_company.org_id, route.query.period, route.query.quarter] as const,
   ([orgId], [previousOrgId]) => {
     if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId);
   },
