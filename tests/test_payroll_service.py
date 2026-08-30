@@ -19,6 +19,7 @@ from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
+    ConfirmFinancialStatementOpeningBalanceRequest,
     EnterpriseIncomeTaxTreatment,
 )
 from ai_accounting.financial_statements import FinancialStatementService
@@ -282,6 +283,17 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
         "bank_reconciliation_scope_confirmed_at",
         configured_at,
     )
+    opening = FinancialStatementService(session).confirm_opening_balance(
+        ConfirmFinancialStatementOpeningBalanceRequest(
+            org_id=organization.id,
+            establishment_date=date(2026, 9, 1),
+            treatment="zero_on_establishment",
+            idempotency_key="payroll-period-opening-balance",
+            confirmation_note="测试企业于九月新设，成立时点期初余额为零。",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert opening.status == "posted"
     income_tax = FinancialStatementService(session).confirm_enterprise_income_tax(
         ConfirmEnterpriseIncomeTaxQuarterRequest(
             org_id=organization.id,

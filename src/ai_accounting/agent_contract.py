@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v8"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v9"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -53,6 +53,14 @@ HISTORICAL_TEST_BATCH_CLOSE_RUNTIME_INSTRUCTION = (
     "已有数字。普通正式库和普通关账仍必须使用密码复核及自动备份，不得调用该专用入口。"
 )
 
+FINANCIAL_STATEMENT_CLOSE_RUNTIME_INSTRUCTION = (
+    "关账预览会把财务报表可生成性作为硬性前置条件：每月必须补齐本月需要的报表明细分类；"
+    "新设企业首个不完整年度必须依据成立证据调用 "
+    "finance_confirm_financial_statement_opening_balance 明确确认成立时点零期初，存量企业"
+    "迁移不得冒用零期初；季度末还会使用与报表导出相同的累计计算做预检，只排除本次关账"
+    "自行满足的当前月关闭状态和快照。存在阻断时必须先补事实再关账，不得先关账后修补报表。"
+)
+
 MCP_SERVER_INSTRUCTIONS = (
     "这是确定性记账内核，不是自由分录接口。调用企业数据工具前先调用 "
     "finance_get_event_schema，并遵守其 agent_operating_protocol。"
@@ -61,6 +69,7 @@ MCP_SERVER_INSTRUCTIONS = (
     "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
     "解读应形成一至两个短句的简明综合判断，不得把看板指标或关账清单简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
+    f"{FINANCIAL_STATEMENT_CLOSE_RUNTIME_INSTRUCTION}"
     f"{HISTORICAL_TEST_BATCH_CLOSE_RUNTIME_INSTRUCTION}"
     f"{CLOSE_APPROVAL_RUNTIME_INSTRUCTION}"
     f"{CLOSE_BACKUP_RUNTIME_INSTRUCTION}"
@@ -123,6 +132,10 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "清单，不得猜测 context 不能证明的原因，并将原文及 context_hash 一并提交"
                     "给确认关账工具。"
                 ),
+            },
+            {
+                "code": "satisfy_financial_statement_close_gate",
+                "instruction": FINANCIAL_STATEMENT_CLOSE_RUNTIME_INSTRUCTION,
             },
             {
                 "code": "batch_historical_test_close_only_when_explicit",

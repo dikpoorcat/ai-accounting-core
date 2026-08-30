@@ -6,6 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from threading import Barrier
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -28,6 +29,10 @@ from ai_accounting.accounting_periods import (
     canonical_sha256,
 )
 from ai_accounting.coa import seed_organization
+from ai_accounting.financial_statement_schemas import (
+    ConfirmFinancialStatementOpeningBalanceRequest,
+)
+from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.models import (
     AccountingPeriod,
     AccountingPeriodClose,
@@ -74,6 +79,30 @@ def _approve_close(
     session.add(approval)
     session.flush()
     return approval.id
+
+
+def _confirm_partial_year_zero_opening(
+    session: Session,
+    authority: Any,
+    *,
+    org_id: uuid.UUID,
+    evidence_id: uuid.UUID,
+) -> None:
+    with authority.attributed_call(
+        session,
+        tool_name="finance_confirm_financial_statement_opening_balance",
+    ):
+        result = FinancialStatementService(session).confirm_opening_balance(
+            ConfirmFinancialStatementOpeningBalanceRequest(
+                org_id=org_id,
+                establishment_date=date(2026, 7, 1),
+                treatment="zero_on_establishment",
+                idempotency_key=f"postgres-partial-opening-{org_id}",
+                confirmation_note="测试企业于七月新设，成立时点期初余额为零。",
+                evidence_references=[evidence_id],
+            )
+        )
+    assert result.status == "posted", result.errors
 
 
 def _sale(
@@ -400,6 +429,12 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                     organization,
                     evidence_id=evidence_id,
                 )
+                _confirm_partial_year_zero_opening(
+                    session,
+                    authority,
+                    org_id=org_id,
+                    evidence_id=evidence_id,
+                )
                 period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
                 preview_request = PreviewAccountingPeriodCloseRequest(
                     org_id=org_id,
@@ -669,6 +704,12 @@ def test_postgres_close_vs_close_is_linearized(
                     evidence_id=evidence_id,
                     executor_name="postgres-close-linearization",
                 )
+                _confirm_partial_year_zero_opening(
+                    session,
+                    authority,
+                    org_id=org_id,
+                    evidence_id=evidence_id,
+                )
                 session.commit()
             with Session(engine) as session:
                 preview = AccountingPeriodService(
@@ -786,6 +827,12 @@ def test_postgres_close_vs_post_is_linearized(
                     organization,
                     evidence_id=evidence_id,
                     executor_name="postgres-close-post-linearization",
+                )
+                _confirm_partial_year_zero_opening(
+                    session,
+                    authority,
+                    org_id=org_id,
+                    evidence_id=evidence_id,
                 )
                 session.commit()
             preview_request = PreviewAccountingPeriodCloseRequest(
@@ -1260,6 +1307,12 @@ def test_postgres_owner_close_vs_raw_payroll_is_linearized(
                     organization,
                     evidence_id=evidence_id,
                     executor_name="postgres-close-payroll-linearization",
+                )
+                _confirm_partial_year_zero_opening(
+                    session,
+                    authority,
+                    org_id=org_id,
+                    evidence_id=evidence_id,
                 )
                 session.commit()
             request = PreviewAccountingPeriodCloseRequest(

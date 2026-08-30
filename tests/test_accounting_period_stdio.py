@@ -24,6 +24,10 @@ from ai_accounting.accounting_period_schemas import (
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_engine, make_session_factory
+from ai_accounting.financial_statement_schemas import (
+    ConfirmFinancialStatementOpeningBalanceRequest,
+)
+from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.models import (
     AccountingPeriod,
     AccountingPeriodClose,
@@ -262,6 +266,19 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                 }
                 generated = await _call(client, "finance_generate_accounting_period", generation)
                 assert generated["status"] == "posted", generated
+                opening = await _call(
+                    client,
+                    "finance_confirm_financial_statement_opening_balance",
+                    {
+                        "org_id": org_id,
+                        "establishment_date": "2026-07-01",
+                        "treatment": "zero_on_establishment",
+                        "idempotency_key": "stdio-period-opening-july",
+                        "confirmation_note": "测试企业于七月新设，成立时点期初余额为零。",
+                        "evidence_references": [evidence_id],
+                    },
+                )
+                assert opening["status"] == "posted", opening
                 replay = await _call(client, "finance_generate_accounting_period", generation)
                 assert replay["period_id"] == generated["period_id"]
                 assert replay["data"]["idempotent_replay"] is True
@@ -588,6 +605,19 @@ def test_zero_voucher_month_closes_through_real_stdio(
                     },
                 )
                 assert generated["status"] == "posted", generated
+                opening = await _call(
+                    client,
+                    "finance_confirm_financial_statement_opening_balance",
+                    {
+                        "org_id": org_id,
+                        "establishment_date": "2026-06-01",
+                        "treatment": "zero_on_establishment",
+                        "idempotency_key": "stdio-zero-opening-june",
+                        "confirmation_note": "测试企业于六月新设，成立时点期初余额为零。",
+                        "evidence_references": [evidence_id],
+                    },
+                )
+                assert opening["status"] == "posted", opening
                 income_tax = await _call(
                     client,
                     "finance_confirm_enterprise_income_tax_quarter",
@@ -809,6 +839,17 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
             "bank_reconciliation_scope_confirmed_at",
             configured_at,
         )
+        opening = FinancialStatementService(database_session).confirm_opening_balance(
+            ConfirmFinancialStatementOpeningBalanceRequest(
+                org_id=closed_org.id,
+                establishment_date=date(2026, 7, 1),
+                treatment="zero_on_establishment",
+                idempotency_key="payroll-stdio-opening-july",
+                confirmation_note="测试企业于七月新设，成立时点期初余额为零。",
+                evidence_references=[evidence.id],
+            )
+        )
+        assert opening.status == "posted"
         close_facts = PreviewAccountingPeriodCloseRequest(
             org_id=closed_org.id,
             period_id=generated.period_id,

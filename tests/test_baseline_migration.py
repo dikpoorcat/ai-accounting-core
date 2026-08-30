@@ -19,8 +19,12 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0006_payment_platform_transfer"]
+    assert scripts.get_heads() == ["0010_fs_close_profile"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0010_fs_close_profile",
+        "0009_fs_close_readiness",
+        "0008_fs_opening_unique_org",
+        "0007_fs_opening_balance",
         "0006_payment_platform_transfer",
         "0005_social_insurance_late_fee",
         "0004_payroll_wage_tax_difference",
@@ -50,13 +54,14 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
             "payroll_contribution_actual_sets",
             "payroll_first_wage_tax_treatments",
             "financial_statement_classifications",
+            "financial_statement_opening_balance_confirmations",
             "enterprise_income_tax_quarter_confirmations",
             "accounting_period_close_commentaries",
         } <= tables
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0006_payment_platform_transfer"
+                == "0010_fs_close_profile"
             )
             organization_columns = {
                 column["name"] for column in inspect(connection).get_columns("organizations")
@@ -145,7 +150,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0006_payment_platform_transfer"
+                == "0010_fs_close_profile"
             )
     finally:
         engine.dispose()

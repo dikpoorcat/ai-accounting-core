@@ -59,7 +59,9 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
         url = postgres.get_connection_url(driver="psycopg")
         monkeypatch.setenv("FINANCE_ENVIRONMENT", "development")
         monkeypatch.setenv("DATABASE_URL", url)
-        command.upgrade(Config("alembic.ini"), "head")
+        migration_config = Config("alembic.ini")
+        migration_config.attributes["database_url_override"] = url
+        command.upgrade(migration_config, "head")
 
         from sqlalchemy import create_engine
 

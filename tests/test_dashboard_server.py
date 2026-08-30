@@ -109,6 +109,23 @@ def test_quarterly_report_view_exposes_ready_summary_and_chinese_checks() -> Non
     assert next(row for row in balance["rows"] if row["line"] == 30)["is_total"] is True
 
 
+def test_quarterly_report_view_describes_new_company_partial_first_year() -> None:
+    view = build_quarterly_report_view(
+        _calculated_result(),
+        year=2022,
+        quarter=3,
+        periods=[
+            SimpleNamespace(calendar_month=8),
+            SimpleNamespace(calendar_month=9),
+        ],
+    )
+
+    period_readiness = next(item for item in view["readiness"] if item["key"] == "period")
+    assert period_readiness["summary"] == (
+        "2022 年 8 月至第 3 季度末所需的 2 个月均已关账并保留快照"
+    )
+
+
 def test_quarterly_report_view_groups_actionable_blockers() -> None:
     open_february = AccountingPeriod(
         org_id=uuid.uuid4(),

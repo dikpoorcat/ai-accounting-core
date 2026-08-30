@@ -68,6 +68,7 @@ from .execution_attribution import persist_execution_attribution
 from .financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
     ConfirmFinancialStatementClassificationRequest,
+    ConfirmFinancialStatementOpeningBalanceRequest,
     GetFinancialStatementRequirementsRequest,
     PreviewQuarterlyFinancialStatementsRequest,
 )
@@ -2141,6 +2142,22 @@ def finance_get_financial_statement_requirements(
             return (
                 _financial_statement_service(session)
                 .get_requirements(request)
+                .model_dump(mode="json")
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_financial_statement_opening_balance(
+    request: ConfirmFinancialStatementOpeningBalanceRequest,
+) -> dict[str, Any]:
+    """确认新设企业首个不完整年度期初余额为零；必须提供成立事实证据。"""
+    try:
+        with SessionLocal.begin() as session:
+            return (
+                _financial_statement_service(session)
+                .confirm_opening_balance(request)
                 .model_dump(mode="json")
             )
     except (ValidationError, ValueError, SQLAlchemyError) as exc:

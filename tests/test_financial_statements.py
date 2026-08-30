@@ -17,6 +17,7 @@ from ai_accounting.coa import seed_organization
 from ai_accounting.financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
     ConfirmFinancialStatementClassificationRequest,
+    ConfirmFinancialStatementOpeningBalanceRequest,
     EnterpriseIncomeTaxTreatment,
     FinancialStatementResultStatus,
     PreviewQuarterlyFinancialStatementsRequest,
@@ -156,6 +157,52 @@ def _close_quarter(
         period.close_id = close.id
         previous_hash = calculation_hash
     session.flush()
+
+
+def _open_partial_year_quarter(
+    session: Session, organization: Organization
+) -> list[AccountingPeriod]:
+    organization.accounting_period_control_enabled = True
+    organization.accounting_period_control_start_date = date(2026, 8, 1)
+    calendar = AccountingPeriodCalendar(
+        org_id=organization.id,
+        calendar_year=2026,
+        rule_version="test",
+        rule_effective_from=date(2026, 1, 1),
+        source_urls=["https://example.test/calendar"],
+    )
+    session.add(calendar)
+    session.flush()
+    periods: list[AccountingPeriod] = []
+    for month, last_day in ((8, 31), (9, 30)):
+        action = AccountingPeriodAction(
+            org_id=organization.id,
+            action_type="period_generation",
+            idempotency_key=f"generate-partial-2026-{month:02d}",
+            request_payload_hash=hashlib.sha256(f"partial-{month}".encode()).hexdigest(),
+            status="posted",
+            input_facts={"month": month},
+            missing_information=[],
+            errors=[],
+            confirmed_by="test",
+            confirmation_note="测试生成新设企业首年期间",
+        )
+        session.add(action)
+        session.flush()
+        period = AccountingPeriod(
+            org_id=organization.id,
+            calendar_id=calendar.id,
+            generation_action_id=action.id,
+            calendar_year=2026,
+            calendar_month=month,
+            start_date=date(2026, month, 1),
+            end_date=date(2026, month, last_day),
+            status="open",
+        )
+        session.add(period)
+        session.flush()
+        periods.append(period)
+    return periods
 
 
 def _post(
@@ -308,6 +355,62 @@ def test_requirements_block_unclassified_expense_and_missing_income_tax(
     assert "ENTERPRISE_INCOME_TAX_QUARTER_CONFIRMATION_REQUIRED" in codes
 
 
+def test_new_company_partial_first_year_uses_explicit_zero_opening_confirmation(
+    session: Session, organization: Organization
+) -> None:
+    periods = _open_partial_year_quarter(session, organization)
+    _close_quarter(session, organization, periods)
+    evidence = _evidence(session, organization, "business-license.txt")
+    service = FinancialStatementService(session)
+    report_request = PreviewQuarterlyFinancialStatementsRequest(
+        org_id=organization.id,
+        year=2026,
+        quarter=3,
+    )
+
+    before = service.preview_quarterly(report_request)
+    before_codes = {item.code for item in before.missing_information}
+    assert "FINANCIAL_STATEMENT_OPENING_BALANCE_UNAVAILABLE" in before_codes
+    assert "FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED" in before_codes
+
+    opening_request = ConfirmFinancialStatementOpeningBalanceRequest(
+        org_id=organization.id,
+        establishment_date=date(2026, 8, 31),
+        treatment="zero_on_establishment",
+        idempotency_key="opening-zero-on-establishment",
+        confirmation_note="依据营业执照确认公司于2026年8月成立，成立时点期初余额为零。",
+        evidence_references=[evidence.id],
+    )
+    opening = service.confirm_opening_balance(opening_request)
+    replay = service.confirm_opening_balance(opening_request)
+    assert opening.status is FinancialStatementResultStatus.POSTED
+    assert replay.opening_balance_confirmation_id == opening.opening_balance_confirmation_id
+    assert replay.data["idempotent_replay"] is True
+
+    income_tax = service.confirm_enterprise_income_tax(
+        ConfirmEnterpriseIncomeTaxQuarterRequest(
+            org_id=organization.id,
+            year=2026,
+            quarter=3,
+            treatment=EnterpriseIncomeTaxTreatment.ZERO,
+            amount_fen=0,
+            idempotency_key="partial-year-q3-income-tax-zero",
+            confirmation_note="明确确认成立后首个季度所得税费用为零。",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert income_tax.status is FinancialStatementResultStatus.POSTED
+
+    result = service.preview_quarterly(report_request)
+
+    assert result.status is FinancialStatementResultStatus.CALCULATED
+    assert result.data["opening_balance_confirmation_id"] == str(
+        opening.opening_balance_confirmation_id
+    )
+    assert len(result.data["source_close_hashes"]) == 2
+    assert len(result.data["enterprise_income_tax_confirmation_ids"]) == 1
+
+
 def test_quarter_end_close_requires_income_tax_confirmation(
     session: Session, organization: Organization
 ) -> None:
@@ -324,6 +427,126 @@ def test_quarter_end_close_requires_income_tax_confirmation(
     )
 
     assert "ACCOUNTING_PERIOD_ENTERPRISE_INCOME_TAX_CONFIRMED" in result.data["blocker_codes"]
+
+
+def test_month_close_blocks_unclassified_financial_statement_expense(
+    session: Session, organization: Organization
+) -> None:
+    periods = _open_quarter(session, organization)
+    _post(
+        session,
+        organization,
+        key="january-unclassified-expense",
+        event_type="expense_cash",
+        posting_date=date(2026, 1, 5),
+        entries=[
+            Entry(account_role="general_expense", debit_fen=1_000),
+            Entry(account_role="bank", credit_fen=1_000),
+        ],
+    )
+
+    result = AccountingPeriodService(
+        session, current_date=date.max
+    ).preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=periods[0].id,
+            closing_date=periods[0].end_date,
+        )
+    )
+
+    assert (
+        "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_CLASSIFICATION_REQUIRED"
+        in result.data["blocker_codes"]
+    )
+    readiness = result.data["assistant_review_checklist"][
+        "financial_statement_readiness"
+    ]
+    assert readiness["completed"] is False
+    assert readiness["requirement_count"] == 1
+    assert readiness["requirements"][0]["data"]["amount_fen"] == 1_000
+
+
+def test_partial_first_year_opening_fact_is_required_before_first_close(
+    session: Session, organization: Organization
+) -> None:
+    periods = _open_partial_year_quarter(session, organization)
+    service = AccountingPeriodService(session, current_date=date.max)
+    preview_request = PreviewAccountingPeriodCloseRequest(
+        org_id=organization.id,
+        period_id=periods[0].id,
+        closing_date=periods[0].end_date,
+    )
+
+    before = service.preview_accounting_period_close(preview_request)
+    assert (
+        "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_OPENING_BALANCE_UNAVAILABLE"
+        in before.data["blocker_codes"]
+    )
+
+    evidence = _evidence(session, organization, "partial-close-license.txt")
+    opening = FinancialStatementService(session).confirm_opening_balance(
+        ConfirmFinancialStatementOpeningBalanceRequest(
+            org_id=organization.id,
+            establishment_date=date(2026, 8, 31),
+            treatment="zero_on_establishment",
+            idempotency_key="partial-close-opening",
+            confirmation_note="依据营业执照确认八月新设且成立时点期初为零。",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert opening.status is FinancialStatementResultStatus.POSTED
+
+    after = service.preview_accounting_period_close(preview_request)
+    assert (
+        "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_OPENING_BALANCE_UNAVAILABLE"
+        not in after.data["blocker_codes"]
+    )
+    assert after.data["assistant_review_checklist"][
+        "financial_statement_readiness"
+    ]["completed"] is True
+
+
+def test_quarter_end_close_rechecks_prior_closed_month_report_requirements(
+    session: Session, organization: Organization
+) -> None:
+    periods = _open_quarter(session, organization)
+    _post(
+        session,
+        organization,
+        key="legacy-january-unclassified-expense",
+        event_type="expense_cash",
+        posting_date=date(2026, 1, 5),
+        entries=[
+            Entry(account_role="general_expense", debit_fen=1_000),
+            Entry(account_role="bank", credit_fen=1_000),
+        ],
+    )
+    # Simulate periods closed by an older checker that did not yet enforce
+    # financial-statement classification readiness.
+    _close_quarter(session, organization, periods[:2])
+
+    result = AccountingPeriodService(
+        session, current_date=date.max
+    ).preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=periods[2].id,
+            closing_date=periods[2].end_date,
+        )
+    )
+
+    assert (
+        "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_CLASSIFICATION_REQUIRED"
+        in result.data["blocker_codes"]
+    )
+    assert "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED" not in result.data[
+        "blocker_codes"
+    ]
+    assert (
+        "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_CLOSE_SNAPSHOT_MISSING"
+        not in result.data["blocker_codes"]
+    )
 
 
 def test_quarterly_statements_are_deterministic_and_balanced(

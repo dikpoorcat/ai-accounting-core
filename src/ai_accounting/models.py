@@ -4879,6 +4879,69 @@ class FinancialStatementClassification(Base):
     )
 
 
+class FinancialStatementOpeningBalanceConfirmation(Base):
+    """Immutable zero-opening fact for a company's first, partial reporting year."""
+
+    __tablename__ = "financial_statement_opening_balance_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    establishment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    treatment: Mapped[str] = mapped_column(String(40), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_references: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_fs_opening_confirmation_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_fs_opening_confirmation_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "org_id", "id", name="uq_fs_opening_confirmation_org_id"
+        ),
+        UniqueConstraint(
+            "org_id",
+            name="uq_fs_opening_confirmation_org",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "idempotency_key",
+            name="uq_fs_opening_confirmation_idempotency",
+        ),
+        CheckConstraint(
+            "treatment = 'zero_on_establishment'",
+            name="ck_fs_opening_confirmation_treatment",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) BETWEEN 1 AND 200 "
+            "AND length(request_payload_hash) = 64",
+            name="ck_fs_opening_confirmation_request",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_fs_opening_confirmation_note",
+        ),
+        CheckConstraint(
+            "request_payload_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_fs_opening_confirmation_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+    )
+
+
 class EnterpriseIncomeTaxQuarterConfirmation(Base):
     """Immutable accountant-approved enterprise-income-tax fact for one quarter."""
 
@@ -6143,6 +6206,7 @@ _ATTRIBUTED_ROOT_TYPES = (
     EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
     FinancialStatementClassification,
+    FinancialStatementOpeningBalanceConfirmation,
     LaborExternalDeclarationConfirmation,
     LaborRemunerationBatch,
     LaborServicePerson,
@@ -6228,6 +6292,7 @@ def _enforce_financial_statement_facts_append_only(
 ) -> None:
     fact_types = (
         FinancialStatementClassification,
+        FinancialStatementOpeningBalanceConfirmation,
         EnterpriseIncomeTaxQuarterConfirmation,
     )
     if any(isinstance(item, fact_types) for item in session.deleted):

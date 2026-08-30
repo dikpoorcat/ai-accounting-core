@@ -30,6 +30,10 @@ from ai_accounting.bank_statement_service import BankStatementService
 from ai_accounting.coa import seed_organization
 from ai_accounting.config import Settings
 from ai_accounting.execution_attribution import persist_execution_attribution
+from ai_accounting.financial_statement_schemas import (
+    ConfirmFinancialStatementOpeningBalanceRequest,
+)
+from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.identity import ExecutorIdentity, ExecutorKind
 from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
 from ai_accounting.identity_service import IdentityService
@@ -542,6 +546,17 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
     )
     assert generated_july.status == "posted"
     assert organization.accounting_period_control_start_date == date(2026, 7, 1)
+    opening = FinancialStatementService(session).confirm_opening_balance(
+        ConfirmFinancialStatementOpeningBalanceRequest(
+            org_id=organization.id,
+            establishment_date=date(2026, 7, 1),
+            treatment="zero_on_establishment",
+            idempotency_key="nonzero-period-opening-balance",
+            confirmation_note="测试企业于七月新设，成立时点期初余额为零。",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert opening.status == "posted"
 
     before_control_start = finance_service.record_event(
         _cash_sale_at(

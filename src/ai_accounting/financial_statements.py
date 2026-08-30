@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from .financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
     ConfirmFinancialStatementClassificationRequest,
+    ConfirmFinancialStatementOpeningBalanceRequest,
     EnterpriseIncomeTaxTreatment,
     FinancialStatementDetailCode,
     FinancialStatementInformationRequirement,
@@ -40,6 +41,7 @@ from .models import (
     EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
     FinancialStatementClassification,
+    FinancialStatementOpeningBalanceConfirmation,
     OpenItem,
     Organization,
     Settlement,
@@ -364,6 +366,119 @@ def _requirement(
 class FinancialStatementService(FinanceService):
     """Calculate reports from immutable ledger facts and confirm bounded supporting facts."""
 
+    def period_close_requirements(
+        self,
+        org_id: uuid.UUID,
+        period: AccountingPeriod,
+    ) -> list[FinancialStatementInformationRequirement]:
+        """Return report facts that must be complete before this month may close.
+
+        Non-quarter months validate the facts introduced by that month plus the
+        first-year opening basis.  Quarter-end months run the same cumulative
+        statement calculation used by export and ignore only the two conditions
+        that the close being previewed will itself satisfy.
+        """
+
+        organization = self.session.get(Organization, org_id)
+        if organization is None:
+            return [
+                _requirement(
+                    "FINANCIAL_STATEMENT_CLOSE_PREFLIGHT_REJECTED",
+                    "季度财务报表关账前预检未能执行。",
+                    data={"errors": ["ORGANIZATION_NOT_FOUND"]},
+                )
+            ]
+        profile = profile_as_of(self.session, org_id=org_id, as_of=period.end_date)
+        if profile.accounting_standard != "small_enterprise" or profile.filing_cycle != "quarterly":
+            return []
+
+        year_start = date(period.calendar_year, 1, 1)
+        (
+            _opening_confirmation,
+            report_period_start,
+            _income_tax_start_quarter,
+            opening_missing,
+        ) = self._opening_balance_state(
+            org_id,
+            organization.accounting_period_control_start_date,
+            year_start,
+            period.end_date,
+        )
+        rows = self._ledger_rows(org_id, period.end_date)
+        _classifications, current_month_missing = self._classification_state(
+            org_id,
+            rows,
+            period.start_date,
+            period.end_date,
+        )
+        if opening_missing or period.calendar_month not in {3, 6, 9, 12}:
+            return self._deduplicate_requirements(
+                [*opening_missing, *current_month_missing]
+            )
+
+        quarter = (period.calendar_month - 1) // 3 + 1
+        preview = self.preview_quarterly(
+            PreviewQuarterlyFinancialStatementsRequest(
+                org_id=org_id,
+                year=period.calendar_year,
+                quarter=quarter,
+            )
+        )
+        if preview.status is FinancialStatementResultStatus.REJECTED:
+            return [
+                _requirement(
+                    "FINANCIAL_STATEMENT_CLOSE_PREFLIGHT_REJECTED",
+                    "季度财务报表关账前预检未能执行。",
+                    data={"errors": preview.errors},
+                )
+            ]
+
+        transient_codes: set[str] = set()
+        expected_months = period.end_date.month - report_period_start.month + 1
+        report_periods = list(
+            self.session.scalars(
+                select(AccountingPeriod)
+                .where(
+                    AccountingPeriod.org_id == org_id,
+                    AccountingPeriod.start_date >= report_period_start,
+                    AccountingPeriod.end_date <= period.end_date,
+                )
+                .order_by(AccountingPeriod.start_date, AccountingPeriod.id)
+            )
+        )
+        if (
+            len(report_periods) == expected_months
+            and all(
+                (
+                    item.id == period.id
+                    and item.status == "open"
+                    and item.close_id is None
+                )
+                or (
+                    item.id != period.id
+                    and item.status == "closed"
+                    and item.close_id is not None
+                )
+                for item in report_periods
+            )
+        ):
+            transient_codes.update(
+                {
+                    "FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED",
+                    "FINANCIAL_STATEMENT_CLOSE_SNAPSHOT_MISSING",
+                }
+            )
+        # The accounting-period service owns this independent quarter-end
+        # blocker and validates the same confirmation in the close transaction.
+        transient_codes.add("ENTERPRISE_INCOME_TAX_QUARTER_CONFIRMATION_REQUIRED")
+        return self._deduplicate_requirements(
+            [
+                item
+                for item in preview.missing_information
+                if item.code not in transient_codes
+            ]
+        )
+
     def preview_quarterly(
         self, request: PreviewQuarterlyFinancialStatementsRequest
     ) -> FinancialStatementResult:
@@ -390,27 +505,30 @@ class FinancialStatementService(FinanceService):
                 errors=["FINANCIAL_STATEMENT_FILING_CYCLE_UNSUPPORTED"],
             )
         missing: list[FinancialStatementInformationRequirement] = []
-        control_start = organization.accounting_period_control_start_date
-        if control_start is None or control_start > year_start:
-            missing.append(
-                _requirement(
-                    "FINANCIAL_STATEMENT_OPENING_BALANCE_UNAVAILABLE",
-                    "缺少完整年初余额依据，不能推断期初数。",
-                    fields=["organization.accounting_period_control_start_date"],
-                )
-            )
+        (
+            opening_confirmation,
+            period_start,
+            income_tax_start_quarter,
+            opening_missing,
+        ) = self._opening_balance_state(
+            request.org_id,
+            organization.accounting_period_control_start_date,
+            year_start,
+            quarter_end,
+        )
+        missing.extend(opening_missing)
         periods = list(
             self.session.scalars(
                 select(AccountingPeriod)
                 .where(
                     AccountingPeriod.org_id == request.org_id,
-                    AccountingPeriod.start_date >= year_start,
+                    AccountingPeriod.start_date >= period_start,
                     AccountingPeriod.end_date <= quarter_end,
                 )
                 .order_by(AccountingPeriod.start_date)
             )
         )
-        expected_months = request.quarter * 3
+        expected_months = quarter_end.month - period_start.month + 1
         if len(periods) != expected_months or any(item.status != "closed" for item in periods):
             missing.append(
                 _requirement(
@@ -435,7 +553,7 @@ class FinancialStatementService(FinanceService):
                 )
                 .where(
                     AccountingPeriod.org_id == request.org_id,
-                    AccountingPeriod.start_date >= year_start,
+                    AccountingPeriod.start_date >= period_start,
                     AccountingPeriod.end_date <= quarter_end,
                 )
                 .order_by(AccountingPeriod.start_date)
@@ -455,7 +573,10 @@ class FinancialStatementService(FinanceService):
         )
         missing.extend(classification_missing)
         tax_confirmations, tax_missing = self._income_tax_state(
-            request.org_id, request.year, request.quarter
+            request.org_id,
+            request.year,
+            request.quarter,
+            start_quarter=income_tax_start_quarter,
         )
         missing.extend(tax_missing)
 
@@ -520,6 +641,9 @@ class FinancialStatementService(FinanceService):
                 "source_url": ACCOUNTING_RULE_SOURCE_URL,
             },
             "source_close_hashes": close_hashes,
+            "opening_balance_confirmation_id": (
+                str(opening_confirmation.id) if opening_confirmation is not None else None
+            ),
             "classification_ids": sorted(str(item.id) for item in classifications.values()),
             "enterprise_income_tax_confirmation_ids": [str(item.id) for item in tax_confirmations],
             "statements": {
@@ -554,6 +678,120 @@ class FinancialStatementService(FinanceService):
     ) -> FinancialStatementResult:
         return self.preview_quarterly(
             PreviewQuarterlyFinancialStatementsRequest.model_validate(request.model_dump())
+        )
+
+    def confirm_opening_balance(
+        self, request: ConfirmFinancialStatementOpeningBalanceRequest
+    ) -> FinancialStatementResult:
+        request_hash = self._request_payload_hash(request)
+        existing = self.session.scalar(
+            select(FinancialStatementOpeningBalanceConfirmation).where(
+                FinancialStatementOpeningBalanceConfirmation.org_id == request.org_id,
+                FinancialStatementOpeningBalanceConfirmation.idempotency_key
+                == request.idempotency_key,
+            )
+        )
+        if existing is not None:
+            if existing.request_payload_hash != request_hash:
+                return self._statement_result(
+                    FinancialStatementResultStatus.REJECTED,
+                    errors=[
+                        "FINANCIAL_STATEMENT_OPENING_BALANCE_IDEMPOTENCY_MISMATCH"
+                    ],
+                )
+            return self._statement_result(
+                FinancialStatementResultStatus.POSTED,
+                opening_balance_confirmation_id=existing.id,
+                data={"idempotent_replay": True},
+            )
+        organization = self.session.get(Organization, request.org_id)
+        if organization is None:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["ORGANIZATION_NOT_FOUND"],
+            )
+        control_start = organization.accounting_period_control_start_date
+        if control_start is None:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["FINANCIAL_STATEMENT_OPENING_BALANCE_CONTROL_START_UNAVAILABLE"],
+            )
+        if control_start.month == 1:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["FINANCIAL_STATEMENT_OPENING_BALANCE_NOT_PARTIAL_YEAR"],
+            )
+        if (
+            request.establishment_date.year != control_start.year
+            or request.establishment_date.month != control_start.month
+            or request.establishment_date < control_start
+        ):
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["FINANCIAL_STATEMENT_ESTABLISHMENT_DATE_CONTROL_START_MISMATCH"],
+            )
+        prior_voucher = self.session.scalar(
+            select(Voucher.id)
+            .where(
+                Voucher.org_id == request.org_id,
+                Voucher.status.in_(("posted", "reversed")),
+                Voucher.posting_date < request.establishment_date,
+            )
+            .limit(1)
+        )
+        if prior_voucher is not None:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["FINANCIAL_STATEMENT_PRIOR_LEDGER_ACTIVITY_EXISTS"],
+            )
+        evidence_error = self._validate_evidence(request.org_id, request.evidence_references)
+        if evidence_error:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED, errors=[evidence_error]
+            )
+        conflict = self.session.scalar(
+            select(FinancialStatementOpeningBalanceConfirmation.id).where(
+                FinancialStatementOpeningBalanceConfirmation.org_id == request.org_id,
+            )
+        )
+        if conflict is not None:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["FINANCIAL_STATEMENT_OPENING_BALANCE_ALREADY_CONFIRMED"],
+            )
+        record = FinancialStatementOpeningBalanceConfirmation(
+            org_id=request.org_id,
+            establishment_date=request.establishment_date,
+            treatment=request.treatment.value,
+            idempotency_key=request.idempotency_key,
+            request_payload_hash=request_hash,
+            confirmation_note=request.confirmation_note,
+            evidence_references=[str(item) for item in request.evidence_references],
+        )
+        try:
+            with self.session.begin_nested():
+                self.session.add(record)
+                self.session.flush()
+        except IntegrityError:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["FINANCIAL_STATEMENT_OPENING_BALANCE_CONCURRENT_CONFLICT"],
+            )
+        self.session.add(
+            AuditLog(
+                org_id=request.org_id,
+                action="financial_statement_opening_balance_confirmed",
+                details={
+                    "confirmation_id": str(record.id),
+                    "establishment_date": request.establishment_date.isoformat(),
+                    "treatment": request.treatment.value,
+                },
+            )
+        )
+        return self._statement_result(
+            FinancialStatementResultStatus.POSTED,
+            opening_balance_confirmation_id=record.id,
+            data={"idempotent_replay": False},
         )
 
     def confirm_classification(
@@ -940,6 +1178,63 @@ class FinancialStatementService(FinanceService):
         active = [item for item in rows if item.id not in superseded]
         return active[0] if len(active) == 1 else None
 
+    def _opening_balance_state(
+        self,
+        org_id: uuid.UUID,
+        control_start: date | None,
+        year_start: date,
+        quarter_end: date,
+    ) -> tuple[
+        FinancialStatementOpeningBalanceConfirmation | None,
+        date,
+        int,
+        list[FinancialStatementInformationRequirement],
+    ]:
+        if control_start is not None and control_start <= year_start:
+            return None, year_start, 1, []
+        missing = [
+            _requirement(
+                "FINANCIAL_STATEMENT_OPENING_BALANCE_UNAVAILABLE",
+                "缺少完整年初余额依据，不能推断期初数。",
+                fields=[
+                    "establishment_date",
+                    "treatment",
+                    "evidence_references",
+                ],
+                data={
+                    "accounting_period_control_start_date": (
+                        control_start.isoformat() if control_start is not None else None
+                    )
+                },
+            )
+        ]
+        if (
+            control_start is None
+            or control_start.year != year_start.year
+            or control_start > quarter_end
+        ):
+            return None, year_start, 1, missing
+        confirmations = list(
+            self.session.scalars(
+                select(FinancialStatementOpeningBalanceConfirmation).where(
+                    FinancialStatementOpeningBalanceConfirmation.org_id == org_id
+                )
+            )
+        )
+        active = [
+            item
+            for item in confirmations
+            if item.establishment_date.year == control_start.year
+            and item.establishment_date.month == control_start.month
+            and item.establishment_date >= control_start
+            and item.establishment_date <= quarter_end
+            and item.treatment == "zero_on_establishment"
+        ]
+        if len(active) != 1:
+            return None, year_start, 1, missing
+        start_quarter = (control_start.month - 1) // 3 + 1
+        return active[0], control_start, start_quarter, []
+
     def _classification_state(
         self,
         org_id: uuid.UUID,
@@ -1000,7 +1295,12 @@ class FinancialStatementService(FinanceService):
         return classifications, missing
 
     def _income_tax_state(
-        self, org_id: uuid.UUID, year: int, through_quarter: int
+        self,
+        org_id: uuid.UUID,
+        year: int,
+        through_quarter: int,
+        *,
+        start_quarter: int = 1,
     ) -> tuple[
         list[EnterpriseIncomeTaxQuarterConfirmation],
         list[FinancialStatementInformationRequirement],
@@ -1019,7 +1319,7 @@ class FinancialStatementService(FinanceService):
         by_quarter = {item.calendar_quarter: item for item in rows}
         missing: list[FinancialStatementInformationRequirement] = []
         active: list[EnterpriseIncomeTaxQuarterConfirmation] = []
-        for quarter in range(1, through_quarter + 1):
+        for quarter in range(start_quarter, through_quarter + 1):
             item = by_quarter.get(quarter)
             if item is None:
                 missing.append(
@@ -1609,6 +1909,7 @@ class FinancialStatementService(FinanceService):
         *,
         calculation_hash: str | None = None,
         classification_id: uuid.UUID | None = None,
+        opening_balance_confirmation_id: uuid.UUID | None = None,
         enterprise_income_tax_confirmation_id: uuid.UUID | None = None,
         event_id: uuid.UUID | None = None,
         voucher_id: uuid.UUID | None = None,
@@ -1622,6 +1923,7 @@ class FinancialStatementService(FinanceService):
             status=status,
             calculation_hash=calculation_hash,
             classification_id=classification_id,
+            opening_balance_confirmation_id=opening_balance_confirmation_id,
             enterprise_income_tax_confirmation_id=enterprise_income_tax_confirmation_id,
             event_id=event_id,
             voucher_id=voucher_id,

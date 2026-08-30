@@ -41,6 +41,10 @@ from ai_accounting.borrowing_schemas import (
 from ai_accounting.borrowing_service import BorrowingService
 from ai_accounting.coa import seed_organization
 from ai_accounting.config import Settings
+from ai_accounting.financial_statement_schemas import (
+    ConfirmFinancialStatementOpeningBalanceRequest,
+)
+from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.intangible_asset_schemas import AcquireIntangibleAssetRequest
 from ai_accounting.intangible_asset_service import IntangibleAssetService
@@ -77,6 +81,26 @@ def _config(database_url: str) -> Config:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     return config
+
+
+def _confirm_partial_year_zero_opening(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    evidence_id: uuid.UUID,
+    establishment_date: date,
+) -> None:
+    result = FinancialStatementService(session).confirm_opening_balance(
+        ConfirmFinancialStatementOpeningBalanceRequest(
+            org_id=org_id,
+            establishment_date=establishment_date,
+            treatment="zero_on_establishment",
+            idempotency_key=f"postgres-partial-opening-{org_id}",
+            confirmation_note="测试企业于首个启账月新设，成立时点期初余额为零。",
+            evidence_references=[evidence_id],
+        )
+    )
+    assert result.status == "posted", result.errors
 
 
 def _insert_owner_authority(
@@ -933,6 +957,12 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path) ->
                     )
                     assert generated.status == "posted", generated.errors
                     assert generated.period_id is not None
+                    _confirm_partial_year_zero_opening(
+                        session,
+                        org_id=org_id,
+                        evidence_id=close_evidence_id,
+                        establishment_date=date(2026, 7, 1),
+                    )
                     preview_request = PreviewAccountingPeriodCloseRequest(
                         org_id=org_id,
                         period_id=generated.period_id,
@@ -2475,6 +2505,12 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                     assert generated.status == "posted", generated.errors
                     assert generated.period_id is not None
                     july_period_id = generated.period_id
+                    _confirm_partial_year_zero_opening(
+                        session,
+                        org_id=org_id,
+                        evidence_id=close_evidence_id,
+                        establishment_date=date(2026, 7, 1),
+                    )
                     close_request = PreviewAccountingPeriodCloseRequest(
                         org_id=org_id,
                         period_id=july_period_id,
@@ -2867,7 +2903,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                     assert close_preview.status == "calculated", close_preview.errors
                     calculation = close_preview.data["calculation"]
                     assert (
-                        calculation["checker_version"] == "accounting_period_close_checker_2026.5"
+                        calculation["checker_version"] == "accounting_period_close_checker_2026.6"
                     )
                     assert calculation["review_counts"]["unmatched_bank_transactions"] == 1
                     assert calculation["review_counts"]["pending_late_bank_transactions"] == 1
@@ -2983,6 +3019,12 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path) -> N
                     assert generated.status == "posted", generated.errors
                     assert generated.period_id is not None
                     august_period_id = generated.period_id
+                    _confirm_partial_year_zero_opening(
+                        session,
+                        org_id=org_id,
+                        evidence_id=evidence_id,
+                        establishment_date=date(2026, 7, 1),
+                    )
                     session.flush()
 
             (tmp_path / "same-source-row.csv").write_bytes(

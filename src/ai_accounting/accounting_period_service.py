@@ -91,7 +91,7 @@ from .models import (
 from .organization_profiles import profile_as_of
 from .tax import calculate_tax_period
 
-_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.5"
+_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.6"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
 _PERIODIC_REVIEW_SOURCE_URLS = {
     "vat_filing_period": (
@@ -883,21 +883,16 @@ class AccountingPeriodService:
             not voucher_issues,
             len(voucher_issues),
         )
-        if (
-            profile_as_of(
-                self.session,
-                org_id=request.org_id,
-                as_of=period.end_date,
-            ).accounting_standard
-            == "small_enterprise"
-            and profile_as_of(
-                self.session,
-                org_id=request.org_id,
-                as_of=period.end_date,
-            ).filing_cycle
-            == "quarterly"
-            and period.calendar_month in {3, 6, 9, 12}
-        ):
+        period_profile = profile_as_of(
+            self.session,
+            org_id=request.org_id,
+            as_of=period.end_date,
+        )
+        financial_statements_applicable = (
+            period_profile.accounting_standard == "small_enterprise"
+            and period_profile.filing_cycle == "quarterly"
+        )
+        if financial_statements_applicable and period.calendar_month in {3, 6, 9, 12}:
             quarter = (period.calendar_month - 1) // 3 + 1
             income_tax_confirmation = self.session.scalar(
                 select(EnterpriseIncomeTaxQuarterConfirmation).where(
@@ -928,6 +923,38 @@ class AccountingPeriodService:
                 income_tax_confirmed,
                 0 if income_tax_confirmed else 1,
             )
+        # Import locally to keep the statement calculator independent from the
+        # period writer while making report readiness a hard close invariant.
+        from .financial_statements import FinancialStatementService
+
+        financial_statement_requirements = (
+            FinancialStatementService(self.session).period_close_requirements(
+                request.org_id,
+                period,
+            )
+            if financial_statements_applicable
+            else []
+        )
+        financial_statement_requirement_data = sorted(
+            (item.model_dump(mode="json") for item in financial_statement_requirements),
+            key=canonical_json,
+        )
+        financial_statement_requirement_counts: dict[str, int] = {}
+        for item in financial_statement_requirements:
+            close_code = f"ACCOUNTING_PERIOD_{item.code}"
+            financial_statement_requirement_counts[close_code] = (
+                financial_statement_requirement_counts.get(close_code, 0) + 1
+            )
+        if financial_statements_applicable:
+            self._add_check(
+                checks,
+                blockers,
+                "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_READY",
+                not financial_statement_requirements,
+                len(financial_statement_requirements),
+            )
+        for code, count in sorted(financial_statement_requirement_counts.items()):
+            self._add_check(checks, blockers, code, False, count)
         module_checks = self._module_checks(request.org_id, period)
         for _name, result in module_checks.items():
             if result["blocking"]:
@@ -983,6 +1010,17 @@ class AccountingPeriodService:
                 "无业务或证据不足时明确说明无法评价经营表现，不编造积极或消极结论",
             ],
         }
+        assistant_review_checklist["financial_statement_readiness"] = {
+            "required_for_close": True,
+            "completed": not financial_statement_requirement_data,
+            "requirement_count": len(financial_statement_requirement_data),
+            "requirements": financial_statement_requirement_data,
+            "instruction": (
+                "关账前必须补齐本月报表分类和首年期初依据；季度末还必须通过与导出相同的"
+                "累计报表预检。当前月尚未关账及尚未生成当前月关账快照是本次关账将自行满足的"
+                "条件，不作为重复阻断。"
+            ),
+        }
         assistant_review_checklist["ai_instruction"] += (
             "完成逐项月末复核后，AI 必须按 management_commentary 的 instruction、"
             "success_criteria 和 context 生成经营解读，并在确认关账时原样提交 commentary "
@@ -1014,6 +1052,7 @@ class AccountingPeriodService:
             warnings=warnings,
         )
         payload["checker_version"] = _BANK_AWARE_CLOSE_CHECKER_VERSION
+        payload["financial_statement_requirements"] = financial_statement_requirement_data
         calculation_hash = close_calculation_hash(payload)
         return {
             "payload": payload,

@@ -43,6 +43,10 @@ class EnterpriseIncomeTaxTreatment(StrEnum):
     REDUCE = "reduce"
 
 
+class FinancialStatementOpeningBalanceTreatment(StrEnum):
+    ZERO_ON_ESTABLISHMENT = "zero_on_establishment"
+
+
 class FinancialStatementInformationRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -93,6 +97,27 @@ class ConfirmFinancialStatementClassificationRequest(BaseModel):
         return value
 
 
+class ConfirmFinancialStatementOpeningBalanceRequest(BaseModel):
+    """Confirm a zero first-year opening balance for a newly established company."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    establishment_date: date
+    treatment: FinancialStatementOpeningBalanceTreatment
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    confirmation_note: str = Field(min_length=1, max_length=2000)
+    evidence_references: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+    @field_validator("idempotency_key", "confirmation_note")
+    @classmethod
+    def strip_opening_balance_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+
 class ConfirmEnterpriseIncomeTaxQuarterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -133,6 +158,7 @@ class FinancialStatementResult(BaseModel):
     status: FinancialStatementResultStatus
     calculation_hash: str | None = None
     classification_id: uuid.UUID | None = None
+    opening_balance_confirmation_id: uuid.UUID | None = None
     enterprise_income_tax_confirmation_id: uuid.UUID | None = None
     event_id: uuid.UUID | None = None
     voucher_id: uuid.UUID | None = None

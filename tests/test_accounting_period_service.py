@@ -19,6 +19,7 @@ from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.database import Base
 from ai_accounting.financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
+    ConfirmFinancialStatementOpeningBalanceRequest,
     EnterpriseIncomeTaxTreatment,
 )
 from ai_accounting.financial_statements import FinancialStatementService
@@ -634,6 +635,17 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
         )
     )
     assert income_tax.status == "posted"
+    opening = FinancialStatementService(session).confirm_opening_balance(
+        ConfirmFinancialStatementOpeningBalanceRequest(
+            org_id=organization.id,
+            establishment_date=date(2026, 3, 1),
+            treatment="zero_on_establishment",
+            idempotency_key="empty-opening-balance",
+            confirmation_note="测试企业于启账月新设，成立时点期初余额为零。",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert opening.status == "posted"
     preview_request = PreviewAccountingPeriodCloseRequest(
         org_id=organization.id,
         period_id=generated.period_id,
@@ -689,7 +701,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
     assert closed.data["calculation"]["checker_version"] == (
-        "accounting_period_close_checker_2026.5"
+        "accounting_period_close_checker_2026.6"
     )
     assert list(closed.data["calculation"]["review_counts"]) == [
         "historical_bank_scope_corrections_pending",

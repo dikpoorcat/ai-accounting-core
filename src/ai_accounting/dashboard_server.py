@@ -483,8 +483,15 @@ def _readiness_views(
     grouped: dict[str, list[dict[str, Any]]] = {key: [] for key, _label in _READINESS_GROUPS}
     for requirement in requirements:
         grouped[_requirement_group(str(requirement.get("code", "")))].append(requirement)
+    first_month = min((item.calendar_month for item in periods), default=1)
+    period_count = quarter * 3 - first_month + 1
+    period_scope = (
+        f"{year} 年 {first_month} 月至第 {quarter} 季度末"
+        if first_month > 1
+        else f"截至第 {quarter} 季度末"
+    )
     defaults = {
-        "period": f"截至第 {quarter} 季度末所需的 {quarter * 3} 个月均已关账并保留快照",
+        "period": f"{period_scope}所需的 {period_count} 个月均已关账并保留快照",
         "classification": "需要拆分的费用凭证行均已完成报表明细分类",
         "income_tax": f"截至第 {quarter} 季度的企业所得税处理均已确认",
         "mapping": "资产负债、损益和现金事件均已映射到报表",
