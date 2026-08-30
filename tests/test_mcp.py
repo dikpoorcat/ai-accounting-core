@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -248,6 +249,181 @@ def test_close_approval_window_and_result_are_exposed_as_mcp_tools(
         "calculation_hash": calculation_hash,
         "owner_approval_id": str(approval_id),
         "expires_at": expires_at.isoformat(),
+    }
+
+
+def test_close_approval_window_bootstraps_when_mcp_session_has_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    calculation_hash = "b" * 64
+    owner = SimpleNamespace(org_id=uuid.uuid4(), status="active", login_name="owner")
+    period = SimpleNamespace(
+        id=period_id,
+        org_id=org_id,
+        status="open",
+        end_date=date(2022, 10, 31),
+    )
+    catalog_scalar_results = iter([owner, owner])
+    business_scalar_results = iter([period])
+    launched: list[dict[str, str]] = []
+
+    class _Session:
+        def __init__(self, scalar_results: Iterator[object]) -> None:
+            self.info: dict[str, object] = {}
+            self._scalar_results = scalar_results
+
+        def __enter__(self) -> _Session:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def scalar(self, _statement: object) -> object:
+            return next(self._scalar_results)
+
+    catalog_session = _Session(catalog_scalar_results)
+    business_session = _Session(business_scalar_results)
+
+    class _CatalogFactory:
+        def __call__(self) -> _Session:
+            return catalog_session
+
+        def begin(self) -> _Session:
+            return catalog_session
+
+    class _Launcher:
+        def request(self, **kwargs: str) -> bool:
+            launched.append(kwargs)
+            return True
+
+    monkeypatch.setattr(
+        mcp_server,
+        "get_settings",
+        lambda: SimpleNamespace(
+            finance_environment="production",
+            multi_company_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "SessionLocal",
+        mcp_server._ContextAwareSessionFactory(_CatalogFactory()),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "company_router",
+        SimpleNamespace(
+            resolve=lambda _session, _org_id, *, for_write: SimpleNamespace(),
+            factory_for=lambda _registry: lambda: business_session,
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "_load_current_session_token",
+        lambda: pytest.fail("close-approval window must not require an active MCP session"),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "_accounting_period_service",
+        lambda _session: SimpleNamespace(
+            preview_accounting_period_close=lambda _request: SimpleNamespace(
+                status=SimpleNamespace(value="calculated"),
+                calculation_hash=calculation_hash,
+            )
+        ),
+    )
+    monkeypatch.setattr(mcp_server, "_OWNER_CLOSE_APPROVAL_WINDOW_LAUNCHER", _Launcher())
+
+    tool = mcp._tool_manager.get_tool(
+        "finance_request_accounting_period_close_approval_window"
+    )
+    assert tool is not None
+    result = tool.fn(
+        RequestAccountingPeriodCloseApprovalWindowRequest(
+            org_id=org_id,
+            period_id=period_id,
+            calculation_hash=calculation_hash,
+        )
+    )
+
+    assert result["status"] == "requested"
+    assert launched == [
+        {
+            "org_id": str(org_id),
+            "period_id": str(period_id),
+            "calculation_hash": calculation_hash,
+            "login_name": "owner",
+        }
+    ]
+
+
+def test_close_approval_poll_waits_without_opening_generic_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    calculation_hash = "c" * 64
+    owner = SimpleNamespace(org_id=org_id, status="active", login_name="owner")
+
+    class _Session:
+        info: dict[str, object] = {}
+
+        def __enter__(self) -> _Session:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def scalar(self, _statement: object) -> object:
+            return owner
+
+    class _Factory:
+        def __call__(self) -> _Session:
+            return _Session()
+
+        def begin(self) -> _Session:
+            return _Session()
+
+    monkeypatch.setattr(
+        mcp_server,
+        "get_settings",
+        lambda: SimpleNamespace(
+            finance_environment="production",
+            multi_company_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "SessionLocal",
+        mcp_server._ContextAwareSessionFactory(_Factory()),
+    )
+    monkeypatch.setattr(mcp_server, "_load_current_session_token", lambda: None)
+    monkeypatch.setattr(
+        mcp_server,
+        "_OWNER_LOGIN_WINDOW_LAUNCHER",
+        SimpleNamespace(
+            request=lambda **_kwargs: pytest.fail(
+                "approval polling must not open the generic login window"
+            )
+        ),
+    )
+
+    tool = mcp._tool_manager.get_tool("finance_get_accounting_period_close_approval")
+    assert tool is not None
+    result = tool.fn(
+        GetAccountingPeriodCloseApprovalRequest(
+            org_id=org_id,
+            period_id=period_id,
+            calculation_hash=calculation_hash,
+        )
+    )
+
+    assert result == {
+        "status": "pending",
+        "period_id": str(period_id),
+        "calculation_hash": calculation_hash,
     }
 
 

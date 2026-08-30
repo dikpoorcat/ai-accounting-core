@@ -291,6 +291,22 @@ def _authentication_required(*, login_name: str) -> dict[str, Any]:
     return _rejected_identity("AUTHENTICATION_REQUIRED")
 
 
+def _pending_close_approval(
+    function: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep close reauthentication single-windowed while its token is pending."""
+
+    bound = inspect.signature(function).bind_partial(*args, **kwargs)
+    request = bound.arguments.get("request")
+    return {
+        "status": "pending",
+        "period_id": str(request.period_id),
+        "calculation_hash": request.calculation_hash,
+    }
+
+
 def _set_owner_login_window_enabled(enabled: bool) -> None:
     """Limit desktop side effects to the live MCP process, not in-process imports."""
 
@@ -339,15 +355,44 @@ def _secure_registered_data_tools() -> None:
                 return _rejected_identity("INVALID_REQUEST")
             environment = settings.finance_environment
             session_token: SecretStr | None = None
-            if environment != "development":
-                try:
-                    session_token = _load_current_session_token()
-                except IdentityError as exc:
-                    return _rejected_identity(exc.code)
             with _begin_mcp_transaction() as session:
                 if multi_company_enabled:
                     session.info["catalog_mode"] = True
                 owner_account = session.scalar(select(OwnerAccount).limit(1))
+                if _tool_name == "finance_request_accounting_period_close_approval_window":
+                    assert requested_org_id is not None
+                    bootstrap_owner = owner_account
+                    if bootstrap_owner is None:
+                        return _rejected_identity("AUTHENTICATION_REQUIRED")
+                    if bootstrap_owner.status != "active":
+                        return _rejected_identity("AUTHENTICATION_REQUIRED")
+                    if not multi_company_enabled and bootstrap_owner.org_id != requested_org_id:
+                        return _rejected_identity("ORGANIZATION_CONTEXT_MISMATCH")
+                    if multi_company_enabled:
+                        try:
+                            registry = company_router.resolve(
+                                session,
+                                requested_org_id,
+                                for_write=False,
+                            )
+                            factory = company_router.factory_for(registry)
+                        except CompanyRoutingError as exc:
+                            return _rejected_identity(exc.code)
+                        catalog_marker = _ACTIVE_CATALOG_SESSION.set(session)
+                        try:
+                            with factory() as business_session:
+                                marker = _ACTIVE_TOOL_SESSION.set(business_session)
+                                try:
+                                    return _original(*args, **kwargs)
+                                finally:
+                                    _ACTIVE_TOOL_SESSION.reset(marker)
+                        finally:
+                            _ACTIVE_CATALOG_SESSION.reset(catalog_marker)
+                    marker = _ACTIVE_TOOL_SESSION.set(session)
+                    try:
+                        return _original(*args, **kwargs)
+                    finally:
+                        _ACTIVE_TOOL_SESSION.reset(marker)
                 if (
                     owner_account is None
                     and environment == "development"
@@ -358,14 +403,15 @@ def _secure_registered_data_tools() -> None:
                         return _original(*args, **kwargs)
                     finally:
                         _ACTIVE_TOOL_SESSION.reset(marker)
-                if environment == "development":
-                    try:
-                        session_token = _load_current_session_token()
-                    except IdentityError as exc:
-                        return _rejected_identity(exc.code)
+                try:
+                    session_token = _load_current_session_token()
+                except IdentityError as exc:
+                    return _rejected_identity(exc.code)
                 if session_token is None:
                     if owner_account is None:
                         return _rejected_identity("AUTHENTICATION_REQUIRED")
+                    if _tool_name == "finance_get_accounting_period_close_approval":
+                        return _pending_close_approval(_original, args, kwargs)
                     return _authentication_required(login_name=owner_account.login_name)
                 correlation_id = uuid.uuid4()
                 try:
@@ -378,6 +424,8 @@ def _secure_registered_data_tools() -> None:
                 except IdentityError as exc:
                     if exc.code == "ORGANIZATION_CONTEXT_MISMATCH":
                         return _rejected_identity("ORGANIZATION_CONTEXT_MISMATCH")
+                    if _tool_name == "finance_get_accounting_period_close_approval":
+                        return _pending_close_approval(_original, args, kwargs)
                     assert owner_account is not None
                     return _authentication_required(login_name=owner_account.login_name)
                 if is_global_company_tool and not multi_company_enabled:
@@ -691,11 +739,20 @@ def _close_backup_service() -> CloseBackupService:
 
 def _active_owner_login_name(session: Any, *, org_id: uuid.UUID) -> str | None:
     context = _ACTIVE_EXECUTION_CONTEXT.get()
-    if context is None or context.org_id != org_id:
+    catalog_session = _ACTIVE_CATALOG_SESSION.get()
+    identity_session = catalog_session or session
+    if context is None:
+        statement = select(OwnerAccount).where(OwnerAccount.status == "active")
+        if catalog_session is None:
+            statement = statement.where(OwnerAccount.org_id == org_id)
+        account = identity_session.scalar(statement.limit(1))
+        return account.login_name if account is not None else None
+    if context.org_id != org_id:
         return None
-    identity_session = _ACTIVE_CATALOG_SESSION.get() or session
     account = identity_session.get(OwnerAccount, context.owner_account_id)
-    if account is None or account.org_id != org_id or account.status != "active":
+    if account is None or account.status != "active":
+        return None
+    if catalog_session is None and account.org_id != org_id:
         return None
     return account.login_name
 

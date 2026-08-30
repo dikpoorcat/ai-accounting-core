@@ -58,7 +58,7 @@ def _dummy_arguments(function: object, org_id: uuid.UUID) -> dict[str, object]:
     return result
 
 
-def test_only_event_schema_is_public_and_all_data_tools_fail_closed(
+def test_authenticated_data_tools_fail_closed_without_session(
     session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -85,7 +85,16 @@ def test_only_event_schema_is_public_and_all_data_tools_fail_closed(
     schema = next(tool for tool in tools if tool.name == "finance_get_event_schema")
     assert schema.fn()["status"] == "ok"
 
-    data_tools = [tool for tool in tools if tool.name != "finance_get_event_schema"]
+    close_bootstrap_tool_names = {
+        "finance_request_accounting_period_close_approval_window",
+        "finance_get_accounting_period_close_approval",
+    }
+    data_tools = [
+        tool
+        for tool in tools
+        if tool.name != "finance_get_event_schema"
+        and tool.name not in close_bootstrap_tool_names
+    ]
     for tool in data_tools:
         assert tool.fn(**_dummy_arguments(tool.fn, org_id)) == {
             "status": "rejected",

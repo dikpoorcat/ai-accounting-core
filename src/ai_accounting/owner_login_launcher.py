@@ -255,7 +255,11 @@ try {{
 
 
 def _powershell_executable(which: Callable[[str], str | None]) -> str | None:
-    for candidate in ("pwsh.exe", "powershell.exe"):
+    # Windows PowerShell reliably owns a classic visible console for password
+    # input.  PowerShell 7 can be redirected into the caller's pseudoterminal by
+    # the configured terminal host, which makes the supposedly dedicated window
+    # invisible and leaves getpass without an interactive input handle.
+    for candidate in ("powershell.exe", "pwsh.exe"):
         resolved = which(candidate)
         if resolved:
             return resolved

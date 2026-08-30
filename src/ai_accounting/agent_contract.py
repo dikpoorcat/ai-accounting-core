@@ -25,7 +25,10 @@ CLOSE_APPROVAL_RUNTIME_INSTRUCTION = (
     "finance_request_accounting_period_close_approval_window，启动标题为"
     "‘AI 记账内核 - 关账密码确认’的独立可见本机窗口；负责人表示完成后，再调用 "
     "finance_get_accounting_period_close_approval 取得与当前会话、期间和预览哈希精确匹配的"
-    "未消费授权。approve-close 是专用窗口内部命令，AI不得直接在隐藏终端、后台会话、"
+    "未消费授权。普通MCP会话过期时，请求工具仍应直接启动该专用窗口，不得先要求负责人"
+    "完成一次通用登录再重复输入关账密码；专用窗口等待期间，授权查询遇到旧会话或过期会话"
+    "只能继续返回等待状态，不得另启通用登录窗。approve-close 是专用窗口内部命令，AI不得直接在"
+    "隐藏终端、后台会话、"
     "MCP stdio、Codex底部终端或其他不可见输入通道中运行它等待密码；窗口未出现时必须"
     "修复启动链，不得回退到不可见终端。AI不得索取、代输、读取或记录负责人密码。"
 )
