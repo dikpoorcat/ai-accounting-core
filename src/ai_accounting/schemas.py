@@ -47,6 +47,7 @@ class EventType(StrEnum):
     BANK_FEE = "bank_fee"
     INTERNAL_TRANSFER = "internal_transfer"
     CASH_BANK_TRANSFER = "cash_bank_transfer"
+    PAYMENT_PLATFORM_TRANSFER = "payment_platform_transfer"
     TAX_PAYMENT = "tax_payment"
     TAX_RELIEF = "tax_relief"
     SALARY_PAYMENT = "salary_payment"
@@ -221,6 +222,7 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "counterparty": "owner required",
         "constraint": "cannot exceed this owner's payable balance",
         "required_fields": ["bank_account_code"],
+        "optional_details": ["owner_repayment_fee_fen"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT.value: {
@@ -355,6 +357,26 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "optional_details": ["social_insurance_late_fee_fen"],
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
+    },
+    EventType.PAYMENT_PLATFORM_TRANSFER.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "posting_date"],
+        "required_fields": [
+            "direction",
+            "bank_account_code",
+            "bank_transaction_references",
+            "evidence_references",
+            "description",
+        ],
+        "direction": "to_platform|from_platform",
+        "bank_transaction_references": (
+            "required; every row must belong to bank_account_code and total "
+            "-amount_fen for to_platform or +amount_fen for from_platform"
+        ),
+        "posting_template": (
+            "transfer between selected bank account and the fixed other-monetary-funds "
+            "payment-platform account"
+        ),
     },
     EventType.HOUSING_FUND_PAYMENT.value: {
         "amount": "amount_fen",
@@ -606,6 +628,7 @@ class EventDetails(BaseModel):
     recognition_source: Literal["contract_liability"] | None = None
     other_income_kind: Literal["retained_verification_payment"] | None = None
     social_insurance_late_fee_fen: PositiveFen | None = None
+    owner_repayment_fee_fen: PositiveFen | None = None
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
@@ -1902,7 +1925,9 @@ class RecordEventRequest(BaseModel):
     bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     source_bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     destination_bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
-    direction: Literal["cash_deposit", "cash_withdrawal"] | None = None
+    direction: Literal[
+        "cash_deposit", "cash_withdrawal", "to_platform", "from_platform"
+    ] | None = None
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     allocations: list[Allocation] = Field(default_factory=list)
@@ -1936,6 +1961,17 @@ class RecordEventRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def owner_repayment_fee_is_owner_repayment_only(self) -> RecordEventRequest:
+        fee_fen = self.details.owner_repayment_fee_fen
+        if fee_fen is None:
+            return self
+        if self.event_type is not EventType.OWNER_REPAYMENT:
+            raise ValueError("owner_repayment_fee_fen is only accepted for owner repayment")
+        if self.amounts.amount_fen is not None and fee_fen >= self.amounts.amount_fen:
+            raise ValueError("owner repayment fee must be less than total bank payment")
+        return self
+
+    @model_validator(mode="after")
     def zero_cash_is_limited_to_salary_withholding_settlement(self) -> RecordEventRequest:
         if self.amounts.amount_fen != 0:
             return self
@@ -1962,8 +1998,29 @@ class RecordEventRequest(BaseModel):
             raise ValueError(
                 "source/destination bank account codes are only accepted for internal transfer"
             )
-        if self.event_type is not EventType.CASH_BANK_TRANSFER and self.direction is not None:
-            raise ValueError("direction is only accepted for cash_bank_transfer")
+        if self.event_type not in {
+            EventType.CASH_BANK_TRANSFER,
+            EventType.PAYMENT_PLATFORM_TRANSFER,
+        } and self.direction is not None:
+            raise ValueError(
+                "direction is only accepted for cash_bank_transfer or "
+                "payment_platform_transfer"
+            )
+        if (
+            self.event_type is EventType.CASH_BANK_TRANSFER
+            and self.direction is not None
+            and self.direction not in {"cash_deposit", "cash_withdrawal"}
+        ):
+            raise ValueError("cash_bank_transfer requires a cash transfer direction")
+        if (
+            self.event_type is EventType.PAYMENT_PLATFORM_TRANSFER
+            and self.direction is not None
+            and self.direction not in {
+            "to_platform",
+            "from_platform",
+            }
+        ):
+            raise ValueError("payment_platform_transfer requires a platform direction")
 
         bank_settled = self.event_type in {
             EventType.SERVICE_CASH_SALE,
@@ -1986,6 +2043,7 @@ class RecordEventRequest(BaseModel):
             EventType.HOUSING_FUND_PAYMENT,
             EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
             EventType.CASH_BANK_TRANSFER,
+            EventType.PAYMENT_PLATFORM_TRANSFER,
         }
         if self.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
             bank_settled = self.details.paid_now is True

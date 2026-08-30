@@ -48,7 +48,7 @@ export interface FundAccountStatement {
 export interface FundAccount {
   code: string;
   name: string;
-  type: "bank" | "cash";
+  type: "bank" | "cash" | "payment_platform";
   active: boolean;
   opening_fen: FenValue;
   inflow_fen: FenValue;
@@ -66,7 +66,7 @@ export interface FundMovement {
   date: string;
   account_code: string;
   account_name: string;
-  account_type: "bank" | "cash";
+  account_type: "bank" | "cash" | "payment_platform";
   direction: FundDirection;
   amount_fen: FenValue;
   signed_amount_fen: FenValue;
@@ -106,6 +106,7 @@ export interface FundsData {
   total_fen: FenValue;
   bank_fen: FenValue;
   cash_fen: FenValue;
+  payment_platform_fen: FenValue;
   opening_fen: FenValue;
   inflow_fen: FenValue;
   outflow_fen: FenValue;
@@ -114,6 +115,7 @@ export interface FundsData {
   account_count: number;
   bank_account_count: number;
   cash_account_count: number;
+  payment_platform_account_count: number;
   attention_account_count: number;
   accounts: FundAccount[];
   movements: FundMovement[];

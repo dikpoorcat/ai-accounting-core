@@ -310,7 +310,8 @@ onBeforeUnmount(() => activeRequest?.abort());
             <strong class="funds-total">{{ formatFen(funds.total_fen) }}</strong>
             <p class="muted">
               <template v-if="funds.account_count">
-                银行 {{ formatFen(funds.bank_fen) }} · 现金
+                银行 {{ formatFen(funds.bank_fen) }} · 支付平台
+                {{ formatFen(funds.payment_platform_fen) }} · 现金
                 {{ formatFen(funds.cash_fen) }} · 共 {{ funds.account_count }} 个资金账户
               </template>
               <template v-else>本月尚无银行或现金账户余额及资金活动</template>
@@ -375,7 +376,7 @@ onBeforeUnmount(() => activeRequest?.abort());
             >
               <div class="account-head">
                 <div>
-                  <span>{{ account.type === "bank" ? "银行账户" : "现金账户" }} · {{ account.code }}</span>
+                  <span>{{ account.type === "bank" ? "银行账户" : account.type === "payment_platform" ? "支付平台" : "现金账户" }} · {{ account.code }}</span>
                   <h3>{{ account.name }}</h3>
                 </div>
                 <div class="account-balance">

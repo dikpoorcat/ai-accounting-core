@@ -1013,6 +1013,63 @@ def test_payroll_accrual_is_gross_salary_and_payment_events_are_category_bound(
     assert reversal_batch.version > original_batch.version
 
 
+def test_payroll_accruals_can_be_reversed_repeatedly_from_latest_to_earliest(
+    session: Session, organization: Organization
+) -> None:
+    employee_id = register_payroll_facts(session, organization)
+    service = FinanceService(session)
+    confirmed = []
+    for month in (3, 4):
+        preview = service.preview_payroll(
+            PreviewPayrollRequest.model_validate(
+                {
+                    "org_id": organization.id,
+                    "idempotency_key": f"payroll-chain-preview-{month}",
+                    "batch_kind": "regular",
+                    "payroll_period": f"2026-{month:02d}",
+                    "posting_date": f"2026-{month:02d}-05",
+                    "payment_date": f"2026-{month:02d}-05",
+                    "employee_items": [
+                        {
+                            "employee_id": employee_id,
+                            "tax_reported_salary_fen": 1_000_000,
+                            "special_additional_deduction_fen": 0,
+                            "other_legal_deduction_fen": 0,
+                        }
+                    ],
+                }
+            )
+        )
+        assert preview.status == "calculated"
+        result = service.confirm_payroll(
+            ConfirmPayrollRequest(
+                org_id=organization.id,
+                batch_id=preview.batch_id,
+                calculation_hash=preview.calculation_hash,
+                idempotency_key=f"payroll-chain-confirm-{month}",
+            )
+        )
+        assert result.status == "posted"
+        confirmed.append(result)
+
+    for month, result in zip((4, 3), reversed(confirmed), strict=True):
+        reversed_result = service.reverse_event(
+            ReverseEventRequest(
+                org_id=organization.id,
+                event_id=result.event_id,
+                idempotency_key=f"payroll-chain-reverse-{month}",
+                reason="从最新月份向前重建累计工资链",
+                posting_date=date(2026, month, 6),
+            )
+        )
+        assert reversed_result.status == "posted", reversed_result.model_dump(mode="json")
+
+    assert all(
+        session.get(PayrollBatch, result.batch_id).status == "reversed"
+        for result in confirmed
+    )
+
+
 def test_social_insurance_payment_can_separate_evidenced_late_fee(
     session: Session, organization: Organization
 ) -> None:

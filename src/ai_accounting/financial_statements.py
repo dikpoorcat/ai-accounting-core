@@ -1065,7 +1065,11 @@ class FinancialStatementService(FinanceService):
                 if row.voucher.posting_date > as_of:
                     continue
                 role = row.role
-                if row.account.requires_bank_reconciliation or role in {"cash", "bank"}:
+                if row.account.requires_bank_reconciliation or role in {
+                    "cash",
+                    "bank",
+                    "payment_platform_funds",
+                }:
                     result[1] += row.debit_signed
                     continue
                 if role in _P_AND_L_ROLES:
@@ -1309,7 +1313,10 @@ class FinancialStatementService(FinanceService):
                 row.debit_signed
                 for row in rows
                 if row.voucher.posting_date <= as_of
-                and (row.account.requires_bank_reconciliation or row.role in {"cash", "bank"})
+                and (
+                    row.account.requires_bank_reconciliation
+                    or row.role in {"cash", "bank", "payment_platform_funds"}
+                )
             )
 
         def values(start: date) -> dict[int, int]:
@@ -1321,7 +1328,8 @@ class FinancialStatementService(FinanceService):
                 cash_delta = sum(
                     row.debit_signed
                     for row in voucher_rows
-                    if row.account.requires_bank_reconciliation or row.role in {"cash", "bank"}
+                    if row.account.requires_bank_reconciliation
+                    or row.role in {"cash", "bank", "payment_platform_funds"}
                 )
                 if cash_delta == 0:
                     continue
@@ -1334,7 +1342,11 @@ class FinancialStatementService(FinanceService):
                         event_type = original[0].event.event_type
                         source_event_id = original[0].event.id
                         source_event = original[0].event
-                if event_type in {"internal_transfer", "cash_bank_transfer"}:
+                if event_type in {
+                    "internal_transfer",
+                    "cash_bank_transfer",
+                    "payment_platform_transfer",
+                }:
                     continue
                 if event_type in {
                     "service_cash_sale",
@@ -1397,8 +1409,19 @@ class FinancialStatementService(FinanceService):
                     result[14] += cash_delta
                 elif event_type == "owner_contribution_received":
                     result[15] += cash_delta
-                elif event_type in {"borrowing_principal_repayment", "owner_repayment"}:
+                elif event_type == "borrowing_principal_repayment":
                     result[16] += -cash_delta
+                elif event_type == "owner_repayment":
+                    total_outflow = -cash_delta
+                    fee_fen = int(
+                        source_event.facts.get("details", {}).get(
+                            "owner_repayment_fee_fen"
+                        )
+                        or 0
+                    )
+                    signed_fee_fen = fee_fen if total_outflow >= 0 else -fee_fen
+                    result[6] += signed_fee_fen
+                    result[16] += total_outflow - signed_fee_fen
                 elif event_type == "borrowing_interest_payment":
                     result[17] += -cash_delta
                 else:

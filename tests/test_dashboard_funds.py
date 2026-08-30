@@ -154,6 +154,12 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
             Account.system_role == "cash",
         )
     )
+    payment_platform = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == "payment_platform_funds",
+        )
+    )
     capital = session.scalar(
         select(Account).where(
             Account.org_id == organization.id,
@@ -172,7 +178,13 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
             Counterparty.kind == "owner",
         )
     )
-    assert cash is not None and capital is not None and expense is not None and owner is not None
+    assert (
+        cash is not None
+        and payment_platform is not None
+        and capital is not None
+        and expense is not None
+        and owner is not None
+    )
     second_bank = Account(
         org_id=organization.id,
         code="100201",
@@ -206,6 +218,18 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
     _add_test_voucher(
         session,
         organization=organization,
+        number="202602-0005",
+        event_type="payment_platform_transfer",
+        description="从工商银行转入公司支付宝",
+        lines=[
+            (payment_platform, None, 5_000, 0),
+            (second_bank, None, 0, 5_000),
+        ],
+        posting_date=date(2026, 2, 11),
+    )
+    _add_test_voucher(
+        session,
+        organization=organization,
         number="202602-0004",
         event_type="expense_cash",
         description="现金支付办公用品",
@@ -216,23 +240,27 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
     funds = build_funds_data(session, organization=organization, period=period)
     accounts = {item["code"]: item for item in funds["accounts"]}
 
-    assert funds["account_count"] == 3
+    assert funds["account_count"] == 4
     assert funds["bank_account_count"] == 2
     assert funds["cash_account_count"] == 1
+    assert funds["payment_platform_account_count"] == 1
     assert funds["total_fen"] == 57_000
-    assert funds["bank_fen"] == 50_000
+    assert funds["bank_fen"] == 45_000
     assert funds["cash_fen"] == 7_000
+    assert funds["payment_platform_fen"] == 5_000
     assert funds["inflow_fen"] == 60_000
     assert funds["outflow_fen"] == 3_000
     assert funds["net_change_fen"] == 57_000
-    assert funds["internal_transfer_fen"] == 10_000
-    assert funds["movement_count"] == 5
-    assert accounts["100201"]["closing_fen"] == 40_000
+    assert funds["internal_transfer_fen"] == 15_000
+    assert funds["movement_count"] == 7
+    assert accounts["100201"]["closing_fen"] == 35_000
     assert accounts["100201"]["reconciliation"]["state"] == "pending"
     assert accounts["1001"]["closing_fen"] == 7_000
     assert accounts["1001"]["reconciliation"]["state"] == "not_applicable"
+    assert accounts["1012"]["closing_fen"] == 5_000
+    assert accounts["1012"]["reconciliation"]["state"] == "not_applicable"
     transfer_rows = [item for item in funds["movements"] if item["internal_transfer"]]
-    assert len(transfer_rows) == 2
+    assert len(transfer_rows) == 4
     assert {item["direction"] for item in transfer_rows} == {"inflow", "outflow"}
 
 

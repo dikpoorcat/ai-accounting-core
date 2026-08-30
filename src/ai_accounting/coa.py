@@ -12,6 +12,7 @@ from .models import Account, LaborRemunerationTaxPolicyVersion, Organization, Ta
 DEFAULT_ACCOUNTS = [
     ("1001", "库存现金", "asset", "debit", "cash"),
     ("1002", "银行存款", "asset", "debit", "bank"),
+    ("1012", "其他货币资金—支付平台", "asset", "debit", "payment_platform_funds"),
     ("1122", "应收账款", "asset", "debit", "accounts_receivable"),
     ("1221", "其他应收款", "asset", "debit", "employee_receivable"),
     ("2202", "应付账款", "liability", "credit", "accounts_payable"),

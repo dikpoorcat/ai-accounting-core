@@ -11,6 +11,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from ai_accounting.models import (
     Account,
     BankTransaction,
+    Evidence,
     OpenItem,
     Organization,
     Settlement,
@@ -140,11 +141,17 @@ def test_owner_loan_repayment_is_limited_by_counterparty_balance(
             {
                 **repayment_payload,
                 "idempotency_key": "owner-repayment-1",
-                "amounts": {"amount_fen": 60_000},
+                "amounts": {"amount_fen": 60_020},
+                "details": {"owner_repayment_fee_fen": 20},
             },
         )
     )
     assert partial.status == "posted"
+    assert partial.data["derived"] == {
+        "owner_repayment_principal_fen": 60_000,
+        "owner_repayment_fee_fen": 20,
+    }
+    assert_balanced(session, partial.voucher_id)
     excess = service.record_event(
         request(
             organization,
@@ -163,6 +170,27 @@ def test_employee_bank_and_internal_transfer_events_are_balanced(
     session: Session, organization: Organization
 ) -> None:
     service = FinanceService(session)
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="9" * 64,
+        original_name="payment-platform-owner-confirmation.txt",
+        media_type="text/plain",
+        source="test",
+        size_bytes=1,
+        storage_path="test/payment-platform-owner-confirmation.txt",
+    )
+    platform_bank_row = BankTransaction(
+        org_id=organization.id,
+        bank_account_code="1002",
+        fingerprint="8" * 64,
+        booking_date=date(2026, 8, 1),
+        amount_fen=-10_000,
+        currency="CNY",
+        memo="转入支付宝",
+        source_sha256="7" * 64,
+    )
+    session.add_all([evidence, platform_bank_row])
+    session.flush()
     payloads = [
         {
             "idempotency_key": "employee-unpaid",
@@ -201,6 +229,17 @@ def test_employee_bank_and_internal_transfer_events_are_balanced(
             "amounts": {"amount_fen": 10_000},
             "direction": "cash_withdrawal",
             "bank_account_code": "1002",
+        },
+        {
+            "idempotency_key": "bank-to-payment-platform",
+            "event_type": "payment_platform_transfer",
+            "business_dates": {"business_date": "2026-08-01", "posting_date": "2026-08-01"},
+            "amounts": {"amount_fen": 10_000},
+            "direction": "to_platform",
+            "bank_account_code": "1002",
+            "bank_transaction_references": [{"id": platform_bank_row.id}],
+            "evidence_references": [evidence.id],
+            "description": "转入公司自有支付平台账户",
         },
     ]
     for payload in payloads:

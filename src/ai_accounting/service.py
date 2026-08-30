@@ -191,6 +191,7 @@ class FinanceService:
             EventType.HOUSING_FUND_PAYMENT,
             EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
             EventType.CASH_BANK_TRANSFER,
+            EventType.PAYMENT_PLATFORM_TRANSFER,
         }
 
     @classmethod
@@ -1234,12 +1235,30 @@ class FinanceService:
             ]
 
         elif event_type == EventType.OWNER_REPAYMENT:
+            fee_fen = int(request.details.owner_repayment_fee_fen or 0)
+            principal_fen = amount - fee_fen
             entries = [
-                Entry(account_role="owner_payable", debit_fen=amount, counterparty_id=cp_id),
                 Entry(
-                    account_code=request.bank_account_code, credit_fen=amount, counterparty_id=cp_id
+                    account_role="owner_payable",
+                    debit_fen=principal_fen,
+                    counterparty_id=cp_id,
                 ),
             ]
+            if fee_fen:
+                entries.append(
+                    Entry(account_role="general_expense", debit_fen=fee_fen)
+                )
+            entries.append(
+                Entry(
+                    account_code=request.bank_account_code,
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                )
+            )
+            derived = {
+                "owner_repayment_principal_fen": principal_fen,
+                "owner_repayment_fee_fen": fee_fen,
+            }
 
         elif event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
             allocated = sum(item.amount_fen for item in request.allocations)
@@ -1336,6 +1355,18 @@ class FinanceService:
                 entries = [
                     Entry(account_role="cash", debit_fen=amount),
                     Entry(account_code=request.bank_account_code, credit_fen=amount),
+                ]
+
+        elif event_type == EventType.PAYMENT_PLATFORM_TRANSFER:
+            if request.direction == "to_platform":
+                entries = [
+                    Entry(account_role="payment_platform_funds", debit_fen=amount),
+                    Entry(account_code=request.bank_account_code, credit_fen=amount),
+                ]
+            else:
+                entries = [
+                    Entry(account_code=request.bank_account_code, debit_fen=amount),
+                    Entry(account_role="payment_platform_funds", credit_fen=amount),
                 ]
 
         elif event_type == EventType.TAX_PAYMENT:
@@ -2550,6 +2581,16 @@ class FinanceService:
             expected = amount if request.direction == "cash_deposit" else -amount
             if bank_total != expected:
                 raise ValueError("CASH_BANK_TRANSFER_BANK_TRANSACTION_AMOUNT_MISMATCH")
+        elif request.event_type == EventType.PAYMENT_PLATFORM_TRANSFER:
+            if any(
+                transaction.bank_account_code != request.bank_account_code
+                for transaction in matched
+            ):
+                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
+            bank_total = sum(transaction.amount_fen for transaction in matched)
+            expected = amount if request.direction == "from_platform" else -amount
+            if bank_total != expected:
+                raise ValueError("PAYMENT_PLATFORM_TRANSFER_BANK_TRANSACTION_AMOUNT_MISMATCH")
         else:
             if any(
                 transaction.bank_account_code != request.bank_account_code
@@ -2570,6 +2611,7 @@ class FinanceService:
             not in {
                 EventType.INTERNAL_TRANSFER,
                 EventType.CASH_BANK_TRANSFER,
+                EventType.PAYMENT_PLATFORM_TRANSFER,
             }
             and request.event_type not in inflows | outflows
         ):
@@ -2655,10 +2697,13 @@ class FinanceService:
                     counterparty_id=counterparty.id,
                 ),
             )
-            if self._amount(request) > payable:
+            principal_fen = self._amount(request) - int(
+                request.details.owner_repayment_fee_fen or 0
+            )
+            if principal_fen > payable:
                 raise ValueError(
                     f"owner repayment exceeds payable balance: available={payable}, "
-                    f"requested={self._amount(request)}"
+                    f"requested={principal_fen}"
                 )
             return None
 
@@ -2795,7 +2840,10 @@ class FinanceService:
                 missing.append("different source and destination bank accounts")
         elif self._uses_bank_settlement(request) and request.bank_account_code is None:
             missing.append("bank_account_code")
-        if request.event_type is EventType.CASH_BANK_TRANSFER and request.direction is None:
+        if request.event_type in {
+            EventType.CASH_BANK_TRANSFER,
+            EventType.PAYMENT_PLATFORM_TRANSFER,
+        } and request.direction is None:
             missing.append("direction")
 
         counterparty_events = {
@@ -2835,6 +2883,14 @@ class FinanceService:
                 missing.append("description")
 
         if event_type == EventType.BANK_INTEREST_RECEIVED:
+            if not request.bank_transaction_references:
+                missing.append("bank_transaction_references")
+            if not request.evidence_references:
+                missing.append("evidence_references")
+            if not request.description.strip():
+                missing.append("description")
+
+        if event_type == EventType.PAYMENT_PLATFORM_TRANSFER:
             if not request.bank_transaction_references:
                 missing.append("bank_transaction_references")
             if not request.evidence_references:
@@ -8214,6 +8270,7 @@ class FinanceService:
                     .where(
                         PayrollBatch.org_id == original.org_id,
                         PayrollBatch.status == "posted",
+                        PayrollBatch.reversal_of_batch_id.is_(None),
                         PayrollLine.employee_id.in_(tax_employee_ids),
                     )
                 ).all()

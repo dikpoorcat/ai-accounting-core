@@ -62,6 +62,7 @@ _EVENT_LABELS = {
     "refundable_deposit_return_received": "可退保证金收回",
     "internal_transfer": "银行账户内部转账",
     "cash_bank_transfer": "现金与银行互转",
+    "payment_platform_transfer": "银行与支付平台互转",
     "reversal": "冲正凭证",
 }
 
@@ -262,7 +263,7 @@ def build_funds_data(
             .where(
                 Account.org_id == organization.id,
                 or_(
-                    Account.system_role.in_(("bank", "cash")),
+                    Account.system_role.in_(("bank", "cash", "payment_platform_funds")),
                     Account.requires_bank_reconciliation.is_(True),
                 ),
             )
@@ -344,7 +345,11 @@ def build_funds_data(
         for account in fund_accounts
     }
     movements = []
-    transfer_types = {"internal_transfer", "cash_bank_transfer"}
+    transfer_types = {
+        "internal_transfer",
+        "cash_bank_transfer",
+        "payment_platform_transfer",
+    }
     for row in movement_rows:
         values = values_by_account[row.account_id]
         signed_fen = int(row.debit_fen) - int(row.credit_fen)
@@ -367,7 +372,13 @@ def build_funds_data(
                 "date": activity_date,
                 "account_code": row.account_code,
                 "account_name": row.account_name,
-                "account_type": "cash" if row.system_role == "cash" else "bank",
+                "account_type": (
+                    "cash"
+                    if row.system_role == "cash"
+                    else "payment_platform"
+                    if row.system_role == "payment_platform_funds"
+                    else "bank"
+                ),
                 "direction": direction,
                 "amount_fen": amount_fen,
                 "signed_amount_fen": signed_fen,
@@ -398,7 +409,13 @@ def build_funds_data(
             for key in ("opening_fen", "inflow_fen", "outflow_fen", "movement_count")
         )
         has_statement_facts = bool(statement and statement["transaction_count"])
-        account_type = "cash" if account.system_role == "cash" else "bank"
+        account_type = (
+            "cash"
+            if account.system_role == "cash"
+            else "payment_platform"
+            if account.system_role == "payment_platform_funds"
+            else "bank"
+        )
         relevant = (
             has_ledger_facts
             if account_type == "cash"
@@ -445,12 +462,18 @@ def build_funds_data(
     external_movements = [item for item in movements if not item["internal_transfer"]]
     bank_accounts = [item for item in accounts if item["type"] == "bank"]
     cash_accounts = [item for item in accounts if item["type"] == "cash"]
+    payment_platform_accounts = [
+        item for item in accounts if item["type"] == "payment_platform"
+    ]
     opening_fen = sum(item["opening_fen"] for item in accounts)
     total_fen = sum(item["closing_fen"] for item in accounts)
     return {
         "total_fen": total_fen,
         "bank_fen": sum(item["closing_fen"] for item in bank_accounts),
         "cash_fen": sum(item["closing_fen"] for item in cash_accounts),
+        "payment_platform_fen": sum(
+            item["closing_fen"] for item in payment_platform_accounts
+        ),
         "opening_fen": opening_fen,
         "inflow_fen": sum(
             item["amount_fen"]
@@ -471,6 +494,7 @@ def build_funds_data(
         "account_count": len(accounts),
         "bank_account_count": len(bank_accounts),
         "cash_account_count": len(cash_accounts),
+        "payment_platform_account_count": len(payment_platform_accounts),
         "attention_account_count": sum(
             item["negative_balance"]
             or item["reconciliation"]["state"] in {"attention", "pending", "not_configured"}
@@ -492,6 +516,8 @@ def _fund_reconciliation_view(
 ) -> dict[str, Any]:
     if account.system_role == "cash":
         return {"state": "not_applicable", "label": "现金账户无需银行对账"}
+    if account.system_role == "payment_platform_funds":
+        return {"state": "not_applicable", "label": "支付平台余额待平台明细核验"}
     if not account.requires_bank_reconciliation:
         return {"state": "not_configured", "label": "未纳入逐账户银行对账"}
     if not in_scope:
@@ -557,6 +583,7 @@ def _empty_funds(bank_activity: dict[str, Any]) -> dict[str, Any]:
         "total_fen": 0,
         "bank_fen": 0,
         "cash_fen": 0,
+        "payment_platform_fen": 0,
         "opening_fen": 0,
         "inflow_fen": 0,
         "outflow_fen": 0,
@@ -565,6 +592,7 @@ def _empty_funds(bank_activity: dict[str, Any]) -> dict[str, Any]:
         "account_count": 0,
         "bank_account_count": 0,
         "cash_account_count": 0,
+        "payment_platform_account_count": 0,
         "attention_account_count": 0,
         "accounts": [],
         "movements": [],

@@ -1287,6 +1287,7 @@ class AccountingPeriodService:
             "refundable_deposit_return_received",
             "internal_transfer",
             "cash_bank_transfer",
+            "payment_platform_transfer",
             "bank_interest_received",
         }
         next_month_inflows = [

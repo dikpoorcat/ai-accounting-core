@@ -95,6 +95,7 @@ EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
     "refundable_deposit_return_received": ("fund_movement", "可退保证金收回"),
     "internal_transfer": ("fund_movement", "银行账户内部转账"),
     "cash_bank_transfer": ("fund_movement", "现金与银行互转"),
+    "payment_platform_transfer": ("fund_movement", "银行与支付平台互转"),
     "reversal": ("correction", "冲正凭证"),
 }
 
