@@ -16,6 +16,7 @@ data/
 dist/
 build/
 /outputs/
+/.tmp/
 /src/ai_accounting/static/dashboard/
 *.egg-info/
 .codex/tmp/
