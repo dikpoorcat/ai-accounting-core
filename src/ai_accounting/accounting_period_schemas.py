@@ -115,6 +115,18 @@ class PreviewAccountingPeriodCloseRequest(BaseModel):
     closing_date: date
 
 
+class RequestAccountingPeriodCloseApprovalWindowRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    period_id: uuid.UUID
+    calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class GetAccountingPeriodCloseApprovalRequest(RequestAccountingPeriodCloseApprovalWindowRequest):
+    pass
+
+
 class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     management_commentary_context_hash: str | None = Field(

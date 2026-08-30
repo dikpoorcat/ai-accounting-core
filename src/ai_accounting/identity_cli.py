@@ -30,6 +30,7 @@ from .identity_schemas import (
 )
 from .identity_service import IdentityService
 from .models import AccountingPeriod, AccountingPeriodCloseApproval, OwnerAccount
+from .owner_login_launcher import OwnerCloseApprovalWindowLauncher
 
 
 def main() -> None:
@@ -52,6 +53,14 @@ def main() -> None:
     approve_close.add_argument("--period-id", required=True, type=uuid.UUID)
     approve_close.add_argument("--calculation-hash", required=True)
     approve_close.add_argument("--login-name", required=True)
+    approve_close_window = commands.add_parser(
+        "approve-close-window",
+        help="open one dedicated visible window for accounting-period close approval",
+    )
+    approve_close_window.add_argument("--org-id", required=True, type=uuid.UUID)
+    approve_close_window.add_argument("--period-id", required=True, type=uuid.UUID)
+    approve_close_window.add_argument("--calculation-hash", required=True)
+    approve_close_window.add_argument("--login-name", required=True)
     commands.add_parser("logout", help="revoke and remove the local session")
     args = parser.parse_args()
 
@@ -68,6 +77,8 @@ def main() -> None:
             _replace_recovery_code()
         elif args.command == "approve-close":
             _approve_close(args)
+        elif args.command == "approve-close-window":
+            _approve_close_window(args)
         else:
             _logout()
     except Exception as exc:
@@ -167,10 +178,7 @@ def _replace_recovery_code() -> None:
 
 
 def _approve_close(args: argparse.Namespace) -> None:
-    if len(args.calculation_hash) != 64 or any(
-        character not in "0123456789abcdef" for character in args.calculation_hash
-    ):
-        raise IdentityError("ACCOUNTING_PERIOD_CALCULATION_HASH_INVALID")
+    _validate_close_calculation_hash(args.calculation_hash)
     if get_settings().multi_company_enabled:
         _approve_close_multi_company(args)
         return
@@ -263,6 +271,19 @@ def _approve_close(args: argparse.Namespace) -> None:
     print(f"CLOSE_APPROVAL_ID={approval.id}")
     print(f"CLOSE_APPROVAL_PERIOD={period_month}")
     print(f"CLOSE_APPROVAL_EXPIRES_AT={approval.expires_at.isoformat()}")
+
+
+def _approve_close_window(args: argparse.Namespace) -> None:
+    _validate_close_calculation_hash(args.calculation_hash)
+    launched = OwnerCloseApprovalWindowLauncher().request(
+        org_id=str(args.org_id),
+        period_id=str(args.period_id),
+        calculation_hash=args.calculation_hash,
+        login_name=args.login_name,
+    )
+    if not launched:
+        raise IdentityError("IDENTITY_CLOSE_APPROVAL_WINDOW_UNAVAILABLE")
+    print("CLOSE_APPROVAL_WINDOW_REQUESTED")
 
 
 def _logout() -> None:
@@ -425,6 +446,13 @@ def _new_password() -> str:
     if first != second:
         raise IdentityError("IDENTITY_PASSWORD_CONFIRMATION_MISMATCH")
     return first
+
+
+def _validate_close_calculation_hash(calculation_hash: str) -> None:
+    if len(calculation_hash) != 64 or any(
+        character not in "0123456789abcdef" for character in calculation_hash
+    ):
+        raise IdentityError("ACCOUNTING_PERIOD_CALCULATION_HASH_INVALID")
 
 
 def _secret_prompt(prompt: str) -> str:

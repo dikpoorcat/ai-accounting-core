@@ -183,6 +183,40 @@ def test_cli_approve_close_reauthenticates_and_binds_exact_preview_hash(
         engine.dispose()
 
 
+def test_cli_close_approval_window_uses_dedicated_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, str]] = []
+
+    class _Launcher:
+        def request(self, **kwargs: str) -> bool:
+            calls.append(kwargs)
+            return True
+
+    monkeypatch.setattr(identity_cli, "OwnerCloseApprovalWindowLauncher", _Launcher)
+    org_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    calculation_hash = "a" * 64
+
+    identity_cli._approve_close_window(
+        Namespace(
+            org_id=org_id,
+            period_id=period_id,
+            calculation_hash=calculation_hash,
+            login_name="owner",
+        )
+    )
+
+    assert calls == [
+        {
+            "org_id": str(org_id),
+            "period_id": str(period_id),
+            "calculation_hash": calculation_hash,
+            "login_name": "owner",
+        }
+    ]
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Credential Manager only")
 def test_windows_credential_store_abi_and_unique_target_round_trip() -> None:
     _assert_windows_credential_layout()

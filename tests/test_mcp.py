@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,10 @@ from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp.exceptions import ToolError
 
 from ai_accounting import mcp_server
+from ai_accounting.accounting_period_schemas import (
+    GetAccountingPeriodCloseApprovalRequest,
+    RequestAccountingPeriodCloseApprovalWindowRequest,
+)
 from ai_accounting.agent_contract import (
     AI_OPERATING_PROTOCOL_VERSION,
     EVIDENCE_FIRST_RUNTIME_INSTRUCTION,
@@ -84,6 +89,8 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_get_borrowing",
         "finance_generate_accounting_period",
         "finance_preview_accounting_period_close",
+        "finance_request_accounting_period_close_approval_window",
+        "finance_get_accounting_period_close_approval",
         "finance_confirm_accounting_period_close",
         "finance_get_accounting_periods",
         "finance_preview_quarterly_financial_statements",
@@ -118,15 +125,130 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "separate_contribution_policy_actual_and_cash",
         "apply_first_wage_tax_treatment_only_with_evidence",
         "generate_period_close_management_commentary",
+        "launch_visible_close_approval_window",
+        "verify_automatic_close_backup",
         "ask_minimum_specific_question",
         "submit_or_stop",
     ]
-    assert "不得让用户代替AI" in protocol["prohibitions"][-1]
+    assert any("不得让用户代替AI" in item for item in protocol["prohibitions"])
+    assert any("不得在隐藏或不可见的终端通道" in item for item in protocol["prohibitions"])
+    assert any("不得绕过内核关账自动备份" in item for item in protocol["prohibitions"])
     assert "除已提供并核对的材料外" in protocol["question_policy"]["final_fallback"]
     assert EVIDENCE_FIRST_RUNTIME_INSTRUCTION in mcp.instructions
     assert "agent_operating_protocol" in mcp.instructions
     assert "management_commentary" in mcp.instructions
     assert "不得把看板指标简单拼接" in mcp.instructions
+    assert "finance_request_accounting_period_close_approval_window" in mcp.instructions
+    assert "finance_get_accounting_period_close_approval" in mcp.instructions
+    assert "AI 记账内核 - 关账密码确认" in mcp.instructions
+    assert "不得直接在隐藏终端" in mcp.instructions
+    assert "finance_get_close_backup_configuration" in mcp.instructions
+    assert "close_backup.status=failed" in mcp.instructions
+    assert "另写临时备份脚本" in mcp.instructions
+
+
+def test_close_approval_window_and_result_are_exposed_as_mcp_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    calculation_hash = "a" * 64
+    approval_id = uuid.uuid4()
+    expires_at = datetime.now(UTC) + timedelta(minutes=30)
+    launched: list[dict[str, str]] = []
+
+    class _Session:
+        def __init__(self) -> None:
+            self.approval: object | None = None
+
+        def __enter__(self) -> _Session:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def scalar(self, _statement: object) -> object:
+            return self.approval or SimpleNamespace(
+                id=period_id,
+                org_id=org_id,
+                status="open",
+                end_date=date(2022, 9, 30),
+            )
+
+    class _Launcher:
+        def request(self, **kwargs: str) -> bool:
+            launched.append(kwargs)
+            return True
+
+    session = _Session()
+    monkeypatch.setattr(mcp_server, "SessionLocal", lambda: session)
+    monkeypatch.setattr(
+        mcp_server,
+        "_accounting_period_service",
+        lambda _session: SimpleNamespace(
+            preview_accounting_period_close=lambda _request: SimpleNamespace(
+                status=SimpleNamespace(value="calculated"),
+                calculation_hash=calculation_hash,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "_active_owner_login_name",
+        lambda _session, *, org_id: "owner",
+    )
+    monkeypatch.setattr(mcp_server, "_OWNER_CLOSE_APPROVAL_WINDOW_LAUNCHER", _Launcher())
+
+    request = RequestAccountingPeriodCloseApprovalWindowRequest(
+        org_id=org_id,
+        period_id=period_id,
+        calculation_hash=calculation_hash,
+    )
+    result = mcp_server.finance_request_accounting_period_close_approval_window(request)
+
+    assert result == {
+        "status": "requested",
+        "period_id": str(period_id),
+        "calculation_hash": calculation_hash,
+        "window_title": "AI 记账内核 - 关账密码确认",
+    }
+    assert launched == [
+        {
+            "org_id": str(org_id),
+            "period_id": str(period_id),
+            "calculation_hash": calculation_hash,
+            "login_name": "owner",
+        }
+    ]
+
+    session.approval = SimpleNamespace(id=approval_id, expires_at=expires_at)
+    marker = mcp_server._ACTIVE_EXECUTION_CONTEXT.set(
+        SimpleNamespace(
+            org_id=org_id,
+            catalog_instance_id=uuid.uuid4(),
+            owner_account_id=uuid.uuid4(),
+            owner_session_id=uuid.uuid4(),
+            owner_credential_version=1,
+        )
+    )
+    try:
+        approval = mcp_server.finance_get_accounting_period_close_approval(
+            GetAccountingPeriodCloseApprovalRequest(
+                org_id=org_id,
+                period_id=period_id,
+                calculation_hash=calculation_hash,
+            )
+        )
+    finally:
+        mcp_server._ACTIVE_EXECUTION_CONTEXT.reset(marker)
+
+    assert approval == {
+        "status": "ready",
+        "period_id": str(period_id),
+        "calculation_hash": calculation_hash,
+        "owner_approval_id": str(approval_id),
+        "expires_at": expires_at.isoformat(),
+    }
 
 
 @pytest.mark.parametrize(
@@ -175,7 +297,7 @@ def test_read_tool_runtime_rejects_caller_identity_and_session_extras(
 
 
 def test_stdio_server_initializes_and_lists_tools() -> None:
-    async def run() -> set[str]:
+    async def run() -> tuple[set[str], str]:
         repository_root = Path(__file__).parents[1]
         site_packages = Path(sys.prefix) / "Lib" / "site-packages"
         environment = os.environ.copy()
@@ -203,11 +325,17 @@ def test_stdio_server_initializes_and_lists_tools() -> None:
         )
         async with stdio_client(parameters) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+                initialized = await session.initialize()
                 response = await session.list_tools()
-                return {tool.name for tool in response.tools}
+                return (
+                    {tool.name for tool in response.tools},
+                    initialized.instructions or "",
+                )
 
-    names = asyncio.run(run())
+    names, instructions = asyncio.run(run())
+    assert "finance_request_accounting_period_close_approval_window" in instructions
+    assert "finance_get_close_backup_configuration" in instructions
+    assert "close_backup.status=failed" in instructions
     assert "finance_record_event" in names
     assert "finance_get_event" in names
     assert {

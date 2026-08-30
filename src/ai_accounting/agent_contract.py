@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v4"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v6"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -20,6 +20,25 @@ EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "不得把数据库没有记录推断为没有业务，也不得臆测缺失事实。"
 )
 
+CLOSE_APPROVAL_RUNTIME_INSTRUCTION = (
+    "现账关账需要负责人密码复核时，AI必须调用 "
+    "finance_request_accounting_period_close_approval_window，启动标题为"
+    "‘AI 记账内核 - 关账密码确认’的独立可见本机窗口；负责人表示完成后，再调用 "
+    "finance_get_accounting_period_close_approval 取得与当前会话、期间和预览哈希精确匹配的"
+    "未消费授权。approve-close 是专用窗口内部命令，AI不得直接在隐藏终端、后台会话、"
+    "MCP stdio、Codex底部终端或其他不可见输入通道中运行它等待密码；窗口未出现时必须"
+    "修复启动链，不得回退到不可见终端。AI不得索取、代输、读取或记录负责人密码。"
+)
+
+CLOSE_BACKUP_RUNTIME_INSTRUCTION = (
+    "正式关账前，AI必须调用 finance_get_close_backup_configuration 核对自动备份配置和就绪状态；"
+    "未配置或未就绪时不得绕过。finance_confirm_accounting_period_close 在关账事务提交后由内核"
+    "自动导出该公司一致性快照并生成便携ZIP，返回 close_backup；AI必须核对其 status。"
+    "status=completed 才表示本次关账备份完成；若关账已 posted 但 close_backup.status=failed，"
+    "AI应使用完全相同的关账请求重试，让内核幂等续做同一关账的备份，不得重复关账、另写临时"
+    "备份脚本或把手工复制文件当成成功。持续失败时应报告稳定错误码和已关账但备份未完成的状态。"
+)
+
 MCP_SERVER_INSTRUCTIONS = (
     "这是确定性记账内核，不是自由分录接口。调用企业数据工具前先调用 "
     "finance_get_event_schema，并遵守其 agent_operating_protocol。"
@@ -28,6 +47,8 @@ MCP_SERVER_INSTRUCTIONS = (
     "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
     "解读应形成综合判断，不得把看板指标简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
+    f"{CLOSE_APPROVAL_RUNTIME_INSTRUCTION}"
+    f"{CLOSE_BACKUP_RUNTIME_INSTRUCTION}"
     "所有金额使用整数分，日期使用 YYYY-MM-DD。"
 )
 
@@ -88,6 +109,14 @@ def agent_operating_protocol() -> dict[str, Any]:
                 ),
             },
             {
+                "code": "launch_visible_close_approval_window",
+                "instruction": CLOSE_APPROVAL_RUNTIME_INSTRUCTION,
+            },
+            {
+                "code": "verify_automatic_close_backup",
+                "instruction": CLOSE_BACKUP_RUNTIME_INSTRUCTION,
+            },
+            {
                 "code": "ask_minimum_specific_question",
                 "instruction": (
                     "确需询问时，先陈述已核对事实和当前结论，再说明一个准确缺口及其影响；"
@@ -117,5 +146,7 @@ def agent_operating_protocol() -> dict[str, Any]:
             "不得把数据库空记录当作没有业务的证据。",
             "不得重复询问已由材料和内核事实唯一证明的事项。",
             "不得让用户代替AI完成银行流水、规范化数据和既有事件之间的核对。",
+            "不得在隐藏或不可见的终端通道中等待负责人输入关账密码。",
+            "不得绕过内核关账自动备份、以临时脚本或手工文件复制替代其完成状态。",
         ],
     }

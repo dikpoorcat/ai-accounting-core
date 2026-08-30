@@ -222,8 +222,10 @@ Set-Location ..
 3. AI 完成材料核对和月末清单后，必须严格依据 `management_commentary.context`、`instruction` 和 `success_criteria` 生成月度经营解读：提炼经营阶段、环比变化、损益与现金差异、回款付款节奏及一至两个关键风险，不得逐项复述看板或猜测上下文不能证明的原因。负责人审阅完整月末清单和该解读并明确同意关账后，必须在本地窗口核对月份及当前预览哈希，并输入负责人密码复核。无需抄写确认短语；密码验证通过后签发一个与企业、月份及预览哈希绑定、30 分钟内且仅可使用一次的 `owner_approval_id`：
 
    ```powershell
-   .\.venv\Scripts\python.exe -m ai_accounting.identity_cli approve-close --org-id $trialOrgId --period-id "预览返回的 period_id" --calculation-hash "预览返回的 calculation_hash" --login-name owner
+   .\.venv\Scripts\python.exe -m ai_accounting.identity_cli approve-close-window --org-id $trialOrgId --period-id "预览返回的 period_id" --calculation-hash "预览返回的 calculation_hash" --login-name owner
    ```
+
+   `approve-close-window` 会启动标题为“AI 记账内核 - 关账密码确认”的独立可见窗口，密码只在该窗口输入。Agent 不得把内部的 `approve-close` 命令直接放进隐藏终端、Codex 底部终端或后台会话等待密码；若专用窗口未出现，应先修复启动链，不能回退到不可见终端。
 
 4. `finance_confirm_accounting_period_close` 必须携带该 `owner_approval_id`、预览返回的 `management_commentary.context_hash` 及负责人已经审阅的经营解读原文，并在税期企业锁和月份锁内复算同一关账哈希及上下文哈希；系统阻断为零、六项人工复核全真且有确认说明和证据时，保存完整不可变快照、经营解读及生成上下文并单向关闭期间。业务事务提交后，系统导出该公司的一致性快照并生成便携 ZIP，返回 `close_backup` 的文件名、摘要和状态。AI 不能代替负责人签发确认，也不能仅凭清单字段为真自动关账。
 5. `finance_get_accounting_periods` 查询生成、关闭动作和期间状态。空月份不会自动跳过，但允许经过同样的显式复核和负责人本地确认后关闭。

@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
 
@@ -21,8 +22,10 @@ from sqlalchemy.orm import selectinload
 from .accounting_period_schemas import (
     ConfirmAccountingPeriodCloseRequest,
     GenerateAccountingPeriodRequest,
+    GetAccountingPeriodCloseApprovalRequest,
     GetAccountingPeriodsRequest,
     PreviewAccountingPeriodCloseRequest,
+    RequestAccountingPeriodCloseApprovalWindowRequest,
 )
 from .agent_contract import MCP_SERVER_INSTRUCTIONS, agent_operating_protocol
 from .bank_import import BankStatementInputError, import_bank_statement
@@ -88,6 +91,8 @@ from .labor_remuneration_schemas import (
 )
 from .models import (
     Account,
+    AccountingPeriod,
+    AccountingPeriodCloseApproval,
     AuditLog,
     BankTransaction,
     BankTransactionMatch,
@@ -103,7 +108,7 @@ from .models import (
     Voucher,
     event_evidence,
 )
-from .owner_login_launcher import OwnerLoginWindowLauncher
+from .owner_login_launcher import OwnerCloseApprovalWindowLauncher, OwnerLoginWindowLauncher
 from .schemas import (
     DISABLED_EVENT_TYPES,
     EVENT_REQUIREMENTS,
@@ -154,6 +159,7 @@ _ACTIVE_EXECUTION_CONTEXT: ContextVar[ExecutionContext | None] = ContextVar(
 )
 _MCP_CREDENTIAL_STORE: CredentialStore | None = None
 _OWNER_LOGIN_WINDOW_LAUNCHER = OwnerLoginWindowLauncher()
+_OWNER_CLOSE_APPROVAL_WINDOW_LAUNCHER = OwnerCloseApprovalWindowLauncher()
 _OWNER_LOGIN_WINDOW_ENABLED = False
 
 
@@ -471,6 +477,7 @@ def _secure_registered_data_tools() -> None:
                         _ACTIVE_EXECUTION_CONTEXT.reset(context_marker)
                         _ACTIVE_CATALOG_SESSION.reset(catalog_marker)
                 marker = _ACTIVE_TOOL_SESSION.set(session)
+                context_marker = _ACTIVE_EXECUTION_CONTEXT.set(context)
                 try:
                     if _is_write:
                         with persist_execution_attribution(
@@ -481,6 +488,7 @@ def _secure_registered_data_tools() -> None:
                             return _original(*args, **kwargs)
                     return _original(*args, **kwargs)
                 finally:
+                    _ACTIVE_EXECUTION_CONTEXT.reset(context_marker)
                     _ACTIVE_TOOL_SESSION.reset(marker)
 
         object.__setattr__(tool, "fn", authenticated)
@@ -679,6 +687,17 @@ def _close_backup_service() -> CloseBackupService:
         context=context,
         settings=get_settings(),
     )
+
+
+def _active_owner_login_name(session: Any, *, org_id: uuid.UUID) -> str | None:
+    context = _ACTIVE_EXECUTION_CONTEXT.get()
+    if context is None or context.org_id != org_id:
+        return None
+    identity_session = _ACTIVE_CATALOG_SESSION.get() or session
+    account = identity_session.get(OwnerAccount, context.owner_account_id)
+    if account is None or account.org_id != org_id or account.status != "active":
+        return None
+    return account.login_name
 
 
 def _bank_statement_service(session: Any) -> Any:
@@ -1790,6 +1809,105 @@ def finance_preview_accounting_period_close(
                 .preview_accounting_period_close(request)
                 .model_dump(mode="json")
             )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_request_accounting_period_close_approval_window(
+    request: RequestAccountingPeriodCloseApprovalWindowRequest,
+) -> dict[str, Any]:
+    """核对当前预览哈希并启动独立可见的负责人关账密码窗口。"""
+
+    try:
+        with SessionLocal() as session:
+            period = session.scalar(
+                select(AccountingPeriod).where(
+                    AccountingPeriod.org_id == request.org_id,
+                    AccountingPeriod.id == request.period_id,
+                )
+            )
+            if period is None or period.status != "open":
+                return _rejected_identity("ACCOUNTING_PERIOD_NOT_OPEN")
+            preview = _accounting_period_service(session).preview_accounting_period_close(
+                PreviewAccountingPeriodCloseRequest(
+                    org_id=request.org_id,
+                    period_id=request.period_id,
+                    closing_date=period.end_date,
+                )
+            )
+            if (
+                preview.status.value != "calculated"
+                or preview.calculation_hash != request.calculation_hash
+            ):
+                return _rejected_identity("ACCOUNTING_PERIOD_CALCULATION_STALE")
+            login_name = _active_owner_login_name(session, org_id=request.org_id)
+            if login_name is None:
+                return _rejected_identity("AUTHENTICATION_REQUIRED")
+        if not _OWNER_CLOSE_APPROVAL_WINDOW_LAUNCHER.request(
+            org_id=str(request.org_id),
+            period_id=str(request.period_id),
+            calculation_hash=request.calculation_hash,
+            login_name=login_name,
+        ):
+            return _rejected_identity("IDENTITY_CLOSE_APPROVAL_WINDOW_UNAVAILABLE")
+        return {
+            "status": "requested",
+            "period_id": str(request.period_id),
+            "calculation_hash": request.calculation_hash,
+            "window_title": "AI 记账内核 - 关账密码确认",
+        }
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_accounting_period_close_approval(
+    request: GetAccountingPeriodCloseApprovalRequest,
+) -> dict[str, Any]:
+    """读取与当前负责人会话、期间及预览哈希精确匹配的未消费授权。"""
+
+    try:
+        context = _ACTIVE_EXECUTION_CONTEXT.get()
+        if context is None or context.org_id != request.org_id:
+            return _rejected_identity("AUTHENTICATION_REQUIRED")
+        with SessionLocal() as session:
+            approval = session.scalar(
+                select(AccountingPeriodCloseApproval)
+                .where(
+                    AccountingPeriodCloseApproval.org_id == request.org_id,
+                    AccountingPeriodCloseApproval.period_id == request.period_id,
+                    AccountingPeriodCloseApproval.calculation_hash
+                    == request.calculation_hash,
+                    AccountingPeriodCloseApproval.catalog_instance_id
+                    == context.catalog_instance_id,
+                    AccountingPeriodCloseApproval.owner_account_id
+                    == context.owner_account_id,
+                    AccountingPeriodCloseApproval.owner_session_id
+                    == context.owner_session_id,
+                    AccountingPeriodCloseApproval.owner_credential_version
+                    == context.owner_credential_version,
+                    AccountingPeriodCloseApproval.confirmation_method
+                    == "local_password_reauthentication",
+                    AccountingPeriodCloseApproval.consumed_at.is_(None),
+                    AccountingPeriodCloseApproval.expires_at > datetime.now(UTC),
+                )
+                .order_by(AccountingPeriodCloseApproval.confirmed_at.desc())
+                .limit(1)
+            )
+        if approval is None:
+            return {
+                "status": "pending",
+                "period_id": str(request.period_id),
+                "calculation_hash": request.calculation_hash,
+            }
+        return {
+            "status": "ready",
+            "period_id": str(request.period_id),
+            "calculation_hash": request.calculation_hash,
+            "owner_approval_id": str(approval.id),
+            "expires_at": approval.expires_at.isoformat(),
+        }
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
