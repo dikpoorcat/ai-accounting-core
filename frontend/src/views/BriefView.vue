@@ -92,45 +92,7 @@ const priorities = computed(() => {
 const takeaway = computed(() => {
   if (!data.value) return "";
   if (data.value.management_commentary) return data.value.management_commentary;
-  const net = fen(data.value.cash.net_fen);
-  const result = fen(data.value.position.month_result_fen);
-  const cashText =
-    net > 0n
-      ? `银行资金净流入 ${formatFen(net)}`
-      : net < 0n
-        ? `银行资金净流出 ${formatPositiveFen(net)}`
-        : "银行资金无净变动";
-  const resultText =
-    result > 0n
-      ? `账面盈利 ${formatFen(result)}`
-      : result < 0n
-        ? `账面亏损 ${formatPositiveFen(result)}`
-        : "账面收支持平";
-  const cashAndResult =
-    net < 0n && result > 0n
-      ? `${resultText}，但${cashText}`
-      : `${cashText}${net > 0n && result < 0n ? "，但" : "，"}${resultText}`;
-  const pending: string[] = [];
-  if (fen(data.value.open_items.receivable_fen)) {
-    pending.push(`${formatFen(data.value.open_items.receivable_fen)} ${isClosed.value ? "应收" : "待收"}`);
-  }
-  if (fen(data.value.open_items.payable_fen)) {
-    pending.push(`${formatFen(data.value.open_items.payable_fen)} ${isClosed.value ? "应付" : "待付"}`);
-  }
-  const openText = isClosed.value
-    ? pending.length
-      ? `关账时点有 ${pending.join("、")}（历史快照）`
-      : "关账时点无应收应付余额"
-    : pending.length
-      ? `期末还有 ${pending.join("、")}`
-      : "期末无待收待付";
-  const bankPending = data.value.cash.unmatched_count + data.value.cash.pending_late_count;
-  const bankText = bankPending
-    ? `，另有 ${bankPending} 笔银行流水待处理`
-    : data.value.cash.transaction_count
-      ? "，银行流水已全部处理"
-      : "";
-  return `${cashAndResult}；${openText}${bankText}。`;
+  return isClosed.value ? "本月暂无经营结论。" : "本月尚未关账，经营结论将在关账时形成。";
 });
 
 function queryPeriod() {
