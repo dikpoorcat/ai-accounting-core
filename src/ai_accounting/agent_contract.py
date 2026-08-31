@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v9"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v10"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -45,7 +45,10 @@ CLOSE_BACKUP_RUNTIME_INSTRUCTION = (
 HISTORICAL_TEST_BATCH_CLOSE_RUNTIME_INSTRUCTION = (
     "只有负责人明确说明当前公司数据库是可丢弃并将由回放重建的测试库，且明确要求批量处理时，"
     "AI才可调用 finance_configure_historical_test_close_mode 启用临时历史测试关账模式。"
-    "在该模式中必须按操作类型分阶段覆盖全部可用月份：先一次性只读预检，再批量补同类前置"
+    "当前自然月即使已到月末最后一天也仍未完整结束，绝不得关账；只有期末日严格早于中国"
+    "当前日期的月份才属于可关月份。存在任一覆盖当月的员工而缺少该员工已过账工资明细时，"
+    "必须视为工资、社保及公积金核算尚未完成并停止关账，不得因工资批次尚未创建而当作零待办。"
+    "在该模式中必须按操作类型分阶段覆盖全部可关月份：先一次性只读预检，再批量补同类前置"
     "事项，最后使用 finance_confirm_historical_test_period_close 连续关账；期间不得逐月更新"
     "回放资料或执行备份，close_backup.status=deferred 是该专用入口的预期结果。批次完成或中止"
     "后必须立即关闭该模式，再统一补回放和备份。预检中由现有材料和系统事实明显证明正常的"

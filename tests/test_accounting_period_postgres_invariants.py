@@ -261,6 +261,9 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 )
                 assert "PERFORM finance_assert_fixed_asset(asset.id)" not in close_assertion
                 assert "PERFORM finance_assert_intangible_asset(asset.id)" not in close_assertion
+                assert "ACCOUNTING_PERIOD_PERIOD_NOT_ENDED" in close_assertion
+                assert "FROM employees AS employee" in close_assertion
+                assert "FROM payroll_lines AS line" in close_assertion
                 assert (
                     "PERFORM finance_assert_accounting_period_close(NEW.close_id)"
                     not in source_validator

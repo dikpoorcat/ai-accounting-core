@@ -191,6 +191,81 @@ def test_generation_rejects_future_month_with_injected_current_date() -> None:
     assert future.errors == ["ACCOUNTING_PERIOD_FUTURE_GENERATION_NOT_ALLOWED"]
 
 
+def test_close_rejects_period_until_the_day_after_month_end() -> None:
+    session = _session()
+    organization, evidence = _organization_and_evidence(session)
+    service = AccountingPeriodService(session, current_date=date(2026, 8, 31))
+    generated = service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-08",
+            idempotency_key="current-month-close-boundary",
+            confirmation_note="核对月末当天不得关账",
+            evidence_references=[evidence.id],
+        )
+    )
+
+    preview = service.preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            closing_date=date(2026, 8, 31),
+        )
+    )
+
+    assert preview.status is AccountingPeriodResultStatus.REJECTED
+    assert preview.errors == ["ACCOUNTING_PERIOD_PERIOD_NOT_ENDED"]
+
+
+def test_close_blocks_when_active_employee_has_no_posted_regular_payroll() -> None:
+    session = _session()
+    organization, evidence = _organization_and_evidence(session)
+    employee_counterparty = Counterparty(
+        org_id=organization.id,
+        kind="employee",
+        name="待核算员工",
+    )
+    session.add(employee_counterparty)
+    session.flush()
+    session.add(
+        Employee(
+            org_id=organization.id,
+            counterparty_id=employee_counterparty.id,
+            employee_code="EMP-CLOSE-GATE",
+            name="待核算员工",
+            employment_start_date=date(2026, 3, 1),
+            status="active",
+        )
+    )
+    session.flush()
+    service = AccountingPeriodService(session, current_date=date(2026, 4, 1))
+    generated = service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-03",
+            idempotency_key="missing-payroll-close-gate",
+            confirmation_note="核对缺失工资批次必须阻断关账",
+            evidence_references=[evidence.id],
+        )
+    )
+
+    preview = service.preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            closing_date=date(2026, 3, 31),
+        )
+    )
+
+    assert preview.status is AccountingPeriodResultStatus.CALCULATED
+    assert "ACCOUNTING_PERIOD_PAYROLL_PENDING" in preview.data["blocker_codes"]
+    assert preview.data["calculation"]["module_checks"]["payroll"] == {
+        "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
+        "count": 1,
+        "blocking": True,
+    }
+
+
 def test_open_item_review_uses_period_end_snapshot_not_current_status() -> None:
     session = _session()
     organization, _evidence = _organization_and_evidence(session)
@@ -701,7 +776,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
     assert closed.data["calculation"]["checker_version"] == (
-        "accounting_period_close_checker_2026.6"
+        "accounting_period_close_checker_2026.7"
     )
     assert list(closed.data["calculation"]["review_counts"]) == [
         "historical_bank_scope_corrections_pending",

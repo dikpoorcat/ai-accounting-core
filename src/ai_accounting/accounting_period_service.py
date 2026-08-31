@@ -79,6 +79,7 @@ from .models import (
     PayrollContributionActualSet,
     PayrollContributionActualUse,
     PayrollContributionSupplement,
+    PayrollLine,
     Settlement,
     TaxPeriod,
     UnifiedPayoutRun,
@@ -91,7 +92,7 @@ from .models import (
 from .organization_profiles import profile_as_of
 from .tax import calculate_tax_period
 
-_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.6"
+_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.7"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
 _PERIODIC_REVIEW_SOURCE_URLS = {
     "vat_filing_period": (
@@ -828,8 +829,8 @@ class AccountingPeriodService:
             raise _PeriodDecision("ACCOUNTING_PERIOD_NOT_GENERATED")
         if request.closing_date != period.end_date:
             raise _PeriodDecision("ACCOUNTING_PERIOD_INVALID_CLOSE_DATE")
-        if period.end_date > self._today():
-            raise _PeriodDecision("ACCOUNTING_PERIOD_FUTURE_CLOSE_NOT_ALLOWED")
+        if period.end_date >= self._today():
+            raise _PeriodDecision("ACCOUNTING_PERIOD_PERIOD_NOT_ENDED")
         checks: list[dict[str, Any]] = []
         blockers: list[str] = []
         self._add_check(checks, blockers, "ACCOUNTING_PERIOD_OPEN", period.status == "open")
@@ -2271,6 +2272,40 @@ class AccountingPeriodService:
             )
             or 0
         )
+        active_employee_ids = set(
+            self.session.scalars(
+                select(Employee.id).where(
+                    Employee.org_id == org_id,
+                    Employee.employment_start_date <= period.end_date,
+                    (
+                        Employee.employment_end_date.is_(None)
+                        | (Employee.employment_end_date >= period.start_date)
+                    ),
+                    Employee.status.in_(("active", "inactive", "terminated")),
+                )
+            ).all()
+        )
+        posted_regular_payroll_employee_ids = set(
+            self.session.scalars(
+                select(PayrollLine.employee_id)
+                .join(
+                    PayrollBatch,
+                    (PayrollBatch.org_id == PayrollLine.org_id)
+                    & (PayrollBatch.id == PayrollLine.payroll_batch_id),
+                )
+                .where(
+                    PayrollLine.org_id == org_id,
+                    PayrollBatch.payroll_period
+                    == f"{period.calendar_year:04d}-{period.calendar_month:02d}",
+                    PayrollBatch.batch_kind == "regular",
+                    PayrollBatch.status == "posted",
+                )
+            ).all()
+        )
+        missing_payroll_employees = len(
+            active_employee_ids - posted_regular_payroll_employee_ids
+        )
+        payroll_pending = max(int(unfinished_payroll), missing_payroll_employees)
         unfinished_labor_batches = (
             self.session.scalar(
                 select(func.count())
@@ -2315,8 +2350,8 @@ class AccountingPeriodService:
             },
             "payroll": {
                 "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
-                "count": int(unfinished_payroll),
-                "blocking": unfinished_payroll > 0,
+                "count": payroll_pending,
+                "blocking": payroll_pending > 0,
             },
             "labor_remuneration": {
                 "code": "ACCOUNTING_PERIOD_LABOR_REMUNERATION_PENDING",

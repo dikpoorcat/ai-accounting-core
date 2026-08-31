@@ -2903,7 +2903,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path) -> None
                     assert close_preview.status == "calculated", close_preview.errors
                     calculation = close_preview.data["calculation"]
                     assert (
-                        calculation["checker_version"] == "accounting_period_close_checker_2026.6"
+                        calculation["checker_version"] == "accounting_period_close_checker_2026.7"
                     )
                     assert calculation["review_counts"]["unmatched_bank_transactions"] == 1
                     assert calculation["review_counts"]["pending_late_bank_transactions"] == 1
