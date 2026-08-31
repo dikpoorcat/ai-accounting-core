@@ -408,13 +408,13 @@ def test_bank_activity_identifies_alipay_balance_transfer_without_changing_raw_m
     activity = build_bank_activity(session, org_id=organization.id, period=period)
     row = next(item for item in activity["rows"] if item["amount_fen"] == 600_000)
 
-    assert row["party"] == (
-        "企业支付宝余额转入（原对方户名：资金看板测试公司）"
-    )
+    assert row["party"] == ("企业支付宝余额转入（资金看板测试公司）")
     assert row["memo"] == "网商银行转入；（转入）网商银行转入"
 
 
-def test_load_funds_dashboard_returns_selected_period_and_empty_period_state(tmp_path) -> None:
+def test_load_funds_dashboard_returns_selected_period_and_empty_period_state(
+    tmp_path,
+) -> None:
     database_path = tmp_path / "dashboard-funds.sqlite3"
     engine = make_engine(f"sqlite+pysqlite:///{database_path.as_posix()}")
     Base.metadata.create_all(engine)

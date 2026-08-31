@@ -312,9 +312,10 @@ async function preview(quarterKey: string) {
     );
     if (previewController !== controller) return;
     report.value = result;
-    activeStatementKey.value = "";
-    statementsExpanded.value = false;
-    taxTemplateMode.value = false;
+    if (!result.statements.some((item) => item.key === activeStatementKey.value)) {
+      activeStatementKey.value = "";
+      statementsExpanded.value = false;
+    }
   } catch (error: unknown) {
     if (previewController === controller) {
       const message = dashboardErrorMessage(error);

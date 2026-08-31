@@ -19,10 +19,13 @@ const selectedBusiness = computed(
   () => props.groups.find((item) => item.key === selectedBusinessKey.value) || null,
 );
 
-function resetSelection() {
-  mode.value = "business";
-  selectedBusinessKey.value = props.groups[0]?.key || "";
-  selectedVoucherNumber.value = "";
+function keepAvailableSelection() {
+  if (!props.groups.some((item) => item.key === selectedBusinessKey.value)) {
+    selectedBusinessKey.value = props.groups[0]?.key || "";
+  }
+  if (!props.vouchers.some((item) => item.number === selectedVoucherNumber.value)) {
+    selectedVoucherNumber.value = "";
+  }
 }
 
 function selectMode(value: "business" | "voucher") {
@@ -42,7 +45,7 @@ function formatDate(value: string) {
   return `${Number(month)} 月 ${Number(day)} 日`;
 }
 
-watch(() => [props.groups, props.vouchers], resetSelection, { immediate: true });
+watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate: true });
 </script>
 
 <template>

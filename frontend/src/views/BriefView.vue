@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import { fetchBrief, type BriefData } from "../api/brief";
 import { dashboardErrorMessage } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
+import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import BriefActivityWorkbench from "../components/brief/BriefActivityWorkbench.vue";
 import BriefFinancialOverview from "../components/brief/BriefFinancialOverview.vue";
 import BriefOpenItems from "../components/brief/BriefOpenItems.vue";
@@ -28,7 +29,7 @@ const loading = ref(false);
 const error = ref("");
 const activeSection = ref("overview");
 let controller: AbortController | null = null;
-let observer: IntersectionObserver | null = null;
+let sectionSyncLocked = false;
 let initialized = false;
 
 const selectedPeriod = computed(() => response.value?.selected_period?.key || "");
@@ -182,34 +183,66 @@ function runPriorityAction(action: PriorityAction) {
   });
 }
 
+function lockSectionSync() {
+  sectionSyncLocked = true;
+}
+
+function enableSectionSyncForUserScroll() {
+  sectionSyncLocked = false;
+}
+
+function handleSectionScrollKey(event: KeyboardEvent) {
+  if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+    enableSectionSyncForUserScroll();
+  }
+}
+
+function handleScrollbarPointer(event: PointerEvent) {
+  if (event.clientX >= document.documentElement.clientWidth) {
+    enableSectionSyncForUserScroll();
+  }
+}
+
+function positionSection(section: HTMLElement) {
+  const root = document.documentElement;
+  const previousBehavior = root.style.scrollBehavior;
+  root.style.scrollBehavior = "auto";
+  window.scrollTo({
+    top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - 78),
+    behavior: "auto",
+  });
+  root.style.scrollBehavior = previousBehavior;
+}
+
 function focusSection(id: string) {
   const section = document.getElementById(id);
   if (!section) return;
+  lockSectionSync();
   activeSection.value = id;
-  section.scrollIntoView({
-    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-    block: "start",
-  });
+  positionSection(section);
   const focusTarget = section.matches("[tabindex]") ? section : section.querySelector<HTMLElement>("[tabindex]");
   focusTarget?.focus({ preventScroll: true });
 }
 
-function setupSectionObserver() {
-  observer?.disconnect();
-  if (!data.value || !("IntersectionObserver" in window)) return;
-  observer = new IntersectionObserver(
-    (entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (visible?.target.id) activeSection.value = visible.target.id;
-    },
-    { rootMargin: "-108px 0px -62%", threshold: [0.05, 0.25, 0.55] },
-  );
-  for (const link of sectionLinks.value) {
+function updateSectionFromScroll() {
+  if (sectionSyncLocked) return;
+  const links = sectionLinks.value;
+  if (!links.length) return;
+  const probeTop = 80;
+  let candidate = links[0].id;
+  for (const link of links) {
     const section = document.getElementById(link.id);
-    if (section) observer.observe(section);
+    if (!section || section.getBoundingClientRect().top > probeTop) break;
+    candidate = link.id;
   }
+  if (candidate === activeSection.value) return;
+  const currentIndex = links.findIndex((link) => link.id === activeSection.value);
+  const candidateIndex = links.findIndex((link) => link.id === candidate);
+  if (candidateIndex < currentIndex) {
+    const currentSection = document.getElementById(activeSection.value);
+    if (currentSection && currentSection.getBoundingClientRect().top <= probeTop + 24) return;
+  }
+  activeSection.value = candidate;
 }
 
 function statusLabel(status: string) {
@@ -267,15 +300,33 @@ watch(
     }
   },
 );
-watch(data, async () => {
-  activeSection.value = "overview";
+watch(data, async (value, previous) => {
+  const rememberedSection = activeSection.value;
+  lockSectionSync();
+  activeSection.value = sectionLinks.value.some((link) => link.id === rememberedSection)
+    ? rememberedSection
+    : "overview";
   await nextTick();
-  setupSectionObserver();
+  if (value && previous && activeSection.value !== "overview") {
+    const section = document.getElementById(activeSection.value);
+    if (section) positionSection(section);
+  }
 });
-onMounted(() => void initialize());
+onMounted(() => {
+  window.addEventListener("scroll", updateSectionFromScroll, { passive: true });
+  window.addEventListener("wheel", enableSectionSyncForUserScroll, { passive: true });
+  window.addEventListener("touchmove", enableSectionSyncForUserScroll, { passive: true });
+  window.addEventListener("keydown", handleSectionScrollKey);
+  window.addEventListener("pointerdown", handleScrollbarPointer);
+  void initialize();
+});
 onBeforeUnmount(() => {
   controller?.abort();
-  observer?.disconnect();
+  window.removeEventListener("scroll", updateSectionFromScroll);
+  window.removeEventListener("wheel", enableSectionSyncForUserScroll);
+  window.removeEventListener("touchmove", enableSectionSyncForUserScroll);
+  window.removeEventListener("keydown", handleSectionScrollKey);
+  window.removeEventListener("pointerdown", handleScrollbarPointer);
 });
 </script>
 
@@ -307,6 +358,14 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
+      <DashboardSectionNav
+        :items="sectionLinks"
+        :active="activeSection"
+        label="经营简报区段"
+        floating
+        @select="focusSection"
+      />
+
       <section id="overview" class="cockpit section-anchor" tabindex="-1">
         <div class="cockpit-copy">
           <div class="cockpit-meta">
@@ -406,18 +465,6 @@ onBeforeUnmount(() => {
         </button>
       </section>
 
-      <nav class="section-nav" aria-label="经营简报区段">
-        <button
-          v-for="link in sectionLinks"
-          :key="link.id"
-          type="button"
-          :aria-current="activeSection === link.id ? 'location' : undefined"
-          @click="focusSection(link.id)"
-        >
-          {{ link.label }}
-        </button>
-      </nav>
-
       <div id="activity" class="section-anchor" tabindex="-1">
         <BriefActivityWorkbench
           :groups="data.activity_groups"
@@ -451,6 +498,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
+      <div class="final-section-space">
       <footer
         id="validation"
         :class="['trust-footer', 'section-anchor', data.validation.state]"
@@ -488,6 +536,7 @@ onBeforeUnmount(() => {
           </dl>
         </details>
       </footer>
+      </div>
     </template>
   </section>
 </template>
@@ -846,51 +895,13 @@ button.kpi:focus-visible {
   color: var(--brief-green);
 }
 
-.section-nav {
-  position: sticky;
-  z-index: 20;
-  top: 8px;
-  display: flex;
-  gap: 3px;
-  width: max-content;
-  max-width: 100%;
-  margin: 13px auto;
-  padding: 4px;
-  overflow-x: auto;
-  border: 1px solid color-mix(in srgb, var(--brief-line) 85%, transparent);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--brief-surface) 91%, transparent);
-  box-shadow: 0 7px 24px rgb(25 55 37 / 8%);
-  backdrop-filter: blur(16px);
-  scrollbar-width: none;
-}
-
-.section-nav::-webkit-scrollbar {
-  display: none;
-}
-
-.section-nav button {
-  min-height: 34px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--brief-muted);
-  font: inherit;
-  font-size: 12px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.section-nav button:hover,
-.section-nav button[aria-current="location"] {
-  background: var(--brief-green-soft);
-  color: var(--brief-green);
-  font-weight: 800;
-}
-
+.kpi-grid + .section-anchor,
 .section-anchor + .section-anchor {
   margin-top: 12px;
+}
+
+.final-section-space {
+  min-height: calc(100vh - 80px);
 }
 
 .trust-footer {
@@ -1078,17 +1089,6 @@ button.kpi:focus-visible {
 
   .kpi {
     min-height: 116px;
-  }
-
-  .section-nav {
-    top: 4px;
-    width: 100%;
-    justify-content: flex-start;
-    margin: 11px 0;
-  }
-
-  .section-nav button {
-    min-height: 44px;
   }
 
   .section-anchor {

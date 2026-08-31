@@ -9,6 +9,7 @@ import {
   type FundsData,
 } from "../api/funds";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
+import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
@@ -30,7 +31,9 @@ const selectedPeriodLabel = ref("");
 const loading = ref(false);
 const initializing = ref(true);
 const requestError = ref("");
+const activeSection = ref("funds-overview");
 let activeRequest: AbortController | null = null;
+let sectionSyncLocked = false;
 
 const periods = computed(() => context.value?.periods ?? []);
 const pageError = computed(() => requestError.value || contextError.value);
@@ -84,25 +87,98 @@ const bankAttentionCount = computed(() => {
     ? statement.unmatched_count + statement.pending_late_count
     : 0;
 });
+const sectionLinks = computed(() => {
+  const links = [
+    { id: "funds-overview", label: "概览" },
+    { id: "fund-accounts", label: "账户" },
+  ];
+  if (attentionItems.value.length) links.push({ id: "funds-attention", label: "关注" });
+  links.push({ id: "bank-details", label: "资金明细" });
+  return links;
+});
 
 function routePeriod(): string | null {
   return typeof route.query.period === "string" ? route.query.period : null;
 }
 
+function lockSectionSync() {
+  sectionSyncLocked = true;
+}
+
+function enableSectionSyncForUserScroll() {
+  sectionSyncLocked = false;
+}
+
+function handleSectionScrollKey(event: KeyboardEvent) {
+  if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+    enableSectionSyncForUserScroll();
+  }
+}
+
+function handleScrollbarPointer(event: PointerEvent) {
+  if (event.clientX >= document.documentElement.clientWidth) {
+    enableSectionSyncForUserScroll();
+  }
+}
+
+function positionSection(section: HTMLElement) {
+  const root = document.documentElement;
+  const previousBehavior = root.style.scrollBehavior;
+  root.style.scrollBehavior = "auto";
+  window.scrollTo({
+    top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - 66),
+    behavior: "auto",
+  });
+  root.style.scrollBehavior = previousBehavior;
+}
+
 async function revealBankDetails() {
   if (route.hash !== "#bank-details" || !funds.value) return;
+  lockSectionSync();
   selectedDetailView.value = "bank";
+  activeSection.value = "bank-details";
   await nextTick();
-  document.getElementById("bank-details")?.scrollIntoView({
-    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-    block: "start",
-  });
+  const section = document.getElementById("bank-details");
+  if (section) positionSection(section);
   document.getElementById("fund-detail-tab-bank")?.focus({ preventScroll: true });
+}
+
+function focusSection(id: string) {
+  const section = document.getElementById(id);
+  if (!section) return;
+  lockSectionSync();
+  activeSection.value = id;
+  positionSection(section);
+  section.focus({ preventScroll: true });
+}
+
+function updateSectionFromScroll() {
+  if (sectionSyncLocked) return;
+  const links = sectionLinks.value;
+  if (!links.length) return;
+  const probeTop = 80;
+  let candidate = links[0].id;
+  for (const link of links) {
+    const section = document.getElementById(link.id);
+    if (!section || section.getBoundingClientRect().top > probeTop) break;
+    candidate = link.id;
+  }
+  if (candidate === activeSection.value) return;
+  const currentIndex = links.findIndex((link) => link.id === activeSection.value);
+  const candidateIndex = links.findIndex((link) => link.id === candidate);
+  if (candidateIndex < currentIndex) {
+    const currentSection = document.getElementById(activeSection.value);
+    if (currentSection && currentSection.getBoundingClientRect().top <= probeTop + 24) return;
+  }
+  activeSection.value = candidate;
 }
 
 async function loadFunds(periodKey: string) {
   activeRequest?.abort();
   const controller = new AbortController();
+  lockSectionSync();
+  const sectionToRestore = activeSection.value;
+  const shouldRestoreSection = funds.value !== null;
   activeRequest = controller;
   loading.value = true;
   requestError.value = "";
@@ -111,11 +187,32 @@ async function loadFunds(periodKey: string) {
     if (response.schema_version !== 1) {
       throw new Error("FUNDS_SCHEMA_MISMATCH");
     }
-    funds.value = response.data;
+    const data = response.data;
+    funds.value = data;
     selectedPeriodLabel.value = response.selected_period?.label ?? "";
-    selectedAccount.value = "";
-    selectedBankAccount.value = "";
-    void revealBankDetails();
+    if (!data?.accounts.some((account) => account.code === selectedAccount.value)) {
+      selectedAccount.value = "";
+    }
+    if (
+      !data?.accounts.some(
+        (account) => account.type === "bank" && account.code === selectedBankAccount.value,
+      )
+    ) {
+      selectedBankAccount.value = "";
+    }
+    await nextTick();
+    const targetSection = sectionLinks.value.some((link) => link.id === sectionToRestore)
+      ? sectionToRestore
+      : sectionToRestore === "funds-attention"
+        ? "bank-details"
+        : "funds-overview";
+    activeSection.value = targetSection;
+    if (route.hash === "#bank-details") {
+      await revealBankDetails();
+    } else if (shouldRestoreSection && targetSection !== "funds-overview") {
+      const section = document.getElementById(targetSection);
+      if (section) positionSection(section);
+    }
   } catch (error: unknown) {
     if (controller.signal.aborted) return;
     requestError.value = dashboardErrorMessage(error);
@@ -208,6 +305,9 @@ watch(
     funds.value = null;
     selectedPeriod.value = "";
     selectedPeriodLabel.value = "";
+    selectedAccount.value = "";
+    selectedBankAccount.value = "";
+    activeSection.value = "funds-overview";
     loading.value = false;
   },
 );
@@ -234,6 +334,9 @@ watch(
       activeRequest?.abort();
       selectedPeriod.value = "";
       selectedPeriodLabel.value = "";
+      selectedAccount.value = "";
+      selectedBankAccount.value = "";
+      activeSection.value = "funds-overview";
       funds.value = null;
       return;
     }
@@ -250,6 +353,11 @@ watch(
 );
 
 onMounted(async () => {
+  window.addEventListener("scroll", updateSectionFromScroll, { passive: true });
+  window.addEventListener("wheel", enableSectionSyncForUserScroll, { passive: true });
+  window.addEventListener("touchmove", enableSectionSyncForUserScroll, { passive: true });
+  window.addEventListener("keydown", handleSectionScrollKey);
+  window.addEventListener("pointerdown", handleScrollbarPointer);
   try {
     await loadContext();
   } catch {
@@ -259,7 +367,14 @@ onMounted(async () => {
   }
 });
 
-onBeforeUnmount(() => activeRequest?.abort());
+onBeforeUnmount(() => {
+  activeRequest?.abort();
+  window.removeEventListener("scroll", updateSectionFromScroll);
+  window.removeEventListener("wheel", enableSectionSyncForUserScroll);
+  window.removeEventListener("touchmove", enableSectionSyncForUserScroll);
+  window.removeEventListener("keydown", handleSectionScrollKey);
+  window.removeEventListener("pointerdown", handleScrollbarPointer);
+});
 </script>
 
 <template>
@@ -302,8 +417,22 @@ onBeforeUnmount(() => activeRequest?.abort());
         <span>可以选择其他月份或重新加载。</span>
       </section>
 
-      <div v-else-if="funds" class="funds-dashboard" :aria-busy="loading">
-        <section class="funds-hero" aria-labelledby="funds-total-label">
+      <template v-else-if="funds">
+        <DashboardSectionNav
+          :items="sectionLinks"
+          :active="activeSection"
+          label="资金页面区段"
+          floating
+          @select="focusSection"
+        />
+
+        <div class="funds-dashboard" :aria-busy="loading">
+        <section
+          id="funds-overview"
+          class="funds-hero section-anchor"
+          aria-labelledby="funds-total-label"
+          tabindex="-1"
+        >
           <div>
             <p class="eyebrow">{{ selectedPeriodLabel }}期末 · 正式账簿口径</p>
             <span id="funds-total-label">账面资金合计</span>
@@ -355,7 +484,12 @@ onBeforeUnmount(() => activeRequest?.abort());
           </article>
         </section>
 
-        <section class="panel section-panel" aria-labelledby="fund-accounts-title">
+        <section
+          id="fund-accounts"
+          class="panel section-panel section-anchor"
+          aria-labelledby="fund-accounts-title"
+          tabindex="-1"
+        >
           <div class="section-heading">
             <div>
               <p class="eyebrow">逐账户查看</p>
@@ -405,8 +539,10 @@ onBeforeUnmount(() => activeRequest?.abort());
 
         <section
           v-if="attentionItems.length"
-          class="panel section-panel attention-panel"
+          id="funds-attention"
+          class="panel section-panel attention-panel section-anchor"
           aria-labelledby="funds-attention-title"
+          tabindex="-1"
         >
           <div class="section-heading">
             <div>
@@ -420,7 +556,13 @@ onBeforeUnmount(() => activeRequest?.abort());
           </ul>
         </section>
 
-        <section id="bank-details" class="panel section-panel" aria-labelledby="fund-details-title">
+        <div class="final-section-space">
+        <section
+          id="bank-details"
+          class="panel section-panel section-anchor"
+          aria-labelledby="fund-details-title"
+          tabindex="-1"
+        >
           <div class="section-heading detail-heading">
             <div>
               <p class="eyebrow">账面与银行数据 · 分口径查看</p>
@@ -569,7 +711,9 @@ onBeforeUnmount(() => activeRequest?.abort());
             <p v-else class="empty">{{ selectedBankAccount ? "本月该账户没有可展示的银行流水。" : "本月没有可展示的银行流水。" }}</p>
           </div>
         </section>
-      </div>
+        </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -595,6 +739,14 @@ onBeforeUnmount(() => activeRequest?.abort());
 
 .funds-dashboard[aria-busy="true"] {
   opacity: 0.72;
+}
+
+.section-anchor {
+  scroll-margin-top: 66px;
+}
+
+.final-section-space {
+  min-height: calc(100vh - 80px);
 }
 
 .panel,

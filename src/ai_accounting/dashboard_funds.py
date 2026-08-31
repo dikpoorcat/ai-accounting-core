@@ -86,7 +86,7 @@ def _bank_activity_party(
         and platform_origin_event
         and "网商银行转入" in transaction.memo
     ):
-        return f"企业支付宝余额转入（原对方户名：{original_party}）"
+        return f"企业支付宝余额转入（{original_party}）"
     return original_party
 
 
@@ -246,7 +246,9 @@ def build_bank_activity(
                 ),
                 "transaction_count": len(account_rows),
                 "ordinary_count": sum(not item["is_late"] for item in account_rows),
-                "matched_count": sum(item["state"] == "matched" for item in account_rows),
+                "matched_count": sum(
+                    item["state"] == "matched" for item in account_rows
+                ),
                 "unmatched_count": sum(
                     item["state"] in {"unmatched", "invalid_match"}
                     for item in account_rows
@@ -336,7 +338,9 @@ def build_funds_data(
         .join(Account, Account.id == VoucherLine.account_id)
         .join(BusinessEvent, BusinessEvent.id == Voucher.event_id)
         .outerjoin(Counterparty, Counterparty.id == VoucherLine.counterparty_id)
-        .outerjoin(original_voucher, original_voucher.id == Voucher.reversal_of_voucher_id)
+        .outerjoin(
+            original_voucher, original_voucher.id == Voucher.reversal_of_voucher_id
+        )
         .outerjoin(original_event, original_event.id == original_voucher.event_id)
         .where(
             VoucherLine.account_id.in_([account.id for account in fund_accounts]),
@@ -369,7 +373,9 @@ def build_funds_data(
     )
     latest_reconciliations: dict[str, BankReconciliation] = {}
     for reconciliation in reconciliation_rows:
-        latest_reconciliations.setdefault(reconciliation.bank_account_code, reconciliation)
+        latest_reconciliations.setdefault(
+            reconciliation.bank_account_code, reconciliation
+        )
 
     statement_by_account = {
         item["account_code"]: item for item in bank_activity.get("accounts", [])
@@ -404,7 +410,8 @@ def build_funds_data(
         if values["last_book_activity_date"] is None:
             values["last_book_activity_date"] = activity_date
         internal_transfer = (
-            row.event_type in transfer_types or row.original_event_type in transfer_types
+            row.event_type in transfer_types
+            or row.original_event_type in transfer_types
         )
         event_label = _EVENT_LABELS.get(row.event_type, "其他业务")
         movements.append(
@@ -415,9 +422,11 @@ def build_funds_data(
                 "account_type": (
                     "cash"
                     if row.system_role == "cash"
-                    else "payment_platform"
-                    if row.system_role == "payment_platform_funds"
-                    else "bank"
+                    else (
+                        "payment_platform"
+                        if row.system_role == "payment_platform_funds"
+                        else "bank"
+                    )
                 ),
                 "direction": direction,
                 "amount_fen": amount_fen,
@@ -435,14 +444,20 @@ def build_funds_data(
     accounts = []
     for account in fund_accounts:
         values = values_by_account[account.id]
-        closing_fen = values["opening_fen"] + values["inflow_fen"] - values["outflow_fen"]
+        closing_fen = (
+            values["opening_fen"] + values["inflow_fen"] - values["outflow_fen"]
+        )
         statement = statement_by_account.get(account.code)
-        in_scope = bool(account.requires_bank_reconciliation) and (
-            account.bank_reconciliation_start_date is None
-            or account.bank_reconciliation_start_date <= period.end_date
-        ) and (
-            account.bank_reconciliation_end_date is None
-            or account.bank_reconciliation_end_date >= period.start_date
+        in_scope = (
+            bool(account.requires_bank_reconciliation)
+            and (
+                account.bank_reconciliation_start_date is None
+                or account.bank_reconciliation_start_date <= period.end_date
+            )
+            and (
+                account.bank_reconciliation_end_date is None
+                or account.bank_reconciliation_end_date >= period.start_date
+            )
         )
         has_ledger_facts = any(
             values[key]
@@ -452,9 +467,11 @@ def build_funds_data(
         account_type = (
             "cash"
             if account.system_role == "cash"
-            else "payment_platform"
-            if account.system_role == "payment_platform_funds"
-            else "bank"
+            else (
+                "payment_platform"
+                if account.system_role == "payment_platform_funds"
+                else "bank"
+            )
         )
         relevant = (
             has_ledger_facts
@@ -537,7 +554,8 @@ def build_funds_data(
         "payment_platform_account_count": len(payment_platform_accounts),
         "attention_account_count": sum(
             item["negative_balance"]
-            or item["reconciliation"]["state"] in {"attention", "pending", "not_configured"}
+            or item["reconciliation"]["state"]
+            in {"attention", "pending", "not_configured"}
             for item in accounts
         ),
         "accounts": accounts,
