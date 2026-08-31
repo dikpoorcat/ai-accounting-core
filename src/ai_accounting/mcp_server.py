@@ -226,8 +226,6 @@ _GLOBAL_COMPANY_TOOLS = {
     "finance_confirm_company_status_change",
 }
 _GLOBAL_COMPANY_TOOLS_WITHOUT_ORG = {
-    "finance_get_close_backup_configuration",
-    "finance_configure_close_backup",
     "finance_list_companies",
     "finance_create_company",
 }
@@ -1016,8 +1014,9 @@ def finance_list_companies(include_archived: bool = False) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
-def finance_get_close_backup_configuration() -> dict[str, Any]:
+def finance_get_close_backup_configuration(org_id: uuid.UUID) -> dict[str, Any]:
     """读取负责人已确定的关账自动备份目录和当前就绪状态。"""
+    del org_id  # Authenticated wrapper binds and validates the active company.
     try:
         return _close_backup_service().get_configuration()
     except CloseBackupError as exc:

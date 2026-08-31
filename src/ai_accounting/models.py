@@ -173,14 +173,23 @@ class CompanyLifecycleAction(Base):
 
 
 class CloseBackupLocationVersion(Base):
-    """Append-only owner choice for automatic post-close backup storage."""
+    """Append-only per-company owner choice for post-close backup storage."""
 
     __tablename__ = "close_backup_location_versions"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    # Rows created before per-company locations were introduced intentionally
+    # keep a NULL organization as immutable legacy audit.  All new rows are
+    # written through CloseBackupService with an organization identity.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("company_registry.org_id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
     backup_directory: Mapped[str] = mapped_column(Text, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
     owner_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
@@ -192,6 +201,16 @@ class CloseBackupLocationVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
+        UniqueConstraint(
+            "org_id",
+            "version",
+            name="uq_close_backup_location_org_version",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "idempotency_key",
+            name="uq_close_backup_location_org_idempotency",
+        ),
         CheckConstraint("version >= 1", name="ck_close_backup_location_version"),
         CheckConstraint(
             "length(request_payload_hash) = 64",

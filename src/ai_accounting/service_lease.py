@@ -98,6 +98,7 @@ def acquire_windows_service_lease(
     _configure_kernel32(kernel32)
     descriptor = -1
     locked = False
+    yielded = False
     overlapped = _Overlapped()
     try:
         descriptor = os.open(candidate, os.O_RDWR | getattr(os, "O_BINARY", 0))
@@ -126,10 +127,13 @@ def acquire_windows_service_lease(
             raise ServiceLeaseError("SERVICE_LEASE_UNAVAILABLE")
         _assert_named_file_matches_handle(candidate, opened)
         access_verifier.assert_current_windows_user_only(candidate)
+        yielded = True
         yield
     except ServiceLeaseError:
         raise
     except Exception as exc:
+        if yielded:
+            raise
         raise ServiceLeaseError("SERVICE_LEASE_UNAVAILABLE") from exc
     finally:
         release_error: ServiceLeaseError | None = None

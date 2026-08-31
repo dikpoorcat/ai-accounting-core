@@ -749,6 +749,20 @@ def test_windows_service_and_backup_modes_are_cross_process_exclusive(tmp_path: 
         pass
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="LockFileEx is Windows-only")
+def test_windows_service_lease_does_not_mask_body_failure(tmp_path: Path) -> None:
+    lock_file = tmp_path / "service.lock"
+    lock_file.write_bytes(b"\x00")
+
+    with pytest.raises(BackupIntegrationError, match="BACKUP_BODY_FAILED"):
+        with service_lease.acquire_windows_service_lease(
+            lock_file,
+            mode="backup",
+            access_verifier=LeaseAclVerifier(),
+        ):
+            raise BackupIntegrationError("BACKUP_BODY_FAILED")
+
+
 class LeaseKernel32Stub:
     LockFileEx = FunctionStub()
     UnlockFileEx = FunctionStub()

@@ -168,40 +168,50 @@ def _create(args: argparse.Namespace) -> None:
     if configured.multi_company_enabled:
         if not (args.org_id or args.catalog or args.all):
             raise BackupCliError("BACKUP_TARGET_REQUIRED")
-        with SessionLocal() as catalog_session:
-            registries = catalog_session.scalars(
-                select(CompanyRegistry)
-                .where(CompanyRegistry.status.in_(["active", "archived"]))
-                .order_by(CompanyRegistry.org_id)
-            ).all()
-            registry_by_org = {item.org_id: item for item in registries}
-            allowed_database_names = frozenset(
-                {settings.database_name, *(item.database_name for item in registries)}
-            )
-            if args.catalog or args.all:
-                targets.append(("catalog", settings.database_name, None, None))
-            if args.org_id:
-                registry = registry_by_org.get(args.org_id)
-                if registry is None:
-                    raise BackupCliError("BACKUP_COMPANY_NOT_FOUND")
-                targets.append(
-                    (
-                        "company",
-                        registry.database_name,
-                        str(registry.org_id),
-                        str(registry.database_identity),
-                    )
+        catalog_bind = None
+        try:
+            with SessionLocal() as catalog_session:
+                catalog_bind = catalog_session.get_bind()
+                registries = catalog_session.scalars(
+                    select(CompanyRegistry)
+                    .where(CompanyRegistry.status.in_(["active", "archived"]))
+                    .order_by(CompanyRegistry.org_id)
+                ).all()
+                registry_by_org = {item.org_id: item for item in registries}
+                allowed_database_names = frozenset(
+                    {settings.database_name, *(item.database_name for item in registries)}
                 )
-            elif args.all:
-                targets.extend(
-                    (
-                        "company",
-                        item.database_name,
-                        str(item.org_id),
-                        str(item.database_identity),
+                if args.catalog or args.all:
+                    targets.append(("catalog", settings.database_name, None, None))
+                if args.org_id:
+                    registry = registry_by_org.get(args.org_id)
+                    if registry is None:
+                        raise BackupCliError("BACKUP_COMPANY_NOT_FOUND")
+                    targets.append(
+                        (
+                            "company",
+                            registry.database_name,
+                            str(registry.org_id),
+                            str(registry.database_identity),
+                        )
                     )
-                    for item in registries
-                )
+                elif args.all:
+                    targets.extend(
+                        (
+                            "company",
+                            item.database_name,
+                            str(item.org_id),
+                            str(item.database_identity),
+                        )
+                        for item in registries
+                    )
+        finally:
+            # The stopped-service invariant includes this command's own runtime
+            # catalog lookup.  Closing the Session returns its connection to the
+            # pool; disposing the process-local pool actually disconnects it
+            # before finance_backup counts active runtime sessions.
+            if catalog_bind is not None:
+                catalog_bind.dispose()
     else:
         if args.org_id or args.catalog or args.all:
             raise BackupCliError("BACKUP_MULTI_COMPANY_NOT_CONFIGURED")

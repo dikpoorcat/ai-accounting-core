@@ -77,9 +77,12 @@ class CloseBackupService:
         self.settings = settings
 
     def configure(self, request: ConfigureCloseBackupRequest) -> dict[str, Any]:
+        if request.org_id != self.context.org_id:
+            raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_IDENTITY_MISMATCH")
         payload_hash = canonical_sha256(request.model_dump(mode="json"))
         existing = self.session.scalar(
             select(CloseBackupLocationVersion).where(
+                CloseBackupLocationVersion.org_id == self.context.org_id,
                 CloseBackupLocationVersion.idempotency_key == request.idempotency_key
             )
         )
@@ -98,9 +101,15 @@ class CloseBackupService:
             raise CloseBackupError("CATALOG_NOT_INITIALIZED")
         backup_root = self._prepare_backup_root(request.backup_directory)
         version = int(
-            self.session.scalar(select(func.max(CloseBackupLocationVersion.version))) or 0
+            self.session.scalar(
+                select(func.max(CloseBackupLocationVersion.version)).where(
+                    CloseBackupLocationVersion.org_id == self.context.org_id
+                )
+            )
+            or 0
         ) + 1
         item = CloseBackupLocationVersion(
+            org_id=self.context.org_id,
             version=version,
             backup_directory=str(backup_root),
             idempotency_key=request.idempotency_key,
@@ -151,6 +160,11 @@ class CloseBackupService:
         period_month: str,
         runtime: CloseBackupRuntime,
     ) -> dict[str, Any]:
+        if (
+            registry.org_id != self.context.org_id
+            or runtime.location.org_id != registry.org_id
+        ):
+            raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_IDENTITY_MISMATCH")
         attempt = self.session.scalar(
             select(AccountingPeriodCloseBackup)
             .where(
@@ -328,10 +342,21 @@ class CloseBackupService:
         backup_root: Path,
     ) -> PortableBackupVerification:
         self._require_company_archive(portable, registry)
+        previous_archive_file = backup_root / (
+            f"{registry.taxpayer_identification_number}.previous.finance-company.zip"
+        )
+        publisher = WindowsWriteThroughPublisher()
         if archive_file.exists() or archive_file.is_symlink():
             current = verify_portable_backup_archive(archive_file)
             self._require_company_archive(current, registry)
-        WindowsWriteThroughPublisher().replace_file(
+            self._rotate_current_to_previous(
+                current=current,
+                previous_archive_file=previous_archive_file,
+                registry=registry,
+                backup_root=backup_root,
+                publisher=publisher,
+            )
+        publisher.replace_file(
             portable.archive_file,
             archive_file,
             backup_root,
@@ -339,22 +364,82 @@ class CloseBackupService:
         published = verify_portable_backup_archive(archive_file)
         self._require_company_archive(published, registry)
         self._remove_older_company_archives(
-            archive_file=published.archive_file,
+            retained_archive_files=(published.archive_file, previous_archive_file),
             registry=registry,
             backup_root=backup_root,
         )
         return published
 
+    def _rotate_current_to_previous(
+        self,
+        *,
+        current: PortableBackupVerification,
+        previous_archive_file: Path,
+        registry: CompanyRegistry,
+        backup_root: Path,
+        publisher: WindowsWriteThroughPublisher,
+    ) -> None:
+        """Durably retain the current verified package before replacing it."""
+
+        self._require_company_archive(current, registry)
+        if previous_archive_file.exists() or previous_archive_file.is_symlink():
+            previous = verify_portable_backup_archive(previous_archive_file)
+            self._require_company_archive(previous, registry)
+        staged = backup_root / (
+            f".{registry.taxpayer_identification_number}-{uuid.uuid4().hex}"
+            ".previous.replacement"
+        )
+        try:
+            source_before = current.archive_file.lstat()
+            if current.archive_file.is_symlink():
+                raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_FILE_CONFLICT")
+            with current.archive_file.open("rb") as source, staged.open("xb") as target:
+                shutil.copyfileobj(source, target)
+                target.flush()
+                os.fsync(target.fileno())
+            source_after = current.archive_file.lstat()
+            if (
+                source_before.st_dev,
+                source_before.st_ino,
+                source_before.st_size,
+                source_before.st_mtime_ns,
+            ) != (
+                source_after.st_dev,
+                source_after.st_ino,
+                source_after.st_size,
+                source_after.st_mtime_ns,
+            ):
+                raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_FILE_CONFLICT")
+            staged_verification = verify_portable_backup_archive(staged)
+            self._require_company_archive(staged_verification, registry)
+            if staged_verification.archive_sha256 != current.archive_sha256:
+                raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_FILE_CONFLICT")
+            publisher.replace_file(staged, previous_archive_file, backup_root)
+            retained = verify_portable_backup_archive(previous_archive_file)
+            self._require_company_archive(retained, registry)
+            if retained.archive_sha256 != current.archive_sha256:
+                raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_FILE_CONFLICT")
+        except FileExistsError as exc:
+            raise CloseBackupError(
+                "ACCOUNTING_PERIOD_CLOSE_BACKUP_ROTATION_FAILED"
+            ) from exc
+        finally:
+            self._remove_replacement_file(staged, backup_root)
+
     def _remove_older_company_archives(
         self,
         *,
-        archive_file: Path,
+        retained_archive_files: tuple[Path, ...],
         registry: CompanyRegistry,
         backup_root: Path,
     ) -> None:
         try:
             root = backup_root.resolve(strict=True)
-            current = archive_file.resolve(strict=True)
+            retained = {
+                item.resolve(strict=True)
+                for item in retained_archive_files
+                if item.exists() and not item.is_symlink()
+            }
             candidates = tuple(root.glob("*.finance-company.zip"))
         except OSError as exc:
             raise CloseBackupError(
@@ -362,7 +447,7 @@ class CloseBackupService:
         ) from exc
         for candidate in candidates:
             try:
-                if candidate.is_symlink() or candidate.resolve(strict=True) == current:
+                if candidate.is_symlink() or candidate.resolve(strict=True) in retained:
                     continue
                 before = candidate.lstat()
                 old = verify_portable_backup_archive(candidate)
@@ -416,8 +501,10 @@ class CloseBackupService:
             "status": "ok",
             "configured": True,
             "automatic_backup_on_close": True,
+            "org_id": str(location.org_id),
             "backup_directory": location.backup_directory,
             "configuration_version": location.version,
+            "retained_generations": 2,
             "configured_at": location.created_at.isoformat(),
             "readiness": readiness,
             "readiness_errors": readiness_errors,
@@ -444,9 +531,10 @@ class CloseBackupService:
 
     def _current_location(self) -> CloseBackupLocationVersion | None:
         return self.session.scalar(
-            select(CloseBackupLocationVersion).order_by(
-                CloseBackupLocationVersion.version.desc()
-            ).limit(1)
+            select(CloseBackupLocationVersion)
+            .where(CloseBackupLocationVersion.org_id == self.context.org_id)
+            .order_by(CloseBackupLocationVersion.version.desc())
+            .limit(1)
         )
 
     def _validate_backup_root(self, raw: str, *, probe: bool) -> Path:

@@ -39,9 +39,9 @@ class _ReplacingPublisher:
         os.replace(replacement, current)
 
 
-def _context() -> ExecutionContext:
+def _context(org_id: uuid.UUID | None = None) -> ExecutionContext:
     return ExecutionContext(
-        org_id=uuid.uuid4(),
+        org_id=org_id or uuid.uuid4(),
         owner_account_id=uuid.uuid4(),
         owner_session_id=uuid.uuid4(),
         owner_credential_version=3,
@@ -94,13 +94,16 @@ def test_owner_configures_append_only_close_backup_location(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ai_accounting.close_backup.WindowsWriteThroughPublisher", _Publisher)
+    context = _context()
+    settings = _settings(tmp_path)
     service = CloseBackupService(
         catalog_session,
-        context=_context(),
-        settings=_settings(tmp_path),
+        context=context,
+        settings=settings,
     )
     requested = tmp_path / "owner-backups"
     request = ConfigureCloseBackupRequest(
+        org_id=context.org_id,
         backup_directory=str(requested),
         idempotency_key="choose-owner-backup-root",
         confirmation_note="负责人确认今后关账自动备份到此目录。",
@@ -108,13 +111,41 @@ def test_owner_configures_append_only_close_backup_location(
 
     first = service.configure(request)
     replay = service.configure(request)
+    other_context = _context()
+    other_requested = tmp_path / "other-company-backups"
+    other = CloseBackupService(
+        catalog_session,
+        context=other_context,
+        settings=settings,
+    ).configure(
+        request.model_copy(
+            update={
+                "org_id": other_context.org_id,
+                "backup_directory": str(other_requested),
+            }
+        )
+    )
     catalog_session.commit()
 
     versions = catalog_session.scalars(select(CloseBackupLocationVersion)).all()
     assert requested.is_dir()
-    assert len(versions) == 1
+    assert other_requested.is_dir()
+    assert len(versions) == 2
     assert first["configured"] is True
+    assert first["org_id"] == str(context.org_id)
+    assert first["configuration_version"] == 1
     assert replay["replayed"] is True
+    assert other["org_id"] == str(other_context.org_id)
+    assert other["configuration_version"] == 1
+    assert service.get_configuration()["backup_directory"] == str(requested)
+    assert (
+        CloseBackupService(
+            catalog_session,
+            context=other_context,
+            settings=settings,
+        ).get_configuration()["backup_directory"]
+        == str(other_requested)
+    )
     with pytest.raises(
         CloseBackupError,
         match="IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST",
@@ -130,14 +161,15 @@ def test_committed_close_backup_failure_is_audited_and_same_close_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("ai_accounting.close_backup.WindowsWriteThroughPublisher", _Publisher)
+    org_id = uuid.uuid4()
+    context = _context(org_id)
     service = CloseBackupService(
-        catalog_session,
-        context=_context(),
-        settings=_settings(tmp_path),
+        catalog_session, context=context, settings=_settings(tmp_path)
     )
     backup_root = tmp_path / "close-backups"
     configured = service.configure(
         ConfigureCloseBackupRequest(
+            org_id=org_id,
             backup_directory=str(backup_root),
             idempotency_key="configure-close-backups",
             confirmation_note="负责人确认。",
@@ -146,7 +178,7 @@ def test_committed_close_backup_failure_is_audited_and_same_close_retries(
     location = catalog_session.scalar(select(CloseBackupLocationVersion))
     assert location is not None
     registry = CompanyRegistry(
-        org_id=uuid.uuid4(),
+        org_id=org_id,
         database_name=f"finance_company_{uuid.uuid4().hex}",
         database_identity=uuid.uuid4(),
         status="active",
@@ -222,7 +254,7 @@ def test_committed_close_backup_failure_is_audited_and_same_close_retries(
     assert calls == 2
 
 
-def test_close_backup_atomically_replaces_and_prunes_same_company_archives(
+def test_close_backup_rotates_current_and_prunes_older_same_company_archives(
     tmp_path: Path,
     catalog_session: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -245,6 +277,7 @@ def test_close_backup_atomically_replaces_and_prunes_same_company_archives(
         settings=_settings(tmp_path),
     )
     current = tmp_path / "91330108MABXE0HA3F.finance-company.zip"
+    previous = tmp_path / "91330108MABXE0HA3F.previous.finance-company.zip"
     replacement = tmp_path / ".replacement"
     legacy = tmp_path / "legacy.finance-company.zip"
     other = tmp_path / "other.finance-company.zip"
@@ -291,6 +324,7 @@ def test_close_backup_atomically_replaces_and_prunes_same_company_archives(
 
     assert published.archive_file == current
     assert current.read_bytes() == b"new"
+    assert previous.read_bytes() == b"old"
     assert not replacement.exists()
     assert not legacy.exists()
     assert other.read_bytes() == b"other"
@@ -361,3 +395,148 @@ def test_close_backup_publish_failure_preserves_previous_archive(
 
     assert current.read_bytes() == b"old"
     assert replacement.read_bytes() == b"new"
+    assert not (
+        tmp_path / "91330108MABXE0HA3F.previous.finance-company.zip"
+    ).exists()
+
+
+def test_close_backup_new_current_failure_leaves_old_current_recoverable(
+    tmp_path: Path,
+    catalog_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = CompanyRegistry(
+        org_id=uuid.uuid4(),
+        database_name=f"finance_company_{uuid.uuid4().hex}",
+        database_identity=uuid.uuid4(),
+        status="active",
+        display_name="当前版发布失败测试公司",
+        taxpayer_identification_number="91330108MABXE0HA3F",
+        profile_effective_from=date(2022, 8, 31),
+        filing_cycle="quarterly",
+        urban_maintenance_rate=Decimal("0.07"),
+        is_primary=True,
+    )
+    service = CloseBackupService(
+        catalog_session,
+        context=_context(registry.org_id),
+        settings=_settings(tmp_path),
+    )
+    current = tmp_path / "91330108MABXE0HA3F.finance-company.zip"
+    previous = tmp_path / "91330108MABXE0HA3F.previous.finance-company.zip"
+    replacement = tmp_path / ".replacement"
+    current.write_bytes(b"july")
+    previous.write_bytes(b"june")
+    replacement.write_bytes(b"august")
+
+    def verification(path: Path) -> PortableBackupVerification:
+        content = path.read_bytes()
+        return PortableBackupVerification(
+            archive_file=path.resolve(strict=True),
+            archive_sha256=content.hex().ljust(64, "0"),
+            backup_id="close-backup",
+            manifest_sha256="b" * 64,
+            database_sha256="c" * 64,
+            database_size_bytes=1,
+            evidence_count=0,
+            artifact_type="company",
+            org_id=str(registry.org_id),
+            database_identity=str(registry.database_identity),
+            purpose="daily",
+        )
+
+    class FailsOnNewCurrentPublisher(_ReplacingPublisher):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def replace_file(self, replacement: Path, current: Path, root: Path) -> None:
+            self.calls += 1
+            if self.calls == 2:
+                raise BackupError("BACKUP_PORTABLE_REPLACE_FAILED")
+            super().replace_file(replacement, current, root)
+
+    publisher = FailsOnNewCurrentPublisher()
+    monkeypatch.setattr(
+        "ai_accounting.close_backup.WindowsWriteThroughPublisher",
+        lambda: publisher,
+    )
+    monkeypatch.setattr(
+        "ai_accounting.close_backup.verify_portable_backup_archive",
+        verification,
+    )
+
+    with pytest.raises(BackupError, match="BACKUP_PORTABLE_REPLACE_FAILED"):
+        service._publish_single_company_archive(
+            portable=verification(replacement),
+            archive_file=current,
+            registry=registry,
+            backup_root=tmp_path,
+        )
+
+    assert current.read_bytes() == b"july"
+    assert previous.read_bytes() == b"july"
+    assert replacement.read_bytes() == b"august"
+
+
+def test_close_backup_second_publish_retains_the_immediately_prior_current(
+    tmp_path: Path,
+    catalog_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = CompanyRegistry(
+        org_id=uuid.uuid4(),
+        database_name=f"finance_company_{uuid.uuid4().hex}",
+        database_identity=uuid.uuid4(),
+        status="active",
+        display_name="双版本备份测试公司",
+        taxpayer_identification_number="91330108MABXE0HA3F",
+        profile_effective_from=date(2022, 8, 31),
+        filing_cycle="quarterly",
+        urban_maintenance_rate=Decimal("0.07"),
+        is_primary=True,
+    )
+    service = CloseBackupService(
+        catalog_session,
+        context=_context(registry.org_id),
+        settings=_settings(tmp_path),
+    )
+    current = tmp_path / "91330108MABXE0HA3F.finance-company.zip"
+    previous = tmp_path / "91330108MABXE0HA3F.previous.finance-company.zip"
+    replacement = tmp_path / ".replacement"
+    current.write_bytes(b"july")
+    previous.write_bytes(b"june")
+    replacement.write_bytes(b"august")
+
+    def verification(path: Path) -> PortableBackupVerification:
+        content = path.read_bytes()
+        return PortableBackupVerification(
+            archive_file=path.resolve(strict=True),
+            archive_sha256=content.hex().ljust(64, "0"),
+            backup_id="close-backup",
+            manifest_sha256="b" * 64,
+            database_sha256="c" * 64,
+            database_size_bytes=1,
+            evidence_count=0,
+            artifact_type="company",
+            org_id=str(registry.org_id),
+            database_identity=str(registry.database_identity),
+            purpose="daily",
+        )
+
+    monkeypatch.setattr(
+        "ai_accounting.close_backup.WindowsWriteThroughPublisher",
+        _ReplacingPublisher,
+    )
+    monkeypatch.setattr(
+        "ai_accounting.close_backup.verify_portable_backup_archive",
+        verification,
+    )
+    service._publish_single_company_archive(
+        portable=verification(replacement),
+        archive_file=current,
+        registry=registry,
+        backup_root=tmp_path,
+    )
+
+    assert current.read_bytes() == b"august"
+    assert previous.read_bytes() == b"july"

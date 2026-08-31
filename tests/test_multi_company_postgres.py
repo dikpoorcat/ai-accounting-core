@@ -198,7 +198,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
             } <= set(inspect(catalog_engine).get_table_names())
             with catalog_engine.connect() as connection:
                 assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "0003_close_backup"
+                    "0004_company_backup_locations"
                 )
             created: list[dict[str, object]] = []
             for request in create_requests:

@@ -199,6 +199,7 @@ class CredentialManagerConnectionProvider:
         password = self._credential_store.load_password()
         if password is None:
             raise BackupCredentialError("BACKUP_CREDENTIAL_REQUIRED")
+        yielded = False
         try:
             with psycopg.connect(
                 host=endpoint.host,
@@ -209,10 +210,13 @@ class CredentialManagerConnectionProvider:
                 application_name=endpoint.application_name,
                 connect_timeout=15,
             ) as connection:
+                yielded = True
                 yield connection
         except BackupCredentialError:
             raise
         except Exception as exc:
+            if yielded:
+                raise
             raise BackupCredentialError("BACKUP_DATABASE_CONNECTION_FAILED") from exc
 
 

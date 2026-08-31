@@ -625,7 +625,10 @@ def _catalog_target_precheck(url: URL, *, org_id: uuid.UUID) -> None:
             registered = connection.execute(
                 text("SELECT org_id FROM company_registry ORDER BY org_id")
             ).scalars().all()
-        if revisions != ["0003_close_backup"] or registered not in ([], [org_id]):
+        if revisions not in (
+            ["0003_close_backup"],
+            ["0004_company_backup_locations"],
+        ) or registered not in ([], [org_id]):
             raise CompanyCliError("COMPANY_MIGRATION_CATALOG_HISTORY_UNKNOWN")
     finally:
         engine.dispose()

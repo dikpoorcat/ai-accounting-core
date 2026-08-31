@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v10"
+AI_OPERATING_PROTOCOL_VERSION = "evidence_first_minimum_question_v11"
 
 EVIDENCE_FIRST_RUNTIME_INSTRUCTION = (
     "先充分审阅和交叉核对用户已经提供的原始材料、规范化数据、银行流水及内核现有事实，"
@@ -35,8 +35,10 @@ CLOSE_APPROVAL_RUNTIME_INSTRUCTION = (
 
 CLOSE_BACKUP_RUNTIME_INSTRUCTION = (
     "正式关账前，AI必须调用 finance_get_close_backup_configuration 核对自动备份配置和就绪状态；"
-    "未配置或未就绪时不得绕过。finance_confirm_accounting_period_close 在关账事务提交后由内核"
-    "自动导出该公司一致性快照并生成便携ZIP，返回 close_backup；AI必须核对其 status。"
+    "该配置按公司隔离，返回的 org_id 必须是当前公司，未配置、公司不匹配或未就绪时不得绕过。"
+    "finance_confirm_accounting_period_close 在关账事务提交后由内核自动导出该公司一致性快照并"
+    "生成便携ZIP；每家公司目录固定保留 current 与 previous 两代已验证整库包。AI必须核对其 "
+    "close_backup.status。"
     "status=completed 才表示本次关账备份完成；若关账已 posted 但 close_backup.status=failed，"
     "AI应使用完全相同的关账请求重试，让内核幂等续做同一关账的备份，不得重复关账、另写临时"
     "备份脚本或把手工复制文件当成成功。持续失败时应报告稳定错误码和已关账但备份未完成的状态。"

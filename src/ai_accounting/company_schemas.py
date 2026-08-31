@@ -88,6 +88,7 @@ class ConfigureCloseBackupRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    org_id: uuid.UUID
     backup_directory: str = Field(min_length=3, max_length=2048)
     idempotency_key: str = Field(min_length=1, max_length=200)
     confirmation_note: str = Field(min_length=1, max_length=2000)

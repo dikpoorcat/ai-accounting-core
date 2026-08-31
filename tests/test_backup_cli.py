@@ -14,11 +14,12 @@ from pydantic import SecretStr
 from ai_accounting import backup_cli, backup_credentials
 from ai_accounting.backup_credentials import (
     BackupCredentialError,
+    CredentialManagerConnectionProvider,
     WindowsFinanceBackupCredentialStore,
     WindowsProtectedArchiveCopyProvider,
     WindowsProtectedPgPassProvider,
 )
-from ai_accounting.backup_integration import PostgresEndpoint
+from ai_accounting.backup_integration import BackupIntegrationError, PostgresEndpoint
 from ai_accounting.config import Settings
 from ai_accounting.windows_backup import WindowsCurrentUserOnlyAclVerifier
 
@@ -284,6 +285,28 @@ def test_create_cli_reaches_durable_directory_preflight_after_validated_settings
     assert called == ["preflight"]
     assert not media.exists()
     assert not pg_bin.exists()
+
+
+def test_credential_connection_provider_does_not_mask_body_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ConnectionContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        backup_credentials.psycopg,
+        "connect",
+        lambda **_kwargs: ConnectionContext(),
+    )
+    provider = CredentialManagerConnectionProvider(InMemoryPasswordStore())
+
+    with pytest.raises(BackupIntegrationError, match="BACKUP_BODY_FAILED"):
+        with provider.connect(_endpoint()):
+            raise BackupIntegrationError("BACKUP_BODY_FAILED")
 
 
 def test_create_cli_rejects_nonproduction_before_windows_or_credential_access(

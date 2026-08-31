@@ -80,16 +80,18 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 
 首次关账前，负责人与 AI 确定一个本机目录，AI 调用
 `finance_configure_close_backup`，显式提交绝对路径、幂等键和负责人的确认说明。目录不存在时只会
-创建路径的最后一级；父目录必须已经存在。该位置以不可变版本记录在目录库中，后续改位置会追加
-新版本；目录库继续保留历史关账所用位置版本及备份尝试的审计归因，文件系统不保留历史包。
+创建路径的最后一级；父目录必须已经存在。该位置按当前公司以不可变版本记录在目录库中，后续
+改位置只为该公司追加新版本；目录库继续保留历史关账所用位置版本及备份尝试的审计归因。
 
 `finance_confirm_accounting_period_close` 在写入前检查目录、专用 `finance_backup` 凭据和
 PostgreSQL 17 `pg_dump`/`pg_restore`；未就绪时不会关账。关账业务事务提交后，系统使用只读
 `REPEATABLE READ` 导出快照，复制该公司实际引用的证据，验证清单和所有摘要，并生成
-`<统一社会信用代码>.finance-company.zip`。同一公司始终只有这个当前包：系统先在同一目录生成
-并完整验证替换包，再以写穿方式原子替换旧包，最后清理能够验证为同一 `org_id` 的旧命名包；
-任一步在替换前失败都会保留旧包。这个包不含目录库身份秘密，可以按下文的 `verify-portable`、
-`unpack` 和 `import-company` 流程恢复或移交。
+`<统一社会信用代码>.finance-company.zip`。发布前，系统把已验证的当前包滚动为
+`<统一社会信用代码>.previous.finance-company.zip`，再以写穿方式原子发布新当前包，最终只保留
+当前版和上一版两个正式包，并清理能够验证为同一 `org_id` 的其他旧命名包。新包生成或滚动失败
+时不会丢失原当前包。包内不含目录库身份秘密，可以按下文的 `verify-portable`、`unpack` 和
+`import-company` 流程恢复或移交；误关最新月份时应停止服务并从上一版整库恢复，不得只删除该月
+凭证或原地改写已过账数据。
 
 自动备份与业务库事务不能组成跨数据库/文件系统原子事务。若故障发生在关账提交之后，关账仍
 明确返回 `posted`，同时 `close_backup.status=failed`；AI 使用完全相同的关账幂等请求重试即可
