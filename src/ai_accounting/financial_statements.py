@@ -1658,6 +1658,7 @@ class FinancialStatementService(FinanceService):
                 elif event_type in {
                     "other_income_received",
                     "bank_interest_received",
+                    "expense_recovery_received",
                     "refundable_deposit_return_received",
                 }:
                     result[2] += cash_delta

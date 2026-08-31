@@ -55,6 +55,7 @@ EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
     "other_income_received": ("income_customer", "营业外收入"),
     "bank_interest_received": ("income_customer", "银行存款利息"),
     "expense_cash": ("expense_supplier", "现付费用"),
+    "expense_recovery_received": ("expense_supplier", "费用退回"),
     "expense_payable": ("expense_supplier", "应付费用"),
     "supplier_payment": ("expense_supplier", "供应商付款"),
     "bank_fee": ("expense_supplier", "银行手续费"),
@@ -417,6 +418,8 @@ def _compact_voucher_summary(
         ):
             return "商户小额验证款转营业外收入"
         return "营业外收入确认"
+    if event.event_type == "expense_recovery_received":
+        return "运营备用金退回银行"
     if event.event_type == "bank_interest_received":
         return f"{period_label}银行存款利息"
     if event.event_type == "refundable_deposit_paid":
@@ -457,6 +460,7 @@ def _compact_voucher_summary(
         "customer_advance": ("收到", "预付款"),
         "customer_refund": ("退还", "款项"),
         "expense_cash": ("支付", "费用"),
+        "expense_recovery_received": ("收回", "费用款"),
         "expense_payable": ("确认", "应付费用"),
         "supplier_payment": ("支付", "供应商款"),
         "owner_loan_received": ("收到", "借款"),

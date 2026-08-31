@@ -176,6 +176,7 @@ class FinanceService:
             EventType.CUSTOMER_ADVANCE,
             EventType.CUSTOMER_REFUND,
             EventType.EXPENSE_CASH,
+            EventType.EXPENSE_RECOVERY_RECEIVED,
             EventType.SUPPLIER_PAYMENT,
             EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_LOAN_RECEIVED,
@@ -1152,8 +1153,27 @@ class FinanceService:
 
         elif event_type in {EventType.EXPENSE_CASH, EventType.EXPENSE_PAYABLE}:
             expense_role = request.amounts.expense_account_role
+            expense_entries = (
+                [
+                    Entry(
+                        account_role=expense_role,
+                        debit_fen=item.amount_fen,
+                        counterparty_id=cp_id,
+                        memo=item.label,
+                    )
+                    for item in request.expense_components
+                ]
+                if request.expense_components
+                else [
+                    Entry(
+                        account_role=expense_role,
+                        debit_fen=amount,
+                        counterparty_id=cp_id,
+                    )
+                ]
+            )
             entries = [
-                Entry(account_role=expense_role, debit_fen=amount, counterparty_id=cp_id),
+                *expense_entries,
                 Entry(
                     account_code=request.bank_account_code,
                     credit_fen=amount,
@@ -1168,7 +1188,23 @@ class FinanceService:
             ]
             if event_type == EventType.EXPENSE_PAYABLE:
                 open_item_type = "payable"
-            derived = {"purchase_tax_treatment": "gross_to_expense", "expense_fen": amount}
+            derived = {
+                "purchase_tax_treatment": "gross_to_expense",
+                "expense_fen": amount,
+                "expense_components": [
+                    item.model_dump(mode="json") for item in request.expense_components
+                ],
+            }
+
+        elif event_type == EventType.EXPENSE_RECOVERY_RECEIVED:
+            entries = [
+                Entry(account_code=request.bank_account_code, debit_fen=amount),
+                Entry(account_role=request.amounts.expense_account_role, credit_fen=amount),
+            ]
+            derived = {
+                "expense_recovery_kind": request.details.expense_recovery_kind,
+                "expense_recovery_fen": amount,
+            }
 
         elif event_type == EventType.SUPPLIER_PAYMENT:
             entries = [
@@ -2534,6 +2570,7 @@ class FinanceService:
             EventType.OTHER_INCOME_RECEIVED,
             EventType.BANK_INTEREST_RECEIVED,
             EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
+            EventType.EXPENSE_RECOVERY_RECEIVED,
         }
         outflows = {
             EventType.CUSTOMER_REFUND,
@@ -2890,6 +2927,18 @@ class FinanceService:
             if not request.description.strip():
                 missing.append("description")
 
+        if event_type == EventType.EXPENSE_RECOVERY_RECEIVED:
+            if request.details.expense_recovery_kind != "owner_managed_payment_account_return":
+                missing.append(
+                    "details.expense_recovery_kind='owner_managed_payment_account_return'"
+                )
+            if not request.bank_transaction_references:
+                missing.append("bank_transaction_references")
+            if not request.evidence_references:
+                missing.append("evidence_references")
+            if not request.description.strip():
+                missing.append("description")
+
         if event_type == EventType.PAYMENT_PLATFORM_TRANSFER:
             if not request.bank_transaction_references:
                 missing.append("bank_transaction_references")
@@ -3038,6 +3087,7 @@ class FinanceService:
             missing.append("details.tax_type ('vat', 'surtax', or 'enterprise_income_tax')")
         expense_events = {
             EventType.EXPENSE_CASH,
+            EventType.EXPENSE_RECOVERY_RECEIVED,
             EventType.EXPENSE_PAYABLE,
         }
         if (
@@ -3065,6 +3115,7 @@ class FinanceService:
             EventType.CUSTOMER_ADVANCE: ("payment_date",),
             EventType.CUSTOMER_REFUND: ("payment_date",),
             EventType.EXPENSE_CASH: ("payment_date",),
+            EventType.EXPENSE_RECOVERY_RECEIVED: ("payment_date",),
             EventType.SUPPLIER_PAYMENT: ("payment_date",),
             EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT: ("payment_date",),
             EventType.OWNER_LOAN_RECEIVED: ("payment_date",),

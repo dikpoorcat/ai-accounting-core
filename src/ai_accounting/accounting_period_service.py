@@ -1327,6 +1327,7 @@ class AccountingPeriodService:
             "internal_transfer",
             "cash_bank_transfer",
             "payment_platform_transfer",
+            "expense_recovery_received",
             "bank_interest_received",
         }
         next_month_inflows = [

@@ -248,6 +248,141 @@ def test_employee_bank_and_internal_transfer_events_are_balanced(
         assert_balanced(session, result.voucher_id)
 
 
+def test_split_cash_expense_and_owner_managed_payment_account_return(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="6" * 64,
+        original_name="owner-managed-payment-account.csv",
+        media_type="text/csv",
+        source="test",
+        size_bytes=1,
+        storage_path="test/owner-managed-payment-account.csv",
+    )
+    funding = BankTransaction(
+        org_id=organization.id,
+        bank_account_code="1002",
+        fingerprint="5" * 64,
+        booking_date=date(2026, 8, 2),
+        amount_fen=-3_000_000,
+        currency="CNY",
+        memo="转入负责人管理的企业支付宝备用金",
+        source_sha256="4" * 64,
+    )
+    returned = BankTransaction(
+        org_id=organization.id,
+        bank_account_code="1002",
+        fingerprint="3" * 64,
+        booking_date=date(2026, 8, 3),
+        amount_fen=10_000,
+        currency="CNY",
+        memo="备用金退回银行",
+        source_sha256="2" * 64,
+    )
+    session.add_all([evidence, funding, returned])
+    session.flush()
+
+    paid = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "owner-managed-payment-funding",
+                "event_type": "expense_cash",
+                "business_dates": {
+                    "business_date": "2026-08-02",
+                    "posting_date": "2026-08-02",
+                    "payment_date": "2026-08-02",
+                },
+                "amounts": {
+                    "gross_amount_fen": 3_000_000,
+                    "expense_account_role": "general_expense",
+                },
+                "expense_components": [
+                    {"label": "阿里云服务购买", "amount_fen": 1_130_000},
+                    {"label": "阿里云短信包", "amount_fen": 15_000},
+                    {"label": "无票运营零星备用金", "amount_fen": 1_855_000},
+                ],
+                "bank_account_code": "1002",
+                "bank_transaction_references": [{"id": funding.id}],
+                "evidence_references": [evidence.id],
+                "description": "转入负责人管理的运营备用金，转出时确认费用",
+            },
+        )
+    )
+    assert paid.status == "posted"
+    paid_lines = session.scalars(
+        select(VoucherLine)
+        .where(VoucherLine.voucher_id == paid.voucher_id)
+        .order_by(VoucherLine.line_number)
+    ).all()
+    assert [(line.debit_fen, line.credit_fen, line.memo) for line in paid_lines] == [
+        (1_130_000, 0, "阿里云服务购买"),
+        (15_000, 0, "阿里云短信包"),
+        (1_855_000, 0, "无票运营零星备用金"),
+        (0, 3_000_000, ""),
+    ]
+
+    recovery = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "owner-managed-payment-return",
+                "event_type": "expense_recovery_received",
+                "business_dates": {
+                    "business_date": "2026-08-03",
+                    "posting_date": "2026-08-03",
+                    "payment_date": "2026-08-03",
+                },
+                "amounts": {
+                    "amount_fen": 10_000,
+                    "expense_account_role": "general_expense",
+                },
+                "bank_account_code": "1002",
+                "bank_transaction_references": [{"id": returned.id}],
+                "evidence_references": [evidence.id],
+                "details": {"expense_recovery_kind": "owner_managed_payment_account_return"},
+                "description": "负责人管理的运营备用金退回银行",
+            },
+        )
+    )
+    assert recovery.status == "posted"
+    recovery_lines = session.scalars(
+        select(VoucherLine).where(VoucherLine.voucher_id == recovery.voucher_id)
+    ).all()
+    by_code = {line.account.code: line for line in recovery_lines}
+    assert by_code["1002"].debit_fen == 10_000
+    assert by_code["5602"].credit_fen == 10_000
+    assert_balanced(session, recovery.voucher_id)
+
+
+def test_expense_components_must_equal_the_bank_settled_gross_amount(
+    organization: Organization,
+) -> None:
+    with pytest.raises(ValueError, match="expense component total must equal gross_amount_fen"):
+        request(
+            organization,
+            {
+                "idempotency_key": "expense-components-do-not-balance",
+                "event_type": "expense_cash",
+                "business_dates": {
+                    "business_date": "2026-08-02",
+                    "posting_date": "2026-08-02",
+                    "payment_date": "2026-08-02",
+                },
+                "amounts": {
+                    "gross_amount_fen": 30_000,
+                    "expense_account_role": "general_expense",
+                },
+                "expense_components": [
+                    {"label": "一部分", "amount_fen": 29_999},
+                ],
+                "bank_account_code": "1002",
+            },
+        )
+
+
 def test_employee_reimbursement_claims_create_payables_and_one_payment_settles_them(
     session: Session, organization: Organization
 ) -> None:

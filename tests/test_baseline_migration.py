@@ -19,8 +19,9 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0010_fs_close_profile"]
+    assert scripts.get_heads() == ["0011_expense_recovery_received"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0011_expense_recovery_received",
         "0010_fs_close_profile",
         "0009_fs_close_readiness",
         "0008_fs_opening_unique_org",
@@ -61,7 +62,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0010_fs_close_profile"
+                == "0011_expense_recovery_received"
             )
             organization_columns = {
                 column["name"] for column in inspect(connection).get_columns("organizations")
@@ -150,7 +151,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0010_fs_close_profile"
+                    == "0011_expense_recovery_received"
             )
     finally:
         engine.dispose()

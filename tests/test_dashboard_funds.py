@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -335,6 +336,82 @@ def test_build_bank_activity_uses_only_current_valid_matches(session: Session) -
     assert funds["movement_count"] == 1
     assert funds["bank_statement"]["transaction_count"] == 2
     assert funds["bank_statement"]["inflow_fen"] == 15_000
+
+
+@pytest.mark.parametrize(
+    ("event_type", "description", "offset_role"),
+    [
+        (
+            "payment_platform_transfer",
+            "企业支付宝余额转入网商银行",
+            "payment_platform_funds",
+        ),
+        (
+            "owner_contribution_received",
+            "股东杜颖成通过企业支付宝投入的投资资金转入浙江网商银行",
+            "paid_in_capital",
+        ),
+    ],
+)
+def test_bank_activity_identifies_alipay_balance_transfer_without_changing_raw_memo(
+    session: Session,
+    event_type: str,
+    description: str,
+    offset_role: str,
+) -> None:
+    organization, period = _seed_funds_month(session)
+    bank = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == "bank",
+        )
+    )
+    offset_account = session.scalar(
+        select(Account).where(
+            Account.org_id == organization.id,
+            Account.system_role == offset_role,
+        )
+    )
+    assert bank is not None and offset_account is not None
+    event, _voucher = _add_test_voucher(
+        session,
+        organization=organization,
+        number="202602-0002",
+        event_type=event_type,
+        description=description,
+        lines=[(bank, None, 600_000, 0), (offset_account, None, 0, 600_000)],
+        posting_date=date(2026, 2, 13),
+    )
+    transaction = BankTransaction(
+        org_id=organization.id,
+        bank_account_code="1002",
+        fingerprint="7" * 64,
+        external_id="2026021311120510400400059356651",
+        booking_date=date(2026, 2, 13),
+        amount_fen=600_000,
+        counterparty_name=organization.name,
+        memo="网商银行转入；（转入）网商银行转入",
+        source_sha256="8" * 64,
+    )
+    session.add(transaction)
+    session.flush()
+    transaction.matched_event_id = event.id
+    session.add(
+        BankTransactionMatch(
+            org_id=organization.id,
+            bank_transaction_id=transaction.id,
+            event_id=event.id,
+        )
+    )
+    session.flush()
+
+    activity = build_bank_activity(session, org_id=organization.id, period=period)
+    row = next(item for item in activity["rows"] if item["amount_fen"] == 600_000)
+
+    assert row["party"] == (
+        "企业支付宝余额转入（原对方户名：资金看板测试公司）"
+    )
+    assert row["memo"] == "网商银行转入；（转入）网商银行转入"
 
 
 def test_load_funds_dashboard_returns_selected_period_and_empty_period_state(tmp_path) -> None:

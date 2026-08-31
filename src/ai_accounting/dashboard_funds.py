@@ -37,6 +37,7 @@ _EVENT_LABELS = {
     "other_income_received": "营业外收入",
     "bank_interest_received": "银行存款利息",
     "expense_cash": "现付费用",
+    "expense_recovery_received": "费用退回",
     "supplier_payment": "供应商付款",
     "bank_fee": "银行手续费",
     "employee_reimbursement_payment": "报销付款",
@@ -65,6 +66,28 @@ _EVENT_LABELS = {
     "payment_platform_transfer": "银行与支付平台互转",
     "reversal": "冲正凭证",
 }
+
+
+def _bank_activity_party(
+    transaction: BankTransaction,
+    matched_event: BusinessEvent | None,
+) -> str:
+    original_party = transaction.counterparty_name or "未提供往来对方"
+    platform_origin_event = matched_event is not None and (
+        matched_event.event_type
+        in {"payment_platform_transfer", "expense_recovery_received"}
+        or (
+            matched_event.event_type == "owner_contribution_received"
+            and "支付宝" in matched_event.description
+        )
+    )
+    if (
+        transaction.amount_fen > 0
+        and platform_origin_event
+        and "网商银行转入" in transaction.memo
+    ):
+        return f"企业支付宝余额转入（原对方户名：{original_party}）"
+    return original_party
 
 
 def load_funds_dashboard(
@@ -127,6 +150,19 @@ def build_bank_activity(
         else []
     )
     matches = {item.bank_transaction_id: item for item in active_matches}
+    matched_events = (
+        {
+            event.id: event
+            for event in session.scalars(
+                select(BusinessEvent).where(
+                    BusinessEvent.org_id == org_id,
+                    BusinessEvent.id.in_({item.event_id for item in active_matches}),
+                )
+            )
+        }
+        if active_matches
+        else {}
+    )
     account_names = dict(
         session.execute(
             select(Account.code, Account.name).where(
@@ -144,6 +180,7 @@ def build_bank_activity(
     rows: list[dict[str, Any]] = []
     for transaction in transactions:
         state = "matched"
+        matched_event: BusinessEvent | None = None
         if transaction.is_late:
             late_count += 1
             if service._current_late_action(transaction) is None:
@@ -154,11 +191,14 @@ def build_bank_activity(
         else:
             ordinary_count += 1
             try:
+                active_match = matches.get(transaction.id)
                 matched = service._valid_current_match(
                     transaction,
-                    matches.get(transaction.id),
+                    active_match,
                 )
                 state = "matched" if matched else "unmatched"
+                if matched and active_match is not None:
+                    matched_event = matched_events.get(active_match.event_id)
             except ValueError:
                 matched = False
                 state = "invalid_match"
@@ -177,7 +217,7 @@ def build_bank_activity(
                 "direction": "inflow" if transaction.amount_fen > 0 else "outflow",
                 "amount_fen": abs(transaction.amount_fen),
                 "signed_amount_fen": transaction.amount_fen,
-                "party": transaction.counterparty_name or "未提供往来对方",
+                "party": _bank_activity_party(transaction, matched_event),
                 "memo": transaction.memo.strip() or "无摘要",
                 "state": state,
                 "is_late": transaction.is_late,

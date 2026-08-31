@@ -33,6 +33,7 @@ class EventType(StrEnum):
     CUSTOMER_ADVANCE = "customer_advance"
     CUSTOMER_REFUND = "customer_refund"
     EXPENSE_CASH = "expense_cash"
+    EXPENSE_RECOVERY_RECEIVED = "expense_recovery_received"
     EXPENSE_PAYABLE = "expense_payable"
     SUPPLIER_PAYMENT = "supplier_payment"
     EMPLOYEE_REIMBURSEMENT = "employee_reimbursement"
@@ -175,8 +176,22 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "amount": "gross_amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "purchase_vat": "included in expense; no input credit",
+        "optional_fields": ["expense_components"],
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
+    },
+    EventType.EXPENSE_RECOVERY_RECEIVED.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "required_details": ["expense_recovery_kind=owner_managed_payment_account_return"],
+        "required_fields": [
+            "bank_account_code",
+            "bank_transaction_references",
+            "evidence_references",
+            "description",
+        ],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_REQUIRED,
+        "posting_template": "debit selected bank account; credit the typed expense role",
     },
     EventType.EXPENSE_PAYABLE.value: {
         "amount": "gross_amount_fen",
@@ -569,6 +584,20 @@ class Allocation(BaseModel):
     amount_fen: PositiveFen
 
 
+class ExpenseComponent(BaseModel):
+    """A labelled part of one bank-settled gross expense.
+
+    Components only split the voucher memo and amount.  They cannot select an
+    account or journal direction; every component uses the event's validated
+    expense role.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=300)
+    amount_fen: PositiveFen
+
+
 class SalaryWithholdingAllocation(BaseModel):
     """Explicit non-cash deductions for one salary-payable allocation.
 
@@ -627,6 +656,7 @@ class EventDetails(BaseModel):
     unallocated_treatment: Literal["advance"] | None = None
     recognition_source: Literal["contract_liability"] | None = None
     other_income_kind: Literal["retained_verification_payment"] | None = None
+    expense_recovery_kind: Literal["owner_managed_payment_account_return"] | None = None
     social_insurance_late_fee_fen: PositiveFen | None = None
     owner_repayment_fee_fen: PositiveFen | None = None
 
@@ -1930,6 +1960,7 @@ class RecordEventRequest(BaseModel):
     ] | None = None
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
+    expense_components: list[ExpenseComponent] = Field(default_factory=list)
     allocations: list[Allocation] = Field(default_factory=list)
     salary_withholding_allocations: list[SalaryWithholdingAllocation] = Field(default_factory=list)
     salary_actual_deduction_allocations: list[SalaryActualDeductionAllocation] = Field(
@@ -1982,6 +2013,21 @@ class RecordEventRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def expense_components_follow_the_typed_expense_branch(self) -> RecordEventRequest:
+        if not self.expense_components:
+            return self
+        if self.event_type is not EventType.EXPENSE_CASH:
+            raise ValueError("expense_components are only accepted for expense_cash")
+        if self.amounts.gross_amount_fen is None:
+            raise ValueError("expense components require gross_amount_fen")
+        if (
+            sum(item.amount_fen for item in self.expense_components)
+            != self.amounts.gross_amount_fen
+        ):
+            raise ValueError("expense component total must equal gross_amount_fen")
+        return self
+
+    @model_validator(mode="after")
     def bank_account_fields_follow_the_typed_settlement_branch(self) -> RecordEventRequest:
         """Keep public bank selection explicit without opening a free-account API."""
 
@@ -2028,6 +2074,7 @@ class RecordEventRequest(BaseModel):
             EventType.CUSTOMER_ADVANCE,
             EventType.CUSTOMER_REFUND,
             EventType.EXPENSE_CASH,
+            EventType.EXPENSE_RECOVERY_RECEIVED,
             EventType.SUPPLIER_PAYMENT,
             EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_LOAN_RECEIVED,
@@ -2095,6 +2142,29 @@ class RecordEventRequest(BaseModel):
             raise ValueError("other_income_received does not accept invoice references")
         if self.allocations or self.salary_withholding_allocations:
             raise ValueError("other_income_received does not accept allocations")
+        return self
+
+    @model_validator(mode="after")
+    def expense_recovery_received_uses_only_its_fixed_fact_shape(
+        self,
+    ) -> RecordEventRequest:
+        if self.event_type is not EventType.EXPENSE_RECOVERY_RECEIVED:
+            return self
+        if self.amounts.gross_amount_fen is not None:
+            raise ValueError("expense_recovery_received must use amount_fen")
+        if self.tax_facts is not None:
+            raise ValueError("expense_recovery_received does not accept tax_facts")
+        if self.invoice_references:
+            raise ValueError("expense_recovery_received does not accept invoice references")
+        if self.counterparty is not None:
+            raise ValueError("expense_recovery_received does not accept a counterparty")
+        if self.expense_components:
+            raise ValueError("expense_recovery_received does not accept expense components")
+        if self.allocations or self.salary_withholding_allocations:
+            raise ValueError("expense_recovery_received does not accept allocations")
+        detail_fields = self.details.model_dump(exclude_none=True)
+        if set(detail_fields) - {"expense_recovery_kind"}:
+            raise ValueError("expense_recovery_received accepts only expense_recovery_kind")
         return self
 
     @model_validator(mode="after")
