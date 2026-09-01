@@ -39,6 +39,7 @@ class AccountingPeriodReviewFacts(BaseModel):
     bank_reconciliation_reviewed: StrictBool | None = None
     open_items_reviewed: StrictBool | None = None
     payroll_and_statutory_items_reviewed: StrictBool | None = None
+    payroll_settlements_reviewed: StrictBool | None = None
     tax_items_reviewed: StrictBool | None = None
     asset_and_borrowing_schedules_reviewed: StrictBool | None = None
 

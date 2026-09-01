@@ -263,7 +263,119 @@ def test_close_blocks_when_active_employee_has_no_posted_regular_payroll() -> No
         "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
         "count": 1,
         "blocking": True,
+        "enforcement": "hard_blocker",
+        "obligation": "regular_payroll_accrual",
     }
+
+
+def test_payroll_cash_settlement_is_due_review_not_a_false_close_blocker() -> None:
+    session = _session()
+    organization, _evidence = _organization_and_evidence(session)
+    employee = Counterparty(
+        org_id=organization.id,
+        kind="employee",
+        name="跨月发薪员工",
+    )
+    due_accrual = BusinessEvent(
+        org_id=organization.id,
+        idempotency_key="payroll-settlement-due-review",
+        event_type="payroll_accrual",
+        status="posted",
+        facts={},
+        business_date=date(2026, 2, 28),
+        posting_date=date(2026, 2, 28),
+    )
+    future_accrual = BusinessEvent(
+        org_id=organization.id,
+        idempotency_key="payroll-settlement-not-due-review",
+        event_type="payroll_accrual",
+        status="posted",
+        facts={},
+        business_date=date(2026, 3, 31),
+        posting_date=date(2026, 3, 31),
+    )
+    session.add_all([employee, due_accrual, future_accrual])
+    session.flush()
+    session.add_all(
+        [
+            OpenItem(
+                org_id=organization.id,
+                counterparty_id=employee.id,
+                source_event_id=due_accrual.id,
+                item_type="payable",
+                original_amount_fen=10_000,
+                settled_amount_fen=0,
+                status="open",
+                due_date=date(2026, 3, 5),
+                payable_category="salary",
+            ),
+            OpenItem(
+                org_id=organization.id,
+                counterparty_id=employee.id,
+                source_event_id=future_accrual.id,
+                item_type="payable",
+                original_amount_fen=20_000,
+                settled_amount_fen=0,
+                status="open",
+                due_date=date(2026, 4, 5),
+                payable_category="salary",
+            ),
+        ]
+    )
+    session.flush()
+    period = AccountingPeriod(
+        org_id=organization.id,
+        calendar_id=uuid.uuid4(),
+        generation_action_id=uuid.uuid4(),
+        calendar_year=2026,
+        calendar_month=3,
+        start_date=date(2026, 3, 1),
+        end_date=date(2026, 3, 31),
+        status="open",
+    )
+
+    service = AccountingPeriodService(session)
+    module_checks = service._module_checks(organization.id, period)
+    check = module_checks["payroll_settlements"]
+
+    assert check["code"] == "ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW"
+    assert check["blocking"] is False
+    assert check["enforcement"] == "mandatory_review"
+    assert check["count"] == 1
+    assert check["remaining_fen"] == 10_000
+    assert check["status"]["due"]["categories"]["salary"] == {
+        "count": 1,
+        "remaining_fen": 10_000,
+    }
+    assert check["status"]["not_due"]["categories"]["salary"] == {
+        "count": 1,
+        "remaining_fen": 20_000,
+    }
+    checklist = service._assistant_review_checklist(
+        organization.id,
+        period,
+        voucher_sources=[],
+        bank_reconciliation_count=0,
+        bank_reconciliation_issue_count=0,
+        module_checks=module_checks,
+        review_counts={
+            "historical_bank_scope_corrections_pending": 0,
+            "open_items": 2,
+            "pending_late_bank_transactions": 0,
+            "tax_items_to_review": 0,
+            "unmatched_bank_transactions": 0,
+        },
+    )
+    payroll_item = next(
+        item
+        for item in checklist["items"]
+        if item["code"] == "MONTH_END_PEOPLE_PAYROLL_STATUTORY"
+    )
+    assert payroll_item["state"] == "needs_attention"
+    assert payroll_item["system_facts"]["payroll_settlement_enforcement"] == (
+        "mandatory_review"
+    )
+    assert any("确实尚未支付" in question for question in payroll_item["owner_questions"])
 
 
 def test_open_item_review_uses_period_end_snapshot_not_current_status() -> None:
@@ -427,7 +539,13 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
 
     assert preview.status is AccountingPeriodResultStatus.CALCULATED
     checklist = preview.data["assistant_review_checklist"]
-    assert checklist["version"] == "periodic_assistant_review_v2"
+    assert checklist["version"] == "periodic_assistant_review_v3"
+    assert checklist["close_obligation_policy"]["version"] == (
+        "accounting_period_close_obligations_2026.1"
+    )
+    assert preview.data["calculation"]["close_obligation_policy"][
+        "mandatory_review_codes"
+    ] == ["ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW"]
     assert checklist["period_month"] == "2026-03"
     assert [item["code"] for item in checklist["items"]] == [
         "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION",
@@ -477,6 +595,7 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     assert "泛泛询问代替材料核对" in checklist["ai_instruction"]
     assert "不得仅因数据库无记录" in checklist["ai_instruction"]
     assert "不得把次月到账默认当作次月收入" in checklist["ai_instruction"]
+    assert "工资结算复核必须区分" in checklist["ai_instruction"]
     assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
     commentary_prompt = checklist["management_commentary"]
     assert commentary_prompt["required_for_close"] is True
@@ -503,6 +622,7 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
         "review_facts.bank_reconciliation_reviewed",
         "review_facts.open_items_reviewed",
         "review_facts.payroll_and_statutory_items_reviewed",
+        "review_facts.payroll_settlements_reviewed",
         "review_facts.tax_items_reviewed",
         "review_facts.asset_and_borrowing_schedules_reviewed",
     ]
@@ -742,6 +862,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
             bank_reconciliation_reviewed=True,
             open_items_reviewed=True,
             payroll_and_statutory_items_reviewed=True,
+            payroll_settlements_reviewed=True,
             tax_items_reviewed=True,
             asset_and_borrowing_schedules_reviewed=True,
         ),
@@ -893,7 +1014,15 @@ def test_reversed_fixed_asset_disposal_reopens_next_month_depreciation_check() -
         status="open",
     )
 
-    assert AccountingPeriodService(session)._fixed_asset_due_missing(organization.id, period) == 1
+    service = AccountingPeriodService(session)
+    assert service._fixed_asset_due_missing(organization.id, period) == 1
+    assert service._module_checks(organization.id, period)["fixed_assets"] == {
+        "code": "ACCOUNTING_PERIOD_FIXED_ASSET_DEPRECIATION_PENDING",
+        "count": 1,
+        "blocking": True,
+        "enforcement": "hard_blocker",
+        "obligation": "fixed_asset_depreciation",
+    }
 
     depreciation_events = [
         BusinessEvent(
@@ -932,7 +1061,7 @@ def test_reversed_fixed_asset_disposal_reopens_next_month_depreciation_check() -
     session.flush()
 
     # The current leaf exists, but the reversed first leaf leaves a cumulative gap.
-    assert AccountingPeriodService(session)._fixed_asset_due_missing(organization.id, period) == 1
+    assert service._fixed_asset_due_missing(organization.id, period) == 1
 
     exhausted_period = AccountingPeriod(
         org_id=organization.id,

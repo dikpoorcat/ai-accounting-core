@@ -94,6 +94,15 @@ from .tax import calculate_tax_period
 
 _BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.7"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
+_CLOSE_OBLIGATION_POLICY_VERSION = "accounting_period_close_obligations_2026.1"
+_PAYROLL_SETTLEMENT_CATEGORIES = (
+    "salary",
+    "employer_social",
+    "withheld_employee_social",
+    "employer_housing",
+    "withheld_employee_housing",
+    "individual_income_tax",
+)
 _PERIODIC_REVIEW_SOURCE_URLS = {
     "vat_filing_period": (
         "https://shanghai.chinatax.gov.cn/tax/zcfw/zcfgk/zzs/202412/t474694.html"
@@ -126,6 +135,18 @@ class AccountingPeriodService:
     ) -> dict[str, dict[str, int]]:
         """Return outstanding balances at period end, excluding later activity."""
 
+        counts: dict[str, dict[str, int]] = {}
+        for item, remaining in self._outstanding_open_items_as_of(org_id, period_end):
+            group = counts.setdefault(item.item_type, {"count": 0, "remaining_fen": 0})
+            group["count"] += 1
+            group["remaining_fen"] += remaining
+        return counts
+
+    def _outstanding_open_items_as_of(
+        self, org_id: uuid.UUID, period_end: date
+    ) -> list[tuple[OpenItem, int]]:
+        """Return normalized open items and balances as they stood at period end."""
+
         item_rows = self.session.execute(
             select(OpenItem, BusinessEvent)
             .join(BusinessEvent, BusinessEvent.id == OpenItem.source_event_id)
@@ -136,7 +157,7 @@ class AccountingPeriodService:
             )
         ).all()
         if not item_rows:
-            return {}
+            return []
 
         item_ids = [item.id for item, _source_event in item_rows]
         settlements = list(
@@ -172,7 +193,7 @@ class AccountingPeriodService:
         for settlement in settlements:
             settlements_by_item.setdefault(settlement.open_item_id, []).append(settlement)
 
-        counts: dict[str, dict[str, int]] = {}
+        outstanding: list[tuple[OpenItem, int]] = []
         for item, source_event in item_rows:
             source_reversal = events.get(source_event.reversed_by_event_id)
             if source_reversal is not None and source_reversal.posting_date <= period_end:
@@ -192,57 +213,62 @@ class AccountingPeriodService:
             remaining = item.original_amount_fen - settled_as_of
             if remaining <= 0:
                 continue
-            group = counts.setdefault(item.item_type, {"count": 0, "remaining_fen": 0})
-            group["count"] += 1
-            group["remaining_fen"] += remaining
-        return counts
+            outstanding.append((item, remaining))
+        return outstanding
 
     def _labor_open_item_counts_as_of(
         self, org_id: uuid.UUID, period_end: date
     ) -> dict[str, dict[str, int]]:
         """Return period-end labor payable balances by controlled source category."""
 
-        rows = self.session.execute(
-            select(OpenItem, BusinessEvent)
-            .join(BusinessEvent, BusinessEvent.id == OpenItem.source_event_id)
-            .where(
-                OpenItem.org_id == org_id,
-                OpenItem.payable_category.in_(
-                    ("labor_remuneration", "labor_individual_income_tax")
-                ),
-                BusinessEvent.posting_date <= period_end,
-                BusinessEvent.status.in_(("posted", "reversed")),
-            )
-        ).all()
         counts: dict[str, dict[str, int]] = {}
-        for item, source_event in rows:
-            source_reversal = (
-                self.session.get(BusinessEvent, source_event.reversed_by_event_id)
-                if source_event.reversed_by_event_id
-                else None
-            )
-            if source_reversal is not None and source_reversal.posting_date <= period_end:
-                continue
-            settled_as_of = 0
-            for settlement in item.settlements:
-                payment = self.session.get(BusinessEvent, settlement.payment_event_id)
-                if payment is None or payment.posting_date > period_end:
-                    continue
-                reversal = (
-                    self.session.get(BusinessEvent, settlement.reversed_by_event_id)
-                    if settlement.reversed_by_event_id
-                    else None
-                )
-                if reversal is None or reversal.posting_date > period_end:
-                    settled_as_of += settlement.amount_fen
-            remaining = item.original_amount_fen - settled_as_of
-            if remaining <= 0:
+        for item, remaining in self._outstanding_open_items_as_of(org_id, period_end):
+            if item.payable_category not in {
+                "labor_remuneration",
+                "labor_individual_income_tax",
+            }:
                 continue
             category = str(item.payable_category)
             group = counts.setdefault(category, {"count": 0, "remaining_fen": 0})
             group["count"] += 1
             group["remaining_fen"] += remaining
         return counts
+
+    def _payroll_settlement_counts_as_of(
+        self, org_id: uuid.UUID, period_end: date
+    ) -> dict[str, Any]:
+        """Split unpaid payroll liabilities by whether their frozen due date has arrived.
+
+        Outstanding cash settlement is a mandatory close review, not an accounting
+        recognition blocker: a correctly accrued salary or statutory liability may
+        remain payable after month end.  Imported payment evidence is still enforced
+        through the bank reconciliation close gates.
+        """
+
+        result: dict[str, Any] = {
+            "due": {"count": 0, "remaining_fen": 0, "categories": {}},
+            "not_due": {"count": 0, "remaining_fen": 0, "categories": {}},
+            "due_date_missing": {"count": 0, "remaining_fen": 0, "categories": {}},
+        }
+        for item, remaining in self._outstanding_open_items_as_of(org_id, period_end):
+            category = item.payable_category
+            if category not in _PAYROLL_SETTLEMENT_CATEGORIES:
+                continue
+            if item.due_date is None:
+                bucket_name = "due_date_missing"
+            elif item.due_date <= period_end:
+                bucket_name = "due"
+            else:
+                bucket_name = "not_due"
+            bucket = result[bucket_name]
+            bucket["count"] += 1
+            bucket["remaining_fen"] += remaining
+            category_totals = bucket["categories"].setdefault(
+                str(category), {"count": 0, "remaining_fen": 0}
+            )
+            category_totals["count"] += 1
+            category_totals["remaining_fen"] += remaining
+        return result
 
     def generate_accounting_period(
         self, request: GenerateAccountingPeriodRequest
@@ -1053,6 +1079,25 @@ class AccountingPeriodService:
             warnings=warnings,
         )
         payload["checker_version"] = _BANK_AWARE_CLOSE_CHECKER_VERSION
+        payload["close_obligation_policy"] = {
+            "version": _CLOSE_OBLIGATION_POLICY_VERSION,
+            "hard_blocker_codes": sorted(
+                result["code"]
+                for result in module_checks.values()
+                if result["enforcement"] == "hard_blocker"
+            ),
+            "mandatory_review_codes": sorted(
+                result["code"]
+                for result in module_checks.values()
+                if result["enforcement"] == "mandatory_review"
+            ),
+            "principles": {
+                "normalized_accounting_recognition": "hard_blocker",
+                "cash_settlement_that_may_cross_periods": "mandatory_review",
+                "observed_bank_activity": "hard_bank_reconciliation_gate",
+                "externally_unknown_activity": "owner_completeness_confirmation",
+            },
+        }
         payload["financial_statement_requirements"] = financial_statement_requirement_data
         calculation_hash = close_calculation_hash(payload)
         return {
@@ -1670,6 +1715,7 @@ class AccountingPeriodService:
             or (active_employees and not regular_payroll_batches)
             or unapplied_contribution_actual_rows
             or module_checks["payroll"]["count"]
+            or module_checks["payroll_settlements"]["count"]
         )
         labor_attention = bool(
             module_checks["labor_remuneration"]["count"]
@@ -1807,7 +1853,7 @@ class AccountingPeriodService:
             },
             {
                 "code": "MONTH_END_PEOPLE_PAYROLL_STATUTORY",
-                "topic": "工资核算人员、社保公积金和个税",
+                "topic": "工资计提、结算、社保公积金和个税",
                 "state": (
                     "needs_attention"
                     if payroll_attention
@@ -1824,7 +1870,9 @@ class AccountingPeriodService:
                     f"系统有 {len(employee_counterparties)} 个员工类往来对象、"
                     f"{len(active_employees)} 份当月有效员工档案、"
                     f"{len(hires_in_period)} 名当月开始按员工工资核算、"
-                    f"{len(payroll_batches)} 个工资批次。"
+                    f"{len(payroll_batches)} 个工资批次；"
+                    f"截至月末有 {module_checks['payroll_settlements']['count']} 项"
+                    "已到期或缺少到期日的工资及法定款项尚未结清。"
                 ),
                 "system_facts": {
                     "employee_counterparty_count": len(employee_counterparties),
@@ -1842,6 +1890,10 @@ class AccountingPeriodService:
                     "regular_payroll_batch_count": len(regular_payroll_batches),
                     "payroll_or_statutory_payment_event_count": payroll_payment_event_count,
                     "unfinished_payroll_batch_count": module_checks["payroll"]["count"],
+                    "payroll_settlement_enforcement": module_checks[
+                        "payroll_settlements"
+                    ]["enforcement"],
+                    "payroll_settlements": module_checks["payroll_settlements"]["status"],
                     "contribution_actual_difference_count": len(
                         active_contribution_actual_rows
                     ),
@@ -1887,6 +1939,15 @@ class AccountingPeriodService:
                             if employee_master_gaps
                             or (active_employees and not regular_payroll_batches)
                             or module_checks["payroll"]["count"]
+                            else []
+                        ),
+                        *(
+                            [
+                                "系统列出的工资、社保、公积金或个税款项在月末已到期但仍未"
+                                "结清，或缺少到期日。请核对它们是确实尚未支付，还是已经支付"
+                                "但银行流水或核销尚未入账；确实未付不应伪造付款。"
+                            ]
+                            if module_checks["payroll_settlements"]["count"]
                             else []
                         ),
                     ]
@@ -2087,13 +2148,24 @@ class AccountingPeriodService:
                 }
             )
         return {
-            "version": "periodic_assistant_review_v2",
+            "version": "periodic_assistant_review_v3",
             "period_month": period_month,
             "semantics": {
                 "completed": "系统记录足以证明该项已完成检查",
                 "needs_attention": "系统已发现待处理或待解释项目",
                 "owner_confirmation_required": "系统没有足够事实；不得把空记录推断为没有业务",
                 "not_due": "本事项尚未到法定或企业核定检查周期；本月不向负责人重复提问",
+            },
+            "close_obligation_policy": {
+                "version": _CLOSE_OBLIGATION_POLICY_VERSION,
+                "hard_blocker": (
+                    "工资计提、折旧、摊销、借款计息等可由规范事实确定的会计确认事项"
+                    "未完成时，内核拒绝关账。"
+                ),
+                "mandatory_review": (
+                    "工资及法定款项的现金结算允许跨月；到期未结项必须明确复核，但确实未付"
+                    "不会被伪装成付款，也不会因为仍是有效负债而阻止正确关账。"
+                ),
             },
             "schedule": {
                 "version": _PERIODIC_REVIEW_SCHEDULE_VERSION,
@@ -2130,6 +2202,8 @@ class AccountingPeriodService:
                 "若已导入次月银行流水，AI 必须先逐笔核对入账款是否属于本月已履约收入，"
                 "不得把次月到账默认当作次月收入；"
                 "不得仅因数据库无记录而代填没有员工、工资、税务、资产或其他业务；"
+                "工资结算复核必须区分尚未到付款日、确实未付和已付未入账；不得为通过关账"
+                "虚构现金支付；"
                 "不得向负责人展示 not_due 项的问题，季度和年度事项只在 schedule 指定月份触发。"
             ),
             "completed_count": sum(item["completed"] for item in items),
@@ -2254,11 +2328,18 @@ class AccountingPeriodService:
     def _module_checks(
         self, org_id: uuid.UUID, period: AccountingPeriod
     ) -> dict[str, dict[str, Any]]:
-        """Check only obligations already represented by normalized module facts."""
+        """Classify close obligations derived from normalized module facts.
+
+        Accounting recognition schedules are hard blockers.  Cash settlement is
+        review-required because a valid liability may remain unpaid across month
+        end; bank evidence and reconciliation independently prevent an observed
+        payment from being silently omitted.
+        """
 
         fixed_missing = self._fixed_asset_due_missing(org_id, period)
         intangible_missing = self._intangible_due_missing(org_id, period)
         borrowing_missing = self._borrowing_due_missing(org_id, period)
+        payroll_settlements = self._payroll_settlement_counts_as_of(org_id, period.end_date)
         unfinished_payroll = (
             self.session.scalar(
                 select(func.count())
@@ -2337,26 +2418,51 @@ class AccountingPeriodService:
                 "code": "ACCOUNTING_PERIOD_FIXED_ASSET_DEPRECIATION_PENDING",
                 "count": fixed_missing,
                 "blocking": fixed_missing > 0,
+                "enforcement": "hard_blocker",
+                "obligation": "fixed_asset_depreciation",
             },
             "intangible_assets": {
                 "code": "ACCOUNTING_PERIOD_INTANGIBLE_AMORTIZATION_PENDING",
                 "count": intangible_missing,
                 "blocking": intangible_missing > 0,
+                "enforcement": "hard_blocker",
+                "obligation": "intangible_asset_amortization",
             },
             "borrowings": {
                 "code": "ACCOUNTING_PERIOD_BORROWING_INTEREST_PENDING",
                 "count": borrowing_missing,
                 "blocking": borrowing_missing > 0,
+                "enforcement": "hard_blocker",
+                "obligation": "borrowing_interest_accrual",
             },
             "payroll": {
                 "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
                 "count": payroll_pending,
                 "blocking": payroll_pending > 0,
+                "enforcement": "hard_blocker",
+                "obligation": "regular_payroll_accrual",
+            },
+            "payroll_settlements": {
+                "code": "ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW",
+                "count": (
+                    payroll_settlements["due"]["count"]
+                    + payroll_settlements["due_date_missing"]["count"]
+                ),
+                "remaining_fen": (
+                    payroll_settlements["due"]["remaining_fen"]
+                    + payroll_settlements["due_date_missing"]["remaining_fen"]
+                ),
+                "blocking": False,
+                "enforcement": "mandatory_review",
+                "obligation": "payroll_cash_settlement",
+                "status": payroll_settlements,
             },
             "labor_remuneration": {
                 "code": "ACCOUNTING_PERIOD_LABOR_REMUNERATION_PENDING",
                 "count": unfinished_labor,
                 "blocking": unfinished_labor > 0,
+                "enforcement": "hard_blocker",
+                "obligation": "known_labor_remuneration_workflow",
             },
         }
 

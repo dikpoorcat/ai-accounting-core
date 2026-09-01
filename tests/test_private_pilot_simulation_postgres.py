@@ -278,6 +278,7 @@ def _review_facts() -> AccountingPeriodReviewFacts:
         bank_reconciliation_reviewed=True,
         open_items_reviewed=True,
         payroll_and_statutory_items_reviewed=True,
+        payroll_settlements_reviewed=True,
         tax_items_reviewed=True,
         asset_and_borrowing_schedules_reviewed=True,
     )

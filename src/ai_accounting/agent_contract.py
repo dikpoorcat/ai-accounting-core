@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v14"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v15"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -86,6 +86,14 @@ FINANCIAL_STATEMENT_CLOSE_RUNTIME_INSTRUCTION = (
     "自行满足的当前月关闭状态和快照。存在阻断时必须先补事实再关账，不得先关账后修补报表。"
 )
 
+CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
+    "关账必须以 finance_preview_accounting_period_close 返回的内核义务为准：工资计提、"
+    "固定资产折旧、无形资产摊销、借款利息和其他已由规范事实确定的月末会计确认事项属于"
+    "硬阻断，未完成不得关账。工资及社保公积金个税的现金结算允许跨月；已到期未结项必须"
+    "逐项复核是确实未付还是已付未入账，并提交独立的 payroll_settlements_reviewed 事实，"
+    "不得为通过关账虚构付款。已有银行付款证据仍由流水匹配和对账硬门禁约束。"
+)
+
 MCP_SERVER_INSTRUCTIONS = (
     f"{IDENTITY_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
@@ -97,6 +105,7 @@ MCP_SERVER_INSTRUCTIONS = (
     "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
     "解读应形成一至两个短句的简明综合判断，不得把看板指标或关账清单简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
+    f"{CLOSE_OBLIGATION_RUNTIME_INSTRUCTION}"
     f"{FINANCIAL_STATEMENT_CLOSE_RUNTIME_INSTRUCTION}"
     f"{HISTORICAL_TEST_BATCH_CLOSE_RUNTIME_INSTRUCTION}"
     f"{CLOSE_APPROVAL_RUNTIME_INSTRUCTION}"
@@ -209,6 +218,10 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "清单，不得猜测 context 不能证明的原因，并将原文及 context_hash 一并提交"
                     "给确认关账工具。"
                 ),
+            },
+            {
+                "code": "satisfy_deterministic_close_obligations",
+                "instruction": CLOSE_OBLIGATION_RUNTIME_INSTRUCTION,
             },
             {
                 "code": "satisfy_financial_statement_close_gate",

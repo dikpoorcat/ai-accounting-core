@@ -189,6 +189,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "settle_person_paid_existing_payables_without_new_expense",
         "apply_first_wage_tax_treatment_only_with_evidence",
         "generate_period_close_management_commentary",
+        "satisfy_deterministic_close_obligations",
         "satisfy_financial_statement_close_gate",
         "batch_historical_test_close_only_when_explicit",
         "launch_visible_close_approval_window",
@@ -209,6 +210,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "一至两个短句的简明综合判断" in mcp.instructions
     assert "不得把看板指标或关账清单简单拼接" in mcp.instructions
     assert "存在阻断时必须先补事实再关账" in mcp.instructions
+    assert "payroll_settlements_reviewed" in mcp.instructions
     assert "finance_request_accounting_period_close_approval_window" in mcp.instructions
     assert "finance_get_accounting_period_close_approval" in mcp.instructions
     assert "AI 记账内核 - 关账密码确认" in mcp.instructions
