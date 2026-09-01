@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
+import xlrd
 from conftest import import_test_bank_transaction
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +20,7 @@ from ai_accounting.accounting_period_schemas import (
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
+from ai_accounting.config import Settings
 from ai_accounting.financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
     ConfirmFinancialStatementOpeningBalanceRequest,
@@ -24,6 +28,7 @@ from ai_accounting.financial_statement_schemas import (
 )
 from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.models import (
+    AccountingPeriod,
     AuditLog,
     BankTransaction,
     Employee,
@@ -33,12 +38,23 @@ from ai_accounting.models import (
     Organization,
     PayrollBatch,
     PayrollLine,
+    PayrollTaxImportExport,
     PayrollTaxStateSlot,
     Voucher,
     VoucherLine,
 )
+from ai_accounting.owner_workflow import OwnerWorkflowService
+from ai_accounting.owner_workflow_schemas import (
+    ConfirmPayrollContributionAssessmentRequest,
+    ConfirmPeriodMaterialCompletenessRequest,
+    ConfirmWorkforceReviewRequest,
+    GetOwnerWorkflowRequest,
+    PreviewPayrollContributionAssessmentRequest,
+)
+from ai_accounting.payroll_tax_import import PayrollTaxImportService
 from ai_accounting.schemas import (
     ConfirmPayrollRequest,
+    GeneratePayrollTaxImportRequest,
     PreviewPayrollRequest,
     RecordEventRequest,
     RegisterEmployeePayrollProfileVersionRequest,
@@ -242,6 +258,417 @@ def preview_and_confirm(
     return service, confirmed
 
 
+def test_declared_unpaid_contribution_and_same_snapshot_payroll_complete_step_three(
+    session: Session,
+    organization: Organization,
+) -> None:
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="w" * 64,
+        original_name="workflow-payroll-period.txt",
+        source="test",
+        size_bytes=1,
+        storage_path="tests/workflow-payroll-period.txt",
+    )
+    session.add(evidence)
+    session.flush()
+    generated = AccountingPeriodService(
+        session, current_date=date(2026, 4, 10)
+    ).generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-03",
+            idempotency_key="workflow-payroll-period-2026-03",
+            confirmation_note="生成三月工资流程期间。",
+            evidence_references=[evidence.id],
+        )
+    )
+    assert generated.status == "posted"
+    period = session.get(AccountingPeriod, generated.period_id)
+    assert period is not None
+
+    employee_id = register_payroll_facts(session, organization)
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 4, 10))
+    gates = workflow.close_gate_snapshot(organization.id, period)
+    workforce = workflow.confirm_workforce_review(
+        ConfirmWorkforceReviewRequest(
+            org_id=organization.id,
+            period_id=period.id,
+            workforce_snapshot_hash=gates["gates"]["workforce_review"][
+                "source_snapshot_hash"
+            ],
+            change_state="no_change",
+            idempotency_key="workflow-payroll-workforce-2026-03",
+            confirmation_note="确认三月人员和工资档案没有其他变化。",
+        )
+    )
+    assert workforce["status"] == "confirmed"
+    assessment = workflow.preview_payroll_contribution_assessment(
+        PreviewPayrollContributionAssessmentRequest(
+            org_id=organization.id,
+            period_id=period.id,
+        )
+    )
+    assert assessment["status"] == "calculated"
+    confirmed_assessment = workflow.confirm_payroll_contribution_assessment(
+        ConfirmPayrollContributionAssessmentRequest(
+            org_id=organization.id,
+            period_id=period.id,
+            calculation_hash=assessment["calculation_hash"],
+            declaration_status="not_declared",
+            idempotency_key="workflow-contribution-assessment-2026-03",
+            confirmation_note="确认三月社保公积金核定金额，外部尚未申报。",
+        )
+    )
+    assert confirmed_assessment["status"] == "confirmed"
+
+    payroll = FinanceService(session)
+    preview = payroll.preview_payroll(
+        PreviewPayrollRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "workflow-payroll-preview-2026-03",
+                "batch_kind": "regular",
+                "payroll_period": "2026-03",
+                "posting_date": "2026-03-31",
+                "payment_date": "2026-03-31",
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "tax_reported_salary_fen": 1_000_000,
+                        "special_additional_deduction_fen": 0,
+                        "other_legal_deduction_fen": 0,
+                    }
+                ],
+            }
+        )
+    )
+    assert preview.status == "calculated"
+    posted = payroll.confirm_payroll(
+        ConfirmPayrollRequest(
+            org_id=organization.id,
+            batch_id=preview.batch_id,
+            calculation_hash=preview.calculation_hash,
+            idempotency_key="workflow-payroll-confirm-2026-03",
+        )
+    )
+    assert posted.status == "posted"
+    session.flush()
+    session.expire_all()
+
+    reopened = OwnerWorkflowService(session, current_date=date(2026, 4, 10))
+    close_gates = reopened.close_gate_snapshot(
+        organization.id, session.get(AccountingPeriod, period.id)
+    )
+    assert close_gates["gates"]["contribution_accounting"]["satisfied"] is True
+    before_declaration = reopened.get(
+        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
+    )
+    step = next(
+        item
+        for item in before_declaration["steps"]
+        if item["code"] == "SOCIAL_INSURANCE_AND_HOUSING_FUND"
+    )
+    assert step["completion_state"] == "incomplete"
+    assert step["close_gate_satisfied"] is True
+    assert step["missing_facts"] == ["external_contribution_declaration"]
+
+    declared = reopened.confirm_payroll_contribution_assessment(
+        ConfirmPayrollContributionAssessmentRequest(
+            org_id=organization.id,
+            period_id=period.id,
+            calculation_hash=assessment["calculation_hash"],
+            declaration_status="declared_unpaid",
+            declaration_date=date(2026, 3, 31),
+            idempotency_key="workflow-contribution-declared-2026-03",
+            confirmation_note="确认三月社保公积金已申报、尚未缴款。",
+            supersedes_confirmation_id=uuid.UUID(
+                confirmed_assessment["confirmation_id"]
+            ),
+        )
+    )
+    assert declared["status"] == "confirmed"
+    session.flush()
+    session.expire_all()
+    result = OwnerWorkflowService(session, current_date=date(2026, 4, 10)).get(
+        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
+    )
+    step = next(
+        item
+        for item in result["steps"]
+        if item["code"] == "SOCIAL_INSURANCE_AND_HOUSING_FUND"
+    )
+    assert step["completion_state"] == "completed"
+    assert step["attention_state"] == "due"
+    assert step["symbol"] == "⏰"
+    assert step["deadline"] == "2026-04-20"
+    assert step["close_gate_satisfied"] is True
+
+
+def test_generate_payroll_tax_import_matches_tax_authority_xls_template(
+    session: Session,
+    organization: Organization,
+    tmp_path: Path,
+) -> None:
+    _service, confirmed = preview_and_confirm(session, organization)
+    assert confirmed.batch_id is not None
+    payroll_line = session.scalar(
+        select(PayrollLine).where(PayrollLine.payroll_batch_id == confirmed.batch_id)
+    )
+    assert payroll_line is not None
+    request = GeneratePayrollTaxImportRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "payroll_period": "2026-03",
+            "idempotency_key": "payroll-tax-import-template",
+            "employee_items": [
+                {
+                    "employee_id": payroll_line.employee_id,
+                    "document_type": "居民身份证",
+                    "document_number": "330106199001011234",
+                    "cumulative_personal_pension_fen": 0,
+                }
+            ],
+        }
+    )
+    export_service = PayrollTaxImportService(
+        session,
+        settings=Settings(finance_environment="development", finance_storage_dir=tmp_path),
+    )
+
+    result = export_service.generate(request)
+
+    assert result.status == "generated"
+    assert result.export_id is not None
+    assert result.row_count == 1
+    assert result.source_batch_ids == [confirmed.batch_id]
+    assert result.file_path is not None
+    content = result.file_path.read_bytes()
+    assert content[:8] == bytes.fromhex("D0CF11E0A1B11AE1")
+    assert hashlib.sha256(content).hexdigest() == result.sha256
+    workbook = xlrd.open_workbook(file_contents=content, formatting_info=True)
+    assert workbook.sheet_names() == ["正常工资薪金收入", "填表说明"]
+    data_sheet = workbook.sheet_by_name("正常工资薪金收入")
+    assert data_sheet.row_values(0) == list(result.data["template_headers"])
+    assert data_sheet.row_values(1)[:10] == [
+        "E-001",
+        "张三",
+        "居民身份证",
+        "330106199001011234",
+        10_000.0,
+        0.0,
+        800.0,
+        0.0,
+        0.0,
+        700.0,
+    ]
+    assert data_sheet.row_values(1)[10:29] == [0.0] * 19
+    assert data_sheet.cell_value(1, 29) == ""
+    money_cell = data_sheet.cell(1, 4)
+    money_format = workbook.format_map[
+        workbook.xf_list[money_cell.xf_index].format_key
+    ].format_str
+    assert money_format == "0.00_);(0.00)"
+    document_cell = data_sheet.cell(1, 3)
+    document_format = workbook.format_map[
+        workbook.xf_list[document_cell.xf_index].format_key
+    ].format_str
+    assert document_cell.value == "330106199001011234"
+    assert document_format == "@"
+    instructions = workbook.sheet_by_name("填表说明")
+    assert instructions.cell_value(5, 0) == "居民身份证"
+    assert instructions.cell_value(20, 0) == "小数点后保留两位，多于两位的数据自动\n四舍五入"
+    export = session.get(PayrollTaxImportExport, result.export_id)
+    assert export is not None
+    assert export.file_sha256 == result.sha256
+    assert export.payroll_source_hash == result.data["payroll_source_hash"]
+    assert export.source_snapshot_hash == result.data["source_snapshot_hash"]
+    assert export.relative_storage_path == result.data["relative_storage_path"]
+
+    replay = export_service.generate(request)
+    assert replay.status == "generated"
+    assert replay.export_id == result.export_id
+    assert replay.idempotent_replay is True
+    assert replay.file_path == result.file_path
+    assert replay.sha256 == result.sha256
+
+
+def test_generate_payroll_tax_import_requires_deduction_breakdown_reconciliation(
+    session: Session,
+    organization: Organization,
+    tmp_path: Path,
+) -> None:
+    _service, confirmed = preview_and_confirm(session, organization)
+    assert confirmed.batch_id is not None
+    payroll_line = session.scalar(
+        select(PayrollLine).where(PayrollLine.payroll_batch_id == confirmed.batch_id)
+    )
+    assert payroll_line is not None
+    request = GeneratePayrollTaxImportRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "payroll_period": "2026-03",
+            "idempotency_key": "payroll-tax-import-deduction-mismatch",
+            "employee_items": [
+                {
+                    "employee_id": payroll_line.employee_id,
+                    "document_type": "居民身份证",
+                    "document_number": "330106199001011234",
+                    "cumulative_child_education_fen": 100,
+                    "cumulative_personal_pension_fen": 0,
+                }
+            ],
+        }
+    )
+
+    result = PayrollTaxImportService(
+        session,
+        settings=Settings(finance_environment="development", finance_storage_dir=tmp_path),
+    ).generate(request)
+
+    assert result.status == "needs_information"
+    assert [item["code"] for item in result.missing_information] == [
+        "cumulative_special_additional_deduction_breakdown"
+    ]
+    assert result.missing_information[0]["expected_fen"] == 0
+    assert result.missing_information[0]["supplied_fen"] == 100
+    assert not list(tmp_path.rglob("*.xls"))
+
+
+def test_generate_payroll_tax_import_excludes_reversal_batches(
+    session: Session,
+    organization: Organization,
+    tmp_path: Path,
+) -> None:
+    service, confirmed = preview_and_confirm(session, organization)
+    assert confirmed.event_id is not None
+    employee_id = session.scalar(
+        select(PayrollLine.employee_id).where(
+            PayrollLine.payroll_batch_id == confirmed.batch_id
+        )
+    )
+    assert employee_id is not None
+    reversed_result = service.reverse_event(
+        ReverseEventRequest(
+            org_id=organization.id,
+            event_id=confirmed.event_id,
+            idempotency_key="reverse-payroll-before-tax-import",
+            reason="工资事实需要更正",
+            posting_date=date(2026, 3, 6),
+        )
+    )
+    assert reversed_result.status == "posted"
+
+    result = PayrollTaxImportService(
+        session,
+        settings=Settings(finance_environment="development", finance_storage_dir=tmp_path),
+    ).generate(
+        GeneratePayrollTaxImportRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "payroll_period": "2026-03",
+                "idempotency_key": "payroll-tax-import-reversed",
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "document_type": "居民身份证",
+                        "document_number": "330106199001011234",
+                        "cumulative_personal_pension_fen": 0,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert result.status == "needs_information"
+    assert result.missing_information[0]["code"] == "posted_regular_payroll"
+    assert not list(tmp_path.rglob("*.xls"))
+
+
+def test_generate_payroll_tax_import_writes_explicit_nonzero_tax_columns(
+    session: Session,
+    organization: Organization,
+    tmp_path: Path,
+) -> None:
+    employee_id = register_payroll_facts(session, organization)
+    service = FinanceService(session)
+    preview = service.preview_payroll(
+        PreviewPayrollRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "payroll-tax-import-nonzero-preview",
+                "batch_kind": "regular",
+                "payroll_period": "2026-03",
+                "posting_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "tax_reported_salary_fen": 2_000_000,
+                        "special_additional_deduction_fen": 100_000,
+                        "other_legal_deduction_fen": 30_000,
+                        "tax_relief_fen": 5_000,
+                    }
+                ],
+            }
+        )
+    )
+    assert preview.status == "calculated"
+    confirmed = service.confirm_payroll(
+        ConfirmPayrollRequest(
+            org_id=organization.id,
+            batch_id=preview.batch_id,
+            calculation_hash=preview.calculation_hash,
+            idempotency_key="payroll-tax-import-nonzero-confirm",
+        )
+    )
+    assert confirmed.status == "posted"
+    request = GeneratePayrollTaxImportRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "payroll_period": "2026-03",
+            "idempotency_key": "payroll-tax-import-nonzero",
+            "employee_items": [
+                {
+                    "employee_id": employee_id,
+                    "document_type": "居民身份证",
+                    "document_number": "330106199001011234",
+                    "cumulative_child_education_fen": 60_000,
+                    "cumulative_continuing_education_fen": 40_000,
+                    "current_personal_pension_fen": 10_000,
+                    "cumulative_personal_pension_fen": 10_000,
+                    "enterprise_occupational_annuity_fen": 20_000,
+                    "tax_relief_fen": 3_000,
+                    "treaty_relief_fen": 2_000,
+                    "remark": "逐项核对",
+                }
+            ],
+        }
+    )
+
+    result = PayrollTaxImportService(
+        session,
+        settings=Settings(finance_environment="development", finance_storage_dir=tmp_path),
+    ).generate(request)
+
+    assert result.status == "generated"
+    assert result.file_path is not None
+    data_sheet = xlrd.open_workbook(
+        file_contents=result.file_path.read_bytes()
+    ).sheet_by_name("正常工资薪金收入")
+    assert data_sheet.row_values(1)[10:18] == [
+        600.0,
+        400.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        100.0,
+        200.0,
+    ]
+    assert data_sheet.row_values(1)[27:30] == [30.0, 20.0, "逐项核对"]
+
+
 def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
     session: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -307,6 +734,35 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
         )
     )
     assert income_tax.status == "posted"
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 12, 31))
+    workflow_gates = workflow.close_gate_snapshot(
+        organization.id, session.get(AccountingPeriod, generated.period_id)
+    )
+    workforce = workflow.confirm_workforce_review(
+        ConfirmWorkforceReviewRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            workforce_snapshot_hash=workflow_gates["gates"]["workforce_review"][
+                "source_snapshot_hash"
+            ],
+            change_state="no_change",
+            idempotency_key="payroll-period-workforce-review",
+            confirmation_note="确认本期尚无员工及工资变化。",
+        )
+    )
+    assert workforce["status"] == "confirmed"
+    material = workflow.confirm_period_material_completeness(
+        ConfirmPeriodMaterialCompletenessRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            activity_snapshot_hash=workflow_gates["gates"]["non_bank_materials"][
+                "source_snapshot_hash"
+            ],
+            idempotency_key="payroll-period-material-review",
+            confirmation_note="确认本期非银行材料已全部提供。",
+        )
+    )
+    assert material["status"] == "confirmed"
     close_facts = PreviewAccountingPeriodCloseRequest(
         org_id=organization.id,
         period_id=generated.period_id,

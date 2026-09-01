@@ -10,6 +10,7 @@ from ai_accounting.mcp_server import mcp
 from ai_accounting.models import BusinessEvent, Counterparty, OpenItem, Organization
 from ai_accounting.schemas import (
     ConfirmPayrollRequest,
+    GeneratePayrollTaxImportRequest,
     PreviewPayrollRequest,
     RecordEventRequest,
     RecordPayrollContributionSupplementRequest,
@@ -29,6 +30,7 @@ def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
         "finance_preview_payroll",
         "finance_confirm_payroll",
         "finance_get_payroll_batch",
+        "finance_generate_payroll_tax_import",
     }
     assert payroll_tools <= tools.keys()
     preview_schema = PreviewPayrollRequest.model_json_schema()
@@ -36,6 +38,7 @@ def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
     record_schema = RecordEventRequest.model_json_schema()
     actual_schema = RegisterPayrollContributionActualRequest.model_json_schema()
     supplement_schema = RecordPayrollContributionSupplementRequest.model_json_schema()
+    tax_import_schema = GeneratePayrollTaxImportRequest.model_json_schema()
     assert "calculation_hash" in confirm_schema["properties"]
     assert "employee_items" in preview_schema["properties"]
     schema_text = str(
@@ -45,10 +48,24 @@ def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
             "record": record_schema,
             "contribution_actual": actual_schema,
             "contribution_supplement": supplement_schema,
+            "tax_import": tax_import_schema,
         }
     )
     assert actual_schema["properties"]["evidence_references"]["minItems"] == 1
     assert supplement_schema["properties"]["evidence_references"]["minItems"] == 1
+    assert tax_import_schema["required"] == [
+        "org_id",
+        "payroll_period",
+        "idempotency_key",
+        "employee_items",
+    ]
+    tax_import_item_schema = tax_import_schema["$defs"]["PayrollTaxImportEmployeeItem"]
+    assert {
+        "employee_id",
+        "document_type",
+        "document_number",
+        "cumulative_personal_pension_fen",
+    } <= set(tax_import_item_schema["required"])
     assert "debit_fen" not in schema_text
     assert "credit_fen" not in schema_text
     assert "'account_code'" not in schema_text

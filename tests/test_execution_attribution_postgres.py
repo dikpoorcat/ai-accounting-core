@@ -78,7 +78,9 @@ def _protect_current_windows_user_only(path: Path) -> None:
 
 
 def _config(database_url: str) -> Config:
-    config = Config("alembic.ini")
+    repository_root = Path(__file__).resolve().parents[1]
+    config = Config(str(repository_root / "alembic.ini"))
+    config.set_main_option("script_location", str(repository_root / "alembic"))
     config.set_main_option("sqlalchemy.url", database_url)
     return config
 
@@ -216,12 +218,65 @@ def _insert_evidence(
     return evidence_id
 
 
+def _insert_workflow_export(
+    connection: sa.Connection,
+    *,
+    org_id: uuid.UUID,
+    attribution_id: uuid.UUID | None,
+    suffix: str,
+) -> uuid.UUID:
+    export_id = uuid.uuid4()
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO payroll_tax_import_exports (
+                id, org_id, payroll_period, payroll_source_hash,
+                source_snapshot_hash, source_batches, idempotency_key,
+                request_payload_hash, relative_storage_path, file_name,
+                file_sha256, row_count, execution_attribution_id, created_at
+            ) VALUES (
+                :id, :org, '2026-08', :payroll_hash, :source_hash,
+                '[]'::jsonb, :key, :request_hash, :path, :name,
+                :file_hash, 1, :attribution, CURRENT_TIMESTAMP
+            )
+            """
+        ),
+        {
+            "id": export_id,
+            "org": org_id,
+            "payroll_hash": suffix * 64,
+            "source_hash": suffix * 64,
+            "key": f"workflow-export-{suffix}",
+            "request_hash": suffix * 64,
+            "path": f"exports/{suffix}.xls",
+            "name": f"{suffix}.xls",
+            "file_hash": suffix * 64,
+            "attribution": attribution_id,
+        },
+    )
+    return export_id
+
+
 def test_postgres_current_transaction_attribution_and_direct_sql_guards() -> None:
     with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
         database_url = postgres.get_connection_url()
-        command.upgrade(_config(database_url), "head")
+        migration_config = _config(database_url)
+        command.upgrade(migration_config, "head")
+        command.check(migration_config)
+        command.downgrade(migration_config, "0016_owner_reserve_settlement")
+        command.upgrade(migration_config, "head")
+        command.check(migration_config)
         engine = sa.create_engine(database_url)
         try:
+            with engine.connect() as connection:
+                close_validator = connection.scalar(
+                    sa.text(
+                        "SELECT pg_get_functiondef("
+                        "'public.finance_assert_accounting_period_close(uuid)'::regprocedure)"
+                    )
+                )
+                assert "accounting_period_close_checker_2026.8" in close_validator
+                assert "ACCOUNTING_PERIOD_OWNER_WORKFLOW_GATE_INVALID" in close_validator
             with engine.begin() as connection:
                 org_id, owner_id, session_id = _authority(connection)
 
@@ -252,6 +307,20 @@ def test_postgres_current_transaction_attribution_and_direct_sql_guards() -> Non
                     attribution_id=attribution_id,
                     suffix="c",
                 )
+                workflow_export_id = _insert_workflow_export(
+                    connection,
+                    org_id=org_id,
+                    attribution_id=attribution_id,
+                    suffix="a",
+                )
+                with pytest.raises(DBAPIError, match="BUSINESS_EXECUTION_ATTRIBUTION_REQUIRED"):
+                    with connection.begin_nested():
+                        _insert_workflow_export(
+                            connection,
+                            org_id=org_id,
+                            attribution_id=None,
+                            suffix="f",
+                        )
             with engine.begin() as connection:
                 connection.execute(
                     sa.text(
@@ -291,6 +360,21 @@ def test_postgres_current_transaction_attribution_and_direct_sql_guards() -> Non
                                 "'finance_record_event' WHERE id = :id"
                             ),
                             {"id": attribution_id},
+                        )
+                with pytest.raises(DBAPIError, match="FINANCIAL_STATEMENT_FACT_IMMUTABLE"):
+                    with connection.begin_nested():
+                        connection.execute(
+                            sa.text(
+                                "UPDATE payroll_tax_import_exports SET row_count = 2 "
+                                "WHERE id = :id"
+                            ),
+                            {"id": workflow_export_id},
+                        )
+                with pytest.raises(DBAPIError, match="FINANCIAL_STATEMENT_FACT_IMMUTABLE"):
+                    with connection.begin_nested():
+                        connection.execute(
+                            sa.text("DELETE FROM payroll_tax_import_exports WHERE id = :id"),
+                            {"id": workflow_export_id},
                         )
         finally:
             engine.dispose()

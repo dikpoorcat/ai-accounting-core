@@ -1280,6 +1280,115 @@ class PayrollResult(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class PayrollTaxIdentityDocumentType(StrEnum):
+    RESIDENT_ID_CARD = "居民身份证"
+    HONG_KONG_MACAO_TRAVEL_PERMIT = "港澳居民来往内地通行证"
+    HONG_KONG_MACAO_TRAVEL_PERMIT_NON_CHINESE = "港澳居民来往内地通行证（非中国籍）"
+    HONG_KONG_MACAO_RESIDENCE_PERMIT = "中华人民共和国港澳居民居住证"
+    TAIWAN_TRAVEL_PERMIT = "台湾居民来往大陆通行证"
+    TAIWAN_RESIDENCE_PERMIT = "中华人民共和国台湾居民居住证"
+    CHINESE_PASSPORT = "中国护照"
+    FOREIGN_PASSPORT = "外国护照"
+    FOREIGN_PERMANENT_RESIDENCE_ID = "外国人永久居留身份证（外国人永久居留证）"
+    FOREIGN_WORK_PERMIT_A = "中华人民共和国外国人工作许可证（A类）"
+    FOREIGN_WORK_PERMIT_B = "中华人民共和国外国人工作许可证（B类）"
+    FOREIGN_WORK_PERMIT_C = "中华人民共和国外国人工作许可证（C类）"
+    OTHER = "其他个人证件"
+
+
+class PayrollTaxImportEmployeeItem(BaseModel):
+    """Explicit tax-client-only facts reconciled to one posted payroll line."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: uuid.UUID
+    document_type: PayrollTaxIdentityDocumentType
+    document_number: str = Field(min_length=1, max_length=100)
+    cumulative_child_education_fen: Fen = 0
+    cumulative_continuing_education_fen: Fen = 0
+    cumulative_housing_loan_interest_fen: Fen = 0
+    cumulative_housing_rent_fen: Fen = 0
+    cumulative_elderly_support_fen: Fen = 0
+    cumulative_infant_care_fen: Fen = 0
+    current_personal_pension_fen: Fen = 0
+    cumulative_personal_pension_fen: Fen
+    enterprise_occupational_annuity_fen: Fen = 0
+    commercial_health_insurance_fen: Fen = 0
+    tax_deferred_pension_insurance_fen: Fen = 0
+    official_transportation_fen: Fen = 0
+    communication_fen: Fen = 0
+    lawyer_case_expense_fen: Fen = 0
+    housing_fund_adjustment_fen: Fen = 0
+    tibet_additional_deduction_fen: Fen = 0
+    other_deduction_fen: Fen = 0
+    deductible_donation_fen: Fen = 0
+    tax_relief_fen: Fen = 0
+    treaty_relief_fen: Fen = 0
+    remark: str = Field(default="", max_length=2000)
+
+    @field_validator("document_number")
+    @classmethod
+    def document_number_is_trimmed(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("document_number must not be blank")
+        return normalized
+
+    @field_validator("remark")
+    @classmethod
+    def remark_is_trimmed(cls, value: str) -> str:
+        return value.strip()
+
+
+class GeneratePayrollTaxImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    payroll_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    employee_items: list[PayrollTaxImportEmployeeItem] = Field(min_length=1)
+    pension_insurance_code: str = Field(default="pension", min_length=1, max_length=50)
+    medical_insurance_code: str = Field(default="medical", min_length=1, max_length=50)
+    unemployment_insurance_code: str = Field(
+        default="unemployment", min_length=1, max_length=50
+    )
+
+    @model_validator(mode="after")
+    def employee_and_insurance_mappings_are_unique(self) -> GeneratePayrollTaxImportRequest:
+        employee_ids = [item.employee_id for item in self.employee_items]
+        if len(employee_ids) != len(set(employee_ids)):
+            raise ValueError("employee_items must contain each employee once")
+        insurance_codes = {
+            self.pension_insurance_code,
+            self.medical_insurance_code,
+            self.unemployment_insurance_code,
+        }
+        if len(insurance_codes) != 3:
+            raise ValueError("social insurance import codes must be distinct")
+        return self
+
+
+class PayrollTaxImportResultStatus(StrEnum):
+    GENERATED = "generated"
+    NEEDS_INFORMATION = "needs_information"
+    REJECTED = "rejected"
+
+
+class PayrollTaxImportResult(BaseModel):
+    status: PayrollTaxImportResultStatus
+    export_id: uuid.UUID | None = None
+    file_name: str | None = None
+    file_path: Path | None = None
+    media_type: str | None = None
+    sha256: str | None = None
+    row_count: int = 0
+    source_batch_ids: list[uuid.UUID] = Field(default_factory=list)
+    missing_information: list[dict[str, Any] | str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    data: dict[str, Any] = Field(default_factory=dict)
+    idempotent_replay: bool = False
+
+
 class FixedAssetCategory(StrEnum):
     PRODUCTION_EQUIPMENT = "production_equipment"
     TOOLS_FURNITURE = "tools_furniture"

@@ -113,6 +113,16 @@ from .models import (
 )
 from .owner_brief import OwnerBriefService
 from .owner_login_launcher import OwnerCloseApprovalWindowLauncher, OwnerLoginWindowLauncher
+from .owner_workflow import OwnerWorkflowService
+from .owner_workflow_schemas import (
+    ConfirmExternalObligationRequest,
+    ConfirmOrganizationEstablishmentRequest,
+    ConfirmPayrollContributionAssessmentRequest,
+    ConfirmPeriodMaterialCompletenessRequest,
+    ConfirmWorkforceReviewRequest,
+    GetOwnerWorkflowRequest,
+    PreviewPayrollContributionAssessmentRequest,
+)
 from .schemas import (
     DISABLED_EVENT_TYPES,
     EVENT_REQUIREMENTS,
@@ -124,6 +134,7 @@ from .schemas import (
     ConfirmPayrollRequest,
     DisposeFixedAssetRequest,
     EventType,
+    GeneratePayrollTaxImportRequest,
     ImportBankStatementRequest,
     PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
@@ -719,6 +730,14 @@ def _labor_remuneration_service(session: Any) -> Any:
     return LaborRemunerationService(session)
 
 
+def _payroll_tax_import_service(session: Any) -> Any:
+    """Load the legacy-XLS tax-client exporter only when invoked."""
+
+    from .payroll_tax_import import PayrollTaxImportService
+
+    return PayrollTaxImportService(session)
+
+
 def _company_service() -> CompanyService:
     catalog_session = _ACTIVE_CATALOG_SESSION.get()
     context = _ACTIVE_EXECUTION_CONTEXT.get()
@@ -855,6 +874,87 @@ def finance_get_owner_brief(org_id: uuid.UUID) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@_database_error_boundary
+def finance_get_owner_workflow(request: GetOwnerWorkflowRequest) -> dict[str, Any]:
+    """读取内核派生的九项负责人流程、完成证据、期限、关账门禁和导出物。"""
+    with SessionLocal() as session:
+        return OwnerWorkflowService(
+            session,
+            catalog_session=_ACTIVE_CATALOG_SESSION.get(),
+        ).get(request)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_workforce_review(
+    request: ConfirmWorkforceReviewRequest,
+) -> dict[str, Any]:
+    """把本期人员及工资变化复核绑定到当前员工档案快照。"""
+    try:
+        with SessionLocal.begin() as session:
+            return OwnerWorkflowService(session).confirm_workforce_review(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_database_error_boundary
+def finance_preview_payroll_contribution_assessment(
+    request: PreviewPayrollContributionAssessmentRequest,
+) -> dict[str, Any]:
+    """按当前员工档案、有效政策和已登记实际数预览社保公积金核定快照。"""
+    with SessionLocal() as session:
+        return OwnerWorkflowService(session).preview_payroll_contribution_assessment(request)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_payroll_contribution_assessment(
+    request: ConfirmPayrollContributionAssessmentRequest,
+) -> dict[str, Any]:
+    """确认外部社保公积金核定状态并绑定不可变计算快照。"""
+    try:
+        with SessionLocal.begin() as session:
+            return OwnerWorkflowService(session).confirm_payroll_contribution_assessment(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_period_material_completeness(
+    request: ConfirmPeriodMaterialCompletenessRequest,
+) -> dict[str, Any]:
+    """把负责人对本期非银行材料完整性的确认绑定到当前业务快照。"""
+    try:
+        with SessionLocal.begin() as session:
+            return OwnerWorkflowService(session).confirm_period_material_completeness(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_external_obligation(
+    request: ConfirmExternalObligationRequest,
+) -> dict[str, Any]:
+    """确认内核生成的外部法定义务，不接受调用方自定义事项。"""
+    try:
+        with SessionLocal.begin() as session:
+            return OwnerWorkflowService(session).confirm_external_obligation(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_organization_establishment(
+    request: ConfirmOrganizationEstablishmentRequest,
+) -> dict[str, Any]:
+    """确认公司成立日期，供年度汇算与工商年报义务调度使用。"""
+    try:
+        with SessionLocal.begin() as session:
+            return OwnerWorkflowService(session).confirm_organization_establishment(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
 def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
     """返回可提交业务事件、停用模块及 finance_record_event 的 JSON Schema。"""
     enabled = [
@@ -884,6 +984,20 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
         "disabled_event_types": disabled,
         "internal_event_types": internal,
         "module_capabilities": {
+            "owner_workflow": {
+                "status": "enabled",
+                "read_tool": "finance_get_owner_workflow",
+                "typed_confirmation_tools": [
+                    "finance_confirm_workforce_review",
+                    "finance_preview_payroll_contribution_assessment",
+                    "finance_confirm_payroll_contribution_assessment",
+                    "finance_confirm_period_material_completeness",
+                    "finance_confirm_external_obligation",
+                    "finance_confirm_organization_establishment",
+                ],
+                "workflow_version": "owner_monthly_workflow_cn_2026.6",
+                "generic_mark_complete_tool": "not_available",
+            },
             "payroll": {
                 "status": "enabled",
                 "entry_tools": [
@@ -897,9 +1011,11 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                     "finance_preview_payroll",
                     "finance_confirm_payroll",
                     "finance_get_payroll_batch",
+                    "finance_generate_payroll_tax_import",
                 ],
                 "generic_event_writer": "not_available",
                 "accrual_entry": "finance_confirm_payroll",
+                "individual_income_tax_import": "finance_generate_payroll_tax_import",
             },
             "personal_labor_remuneration": {
                 "status": "enabled",
@@ -1380,6 +1496,18 @@ def finance_get_payroll_batch(org_id: uuid.UUID, batch_id: uuid.UUID) -> dict[st
         with SessionLocal() as session:
             return FinanceService(session).get_payroll_batch(org_id, batch_id)
     except (ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_generate_payroll_tax_import(
+    request: GeneratePayrollTaxImportRequest,
+) -> dict[str, Any]:
+    """按已过账工资及显式证件、扣除拆分生成税局正常工资薪金导入 XLS。"""
+    try:
+        with SessionLocal.begin() as session:
+            return _payroll_tax_import_service(session).generate(request).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
 

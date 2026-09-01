@@ -1443,6 +1443,387 @@ class PayrollContributionActualUse(Base):
     )
 
 
+class OwnerPeriodConfirmation(Base):
+    """Append-only owner fact for one typed monthly workflow checkpoint."""
+
+    __tablename__ = "owner_period_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    fact_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    confirmation_state: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_owner_period_confirmation_org_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            ["owner_period_confirmations.org_id", "owner_period_confirmations.id"],
+            name="fk_owner_period_confirmation_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_owner_period_confirmation_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_owner_period_confirmation_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_owner_period_confirmation_idempotency"
+        ),
+        CheckConstraint(
+            "fact_type IN ('workforce_review','non_bank_materials')",
+            name="ck_owner_period_confirmation_fact_type",
+        ),
+        CheckConstraint(
+            "(fact_type = 'workforce_review' AND confirmation_state IN "
+            "('no_change','changes_resolved')) OR "
+            "(fact_type = 'non_bank_materials' AND confirmation_state = 'complete')",
+            name="ck_owner_period_confirmation_state",
+        ),
+        CheckConstraint(
+            "length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64",
+            name="ck_owner_period_confirmation_hashes",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_owner_period_confirmation_note",
+        ),
+    )
+
+
+Index(
+    "uq_owner_period_confirmation_root",
+    OwnerPeriodConfirmation.org_id,
+    OwnerPeriodConfirmation.period_id,
+    OwnerPeriodConfirmation.fact_type,
+    unique=True,
+    postgresql_where=OwnerPeriodConfirmation.supersedes_id.is_(None),
+    sqlite_where=OwnerPeriodConfirmation.supersedes_id.is_(None),
+)
+
+
+class PayrollContributionAssessmentConfirmation(Base):
+    """Owner-confirmed external assessment bound to a deterministic contribution snapshot."""
+
+    __tablename__ = "payroll_contribution_assessment_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    contribution_period: Mapped[str] = mapped_column(String(7), nullable=False)
+    declaration_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    declaration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    payment_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    external_reference: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    employee_social_insurance_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    employer_social_insurance_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    employee_housing_fund_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    employer_housing_fund_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            name="fk_contribution_assessment_org_period",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            [
+                "payroll_contribution_assessment_confirmations.org_id",
+                "payroll_contribution_assessment_confirmations.id",
+            ],
+            name="fk_contribution_assessment_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_contribution_assessment_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_contribution_assessment_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_contribution_assessment_idempotency"
+        ),
+        CheckConstraint(
+            "declaration_status IN ('declared_paid','declared_unpaid','not_declared')",
+            name="ck_contribution_assessment_declaration_status",
+        ),
+        CheckConstraint(
+            "payment_status IN ('paid','unpaid','not_applicable')",
+            name="ck_contribution_assessment_payment_status",
+        ),
+        CheckConstraint(
+            "(declaration_status = 'declared_paid' AND declaration_date IS NOT NULL "
+            "AND payment_status = 'paid' AND payment_date IS NOT NULL) OR "
+            "(declaration_status = 'declared_unpaid' AND declaration_date IS NOT NULL "
+            "AND payment_status = 'unpaid' AND payment_date IS NULL) OR "
+            "(declaration_status = 'not_declared' AND declaration_date IS NULL "
+            "AND payment_status = 'not_applicable' AND payment_date IS NULL)",
+            name="ck_contribution_assessment_status_dates",
+        ),
+        CheckConstraint(
+            "length(contribution_period) = 7 AND substr(contribution_period, 5, 1) = '-'",
+            name="ck_contribution_assessment_period",
+        ),
+        CheckConstraint(
+            "length(calculation_hash) = 64 AND length(request_payload_hash) = 64",
+            name="ck_contribution_assessment_hashes",
+        ),
+        CheckConstraint(
+            "employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 "
+            "AND employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0",
+            name="ck_contribution_assessment_amounts",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_contribution_assessment_note",
+        ),
+    )
+
+
+Index(
+    "ix_contribution_assessment_period",
+    PayrollContributionAssessmentConfirmation.contribution_period,
+)
+
+
+Index(
+    "uq_contribution_assessment_root",
+    PayrollContributionAssessmentConfirmation.org_id,
+    PayrollContributionAssessmentConfirmation.period_id,
+    unique=True,
+    postgresql_where=PayrollContributionAssessmentConfirmation.supersedes_id.is_(None),
+    sqlite_where=PayrollContributionAssessmentConfirmation.supersedes_id.is_(None),
+)
+
+
+class PayrollTaxImportExport(Base):
+    """Append-only catalog of verified payroll tax import artifacts."""
+
+    __tablename__ = "payroll_tax_import_exports"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    payroll_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    payroll_source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_batches: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    relative_storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_payroll_tax_import_export_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            ["payroll_tax_import_exports.org_id", "payroll_tax_import_exports.id"],
+            name="fk_payroll_tax_import_export_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_payroll_tax_import_export_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_payroll_tax_import_export_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_payroll_tax_import_export_idempotency"
+        ),
+        CheckConstraint(
+            "length(payroll_period) = 7 AND substr(payroll_period, 5, 1) = '-'",
+            name="ck_payroll_tax_import_export_period",
+        ),
+        CheckConstraint(
+            "length(payroll_source_hash) = 64 AND length(source_snapshot_hash) = 64 "
+            "AND length(request_payload_hash) = 64 "
+            "AND length(file_sha256) = 64",
+            name="ck_payroll_tax_import_export_hashes",
+        ),
+        CheckConstraint("row_count > 0", name="ck_payroll_tax_import_export_row_count"),
+    )
+
+
+class ExternalObligationConfirmation(Base):
+    """Typed completion fact for a kernel-generated external statutory obligation."""
+
+    __tablename__ = "external_obligation_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    obligation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    obligation_code: Mapped[str] = mapped_column(String(80), nullable=False)
+    obligation_scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    completion_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    completion_date: Mapped[date] = mapped_column(Date, nullable=False)
+    external_reference: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_external_obligation_confirmation_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            ["external_obligation_confirmations.org_id", "external_obligation_confirmations.id"],
+            name="fk_external_obligation_confirmation_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_external_obligation_confirmation_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_external_obligation_confirmation_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_external_obligation_confirmation_idempotency"
+        ),
+        CheckConstraint(
+            "obligation_code IN ('individual_income_tax','periodic_tax_reporting',"
+            "'annual_enterprise_income_tax','annual_business_report')",
+            name="ck_external_obligation_confirmation_code",
+        ),
+        CheckConstraint(
+            "obligation_scope IN ('month','quarter','year')",
+            name="ck_external_obligation_confirmation_scope",
+        ),
+        CheckConstraint(
+            "completion_status IN ('submitted','not_applicable')",
+            name="ck_external_obligation_confirmation_status",
+        ),
+        CheckConstraint(
+            "length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64",
+            name="ck_external_obligation_confirmation_hashes",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_external_obligation_confirmation_note",
+        ),
+    )
+
+
+Index(
+    "uq_external_obligation_confirmation_root",
+    ExternalObligationConfirmation.org_id,
+    ExternalObligationConfirmation.obligation_id,
+    unique=True,
+    postgresql_where=ExternalObligationConfirmation.supersedes_id.is_(None),
+    sqlite_where=ExternalObligationConfirmation.supersedes_id.is_(None),
+)
+
+
+class OrganizationEstablishmentConfirmation(Base):
+    """Evidence-aware establishment date used to schedule annual obligations."""
+
+    __tablename__ = "organization_establishment_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    establishment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_establishment_confirmation_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            [
+                "organization_establishment_confirmations.org_id",
+                "organization_establishment_confirmations.id",
+            ],
+            name="fk_establishment_confirmation_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_establishment_confirmation_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "id", name="uq_establishment_confirmation_org_id"),
+        UniqueConstraint(
+            "org_id", "idempotency_key", name="uq_establishment_confirmation_idempotency"
+        ),
+        CheckConstraint(
+            "length(request_payload_hash) = 64",
+            name="ck_establishment_confirmation_request_hash",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_establishment_confirmation_note",
+        ),
+    )
+
+
+Index(
+    "uq_establishment_confirmation_root",
+    OrganizationEstablishmentConfirmation.org_id,
+    unique=True,
+    postgresql_where=OrganizationEstablishmentConfirmation.supersedes_id.is_(None),
+    sqlite_where=OrganizationEstablishmentConfirmation.supersedes_id.is_(None),
+)
+
+
 class PayrollContributionSupplement(Base):
     """Typed historical contribution accrual; its event date is never the old payroll month."""
 
@@ -6224,15 +6605,20 @@ _ATTRIBUTED_ROOT_TYPES = (
     EmployeePayrollProfileVersion,
     EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
+    ExternalObligationConfirmation,
     FinancialStatementClassification,
     FinancialStatementOpeningBalanceConfirmation,
     LaborExternalDeclarationConfirmation,
     LaborRemunerationBatch,
     LaborServicePerson,
     LaborServicePersonEndAction,
+    OrganizationEstablishmentConfirmation,
+    OwnerPeriodConfirmation,
     PayrollBatch,
+    PayrollContributionAssessmentConfirmation,
     PayrollOpeningState,
     PayrollPolicyVersion,
+    PayrollTaxImportExport,
     UnifiedPayoutRun,
     ZeroTaxPeriodConfirmation,
 )
@@ -6319,6 +6705,24 @@ def _enforce_financial_statement_facts_append_only(
     for item in session.dirty:
         if isinstance(item, fact_types) and session.is_modified(item):
             raise ValueError("FINANCIAL_STATEMENT_FACT_IMMUTABLE")
+
+
+@event.listens_for(Session, "before_flush")
+def _enforce_owner_workflow_facts_append_only(
+    session: Session, _flush_context: object, _instances: object
+) -> None:
+    fact_types = (
+        ExternalObligationConfirmation,
+        OrganizationEstablishmentConfirmation,
+        OwnerPeriodConfirmation,
+        PayrollContributionAssessmentConfirmation,
+        PayrollTaxImportExport,
+    )
+    if any(isinstance(item, fact_types) for item in session.deleted):
+        raise ValueError("OWNER_WORKFLOW_FACT_IMMUTABLE")
+    for item in session.dirty:
+        if isinstance(item, fact_types) and session.is_modified(item):
+            raise ValueError("OWNER_WORKFLOW_FACT_IMMUTABLE")
 
 
 @event.listens_for(Session, "before_flush")

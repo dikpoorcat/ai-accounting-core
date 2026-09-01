@@ -27,6 +27,8 @@ from ai_accounting.agent_contract import (
     EVIDENCE_FIRST_RUNTIME_INSTRUCTION,
     IDENTITY_RUNTIME_INSTRUCTION,
     OWNER_WORKFLOW_RUNTIME_INSTRUCTION,
+    PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION,
+    PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION,
 )
 from ai_accounting.mcp_server import mcp
 
@@ -46,6 +48,13 @@ def test_mcp_exposes_only_domain_tools() -> None:
     assert names == {
         "finance_get_profile",
         "finance_get_owner_brief",
+        "finance_get_owner_workflow",
+        "finance_confirm_workforce_review",
+        "finance_preview_payroll_contribution_assessment",
+        "finance_confirm_payroll_contribution_assessment",
+        "finance_confirm_period_material_completeness",
+        "finance_confirm_external_obligation",
+        "finance_confirm_organization_establishment",
         "finance_get_event_schema",
         "finance_list_companies",
         "finance_create_company",
@@ -76,6 +85,7 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_preview_payroll",
         "finance_confirm_payroll",
         "finance_get_payroll_batch",
+        "finance_generate_payroll_tax_import",
         "finance_register_labor_service_person",
         "finance_end_labor_service_person",
         "finance_preview_labor_remuneration_batch",
@@ -171,10 +181,47 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert protocol["communication_policy"]["style"] == "execution_secretary"
     assert protocol["communication_policy"]["fixed_salutation"] is None
     assert protocol["communication_policy"]["maximum_questions_per_response"] == 1
+    assert protocol["communication_policy"]["needs_information_order"] == [
+        "reviewed_facts",
+        "reasoned_assessment",
+        "recommended_answer",
+        "material_effect",
+        "confirm_or_correct",
+    ]
+    assert protocol["communication_policy"]["assistance_policy"] == {
+        "default_behavior": "investigate_reason_recommend_execute",
+        "owner_role": "confirm_or_correct_material_assumptions_and_do_external_actions",
+        "before_asking": [
+            "inspect_all_available_evidence",
+            "use_relevant_read_only_tools",
+            "derive_supported_facts",
+            "compare_transaction_chronology_and_linked_events",
+        ],
+        "when_unique": "execute_without_redundant_chat_confirmation",
+        "when_one_candidate_is_best_supported": {
+            "response": "present_one_complete_proposal_then_ask_confirm_or_correct",
+            "include_linked_missing_fields_in_proposal": True,
+            "formal_use_requires_owner_confirmation": True,
+        },
+        "when_no_responsible_candidate": (
+            "explain_why_then_ask_one_precise_factual_question_without_inventing"
+        ),
+        "prohibit_form_style_field_requests": True,
+    }
     assert protocol["communication_policy"]["owner_action_view"] == {
         "current_action_count": 1,
         "queue_length": "all_fixed_workflow_steps",
-        "queue_statuses": ["当前", "待办", "到期", "已完成", "本期无"],
+        "next_action_requires_queue": True,
+        "queue_position": "immediately_after_next_action",
+        "queue_status_display": {
+            "completed": "✅",
+            "current": "🔄",
+            "due_or_overdue": "⏰",
+            "pending": "⬜",
+            "not_applicable": "➖",
+        },
+        "show_bracketed_status_text": False,
+        "completed_requires": ["finance_get_owner_workflow_completion_state"],
         "never_merge_workflow_steps": True,
         "include_only": [
             "owner_material",
@@ -183,9 +230,12 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
             "owner_external_filing_or_payment",
         ],
         "exclude": ["ai_internal_work"],
-        "show_when": ["generic_opening", "current_action_changes", "owner_requests_status"],
+        "show_when": ["every_response_with_next_action", "owner_requests_status"],
     }
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.1"
+    assert protocol["version"] == "accounting_execution_assistant_v23"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.6"
+    assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
+    assert protocol["owner_workflow"]["prohibit_chat_derived_completion"] is True
     assert protocol["owner_workflow"]["visibility_rule"] == (
         "show_all_fixed_steps_and_known_deadlines_immediately"
     )
@@ -195,14 +245,71 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "SOCIAL_INSURANCE_AND_HOUSING_FUND",
         "INDIVIDUAL_INCOME_TAX_WITHHOLDING",
         "NON_BANK_MATERIALS",
+        "PERIOD_CLOSE_APPROVAL",
         "PERIODIC_TAX_AND_FINANCIAL_REPORTING",
         "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT",
         "ANNUAL_BUSINESS_REPORT",
-        "PERIOD_CLOSE_APPROVAL",
     ]
+    workforce_step = next(
+        step
+        for step in protocol["owner_workflow"]["steps"]
+        if step["code"] == "WORKFORCE_AND_PAY_CHANGES"
+    )
+    assert workforce_step["completion_gate"] == {
+        "typed_fact": "finance_confirm_workforce_review",
+        "snapshot": "current_workforce_snapshot_hash",
+        "regular_payroll_required": False,
+    }
+    assert workforce_step["owner_answer_alone_completes_step"] is False
+    contribution_step = next(
+        step
+        for step in protocol["owner_workflow"]["steps"]
+        if step["code"] == "SOCIAL_INSURANCE_AND_HOUSING_FUND"
+    )
+    assert contribution_step["accounting_close_gate"] == (
+        "current_amount_assessment_and_posted_payroll_use_same_snapshot"
+    )
+    assert contribution_step["not_declared_amount_confirmation"] == (
+        "may_satisfy_accounting_close_gate_but_keeps_row_incomplete"
+    )
+    individual_income_tax_step = next(
+        step
+        for step in protocol["owner_workflow"]["steps"]
+        if step["code"] == "INDIVIDUAL_INCOME_TAX_WITHHOLDING"
+    )
+    assert (
+        individual_income_tax_step["payroll_import_tool"] == "finance_generate_payroll_tax_import"
+    )
+    assert (
+        individual_income_tax_step["entry_action"]
+        == "ensure_posted_regular_payroll_then_generate_before_status_question"
+    )
+    assert individual_income_tax_step["if_expected_payroll_unposted"] == {
+        "current_step": "SOCIAL_INSURANCE_AND_HOUSING_FUND",
+        "individual_income_tax_status": "pending",
+        "action": "confirm_assessment_then_post_payroll_before_tax_import",
+        "prohibit_external_status_question": True,
+    }
+    assert individual_income_tax_step["desktop_delivery"] == {
+        "destination": "os_current_user_desktop_known_folder",
+        "source": "generated_result.file_path",
+        "file_name": "generated_result.file_name",
+        "helper": (".agents/skills/accounting-operator/scripts/copy-export-to-desktop.ps1"),
+        "verify_sha256": True,
+        "existing_same_hash": "reuse_as_idempotent_success",
+        "existing_different_hash": "do_not_overwrite_report_collision",
+    }
+    assert individual_income_tax_step["generation_is_external_declaration"] is False
+    assert individual_income_tax_step["export_record_is_persistent"] is True
+    assert (
+        individual_income_tax_step["remains_current_until"]
+        == "owner_confirms_external_declaration_status"
+    )
     assert protocol["confirmation_policy"] == {
         "ordinary_formal_write": "host_write_tool_approval",
         "redundant_chat_confirmation": False,
+        "material_inference": "owner_confirm_or_correct_before_formal_use",
+        "silence_is_confirmation": False,
         "approval_rejected_or_cancelled": "stop_without_retry",
         "specialized_controls_remain_required": [
             "owner_login_window",
@@ -215,6 +322,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "inspect_available_materials",
         "derive_when_unique",
         "identify_material_unknowns",
+        "propose_best_supported_treatment",
+        "persist_workforce_then_assess_contributions_before_income_tax",
         "separate_contribution_policy_actual_and_cash",
         "settle_person_paid_existing_payables_without_new_expense",
         "apply_first_wage_tax_treatment_only_with_evidence",
@@ -228,14 +337,25 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "submit_or_stop",
     ]
     assert any("不得让用户代替AI" in item for item in protocol["prohibitions"])
+    assert any("方案拟定工作转交老板" in item for item in protocol["prohibitions"])
     assert any("不得在隐藏或不可见的终端通道" in item for item in protocol["prohibitions"])
     assert any("不得绕过内核关账自动备份" in item for item in protocol["prohibitions"])
     assert "除已提供并核对的材料外" in protocol["question_policy"]["final_fallback"]
+    assert "完整方案" in protocol["question_policy"]["recommended_confirmation"]
+    assert "字段模板" in protocol["question_policy"]["prohibited_request_style"]
     assert EVIDENCE_FIRST_RUNTIME_INSTRUCTION in mcp.instructions
     assert IDENTITY_RUNTIME_INSTRUCTION in mcp.instructions
     assert COMMUNICATION_RUNTIME_INSTRUCTION in mcp.instructions
+    assert "不得只输出孤立的下一步问题" in mcp.instructions
     assert OWNER_WORKFLOW_RUNTIME_INSTRUCTION in mcp.instructions
+    assert PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION in mcp.instructions
+    assert PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION in mcp.instructions
+    assert "不得要求工资已过账才完成第2项" in mcp.instructions
+    assert "禁止直接询问个税外部申报状态" in mcp.instructions
+    assert "不得先问老板是否生成" in mcp.instructions
+    assert "当前用户桌面已知目录" in mcp.instructions
     assert CONFIRMATION_RUNTIME_INSTRUCTION in mcp.instructions
+    assert "不得要求老板逐字段填表" in mcp.instructions
     assert "agent_operating_protocol" in mcp.instructions
     assert "management_commentary" in mcp.instructions
     assert "一至两个短句的简明综合判断" in mcp.instructions

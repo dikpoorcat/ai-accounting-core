@@ -335,9 +335,11 @@ def test_pay_019_payroll_capability_is_discoverable_but_not_a_free_event() -> No
             "finance_preview_payroll",
             "finance_confirm_payroll",
             "finance_get_payroll_batch",
+            "finance_generate_payroll_tax_import",
         ],
         "generic_event_writer": "not_available",
         "accrual_entry": "finance_confirm_payroll",
+        "individual_income_tax_import": "finance_generate_payroll_tax_import",
     }
 
     request = {

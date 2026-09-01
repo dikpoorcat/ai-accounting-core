@@ -90,9 +90,10 @@ from .models import (
     accounting_period_action_evidence,
 )
 from .organization_profiles import profile_as_of
+from .owner_workflow import OwnerWorkflowService
 from .tax import calculate_tax_period
 
-_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.7"
+_BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.8"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.2"
 _CLOSE_OBLIGATION_POLICY_VERSION = "accounting_period_close_obligations_2026.1"
 _PAYROLL_SETTLEMENT_CATEGORIES = (
@@ -989,6 +990,28 @@ class AccountingPeriodService:
         for _name, result in module_checks.items():
             if result["blocking"]:
                 self._add_check(checks, blockers, result["code"], False, result["count"])
+        owner_workflow_close_gates = OwnerWorkflowService(
+            self.session, current_date=self._today()
+        ).close_gate_snapshot(request.org_id, period)
+        if owner_workflow_close_gates["enforced_for_period"]:
+            workflow_gate_codes = {
+                "workforce_review": "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT",
+                "contribution_accounting": (
+                    "ACCOUNTING_PERIOD_CONTRIBUTION_ASSESSMENT_CURRENT"
+                ),
+                "non_bank_materials": (
+                    "ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT"
+                ),
+            }
+            for gate_name, code in workflow_gate_codes.items():
+                gate = owner_workflow_close_gates["gates"][gate_name]
+                self._add_check(
+                    checks,
+                    blockers,
+                    code,
+                    bool(gate["satisfied"]),
+                    0 if gate["satisfied"] else 1,
+                )
         account_totals = self._account_totals(request.org_id, period)
         bank_reconciliations, bank_reconciliation_issues = self._current_bank_reconciliations(
             request.org_id, period
@@ -1100,6 +1123,7 @@ class AccountingPeriodService:
             },
         }
         payload["financial_statement_requirements"] = financial_statement_requirement_data
+        payload["owner_workflow_close_gates"] = owner_workflow_close_gates
         calculation_hash = close_calculation_hash(payload)
         return {
             "payload": payload,
@@ -1119,6 +1143,7 @@ class AccountingPeriodService:
                 "calculation": payload,
                 "blocker_codes": blockers,
                 "assistant_review_checklist": assistant_review_checklist,
+                "owner_workflow_close_gates": owner_workflow_close_gates,
             },
         }
 
