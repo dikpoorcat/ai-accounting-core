@@ -1,4 +1,4 @@
-"""Cross-process Windows lease shared by the production service and backups."""
+"""Cross-process Windows lease shared by production services and exclusive backups."""
 
 from __future__ import annotations
 
@@ -82,12 +82,14 @@ def acquire_windows_service_lease(
     mode: Literal["service", "backup"],
     access_verifier: ServiceLeaseAccessVerifier,
 ) -> Iterator[None]:
-    """Hold one exclusive byte until the service or backup context exits.
+    """Hold one shared-service or exclusive-backup byte until the context exits.
 
-    Both modes intentionally request the same non-blocking exclusive lock.  A
-    running service therefore blocks backup, and a backup in progress blocks a
-    service restart until the verified ``.complete`` publication has finished.
-    Windows releases the byte-range lock if the process exits unexpectedly.
+    Each Codex task can own a separate STDIO MCP process, so service mode uses a
+    shared lock and allows those processes to coexist. Backup mode uses the same
+    byte as an exclusive lock: any running service blocks backup, and a backup in
+    progress blocks every service start until the verified ``.complete``
+    publication has finished. Windows releases the byte-range lock if a process
+    exits unexpectedly.
     """
     if mode not in _LEASE_MODES or sys.platform != "win32":
         raise ServiceLeaseError("SERVICE_LEASE_UNAVAILABLE")
@@ -106,10 +108,13 @@ def acquire_windows_service_lease(
         if not _same_file(before_open, opened) or not stat.S_ISREG(opened.st_mode):
             raise ServiceLeaseError("SERVICE_LEASE_UNAVAILABLE")
         handle = ctypes.c_void_p(msvcrt.get_osfhandle(descriptor))
+        lock_flags = _LOCKFILE_FAIL_IMMEDIATELY
+        if mode == "backup":
+            lock_flags |= _LOCKFILE_EXCLUSIVE_LOCK
         locked = bool(
             kernel32.LockFileEx(
                 handle,
-                _LOCKFILE_EXCLUSIVE_LOCK | _LOCKFILE_FAIL_IMMEDIATELY,
+                lock_flags,
                 0,
                 1,
                 0,

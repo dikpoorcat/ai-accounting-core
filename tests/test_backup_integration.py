@@ -730,7 +730,9 @@ class LeaseAclVerifier:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="LockFileEx is Windows-only")
-def test_windows_service_and_backup_modes_are_cross_process_exclusive(tmp_path: Path) -> None:
+def test_windows_service_leases_coexist_and_remain_exclusive_with_backup(
+    tmp_path: Path,
+) -> None:
     lock_file = tmp_path / "service.lock"
     lock_file.write_bytes(b"\x00")
     verifier = LeaseAclVerifier()
@@ -738,15 +740,22 @@ def test_windows_service_and_backup_modes_are_cross_process_exclusive(tmp_path: 
     with service_lease.acquire_windows_service_lease(
         lock_file, mode="service", access_verifier=verifier
     ):
-        with pytest.raises(service_lease.ServiceLeaseError, match="SERVICE_LEASE_HELD"):
-            with service_lease.acquire_windows_service_lease(
-                lock_file, mode="backup", access_verifier=verifier
-            ):
-                pytest.fail("exclusive backup lease must not be yielded")
+        with service_lease.acquire_windows_service_lease(
+            lock_file, mode="service", access_verifier=verifier
+        ):
+            with pytest.raises(service_lease.ServiceLeaseError, match="SERVICE_LEASE_HELD"):
+                with service_lease.acquire_windows_service_lease(
+                    lock_file, mode="backup", access_verifier=verifier
+                ):
+                    pytest.fail("exclusive backup lease must not be yielded")
     with service_lease.acquire_windows_service_lease(
         lock_file, mode="backup", access_verifier=verifier
     ):
-        pass
+        with pytest.raises(service_lease.ServiceLeaseError, match="SERVICE_LEASE_HELD"):
+            with service_lease.acquire_windows_service_lease(
+                lock_file, mode="service", access_verifier=verifier
+            ):
+                pytest.fail("shared service lease must not bypass an active backup")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="LockFileEx is Windows-only")

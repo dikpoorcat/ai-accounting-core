@@ -111,6 +111,7 @@ from .models import (
     Voucher,
     event_evidence,
 )
+from .owner_brief import OwnerBriefService
 from .owner_login_launcher import OwnerCloseApprovalWindowLauncher, OwnerLoginWindowLauncher
 from .schemas import (
     DISABLED_EVENT_TYPES,
@@ -843,6 +844,14 @@ def finance_get_profile(org_id: str) -> dict[str, Any]:
                 for policy in labor_policies
             ],
         }
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_database_error_boundary
+def finance_get_owner_brief(org_id: uuid.UUID) -> dict[str, Any]:
+    """读取公司、开放期间及系统内已知会计待办的精简摘要。"""
+    with SessionLocal() as session:
+        return OwnerBriefService(session).get(org_id)
 
 
 @mcp.tool(annotations=READ_ONLY)

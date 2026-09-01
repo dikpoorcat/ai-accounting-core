@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import tomllib
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
@@ -21,15 +22,29 @@ from ai_accounting.accounting_period_schemas import (
 )
 from ai_accounting.agent_contract import (
     AI_OPERATING_PROTOCOL_VERSION,
+    COMMUNICATION_RUNTIME_INSTRUCTION,
+    CONFIRMATION_RUNTIME_INSTRUCTION,
     EVIDENCE_FIRST_RUNTIME_INSTRUCTION,
+    IDENTITY_RUNTIME_INSTRUCTION,
 )
 from ai_accounting.mcp_server import mcp
+
+
+def test_project_mcp_config_does_not_override_application_environment() -> None:
+    repository_root = Path(__file__).parents[1]
+    with (repository_root / ".codex" / "config.toml").open("rb") as config_file:
+        config = tomllib.load(config_file)
+
+    accounting = config["mcp_servers"]["ai_accounting"]
+    assert "env" not in accounting
+    assert accounting["default_tools_approval_mode"] == "writes"
 
 
 def test_mcp_exposes_only_domain_tools() -> None:
     names = {tool.name for tool in asyncio.run(mcp.list_tools())}
     assert names == {
         "finance_get_profile",
+        "finance_get_owner_brief",
         "finance_get_event_schema",
         "finance_list_companies",
         "finance_create_company",
@@ -117,16 +132,61 @@ def test_every_registered_tool_publishes_a_closed_top_level_envelope() -> None:
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
 
 
+def test_owner_brief_is_a_strict_read_only_tool() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    brief = tools["finance_get_owner_brief"]
+
+    assert brief.annotations is not None
+    assert brief.annotations.readOnlyHint is True
+    assert brief.annotations.destructiveHint is False
+    assert brief.inputSchema["additionalProperties"] is False
+    assert brief.inputSchema["required"] == ["org_id"]
+    assert set(brief.inputSchema["properties"]) == {"org_id"}
+    with pytest.raises(ToolError, match="VALIDATION_ERROR") as caught:
+        asyncio.run(
+            mcp.call_tool(
+                "finance_get_owner_brief",
+                {"org_id": str(uuid.uuid4()), "unexpected": "private-sentinel"},
+            )
+        )
+    assert "private-sentinel" not in str(caught.value)
+
+
 def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> None:
     schema = mcp_server.finance_get_event_schema()
     protocol = schema["agent_operating_protocol"]
 
     assert protocol["version"] == AI_OPERATING_PROTOCOL_VERSION
+    assert protocol["identity"] == {
+        "role": "accounting_execution_assistant",
+        "audience": "local_business_owner",
+        "mission": "审阅资料、整理业务事实、调用受控工具并用业务语言报告结果。",
+        "boundaries": [
+            "不是注册会计师或税务机关。",
+            "不是自动纳税申报或报税系统。",
+            "不得把自己描述成确定性记账内核本身。",
+        ],
+    }
+    assert protocol["communication_policy"]["style"] == "execution_secretary"
+    assert protocol["communication_policy"]["fixed_salutation"] is None
+    assert protocol["communication_policy"]["maximum_questions_per_response"] == 1
+    assert protocol["confirmation_policy"] == {
+        "ordinary_formal_write": "host_write_tool_approval",
+        "redundant_chat_confirmation": False,
+        "approval_rejected_or_cancelled": "stop_without_retry",
+        "specialized_controls_remain_required": [
+            "owner_login_window",
+            "accounting_period_close_password_window",
+            "preview_calculation_hash",
+            "workflow_specific_confirmation",
+        ],
+    }
     assert [item["code"] for item in protocol["required_sequence"]] == [
         "inspect_available_materials",
         "derive_when_unique",
         "identify_material_unknowns",
         "separate_contribution_policy_actual_and_cash",
+        "settle_person_paid_existing_payables_without_new_expense",
         "apply_first_wage_tax_treatment_only_with_evidence",
         "generate_period_close_management_commentary",
         "satisfy_financial_statement_close_gate",
@@ -141,6 +201,9 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert any("不得绕过内核关账自动备份" in item for item in protocol["prohibitions"])
     assert "除已提供并核对的材料外" in protocol["question_policy"]["final_fallback"]
     assert EVIDENCE_FIRST_RUNTIME_INSTRUCTION in mcp.instructions
+    assert IDENTITY_RUNTIME_INSTRUCTION in mcp.instructions
+    assert COMMUNICATION_RUNTIME_INSTRUCTION in mcp.instructions
+    assert CONFIRMATION_RUNTIME_INSTRUCTION in mcp.instructions
     assert "agent_operating_protocol" in mcp.instructions
     assert "management_commentary" in mcp.instructions
     assert "一至两个短句的简明综合判断" in mcp.instructions
@@ -156,6 +219,20 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "finance_configure_historical_test_close_mode" in mcp.instructions
     assert "finance_confirm_historical_test_period_close" in mcp.instructions
     assert "close_backup.status=deferred" in mcp.instructions
+
+    on_behalf = mcp_server.finance_get_event_schema("employee_reimbursement")
+    assert "existing_payable" in on_behalf["event_requirements"][
+        "existing_payable_workflow"
+    ]
+    cash_payment = mcp_server.finance_get_event_schema("employee_reimbursement_payment")
+    assert cash_payment["event_requirements"]["optional_details"] == [
+        "settlement_method=bank|cash|owner_managed_reserve; omitted means bank"
+    ]
+    assert "inventory-cash" in cash_payment["event_requirements"]["cash_settlement"]
+    assert (
+        "original_event_id"
+        in cash_payment["event_requirements"]["owner_managed_reserve_settlement"]
+    )
 
 
 def test_close_approval_window_and_result_are_exposed_as_mcp_tools(
@@ -487,6 +564,9 @@ def test_stdio_server_initializes_and_lists_tools() -> None:
         repository_root = Path(__file__).parents[1]
         site_packages = Path(sys.prefix) / "Lib" / "site-packages"
         environment = os.environ.copy()
+        # Tool-discovery smoke tests must not join the machine's production
+        # service/backup lease or depend on a developer's local .env mode.
+        environment["FINANCE_ENVIRONMENT"] = "development"
         environment["PYTHONPATH"] = os.pathsep.join(
             filter(
                 None,
