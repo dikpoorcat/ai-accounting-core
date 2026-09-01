@@ -28,7 +28,11 @@ from .accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
     RequestAccountingPeriodCloseApprovalWindowRequest,
 )
-from .agent_contract import MCP_SERVER_INSTRUCTIONS, agent_operating_protocol
+from .agent_contract import (
+    MCP_SERVER_INSTRUCTIONS,
+    OWNER_WORKFLOW_VERSION,
+    agent_operating_protocol,
+)
 from .bank_import import BankStatementInputError, import_bank_statement
 from .bank_statement_schemas import (
     ConfirmBankReconciliationRequest,
@@ -355,9 +359,7 @@ def _secure_registered_data_tools() -> None:
             **kwargs: Any,
         ) -> dict[str, Any]:
             settings = get_settings()
-            multi_company_enabled = bool(
-                getattr(settings, "multi_company_enabled", False)
-            )
+            multi_company_enabled = bool(getattr(settings, "multi_company_enabled", False))
             is_global_company_tool = _tool_name in _GLOBAL_COMPANY_TOOLS
             try:
                 requested_org_id = (
@@ -471,10 +473,7 @@ def _secure_registered_data_tools() -> None:
                             try:
                                 close_backup_runtime = close_backup_service.require_ready()
                             except CloseBackupError as exc:
-                                if (
-                                    exc.code
-                                    == "ACCOUNTING_PERIOD_CLOSE_BACKUP_LOCATION_REQUIRED"
-                                ):
+                                if exc.code == "ACCOUNTING_PERIOD_CLOSE_BACKUP_LOCATION_REQUIRED":
                                     return {
                                         "status": "needs_information",
                                         "errors": [exc.code],
@@ -515,9 +514,7 @@ def _secure_registered_data_tools() -> None:
                             try:
                                 close_id = uuid.UUID(str(tool_result["close_id"]))
                                 period_id = uuid.UUID(str(tool_result["period_id"]))
-                                bound = inspect.signature(_original).bind_partial(
-                                    *args, **kwargs
-                                )
+                                bound = inspect.signature(_original).bind_partial(*args, **kwargs)
                                 close_request = bound.arguments.get("request")
                                 period_month = close_request.closing_date.strftime("%Y-%m")
                             except (KeyError, TypeError, ValueError, AttributeError):
@@ -815,9 +812,7 @@ def finance_get_profile(org_id: str) -> dict[str, Any]:
             "organization": {
                 "id": str(organization.id),
                 "name": organization.name,
-                "taxpayer_identification_number": (
-                    organization.taxpayer_identification_number
-                ),
+                "taxpayer_identification_number": (organization.taxpayer_identification_number),
                 "taxpayer_type": organization.taxpayer_type,
                 "filing_cycle": organization.filing_cycle,
                 "jurisdiction": organization.jurisdiction,
@@ -911,7 +906,7 @@ def finance_preview_payroll_contribution_assessment(
 def finance_confirm_payroll_contribution_assessment(
     request: ConfirmPayrollContributionAssessmentRequest,
 ) -> dict[str, Any]:
-    """确认外部社保公积金核定状态并绑定不可变计算快照。"""
+    """确认社保公积金已申报并绑定申报日及不可变核定快照；不收集缴款事实。"""
     try:
         with SessionLocal.begin() as session:
             return OwnerWorkflowService(session).confirm_payroll_contribution_assessment(request)
@@ -950,9 +945,7 @@ def finance_confirm_historical_obligation_completion(
     """追认截至内核给定范围的适用历史法定义务已完成，不虚构完成日期。"""
     try:
         with SessionLocal.begin() as session:
-            return OwnerWorkflowService(session).confirm_historical_obligation_completion(
-                request
-            )
+            return OwnerWorkflowService(session).confirm_historical_obligation_completion(request)
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -1011,7 +1004,7 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                     "finance_confirm_historical_obligation_completion",
                     "finance_confirm_organization_establishment",
                 ],
-                "workflow_version": "owner_monthly_workflow_cn_2026.7",
+                "workflow_version": OWNER_WORKFLOW_VERSION,
                 "generic_mark_complete_tool": "not_available",
             },
             "payroll": {
@@ -1550,9 +1543,7 @@ def finance_end_labor_service_person(
     """以证据支持的受控动作结束劳务关系，保留未来转员工的身份链。"""
     try:
         with SessionLocal.begin() as session:
-            return (
-                _labor_remuneration_service(session).end_person(request).model_dump(mode="json")
-            )
+            return _labor_remuneration_service(session).end_person(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -2093,14 +2084,11 @@ def finance_get_accounting_period_close_approval(
                 .where(
                     AccountingPeriodCloseApproval.org_id == request.org_id,
                     AccountingPeriodCloseApproval.period_id == request.period_id,
-                    AccountingPeriodCloseApproval.calculation_hash
-                    == request.calculation_hash,
+                    AccountingPeriodCloseApproval.calculation_hash == request.calculation_hash,
                     AccountingPeriodCloseApproval.catalog_instance_id
                     == context.catalog_instance_id,
-                    AccountingPeriodCloseApproval.owner_account_id
-                    == context.owner_account_id,
-                    AccountingPeriodCloseApproval.owner_session_id
-                    == context.owner_session_id,
+                    AccountingPeriodCloseApproval.owner_account_id == context.owner_account_id,
+                    AccountingPeriodCloseApproval.owner_session_id == context.owner_session_id,
                     AccountingPeriodCloseApproval.owner_credential_version
                     == context.owner_credential_version,
                     AccountingPeriodCloseApproval.confirmation_method
@@ -2785,9 +2773,7 @@ def main() -> None:
                 access_verifier=WindowsCurrentUserOnlyAclVerifier(),
             ):
                 try:
-                    _initialize_mcp_credential_store(
-                        environment=settings.finance_environment
-                    )
+                    _initialize_mcp_credential_store(environment=settings.finance_environment)
                     _set_owner_login_window_enabled(True)
                     mcp.run(transport="stdio")
                 finally:

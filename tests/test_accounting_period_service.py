@@ -266,7 +266,7 @@ def test_close_blocks_when_active_employee_has_no_posted_regular_payroll() -> No
     }
 
 
-def test_payroll_cash_settlement_is_due_review_not_a_false_close_blocker() -> None:
+def test_payroll_cash_settlement_waits_for_bank_without_close_review() -> None:
     session = _session()
     organization, _evidence = _organization_and_evidence(session)
     employee = Counterparty(
@@ -338,16 +338,12 @@ def test_payroll_cash_settlement_is_due_review_not_a_false_close_blocker() -> No
 
     assert check["code"] == "ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW"
     assert check["blocking"] is False
-    assert check["enforcement"] == "mandatory_review"
-    assert check["count"] == 1
-    assert check["remaining_fen"] == 10_000
-    assert check["status"]["due"]["categories"]["salary"] == {
-        "count": 1,
-        "remaining_fen": 10_000,
-    }
-    assert check["status"]["not_due"]["categories"]["salary"] == {
-        "count": 1,
-        "remaining_fen": 20_000,
+    assert check["enforcement"] == "bank_statement_follow_up"
+    assert check["count"] == 0
+    assert check["remaining_fen"] == 0
+    assert check["status"]["awaiting_bank_settlement"]["categories"]["salary"] == {
+        "count": 2,
+        "remaining_fen": 30_000,
     }
     checklist = service._assistant_review_checklist(
         organization.id,
@@ -367,9 +363,10 @@ def test_payroll_cash_settlement_is_due_review_not_a_false_close_blocker() -> No
     payroll_item = next(
         item for item in checklist["items"] if item["code"] == "MONTH_END_PEOPLE_PAYROLL_STATUTORY"
     )
-    assert payroll_item["state"] == "needs_attention"
-    assert payroll_item["system_facts"]["payroll_settlement_enforcement"] == ("mandatory_review")
-    assert any("确实未付" in question for question in payroll_item["owner_questions"])
+    assert payroll_item["system_facts"]["payroll_settlement_enforcement"] == (
+        "bank_statement_follow_up"
+    )
+    assert not any("确实未付" in question for question in payroll_item["owner_questions"])
 
 
 def test_open_item_review_uses_period_end_snapshot_not_current_status() -> None:
@@ -536,11 +533,9 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     checklist = preview.data["assistant_review_checklist"]
     assert checklist["version"] == "periodic_assistant_review_v4"
     assert checklist["close_obligation_policy"]["version"] == (
-        "accounting_period_close_obligations_2026.1"
+        "accounting_period_close_obligations_2026.2"
     )
-    assert preview.data["calculation"]["close_obligation_policy"]["mandatory_review_codes"] == [
-        "ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW"
-    ]
+    assert preview.data["calculation"]["close_obligation_policy"]["mandatory_review_codes"] == []
     assert checklist["period_month"] == "2026-03"
     assert [item["code"] for item in checklist["items"]] == [
         "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION",
@@ -566,8 +561,8 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
         for question in item_by_code["MONTH_END_PEOPLE_PAYROLL_STATUTORY"]["owner_questions"]
     )
     assert item_by_code["MONTH_END_PEOPLE_PAYROLL_STATUTORY"]["owner_questions"] == [
-        "本月是否有新入职、离职、停薪，或工资奖金、社保公积金参保及缴费基数变化？"
-        "没有请直接回复“无变化”。"
+        "本月是否有新入职、离职、停薪，或工资奖金、个税扣除资料、社保公积金参保及"
+        "缴费基数变化？没有请直接回复“无变化”。"
     ]
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["state"] == "needs_attention"
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["due_now"] is True
@@ -597,7 +592,7 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     assert "泛泛询问代替材料核对" in checklist["ai_instruction"]
     assert "不得仅因数据库无记录" in checklist["ai_instruction"]
     assert "不得把次月到账默认当作次月收入" in checklist["ai_instruction"]
-    assert "工资结算复核必须区分" in checklist["ai_instruction"]
+    assert "不得在计提时索要或虚构支付日" in checklist["ai_instruction"]
     assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
     commentary_prompt = checklist["management_commentary"]
     assert commentary_prompt["required_for_close"] is True
@@ -624,7 +619,6 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
         "review_facts.bank_reconciliation_reviewed",
         "review_facts.open_items_reviewed",
         "review_facts.payroll_and_statutory_items_reviewed",
-        "review_facts.payroll_settlements_reviewed",
         "review_facts.tax_items_reviewed",
         "review_facts.asset_and_borrowing_schedules_reviewed",
     ]
@@ -932,7 +926,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert closed.status is AccountingPeriodResultStatus.POSTED
     assert closed.data["calculation"]["voucher_sources"] == []
     assert closed.data["calculation"]["checker_version"] == (
-            "accounting_period_close_checker_2026.8"
+        "accounting_period_close_checker_2026.8"
     )
     assert list(closed.data["calculation"]["review_counts"]) == [
         "historical_bank_scope_corrections_pending",

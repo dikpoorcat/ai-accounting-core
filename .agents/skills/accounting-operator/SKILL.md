@@ -24,11 +24,13 @@ filing service, or the deterministic kernel itself.
    - Keep using the selected company until the user explicitly switches it.
 3. For a generic request such as “开始记账”, call `finance_get_owner_brief`, then call
    `finance_get_owner_workflow` for the selected company. The brief supplies context only; the
-   workflow response is the only authority for the nine rows, their symbols, deadlines, completion
-   proof, current owner action, and close gates. Do not recreate a row state from chat history,
+   workflow response is the only authority for the internal nine rows, displayed `queue_steps`,
+   symbols, deadlines, completion proof, current owner action, and close gates. Do not recreate a row state from chat history,
    unmatched counts, or a separate close checklist.
-4. End a generic opening with the returned `current_action`, followed immediately by all nine
-   returned rows in order. Copy each returned symbol exactly: `✅`, `🔄`, `⏰`, `⬜`, or `➖`.
+4. End a generic opening with the returned `current_action`, followed immediately by every row in
+   returned `queue_steps`, in that order and with its canonical order number. Rows 1–6 remain visible;
+   rows 7–9 appear only while the kernel says they require owner attention. Copy each returned symbol
+   exactly: `✅`, `🔄`, `⏰`, `⬜`, or `➖`.
    Include only the owner's returned action; do not turn calculations, matching, posting, file
    generation, or tool calls into owner work. If no period exists, ask only for the first month to
    process and use the controlled period-generation workflow. In every ordinary accounting reply
@@ -49,17 +51,28 @@ tool and then re-read `finance_get_owner_workflow` before replying:
 1. `银行流水` — use the existing controlled bank-scope, import, matching, late-evidence, and
    reconciliation workflows. Zero unmatched rows alone is not completion proof.
 2. `员工及工资变动` — ask separately about entry, departure, suspended pay, pay or bonus changes,
-   participation, and contribution-base changes. Once resolved, call
+   individual-income-tax deduction material, participation, and contribution-base changes. Before
+   asking for any wage amount, inspect `regular_payroll_preparation` returned by the workflow. Reuse
+   a current-period calculated batch first, then a persisted monthly plan, then (only after an owner
+   `no_change` confirmation) the latest posted regular payroll. Never ask again for employee wage
+   values already returned there. Once changes are resolved, call
    `finance_confirm_workforce_review` with the workflow's current workforce snapshot hash. This
-   step does not require payroll posting.
+   step does not require payroll posting. Pass `regular_payroll_items` only for a first-time or
+   changed plan that the kernel could not recover; present one complete suggested plan for owner
+   confirmation instead of requesting a field list.
 3. `社保及公积金` — call `finance_preview_payroll_contribution_assessment`. If the external
    assessment differs from policy, first register the actual amounts with the existing typed tool.
-   Then call `finance_confirm_payroll_contribution_assessment` and use that same snapshot to preview
-   and confirm regular payroll. If it has not yet been externally declared, persist `not_declared`
-   only after the owner has confirmed that the returned amounts are the amounts to accrue; the row
-   remains incomplete for the external declaration, while the completed accounting accrual can
-   satisfy the close gate. `已申报未缴` completes the row; the returned deadline remains an external
-   payment alert and does not block the prior-month close.
+   After the external declaration is complete, call
+   `finance_confirm_payroll_contribution_assessment` with only the declaration date and the final
+   declared snapshot, then use that same snapshot and the workflow's recovered
+   `regular_payroll_preparation.employee_items` to preview and confirm regular payroll. Omit
+   `payment_date` for a regular payroll: its accrual belongs to `payroll_period`, and actual payment
+   is recorded only from the later bank statement. `payment_date` remains required for annual-bonus
+   payroll because it controls the bonus tax period. If the declaration is
+   still `尚未申报`, leave the row current; do not persist a completion or post payroll from an
+   unconfirmed declaration snapshot. Never ask for payment status or payment date. Later actual
+   payment is posted from the bank statement in the month it occurs and does not block prior-month
+   close.
 4. `个人所得税` — when this is the returned current step and current posted regular payroll exists,
    call `finance_generate_payroll_tax_import` immediately with a stable idempotency key. Reuse a
    current export returned by the workflow after revalidating its hash. Otherwise verify the new
@@ -67,16 +80,21 @@ tool and then re-read `finance_get_owner_workflow` before replying:
    `scripts/copy-export-to-desktop.ps1 -SourcePath <file_path> -ExpectedSha256 <sha256>
    -FileName <file_name>`. Never invent identity or deduction facts. Export generation is not filing
    completion; after the owner confirms the tax-client submission, call
-   `finance_confirm_external_obligation` with the returned obligation id and source hash.
+   `finance_confirm_external_obligation` with the returned obligation id, source hash, and external
+   declaration date. For this row, `completion_date` means the declaration date, never a payment
+   date. Do not ask for payment status or payment date; later payment is handled from its actual bank
+   statement.
 5. `票据及非银行业务` — after the materials are actually reviewed and any supported entries are
    posted, call `finance_confirm_period_material_completeness` with the current activity snapshot.
-6. `关账确认` — only accounting completeness blocks this step. Use the normal preview, password
-   approval, confirmation, and automatic-backup workflow. External filings and next-month cash
-   payment are not direct close gates.
+6. `关账确认` — reach this step only after rows 3 and 4 have completed their external declaration
+   checks. Use the normal preview, password approval, confirmation, and automatic-backup workflow.
+   Next-month cash payment is not a prior-month close gate.
 7. `税费申报及财务报表` — this follows close when applicable. Confirm the returned kernel-generated
    obligation with `finance_confirm_external_obligation`; never create a custom obligation.
-8. `企业所得税年度汇算清缴` and 9. `工商年报` — keep overdue obligations visible until their
-   generated obligation ids are confirmed. If establishment date is the only missing fact, confirm
+8. `企业所得税年度汇算清缴` and 9. `工商年报` — when returned in `queue_steps`, keep overdue
+   obligations visible until their generated obligation ids are confirmed. Completed or currently
+   inapplicable rows 7–9 are intentionally absent and must not be added back from `steps`. If
+   establishment date is the only missing fact, confirm
    it once with the typed establishment tool; a current financial-statement opening confirmation
    may already supply it.
 
@@ -104,18 +122,18 @@ Use this compact shape when the queue is shown:
 4. ⬜ 个人所得税（9月15日前）
 5. ⬜ 票据及非银行业务
 6. ⬜ 关账确认
-7. ➖ 税费申报及财务报表
-8. ➖ 企业所得税年度汇算清缴
-9. ➖ 工商年报
 ```
+
+If an active statutory obligation exists, append only the returned conditional row, preserving its
+number, for example `8. ⏰ 企业所得税年度汇算清缴（5月31日前）`. Do not renumber it to 7.
 
 Do not add bracketed status words such as `[当前]` or a separate legend in ordinary replies. The
 symbol, fixed row order, concise item label, and optional deadline are sufficient.
 
-Keep completed rows in the queue so the owner can see progress, but shorten them to the label and
-completion state. Show the complete nine-row queue every time `下一步：` is shown, not only at the
-generic opening or when the current step changes. The queue must immediately follow the next action;
-do not insert a long accounting summary between them.
+Keep completed rows 1–6 in the queue so the owner can see month-close progress, but shorten them to
+the label and completion state. Show the complete returned `queue_steps` every time `下一步：` is
+shown, not only at the generic opening or when the current step changes. The queue must immediately
+follow the next action; do not insert a long accounting summary between them.
 
 ## Perform the work
 

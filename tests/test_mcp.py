@@ -184,9 +184,21 @@ def test_historical_obligation_completion_is_a_strict_typed_write() -> None:
         "idempotency_key",
         "confirmation_note",
     }
-    assert request_schema["properties"]["completion_date_status"]["const"] == (
-        "not_established"
-    )
+    assert request_schema["properties"]["completion_date_status"]["const"] == ("not_established")
+
+
+def test_contribution_confirmation_tracks_declaration_without_payment_fields() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    confirmation = tools["finance_confirm_payroll_contribution_assessment"]
+    request_schema = confirmation.inputSchema["$defs"][
+        "ConfirmPayrollContributionAssessmentRequest"
+    ]
+
+    assert request_schema["additionalProperties"] is False
+    assert request_schema["properties"]["declaration_status"]["const"] == "declared"
+    assert "declaration_date" in request_schema["required"]
+    assert "payment_status" not in request_schema["properties"]
+    assert "payment_date" not in request_schema["properties"]
 
 
 def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> None:
@@ -240,7 +252,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     }
     assert protocol["communication_policy"]["owner_action_view"] == {
         "current_action_count": 1,
-        "queue_length": "all_fixed_workflow_steps",
+        "queue_length": "core_steps_1_to_6_plus_active_steps_7_to_9",
+        "queue_source": "finance_get_owner_workflow.queue_steps",
         "next_action_requires_queue": True,
         "queue_position": "immediately_after_next_action",
         "queue_status_display": {
@@ -262,12 +275,12 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "exclude": ["ai_internal_work"],
         "show_when": ["every_response_with_next_action", "owner_requests_status"],
     }
-    assert protocol["version"] == "accounting_execution_assistant_v24"
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.7"
+    assert protocol["version"] == "accounting_execution_assistant_v26"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.9"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["prohibit_chat_derived_completion"] is True
     assert protocol["owner_workflow"]["visibility_rule"] == (
-        "show_all_fixed_steps_and_known_deadlines_immediately"
+        "always_show_steps_1_to_6_and_show_steps_7_to_9_only_while_attention_required"
     )
     assert [step["code"] for step in protocol["owner_workflow"]["steps"]] == [
         "BANK_STATEMENTS",
@@ -289,6 +302,9 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "typed_fact": "finance_confirm_workforce_review",
         "snapshot": "current_workforce_snapshot_hash",
         "regular_payroll_required": False,
+        "monthly_payroll_input_persistence": (
+            "reuse_current_draft_or_persisted_plan_or_prior_posted_when_no_change"
+        ),
     }
     assert workforce_step["owner_answer_alone_completes_step"] is False
     contribution_step = next(
@@ -299,8 +315,16 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert contribution_step["accounting_close_gate"] == (
         "current_amount_assessment_and_posted_payroll_use_same_snapshot"
     )
-    assert contribution_step["not_declared_amount_confirmation"] == (
-        "may_satisfy_accounting_close_gate_but_keeps_row_incomplete"
+    assert contribution_step["status_choices"] == ["已申报", "尚未申报"]
+    assert contribution_step["confirmation_fields"] == [
+        "declaration_date",
+        "declared_amount_snapshot",
+    ]
+    assert contribution_step["payment_tracking"] == (
+        "later_bank_statement_only_not_owner_workflow_input"
+    )
+    assert contribution_step["not_declared_behavior"] == (
+        "keep_current_without_persisting_completion"
     )
     individual_income_tax_step = next(
         step
@@ -331,6 +355,16 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     }
     assert individual_income_tax_step["generation_is_external_declaration"] is False
     assert individual_income_tax_step["export_record_is_persistent"] is True
+    assert individual_income_tax_step["status_choices"] == ["已申报", "尚未申报"]
+    assert individual_income_tax_step["declaration_close_gate"] == (
+        "current_external_submission_confirmation"
+    )
+    assert individual_income_tax_step["completion_date_semantics"] == (
+        "external_declaration_date_not_payment_date"
+    )
+    assert individual_income_tax_step["payment_tracking"] == (
+        "later_bank_statement_only_not_owner_workflow_input"
+    )
     assert (
         individual_income_tax_step["remains_current_until"]
         == "owner_confirms_external_declaration_status"
@@ -392,7 +426,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "一至两个短句的简明综合判断" in mcp.instructions
     assert "不得把看板指标或关账清单简单拼接" in mcp.instructions
     assert "存在阻断时必须先补事实再关账" in mcp.instructions
-    assert "payroll_settlements_reviewed" in mcp.instructions
+    assert "不要求独立的工资结算复核" in mcp.instructions
     assert "finance_request_accounting_period_close_approval_window" in mcp.instructions
     assert "finance_get_accounting_period_close_approval" in mcp.instructions
     assert "AI 记账内核 - 关账密码确认" in mcp.instructions

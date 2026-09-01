@@ -1133,7 +1133,13 @@ class PreviewPayrollRequest(BaseModel):
     batch_kind: PayrollBatchKind
     payroll_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     posting_date: date
-    payment_date: date
+    payment_date: date | None = Field(
+        default=None,
+        description=(
+            "仅年终奖等以实际支付日决定个税所属期的批次必填。常规月薪按工资所属期计提，"
+            "无需提供预计或实际支付日；实际发薪由后续银行流水和付款事件记录。"
+        ),
+    )
     employee_items: list[PayrollEmployeeItem] = Field(min_length=1)
     tax_method: AnnualBonusTaxMethod | None = None
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
@@ -1141,8 +1147,6 @@ class PreviewPayrollRequest(BaseModel):
 
     @model_validator(mode="after")
     def payroll_shape_is_explicit(self) -> PreviewPayrollRequest:
-        if self.payment_date < self.posting_date:
-            raise ValueError("payment_date must not precede posting_date")
         employee_ids = [item.employee_id for item in self.employee_items]
         if len(employee_ids) != len(set(employee_ids)):
             raise ValueError("employee_items must contain each employee once")
@@ -1153,8 +1157,7 @@ class PreviewPayrollRequest(BaseModel):
                 raise ValueError("annual_bonus_fen is only available for annual_bonus payroll")
             for item in self.employee_items:
                 if (
-                    item.wage_tax_declaration_state
-                    == PayrollWageTaxDeclarationState.DECLARED
+                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
                     and item.tax_reported_salary_fen is None
                 ):
                     raise ValueError(
@@ -1162,8 +1165,7 @@ class PreviewPayrollRequest(BaseModel):
                         "including zero"
                     )
                 if (
-                    item.wage_tax_declaration_state
-                    == PayrollWageTaxDeclarationState.NOT_DECLARED
+                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED
                     and (
                         item.tax_reported_salary_fen is not None
                         or item.special_additional_deduction_fen
@@ -1175,8 +1177,7 @@ class PreviewPayrollRequest(BaseModel):
                         "not_declared regular payroll cannot include wage-tax amounts or deductions"
                     )
                 if (
-                    item.wage_tax_declaration_state
-                    == PayrollWageTaxDeclarationState.NOT_DECLARED
+                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED
                     and (
                         item.accounting_gross_salary_fen not in {None, 0}
                         or item.tax_reporting_difference_reason is not None
@@ -1187,8 +1188,7 @@ class PreviewPayrollRequest(BaseModel):
                         "difference facts"
                     )
                 if (
-                    item.wage_tax_declaration_state
-                    == PayrollWageTaxDeclarationState.DECLARED
+                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
                     and item.tax_reported_salary_fen is not None
                 ):
                     accounting_gross = (
@@ -1218,14 +1218,15 @@ class PreviewPayrollRequest(BaseModel):
                     "regular_payroll_batch_id is only available for annual_bonus payroll"
                 )
         else:
+            if self.payment_date is None:
+                raise ValueError("payment_date is required for annual_bonus payroll")
+            if self.payment_date < self.posting_date:
+                raise ValueError("payment_date must not precede posting_date")
             if any(
-                item.wage_tax_declaration_state
-                != PayrollWageTaxDeclarationState.DECLARED
+                item.wage_tax_declaration_state != PayrollWageTaxDeclarationState.DECLARED
                 for item in self.employee_items
             ):
-                raise ValueError(
-                    "wage_tax_declaration_state is only available for regular payroll"
-                )
+                raise ValueError("wage_tax_declaration_state is only available for regular payroll")
             if any(item.annual_bonus_fen <= 0 for item in self.employee_items):
                 raise ValueError("annual_bonus_fen must be positive for annual_bonus payroll")
             if any(
@@ -1349,9 +1350,7 @@ class GeneratePayrollTaxImportRequest(BaseModel):
     employee_items: list[PayrollTaxImportEmployeeItem] = Field(min_length=1)
     pension_insurance_code: str = Field(default="pension", min_length=1, max_length=50)
     medical_insurance_code: str = Field(default="medical", min_length=1, max_length=50)
-    unemployment_insurance_code: str = Field(
-        default="unemployment", min_length=1, max_length=50
-    )
+    unemployment_insurance_code: str = Field(default="unemployment", min_length=1, max_length=50)
 
     @model_validator(mode="after")
     def employee_and_insurance_mappings_are_unique(self) -> GeneratePayrollTaxImportRequest:
@@ -2090,9 +2089,9 @@ class RecordEventRequest(BaseModel):
     bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     source_bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     destination_bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
-    direction: Literal[
-        "cash_deposit", "cash_withdrawal", "to_platform", "from_platform"
-    ] | None = None
+    direction: Literal["cash_deposit", "cash_withdrawal", "to_platform", "from_platform"] | None = (
+        None
+    )
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     expense_components: list[ExpenseComponent] = Field(default_factory=list)
@@ -2179,13 +2178,16 @@ class RecordEventRequest(BaseModel):
             raise ValueError(
                 "source/destination bank account codes are only accepted for internal transfer"
             )
-        if self.event_type not in {
-            EventType.CASH_BANK_TRANSFER,
-            EventType.PAYMENT_PLATFORM_TRANSFER,
-        } and self.direction is not None:
+        if (
+            self.event_type
+            not in {
+                EventType.CASH_BANK_TRANSFER,
+                EventType.PAYMENT_PLATFORM_TRANSFER,
+            }
+            and self.direction is not None
+        ):
             raise ValueError(
-                "direction is only accepted for cash_bank_transfer or "
-                "payment_platform_transfer"
+                "direction is only accepted for cash_bank_transfer or payment_platform_transfer"
             )
         if (
             self.event_type is EventType.CASH_BANK_TRANSFER
@@ -2196,9 +2198,10 @@ class RecordEventRequest(BaseModel):
         if (
             self.event_type is EventType.PAYMENT_PLATFORM_TRANSFER
             and self.direction is not None
-            and self.direction not in {
-            "to_platform",
-            "from_platform",
+            and self.direction
+            not in {
+                "to_platform",
+                "from_platform",
             }
         ):
             raise ValueError("payment_platform_transfer requires a platform direction")
@@ -2275,9 +2278,12 @@ class RecordEventRequest(BaseModel):
                     raise ValueError(
                         "an existing-payable reimbursement does not accept a deposit holder"
                     )
-                if self.allocations and self.amounts.gross_amount_fen is not None and sum(
-                    item.amount_fen for item in self.allocations
-                ) != self.amounts.gross_amount_fen:
+                if (
+                    self.allocations
+                    and self.amounts.gross_amount_fen is not None
+                    and sum(item.amount_fen for item in self.allocations)
+                    != self.amounts.gross_amount_fen
+                ):
                     raise ValueError(
                         "existing-payable reimbursement allocations must equal gross_amount_fen"
                     )
@@ -2301,9 +2307,7 @@ class RecordEventRequest(BaseModel):
                 )
             if self.details.settlement_method == "owner_managed_reserve":
                 if self.details.original_event_id is None:
-                    raise ValueError(
-                        "owner-managed-reserve settlement requires original_event_id"
-                    )
+                    raise ValueError("owner-managed-reserve settlement requires original_event_id")
             elif self.details.original_event_id is not None:
                 raise ValueError(
                     "original_event_id is only accepted for owner-managed-reserve settlement"
@@ -2467,7 +2471,6 @@ class RegisterEvidenceRequest(BaseModel):
         if (self.file_path is None) == (self.content_base64 is None):
             raise ValueError("provide exactly one of file_path or content_base64")
         return self
-
 
 
 class BankStatementColumnMapping(BaseModel):

@@ -19,8 +19,10 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0018_historical_obligation"]
+    assert scripts.get_heads() == ["0020_payroll_accrual_date"]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "0020_payroll_accrual_date",
+        "0019_declaration_only",
         "0018_historical_obligation",
         "0017_owner_workflow",
         "0016_owner_reserve_settlement",
@@ -75,7 +77,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0018_historical_obligation"
+                == "0020_payroll_accrual_date"
             )
             organization_columns = {
                 column["name"] for column in inspect(connection).get_columns("organizations")
@@ -129,6 +131,12 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
                 "tax_exempt_income_fen",
                 "attendance_deduction_fen",
             }.isdisjoint(payroll_line_columns)
+            payroll_payment_date_column = next(
+                column
+                for column in inspect(connection).get_columns("payroll_batches")
+                if column["name"] == "payment_date"
+            )
+            assert payroll_payment_date_column["nullable"] is True
             assert (
                 connection.scalar(
                     sa.text(
@@ -164,7 +172,7 @@ def test_sqlite_formal_baseline_round_trip(tmp_path) -> None:
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                == "0018_historical_obligation"
+                == "0020_payroll_accrual_date"
             )
     finally:
         engine.dispose()

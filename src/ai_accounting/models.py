@@ -61,9 +61,7 @@ class CatalogMetadata(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    __table_args__ = (
-        CheckConstraint("singleton_key = 1", name="ck_catalog_metadata_singleton"),
-    )
+    __table_args__ = (CheckConstraint("singleton_key = 1", name="ck_catalog_metadata_singleton"),)
 
 
 class CompanyRegistry(Base):
@@ -95,8 +93,7 @@ class CompanyRegistry(Base):
             name="ck_company_registry_status",
         ),
         CheckConstraint(
-            "database_name = 'finance' OR "
-            "database_name ~ '^finance_company_[0-9a-f]{32}$'",
+            "database_name = 'finance' OR database_name ~ '^finance_company_[0-9a-f]{32}$'",
             name="ck_company_registry_database_name",
         ).ddl_if(dialect="postgresql"),
         CheckConstraint(
@@ -382,9 +379,7 @@ class OrganizationDatabaseMetadata(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["org_id"], ["organizations.id"], name="fk_org_database_metadata_org"
-        ),
+        ForeignKeyConstraint(["org_id"], ["organizations.id"], name="fk_org_database_metadata_org"),
         CheckConstraint("singleton_key = 1", name="ck_org_database_metadata_singleton"),
     )
 
@@ -410,9 +405,7 @@ class OrganizationProfileVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["org_id"], ["organizations.id"], name="fk_org_profile_version_org"
-        ),
+        ForeignKeyConstraint(["org_id"], ["organizations.id"], name="fk_org_profile_version_org"),
         ForeignKeyConstraint(
             ["org_id", "execution_attribution_id"],
             ["execution_attributions.org_id", "execution_attributions.id"],
@@ -420,9 +413,7 @@ class OrganizationProfileVersion(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_org_profile_version_org_id"),
-        UniqueConstraint(
-            "org_id", "effective_from", name="uq_org_profile_version_effective_from"
-        ),
+        UniqueConstraint("org_id", "effective_from", name="uq_org_profile_version_effective_from"),
         CheckConstraint("taxpayer_type = 'small_scale'", name="ck_org_profile_small_scale"),
         CheckConstraint("jurisdiction = 'CN'", name="ck_org_profile_jurisdiction"),
         CheckConstraint(
@@ -1194,13 +1185,9 @@ class PayrollFirstWageTaxTreatment(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_first_wage_treatment_org_id"),
-        UniqueConstraint(
-            "org_id", "idempotency_key", name="uq_first_wage_treatment_idempotency"
-        ),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_first_wage_treatment_idempotency"),
         CheckConstraint("tax_year BETWEEN 1900 AND 9999", name="ck_first_wage_treatment_year"),
-        CheckConstraint(
-            "first_wage_month BETWEEN 1 AND 12", name="ck_first_wage_treatment_month"
-        ),
+        CheckConstraint("first_wage_month BETWEEN 1 AND 12", name="ck_first_wage_treatment_month"),
         CheckConstraint(
             "treatment_state IN ('eligible','not_eligible')",
             name="ck_first_wage_treatment_state",
@@ -1573,14 +1560,16 @@ class PayrollContributionAssessmentConfirmation(Base):
             "org_id", "idempotency_key", name="uq_contribution_assessment_idempotency"
         ),
         CheckConstraint(
-            "declaration_status IN ('declared_paid','declared_unpaid','not_declared')",
+            "declaration_status IN ('declared','declared_paid','declared_unpaid','not_declared')",
             name="ck_contribution_assessment_declaration_status",
         ),
         CheckConstraint(
-            "payment_status IN ('paid','unpaid','not_applicable')",
+            "payment_status IN ('not_tracked','paid','unpaid','not_applicable')",
             name="ck_contribution_assessment_payment_status",
         ),
         CheckConstraint(
+            "(declaration_status = 'declared' AND declaration_date IS NOT NULL "
+            "AND payment_status = 'not_tracked' AND payment_date IS NULL) OR "
             "(declaration_status = 'declared_paid' AND declaration_date IS NOT NULL "
             "AND payment_status = 'paid' AND payment_date IS NOT NULL) OR "
             "(declaration_status = 'declared_unpaid' AND declaration_date IS NOT NULL "
@@ -1804,9 +1793,7 @@ class HistoricalObligationCompletionConfirmation(Base):
             name="fk_historical_obligation_completion_execution_attribution",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint(
-            "org_id", "id", name="uq_historical_obligation_completion_org_id"
-        ),
+        UniqueConstraint("org_id", "id", name="uq_historical_obligation_completion_org_id"),
         UniqueConstraint(
             "org_id",
             "idempotency_key",
@@ -2099,7 +2086,11 @@ class PayrollBatch(Base):
     policy_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     policy_version_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     posting_date: Mapped[date] = mapped_column(Date)
-    payment_date: Mapped[date] = mapped_column(Date)
+    # Regular monthly payroll is an accrual for ``payroll_period``.  Its later
+    # cash settlement date is learned from the bank/payment event, not guessed
+    # during accrual.  Annual-bonus payroll still requires an actual payment
+    # date because that date controls its individual-income-tax period.
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     tax_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
     confirmed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2158,6 +2149,10 @@ class PayrollBatch(Base):
         CheckConstraint(
             "status <> 'posted' OR batch_kind = 'regular' OR tax_method IS NOT NULL",
             name="ck_payroll_batch_posted_bonus_tax_method",
+        ),
+        CheckConstraint(
+            "batch_kind = 'regular' OR payment_date IS NOT NULL",
+            name="ck_payroll_batch_bonus_payment_date",
         ),
     )
 
@@ -5014,9 +5009,7 @@ class UnifiedPayoutRunItem(Base):
     )
     employee_housing_fund_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     individual_income_tax_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    actual_salary_deduction_fen: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
+    actual_salary_deduction_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     salary_petty_cash_recovery_fen: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
@@ -5397,9 +5390,7 @@ class FinancialStatementOpeningBalanceConfirmation(Base):
             name="fk_fs_opening_confirmation_execution_attribution",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint(
-            "org_id", "id", name="uq_fs_opening_confirmation_org_id"
-        ),
+        UniqueConstraint("org_id", "id", name="uq_fs_opening_confirmation_org_id"),
         UniqueConstraint(
             "org_id",
             name="uq_fs_opening_confirmation_org",
@@ -5414,8 +5405,7 @@ class FinancialStatementOpeningBalanceConfirmation(Base):
             name="ck_fs_opening_confirmation_treatment",
         ),
         CheckConstraint(
-            "length(idempotency_key) BETWEEN 1 AND 200 "
-            "AND length(request_payload_hash) = 64",
+            "length(idempotency_key) BETWEEN 1 AND 200 AND length(request_payload_hash) = 64",
             name="ck_fs_opening_confirmation_request",
         ),
         CheckConstraint(
@@ -6715,9 +6705,10 @@ _ATTRIBUTED_ROOT_TYPES = (
 def _owner_attribution_mode(session: Session) -> bool:
     connection = session.connection()
     schema = inspect(connection)
-    if schema.has_table("organization_database_metadata") and session.scalar(
-        select(OrganizationDatabaseMetadata.singleton_key).limit(1)
-    ) is not None:
+    if (
+        schema.has_table("organization_database_metadata")
+        and session.scalar(select(OrganizationDatabaseMetadata.singleton_key).limit(1)) is not None
+    ):
         return True
     return schema.has_table("owner_accounts") and (
         session.scalar(select(OwnerAccount.id).limit(1)) is not None

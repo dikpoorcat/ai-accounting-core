@@ -39,6 +39,9 @@ class AccountingPeriodReviewFacts(BaseModel):
     bank_reconciliation_reviewed: StrictBool | None = None
     open_items_reviewed: StrictBool | None = None
     payroll_and_statutory_items_reviewed: StrictBool | None = None
+    # Backward-compatible input only.  Regular payroll/statutory cash settlement
+    # is learned from later bank activity and is no longer a prior-month close
+    # review fact.
     payroll_settlements_reviewed: StrictBool | None = None
     tax_items_reviewed: StrictBool | None = None
     asset_and_borrowing_schedules_reviewed: StrictBool | None = None
@@ -47,14 +50,14 @@ class AccountingPeriodReviewFacts(BaseModel):
         return [
             field_name
             for field_name in type(self).model_fields
-            if getattr(self, field_name) is None
+            if field_name != "payroll_settlements_reviewed" and getattr(self, field_name) is None
         ]
 
     def false_fields(self) -> list[str]:
         return [
             field_name
             for field_name in type(self).model_fields
-            if getattr(self, field_name) is False
+            if field_name != "payroll_settlements_reviewed" and getattr(self, field_name) is False
         ]
 
 
@@ -86,9 +89,7 @@ class GenerateAccountingPeriodRequest(BaseModel):
 
     def missing_information(self) -> list[AccountingPeriodInformationRequirement]:
         fields = [
-            name
-            for name in ("idempotency_key", "confirmation_note")
-            if getattr(self, name) is None
+            name for name in ("idempotency_key", "confirmation_note") if getattr(self, name) is None
         ]
         if not self.evidence_references:
             fields.append("evidence_references")
@@ -97,8 +98,7 @@ class GenerateAccountingPeriodRequest(BaseModel):
                 AccountingPeriodInformationRequirement(
                     code="ACCOUNTING_PERIOD_GENERATION_CONFIRMATION_REQUIRED",
                     message=(
-                        "idempotency key, note, and at least one evidence "
-                        "reference are required"
+                        "idempotency key, note, and at least one evidence reference are required"
                     ),
                     fields=fields,
                 )

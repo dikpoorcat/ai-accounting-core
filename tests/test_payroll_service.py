@@ -37,6 +37,7 @@ from ai_accounting.models import (
     OpenItem,
     Organization,
     PayrollBatch,
+    PayrollContributionAssessmentConfirmation,
     PayrollLine,
     PayrollTaxImportExport,
     PayrollTaxStateSlot,
@@ -45,6 +46,7 @@ from ai_accounting.models import (
 )
 from ai_accounting.owner_workflow import OwnerWorkflowService
 from ai_accounting.owner_workflow_schemas import (
+    ConfirmExternalObligationRequest,
     ConfirmPayrollContributionAssessmentRequest,
     ConfirmPeriodMaterialCompletenessRequest,
     ConfirmWorkforceReviewRequest,
@@ -258,7 +260,45 @@ def preview_and_confirm(
     return service, confirmed
 
 
-def test_declared_unpaid_contribution_and_same_snapshot_payroll_complete_step_three(
+def test_regular_payroll_omits_payment_date_but_annual_bonus_requires_it() -> None:
+    employee_id = uuid.uuid4()
+    regular = PreviewPayrollRequest.model_validate(
+        {
+            "org_id": uuid.uuid4(),
+            "idempotency_key": "regular-accrual-without-payment-date",
+            "batch_kind": "regular",
+            "payroll_period": "2026-08",
+            "posting_date": "2026-08-31",
+            "employee_items": [
+                {
+                    "employee_id": employee_id,
+                    "tax_reported_salary_fen": 100_000,
+                }
+            ],
+        }
+    )
+    assert regular.payment_date is None
+
+    with pytest.raises(ValueError, match="payment_date is required for annual_bonus"):
+        PreviewPayrollRequest.model_validate(
+            {
+                "org_id": uuid.uuid4(),
+                "idempotency_key": "annual-bonus-without-payment-date",
+                "batch_kind": "annual_bonus",
+                "payroll_period": "2026-08",
+                "posting_date": "2026-08-31",
+                "tax_method": "separate",
+                "employee_items": [
+                    {
+                        "employee_id": employee_id,
+                        "annual_bonus_fen": 100_000,
+                    }
+                ],
+            }
+        )
+
+
+def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_without_payment_fact(
     session: Session,
     organization: Organization,
 ) -> None:
@@ -273,13 +313,13 @@ def test_declared_unpaid_contribution_and_same_snapshot_payroll_complete_step_th
     session.add(evidence)
     session.flush()
     generated = AccountingPeriodService(
-        session, current_date=date(2026, 4, 10)
+        session, current_date=date(2026, 9, 10)
     ).generate_accounting_period(
         GenerateAccountingPeriodRequest(
             org_id=organization.id,
-            period_month="2026-03",
-            idempotency_key="workflow-payroll-period-2026-03",
-            confirmation_note="生成三月工资流程期间。",
+            period_month="2026-08",
+            idempotency_key="workflow-payroll-period-2026-08",
+            confirmation_note="生成八月工资流程期间。",
             evidence_references=[evidence.id],
         )
     )
@@ -288,18 +328,16 @@ def test_declared_unpaid_contribution_and_same_snapshot_payroll_complete_step_th
     assert period is not None
 
     employee_id = register_payroll_facts(session, organization)
-    workflow = OwnerWorkflowService(session, current_date=date(2026, 4, 10))
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 10))
     gates = workflow.close_gate_snapshot(organization.id, period)
     workforce = workflow.confirm_workforce_review(
         ConfirmWorkforceReviewRequest(
             org_id=organization.id,
             period_id=period.id,
-            workforce_snapshot_hash=gates["gates"]["workforce_review"][
-                "source_snapshot_hash"
-            ],
+            workforce_snapshot_hash=gates["gates"]["workforce_review"]["source_snapshot_hash"],
             change_state="no_change",
-            idempotency_key="workflow-payroll-workforce-2026-03",
-            confirmation_note="确认三月人员和工资档案没有其他变化。",
+            idempotency_key="workflow-payroll-workforce-2026-08",
+            confirmation_note="确认八月人员和工资档案没有其他变化。",
         )
     )
     assert workforce["status"] == "confirmed"
@@ -315,23 +353,32 @@ def test_declared_unpaid_contribution_and_same_snapshot_payroll_complete_step_th
             org_id=organization.id,
             period_id=period.id,
             calculation_hash=assessment["calculation_hash"],
-            declaration_status="not_declared",
-            idempotency_key="workflow-contribution-assessment-2026-03",
-            confirmation_note="确认三月社保公积金核定金额，外部尚未申报。",
+            declaration_status="declared",
+            declaration_date=date(2026, 9, 1),
+            idempotency_key="workflow-contribution-declared-2026-08",
+            confirmation_note="确认八月社保公积金已申报，核定金额与快照一致。",
         )
     )
     assert confirmed_assessment["status"] == "confirmed"
+    stored_assessment = session.get(
+        PayrollContributionAssessmentConfirmation,
+        uuid.UUID(confirmed_assessment["confirmation_id"]),
+    )
+    assert stored_assessment is not None
+    assert stored_assessment.declaration_status == "declared"
+    assert stored_assessment.declaration_date == date(2026, 9, 1)
+    assert stored_assessment.payment_status == "not_tracked"
+    assert stored_assessment.payment_date is None
 
     payroll = FinanceService(session)
     preview = payroll.preview_payroll(
         PreviewPayrollRequest.model_validate(
             {
                 "org_id": organization.id,
-                "idempotency_key": "workflow-payroll-preview-2026-03",
+                "idempotency_key": "workflow-payroll-preview-2026-08",
                 "batch_kind": "regular",
-                "payroll_period": "2026-03",
-                "posting_date": "2026-03-31",
-                "payment_date": "2026-03-31",
+                "payroll_period": "2026-08",
+                "posting_date": "2026-08-31",
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -344,65 +391,117 @@ def test_declared_unpaid_contribution_and_same_snapshot_payroll_complete_step_th
         )
     )
     assert preview.status == "calculated"
+    calculated_batch = session.get(PayrollBatch, preview.batch_id)
+    assert calculated_batch is not None
+    assert calculated_batch.payment_date is None
+    session.flush()
+    session.expire_all()
+    recovered = OwnerWorkflowService(session, current_date=date(2026, 9, 10)).get(
+        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
+    )
+    preparation = recovered["regular_payroll_preparation"]
+    assert preparation["status"] == "ready"
+    assert preparation["source"] == "current_calculated_batch"
+    assert preparation["employee_items"] == [
+        {
+            "employee_id": str(employee_id),
+            "wage_tax_declaration_state": "declared",
+            "tax_reported_salary_fen": 1_000_000,
+            "accounting_gross_salary_fen": None,
+            "tax_reporting_difference_reason": None,
+            "special_additional_deduction_fen": 0,
+            "other_legal_deduction_fen": 0,
+            "tax_relief_fen": 0,
+        }
+    ]
     posted = payroll.confirm_payroll(
         ConfirmPayrollRequest(
             org_id=organization.id,
             batch_id=preview.batch_id,
             calculation_hash=preview.calculation_hash,
-            idempotency_key="workflow-payroll-confirm-2026-03",
+            idempotency_key="workflow-payroll-confirm-2026-08",
         )
     )
     assert posted.status == "posted"
+    payroll_open_items = list(
+        session.scalars(
+            select(OpenItem).where(
+                OpenItem.org_id == organization.id,
+                OpenItem.source_event_id == posted.event_id,
+            )
+        )
+    )
+    assert payroll_open_items
+    assert all(item.due_date is None for item in payroll_open_items)
     session.flush()
     session.expire_all()
 
-    reopened = OwnerWorkflowService(session, current_date=date(2026, 4, 10))
+    reopened = OwnerWorkflowService(session, current_date=date(2026, 9, 10))
     close_gates = reopened.close_gate_snapshot(
         organization.id, session.get(AccountingPeriod, period.id)
     )
     assert close_gates["gates"]["contribution_accounting"]["satisfied"] is True
-    before_declaration = reopened.get(
+    result = OwnerWorkflowService(session, current_date=date(2026, 9, 10)).get(
         GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
     )
     step = next(
-        item
-        for item in before_declaration["steps"]
-        if item["code"] == "SOCIAL_INSURANCE_AND_HOUSING_FUND"
-    )
-    assert step["completion_state"] == "incomplete"
-    assert step["close_gate_satisfied"] is True
-    assert step["missing_facts"] == ["external_contribution_declaration"]
-
-    declared = reopened.confirm_payroll_contribution_assessment(
-        ConfirmPayrollContributionAssessmentRequest(
-            org_id=organization.id,
-            period_id=period.id,
-            calculation_hash=assessment["calculation_hash"],
-            declaration_status="declared_unpaid",
-            declaration_date=date(2026, 3, 31),
-            idempotency_key="workflow-contribution-declared-2026-03",
-            confirmation_note="确认三月社保公积金已申报、尚未缴款。",
-            supersedes_confirmation_id=uuid.UUID(
-                confirmed_assessment["confirmation_id"]
-            ),
-        )
-    )
-    assert declared["status"] == "confirmed"
-    session.flush()
-    session.expire_all()
-    result = OwnerWorkflowService(session, current_date=date(2026, 4, 10)).get(
-        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
-    )
-    step = next(
-        item
-        for item in result["steps"]
-        if item["code"] == "SOCIAL_INSURANCE_AND_HOUSING_FUND"
+        item for item in result["steps"] if item["code"] == "SOCIAL_INSURANCE_AND_HOUSING_FUND"
     )
     assert step["completion_state"] == "completed"
-    assert step["attention_state"] == "due"
-    assert step["symbol"] == "⏰"
-    assert step["deadline"] == "2026-04-20"
+    assert step["attention_state"] == "normal"
+    assert step["symbol"] == "✅"
+    assert step.get("deadline") is None
+    assert step["next_owner_action"] is None
     assert step["close_gate_satisfied"] is True
+
+    before_iit_declaration = OwnerWorkflowService(
+        session, current_date=date(2026, 9, 10)
+    ).close_gate_snapshot(organization.id, period)
+    assert (
+        before_iit_declaration["gates"]["individual_income_tax_declaration"]["satisfied"] is False
+    )
+    close_before_iit = AccountingPeriodService(
+        session, current_date=date(2026, 9, 10)
+    ).preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=period.id,
+            closing_date=period.end_date,
+        )
+    )
+    assert "ACCOUNTING_PERIOD_IIT_DECLARATION_CURRENT" in close_before_iit.data["blocker_codes"]
+    iit_step = next(
+        item for item in result["steps"] if item["code"] == "INDIVIDUAL_INCOME_TAX_WITHHOLDING"
+    )
+    obligation = iit_step["obligation"]
+    iit_confirmed = OwnerWorkflowService(
+        session, current_date=date(2026, 9, 10)
+    ).confirm_external_obligation(
+        ConfirmExternalObligationRequest(
+            org_id=organization.id,
+            obligation_id=uuid.UUID(obligation["obligation_id"]),
+            source_snapshot_hash=obligation["source_snapshot_hash"],
+            completion_status="submitted",
+            completion_date=date(2026, 9, 2),
+            idempotency_key="workflow-iit-declared-2026-08",
+            confirmation_note="确认八月个税已申报；日期为申报日，不是缴款日。",
+        )
+    )
+    assert iit_confirmed["status"] == "confirmed"
+    after_iit_declaration = OwnerWorkflowService(
+        session, current_date=date(2026, 9, 10)
+    ).close_gate_snapshot(organization.id, period)
+    assert after_iit_declaration["gates"]["individual_income_tax_declaration"]["satisfied"] is True
+    close_after_iit = AccountingPeriodService(
+        session, current_date=date(2026, 9, 10)
+    ).preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=organization.id,
+            period_id=period.id,
+            closing_date=period.end_date,
+        )
+    )
+    assert "ACCOUNTING_PERIOD_IIT_DECLARATION_CURRENT" not in close_after_iit.data["blocker_codes"]
 
 
 def test_generate_payroll_tax_import_matches_tax_authority_xls_template(
@@ -465,9 +564,7 @@ def test_generate_payroll_tax_import_matches_tax_authority_xls_template(
     assert data_sheet.row_values(1)[10:29] == [0.0] * 19
     assert data_sheet.cell_value(1, 29) == ""
     money_cell = data_sheet.cell(1, 4)
-    money_format = workbook.format_map[
-        workbook.xf_list[money_cell.xf_index].format_key
-    ].format_str
+    money_format = workbook.format_map[workbook.xf_list[money_cell.xf_index].format_key].format_str
     assert money_format == "0.00_);(0.00)"
     document_cell = data_sheet.cell(1, 3)
     document_format = workbook.format_map[
@@ -543,9 +640,7 @@ def test_generate_payroll_tax_import_excludes_reversal_batches(
     service, confirmed = preview_and_confirm(session, organization)
     assert confirmed.event_id is not None
     employee_id = session.scalar(
-        select(PayrollLine.employee_id).where(
-            PayrollLine.payroll_batch_id == confirmed.batch_id
-        )
+        select(PayrollLine.employee_id).where(PayrollLine.payroll_batch_id == confirmed.batch_id)
     )
     assert employee_id is not None
     reversed_result = service.reverse_event(
@@ -653,9 +748,9 @@ def test_generate_payroll_tax_import_writes_explicit_nonzero_tax_columns(
 
     assert result.status == "generated"
     assert result.file_path is not None
-    data_sheet = xlrd.open_workbook(
-        file_contents=result.file_path.read_bytes()
-    ).sheet_by_name("正常工资薪金收入")
+    data_sheet = xlrd.open_workbook(file_contents=result.file_path.read_bytes()).sheet_by_name(
+        "正常工资薪金收入"
+    )
     assert data_sheet.row_values(1)[10:18] == [
         600.0,
         400.0,
@@ -773,9 +868,9 @@ def test_payroll_preview_preserves_closed_period_error_without_calculated_batch(
         ConfirmAccountingPeriodCloseRequest(
             **close_facts.model_dump(),
             calculation_hash=close_preview.calculation_hash,
-            management_commentary_context_hash=close_preview.data[
-                "assistant_review_checklist"
-            ]["management_commentary"]["context_hash"],
+            management_commentary_context_hash=close_preview.data["assistant_review_checklist"][
+                "management_commentary"
+            ]["context_hash"],
             management_commentary="九月经营情况已基于关账上下文完成分析。",
             idempotency_key="payroll-period-close",
             review_facts=AccountingPeriodReviewFacts(
@@ -1122,9 +1217,7 @@ def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
         "difference_fen": -350_000,
         "difference_reason": "历史申报数不形成实际工资债务；账务工资按个人缴费扣款确认。",
     }
-    tax_state = next(
-        entry for entry in line_payload["trace"] if entry["step"] == "tax_state_after"
-    )
+    tax_state = next(entry for entry in line_payload["trace"] if entry["step"] == "tax_state_after")
     assert tax_state["values"]["cumulative_income_fen"] == 500_000
 
     confirmed = service.confirm_payroll(
@@ -1283,11 +1376,14 @@ def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
     assert line.tax_reported_salary_fen is None
     assert line.employee_social_insurance_fen == 0
     assert line.employer_social_insurance_fen == 184_500
-    assert session.scalar(
-        select(PayrollTaxStateSlot).where(
-            PayrollTaxStateSlot.regular_batch_id == preview.batch_id
+    assert (
+        session.scalar(
+            select(PayrollTaxStateSlot).where(
+                PayrollTaxStateSlot.regular_batch_id == preview.batch_id
+            )
         )
-    ) is None
+        is None
+    )
     assert_balanced(session, confirmed.voucher_id)
 
 
@@ -1534,8 +1630,7 @@ def test_payroll_accruals_can_be_reversed_repeatedly_from_latest_to_earliest(
         assert reversed_result.status == "posted", reversed_result.model_dump(mode="json")
 
     assert all(
-        session.get(PayrollBatch, result.batch_id).status == "reversed"
-        for result in confirmed
+        session.get(PayrollBatch, result.batch_id).status == "reversed" for result in confirmed
     )
 
 
@@ -1607,8 +1702,7 @@ def test_social_insurance_payment_can_separate_evidenced_late_fee(
     voucher = session.get(Voucher, payment.voucher_id)
     assert voucher is not None
     by_role = {
-        line.account.system_role: (line.debit_fen, line.credit_fen)
-        for line in voucher.lines
+        line.account.system_role: (line.debit_fen, line.credit_fen) for line in voucher.lines
     }
     assert by_role["employer_social_payable"] == (160_000, 0)
     assert by_role["social_insurance_late_fee_expense"] == (500, 0)

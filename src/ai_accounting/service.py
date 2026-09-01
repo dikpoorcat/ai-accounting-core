@@ -134,8 +134,7 @@ from .tax import active_tax_rule, calculate_tax_period, split_tax_inclusive
 class FinanceService:
     DEFERRED_OUTPUT_VAT_RULE_VERSION = "mof-cai-kuai-2016-22-v1"
     DEFERRED_OUTPUT_VAT_RULE_SOURCE_URL = (
-        "https://www.mof.gov.cn/gkml/caizhengwengao/2017wg/wg201703/"
-        "201707/t20170707_2641107.htm"
+        "https://www.mof.gov.cn/gkml/caizhengwengao/2017wg/wg201703/201707/t20170707_2641107.htm"
     )
     FIRST_WAGE_TAX_TREATMENT_SOURCE_URL = (
         "https://fgk.chinatax.gov.cn/zcfgk/c100012/c5194937/content.html"
@@ -947,9 +946,7 @@ class FinanceService:
         self.session.flush()
         result_data: dict[str, Any] = {"derived": derived}
         if created_open_item is not None:
-            result_data["created_open_items"] = [
-                self._open_item_result(created_open_item)
-            ]
+            result_data["created_open_items"] = [self._open_item_result(created_open_item)]
         return FinanceResult(
             status=ResultStatus.POSTED,
             event_id=event.id,
@@ -1264,9 +1261,7 @@ class FinanceService:
                     Entry(
                         account_code=request.bank_account_code if paid_now else None,
                         account_role=(
-                            None
-                            if paid_now
-                            else self._person_payable_role(counterparty)
+                            None if paid_now else self._person_payable_role(counterparty)
                         ),
                         credit_fen=amount,
                         counterparty_id=cp_id,
@@ -1302,9 +1297,7 @@ class FinanceService:
                 ),
             ]
             if fee_fen:
-                entries.append(
-                    Entry(account_role="general_expense", debit_fen=fee_fen)
-                )
+                entries.append(Entry(account_role="general_expense", debit_fen=fee_fen))
             entries.append(
                 Entry(
                     account_code=request.bank_account_code,
@@ -1322,9 +1315,7 @@ class FinanceService:
             settlement_method = request.details.settlement_method or "bank"
             reserve_derived: dict[str, Any] = {}
             if settlement_method == "owner_managed_reserve":
-                reserve_role, reserve_derived = self._owner_managed_reserve_source(
-                    request
-                )
+                reserve_role, reserve_derived = self._owner_managed_reserve_source(request)
                 settlement_entry = Entry(
                     account_role=reserve_role,
                     credit_fen=amount,
@@ -1492,9 +1483,7 @@ class FinanceService:
                 "employee_social_insurance_fen": withholding["employee_social_insurance_fen"],
                 "employee_housing_fund_fen": withholding["employee_housing_fund_fen"],
                 "individual_income_tax_fen": withholding["individual_income_tax_fen"],
-                "actual_salary_deduction_fen": withholding[
-                    "actual_salary_deduction_fen"
-                ],
+                "actual_salary_deduction_fen": withholding["actual_salary_deduction_fen"],
                 "actual_salary_deduction_allocations": withholding[
                     "actual_salary_deduction_allocations"
                 ],
@@ -1590,8 +1579,7 @@ class FinanceService:
             and request.tax_facts.taxable
             and request.tax_facts.tax_due_on_event
             and request.business_dates.tax_obligation_date
-            and request.business_dates.tax_obligation_date
-            > request.business_dates.posting_date
+            and request.business_dates.tax_obligation_date > request.business_dates.posting_date
         )
 
     def _deferred_output_vat_transfer_plans(
@@ -1762,8 +1750,10 @@ class FinanceService:
                 request.event_type is EventType.EMPLOYEE_REIMBURSEMENT
                 and request.details.reimbursement_kind == "existing_payable"
             )
-            if payroll_categories is None and not person_paid_existing_payable and (
-                counterparty is None or item.counterparty_id != counterparty.id
+            if (
+                payroll_categories is None
+                and not person_paid_existing_payable
+                and (counterparty is None or item.counterparty_id != counterparty.id)
             ):
                 raise ValueError(f"open item belongs to a different counterparty: {item.id}")
             if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
@@ -1845,32 +1835,26 @@ class FinanceService:
         if payment_date is None:
             raise ValueError("owner-managed-reserve settlement requires payment_date")
         if source.posting_date > payment_date:
-            raise ValueError(
-                "owner-managed-reserve source must not post after the reimbursement"
-            )
+            raise ValueError("owner-managed-reserve source must not post after the reimbursement")
         source_amount = self._event_amount(source)
         source_role = source.facts.get("amounts", {}).get("expense_account_role")
         if not isinstance(source_role, str) or not source_role:
-            raise ValueError(
-                "owner-managed-reserve source must contain one derived expense role"
-            )
+            raise ValueError("owner-managed-reserve source must contain one derived expense role")
 
         used_before = 0
         candidates = self.session.scalars(
             select(BusinessEvent).where(
                 BusinessEvent.org_id == request.org_id,
-                BusinessEvent.event_type
-                == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT.value,
+                BusinessEvent.event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT.value,
                 BusinessEvent.status == "posted",
                 BusinessEvent.reversed_by_event_id.is_(None),
             )
         ).all()
         for candidate in candidates:
             details = candidate.facts.get("details", {})
-            if (
-                details.get("settlement_method") == "owner_managed_reserve"
-                and str(details.get("original_event_id")) == str(source.id)
-            ):
+            if details.get("settlement_method") == "owner_managed_reserve" and str(
+                details.get("original_event_id")
+            ) == str(source.id):
                 used_before += self._event_amount(candidate)
         amount = self._amount(request)
         if used_before + amount > source_amount:
@@ -1902,8 +1886,7 @@ class FinanceService:
                 return category_roles[item.payable_category]
             except KeyError as exc:
                 raise ValueError(
-                    f"unsupported payable category for payment on behalf: "
-                    f"{item.payable_category}"
+                    f"unsupported payable category for payment on behalf: {item.payable_category}"
                 ) from exc
         counterparty_roles = {
             "supplier": "accounts_payable",
@@ -2014,9 +1997,7 @@ class FinanceService:
             raise ValueError("payroll payment requires allocations")
         expected_allocation_fen = self._amount(request)
         if request.event_type is EventType.SOCIAL_INSURANCE_PAYMENT:
-            expected_allocation_fen -= int(
-                request.details.social_insurance_late_fee_fen or 0
-            )
+            expected_allocation_fen -= int(request.details.social_insurance_late_fee_fen or 0)
         if expected_allocation_fen <= 0:
             raise ValueError("social insurance late fee must be less than amount_fen")
         if sum(item.amount_fen for item in request.allocations) != expected_allocation_fen:
@@ -2080,16 +2061,12 @@ class FinanceService:
             item.open_item_id: item.amount_fen
             for item in request.salary_actual_deduction_allocations
         }
-        if len(actual_deduction_by_item) != len(
-            request.salary_actual_deduction_allocations
-        ):
+        if len(actual_deduction_by_item) != len(request.salary_actual_deduction_allocations):
             raise ValueError(
                 "salary payment cannot state actual deductions twice for one open item"
             )
         if not set(actual_deduction_by_item).issubset(allocation_by_item):
-            raise ValueError(
-                "salary actual deduction must belong to a salary allocation"
-            )
+            raise ValueError("salary actual deduction must belong to a salary allocation")
 
         batch: PayrollBatch | None = None
         cash_total = 0
@@ -2157,8 +2134,7 @@ class FinanceService:
             profile = self.session.scalar(
                 select(EmployeePayrollProfileVersion).where(
                     EmployeePayrollProfileVersion.org_id == request.org_id,
-                    EmployeePayrollProfileVersion.id
-                    == line.employee_payroll_profile_version_id,
+                    EmployeePayrollProfileVersion.id == line.employee_payroll_profile_version_id,
                     EmployeePayrollProfileVersion.employee_id == line.employee_id,
                 )
             )
@@ -2212,8 +2188,7 @@ class FinanceService:
             actual_deduction_total += actual_deduction
             if actual_deduction:
                 actual_deduction_by_expense_role[profile.expense_role] = (
-                    actual_deduction_by_expense_role.get(profile.expense_role, 0)
-                    + actual_deduction
+                    actual_deduction_by_expense_role.get(profile.expense_role, 0) + actual_deduction
                 )
                 actual_deduction_allocations.append(
                     {
@@ -2602,7 +2577,12 @@ class FinanceService:
             # JSON income-tax snapshot is explanatory evidence, not the
             # relational identity used to merge formal payments.
             controlling_policy_id = str(source_batch.policy_version_id)
-            statutory_period = source_batch.payment_date.strftime("%Y-%m")
+            if source_batch.batch_kind == PayrollBatchKind.REGULAR.value:
+                statutory_period = source_batch.payroll_period
+            else:
+                if source_batch.payment_date is None:
+                    raise ValueError("STATUTORY_PAYMENT_SOURCE_PAYMENT_DATE_MISSING")
+                statutory_period = source_batch.payment_date.strftime("%Y-%m")
         else:
             # Social insurance and housing fund retain their period-end
             # contribution rule and payroll-period contribution month.
@@ -3124,10 +3104,14 @@ class FinanceService:
                 missing.append("different source and destination bank accounts")
         elif self._uses_bank_settlement(request) and request.bank_account_code is None:
             missing.append("bank_account_code")
-        if request.event_type in {
-            EventType.CASH_BANK_TRANSFER,
-            EventType.PAYMENT_PLATFORM_TRANSFER,
-        } and request.direction is None:
+        if (
+            request.event_type
+            in {
+                EventType.CASH_BANK_TRANSFER,
+                EventType.PAYMENT_PLATFORM_TRANSFER,
+            }
+            and request.direction is None
+        ):
             missing.append("direction")
 
         counterparty_events = {
@@ -3666,9 +3650,7 @@ class FinanceService:
                     "social_insurance_participating": (
                         existing_successor.social_insurance_participating
                     ),
-                    "housing_fund_participating": (
-                        existing_successor.housing_fund_participating
-                    ),
+                    "housing_fund_participating": (existing_successor.housing_fund_participating),
                     "resident_employee": existing_successor.resident_employee,
                 }
                 if actual == expected:
@@ -4357,16 +4339,20 @@ class FinanceService:
             (item.contribution_group, item.insurance_kind): item for item in active_items
         }
         supersedes_ids = set(request.supersedes_actual_ids)
-        supplied_predecessors = list(
-            self.session.scalars(
-                select(PayrollContributionActualItem)
-                .where(
-                    PayrollContributionActualItem.org_id == request.org_id,
-                    PayrollContributionActualItem.id.in_(supersedes_ids),
+        supplied_predecessors = (
+            list(
+                self.session.scalars(
+                    select(PayrollContributionActualItem)
+                    .where(
+                        PayrollContributionActualItem.org_id == request.org_id,
+                        PayrollContributionActualItem.id.in_(supersedes_ids),
+                    )
+                    .with_for_update()
                 )
-                .with_for_update()
             )
-        ) if supersedes_ids else []
+            if supersedes_ids
+            else []
+        )
         if {item.id for item in supplied_predecessors} != supersedes_ids:
             return {"status": "rejected", "errors": ["INVALID_CONTRIBUTION_ACTUAL_SUPERSEDES"]}
         supplied_by_key = {
@@ -4376,9 +4362,7 @@ class FinanceService:
             item.employee_id != request.employee_id
             or item.contribution_period != request.contribution_period
             for item in supplied_predecessors
-        ) or set(supplied_by_key) != {
-            key for key in requested_by_key if key in active_by_key
-        }:
+        ) or set(supplied_by_key) != {key for key in requested_by_key if key in active_by_key}:
             return {"status": "rejected", "errors": ["INVALID_CONTRIBUTION_ACTUAL_SUPERSEDES"]}
         for key, active in active_by_key.items():
             supplied = supplied_by_key.get(key)
@@ -4874,7 +4858,11 @@ class FinanceService:
                     policy_snapshot=calculation["policy_snapshot"],
                     policy_version_id=calculation["policy"].id,
                     posting_date=request.posting_date,
-                    payment_date=request.payment_date,
+                    payment_date=(
+                        request.payment_date
+                        if request.batch_kind == PayrollBatchKind.ANNUAL_BONUS
+                        else None
+                    ),
                     tax_method=request.tax_method.value if request.tax_method else None,
                 )
                 self.session.add(batch)
@@ -5137,8 +5125,7 @@ class FinanceService:
             or recalculated["calculation_hash"] != batch.calculation_hash
             or recalculated["policy_snapshot"] != batch.policy_snapshot
             or set(recalculated["actual_item_ids"]) != stored_actual_item_ids
-            or set(recalculated["first_wage_treatment_ids"])
-            != stored_first_wage_treatment_ids
+            or set(recalculated["first_wage_treatment_ids"]) != stored_first_wage_treatment_ids
         ):
             return PayrollResult(
                 status=PayrollResultStatus.REJECTED,
@@ -5166,7 +5153,13 @@ class FinanceService:
             facts={
                 "payroll_batch_id": str(batch.id),
                 "calculation_hash": batch.calculation_hash,
-                "payment_date": batch.payment_date.isoformat(),
+                "cash_settlement_tracking": "later_bank_statement_and_payment_event",
+                **(
+                    {"annual_bonus_payment_date": batch.payment_date.isoformat()}
+                    if batch.payment_date is not None
+                    and batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
+                    else {}
+                ),
             },
             business_date=batch.posting_date,
             posting_date=batch.posting_date,
@@ -5944,15 +5937,19 @@ class FinanceService:
 
     def _calculate_payroll(self, request: PreviewPayrollRequest) -> dict[str, Any]:
         period = YearMonth(int(request.payroll_period[:4]), int(request.payroll_period[5:]))
+        payment_date = request.payment_date
+        if request.batch_kind == PayrollBatchKind.ANNUAL_BONUS and payment_date is None:
+            raise CalculationValidationError(
+                "PAYROLL_PAYMENT_DATE_REQUIRED",
+                "annual bonus payroll requires its actual payment date",
+            )
         tax_period = (
             period
             if request.batch_kind == PayrollBatchKind.REGULAR
-            else YearMonth(request.payment_date.year, request.payment_date.month)
+            else YearMonth(payment_date.year, payment_date.month)
         )
         tax_policy_date = (
-            period.end_date
-            if request.batch_kind == PayrollBatchKind.REGULAR
-            else request.payment_date
+            period.end_date if request.batch_kind == PayrollBatchKind.REGULAR else payment_date
         )
         contribution_policy_record = self._effective_payroll_policy(request.org_id, period.end_date)
         tax_policy_record = self._effective_payroll_policy(request.org_id, tax_policy_date)
@@ -5989,7 +5986,7 @@ class FinanceService:
             and bonus_policy is not None
         ):
             try:
-                bonus_policy.assert_effective(request.payment_date)
+                bonus_policy.assert_effective(payment_date)
             except ExpiredPolicyError:
                 # A combined bonus is governed by the current cumulative wage-tax
                 # rule; an expired separate-method policy must not block it.
@@ -6093,8 +6090,7 @@ class FinanceService:
                 continue
             uses_wage_tax = (
                 request.batch_kind == PayrollBatchKind.ANNUAL_BONUS
-                or item.wage_tax_declaration_state
-                == PayrollWageTaxDeclarationState.DECLARED
+                or item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
             )
             if uses_wage_tax and profile.resident_employee is None:
                 missing.append(
@@ -6136,8 +6132,7 @@ class FinanceService:
                     )
                     continue
                 if (
-                    item.wage_tax_declaration_state
-                    == PayrollWageTaxDeclarationState.DECLARED
+                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
                     and employee.tax_withholding_start_date is None
                 ):
                     missing.append(
@@ -6207,10 +6202,7 @@ class FinanceService:
                     payroll_input.gross_salary_fen,
                     shortfall_treatment,
                 )
-                if (
-                    item.wage_tax_declaration_state
-                    == PayrollWageTaxDeclarationState.NOT_DECLARED
-                ):
+                if item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED:
                     prepared_lines.append(
                         self._unreported_regular_prepared_line(
                             employee,
@@ -6306,9 +6298,7 @@ class FinanceService:
                         "wage_tax_declaration_state": "declared",
                         "accounting_gross_salary_fen": payroll_input.gross_salary_fen,
                         "tax_reported_salary_fen": payroll_input.tax_reported_salary_fen,
-                        "tax_reporting_difference_reason": (
-                            item.tax_reporting_difference_reason
-                        ),
+                        "tax_reporting_difference_reason": (item.tax_reporting_difference_reason),
                         "tax_withholding_start_date": (
                             employee.tax_withholding_start_date.isoformat()
                         ),
@@ -6323,9 +6313,7 @@ class FinanceService:
                                 "first_wage_month": first_wage_treatment.first_wage_month,
                                 "treatment_state": first_wage_treatment.treatment_state,
                                 "legal_basis_url": first_wage_treatment.legal_basis_url,
-                                "standard_deduction_start_month": (
-                                    standard_deduction_start_month
-                                ),
+                                "standard_deduction_start_month": (standard_deduction_start_month),
                             }
                             if first_wage_treatment is not None
                             else None
@@ -6350,7 +6338,7 @@ class FinanceService:
                             tax_policy,
                             AnnualBonusScenarioInput(
                                 period=tax_period,
-                                payment_date=request.payment_date,
+                                payment_date=payment_date,
                                 bonus_fen=item.annual_bonus_fen,
                                 prior_tax_state=None,
                                 regular_period_input=None,
@@ -6420,7 +6408,7 @@ class FinanceService:
                         tax_period,
                         prior_state,
                         CumulativeTaxPeriodInput(
-                            income_date=request.payment_date,
+                            income_date=payment_date,
                             withholding_start_date=self._required_tax_withholding_start_date(
                                 employee
                             ),
@@ -6475,7 +6463,7 @@ class FinanceService:
                         tax_policy,
                         AnnualBonusScenarioInput(
                             period=tax_period,
-                            payment_date=request.payment_date,
+                            payment_date=payment_date,
                             bonus_fen=item.annual_bonus_fen,
                             prior_tax_state=prior_state,
                             regular_period_input=regular_tax_input,
@@ -6509,7 +6497,7 @@ class FinanceService:
                             tax_period,
                             prior_state,
                             CumulativeTaxPeriodInput(
-                                income_date=request.payment_date,
+                                income_date=payment_date,
                                 withholding_start_date=self._required_tax_withholding_start_date(
                                     employee
                                 ),
@@ -6605,7 +6593,12 @@ class FinanceService:
                 "stage": "payroll_calculated",
                 "batch_kind": request.batch_kind.value,
                 "payroll_period": request.payroll_period,
-                "payment_date": request.payment_date.isoformat(),
+                "tax_timing_date": (
+                    payment_date.isoformat()
+                    if request.batch_kind == PayrollBatchKind.ANNUAL_BONUS
+                    else period.end_date.isoformat()
+                ),
+                "cash_settlement_tracking": "later_bank_statement_and_payment_event",
                 "policy_version": tax_policy_record.version,
                 "policy_sources": {
                     "contribution": policy_snapshot["contribution_policy"],
@@ -7161,6 +7154,11 @@ class FinanceService:
     def _batch_tax_period(batch: PayrollBatch) -> YearMonth:
         if batch.batch_kind == PayrollBatchKind.REGULAR.value:
             return YearMonth(int(batch.payroll_period[:4]), int(batch.payroll_period[5:]))
+        if batch.payment_date is None:
+            raise CalculationValidationError(
+                "PAYROLL_PAYMENT_DATE_REQUIRED",
+                "annual bonus payroll requires its actual payment date",
+            )
         return YearMonth(batch.payment_date.year, batch.payment_date.month)
 
     @staticmethod
@@ -7584,7 +7582,14 @@ class FinanceService:
                         counterparty_id=employee.counterparty_id,
                         item_type="payable",
                         original_amount_fen=line.gross_salary_fen,
-                        due_date=batch.payment_date,
+                        # A regular payroll accrual does not predict its later
+                        # bank settlement date.  The payable remains open until
+                        # a typed payment event matches the real bank entry.
+                        due_date=(
+                            batch.payment_date
+                            if batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
+                            else None
+                        ),
                         payable_category="salary",
                     )
                 )
@@ -7618,7 +7623,7 @@ class FinanceService:
                     counterparty_id=agency.id,
                     item_type="payable",
                     original_amount_fen=amount,
-                    due_date=batch.payment_date,
+                    due_date=None,
                     payable_category=category,
                     payable_agency_code=target["agency_code"],
                     insurance_kind=insurance_kind,
@@ -8583,9 +8588,7 @@ class FinanceService:
                     errors=["REVERSE_DEPENDENT_EVENTS_FIRST"],
                 )
             payroll_lines = self.session.scalars(
-                select(PayrollLine).where(
-                    PayrollLine.payroll_batch_id == payroll_batch.id
-                )
+                select(PayrollLine).where(PayrollLine.payroll_batch_id == payroll_batch.id)
             ).all()
             tax_employee_ids = [
                 line.employee_id
@@ -8618,9 +8621,7 @@ class FinanceService:
                 ).all()
                 dependent = any(
                     candidate_batch.id != payroll_batch.id
-                    and self._line_uses_cumulative_tax_state(
-                        candidate_batch, candidate_line
-                    )
+                    and self._line_uses_cumulative_tax_state(candidate_batch, candidate_line)
                     and (
                         self._batch_tax_period(candidate_batch) > original_tax_period
                         or candidate_line.regular_payroll_batch_id == payroll_batch.id

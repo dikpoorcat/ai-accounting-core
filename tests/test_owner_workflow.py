@@ -28,9 +28,7 @@ from ai_accounting.schemas import RegisterEmployeeRequest
 from ai_accounting.service import FinanceService
 
 
-def _generate_august_period(
-    session: Session, organization: Organization
-) -> AccountingPeriod:
+def _generate_august_period(session: Session, organization: Organization) -> AccountingPeriod:
     evidence = Evidence(
         org_id=organization.id,
         sha256="d" * 64,
@@ -140,17 +138,16 @@ def test_typed_owner_confirmations_survive_new_service_and_stale_on_upstream_cha
         "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT",
         "ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT",
     } <= set(initial_close.data["blocker_codes"])
-    assert initial_close.data["calculation"]["owner_workflow_close_gates"][
-        "snapshot_hash"
-    ] == gates["snapshot_hash"]
+    assert (
+        initial_close.data["calculation"]["owner_workflow_close_gates"]["snapshot_hash"]
+        == gates["snapshot_hash"]
+    )
 
     workforce = workflow.confirm_workforce_review(
         ConfirmWorkforceReviewRequest(
             org_id=organization.id,
             period_id=period.id,
-            workforce_snapshot_hash=gates["gates"]["workforce_review"][
-                "source_snapshot_hash"
-            ],
+            workforce_snapshot_hash=gates["gates"]["workforce_review"]["source_snapshot_hash"],
             change_state="no_change",
             idempotency_key="owner-workflow-workforce-2026-08",
             confirmation_note="确认八月没有人员及工资档案变化。",
@@ -160,9 +157,7 @@ def test_typed_owner_confirmations_survive_new_service_and_stale_on_upstream_cha
         ConfirmPeriodMaterialCompletenessRequest(
             org_id=organization.id,
             period_id=period.id,
-            activity_snapshot_hash=gates["gates"]["non_bank_materials"][
-                "source_snapshot_hash"
-            ],
+            activity_snapshot_hash=gates["gates"]["non_bank_materials"]["source_snapshot_hash"],
             idempotency_key="owner-workflow-materials-2026-08",
             confirmation_note="确认八月非银行材料已经全部提供。",
         )
@@ -178,11 +173,10 @@ def test_typed_owner_confirmations_survive_new_service_and_stale_on_upstream_cha
             closing_date=period.end_date,
         )
     )
-    assert "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT" not in refreshed_close.data[
-        "blocker_codes"
-    ]
-    assert "ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT" not in (
-        refreshed_close.data["blocker_codes"]
+    assert "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT" not in refreshed_close.data["blocker_codes"]
+    assert (
+        "ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT"
+        not in (refreshed_close.data["blocker_codes"])
     )
     session.flush()
     session.expire_all()
@@ -203,9 +197,9 @@ def test_typed_owner_confirmations_survive_new_service_and_stale_on_upstream_cha
     ]
     assert _step(reopened, "WORKFORCE_AND_PAY_CHANGES")["completion_state"] == "completed"
     assert _step(reopened, "WORKFORCE_AND_PAY_CHANGES")["symbol"] == "✅"
-    assert _step(reopened, "SOCIAL_INSURANCE_AND_HOUSING_FUND")[
-        "completion_state"
-    ] == "not_applicable"
+    assert (
+        _step(reopened, "SOCIAL_INSURANCE_AND_HOUSING_FUND")["completion_state"] == "not_applicable"
+    )
     assert _step(reopened, "NON_BANK_MATERIALS")["completion_state"] == "completed"
 
     registered = FinanceService(session).register_employee(
@@ -243,9 +237,7 @@ def test_annual_obligations_remain_overdue_until_typed_confirmation(
     )
     assert establishment["status"] == "confirmed"
 
-    before = workflow.get(
-        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
-    )
+    before = workflow.get(GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id))
     annual_eit = _step(before, "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT")
     business_report = _step(before, "ANNUAL_BUSINESS_REPORT")
     assert annual_eit["attention_state"] == "overdue"
@@ -283,22 +275,14 @@ def test_historical_obligation_cutoffs_persist_without_invented_completion_dates
 ) -> None:
     period = _generate_august_period(session, organization)
     workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
-    before = workflow.get(
-        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
-    )
+    before = workflow.get(GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id))
     candidates = {
         item["obligation_code"]: item
         for item in before["historical_obligation_completion_candidates"]
     }
-    assert candidates["periodic_tax_reporting"]["completion_through_identity"] == (
-        "2026-Q2"
-    )
-    assert candidates["annual_enterprise_income_tax"][
-        "completion_through_identity"
-    ] == "2025"
-    assert candidates["annual_business_report"]["completion_through_identity"] == (
-        "2025"
-    )
+    assert candidates["periodic_tax_reporting"]["completion_through_identity"] == ("2026-Q2")
+    assert candidates["annual_enterprise_income_tax"]["completion_through_identity"] == "2025"
+    assert candidates["annual_business_report"]["completion_through_identity"] == ("2025")
 
     other_organization = seed_organization(
         session,
@@ -313,18 +297,14 @@ def test_historical_obligation_cutoffs_persist_without_invented_completion_dates
             completion_through_identity=candidates["periodic_tax_reporting"][
                 "completion_through_identity"
             ],
-            source_snapshot_hash=candidates["periodic_tax_reporting"][
-                "source_snapshot_hash"
-            ],
+            source_snapshot_hash=candidates["periodic_tax_reporting"]["source_snapshot_hash"],
             completion_date_status="not_established",
             idempotency_key="historical-obligation-cross-company",
             confirmation_note="跨公司哈希必须被拒绝。",
         )
     )
     assert cross_company["status"] == "rejected"
-    assert cross_company["errors"] == [
-        "HISTORICAL_OBLIGATION_COMPLETION_SNAPSHOT_STALE"
-    ]
+    assert cross_company["errors"] == ["HISTORICAL_OBLIGATION_COMPLETION_SNAPSHOT_STALE"]
 
     for code, candidate in candidates.items():
         confirmed = workflow.confirm_historical_obligation_completion(
@@ -357,9 +337,9 @@ def test_historical_obligation_cutoffs_persist_without_invented_completion_dates
         "completion_through_identity": "2025",
         "completion_date_status": "not_established",
     }
-    assert business_report["completion_proof"][0]["completion_date_status"] == (
-        "not_established"
-    )
+    assert business_report["completion_proof"][0]["completion_date_status"] == ("not_established")
+    assert [item["order"] for item in reopened["queue_steps"]] == [1, 2, 3, 4, 5, 6]
+    assert [item["order"] for item in reopened["steps"]] == list(range(1, 10))
 
     q2_obligation = workflow._obligation(  # noqa: SLF001 - cutoff boundary regression
         organization.id,

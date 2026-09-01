@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from .accounting_periods import canonical_sha256, china_current_date
+from .agent_contract import OWNER_WORKFLOW_VERSION
 from .models import (
     AccountingPeriod,
     AccountingPeriodClose,
@@ -50,22 +51,17 @@ from .payroll import (
     calculate_contributions,
 )
 from .payroll.types import CalculationValidationError, NeedsInformationError
+from .schemas import PayrollEmployeeItem
 from .service import FinanceService
 
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.7"
-OWNER_WORKFLOW_CLOSE_GATE_VERSION = "owner_workflow_close_gates_2026.1"
+OWNER_WORKFLOW_CLOSE_GATE_VERSION = "owner_workflow_close_gates_2026.2"
 OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM = date(2026, 8, 1)
 
 _IIT_SOURCE_URL = (
-    "https://www.chinatax.gov.cn/n810219/n810744/n3752930/"
-    "n3752974/c3963396/content.html"
+    "https://www.chinatax.gov.cn/n810219/n810744/n3752930/n3752974/c3963396/content.html"
 )
-_SOCIAL_SOURCE_URL = (
-    "https://zhejiang.chinatax.gov.cn/art/2023/8/10/art_13314_595952.html"
-)
-_TAX_DEADLINE_SOURCE_URL = (
-    "https://fgk.chinatax.gov.cn/zcfgk/c102424/c5245729/content.html"
-)
+_SOCIAL_SOURCE_URL = "https://zhejiang.chinatax.gov.cn/art/2023/8/10/art_13314_595952.html"
+_TAX_DEADLINE_SOURCE_URL = "https://fgk.chinatax.gov.cn/zcfgk/c102424/c5245729/content.html"
 _BUSINESS_REPORT_SOURCE_URL = (
     "https://www.samr.gov.cn/cms_files/filemanager/samr/www/samrnew/"
     "samrgkml/nsjg/fgs/202203/W020220302478403609033.pdf"
@@ -142,6 +138,11 @@ class OwnerWorkflowService:
         current_action = self._select_current_action(steps)
         for step in steps:
             step.pop("_ready", None)
+        queue_steps = [
+            step
+            for step in steps
+            if step["order"] <= 6 or step["completion_state"] not in {"completed", "not_applicable"}
+        ]
         exports = self._period_exports(request.org_id, self._period_month(period))
         return {
             "status": "ok",
@@ -151,7 +152,15 @@ class OwnerWorkflowService:
             "period": self._period_payload(period),
             "current_action": current_action,
             "steps": steps,
+            "queue_steps": queue_steps,
+            "queue_visibility": {
+                "always_visible_orders": [1, 2, 3, 4, 5, 6],
+                "conditional_orders": [7, 8, 9],
+                "conditional_rule": "show_only_while_owner_attention_is_required",
+                "canonical_order_numbers_are_preserved": True,
+            },
             "close_gates": gate_snapshot,
+            "regular_payroll_preparation": gate_snapshot["regular_payroll_preparation"],
             "existing_exports": exports,
             "historical_obligation_completion_candidates": self._historical_completion_candidates(
                 organization
@@ -185,9 +194,7 @@ class OwnerWorkflowService:
             "calculation": snapshot["calculation"],
         }
 
-    def confirm_workforce_review(
-        self, request: ConfirmWorkforceReviewRequest
-    ) -> dict[str, Any]:
+    def confirm_workforce_review(self, request: ConfirmWorkforceReviewRequest) -> dict[str, Any]:
         period = self._period_for_org(request.org_id, request.period_id)
         if period is None:
             return {"status": "rejected", "errors": ["ACCOUNTING_PERIOD_NOT_FOUND"]}
@@ -198,15 +205,32 @@ class OwnerWorkflowService:
                 "errors": ["WORKFORCE_REVIEW_SNAPSHOT_STALE"],
                 "current_snapshot_hash": snapshot["hash"],
             }
-        return self._confirm_period_fact(
+        source_snapshot = dict(snapshot["data"])
+        preparation = self._regular_payroll_preparation(
+            request.org_id,
+            period,
+            explicit_items=request.regular_payroll_items,
+            allow_prior_carry_forward=request.change_state == "no_change",
+        )
+        if preparation["status"] == "ready":
+            source_snapshot["regular_payroll_plan"] = {
+                "version": "regular_payroll_plan_v1",
+                "input_hash": preparation["input_hash"],
+                "source": preparation["source"],
+                "employee_items": preparation["employee_items"],
+            }
+        result = self._confirm_period_fact(
             request=request,
             period=period,
             fact_type="workforce_review",
             state=request.change_state,
             source_snapshot_hash=snapshot["hash"],
-            source_snapshot=snapshot["data"],
+            source_snapshot=source_snapshot,
             supersedes_id=request.supersedes_confirmation_id,
         )
+        if result.get("status") == "confirmed":
+            result["regular_payroll_preparation"] = preparation
+        return result
 
     def confirm_period_material_completeness(
         self, request: ConfirmPeriodMaterialCompletenessRequest
@@ -275,19 +299,14 @@ class OwnerWorkflowService:
         except ValueError as exc:
             return {"status": "rejected", "errors": [str(exc)]}
         totals = preview["calculation"]["totals"]
-        payment_status = {
-            "declared_paid": "paid",
-            "declared_unpaid": "unpaid",
-            "not_declared": "not_applicable",
-        }[request.declaration_status]
         row = PayrollContributionAssessmentConfirmation(
             org_id=request.org_id,
             period_id=period.id,
             contribution_period=self._period_month(period),
             declaration_status=request.declaration_status,
             declaration_date=request.declaration_date,
-            payment_status=payment_status,
-            payment_date=request.payment_date,
+            payment_status="not_tracked",
+            payment_date=None,
             external_reference=request.external_reference,
             calculation_hash=preview["calculation_hash"],
             calculation=preview["calculation"],
@@ -411,12 +430,9 @@ class OwnerWorkflowService:
         organization = self.session.get(Organization, request.org_id)
         if organization is None:
             return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
-        candidate = self._historical_completion_candidate(
-            organization, request.obligation_code
-        )
+        candidate = self._historical_completion_candidate(organization, request.obligation_code)
         if (
-            request.completion_through_identity
-            != candidate["completion_through_identity"]
+            request.completion_through_identity != candidate["completion_through_identity"]
             or request.source_snapshot_hash != candidate["source_snapshot_hash"]
         ):
             return {
@@ -498,9 +514,7 @@ class OwnerWorkflowService:
     ) -> dict[str, Any]:
         if self.session.get(Organization, request.org_id) is None:
             return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
-        payload_hash = self._request_hash(
-            "finance_confirm_organization_establishment", request
-        )
+        payload_hash = self._request_hash("finance_confirm_organization_establishment", request)
         replay = self._idempotent_replay(
             OrganizationEstablishmentConfirmation,
             request.org_id,
@@ -549,22 +563,28 @@ class OwnerWorkflowService:
             "verification_level": "evidence_attached" if evidence else "owner_confirmed",
         }
 
-    def close_gate_snapshot(
-        self, org_id: uuid.UUID, period: AccountingPeriod
-    ) -> dict[str, Any]:
+    def close_gate_snapshot(self, org_id: uuid.UUID, period: AccountingPeriod) -> dict[str, Any]:
+        organization = self.session.get(Organization, org_id)
+        if organization is None:
+            raise ValueError("ORGANIZATION_NOT_FOUND")
         workforce = self._workforce_snapshot(org_id, period)
-        workforce_fact = self._active_period_confirmation(
-            org_id, period.id, "workforce_review"
-        )
+        workforce_fact = self._active_period_confirmation(org_id, period.id, "workforce_review")
         workforce_current = bool(
-            workforce_fact is not None
-            and workforce_fact.source_snapshot_hash == workforce["hash"]
+            workforce_fact is not None and workforce_fact.source_snapshot_hash == workforce["hash"]
+        )
+        regular_payroll_preparation = self._regular_payroll_preparation(
+            org_id,
+            period,
+            workforce_fact=workforce_fact if workforce_current else None,
+            allow_prior_carry_forward=bool(
+                workforce_current
+                and workforce_fact is not None
+                and workforce_fact.confirmation_state == "no_change"
+            ),
         )
 
         material = self._material_snapshot(org_id, period)
-        material_fact = self._active_period_confirmation(
-            org_id, period.id, "non_bank_materials"
-        )
+        material_fact = self._active_period_confirmation(org_id, period.id, "non_bank_materials")
         material_current = bool(
             material_fact is not None and material_fact.source_snapshot_hash == material["hash"]
         )
@@ -583,6 +603,7 @@ class OwnerWorkflowService:
             assessment_current = bool(
                 assessment is not None
                 and assessment.calculation_hash == contribution["calculation_hash"]
+                and assessment.declaration_status != "not_declared"
             )
             payroll_match = self._posted_payroll_matches_contribution(
                 org_id, period, contribution["calculation"]
@@ -590,6 +611,25 @@ class OwnerWorkflowService:
             contribution_current = assessment_current and payroll_match["satisfied"]
         else:
             assessment_current = active_employee_count == 0
+
+        iit_source = self._posted_payroll_source_snapshot(org_id, period)
+        iit_obligation = (
+            self._iit_obligation(organization, period)
+            if iit_source["declared_line_count"]
+            else None
+        )
+        iit_confirmation = (
+            self._current_obligation_confirmation(iit_obligation)
+            if iit_obligation is not None
+            else None
+        )
+        iit_declaration_current = bool(
+            iit_obligation is None
+            or (
+                isinstance(iit_confirmation, ExternalObligationConfirmation)
+                and iit_confirmation.completion_status == "submitted"
+            )
+        )
 
         return {
             "version": OWNER_WORKFLOW_CLOSE_GATE_VERSION,
@@ -603,11 +643,22 @@ class OwnerWorkflowService:
                     "workforce_confirmation_id": (
                         str(workforce_fact.id) if workforce_current and workforce_fact else None
                     ),
+                    "regular_payroll_input_hash": regular_payroll_preparation.get("input_hash"),
                     "contribution_calculation_hash": contribution.get("calculation_hash"),
                     "contribution_confirmation_id": (
                         str(assessment.id) if assessment_current and assessment else None
                     ),
                     "payroll_batch_id": payroll_match["batch_id"],
+                    "individual_income_tax_obligation_hash": (
+                        iit_obligation["source_snapshot_hash"]
+                        if iit_obligation is not None
+                        else None
+                    ),
+                    "individual_income_tax_confirmation_id": (
+                        str(iit_confirmation.id)
+                        if iit_declaration_current and iit_confirmation
+                        else None
+                    ),
                     "material_snapshot_hash": material["hash"],
                     "material_confirmation_id": (
                         str(material_fact.id) if material_current and material_fact else None
@@ -633,6 +684,23 @@ class OwnerWorkflowService:
                     "payroll": payroll_match,
                     "missing_information": contribution["missing_information"],
                 },
+                "individual_income_tax_declaration": {
+                    "satisfied": iit_declaration_current,
+                    "applicable": iit_obligation is not None,
+                    "obligation_id": (
+                        iit_obligation["obligation_id"] if iit_obligation is not None else None
+                    ),
+                    "source_snapshot_hash": (
+                        iit_obligation["source_snapshot_hash"]
+                        if iit_obligation is not None
+                        else None
+                    ),
+                    "confirmation_id": (
+                        str(iit_confirmation.id)
+                        if iit_declaration_current and iit_confirmation
+                        else None
+                    ),
+                },
                 "non_bank_materials": {
                     "satisfied": material_current,
                     "source_snapshot_hash": material["hash"],
@@ -640,6 +708,7 @@ class OwnerWorkflowService:
                     "stale": material_fact is not None and not material_current,
                 },
             },
+            "regular_payroll_preparation": regular_payroll_preparation,
         }
 
     def _build_steps(
@@ -715,7 +784,10 @@ class OwnerWorkflowService:
         return self._incomplete(
             state="stale" if gate["stale"] else "incomplete",
             missing=["workforce_review"],
-            action="请确认本月是否有入离职、停薪、工资奖金、参保或基数变化。",
+            action=(
+                "请确认本月是否有入离职、停薪、工资奖金、个税扣除资料、参保或基数变化；"
+                "如无变化，内核将优先沿用本期已有方案或最近一期正式工资。"
+            ),
             close_gate=False,
         )
 
@@ -725,9 +797,6 @@ class OwnerWorkflowService:
         gate = gates["gates"]["contribution_accounting"]
         if gate["active_employee_count"] == 0:
             return self._not_applicable("本期没有适用员工。")
-        assessment = self._active_contribution_confirmation(
-            _organization.id, _period.id
-        )
         if gate["satisfied"]:
             proof = [
                 {
@@ -740,36 +809,21 @@ class OwnerWorkflowService:
                     "batch_id": gate["payroll"]["batch_id"],
                 },
             ]
-            if assessment is not None and assessment.declaration_status == "not_declared":
-                return self._incomplete(
-                    missing=["external_contribution_declaration"],
-                    action="会计计提已完成；请完成社保及公积金外部申报并确认结果。",
-                    close_gate=True,
-                ) | {"completion_proof": proof}
-            result = self._completed(proof)
-            if assessment is not None and assessment.declaration_status == "declared_unpaid":
-                deadline = self._next_month_deadline(_period.end_date)
-                result.update(
-                    {
-                        "attention_state": (
-                            "overdue" if self.today > deadline else "due"
-                        ),
-                        "deadline": deadline.isoformat(),
-                        "next_owner_action": (
-                            f"请在 {deadline.isoformat()} 前完成社保及公积金缴款。"
-                        ),
-                    }
-                )
-            return result
+            return self._completed(proof)
         if gate["missing_information"]:
             missing = [item["code"] for item in gate["missing_information"]]
             action = "请先补齐员工社保公积金档案或有效政策。"
         elif not gate["confirmation_current"]:
             missing = ["contribution_assessment_confirmation"]
-            action = "请确认本期社保及公积金申报核定结果。"
+            action = "请先完成本期社保及公积金申报，再确认申报日和最终核定金额。"
         else:
             missing = ["posted_regular_payroll_using_same_assessment"]
-            action = "核定金额已确认；请确认工资方案，内核将用同一核定快照完成计提。"
+            preparation = gates["regular_payroll_preparation"]
+            action = (
+                "社保公积金核定已确认；请确认按内核已有的本期工资方案直接完成计提。"
+                if preparation["status"] == "ready"
+                else "社保公积金核定已确认；内核尚无可复用工资方案，请确认建议的逐人工资金额。"
+            )
         return self._incomplete(missing=missing, action=action, close_gate=False)
 
     def _iit_step(
@@ -810,9 +864,7 @@ class OwnerWorkflowService:
             organization.id, uuid.UUID(obligation["source"]["period_id"])
         )
         assert obligation_period is not None
-        exports = self._period_exports(
-            organization.id, self._period_month(obligation_period)
-        )
+        exports = self._period_exports(organization.id, self._period_month(obligation_period))
         current_export = next((item for item in exports if item["current"]), None)
         deadline = date.fromisoformat(obligation["deadline"])
         action = (
@@ -889,11 +941,7 @@ class OwnerWorkflowService:
                 action=None,
                 ready=False,
             )
-        durable_blockers = [
-            code
-            for code, gate in gates["gates"].items()
-            if not gate["satisfied"]
-        ]
+        durable_blockers = [code for code, gate in gates["gates"].items() if not gate["satisfied"]]
         if durable_blockers:
             return self._incomplete(
                 state="waiting",
@@ -1005,9 +1053,7 @@ class OwnerWorkflowService:
     ) -> dict[str, Any]:
         establishment = self._establishment_date(organization.id)
         if establishment is None:
-            historical = self._active_historical_obligation_completion(
-                organization.id, code
-            )
+            historical = self._active_historical_obligation_completion(organization.id, code)
             candidate = self._historical_completion_candidate(organization, code)
             if historical is not None and self._scope_identity_rank(
                 historical.obligation_scope, historical.completion_through_identity
@@ -1021,9 +1067,7 @@ class OwnerWorkflowService:
                             "kind": "historical_obligation_completion_confirmation",
                             "confirmation_id": str(historical.id),
                             "obligation_code": historical.obligation_code,
-                            "completion_through_identity": (
-                                historical.completion_through_identity
-                            ),
+                            "completion_through_identity": (historical.completion_through_identity),
                             "completion_date_status": historical.completion_date_status,
                         }
                     ]
@@ -1036,8 +1080,7 @@ class OwnerWorkflowService:
         if not report_years:
             return self._not_applicable("公司尚未进入首个年度报告期。")
         obligations = [
-            self._annual_obligation(organization, code, report_year)
-            for report_year in report_years
+            self._annual_obligation(organization, code, report_year) for report_year in report_years
         ]
         pending = [
             obligation
@@ -1214,9 +1257,7 @@ class OwnerWorkflowService:
             "verification_level": "evidence_attached" if evidence else "owner_confirmed",
         }
 
-    def _workforce_snapshot(
-        self, org_id: uuid.UUID, period: AccountingPeriod
-    ) -> dict[str, Any]:
+    def _workforce_snapshot(self, org_id: uuid.UUID, period: AccountingPeriod) -> dict[str, Any]:
         finance = FinanceService(self.session)
         ym = YearMonth(period.calendar_year, period.calendar_month)
         employees = list(
@@ -1281,9 +1322,200 @@ class OwnerWorkflowService:
         }
         return {"hash": canonical_sha256(data), "data": data}
 
-    def _material_snapshot(
+    @staticmethod
+    def _normalize_regular_payroll_items(
+        items: list[PayrollEmployeeItem] | list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for value in items:
+            item = (
+                value
+                if isinstance(value, PayrollEmployeeItem)
+                else PayrollEmployeeItem.model_validate(value)
+            )
+            normalized.append(
+                {
+                    "employee_id": str(item.employee_id),
+                    "wage_tax_declaration_state": item.wage_tax_declaration_state.value,
+                    "tax_reported_salary_fen": item.tax_reported_salary_fen,
+                    "accounting_gross_salary_fen": item.accounting_gross_salary_fen,
+                    "tax_reporting_difference_reason": item.tax_reporting_difference_reason,
+                    "special_additional_deduction_fen": (item.special_additional_deduction_fen),
+                    "other_legal_deduction_fen": item.other_legal_deduction_fen,
+                    "tax_relief_fen": item.tax_relief_fen,
+                }
+            )
+        return sorted(normalized, key=lambda item: item["employee_id"])
+
+    def _regular_payroll_items_from_batch(self, batch: PayrollBatch) -> list[dict[str, Any]] | None:
+        request = batch.calculation_input.get("request")
+        if not isinstance(request, dict):
+            return None
+        raw_items = request.get("employee_items")
+        if not isinstance(raw_items, list) or not raw_items:
+            return None
+        try:
+            return self._normalize_regular_payroll_items(raw_items)
+        except (TypeError, ValueError):
+            return None
+
+    def _latest_regular_payroll_batch(
+        self,
+        org_id: uuid.UUID,
+        period: AccountingPeriod,
+        *,
+        current_period: bool,
+    ) -> PayrollBatch | None:
+        statement = select(PayrollBatch).where(
+            PayrollBatch.org_id == org_id,
+            PayrollBatch.batch_kind == "regular",
+            PayrollBatch.reversal_of_batch_id.is_(None),
+        )
+        if current_period:
+            statement = statement.where(
+                PayrollBatch.payroll_period == self._period_month(period),
+                PayrollBatch.status.in_(("calculated", "posted")),
+            )
+        else:
+            statement = statement.where(
+                PayrollBatch.payroll_period < self._period_month(period),
+                PayrollBatch.status == "posted",
+            )
+        return self.session.scalar(
+            statement.order_by(
+                PayrollBatch.payroll_period.desc(),
+                PayrollBatch.version.desc(),
+                PayrollBatch.created_at.desc(),
+                PayrollBatch.id.desc(),
+            ).limit(1)
+        )
+
+    def _active_regular_payroll_employee_ids(
         self, org_id: uuid.UUID, period: AccountingPeriod
+    ) -> set[str]:
+        return {
+            str(employee_id)
+            for employee_id in self.session.scalars(
+                select(Employee.id).where(
+                    Employee.org_id == org_id,
+                    Employee.status == "active",
+                    Employee.employment_start_date <= period.end_date,
+                    (
+                        Employee.employment_end_date.is_(None)
+                        | (Employee.employment_end_date >= period.start_date)
+                    ),
+                )
+            ).all()
+        }
+
+    def _regular_payroll_preparation(
+        self,
+        org_id: uuid.UUID,
+        period: AccountingPeriod,
+        *,
+        workforce_fact: OwnerPeriodConfirmation | None = None,
+        explicit_items: list[PayrollEmployeeItem] | None = None,
+        allow_prior_carry_forward: bool = False,
     ) -> dict[str, Any]:
+        """Resolve monthly wage inputs from durable facts before asking the owner again."""
+
+        expected_employee_ids = self._active_regular_payroll_employee_ids(org_id, period)
+        if not expected_employee_ids:
+            return {
+                "status": "not_applicable",
+                "source": "no_active_employees",
+                "input_hash": None,
+                "employee_items": [],
+                "batch": None,
+                "missing_information": [],
+            }
+
+        items: list[dict[str, Any]] | None = None
+        source: str | None = None
+        batch_payload: dict[str, Any] | None = None
+        if explicit_items is not None:
+            items = self._normalize_regular_payroll_items(explicit_items)
+            source = "owner_confirmed_monthly_plan"
+        else:
+            current_batch = self._latest_regular_payroll_batch(org_id, period, current_period=True)
+            if current_batch is not None:
+                items = self._regular_payroll_items_from_batch(current_batch)
+                if items is not None:
+                    source = f"current_{current_batch.status}_batch"
+                    batch_payload = {
+                        "batch_id": str(current_batch.id),
+                        "status": current_batch.status,
+                        "calculation_hash": current_batch.calculation_hash,
+                    }
+            if items is None and workforce_fact is not None:
+                plan = workforce_fact.source_snapshot.get("regular_payroll_plan")
+                raw_items = plan.get("employee_items") if isinstance(plan, dict) else None
+                if isinstance(raw_items, list) and raw_items:
+                    try:
+                        items = self._normalize_regular_payroll_items(raw_items)
+                    except (TypeError, ValueError):
+                        items = None
+                    if items is not None:
+                        source = "persisted_workforce_confirmation"
+            if items is None and allow_prior_carry_forward:
+                prior_batch = self._latest_regular_payroll_batch(
+                    org_id, period, current_period=False
+                )
+                if prior_batch is not None:
+                    items = self._regular_payroll_items_from_batch(prior_batch)
+                    if items is not None:
+                        source = "prior_posted_payroll_carry_forward"
+                        batch_payload = {
+                            "batch_id": str(prior_batch.id),
+                            "status": prior_batch.status,
+                            "calculation_hash": prior_batch.calculation_hash,
+                            "payroll_period": prior_batch.payroll_period,
+                        }
+
+        actual_employee_ids = (
+            {item["employee_id"] for item in items} if items is not None else set()
+        )
+        if items is None or actual_employee_ids != expected_employee_ids:
+            return {
+                "status": "needs_information",
+                "source": source,
+                "input_hash": None,
+                "employee_items": items or [],
+                "batch": batch_payload,
+                "missing_information": [
+                    {
+                        "code": "REGULAR_PAYROLL_MONTHLY_INPUT_REQUIRED",
+                        "fields": ["regular_payroll_items"],
+                        "message": (
+                            "本期没有覆盖全部在职员工的可复用工资方案；只需确认内核根据"
+                            "现有资料整理出的逐人工资建议是否正确。"
+                        ),
+                    }
+                ],
+            }
+        input_hash = canonical_sha256(
+            {
+                "version": "regular_payroll_plan_v1",
+                "payroll_period": self._period_month(period),
+                "employee_items": items,
+            }
+        )
+        return {
+            "status": "ready",
+            "source": source,
+            "input_hash": input_hash,
+            "employee_items": items,
+            "batch": batch_payload,
+            "missing_information": [],
+            "regular_payroll_request_defaults": {
+                "batch_kind": "regular",
+                "payroll_period": self._period_month(period),
+                "posting_date": period.end_date.isoformat(),
+                "payment_date": "omit_for_regular_payroll",
+            },
+        }
+
+    def _material_snapshot(self, org_id: uuid.UUID, period: AccountingPeriod) -> dict[str, Any]:
         events = list(
             self.session.scalars(
                 select(BusinessEvent)
@@ -1335,9 +1567,7 @@ class OwnerWorkflowService:
         }
         return {"hash": canonical_sha256(data), "data": data}
 
-    def _contribution_snapshot(
-        self, org_id: uuid.UUID, period: AccountingPeriod
-    ) -> dict[str, Any]:
+    def _contribution_snapshot(self, org_id: uuid.UUID, period: AccountingPeriod) -> dict[str, Any]:
         finance = FinanceService(self.session)
         ym = YearMonth(period.calendar_year, period.calendar_month)
         employees = list(
@@ -1466,7 +1696,7 @@ class OwnerWorkflowService:
             "employees": calculation_rows,
             "totals": totals,
             "source_urls": [
-                *( [policy.source_url] if policy else [] ),
+                *([policy.source_url] if policy else []),
                 _SOCIAL_SOURCE_URL,
             ],
         }
@@ -1512,9 +1742,7 @@ class OwnerWorkflowService:
                 .order_by(PayrollLine.employee_id, PayrollLine.id)
             )
         )
-        expected_employees = {
-            row["employee_id"]: row for row in calculation["employees"]
-        }
+        expected_employees = {row["employee_id"]: row for row in calculation["employees"]}
         actual_employees = {str(line.employee_id): line for line in lines}
         profile_match = set(expected_employees) == set(actual_employees) and all(
             str(actual_employees[employee_id].employee_payroll_profile_version_id)
@@ -1522,9 +1750,7 @@ class OwnerWorkflowService:
             for employee_id, row in expected_employees.items()
         )
         expected_actual_ids = {
-            item_id
-            for row in calculation["employees"]
-            for item_id in row["actual_item_ids"]
+            item_id for row in calculation["employees"] for item_id in row["actual_item_ids"]
         }
         used_actual_ids = {
             str(item_id)
@@ -1645,9 +1871,7 @@ class OwnerWorkflowService:
             for row in rows
         ]
 
-    def _historical_completion_candidates(
-        self, organization: Organization
-    ) -> list[dict[str, Any]]:
+    def _historical_completion_candidates(self, organization: Organization) -> list[dict[str, Any]]:
         return [
             self._historical_completion_candidate(organization, code)
             for code in (
@@ -1672,9 +1896,7 @@ class OwnerWorkflowService:
             "annual_business_report",
         }:
             obligation_scope = "year"
-            deadline_month_day = (
-                (5, 31) if code == "annual_enterprise_income_tax" else (6, 30)
-            )
+            deadline_month_day = (5, 31) if code == "annual_enterprise_income_tax" else (6, 30)
             latest_report_year = self.today.year - 1
             if self.today <= date(self.today.year, *deadline_month_day):
                 latest_report_year -= 1
@@ -1887,8 +2109,7 @@ class OwnerWorkflowService:
 
     @staticmethod
     def _obligation_completion_proof(
-        confirmation: ExternalObligationConfirmation
-        | HistoricalObligationCompletionConfirmation,
+        confirmation: ExternalObligationConfirmation | HistoricalObligationCompletionConfirmation,
         obligation: dict[str, Any],
     ) -> dict[str, Any]:
         if isinstance(confirmation, HistoricalObligationCompletionConfirmation):
@@ -1949,9 +2170,7 @@ class OwnerWorkflowService:
             .limit(1)
         )
 
-    def _period_for_org(
-        self, org_id: uuid.UUID, period_id: uuid.UUID
-    ) -> AccountingPeriod | None:
+    def _period_for_org(self, org_id: uuid.UUID, period_id: uuid.UUID) -> AccountingPeriod | None:
         return self.session.scalar(
             select(AccountingPeriod).where(
                 AccountingPeriod.org_id == org_id,
@@ -2003,8 +2222,7 @@ class OwnerWorkflowService:
                 PayrollContributionAssessmentConfirmation.period_id == period_id,
                 ~exists(
                     select(successor.id).where(
-                        successor.supersedes_id
-                        == PayrollContributionAssessmentConfirmation.id
+                        successor.supersedes_id == PayrollContributionAssessmentConfirmation.id
                     )
                 ),
             )
@@ -2047,12 +2265,10 @@ class OwnerWorkflowService:
             select(HistoricalObligationCompletionConfirmation)
             .where(
                 HistoricalObligationCompletionConfirmation.org_id == org_id,
-                HistoricalObligationCompletionConfirmation.obligation_code
-                == obligation_code,
+                HistoricalObligationCompletionConfirmation.obligation_code == obligation_code,
                 ~exists(
                     select(successor.id).where(
-                        successor.supersedes_id
-                        == HistoricalObligationCompletionConfirmation.id
+                        successor.supersedes_id == HistoricalObligationCompletionConfirmation.id
                     )
                 ),
             )
@@ -2104,9 +2320,7 @@ class OwnerWorkflowService:
 
     @staticmethod
     def _request_hash(command: str, request: Any) -> str:
-        return canonical_sha256(
-            {"command": command, "request": request.model_dump(mode="json")}
-        )
+        return canonical_sha256({"command": command, "request": request.model_dump(mode="json")})
 
     def _idempotent_replay(
         self,

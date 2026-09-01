@@ -95,7 +95,7 @@ from .tax import calculate_tax_period
 
 _BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.8"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.2"
-_CLOSE_OBLIGATION_POLICY_VERSION = "accounting_period_close_obligations_2026.1"
+_CLOSE_OBLIGATION_POLICY_VERSION = "accounting_period_close_obligations_2026.2"
 _PAYROLL_SETTLEMENT_CATEGORIES = (
     "salary",
     "employer_social",
@@ -244,24 +244,45 @@ class AccountingPeriodService:
     def _payroll_settlement_counts_as_of(
         self, org_id: uuid.UUID, period_end: date
     ) -> dict[str, Any]:
-        """Split unpaid payroll liabilities by whether their frozen due date has arrived.
+        """Classify payroll liabilities without inventing an accrual-time payment date.
 
-        Outstanding cash settlement is a mandatory close review, not an accounting
-        recognition blocker: a correctly accrued salary or statutory liability may
-        remain payable after month end.  Imported payment evidence is still enforced
-        through the bank reconciliation close gates.
+        Regular salary and statutory liabilities created by ``payroll_accrual`` stay
+        open until a later bank/payment event settles them.  Their lack of a due date
+        is intentional and must not become an owner question or month-close review.
+        Imported payment evidence remains enforced by the bank reconciliation gates.
         """
 
         result: dict[str, Any] = {
             "due": {"count": 0, "remaining_fen": 0, "categories": {}},
             "not_due": {"count": 0, "remaining_fen": 0, "categories": {}},
             "due_date_missing": {"count": 0, "remaining_fen": 0, "categories": {}},
+            "awaiting_bank_settlement": {
+                "count": 0,
+                "remaining_fen": 0,
+                "categories": {},
+            },
         }
-        for item, remaining in self._outstanding_open_items_as_of(org_id, period_end):
+        open_rows = self._outstanding_open_items_as_of(org_id, period_end)
+        source_event_ids = {item.source_event_id for item, _remaining in open_rows}
+        source_event_types = (
+            dict(
+                self.session.execute(
+                    select(BusinessEvent.id, BusinessEvent.event_type).where(
+                        BusinessEvent.org_id == org_id,
+                        BusinessEvent.id.in_(source_event_ids),
+                    )
+                ).all()
+            )
+            if source_event_ids
+            else {}
+        )
+        for item, remaining in open_rows:
             category = item.payable_category
             if category not in _PAYROLL_SETTLEMENT_CATEGORIES:
                 continue
-            if item.due_date is None:
+            if source_event_types.get(item.source_event_id) == "payroll_accrual":
+                bucket_name = "awaiting_bank_settlement"
+            elif item.due_date is None:
                 bucket_name = "due_date_missing"
             elif item.due_date <= period_end:
                 bucket_name = "due"
@@ -996,12 +1017,9 @@ class AccountingPeriodService:
         if owner_workflow_close_gates["enforced_for_period"]:
             workflow_gate_codes = {
                 "workforce_review": "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT",
-                "contribution_accounting": (
-                    "ACCOUNTING_PERIOD_CONTRIBUTION_ASSESSMENT_CURRENT"
-                ),
-                "non_bank_materials": (
-                    "ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT"
-                ),
+                "contribution_accounting": ("ACCOUNTING_PERIOD_CONTRIBUTION_ASSESSMENT_CURRENT"),
+                "individual_income_tax_declaration": ("ACCOUNTING_PERIOD_IIT_DECLARATION_CURRENT"),
+                "non_bank_materials": ("ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT"),
             }
             for gate_name, code in workflow_gate_codes.items():
                 gate = owner_workflow_close_gates["gates"][gate_name]
@@ -1117,7 +1135,9 @@ class AccountingPeriodService:
             ),
             "principles": {
                 "normalized_accounting_recognition": "hard_blocker",
-                "cash_settlement_that_may_cross_periods": "mandatory_review",
+                "cash_settlement_that_may_cross_periods": (
+                    "later_bank_statement_and_typed_payment_event"
+                ),
                 "observed_bank_activity": "hard_bank_reconciliation_gate",
                 "externally_unknown_activity": "owner_completeness_confirmation",
             },
@@ -1748,7 +1768,6 @@ class AccountingPeriodService:
             or (active_employees and not regular_payroll_batches)
             or unapplied_contribution_actual_rows
             or module_checks["payroll"]["count"]
-            or module_checks["payroll_settlements"]["count"]
         )
         labor_attention = bool(
             module_checks["labor_remuneration"]["count"]
@@ -1762,8 +1781,8 @@ class AccountingPeriodService:
         )
         open_item_total_count = sum(item["count"] for item in open_item_counts.values())
         workforce_question = (
-            "本月是否有新入职、离职、停薪，或工资奖金、社保公积金参保及缴费基数变化？"
-            "没有请直接回复“无变化”。"
+            "本月是否有新入职、离职、停薪，或工资奖金、个税扣除资料、社保公积金参保及"
+            "缴费基数变化？没有请直接回复“无变化”。"
         )
         payroll_settlement_status = module_checks["payroll_settlements"]["status"]
         payroll_settlement_categories = {
@@ -1787,11 +1806,6 @@ class AccountingPeriodService:
             or payroll_batches
             or "individual_income_tax" in payroll_settlement_categories
         )
-        overdue_salary_count = sum(
-            payroll_settlement_status[bucket]["categories"].get("salary", {}).get("count", 0)
-            for bucket in ("due", "due_date_missing")
-        )
-
         items = [
             {
                 "code": "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION",
@@ -1924,8 +1938,7 @@ class AccountingPeriodService:
                     f"{len(active_employees)} 份当月有效员工档案、"
                     f"{len(hires_in_period)} 名当月开始按员工工资核算、"
                     f"{len(payroll_batches)} 个工资批次；"
-                    f"截至月末有 {module_checks['payroll_settlements']['count']} 项"
-                    "已到期或缺少到期日的工资及法定款项尚未结清；"
+                    "工资及法定款项实际支付由后续银行流水核销，不要求在本月关账前提供支付日；"
                     "系统记录不能证明没有尚未登记的人员变化，仍需负责人确认。"
                 ),
                 "system_facts": {
@@ -1974,7 +1987,9 @@ class AccountingPeriodService:
                     "individual_income_tax_confirmation_required": (
                         individual_income_tax_confirmation_required
                     ),
-                    "overdue_or_undated_salary_count": overdue_salary_count,
+                    "payroll_cash_settlement_tracking": (
+                        "later_bank_statement_and_typed_payment_event"
+                    ),
                     "owner_workflow_question_codes": [
                         "WORKFORCE_AND_PAY_CHANGES",
                         *(
@@ -2024,24 +2039,18 @@ class AccountingPeriodService:
                         else []
                     ),
                     *(
-                        ["本月社保及公积金（如有）目前是“已申报已缴”、“已申报未缴”还是“尚未申报”？"]
+                        [
+                            "本月社保及公积金申报是否已经完成？只需确认申报结果，不需要提供缴款状态或日期。"
+                        ]
                         if social_confirmation_required
                         else []
                     ),
                     *(
                         [
-                            "本月个税全员全额扣缴申报目前是“已申报已缴”、"
-                            "“已申报有税未缴”还是“尚未申报”？"
+                            "本月个税全员全额扣缴申报是否已经完成？只需确认申报结果，"
+                            "不需要提供缴款状态或日期。"
                         ]
                         if individual_income_tax_confirmation_required
-                        else []
-                    ),
-                    *(
-                        [
-                            f"系统有 {overdue_salary_count} 笔工资负债已到期或缺少到期日；"
-                            "请说明是确实未付，还是已付但流水或核销尚未入账。"
-                        ]
-                        if overdue_salary_count
                         else []
                     ),
                 ],
@@ -2266,9 +2275,9 @@ class AccountingPeriodService:
                     "工资计提、折旧、摊销、借款计息等可由规范事实确定的会计确认事项"
                     "未完成时，内核拒绝关账。"
                 ),
-                "mandatory_review": (
-                    "工资及法定款项的现金结算允许跨月；到期未结项必须明确复核，但确实未付"
-                    "不会被伪装成付款，也不会因为仍是有效负债而阻止正确关账。"
+                "cash_settlement_follow_up": (
+                    "工资及法定款项的现金结算允许跨月；常规计提不要求预计支付日，实际支付"
+                    "由后续银行流水和类型化付款事件记录，不作为上月关账人工复核项。"
                 ),
             },
             "schedule": {
@@ -2309,8 +2318,8 @@ class AccountingPeriodService:
                 "若已导入次月银行流水，AI 必须先逐笔核对入账款是否属于本月已履约收入，"
                 "不得把次月到账默认当作次月收入；"
                 "不得仅因数据库无记录而代填没有员工、工资、税务、资产或其他业务；"
-                "工资结算复核必须区分尚未到付款日、确实未付和已付未入账；不得为通过关账"
-                "虚构现金支付；"
+                "常规工资及法定款项的实际支付由后续银行流水和类型化付款事件记录；不得在"
+                "计提时索要或虚构支付日，也不得为通过关账虚构现金支付；"
                 "不得向负责人展示 not_due 项的问题，季度和年度事项只在 schedule 指定月份触发。"
             ),
             "completed_count": sum(item["completed"] for item in items),
@@ -2549,17 +2558,11 @@ class AccountingPeriodService:
             },
             "payroll_settlements": {
                 "code": "ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW",
-                "count": (
-                    payroll_settlements["due"]["count"]
-                    + payroll_settlements["due_date_missing"]["count"]
-                ),
-                "remaining_fen": (
-                    payroll_settlements["due"]["remaining_fen"]
-                    + payroll_settlements["due_date_missing"]["remaining_fen"]
-                ),
+                "count": 0,
+                "remaining_fen": 0,
                 "blocking": False,
-                "enforcement": "mandatory_review",
-                "obligation": "payroll_cash_settlement",
+                "enforcement": "bank_statement_follow_up",
+                "obligation": "later_payroll_cash_settlement",
                 "status": payroll_settlements,
             },
             "labor_remuneration": {

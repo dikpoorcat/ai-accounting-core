@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v24"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v26"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.9"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -22,11 +23,12 @@ COMMUNICATION_RUNTIME_INSTRUCTION = (
     "通用开场和阶段切换时只突出一个负责人当前动作，并附按固定月度流程排序的完整待办清单"
     "队列；不得把相邻步骤合并成一个大问题。队列只列负责人需要提供、确认或在外部办理的"
     "事项，不报告AI自身的核对、计算、入账或工具调用。"
-    "首条队列必须一次性展示固定流程的全部提醒及已知期限，排序只决定当前追问，不得把后续"
-    "事项隐藏到前一步完成之后。每行只使用一个状态符号：✅已完成、🔄当前、⏰到期或逾期、"
-    "⬜待办、➖本期无；不再附加方括号状态文字。"
-    "凡普通会计回复中出现“下一步：”，必须在其正下方立即附完整九项“待办清单”队列；完成"
-    "具体业务后转入下一事项也不例外，不得只输出孤立的下一步问题。"
+    "队列始终展示月结主流程第1至6项；第7至9项仅在当前确有待办、到期、逾期或等待关账的"
+    "外部义务时展示，已完成或当前不适用时隐藏。出现的提醒必须一次性展示，排序只决定当前"
+    "追问，不得把活跃的后续义务隐藏到前一步完成之后。每行只使用一个状态符号：✅已完成、"
+    "🔄当前、⏰到期或逾期、⬜待办、➖本期无；不再附加方括号状态文字。"
+    "凡普通会计回复中出现“下一步：”，必须在其正下方立即附finance_get_owner_workflow返回的"
+    "完整queue_steps；完成具体业务后转入下一事项也不例外，不得只输出孤立的下一步问题。"
     "正常完成时使用业务语言说明公司、事项、金额、入账日期和结果；除非负责人要求审计细节，"
     "不展示原始JSON、科目借贷行或内部UUID。稳定错误码应保留在简明中文解释后。"
     "返回needs_information时，先完成AI能够自行完成的核对和推理；如存在一个有证据支持的最可能"
@@ -39,9 +41,10 @@ OWNER_WORKFLOW_RUNTIME_INSTRUCTION = (
     "票据及非银行业务；关账确认；税费申报及财务报表；企业所得税年度汇算清缴；工商年报。"
     "每次进入会计操作模式和每次写入后都调用finance_get_owner_workflow；清单符号、完成状态、"
     "期限、当前动作和关账门禁只能使用该工具返回值，不得从聊天记忆或提示词自行推断。"
-    "九项必须一次性完整展示，排序只决定当前追问；等待关账的报表和尚未到期的年度义务也"
-    "不能隐藏。工资及社保公积金计提是关账义务，正常次月实发和外部缴款不是关上月账的"
-    "直接前置条件。"
+    "展示必须逐行复制工具返回的queue_steps：第1至6项固定展示，第7至9项只有需要负责人注意"
+    "时才出现；不得自行从完整steps增删或重新编号。所有当前活跃提醒必须一次性展示，排序只"
+    "决定当前追问。社保公积金和个人所得税必须先完成外部申报并核对申报值，再进入后续关账步骤；"
+    "工资及社保公积金计提是关账义务，正常次月实发和实际缴款不是关上月账的直接前置条件。"
 )
 
 HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION = (
@@ -53,12 +56,19 @@ HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION = (
 )
 
 PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION = (
-    "第2项只确认新入职、离职、停薪、工资奖金、参保和缴费基数变化。老板确认后必须调用"
+    "第2项确认新入职、离职、停薪、工资奖金、个税扣除资料、参保和缴费基数变化。老板确认后必须调用"
     "finance_confirm_workforce_review绑定内核返回的人员快照；不得要求工资已过账才完成第2项。"
-    "第3项先调用finance_preview_payroll_contribution_assessment；外部申报与政策不一致时先登记"
-    "实际数，再调用finance_confirm_payroll_contribution_assessment绑定同一核定快照，随后使用"
-    "同一快照完成工资及单位社保公积金计提。申报事实当前且正式工资批次使用同一快照后第3项"
-    "完成。已申报未缴可以完成第3项，缴款期限继续提醒但不重新打开会计计提门禁。"
+    "调用前先读取finance_get_owner_workflow.regular_payroll_preparation：存在本期工资草稿、"
+    "本期持久化方案或老板已确认无变化且可沿用最近正式工资时，直接复用逐人工资事实，不得"
+    "跨会话再次询问金额。只有该字段明确返回needs_information时，才把内核整理的一个完整工资"
+    "建议交老板确认或纠正。常规工资按payroll_period计提，finance_preview_payroll不得要求或"
+    "发送payment_date；实际发薪日期只由次月银行流水及工资付款事件记录。只有实际支付日决定"
+    "个税所属期的年终奖批次保留payment_date。"
+    "第3项先调用finance_preview_payroll_contribution_assessment供外部申报核对；申报值与政策数"
+    "不一致时先登记实际数。外部申报完成后，只用申报日和最终核定金额调用"
+    "finance_confirm_payroll_contribution_assessment绑定同一核定快照，随后使用同一快照完成工资"
+    "及单位社保公积金计提。不得询问或提交缴款状态、缴款日期；实际缴款以后由发生月份的银行"
+    "流水和类型化付款事件核销。申报事实当前且正式工资批次使用同一快照后第3项完成。"
 )
 
 PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION = (
@@ -71,8 +81,10 @@ PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION = (
     "操作系统当前用户桌面已知目录而非硬编码路径，将返回file_name复制到桌面；新会话先复用"
     "finance_get_owner_workflow返回的当前导出记录，同名同哈希视为"
     "幂等成功，同名不同内容不得覆盖。只向老板报告桌面文件名、行数和去税务客户端导入核对的"
-    "下一动作，不在聊天中展示证件号码。文件生成不等于已申报或已缴款，第4项在老板确认外部"
-    "结果前保持🔄。返回needs_information时先继续核对历史同公司导出和已有材料，再按交流策略"
+    "下一动作，不在聊天中展示证件号码。文件生成不等于已申报；第4项只在老板确认外部申报日"
+    "后完成，不得询问缴款状态或缴款日期。实际个税缴款以后由发生月份的银行流水和"
+    "individual_income_tax_payment事件核销。返回needs_information时先继续核对历史同公司导出"
+    "和已有材料，再按交流策略"
     "只追问真正缺少的员工事实，不得擅自补零。只有劳务报酬等非工资扣缴情形时不得误用该工具。"
 )
 
@@ -146,10 +158,11 @@ CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
     "关账必须以 finance_preview_accounting_period_close 返回的内核义务为准：工资计提、"
     "固定资产折旧、无形资产摊销、借款利息和其他已由规范事实确定的月末会计确认事项属于"
     "硬阻断，未完成不得关账。人员复核、社保核定及工资计提、非银行材料完整性必须使用"
-    "finance_get_owner_workflow返回的持久化门禁，最终请求里的review_facts不能替代。工资及"
-    "社保公积金个税的现金结算和外部申报允许跨月；已到期未结项必须"
-    "逐项复核是确实未付还是已付未入账，并提交独立的 payroll_settlements_reviewed 事实，"
-    "不得为通过关账虚构付款。已有银行付款证据仍由流水匹配和对账硬门禁约束。"
+    "finance_get_owner_workflow返回的持久化门禁，最终请求里的review_facts不能替代。社保公积金"
+    "和个人所得税的申报值核对在关账流程前完成；工资、社保公积金和个税的现金结算允许跨月。"
+    "常规计提不要求预计或实际支付日，也不要求独立的工资结算复核；实际付款只在后续银行"
+    "流水出现时通过类型化付款事件核销，不得为通过关账虚构付款。已有银行付款证据仍由流水"
+    "匹配和对账硬门禁约束。"
 )
 
 MCP_SERVER_INSTRUCTIONS = (
@@ -235,7 +248,8 @@ def agent_operating_protocol() -> dict[str, Any]:
             },
             "owner_action_view": {
                 "current_action_count": 1,
-                "queue_length": "all_fixed_workflow_steps",
+                "queue_length": "core_steps_1_to_6_plus_active_steps_7_to_9",
+                "queue_source": "finance_get_owner_workflow.queue_steps",
                 "next_action_requires_queue": True,
                 "queue_position": "immediately_after_next_action",
                 "queue_status_display": {
@@ -263,10 +277,14 @@ def agent_operating_protocol() -> dict[str, Any]:
             "stable_error_code": "append_after_plain_chinese_explanation",
         },
         "owner_workflow": {
-            "version": "owner_monthly_workflow_cn_2026.7",
+            "version": OWNER_WORKFLOW_VERSION,
             "status_source": "finance_get_owner_workflow",
             "selection_rule": "earliest_ready_incomplete_step_skip_waiting_dependencies",
-            "visibility_rule": "show_all_fixed_steps_and_known_deadlines_immediately",
+            "visibility_rule": (
+                "always_show_steps_1_to_6_and_show_steps_7_to_9_only_while_attention_required"
+            ),
+            "display_source": "queue_steps",
+            "internal_status_source": "steps",
             "state_fields": [
                 "completion_state",
                 "attention_state",
@@ -291,14 +309,21 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "label": "员工及工资变动",
                     "applicability": "always",
                     "question": (
-                        "本月是否有新入职、离职、停薪，或工资奖金、社保公积金参保及缴费"
-                        "基数变化？没有请直接回复“无变化”。"
+                        "本月是否有新入职、离职、停薪，或工资奖金、个税扣除资料、社保"
+                        "公积金参保及缴费基数变化？没有请直接回复“无变化”。"
                     ),
                     "completion_gate": {
                         "typed_fact": "finance_confirm_workforce_review",
                         "snapshot": "current_workforce_snapshot_hash",
                         "regular_payroll_required": False,
+                        "monthly_payroll_input_persistence": (
+                            "reuse_current_draft_or_persisted_plan_or_prior_posted_when_no_change"
+                        ),
                     },
+                    "payroll_preparation_source": (
+                        "finance_get_owner_workflow.regular_payroll_preparation"
+                    ),
+                    "regular_payroll_payment_date": "omit_track_later_from_bank_payment_event",
                     "owner_answer_alone_completes_step": False,
                 },
                 {
@@ -306,7 +331,7 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "code": "SOCIAL_INSURANCE_AND_HOUSING_FUND",
                     "label": "社保及公积金",
                     "applicability": "employees_contribution_facts_or_statutory_payable",
-                    "status_choices": ["已申报已缴", "已申报未缴", "尚未申报"],
+                    "status_choices": ["已申报", "尚未申报"],
                     "preview_tool": "finance_preview_payroll_contribution_assessment",
                     "confirmation_tool": "finance_confirm_payroll_contribution_assessment",
                     "accounting_close_gate": (
@@ -315,17 +340,16 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "row_completion_gate": (
                         "accounting_close_gate_and_external_declaration_confirmed"
                     ),
-                    "not_declared_amount_confirmation": (
-                        "may_satisfy_accounting_close_gate_but_keeps_row_incomplete"
-                    ),
-                    "declared_unpaid_completes_accounting_step": True,
+                    "confirmation_fields": ["declaration_date", "declared_amount_snapshot"],
+                    "payment_tracking": "later_bank_statement_only_not_owner_workflow_input",
+                    "not_declared_behavior": "keep_current_without_persisting_completion",
                 },
                 {
                     "order": 4,
                     "code": "INDIVIDUAL_INCOME_TAX_WITHHOLDING",
                     "label": "个人所得税",
                     "applicability": "payroll_labor_or_withholding_obligation",
-                    "status_choices": ["已申报已缴", "已申报有税未缴", "尚未申报"],
+                    "status_choices": ["已申报", "尚未申报"],
                     "payroll_import_tool": "finance_generate_payroll_tax_import",
                     "pre_entry_gate": "contribution_accounting_close_gate_satisfied",
                     "if_expected_payroll_unposted": {
@@ -353,6 +377,9 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "generation_is_external_declaration": False,
                     "export_record_is_persistent": True,
                     "remains_current_until": "owner_confirms_external_declaration_status",
+                    "declaration_close_gate": "current_external_submission_confirmation",
+                    "completion_date_semantics": "external_declaration_date_not_payment_date",
+                    "payment_tracking": "later_bank_statement_only_not_owner_workflow_input",
                 },
                 {
                     "order": 5,
