@@ -119,9 +119,7 @@ class _LateWarningSession:
                 return _WarningRows([self.transaction])
             return _WarningRows([])
         if "FROM late_bank_evidence_actions" in rendered:
-            return _WarningRows(
-                [self.action] if self.direct_event_status is not None else []
-            )
+            return _WarningRows([self.action] if self.direct_event_status is not None else [])
         return _WarningRows([])
 
     def get(self, model: type[object], identity: object) -> object | None:
@@ -367,15 +365,11 @@ def test_payroll_cash_settlement_is_due_review_not_a_false_close_blocker() -> No
         },
     )
     payroll_item = next(
-        item
-        for item in checklist["items"]
-        if item["code"] == "MONTH_END_PEOPLE_PAYROLL_STATUTORY"
+        item for item in checklist["items"] if item["code"] == "MONTH_END_PEOPLE_PAYROLL_STATUTORY"
     )
     assert payroll_item["state"] == "needs_attention"
-    assert payroll_item["system_facts"]["payroll_settlement_enforcement"] == (
-        "mandatory_review"
-    )
-    assert any("确实尚未支付" in question for question in payroll_item["owner_questions"])
+    assert payroll_item["system_facts"]["payroll_settlement_enforcement"] == ("mandatory_review")
+    assert any("确实未付" in question for question in payroll_item["owner_questions"])
 
 
 def test_open_item_review_uses_period_end_snapshot_not_current_status() -> None:
@@ -457,8 +451,9 @@ def test_open_item_review_uses_period_end_snapshot_not_current_status() -> None:
     assert counts == {"payable": {"count": 1, "remaining_fen": 10_000}}
 
 
-def test_pending_late_bank_warning_continues_each_later_month_and_direct_reversal_restores_it(
-) -> None:
+def test_pending_late_bank_warning_continues_each_later_month_and_direct_reversal_restores_it() -> (
+    None
+):
     session = _LateWarningSession()
     service = AccountingPeriodService(  # type: ignore[arg-type]
         session,
@@ -539,13 +534,13 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
 
     assert preview.status is AccountingPeriodResultStatus.CALCULATED
     checklist = preview.data["assistant_review_checklist"]
-    assert checklist["version"] == "periodic_assistant_review_v3"
+    assert checklist["version"] == "periodic_assistant_review_v4"
     assert checklist["close_obligation_policy"]["version"] == (
         "accounting_period_close_obligations_2026.1"
     )
-    assert preview.data["calculation"]["close_obligation_policy"][
-        "mandatory_review_codes"
-    ] == ["ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW"]
+    assert preview.data["calculation"]["close_obligation_policy"]["mandatory_review_codes"] == [
+        "ACCOUNTING_PERIOD_PAYROLL_SETTLEMENT_REVIEW"
+    ]
     assert checklist["period_month"] == "2026-03"
     assert [item["code"] for item in checklist["items"]] == [
         "MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION",
@@ -561,12 +556,19 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     assert item_by_code["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"]["state"] == (
         "owner_confirmation_required"
     )
-    assert item_by_code["MONTH_END_FIXED_ASSETS"]["state"] == (
-        "owner_confirmation_required"
-    )
+    assert item_by_code["MONTH_END_FIXED_ASSETS"]["state"] == ("owner_confirmation_required")
     assert item_by_code["MONTH_END_PEOPLE_PAYROLL_STATUTORY"]["state"] == (
         "owner_confirmation_required"
     )
+    assert item_by_code["MONTH_END_PEOPLE_PAYROLL_STATUTORY"]["completed"] is False
+    assert any(
+        "新入职、离职、停薪" in question
+        for question in item_by_code["MONTH_END_PEOPLE_PAYROLL_STATUTORY"]["owner_questions"]
+    )
+    assert item_by_code["MONTH_END_PEOPLE_PAYROLL_STATUTORY"]["owner_questions"] == [
+        "本月是否有新入职、离职、停薪，或工资奖金、社保公积金参保及缴费基数变化？"
+        "没有请直接回复“无变化”。"
+    ]
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["state"] == "needs_attention"
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["due_now"] is True
     completeness_item = item_by_code["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"]
@@ -665,7 +667,8 @@ def test_quarterly_tax_filing_is_not_asked_before_quarter_end() -> None:
     assert tax_item["due_now"] is False
     assert tax_item["completed"] is True
     assert tax_item["owner_questions"] == []
-    assert "ANNUAL_REPORTING_AND_SETTLEMENT" not in item_by_code
+    assert "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT" not in item_by_code
+    assert "ANNUAL_BUSINESS_REPORT" not in item_by_code
     assert "YEAR_END_STATUTORY_CHECKPOINT" not in item_by_code
 
 
@@ -725,6 +728,44 @@ def test_employee_named_counterparty_alias_is_not_reported_as_missing_master() -
 
 
 def test_annual_checkpoints_are_scheduled_without_monthly_repetition() -> None:
+    april_session = _session()
+    april_organization, april_evidence = _organization_and_evidence(april_session)
+    april_service = AccountingPeriodService(april_session, current_date=date(2026, 8, 11))
+    april_period = april_service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=april_organization.id,
+            period_month="2026-04",
+            idempotency_key="period-generation-annual-april",
+            confirmation_note="核对汇算清缴提醒",
+            evidence_references=[april_evidence.id],
+        )
+    )
+    april_preview = april_service.preview_accounting_period_close(
+        PreviewAccountingPeriodCloseRequest(
+            org_id=april_organization.id,
+            period_id=april_period.period_id,
+            closing_date=date(2026, 4, 30),
+        )
+    )
+    april_items = {
+        item["code"]: item for item in april_preview.data["assistant_review_checklist"]["items"]
+    }
+
+    assert "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT" in april_items
+    assert april_items["ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT"]["cadence"] == "annual"
+    assert "汇算清缴" in april_items["ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT"]["topic"]
+    assert "ANNUAL_BUSINESS_REPORT" not in april_items
+    annual_schedule = {
+        rule["code"]: rule
+        for rule in april_preview.data["assistant_review_checklist"]["schedule"]["rules"]
+    }
+    assert (
+        april_preview.data["assistant_review_checklist"]["schedule"]["version"]
+        == "cn_periodic_review_schedule_2026.2"
+    )
+    assert annual_schedule["ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT"]["trigger_months"] == [4]
+    assert annual_schedule["ANNUAL_BUSINESS_REPORT"]["trigger_months"] == [5]
+
     may_session = _session()
     may_organization, may_evidence = _organization_and_evidence(may_session)
     may_service = AccountingPeriodService(may_session, current_date=date(2026, 8, 11))
@@ -745,22 +786,18 @@ def test_annual_checkpoints_are_scheduled_without_monthly_repetition() -> None:
         )
     )
     may_items = {
-        item["code"]: item
-        for item in may_preview.data["assistant_review_checklist"]["items"]
+        item["code"]: item for item in may_preview.data["assistant_review_checklist"]["items"]
     }
 
-    assert "ANNUAL_REPORTING_AND_SETTLEMENT" in may_items
-    assert may_items["ANNUAL_REPORTING_AND_SETTLEMENT"]["cadence"] == "annual"
-    assert "工商年报" in may_items["ANNUAL_REPORTING_AND_SETTLEMENT"]["topic"]
+    assert "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT" not in may_items
+    assert "ANNUAL_BUSINESS_REPORT" in may_items
+    assert may_items["ANNUAL_BUSINESS_REPORT"]["cadence"] == "annual"
+    assert "工商年报" in may_items["ANNUAL_BUSINESS_REPORT"]["topic"]
     assert "YEAR_END_STATUTORY_CHECKPOINT" not in may_items
 
     december_session = _session()
-    december_organization, december_evidence = _organization_and_evidence(
-        december_session
-    )
-    december_service = AccountingPeriodService(
-        december_session, current_date=date(2027, 1, 11)
-    )
+    december_organization, december_evidence = _organization_and_evidence(december_session)
+    december_service = AccountingPeriodService(december_session, current_date=date(2027, 1, 11))
     december_period = december_service.generate_accounting_period(
         GenerateAccountingPeriodRequest(
             org_id=december_organization.id,
@@ -778,13 +815,13 @@ def test_annual_checkpoints_are_scheduled_without_monthly_repetition() -> None:
         )
     )
     december_items = {
-        item["code"]: item
-        for item in december_preview.data["assistant_review_checklist"]["items"]
+        item["code"]: item for item in december_preview.data["assistant_review_checklist"]["items"]
     }
 
     assert "YEAR_END_STATUTORY_CHECKPOINT" in december_items
     assert december_items["YEAR_END_STATUTORY_CHECKPOINT"]["cadence"] == "annual"
-    assert "ANNUAL_REPORTING_AND_SETTLEMENT" not in december_items
+    assert "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT" not in december_items
+    assert "ANNUAL_BUSINESS_REPORT" not in december_items
 
 
 def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
@@ -850,9 +887,9 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     close_request = ConfirmAccountingPeriodCloseRequest(
         **preview_request.model_dump(),
         calculation_hash=preview.calculation_hash,
-        management_commentary_context_hash=preview.data[
-            "assistant_review_checklist"
-        ]["management_commentary"]["context_hash"],
+        management_commentary_context_hash=preview.data["assistant_review_checklist"][
+            "management_commentary"
+        ]["context_hash"],
         management_commentary="本月尚无经营活动，现有事实不足以评价经营表现。",
         idempotency_key="empty-close",
         confirmation_note="确认本月无业务",
@@ -889,9 +926,7 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
         item["code"]: item for item in preview.data["assistant_review_checklist"]["items"]
     }
     assert checklist_items["MONTH_END_BANK_RECONCILIATION"]["state"] == "completed"
-    assert checklist_items["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"][
-        "completed"
-    ] is False
+    assert checklist_items["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"]["completed"] is False
     assert stale_commentary.status is AccountingPeriodResultStatus.REJECTED
     assert stale_commentary.errors == ["ACCOUNTING_PERIOD_COMMENTARY_CONTEXT_STALE"]
     assert closed.status is AccountingPeriodResultStatus.POSTED

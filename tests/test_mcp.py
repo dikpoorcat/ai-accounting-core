@@ -26,6 +26,7 @@ from ai_accounting.agent_contract import (
     CONFIRMATION_RUNTIME_INSTRUCTION,
     EVIDENCE_FIRST_RUNTIME_INSTRUCTION,
     IDENTITY_RUNTIME_INSTRUCTION,
+    OWNER_WORKFLOW_RUNTIME_INSTRUCTION,
 )
 from ai_accounting.mcp_server import mcp
 
@@ -170,6 +171,35 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert protocol["communication_policy"]["style"] == "execution_secretary"
     assert protocol["communication_policy"]["fixed_salutation"] is None
     assert protocol["communication_policy"]["maximum_questions_per_response"] == 1
+    assert protocol["communication_policy"]["owner_action_view"] == {
+        "current_action_count": 1,
+        "queue_length": "all_fixed_workflow_steps",
+        "queue_statuses": ["当前", "待办", "到期", "已完成", "本期无"],
+        "never_merge_workflow_steps": True,
+        "include_only": [
+            "owner_material",
+            "owner_fact",
+            "owner_confirmation",
+            "owner_external_filing_or_payment",
+        ],
+        "exclude": ["ai_internal_work"],
+        "show_when": ["generic_opening", "current_action_changes", "owner_requests_status"],
+    }
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.1"
+    assert protocol["owner_workflow"]["visibility_rule"] == (
+        "show_all_fixed_steps_and_known_deadlines_immediately"
+    )
+    assert [step["code"] for step in protocol["owner_workflow"]["steps"]] == [
+        "BANK_STATEMENTS",
+        "WORKFORCE_AND_PAY_CHANGES",
+        "SOCIAL_INSURANCE_AND_HOUSING_FUND",
+        "INDIVIDUAL_INCOME_TAX_WITHHOLDING",
+        "NON_BANK_MATERIALS",
+        "PERIODIC_TAX_AND_FINANCIAL_REPORTING",
+        "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT",
+        "ANNUAL_BUSINESS_REPORT",
+        "PERIOD_CLOSE_APPROVAL",
+    ]
     assert protocol["confirmation_policy"] == {
         "ordinary_formal_write": "host_write_tool_approval",
         "redundant_chat_confirmation": False,
@@ -204,6 +234,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert EVIDENCE_FIRST_RUNTIME_INSTRUCTION in mcp.instructions
     assert IDENTITY_RUNTIME_INSTRUCTION in mcp.instructions
     assert COMMUNICATION_RUNTIME_INSTRUCTION in mcp.instructions
+    assert OWNER_WORKFLOW_RUNTIME_INSTRUCTION in mcp.instructions
     assert CONFIRMATION_RUNTIME_INSTRUCTION in mcp.instructions
     assert "agent_operating_protocol" in mcp.instructions
     assert "management_commentary" in mcp.instructions
@@ -223,9 +254,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "close_backup.status=deferred" in mcp.instructions
 
     on_behalf = mcp_server.finance_get_event_schema("employee_reimbursement")
-    assert "existing_payable" in on_behalf["event_requirements"][
-        "existing_payable_workflow"
-    ]
+    assert "existing_payable" in on_behalf["event_requirements"]["existing_payable_workflow"]
     cash_payment = mcp_server.finance_get_event_schema("employee_reimbursement_payment")
     assert cash_payment["event_requirements"]["optional_details"] == [
         "settlement_method=bank|cash|owner_managed_reserve; omitted means bank"
@@ -425,9 +454,7 @@ def test_close_approval_window_bootstraps_when_mcp_session_has_expired(
     )
     monkeypatch.setattr(mcp_server, "_OWNER_CLOSE_APPROVAL_WINDOW_LAUNCHER", _Launcher())
 
-    tool = mcp._tool_manager.get_tool(
-        "finance_request_accounting_period_close_approval_window"
-    )
+    tool = mcp._tool_manager.get_tool("finance_request_accounting_period_close_approval_window")
     assert tool is not None
     result = tool.fn(
         RequestAccountingPeriodCloseApprovalWindowRequest(

@@ -93,7 +93,7 @@ from .organization_profiles import profile_as_of
 from .tax import calculate_tax_period
 
 _BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.7"
-_PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.1"
+_PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.2"
 _CLOSE_OBLIGATION_POLICY_VERSION = "accounting_period_close_obligations_2026.1"
 _PAYROLL_SETTLEMENT_CATEGORIES = (
     "salary",
@@ -107,7 +107,13 @@ _PERIODIC_REVIEW_SOURCE_URLS = {
     "vat_filing_period": (
         "https://shanghai.chinatax.gov.cn/tax/zcfw/zcfgk/zzs/202412/t474694.html"
     ),
-    "enterprise_income_tax": "https://12366.chinatax.gov.cn/bzds/050/050-4-1.html",
+    "enterprise_income_tax": "https://12366.chinatax.gov.cn/bzds/022/022-5-1.html",
+    "individual_income_tax_withholding": (
+        "https://www.chinatax.gov.cn/n810219/n810744/n3752930/n3752974/c3970366/content.html"
+    ),
+    "zhejiang_social_insurance": (
+        "https://zhejiang.chinatax.gov.cn/art/2023/6/16/art_8414_83501.html"
+    ),
     "business_annual_report": (
         "https://www.samr.gov.cn/xyjgs/flfg/art/2024/art_be55c2e3a54a43e5ab12794c9dc87600.html"
     ),
@@ -780,10 +786,7 @@ class AccountingPeriodService:
     def _owner_close_approval_required(self, org_id: uuid.UUID) -> bool:
         database_metadata = self.session.get(OrganizationDatabaseMetadata, 1)
         if database_metadata is not None:
-            return (
-                database_metadata.org_id == org_id
-                and database_metadata.owner_approval_required
-            )
+            return database_metadata.org_id == org_id and database_metadata.owner_approval_required
         return (
             self.session.scalar(
                 select(OwnerAccount.id).where(OwnerAccount.org_id == org_id).limit(1)
@@ -1015,9 +1018,7 @@ class AccountingPeriodService:
             review_counts=review_counts,
         )
         management_commentary_context = self._management_commentary_context(period)
-        management_commentary_context_hash = canonical_sha256(
-            management_commentary_context
-        )
+        management_commentary_context_hash = canonical_sha256(management_commentary_context)
         assistant_review_checklist["management_commentary"] = {
             "required_for_close": True,
             "prompt_version": MANAGEMENT_COMMENTARY_PROMPT_VERSION,
@@ -1191,14 +1192,12 @@ class AccountingPeriodService:
                 as_of_date=target.end_date,
                 counterparties=counterparties,
             )
-            open_items["refundable_deposit_receivables"] = (
-                _load_refundable_deposit_balances(
-                    self.session,
-                    org_id=organization.id,
-                    origin_end_date=target.end_date,
-                    as_of_date=target.end_date,
-                    counterparties=counterparties,
-                )
+            open_items["refundable_deposit_receivables"] = _load_refundable_deposit_balances(
+                self.session,
+                org_id=organization.id,
+                origin_end_date=target.end_date,
+                as_of_date=target.end_date,
+                counterparties=counterparties,
             )
             open_items = _finalize_open_items(open_items)
             activity_groups = _build_activity_groups(voucher_records)
@@ -1352,9 +1351,13 @@ class AccountingPeriodService:
                 )
                 .order_by(Settlement.payment_event_id, BusinessEvent.posting_date, BusinessEvent.id)
             ).all()
-            for payment_event_id, amount_fen, source_event_id, posting_date, event_type in (
-                settlement_rows
-            ):
+            for (
+                payment_event_id,
+                amount_fen,
+                source_event_id,
+                posting_date,
+                event_type,
+            ) in settlement_rows:
                 settled_sources_by_payment_event.setdefault(payment_event_id, []).append(
                     {
                         "source_event_id": str(source_event_id),
@@ -1503,21 +1506,25 @@ class AccountingPeriodService:
             if item.id not in superseded_actual_ids
         ]
         active_actual_ids = {item.id for item, _ in active_contribution_actual_rows}
-        used_actual_ids = set(
-            self.session.scalars(
-                select(PayrollContributionActualUse.actual_item_id)
-                .join(
-                    PayrollBatch,
-                    (PayrollBatch.org_id == PayrollContributionActualUse.org_id)
-                    & (PayrollBatch.id == PayrollContributionActualUse.payroll_batch_id),
-                )
-                .where(
-                    PayrollContributionActualUse.org_id == org_id,
-                    PayrollContributionActualUse.actual_item_id.in_(active_actual_ids),
-                    PayrollBatch.status.not_in(("reversed", "superseded")),
+        used_actual_ids = (
+            set(
+                self.session.scalars(
+                    select(PayrollContributionActualUse.actual_item_id)
+                    .join(
+                        PayrollBatch,
+                        (PayrollBatch.org_id == PayrollContributionActualUse.org_id)
+                        & (PayrollBatch.id == PayrollContributionActualUse.payroll_batch_id),
+                    )
+                    .where(
+                        PayrollContributionActualUse.org_id == org_id,
+                        PayrollContributionActualUse.actual_item_id.in_(active_actual_ids),
+                        PayrollBatch.status.not_in(("reversed", "superseded")),
+                    )
                 )
             )
-        ) if active_actual_ids else set()
+            if active_actual_ids
+            else set()
+        )
         unapplied_contribution_actual_rows = [
             (item, actual_set)
             for item, actual_set in active_contribution_actual_rows
@@ -1665,7 +1672,8 @@ class AccountingPeriodService:
                 if current.calculation_hash == confirmation.calculation_hash:
                     matching_zero_tax_confirmation_count += 1
         tax_period_count = adjustment_tax_period_count + matching_zero_tax_confirmation_count
-        annual_reporting_checkpoint_due = period.calendar_month == 5
+        annual_income_tax_settlement_due = period.calendar_month == 4
+        annual_business_report_due = period.calendar_month == 5
         year_end_checkpoint_due = period.calendar_month == 12
         borrowing_count = int(
             self.session.scalar(
@@ -1728,6 +1736,36 @@ class AccountingPeriodService:
             "count", 0
         )
         open_item_total_count = sum(item["count"] for item in open_item_counts.values())
+        workforce_question = (
+            "本月是否有新入职、离职、停薪，或工资奖金、社保公积金参保及缴费基数变化？"
+            "没有请直接回复“无变化”。"
+        )
+        payroll_settlement_status = module_checks["payroll_settlements"]["status"]
+        payroll_settlement_categories = {
+            category
+            for bucket in payroll_settlement_status.values()
+            for category in bucket["categories"]
+        }
+        social_confirmation_required = bool(
+            active_employees
+            or payroll_batches
+            or payroll_settlement_categories
+            & {
+                "employer_social",
+                "withheld_employee_social",
+                "employer_housing",
+                "withheld_employee_housing",
+            }
+        )
+        individual_income_tax_confirmation_required = bool(
+            active_employees
+            or payroll_batches
+            or "individual_income_tax" in payroll_settlement_categories
+        )
+        overdue_salary_count = sum(
+            payroll_settlement_status[bucket]["categories"].get("salary", {}).get("count", 0)
+            for bucket in ("due", "due_date_missing")
+        )
 
         items = [
             {
@@ -1748,9 +1786,7 @@ class AccountingPeriodService:
                     "next_month_bank_inflow_total_fen": sum(
                         item["amount_fen"] for item in next_month_inflows
                     ),
-                    "next_month_revenue_cutoff_review_count": len(
-                        next_month_cutoff_review_items
-                    ),
+                    "next_month_revenue_cutoff_review_count": len(next_month_cutoff_review_items),
                     "next_month_bank_inflows": next_month_inflows,
                 },
                 "owner_questions": [
@@ -1855,24 +1891,17 @@ class AccountingPeriodService:
                 "code": "MONTH_END_PEOPLE_PAYROLL_STATUTORY",
                 "topic": "工资计提、结算、社保公积金和个税",
                 "state": (
-                    "needs_attention"
-                    if payroll_attention
-                    else (
-                        "completed"
-                        if active_employees and payroll_batches
-                        else "owner_confirmation_required"
-                    )
+                    "needs_attention" if payroll_attention else "owner_confirmation_required"
                 ),
-                "completed": (
-                    bool(active_employees and regular_payroll_batches) and not payroll_attention
-                ),
+                "completed": False,
                 "summary": (
                     f"系统有 {len(employee_counterparties)} 个员工类往来对象、"
                     f"{len(active_employees)} 份当月有效员工档案、"
                     f"{len(hires_in_period)} 名当月开始按员工工资核算、"
                     f"{len(payroll_batches)} 个工资批次；"
                     f"截至月末有 {module_checks['payroll_settlements']['count']} 项"
-                    "已到期或缺少到期日的工资及法定款项尚未结清。"
+                    "已到期或缺少到期日的工资及法定款项尚未结清；"
+                    "系统记录不能证明没有尚未登记的人员变化，仍需负责人确认。"
                 ),
                 "system_facts": {
                     "employee_counterparty_count": len(employee_counterparties),
@@ -1890,13 +1919,11 @@ class AccountingPeriodService:
                     "regular_payroll_batch_count": len(regular_payroll_batches),
                     "payroll_or_statutory_payment_event_count": payroll_payment_event_count,
                     "unfinished_payroll_batch_count": module_checks["payroll"]["count"],
-                    "payroll_settlement_enforcement": module_checks[
-                        "payroll_settlements"
-                    ]["enforcement"],
+                    "payroll_settlement_enforcement": module_checks["payroll_settlements"][
+                        "enforcement"
+                    ],
                     "payroll_settlements": module_checks["payroll_settlements"]["status"],
-                    "contribution_actual_difference_count": len(
-                        active_contribution_actual_rows
-                    ),
+                    "contribution_actual_difference_count": len(active_contribution_actual_rows),
                     "unapplied_contribution_actual_difference_count": len(
                         unapplied_contribution_actual_rows
                     ),
@@ -1914,46 +1941,85 @@ class AccountingPeriodService:
                         for item, actual_set in active_contribution_actual_rows
                     ],
                     "historical_contribution_supplement_count": contribution_supplement_count,
+                    "workforce_change_confirmation_required": True,
+                    "external_payroll_compliance_confirmation_required": bool(
+                        social_confirmation_required or individual_income_tax_confirmation_required
+                    ),
+                    "social_confirmation_required": social_confirmation_required,
+                    "individual_income_tax_confirmation_required": (
+                        individual_income_tax_confirmation_required
+                    ),
+                    "overdue_or_undated_salary_count": overdue_salary_count,
+                    "owner_workflow_question_codes": [
+                        "WORKFORCE_AND_PAY_CHANGES",
+                        *(
+                            ["SOCIAL_INSURANCE_AND_HOUSING_FUND"]
+                            if social_confirmation_required
+                            else []
+                        ),
+                        *(
+                            ["INDIVIDUAL_INCOME_TAX_WITHHOLDING"]
+                            if individual_income_tax_confirmation_required
+                            else []
+                        ),
+                    ],
+                    "external_compliance_source_urls": {
+                        "individual_income_tax_withholding": _PERIODIC_REVIEW_SOURCE_URLS[
+                            "individual_income_tax_withholding"
+                        ],
+                        "zhejiang_social_insurance": _PERIODIC_REVIEW_SOURCE_URLS[
+                            "zhejiang_social_insurance"
+                        ],
+                    },
                 },
-                "owner_questions": (
-                    [
-                        *(
-                            [
-                                "以下已登记的逐险种实际应缴事实尚未进入本月工资批次："
-                                + "；".join(
-                                    f"员工{item.employee_id} {item.contribution_group}/"
-                                    f"{item.insurance_kind}={item.employee_amount_fen}+"
-                                    f"{item.employer_amount_fen}分（{item.actual_state}）"
-                                    for item, _ in unapplied_contribution_actual_rows
-                                )
-                                + "。请先按这些已知事实重算工资批次。"
-                            ]
-                            if unapplied_contribution_actual_rows
-                            else []
-                        ),
-                        *(
-                            [
-                                "系统列出的具体工资核算人员缺档、工资批次或法定项目异常，"
-                                "是否有尚未提供且会改变本月工资、社保、公积金或个税的事实？"
-                            ]
-                            if employee_master_gaps
-                            or (active_employees and not regular_payroll_batches)
-                            or module_checks["payroll"]["count"]
-                            else []
-                        ),
-                        *(
-                            [
-                                "系统列出的工资、社保、公积金或个税款项在月末已到期但仍未"
-                                "结清，或缺少到期日。请核对它们是确实尚未支付，还是已经支付"
-                                "但银行流水或核销尚未入账；确实未付不应伪造付款。"
-                            ]
-                            if module_checks["payroll_settlements"]["count"]
-                            else []
-                        ),
-                    ]
-                    if payroll_attention
-                    else []
-                ),
+                "owner_questions": [
+                    workforce_question,
+                    *(
+                        [
+                            "以下已登记的逐险种实际应缴事实尚未进入本月工资批次："
+                            + "；".join(
+                                f"员工{item.employee_id} {item.contribution_group}/"
+                                f"{item.insurance_kind}={item.employee_amount_fen}+"
+                                f"{item.employer_amount_fen}分（{item.actual_state}）"
+                                for item, _ in unapplied_contribution_actual_rows
+                            )
+                            + "。请先按这些已知事实重算工资批次。"
+                        ]
+                        if unapplied_contribution_actual_rows
+                        else []
+                    ),
+                    *(
+                        [
+                            "系统列出的人员档案或工资批次仍有具体缺口；"
+                            "请只补充清单中列明的缺失人员事实。"
+                        ]
+                        if employee_master_gaps
+                        or (active_employees and not regular_payroll_batches)
+                        or module_checks["payroll"]["count"]
+                        else []
+                    ),
+                    *(
+                        ["本月社保及公积金（如有）目前是“已申报已缴”、“已申报未缴”还是“尚未申报”？"]
+                        if social_confirmation_required
+                        else []
+                    ),
+                    *(
+                        [
+                            "本月个税全员全额扣缴申报目前是“已申报已缴”、"
+                            "“已申报有税未缴”还是“尚未申报”？"
+                        ]
+                        if individual_income_tax_confirmation_required
+                        else []
+                    ),
+                    *(
+                        [
+                            f"系统有 {overdue_salary_count} 笔工资负债已到期或缺少到期日；"
+                            "请说明是确实未付，还是已付但流水或核销尚未入账。"
+                        ]
+                        if overdue_salary_count
+                        else []
+                    ),
+                ],
             },
             {
                 "code": "MONTH_END_PERSONAL_LABOR_REMUNERATION",
@@ -2084,35 +2150,48 @@ class AccountingPeriodService:
                 ],
             },
         ]
-        if annual_reporting_checkpoint_due:
+        if annual_income_tax_settlement_due:
             items.append(
                 {
-                    "code": "ANNUAL_REPORTING_AND_SETTLEMENT",
-                    "topic": "上年度汇算清缴和工商年报",
+                    "code": "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT",
+                    "topic": "上年度企业所得税汇算清缴",
                     "cadence": "annual",
                     "due_now": True,
                     "state": "owner_confirmation_required",
                     "completed": False,
                     "summary": (
-                        "年度检查点每年只在 5 月月结时提示一次：企业所得税汇算清缴"
-                        "应在年度终了后五个月内完成，上一年度工商年报应在 6 月 30 日前报送；"
-                        "当年新设企业自下一年起报送工商年报。"
+                        "本检查点每年只在 4 月月结时提示一次，以便在 5 月 31 日前完成"
+                        "上一年度企业所得税汇算清缴。"
                     ),
                     "system_facts": {
                         "reporting_year": period.calendar_year - 1,
                         "enterprise_income_tax_deadline": f"{period.calendar_year}-05-31",
-                        "business_annual_report_deadline": f"{period.calendar_year}-06-30",
-                        "source_urls": {
-                            "enterprise_income_tax": _PERIODIC_REVIEW_SOURCE_URLS[
-                                "enterprise_income_tax"
-                            ],
-                            "business_annual_report": _PERIODIC_REVIEW_SOURCE_URLS[
-                                "business_annual_report"
-                            ],
-                        },
+                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS["enterprise_income_tax"],
                     },
                     "owner_questions": [
                         "如企业上一年度已经登记成立，上一年度企业所得税汇算清缴是否已完成？",
+                    ],
+                }
+            )
+        if annual_business_report_due:
+            items.append(
+                {
+                    "code": "ANNUAL_BUSINESS_REPORT",
+                    "topic": "上年度工商年报",
+                    "cadence": "annual",
+                    "due_now": True,
+                    "state": "owner_confirmation_required",
+                    "completed": False,
+                    "summary": (
+                        "本检查点每年只在 5 月月结时提示一次，以便在 6 月 30 日前报送"
+                        "上一年度工商年报；当年新设企业自下一年起报送。"
+                    ),
+                    "system_facts": {
+                        "reporting_year": period.calendar_year - 1,
+                        "business_annual_report_deadline": f"{period.calendar_year}-06-30",
+                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS["business_annual_report"],
+                    },
+                    "owner_questions": [
                         (
                             "如企业上一年度已经登记成立，上一年度工商年报是否已报送，"
                             "或已安排在 6 月 30 日前报送？"
@@ -2148,7 +2227,7 @@ class AccountingPeriodService:
                 }
             )
         return {
-            "version": "periodic_assistant_review_v3",
+            "version": "periodic_assistant_review_v4",
             "period_month": period_month,
             "semantics": {
                 "completed": "系统记录足以证明该项已完成检查",
@@ -2180,13 +2259,16 @@ class AccountingPeriodService:
                         "source_url": _PERIODIC_REVIEW_SOURCE_URLS["vat_filing_period"],
                     },
                     {
-                        "code": "ANNUAL_REPORTING_AND_SETTLEMENT",
+                        "code": "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT",
+                        "cadence": "annual",
+                        "trigger_months": [4],
+                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS["enterprise_income_tax"],
+                    },
+                    {
+                        "code": "ANNUAL_BUSINESS_REPORT",
                         "cadence": "annual",
                         "trigger_months": [5],
-                        "source_urls": [
-                            _PERIODIC_REVIEW_SOURCE_URLS["enterprise_income_tax"],
-                            _PERIODIC_REVIEW_SOURCE_URLS["business_annual_report"],
-                        ],
+                        "source_url": _PERIODIC_REVIEW_SOURCE_URLS["business_annual_report"],
                     },
                     {
                         "code": "YEAR_END_STATUTORY_CHECKPOINT",
@@ -2383,9 +2465,7 @@ class AccountingPeriodService:
                 )
             ).all()
         )
-        missing_payroll_employees = len(
-            active_employee_ids - posted_regular_payroll_employee_ids
-        )
+        missing_payroll_employees = len(active_employee_ids - posted_regular_payroll_employee_ids)
         payroll_pending = max(int(unfinished_payroll), missing_payroll_employees)
         unfinished_labor_batches = (
             self.session.scalar(

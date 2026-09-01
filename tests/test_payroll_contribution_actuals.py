@@ -348,15 +348,16 @@ def test_actual_requires_evidence_policy_kind_and_reversal_before_posted_correct
             supersedes=current_ids,
         )
     )
-    assert blocked["errors"] == [
-        "CONTRIBUTION_ACTUAL_POSTED_PAYROLL_MUST_BE_REVERSED_FIRST"
-    ]
+    assert blocked["errors"] == ["CONTRIBUTION_ACTUAL_POSTED_PAYROLL_MUST_BE_REVERSED_FIRST"]
     assert blocked["blocking_payroll_batch_ids"] == [str(final_preview.batch_id)]
-    assert session.scalar(
-        select(PayrollContributionActualUse).where(
-            PayrollContributionActualUse.payroll_batch_id == final_preview.batch_id
+    assert (
+        session.scalar(
+            select(PayrollContributionActualUse).where(
+                PayrollContributionActualUse.payroll_batch_id == final_preview.batch_id
+            )
         )
-    ) is not None
+        is not None
+    )
 
 
 def test_historical_supplement_posts_now_without_rewriting_original_payroll(
@@ -509,9 +510,7 @@ def test_historical_supplement_posts_now_without_rewriting_original_payroll(
         "payment_date": "2026-09-15",
         "posting_date": "2026-09-15",
     }
-    payment = service.record_event(
-        RecordEventRequest.model_validate(payment_payload)
-    )
+    payment = service.record_event(RecordEventRequest.model_validate(payment_payload))
     assert payment.status == "posted", payment.model_dump(mode="json")
     reversed_payment = service.reverse_event(
         ReverseEventRequest(
@@ -603,8 +602,11 @@ def test_month_end_lists_specific_unapplied_insurance_kinds(
     before = payroll_item()
     assert before["system_facts"]["contribution_actual_difference_count"] == 2
     assert before["system_facts"]["unapplied_contribution_actual_difference_count"] == 2
-    assert "medical" in before["owner_questions"][0]
-    assert "work_injury" in before["owner_questions"][0]
+    contribution_question = next(
+        question for question in before["owner_questions"] if "尚未进入本月工资批次" in question
+    )
+    assert "medical" in contribution_question
+    assert "work_injury" in contribution_question
 
     preview = _preview(
         service,
@@ -623,6 +625,25 @@ def test_month_end_lists_specific_unapplied_insurance_kinds(
         fact["applied_to_current_payroll"]
         for fact in after["system_facts"]["contribution_actual_differences"]
     )
+    assert after["state"] == "owner_confirmation_required"
+    assert after["completed"] is False
+    assert any("新入职、离职、停薪" in question for question in after["owner_questions"])
+    assert after["system_facts"]["owner_workflow_question_codes"] == [
+        "WORKFORCE_AND_PAY_CHANGES",
+        "SOCIAL_INSURANCE_AND_HOUSING_FUND",
+        "INDIVIDUAL_INCOME_TAX_WITHHOLDING",
+    ]
+    social_index = next(
+        index
+        for index, question in enumerate(after["owner_questions"])
+        if "社保及公积金" in question
+    )
+    individual_income_tax_index = next(
+        index
+        for index, question in enumerate(after["owner_questions"])
+        if "个税全员全额扣缴申报" in question
+    )
+    assert social_index < individual_income_tax_index
 
 
 def test_first_wage_tax_treatment_is_evidenced_and_used_by_payroll(
@@ -662,9 +683,7 @@ def test_first_wage_tax_treatment_is_evidenced_and_used_by_payroll(
     assert preview.data["lines"][0]["individual_income_tax_fen"] == 0
     batch = session.get(PayrollBatch, preview.batch_id)
     assert batch is not None
-    snapshot = batch.calculation_input["employee_snapshots"][0][
-        "first_wage_tax_treatment"
-    ]
+    snapshot = batch.calculation_input["employee_snapshots"][0]["first_wage_tax_treatment"]
     assert snapshot["standard_deduction_start_month"] == 1
     use = session.scalar(
         select(PayrollFirstWageTaxTreatmentUse).where(

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v15"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v17"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -19,10 +19,26 @@ IDENTITY_RUNTIME_INSTRUCTION = (
 
 COMMUNICATION_RUNTIME_INSTRUCTION = (
     "与负责人使用中文、执行秘书型表达，不使用固定称呼；先说明结论、完成状态或准确缺口。"
+    "通用开场和阶段切换时只突出一个负责人当前动作，并附按固定月度流程排序的完整老板待办"
+    "队列；不得把相邻步骤合并成一个大问题。队列只列负责人需要提供、确认或在外部办理的"
+    "事项，不报告AI自身的核对、计算、入账或工具调用。"
+    "首条队列必须一次性展示固定流程的全部提醒及已知期限，排序只决定当前追问，不得把后续"
+    "事项隐藏到前一步完成之后；本期不适用的季度和年度事项也保留并标为“本期无”。"
     "正常完成时使用业务语言说明公司、事项、金额、入账日期和结果；除非负责人要求审计细节，"
     "不展示原始JSON、科目借贷行或内部UUID。稳定错误码应保留在简明中文解释后。"
     "返回needs_information时只提出一个最小且具体的问题，并依次说明已核对事实、当前判断、"
     "缺失事实及其影响。"
+)
+
+OWNER_WORKFLOW_RUNTIME_INSTRUCTION = (
+    "负责人月度提醒按固定顺序逐项推进：银行流水；员工及工资变动；适用时社保及公积金申报"
+    "缴款；适用时个税全员全额扣缴申报缴款；票据及非银行业务；到期税费申报及财务报表；"
+    "到期企业所得税年度汇算清缴；到期工商年报；关账确认。每次只问当前"
+    "步骤的一个明确问题，并显示所有适用步骤的进度；不得把员工变化与账外材料合并询问，"
+    "不得把社保和个税合并询问。首条队列必须一次性显示全部固定步骤及已知期限，本期不适用"
+    "的步骤标为“本期无”；后续只更新状态，不得走到该步骤时才首次显示。上月工资计提是"
+    "关账义务，但正常次月"
+    "实发不是关上月账的前置条件，只在次月流水或冻结到期日要求时复核结算。"
 )
 
 CONFIRMATION_RUNTIME_INSTRUCTION = (
@@ -97,6 +113,7 @@ CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
 MCP_SERVER_INSTRUCTIONS = (
     f"{IDENTITY_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
+    f"{OWNER_WORKFLOW_RUNTIME_INSTRUCTION}"
     f"{CONFIRMATION_RUNTIME_INSTRUCTION}"
     "这是确定性记账内核，不是自由分录接口。调用企业数据工具前先调用 "
     "finance_get_event_schema，并遵守其 agent_operating_protocol。"
@@ -144,7 +161,88 @@ def agent_operating_protocol() -> dict[str, Any]:
                 "material_effect",
             ],
             "maximum_questions_per_response": 1,
+            "owner_action_view": {
+                "current_action_count": 1,
+                "queue_length": "all_fixed_workflow_steps",
+                "queue_statuses": ["当前", "待办", "到期", "已完成", "本期无"],
+                "never_merge_workflow_steps": True,
+                "include_only": [
+                    "owner_material",
+                    "owner_fact",
+                    "owner_confirmation",
+                    "owner_external_filing_or_payment",
+                ],
+                "exclude": ["ai_internal_work"],
+                "show_when": ["generic_opening", "current_action_changes", "owner_requests_status"],
+            },
             "stable_error_code": "append_after_plain_chinese_explanation",
+        },
+        "owner_workflow": {
+            "version": "owner_monthly_workflow_cn_2026.1",
+            "selection_rule": "earliest_applicable_incomplete_step",
+            "visibility_rule": "show_all_fixed_steps_and_known_deadlines_immediately",
+            "steps": [
+                {
+                    "order": 1,
+                    "code": "BANK_STATEMENTS",
+                    "label": "银行流水",
+                    "applicability": "always",
+                },
+                {
+                    "order": 2,
+                    "code": "WORKFORCE_AND_PAY_CHANGES",
+                    "label": "员工及工资变动",
+                    "applicability": "always",
+                    "question": (
+                        "本月是否有新入职、离职、停薪，或工资奖金、社保公积金参保及缴费"
+                        "基数变化？没有请直接回复“无变化”。"
+                    ),
+                },
+                {
+                    "order": 3,
+                    "code": "SOCIAL_INSURANCE_AND_HOUSING_FUND",
+                    "label": "社保及公积金",
+                    "applicability": "employees_contribution_facts_or_statutory_payable",
+                    "status_choices": ["已申报已缴", "已申报未缴", "尚未申报"],
+                },
+                {
+                    "order": 4,
+                    "code": "INDIVIDUAL_INCOME_TAX_WITHHOLDING",
+                    "label": "个人所得税",
+                    "applicability": "payroll_labor_or_withholding_obligation",
+                    "status_choices": ["已申报已缴", "已申报有税未缴", "尚未申报"],
+                },
+                {
+                    "order": 5,
+                    "code": "NON_BANK_MATERIALS",
+                    "label": "票据及非银行业务",
+                    "applicability": "always",
+                },
+                {
+                    "order": 6,
+                    "code": "PERIODIC_TAX_AND_FINANCIAL_REPORTING",
+                    "label": "税费申报及财务报表",
+                    "applicability": "runtime_checklist_due",
+                },
+                {
+                    "order": 7,
+                    "code": "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT",
+                    "label": "企业所得税年度汇算清缴",
+                    "applicability": "runtime_checklist_due",
+                },
+                {
+                    "order": 8,
+                    "code": "ANNUAL_BUSINESS_REPORT",
+                    "label": "工商年报",
+                    "applicability": "runtime_checklist_due",
+                },
+                {
+                    "order": 9,
+                    "code": "PERIOD_CLOSE_APPROVAL",
+                    "label": "关账确认",
+                    "applicability": "all_prior_applicable_steps_resolved",
+                },
+            ],
         },
         "confirmation_policy": {
             "ordinary_formal_write": "host_write_tool_approval",
