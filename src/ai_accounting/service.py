@@ -168,6 +168,11 @@ class FinanceService:
             return True
         if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
             return request.details.paid_now is True
+        if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
+            return request.details.settlement_method not in {
+                "cash",
+                "owner_managed_reserve",
+            }
         if request.event_type is EventType.SALARY_PAYMENT:
             return request.amounts.amount_fen != 0
         return request.event_type in {
@@ -178,7 +183,6 @@ class FinanceService:
             EventType.EXPENSE_CASH,
             EventType.EXPENSE_RECOVERY_RECEIVED,
             EventType.SUPPLIER_PAYMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_LOAN_RECEIVED,
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
@@ -793,8 +797,8 @@ class FinanceService:
         if request.event_type in {
             EventType.EMPLOYEE_REIMBURSEMENT,
             EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
-        } and (counterparty is None or counterparty.kind != "employee"):
-            raise ValueError("employee reimbursement requires an employee counterparty")
+        } and (counterparty is None or counterparty.kind not in {"employee", "owner"}):
+            raise ValueError("person reimbursement requires an employee or owner counterparty")
         if request.event_type is EventType.OTHER_INCOME_RECEIVED and (
             counterparty is None or counterparty.kind != "other"
         ):
@@ -912,19 +916,19 @@ class FinanceService:
         # original sale or advance into a technical ``reversed`` event.  Only
         # finance_reverse_event may apply the explicit posted -> reversed
         # state transition with a linked reversal voucher.
+        created_open_item: OpenItem | None = None
         if open_item_type:
             if counterparty is None:
                 raise ValueError("counterparty is required for an open item")
-            self.session.add(
-                OpenItem(
-                    org_id=request.org_id,
-                    counterparty_id=counterparty.id,
-                    source_event_id=event.id,
-                    item_type=open_item_type,
-                    original_amount_fen=self._amount(request),
-                    due_date=self._optional_date(request.details.get("due_date")),
-                )
+            created_open_item = OpenItem(
+                org_id=request.org_id,
+                counterparty_id=counterparty.id,
+                source_event_id=event.id,
+                item_type=open_item_type,
+                original_amount_fen=self._amount(request),
+                due_date=self._optional_date(request.details.get("due_date")),
             )
+            self.session.add(created_open_item)
         if request.event_type == EventType.SALARY_PAYMENT:
             create_open_items(
                 self.session,
@@ -941,6 +945,11 @@ class FinanceService:
             )
         )
         self.session.flush()
+        result_data: dict[str, Any] = {"derived": derived}
+        if created_open_item is not None:
+            result_data["created_open_items"] = [
+                self._open_item_result(created_open_item)
+            ]
         return FinanceResult(
             status=ResultStatus.POSTED,
             event_id=event.id,
@@ -948,7 +957,7 @@ class FinanceService:
             voucher_number=voucher.voucher_number,
             rule_version=rule_version,
             trace=trace,
-            data={"derived": derived},
+            data=result_data,
         )
 
     def _lock_payroll_open_items(self, request: RecordEventRequest) -> None:
@@ -1218,7 +1227,14 @@ class FinanceService:
         elif event_type == EventType.EMPLOYEE_REIMBURSEMENT:
             paid_now = bool(request.details["paid_now"])
             reimbursement_kind = request.details.reimbursement_kind or "expense"
-            if reimbursement_kind == "refundable_deposit":
+            if reimbursement_kind == "existing_payable":
+                if counterparty is None:
+                    raise ValueError("person counterparty is required")
+                entries, derived = self._existing_payable_reimbursement_entries(
+                    request, counterparty
+                )
+                open_item_type = "payable"
+            elif reimbursement_kind == "refundable_deposit":
                 if deposit_holder is None:
                     raise ValueError("deposit_holder is required for a refundable deposit")
                 debit_entry = Entry(
@@ -1242,17 +1258,22 @@ class FinanceService:
                     "purchase_tax_treatment": "gross_to_expense",
                     "expense_fen": amount,
                 }
-            entries = [
-                debit_entry,
-                Entry(
-                    account_code=request.bank_account_code if paid_now else None,
-                    account_role=None if paid_now else "employee_payable",
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-            ]
-            if not paid_now:
-                open_item_type = "payable"
+            if reimbursement_kind != "existing_payable":
+                entries = [
+                    debit_entry,
+                    Entry(
+                        account_code=request.bank_account_code if paid_now else None,
+                        account_role=(
+                            None
+                            if paid_now
+                            else self._person_payable_role(counterparty)
+                        ),
+                        credit_fen=amount,
+                        counterparty_id=cp_id,
+                    ),
+                ]
+                if not paid_now:
+                    open_item_type = "payable"
 
         elif event_type == EventType.OWNER_LOAN_RECEIVED:
             entries = [
@@ -1298,15 +1319,41 @@ class FinanceService:
 
         elif event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
             allocated = sum(item.amount_fen for item in request.allocations)
-            entries = [
-                Entry(account_role="employee_payable", debit_fen=amount, counterparty_id=cp_id),
-                Entry(
+            settlement_method = request.details.settlement_method or "bank"
+            reserve_derived: dict[str, Any] = {}
+            if settlement_method == "owner_managed_reserve":
+                reserve_role, reserve_derived = self._owner_managed_reserve_source(
+                    request
+                )
+                settlement_entry = Entry(
+                    account_role=reserve_role,
+                    credit_fen=amount,
+                )
+            elif settlement_method == "cash":
+                settlement_entry = Entry(
+                    account_role="cash",
+                    credit_fen=amount,
+                    counterparty_id=cp_id,
+                )
+            else:
+                settlement_entry = Entry(
                     account_code=request.bank_account_code,
                     credit_fen=amount,
                     counterparty_id=cp_id,
+                )
+            entries = [
+                Entry(
+                    account_role=self._person_payable_role(counterparty),
+                    debit_fen=amount,
+                    counterparty_id=cp_id,
                 ),
+                settlement_entry,
             ]
-            derived = {"allocated_fen": allocated}
+            derived = {
+                "allocated_fen": allocated,
+                "settlement_method": settlement_method,
+                **reserve_derived,
+            }
 
         elif event_type == EventType.OTHER_INCOME_RECEIVED:
             entries = [
@@ -1711,7 +1758,11 @@ class FinanceService:
                     f"open item category {item.payable_category!r} is not allowed for "
                     f"{request.event_type.value}"
                 )
-            if payroll_categories is None and (
+            person_paid_existing_payable = (
+                request.event_type is EventType.EMPLOYEE_REIMBURSEMENT
+                and request.details.reimbursement_kind == "existing_payable"
+            )
+            if payroll_categories is None and not person_paid_existing_payable and (
                 counterparty is None or item.counterparty_id != counterparty.id
             ):
                 raise ValueError(f"open item belongs to a different counterparty: {item.id}")
@@ -1757,6 +1808,202 @@ class FinanceService:
                     amount_fen=allocation.amount_fen,
                 )
             )
+
+    @staticmethod
+    def _person_payable_role(counterparty: Counterparty | None) -> str:
+        if counterparty is None or counterparty.kind not in {"employee", "owner"}:
+            raise ValueError("person counterparty must be an employee or owner")
+        return "owner_payable" if counterparty.kind == "owner" else "employee_payable"
+
+    def _owner_managed_reserve_source(
+        self,
+        request: RecordEventRequest,
+    ) -> tuple[str, dict[str, Any]]:
+        """Derive a non-cash settlement credit from one earlier expensed reserve source."""
+
+        source_id = request.details.original_event_id
+        if source_id is None:
+            raise ValueError("owner-managed-reserve settlement requires original_event_id")
+        source = self.session.scalar(
+            select(BusinessEvent)
+            .where(
+                BusinessEvent.org_id == request.org_id,
+                BusinessEvent.id == source_id,
+            )
+            .with_for_update()
+        )
+        if (
+            source is None
+            or source.event_type != EventType.EXPENSE_CASH.value
+            or source.status != "posted"
+            or source.reversed_by_event_id is not None
+        ):
+            raise ValueError(
+                "owner-managed-reserve source must be an active bank-paid expense event"
+            )
+        payment_date = request.business_dates.payment_date
+        if payment_date is None:
+            raise ValueError("owner-managed-reserve settlement requires payment_date")
+        if source.posting_date > payment_date:
+            raise ValueError(
+                "owner-managed-reserve source must not post after the reimbursement"
+            )
+        source_amount = self._event_amount(source)
+        source_role = source.facts.get("amounts", {}).get("expense_account_role")
+        if not isinstance(source_role, str) or not source_role:
+            raise ValueError(
+                "owner-managed-reserve source must contain one derived expense role"
+            )
+
+        used_before = 0
+        candidates = self.session.scalars(
+            select(BusinessEvent).where(
+                BusinessEvent.org_id == request.org_id,
+                BusinessEvent.event_type
+                == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT.value,
+                BusinessEvent.status == "posted",
+                BusinessEvent.reversed_by_event_id.is_(None),
+            )
+        ).all()
+        for candidate in candidates:
+            details = candidate.facts.get("details", {})
+            if (
+                details.get("settlement_method") == "owner_managed_reserve"
+                and str(details.get("original_event_id")) == str(source.id)
+            ):
+                used_before += self._event_amount(candidate)
+        amount = self._amount(request)
+        if used_before + amount > source_amount:
+            raise ValueError(
+                "owner-managed-reserve settlement exceeds the referenced source amount"
+            )
+        return source_role, {
+            "reserve_source_event_id": str(source.id),
+            "reserve_source_expense_role": source_role,
+            "reserve_source_amount_fen": source_amount,
+            "reserve_used_before_fen": used_before,
+            "reserve_remaining_after_fen": source_amount - used_before - amount,
+        }
+
+    @staticmethod
+    def _open_payable_account_role(item: OpenItem, counterparty: Counterparty) -> str:
+        category_roles = {
+            "salary": "employee_salary_payable",
+            "employer_social": "employer_social_payable",
+            "withheld_employee_social": "withheld_employee_social_payable",
+            "employer_housing": "employer_housing_fund_payable",
+            "withheld_employee_housing": "withheld_employee_housing_fund_payable",
+            "individual_income_tax": "individual_income_tax_payable",
+            "labor_remuneration": "labor_remuneration_payable",
+            "labor_individual_income_tax": "individual_income_tax_payable",
+        }
+        if item.payable_category is not None:
+            try:
+                return category_roles[item.payable_category]
+            except KeyError as exc:
+                raise ValueError(
+                    f"unsupported payable category for payment on behalf: "
+                    f"{item.payable_category}"
+                ) from exc
+        counterparty_roles = {
+            "supplier": "accounts_payable",
+            "employee": "employee_payable",
+            "owner": "owner_payable",
+        }
+        try:
+            return counterparty_roles[counterparty.kind]
+        except KeyError as exc:
+            raise ValueError(
+                "an uncategorized payable must belong to a supplier, employee, or owner"
+            ) from exc
+
+    def _existing_payable_reimbursement_entries(
+        self,
+        request: RecordEventRequest,
+        payer: Counterparty,
+    ) -> tuple[list[Entry], dict[str, Any]]:
+        """Transfer exact existing liabilities to the employee or owner who paid them."""
+
+        if not request.allocations:
+            raise ValueError("existing-payable reimbursement requires allocations")
+        allocation_ids = [allocation.open_item_id for allocation in request.allocations]
+        if len(allocation_ids) != len(set(allocation_ids)):
+            raise ValueError("duplicate open item allocation")
+        if sum(allocation.amount_fen for allocation in request.allocations) != self._amount(
+            request
+        ):
+            raise ValueError("existing-payable reimbursement allocations must equal amount")
+
+        items = self.session.scalars(
+            select(OpenItem)
+            .where(
+                OpenItem.org_id == request.org_id,
+                OpenItem.id.in_(allocation_ids),
+            )
+            .order_by(OpenItem.id)
+            .with_for_update()
+        ).all()
+        by_id = {item.id: item for item in items}
+        if len(by_id) != len(allocation_ids):
+            raise ValueError("existing-payable reimbursement source open item not found")
+
+        item_counterparties = {
+            counterparty.id: counterparty
+            for counterparty in self.session.scalars(
+                select(Counterparty).where(
+                    Counterparty.org_id == request.org_id,
+                    Counterparty.id.in_({item.counterparty_id for item in items}),
+                )
+            ).all()
+        }
+        entries: list[Entry] = []
+        sources: list[dict[str, Any]] = []
+        for allocation in request.allocations:
+            item = by_id[allocation.open_item_id]
+            if item.item_type != "payable" or item.status not in {"open", "partial"}:
+                raise ValueError(f"open item is not an active payable: {item.id}")
+            available = item.original_amount_fen - item.settled_amount_fen
+            if allocation.amount_fen > available:
+                raise ValueError(
+                    f"allocation exceeds open amount for {item.id}: "
+                    f"available={available}, requested={allocation.amount_fen}"
+                )
+            item_counterparty = item_counterparties.get(item.counterparty_id)
+            if item_counterparty is None:
+                raise ValueError("payable counterparty is not available in this organization")
+            account_role = self._open_payable_account_role(item, item_counterparty)
+            entries.append(
+                Entry(
+                    account_role=account_role,
+                    debit_fen=allocation.amount_fen,
+                    counterparty_id=(
+                        item.counterparty_id
+                        if item.payable_category in {None, "salary", "labor_remuneration"}
+                        else None
+                    ),
+                )
+            )
+            sources.append(
+                {
+                    "open_item_id": str(item.id),
+                    "amount_fen": allocation.amount_fen,
+                    "payable_category": item.payable_category,
+                    "account_role": account_role,
+                }
+            )
+        entries.append(
+            Entry(
+                account_role=self._person_payable_role(payer),
+                credit_fen=self._amount(request),
+                counterparty_id=payer.id,
+            )
+        )
+        return entries, {
+            "reimbursement_kind": "existing_payable",
+            "allocated_fen": self._amount(request),
+            "person_payable_role": self._person_payable_role(payer),
+            "source_payables": sources,
+        }
 
     def _payroll_payment_allocations(
         self, request: RecordEventRequest, allowed_categories: set[str]
@@ -2908,6 +3155,23 @@ class FinanceService:
             and request.deposit_holder is None
         ):
             missing.append("deposit_holder")
+        if (
+            event_type == EventType.EMPLOYEE_REIMBURSEMENT
+            and request.details.reimbursement_kind == "existing_payable"
+        ):
+            allocated = sum(item.amount_fen for item in request.allocations)
+            if request.business_dates.payment_date is None:
+                missing.append("business_dates.payment_date")
+            if not request.allocations:
+                missing.append("allocations")
+            elif amount and allocated != amount:
+                missing.append("allocations whose total equals the reimbursed payable")
+        if (
+            event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT
+            and request.details.settlement_method == "owner_managed_reserve"
+            and request.details.original_event_id is None
+        ):
+            missing.append("details.original_event_id")
 
         if event_type == EventType.OTHER_INCOME_RECEIVED:
             if request.details.other_income_kind != "retained_verification_payment":
@@ -3190,6 +3454,21 @@ class FinanceService:
             if event.status in {"posted", "reversed"}
             else ResultStatus(event.status)
         )
+        created_open_items = self.session.scalars(
+            select(OpenItem)
+            .where(OpenItem.org_id == event.org_id, OpenItem.source_event_id == event.id)
+            .order_by(OpenItem.id)
+        ).all()
+        data: dict[str, Any] = {
+            "idempotent_replay": True,
+            "original_status": event.status,
+        }
+        if isinstance(event.facts.get("derived"), dict):
+            data["derived"] = event.facts["derived"]
+        if created_open_items:
+            data["created_open_items"] = [
+                self._open_item_result(item) for item in created_open_items
+            ]
         return FinanceResult(
             status=status,
             event_id=event.id,
@@ -3199,8 +3478,20 @@ class FinanceService:
             missing_information=event.facts.get("_decision", {}).get("missing", []),
             errors=event.facts.get("_decision", {}).get("errors", []),
             rule_version=event.rule_version,
-            data={"idempotent_replay": True, "original_status": event.status},
+            data=data,
         )
+
+    @staticmethod
+    def _open_item_result(item: OpenItem) -> dict[str, Any]:
+        return {
+            "open_item_id": str(item.id),
+            "item_type": item.item_type,
+            "original_amount_fen": item.original_amount_fen,
+            "settled_amount_fen": item.settled_amount_fen,
+            "status": item.status,
+            "counterparty_id": str(item.counterparty_id),
+            "due_date": item.due_date.isoformat() if item.due_date else None,
+        }
 
     def register_employee(self, request: RegisterEmployeeRequest) -> dict[str, Any]:
         if self.session.get(Organization, request.org_id) is None:

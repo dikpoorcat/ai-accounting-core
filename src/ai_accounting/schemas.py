@@ -210,11 +210,19 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     EventType.EMPLOYEE_REIMBURSEMENT.value: {
         "amount": "gross_amount_fen",
         "required_dates": ["business_date", "posting_date"],
-        "counterparty": "employee required",
+        "counterparty": "employee or owner required",
         "required_details": ["paid_now"],
         "conditional_required_fields": {
             "when details.paid_now=true": ["bank_account_code"],
+            "when details.reimbursement_kind=existing_payable": [
+                "business_dates.payment_date",
+                "allocations",
+            ],
         },
+        "existing_payable_workflow": (
+            "reimbursement_kind=existing_payable settles existing payable open items and "
+            "creates one payable to the employee or owner; does not recognize a new expense"
+        ),
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.OWNER_LOAN_RECEIVED.value: {
@@ -243,9 +251,26 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
     EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT.value: {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
-        "counterparty": "employee required",
+        "counterparty": "employee or owner required",
         "allocations": "required and total must equal payment",
-        "required_fields": ["bank_account_code"],
+        "optional_details": [
+            "settlement_method=bank|cash|owner_managed_reserve; omitted means bank"
+        ],
+        "conditional_required_fields": {
+            "when details.settlement_method is omitted or bank": ["bank_account_code"],
+            "when details.settlement_method=owner_managed_reserve": [
+                "details.original_event_id",
+            ],
+        },
+        "cash_settlement": (
+            "credits the fixed inventory-cash account and forbids bank account or bank "
+            "transaction facts"
+        ),
+        "owner_managed_reserve_settlement": (
+            "details.original_event_id references one earlier bank-paid expense event that "
+            "funded an owner-managed reserve, credits the expense role derived from that "
+            "source, and forbids bank or inventory-cash facts"
+        ),
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
     EventType.OTHER_INCOME_RECEIVED.value: {
@@ -650,7 +675,8 @@ class EventDetails(BaseModel):
     tax_previously_accrued: bool | None = None
     refund_kind: Literal["advance", "sale_return"] | None = None
     paid_now: bool | None = None
-    reimbursement_kind: Literal["expense", "refundable_deposit"] | None = None
+    reimbursement_kind: Literal["expense", "refundable_deposit", "existing_payable"] | None = None
+    settlement_method: Literal["bank", "cash", "owner_managed_reserve"] | None = None
     tax_type: Literal["vat", "surtax", "enterprise_income_tax"] | None = None
     original_event_id: uuid.UUID | None = None
     unallocated_treatment: Literal["advance"] | None = None
@@ -2076,7 +2102,6 @@ class RecordEventRequest(BaseModel):
             EventType.EXPENSE_CASH,
             EventType.EXPENSE_RECOVERY_RECEIVED,
             EventType.SUPPLIER_PAYMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.OWNER_LOAN_RECEIVED,
             EventType.OWNER_CONTRIBUTION_RECEIVED,
             EventType.OWNER_REPAYMENT,
@@ -2094,6 +2119,11 @@ class RecordEventRequest(BaseModel):
         }
         if self.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
             bank_settled = self.details.paid_now is True
+        if self.event_type is EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
+            bank_settled = self.details.settlement_method not in {
+                "cash",
+                "owner_managed_reserve",
+            }
         if self.event_type is EventType.SALARY_PAYMENT:
             bank_settled = self.amounts.amount_fen != 0
         if not bank_settled and (
@@ -2105,12 +2135,46 @@ class RecordEventRequest(BaseModel):
     @model_validator(mode="after")
     def reimbursement_fields_follow_the_typed_branch(self) -> RecordEventRequest:
         if self.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
-            if self.details.reimbursement_kind == "refundable_deposit":
+            reimbursement_kind = self.details.reimbursement_kind or "expense"
+            if self.details.settlement_method is not None:
+                raise ValueError(
+                    "settlement_method is only accepted for employee reimbursement payment"
+                )
+            if reimbursement_kind == "refundable_deposit":
                 if self.amounts.expense_account_role is not None:
                     raise ValueError(
                         "a refundable-deposit reimbursement does not accept an expense role"
                     )
-            elif self.deposit_holder is not None:
+                if self.allocations:
+                    raise ValueError(
+                        "a refundable-deposit reimbursement does not accept allocations"
+                    )
+            elif reimbursement_kind == "existing_payable":
+                if self.details.paid_now is not False:
+                    raise ValueError(
+                        "an existing-payable reimbursement must create a person payable"
+                    )
+                if self.amounts.expense_account_role is not None:
+                    raise ValueError(
+                        "an existing-payable reimbursement does not accept an expense role"
+                    )
+                if self.tax_facts is not None or self.invoice_references:
+                    raise ValueError(
+                        "an existing-payable reimbursement does not accept tax or invoice facts"
+                    )
+                if self.deposit_holder is not None:
+                    raise ValueError(
+                        "an existing-payable reimbursement does not accept a deposit holder"
+                    )
+                if self.allocations and self.amounts.gross_amount_fen is not None and sum(
+                    item.amount_fen for item in self.allocations
+                ) != self.amounts.gross_amount_fen:
+                    raise ValueError(
+                        "existing-payable reimbursement allocations must equal gross_amount_fen"
+                    )
+            elif self.allocations:
+                raise ValueError("an expense reimbursement does not accept allocations")
+            if reimbursement_kind != "refundable_deposit" and self.deposit_holder is not None:
                 raise ValueError("deposit_holder is only accepted for a refundable deposit")
             return self
         if self.deposit_holder is not None:
@@ -2126,6 +2190,20 @@ class RecordEventRequest(BaseModel):
                 raise ValueError(
                     "employee reimbursement payment does not accept tax or invoice facts"
                 )
+            if self.details.settlement_method == "owner_managed_reserve":
+                if self.details.original_event_id is None:
+                    raise ValueError(
+                        "owner-managed-reserve settlement requires original_event_id"
+                    )
+            elif self.details.original_event_id is not None:
+                raise ValueError(
+                    "original_event_id is only accepted for owner-managed-reserve settlement"
+                )
+            return self
+        if self.details.settlement_method is not None:
+            raise ValueError(
+                "settlement_method is only accepted for employee reimbursement payment"
+            )
         return self
 
     @model_validator(mode="after")

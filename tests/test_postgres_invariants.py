@@ -26,6 +26,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
         url = postgres.get_connection_url(driver="psycopg")
         monkeypatch.setenv("DATABASE_URL", url)
         alembic_config = Config("alembic.ini")
+        alembic_config.attributes["database_url_override"] = url
         command.upgrade(alembic_config, "head")
         from sqlalchemy import create_engine
 

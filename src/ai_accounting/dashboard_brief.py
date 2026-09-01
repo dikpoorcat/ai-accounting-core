@@ -409,7 +409,15 @@ def _compact_voucher_summary(
         if isinstance(asset_name, str) and asset_name.strip():
             return asset_name.strip()
     if event.event_type == "employee_reimbursement_payment":
-        return f"{party or '员工'}报销款"
+        derived = facts.get("derived")
+        if isinstance(derived, dict) and derived.get("settlement_method") == "cash":
+            return f"{party or '个人'}备用金报销"
+        if (
+            isinstance(derived, dict)
+            and derived.get("settlement_method") == "owner_managed_reserve"
+        ):
+            return f"{party or '个人'}老板备用金报销"
+        return f"{party or '个人'}垫付款清偿"
     if event.event_type == "other_income_received":
         details = facts.get("details")
         if (
@@ -427,6 +435,9 @@ def _compact_voucher_summary(
     if event.event_type == "refundable_deposit_return_received":
         return f"{party or '往来方'}保证金"
     if event.event_type == "employee_reimbursement":
+        derived = facts.get("derived")
+        if isinstance(derived, dict) and derived.get("reimbursement_kind") == "existing_payable":
+            return f"{party or '个人'}代偿既有应付款"
         compact = description.strip().rstrip("。")
         for prefix in (
             f"登记{party}垫付的",

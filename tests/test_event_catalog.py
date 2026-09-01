@@ -8,9 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
+from ai_accounting.financial_statements import FinancialStatementService
 from ai_accounting.models import (
     Account,
     BankTransaction,
+    BusinessEvent,
+    Counterparty,
     Evidence,
     OpenItem,
     Organization,
@@ -491,6 +494,306 @@ def test_employee_reimbursement_claims_create_payables_and_one_payment_settles_t
     assert bank.matched_event_id == payment.event_id
     assert all(item.status == "settled" for item in claims)
     assert session.query(Settlement).filter_by(payment_event_id=payment.event_id).count() == 2
+
+
+def test_person_payment_on_behalf_reclassifies_existing_housing_payables_and_cash_settles(
+    session: Session, organization: Organization
+) -> None:
+    service = FinanceService(session)
+    agency = Counterparty(
+        org_id=organization.id,
+        kind="other",
+        name="住房公积金管理中心",
+        external_ref="HZ-HOUSING-FUND",
+    )
+    source = BusinessEvent(
+        org_id=organization.id,
+        idempotency_key="housing-payables-source",
+        event_type="payroll_accrual",
+        status="posted",
+        description="2024年8月公积金应付款",
+        facts={},
+        business_date=date(2024, 8, 31),
+        posting_date=date(2024, 8, 31),
+        rule_trace=[],
+    )
+    session.add_all([agency, source])
+    session.flush()
+    employer_item = OpenItem(
+        org_id=organization.id,
+        counterparty_id=agency.id,
+        source_event_id=source.id,
+        item_type="payable",
+        original_amount_fen=25_000,
+        due_date=date(2024, 8, 31),
+        payable_category="employer_housing",
+        payable_agency_code="HZ-HOUSING-FUND",
+        insurance_kind="housing_fund",
+    )
+    employee_item = OpenItem(
+        org_id=organization.id,
+        counterparty_id=agency.id,
+        source_event_id=source.id,
+        item_type="payable",
+        original_amount_fen=25_000,
+        due_date=date(2024, 8, 31),
+        payable_category="withheld_employee_housing",
+        payable_agency_code="HZ-HOUSING-FUND",
+        insurance_kind="housing_fund",
+    )
+    session.add_all([employer_item, employee_item])
+    session.flush()
+
+    payer = {"kind": "employee", "name": "杜颖成"}
+    on_behalf_request = request(
+        organization,
+        {
+                "idempotency_key": "housing-paid-on-behalf",
+                "event_type": "employee_reimbursement",
+                "business_dates": {
+                    "business_date": "2026-08-20",
+                    "posting_date": "2026-08-20",
+                    "payment_date": "2026-08-20",
+                },
+                "counterparty": payer,
+                "amounts": {"gross_amount_fen": 50_000},
+                "details": {
+                    "paid_now": False,
+                    "reimbursement_kind": "existing_payable",
+                },
+                "allocations": [
+                    {"open_item_id": employer_item.id, "amount_fen": 25_000},
+                    {"open_item_id": employee_item.id, "amount_fen": 25_000},
+                ],
+        },
+    )
+    on_behalf = service.record_event(on_behalf_request)
+    assert on_behalf.status == "posted"
+    assert on_behalf.data["created_open_items"][0]["original_amount_fen"] == 50_000
+    assert employer_item.status == employee_item.status == "settled"
+    assert_balanced(session, on_behalf.voucher_id)
+    on_behalf_lines = session.scalars(
+        select(VoucherLine).where(VoucherLine.voucher_id == on_behalf.voucher_id)
+    ).all()
+    line_roles = {
+        session.get(Account, line.account_id).system_role: (
+            line.debit_fen,
+            line.credit_fen,
+        )
+        for line in on_behalf_lines
+    }
+    assert line_roles["employer_housing_fund_payable"] == (25_000, 0)
+    assert line_roles["withheld_employee_housing_fund_payable"] == (25_000, 0)
+    assert line_roles["employee_payable"] == (0, 50_000)
+    assert all(
+        session.get(Account, line.account_id).category != "expense"
+        for line in on_behalf_lines
+    )
+
+    person_payable = session.scalar(
+        select(OpenItem).where(OpenItem.source_event_id == on_behalf.event_id)
+    )
+    assert person_payable is not None
+    assert (
+        on_behalf.data["created_open_items"][0]["open_item_id"]
+        == str(person_payable.id)
+    )
+    replay = service.record_event(on_behalf_request)
+    assert replay.data["idempotent_replay"] is True
+    assert replay.data["created_open_items"][0]["open_item_id"] == str(person_payable.id)
+    cash_payment = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "housing-cash-reimbursement",
+                "event_type": "employee_reimbursement_payment",
+                "business_dates": {
+                    "business_date": "2026-08-20",
+                    "posting_date": "2026-08-20",
+                    "payment_date": "2026-08-20",
+                },
+                "counterparty": payer,
+                "amounts": {"amount_fen": 50_000},
+                "details": {"settlement_method": "cash"},
+                "allocations": [
+                    {"open_item_id": person_payable.id, "amount_fen": 50_000},
+                ],
+            },
+        )
+    )
+    assert cash_payment.status == "posted"
+    assert person_payable.status == "settled"
+    assert_balanced(session, cash_payment.voucher_id)
+    cash_lines = session.scalars(
+        select(VoucherLine).where(VoucherLine.voucher_id == cash_payment.voucher_id)
+    ).all()
+    cash_roles = {
+        session.get(Account, line.account_id).system_role: (
+            line.debit_fen,
+            line.credit_fen,
+        )
+        for line in cash_lines
+    }
+    assert cash_roles == {
+        "employee_payable": (50_000, 0),
+        "cash": (0, 50_000),
+    }
+    cash_flow = {line: 0 for line in range(1, 23)}
+    missing = []
+    FinancialStatementService(session)._allocate_settlement_cash(
+        cash_flow,
+        cash_payment.event_id,
+        50_000,
+        missing,
+    )
+    assert missing == []
+    assert cash_flow[4] == 50_000
+
+
+def test_cash_reimbursement_payment_forbids_bank_facts(
+    organization: Organization,
+) -> None:
+    with pytest.raises(ValueError, match="non-bank settlement"):
+        request(
+            organization,
+            {
+                "idempotency_key": "cash-reimbursement-with-bank",
+                "event_type": "employee_reimbursement_payment",
+                "business_dates": {
+                    "business_date": "2026-08-20",
+                    "posting_date": "2026-08-20",
+                    "payment_date": "2026-08-20",
+                },
+                "counterparty": {"kind": "employee", "name": "测试员工"},
+                "amounts": {"amount_fen": 50_000},
+                "details": {"settlement_method": "cash"},
+                "bank_account_code": "1002",
+                "allocations": [
+                    {"open_item_id": uuid.uuid4(), "amount_fen": 50_000},
+                ],
+            },
+        )
+
+
+def test_owner_managed_reserve_reclassifies_prior_expense_without_cash(
+    session: Session,
+    organization: Organization,
+) -> None:
+    service = FinanceService(session)
+    reserve_source = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "owner-managed-reserve-source",
+                "event_type": "expense_cash",
+                "business_dates": {
+                    "business_date": "2026-08-01",
+                    "posting_date": "2026-08-01",
+                    "payment_date": "2026-08-01",
+                },
+                "bank_account_code": "1002",
+                "amounts": {
+                    "gross_amount_fen": 100_000,
+                    "expense_account_role": "general_expense",
+                },
+                "description": "转入负责人管理的备用金，转入时直接费用化",
+            },
+        )
+    )
+    assert reserve_source.status == "posted"
+    payable = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "reserve-payable-source",
+                "event_type": "expense_payable",
+                "business_dates": {
+                    "business_date": "2026-08-02",
+                    "posting_date": "2026-08-02",
+                },
+                "counterparty": {"kind": "supplier", "name": "测试供应商"},
+                "amounts": {
+                    "gross_amount_fen": 50_000,
+                    "expense_account_role": "general_expense",
+                },
+            },
+        )
+    )
+    payable_item = session.scalar(
+        select(OpenItem).where(OpenItem.source_event_id == payable.event_id)
+    )
+    assert payable_item is not None
+    payer = {"kind": "employee", "name": "测试员工"}
+    on_behalf = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "reserve-paid-on-behalf",
+                "event_type": "employee_reimbursement",
+                "business_dates": {
+                    "business_date": "2026-08-20",
+                    "posting_date": "2026-08-20",
+                    "payment_date": "2026-08-20",
+                },
+                "counterparty": payer,
+                "amounts": {"gross_amount_fen": 50_000},
+                "details": {
+                    "paid_now": False,
+                    "reimbursement_kind": "existing_payable",
+                },
+                "allocations": [
+                    {"open_item_id": payable_item.id, "amount_fen": 50_000}
+                ],
+            },
+        )
+    )
+    person_item = session.scalar(
+        select(OpenItem).where(OpenItem.source_event_id == on_behalf.event_id)
+    )
+    assert person_item is not None
+    payment = service.record_event(
+        request(
+            organization,
+            {
+                "idempotency_key": "owner-managed-reserve-settlement",
+                "event_type": "employee_reimbursement_payment",
+                "business_dates": {
+                    "business_date": "2026-08-31",
+                    "posting_date": "2026-08-31",
+                    "payment_date": "2026-08-31",
+                },
+                "counterparty": payer,
+                "amounts": {"amount_fen": 50_000},
+                "details": {
+                    "settlement_method": "owner_managed_reserve",
+                    "original_event_id": reserve_source.event_id,
+                },
+                "allocations": [
+                    {"open_item_id": person_item.id, "amount_fen": 50_000}
+                ],
+            },
+        )
+    )
+    assert payment.status == "posted", payment.errors
+    assert person_item.status == "settled"
+    assert payment.data["derived"]["reserve_remaining_after_fen"] == 50_000
+    roles = {
+        session.get(Account, line.account_id).system_role: (
+            line.debit_fen,
+            line.credit_fen,
+        )
+        for line in session.scalars(
+            select(VoucherLine).where(VoucherLine.voucher_id == payment.voucher_id)
+        ).all()
+    }
+    assert roles == {
+        "employee_payable": (50_000, 0),
+        "general_expense": (0, 50_000),
+    }
+    assert not any(
+        role == "cash" or role is None
+        for role in roles
+    )
 
 
 def test_vat_payment_cannot_exceed_posted_liability(

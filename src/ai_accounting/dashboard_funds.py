@@ -40,7 +40,7 @@ _EVENT_LABELS = {
     "expense_recovery_received": "费用退回",
     "supplier_payment": "供应商付款",
     "bank_fee": "银行手续费",
-    "employee_reimbursement_payment": "报销付款",
+    "employee_reimbursement_payment": "个人垫付款清偿",
     "salary_payment": "工资结算",
     "social_insurance_payment": "社保缴纳",
     "housing_fund_payment": "公积金缴纳",

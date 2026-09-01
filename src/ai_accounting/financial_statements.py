@@ -1779,17 +1779,49 @@ class FinancialStatementService(FinanceService):
             )
             return
         for settlement in settlements:
-            source = self.session.scalar(
-                select(BusinessEvent)
+            source_row = self.session.execute(
+                select(BusinessEvent, OpenItem)
                 .join(OpenItem, OpenItem.source_event_id == BusinessEvent.id)
                 .where(OpenItem.id == settlement.open_item_id)
-            )
-            if source is None:
+            ).one_or_none()
+            if source_row is None:
                 missing.append(
                     _requirement(
                         "FINANCIAL_STATEMENT_CASH_SOURCE_MISSING",
                         "找不到付款对应的原始事项。",
                     )
+                )
+                continue
+            source, source_item = source_row
+            signed_amount = settlement.amount_fen * allocation_sign
+            if source_item.payable_category in {
+                "salary",
+                "employer_social",
+                "withheld_employee_social",
+                "employer_housing",
+                "withheld_employee_housing",
+            }:
+                result[4] += signed_amount
+                continue
+            if source_item.payable_category in {
+                "individual_income_tax",
+                "labor_individual_income_tax",
+            }:
+                result[5] += signed_amount
+                continue
+            if source_item.payable_category == "labor_remuneration":
+                result[3] += signed_amount
+                continue
+            if (
+                source.event_type == "employee_reimbursement"
+                and source.facts.get("derived", {}).get("reimbursement_kind")
+                == "existing_payable"
+            ):
+                self._allocate_settlement_cash(
+                    result,
+                    source.id,
+                    signed_amount,
+                    missing,
                 )
                 continue
             roles = set(
@@ -1801,14 +1833,14 @@ class FinancialStatementService(FinanceService):
                 )
             )
             if roles & _SERVICE_COST_ROLES or source.event_type == "labor_remuneration_accrual":
-                result[3] += settlement.amount_fen * allocation_sign
+                result[3] += signed_amount
             elif source.event_type in {
                 "fixed_asset_acquisition",
                 "intangible_asset_acquisition",
             }:
-                result[12] += settlement.amount_fen * allocation_sign
+                result[12] += signed_amount
             else:
-                result[6] += settlement.amount_fen * allocation_sign
+                result[6] += signed_amount
 
     def _allocate_unified_payout_cash(
         self,
