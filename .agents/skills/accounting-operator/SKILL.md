@@ -80,6 +80,14 @@ tool and then re-read `finance_get_owner_workflow` before replying:
    it once with the typed establishment tool; a current financial-statement opening confirmation
    may already supply it.
 
+If the owner explicitly confirms that every applicable historical item in rows 7–9 was completed
+before the kernel tracked it, but the exact external completion dates are unavailable, use only the
+matching `historical_obligation_completion_candidates` returned by the workflow and call
+`finance_confirm_historical_obligation_completion` once per returned obligation type. This records
+an owner-confirmed cutoff with `completion_date_status=not_established`; never substitute a legal
+deadline, the current date, or a guessed establishment date for an unknown filing date. Re-read the
+workflow after each write. This migration fact cannot confirm a current or future obligation.
+
 Upstream employee, payroll, policy, contribution-actual, event, evidence, or material changes can
 make an old confirmation or export stale. If the workflow reopens a row, follow its missing facts
 and supersede the old typed confirmation; do not preserve the old check from chat memory.

@@ -129,6 +129,56 @@ class ConfirmExternalObligationRequest(_StrictRequest):
         return normalized or None
 
 
+class ConfirmHistoricalObligationCompletionRequest(_StrictRequest):
+    """Confirm an applicable history cutoff without inventing filing dates."""
+
+    org_id: uuid.UUID
+    obligation_code: Literal[
+        "periodic_tax_reporting",
+        "annual_enterprise_income_tax",
+        "annual_business_report",
+    ]
+    completion_through_identity: str = Field(min_length=4, max_length=7)
+    source_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    completion_date_status: Literal["not_established"]
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    confirmation_note: str = Field(min_length=1, max_length=2000)
+    evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+    supersedes_confirmation_id: uuid.UUID | None = None
+
+    @field_validator("idempotency_key", "confirmation_note")
+    @classmethod
+    def required_text_is_trimmed(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def completion_identity_matches_obligation(
+        self,
+    ) -> ConfirmHistoricalObligationCompletionRequest:
+        identity = self.completion_through_identity
+        if self.obligation_code == "periodic_tax_reporting":
+            valid = (
+                len(identity) == 7
+                and identity[:4].isdigit()
+                and (
+                    (identity[4:6] == "-Q" and identity[6] in "1234")
+                    or (
+                        identity[4] == "-"
+                        and identity[5:].isdigit()
+                        and 1 <= int(identity[5:]) <= 12
+                    )
+                )
+            )
+        else:
+            valid = len(identity) == 4 and identity.isdigit()
+        if not valid:
+            raise ValueError("completion_through_identity does not match obligation_code")
+        return self
+
+
 class ConfirmOrganizationEstablishmentRequest(_StrictRequest):
     org_id: uuid.UUID
     establishment_date: date

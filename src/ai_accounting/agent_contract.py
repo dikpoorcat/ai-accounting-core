@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v23"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v24"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -42,6 +42,14 @@ OWNER_WORKFLOW_RUNTIME_INSTRUCTION = (
     "九项必须一次性完整展示，排序只决定当前追问；等待关账的报表和尚未到期的年度义务也"
     "不能隐藏。工资及社保公积金计提是关账义务，正常次月实发和外部缴款不是关上月账的"
     "直接前置条件。"
+)
+
+HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION = (
+    "负责人明确确认第7至9项全部适用历史义务已完成、但具体外部完成日期未建立时，不得按法定"
+    "截止日或确认当天伪造逐笔完成日期。必须使用finance_get_owner_workflow返回的"
+    "historical_obligation_completion_candidates，并按义务类型调用"
+    "finance_confirm_historical_obligation_completion保存负责人追认截止范围。该工具只覆盖候选"
+    "范围内已经到期的适用历史义务，不得用于提前确认当前或未来义务；写入后重新读取完整清单。"
 )
 
 PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION = (
@@ -148,6 +156,7 @@ MCP_SERVER_INSTRUCTIONS = (
     f"{IDENTITY_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
     f"{OWNER_WORKFLOW_RUNTIME_INSTRUCTION}"
+    f"{HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION}"
     f"{PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION}"
     f"{PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION}"
     f"{CONFIRMATION_RUNTIME_INSTRUCTION}"
@@ -254,7 +263,7 @@ def agent_operating_protocol() -> dict[str, Any]:
             "stable_error_code": "append_after_plain_chinese_explanation",
         },
         "owner_workflow": {
-            "version": "owner_monthly_workflow_cn_2026.6",
+            "version": "owner_monthly_workflow_cn_2026.7",
             "status_source": "finance_get_owner_workflow",
             "selection_rule": "earliest_ready_incomplete_step_skip_waiting_dependencies",
             "visibility_rule": "show_all_fixed_steps_and_known_deadlines_immediately",
@@ -362,18 +371,27 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "code": "PERIODIC_TAX_AND_FINANCIAL_REPORTING",
                     "label": "税费申报及财务报表",
                     "applicability": "due_after_period_close",
+                    "historical_completion_tool": (
+                        "finance_confirm_historical_obligation_completion"
+                    ),
                 },
                 {
                     "order": 8,
                     "code": "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT",
                     "label": "企业所得税年度汇算清缴",
                     "applicability": "persistent_until_confirmed",
+                    "historical_completion_tool": (
+                        "finance_confirm_historical_obligation_completion"
+                    ),
                 },
                 {
                     "order": 9,
                     "code": "ANNUAL_BUSINESS_REPORT",
                     "label": "工商年报",
                     "applicability": "persistent_until_confirmed",
+                    "historical_completion_tool": (
+                        "finance_confirm_historical_obligation_completion"
+                    ),
                 },
             ],
         },
@@ -404,6 +422,10 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "已有事实与冻结规则能够唯一确定结果时，AI直接形成结论并使用受控工具推进，"
                     "不得把已提供材料重新包装成问题交还用户。"
                 ),
+            },
+            {
+                "code": "persist_historical_obligation_cutoffs_without_fake_dates",
+                "instruction": HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION,
             },
             {
                 "code": "identify_material_unknowns",

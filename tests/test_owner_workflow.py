@@ -13,10 +13,12 @@ from ai_accounting.accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
+from ai_accounting.coa import seed_organization
 from ai_accounting.models import AccountingPeriod, Evidence, Organization
 from ai_accounting.owner_workflow import OwnerWorkflowService
 from ai_accounting.owner_workflow_schemas import (
     ConfirmExternalObligationRequest,
+    ConfirmHistoricalObligationCompletionRequest,
     ConfirmOrganizationEstablishmentRequest,
     ConfirmPeriodMaterialCompletenessRequest,
     ConfirmWorkforceReviewRequest,
@@ -273,3 +275,109 @@ def test_annual_obligations_remain_overdue_until_typed_confirmation(
     assert next_annual["attention_state"] == "overdue"
     assert next_annual["obligation"]["scope_identity"] == "2025"
     assert _step(after, "ANNUAL_BUSINESS_REPORT")["attention_state"] == "overdue"
+
+
+def test_historical_obligation_cutoffs_persist_without_invented_completion_dates(
+    session: Session,
+    organization: Organization,
+) -> None:
+    period = _generate_august_period(session, organization)
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
+    before = workflow.get(
+        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
+    )
+    candidates = {
+        item["obligation_code"]: item
+        for item in before["historical_obligation_completion_candidates"]
+    }
+    assert candidates["periodic_tax_reporting"]["completion_through_identity"] == (
+        "2026-Q2"
+    )
+    assert candidates["annual_enterprise_income_tax"][
+        "completion_through_identity"
+    ] == "2025"
+    assert candidates["annual_business_report"]["completion_through_identity"] == (
+        "2025"
+    )
+
+    other_organization = seed_organization(
+        session,
+        taxpayer_identification_number="91330106MA7654321P",
+        name="另一家隔离测试公司",
+        accounting_period_control_enabled=False,
+    )
+    cross_company = workflow.confirm_historical_obligation_completion(
+        ConfirmHistoricalObligationCompletionRequest(
+            org_id=other_organization.id,
+            obligation_code="periodic_tax_reporting",
+            completion_through_identity=candidates["periodic_tax_reporting"][
+                "completion_through_identity"
+            ],
+            source_snapshot_hash=candidates["periodic_tax_reporting"][
+                "source_snapshot_hash"
+            ],
+            completion_date_status="not_established",
+            idempotency_key="historical-obligation-cross-company",
+            confirmation_note="跨公司哈希必须被拒绝。",
+        )
+    )
+    assert cross_company["status"] == "rejected"
+    assert cross_company["errors"] == [
+        "HISTORICAL_OBLIGATION_COMPLETION_SNAPSHOT_STALE"
+    ]
+
+    for code, candidate in candidates.items():
+        confirmed = workflow.confirm_historical_obligation_completion(
+            ConfirmHistoricalObligationCompletionRequest(
+                org_id=organization.id,
+                obligation_code=code,
+                completion_through_identity=candidate["completion_through_identity"],
+                source_snapshot_hash=candidate["source_snapshot_hash"],
+                completion_date_status="not_established",
+                idempotency_key=f"historical-obligation-{code}",
+                confirmation_note="负责人确认全部适用历史义务已完成，具体完成日期未建立。",
+            )
+        )
+        assert confirmed["status"] == "confirmed"
+        assert confirmed["completion_date_status"] == "not_established"
+
+    session.flush()
+    session.expire_all()
+    reopened = OwnerWorkflowService(session, current_date=date(2026, 9, 2)).get(
+        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
+    )
+    annual_eit = _step(reopened, "ANNUAL_ENTERPRISE_INCOME_TAX_SETTLEMENT")
+    business_report = _step(reopened, "ANNUAL_BUSINESS_REPORT")
+    assert annual_eit["completion_state"] == "completed"
+    assert business_report["completion_state"] == "completed"
+    assert annual_eit["completion_proof"][0] == {
+        "kind": "historical_obligation_completion_confirmation",
+        "confirmation_id": annual_eit["completion_proof"][0]["confirmation_id"],
+        "obligation_code": "annual_enterprise_income_tax",
+        "completion_through_identity": "2025",
+        "completion_date_status": "not_established",
+    }
+    assert business_report["completion_proof"][0]["completion_date_status"] == (
+        "not_established"
+    )
+
+    q2_obligation = workflow._obligation(  # noqa: SLF001 - cutoff boundary regression
+        organization.id,
+        "periodic_tax_reporting",
+        "quarter",
+        "2026-Q2",
+        date(2026, 7, 15),
+        {"rule_version": "test"},
+        [],
+    )
+    q3_obligation = workflow._obligation(  # noqa: SLF001 - future boundary regression
+        organization.id,
+        "periodic_tax_reporting",
+        "quarter",
+        "2026-Q3",
+        date(2026, 10, 26),
+        {"rule_version": "test"},
+        [],
+    )
+    assert workflow._current_obligation_confirmation(q2_obligation) is not None  # noqa: SLF001
+    assert workflow._current_obligation_confirmation(q3_obligation) is None  # noqa: SLF001

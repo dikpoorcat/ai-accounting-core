@@ -116,6 +116,7 @@ from .owner_login_launcher import OwnerCloseApprovalWindowLauncher, OwnerLoginWi
 from .owner_workflow import OwnerWorkflowService
 from .owner_workflow_schemas import (
     ConfirmExternalObligationRequest,
+    ConfirmHistoricalObligationCompletionRequest,
     ConfirmOrganizationEstablishmentRequest,
     ConfirmPayrollContributionAssessmentRequest,
     ConfirmPeriodMaterialCompletenessRequest,
@@ -943,6 +944,20 @@ def finance_confirm_external_obligation(
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_historical_obligation_completion(
+    request: ConfirmHistoricalObligationCompletionRequest,
+) -> dict[str, Any]:
+    """追认截至内核给定范围的适用历史法定义务已完成，不虚构完成日期。"""
+    try:
+        with SessionLocal.begin() as session:
+            return OwnerWorkflowService(session).confirm_historical_obligation_completion(
+                request
+            )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_confirm_organization_establishment(
     request: ConfirmOrganizationEstablishmentRequest,
 ) -> dict[str, Any]:
@@ -993,9 +1008,10 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                     "finance_confirm_payroll_contribution_assessment",
                     "finance_confirm_period_material_completeness",
                     "finance_confirm_external_obligation",
+                    "finance_confirm_historical_obligation_completion",
                     "finance_confirm_organization_establishment",
                 ],
-                "workflow_version": "owner_monthly_workflow_cn_2026.6",
+                "workflow_version": "owner_monthly_workflow_cn_2026.7",
                 "generic_mark_complete_tool": "not_available",
             },
             "payroll": {

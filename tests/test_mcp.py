@@ -54,6 +54,7 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_confirm_payroll_contribution_assessment",
         "finance_confirm_period_material_completeness",
         "finance_confirm_external_obligation",
+        "finance_confirm_historical_obligation_completion",
         "finance_confirm_organization_establishment",
         "finance_get_event_schema",
         "finance_list_companies",
@@ -163,10 +164,39 @@ def test_owner_brief_is_a_strict_read_only_tool() -> None:
     assert "private-sentinel" not in str(caught.value)
 
 
+def test_historical_obligation_completion_is_a_strict_typed_write() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    confirmation = tools["finance_confirm_historical_obligation_completion"]
+
+    assert confirmation.annotations is not None
+    assert confirmation.annotations.readOnlyHint is False
+    assert confirmation.inputSchema["additionalProperties"] is False
+    request_schema = confirmation.inputSchema["$defs"][
+        "ConfirmHistoricalObligationCompletionRequest"
+    ]
+    assert request_schema["additionalProperties"] is False
+    assert set(request_schema["required"]) == {
+        "org_id",
+        "obligation_code",
+        "completion_through_identity",
+        "source_snapshot_hash",
+        "completion_date_status",
+        "idempotency_key",
+        "confirmation_note",
+    }
+    assert request_schema["properties"]["completion_date_status"]["const"] == (
+        "not_established"
+    )
+
+
 def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> None:
     schema = mcp_server.finance_get_event_schema()
     protocol = schema["agent_operating_protocol"]
 
+    assert (
+        "finance_confirm_historical_obligation_completion"
+        in schema["module_capabilities"]["owner_workflow"]["typed_confirmation_tools"]
+    )
     assert protocol["version"] == AI_OPERATING_PROTOCOL_VERSION
     assert protocol["identity"] == {
         "role": "accounting_execution_assistant",
@@ -232,8 +262,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "exclude": ["ai_internal_work"],
         "show_when": ["every_response_with_next_action", "owner_requests_status"],
     }
-    assert protocol["version"] == "accounting_execution_assistant_v23"
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.6"
+    assert protocol["version"] == "accounting_execution_assistant_v24"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.7"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["prohibit_chat_derived_completion"] is True
     assert protocol["owner_workflow"]["visibility_rule"] == (
@@ -321,6 +351,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert [item["code"] for item in protocol["required_sequence"]] == [
         "inspect_available_materials",
         "derive_when_unique",
+        "persist_historical_obligation_cutoffs_without_fake_dates",
         "identify_material_unknowns",
         "propose_best_supported_treatment",
         "persist_workforce_then_assess_contributions_before_income_tax",

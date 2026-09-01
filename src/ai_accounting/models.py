@@ -1762,6 +1762,93 @@ Index(
 )
 
 
+class HistoricalObligationCompletionConfirmation(Base):
+    """Owner-confirmed cutoff for applicable pre-kernel statutory obligations."""
+
+    __tablename__ = "historical_obligation_completion_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    obligation_code: Mapped[str] = mapped_column(String(80), nullable=False)
+    obligation_scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    completion_through_identity: Mapped[str] = mapped_column(String(7), nullable=False)
+    completion_date_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id"],
+            ["organizations.id"],
+            name="fk_historical_obligation_completion_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "supersedes_id"],
+            [
+                "historical_obligation_completion_confirmations.org_id",
+                "historical_obligation_completion_confirmations.id",
+            ],
+            name="fk_historical_obligation_completion_org_supersedes",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            name="fk_historical_obligation_completion_execution_attribution",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "org_id", "id", name="uq_historical_obligation_completion_org_id"
+        ),
+        UniqueConstraint(
+            "org_id",
+            "idempotency_key",
+            name="uq_historical_obligation_completion_idempotency",
+        ),
+        CheckConstraint(
+            "obligation_code IN ('periodic_tax_reporting',"
+            "'annual_enterprise_income_tax','annual_business_report')",
+            name="ck_historical_obligation_completion_code",
+        ),
+        CheckConstraint(
+            "(obligation_code = 'periodic_tax_reporting' AND obligation_scope IN "
+            "('month','quarter')) OR "
+            "(obligation_code IN ('annual_enterprise_income_tax','annual_business_report') "
+            "AND obligation_scope = 'year')",
+            name="ck_historical_obligation_completion_scope",
+        ),
+        CheckConstraint(
+            "completion_date_status = 'not_established'",
+            name="ck_historical_obligation_completion_date_status",
+        ),
+        CheckConstraint(
+            "length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64",
+            name="ck_historical_obligation_completion_hashes",
+        ),
+        CheckConstraint(
+            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
+            name="ck_historical_obligation_completion_note",
+        ),
+    )
+
+
+Index(
+    "uq_historical_obligation_completion_root",
+    HistoricalObligationCompletionConfirmation.org_id,
+    HistoricalObligationCompletionConfirmation.obligation_code,
+    unique=True,
+    postgresql_where=HistoricalObligationCompletionConfirmation.supersedes_id.is_(None),
+    sqlite_where=HistoricalObligationCompletionConfirmation.supersedes_id.is_(None),
+)
+
+
 class OrganizationEstablishmentConfirmation(Base):
     """Evidence-aware establishment date used to schedule annual obligations."""
 
@@ -6606,6 +6693,7 @@ _ATTRIBUTED_ROOT_TYPES = (
     EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
     ExternalObligationConfirmation,
+    HistoricalObligationCompletionConfirmation,
     FinancialStatementClassification,
     FinancialStatementOpeningBalanceConfirmation,
     LaborExternalDeclarationConfirmation,
@@ -6713,6 +6801,7 @@ def _enforce_owner_workflow_facts_append_only(
 ) -> None:
     fact_types = (
         ExternalObligationConfirmation,
+        HistoricalObligationCompletionConfirmation,
         OrganizationEstablishmentConfirmation,
         OwnerPeriodConfirmation,
         PayrollContributionAssessmentConfirmation,

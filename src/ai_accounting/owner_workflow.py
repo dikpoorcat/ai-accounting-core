@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from datetime import date
 from typing import Any
 
@@ -19,6 +20,7 @@ from .models import (
     Evidence,
     ExternalObligationConfirmation,
     FinancialStatementOpeningBalanceConfirmation,
+    HistoricalObligationCompletionConfirmation,
     Organization,
     OrganizationEstablishmentConfirmation,
     OwnerPeriodConfirmation,
@@ -31,6 +33,7 @@ from .models import (
 )
 from .owner_workflow_schemas import (
     ConfirmExternalObligationRequest,
+    ConfirmHistoricalObligationCompletionRequest,
     ConfirmOrganizationEstablishmentRequest,
     ConfirmPayrollContributionAssessmentRequest,
     ConfirmPeriodMaterialCompletenessRequest,
@@ -49,7 +52,7 @@ from .payroll import (
 from .payroll.types import CalculationValidationError, NeedsInformationError
 from .service import FinanceService
 
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.6"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.7"
 OWNER_WORKFLOW_CLOSE_GATE_VERSION = "owner_workflow_close_gates_2026.1"
 OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM = date(2026, 8, 1)
 
@@ -150,6 +153,9 @@ class OwnerWorkflowService:
             "steps": steps,
             "close_gates": gate_snapshot,
             "existing_exports": exports,
+            "historical_obligation_completion_candidates": self._historical_completion_candidates(
+                organization
+            ),
             "external_materials_completeness": (
                 "owner_confirmed_current"
                 if gate_snapshot["gates"]["non_bank_materials"]["satisfied"]
@@ -396,6 +402,94 @@ class OwnerWorkflowService:
             "status": "confirmed",
             "confirmation_id": str(row.id),
             "obligation_id": str(row.obligation_id),
+            "verification_level": "evidence_attached" if evidence else "owner_confirmed",
+        }
+
+    def confirm_historical_obligation_completion(
+        self, request: ConfirmHistoricalObligationCompletionRequest
+    ) -> dict[str, Any]:
+        organization = self.session.get(Organization, request.org_id)
+        if organization is None:
+            return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
+        candidate = self._historical_completion_candidate(
+            organization, request.obligation_code
+        )
+        if (
+            request.completion_through_identity
+            != candidate["completion_through_identity"]
+            or request.source_snapshot_hash != candidate["source_snapshot_hash"]
+        ):
+            return {
+                "status": "rejected",
+                "errors": ["HISTORICAL_OBLIGATION_COMPLETION_SNAPSHOT_STALE"],
+                "current_candidate": candidate,
+            }
+        payload_hash = self._request_hash(
+            "finance_confirm_historical_obligation_completion", request
+        )
+        replay = self._idempotent_replay(
+            HistoricalObligationCompletionConfirmation,
+            request.org_id,
+            request.idempotency_key,
+            payload_hash,
+            "HISTORICAL_OBLIGATION_COMPLETION_IDEMPOTENCY_PAYLOAD_MISMATCH",
+        )
+        if replay is not None:
+            return replay
+        active = self._active_historical_obligation_completion(
+            request.org_id, request.obligation_code
+        )
+        invalid = self._validate_supersedes(
+            active,
+            request.supersedes_confirmation_id,
+            "HISTORICAL_OBLIGATION_COMPLETION_CORRECTION_REQUIRES_SUPERSEDES",
+            "INVALID_HISTORICAL_OBLIGATION_COMPLETION_SUPERSEDES",
+        )
+        if invalid is not None:
+            return invalid
+        try:
+            evidence = self._evidence_snapshot(request.org_id, request.evidence_references)
+        except ValueError as exc:
+            return {"status": "rejected", "errors": [str(exc)]}
+        row = HistoricalObligationCompletionConfirmation(
+            org_id=request.org_id,
+            obligation_code=request.obligation_code,
+            obligation_scope=candidate["obligation_scope"],
+            completion_through_identity=request.completion_through_identity,
+            completion_date_status=request.completion_date_status,
+            source_snapshot_hash=request.source_snapshot_hash,
+            idempotency_key=request.idempotency_key,
+            request_payload_hash=payload_hash,
+            confirmation_note=request.confirmation_note,
+            evidence_snapshot=evidence,
+            supersedes_id=active.id if active is not None else None,
+        )
+        result = self._persist_row(
+            row,
+            HistoricalObligationCompletionConfirmation,
+            request.org_id,
+            request.idempotency_key,
+            payload_hash,
+            "HISTORICAL_OBLIGATION_COMPLETION_CONCURRENT_WRITE_CONFLICT",
+        )
+        if result is not None:
+            return result
+        self._audit(
+            request.org_id,
+            "historical_obligation_completion_confirmed",
+            {
+                "confirmation_id": str(row.id),
+                "obligation_code": row.obligation_code,
+                "completion_through_identity": row.completion_through_identity,
+                "completion_date_status": row.completion_date_status,
+            },
+        )
+        return {
+            "status": "confirmed",
+            "confirmation_id": str(row.id),
+            "obligation_code": row.obligation_code,
+            "completion_through_identity": row.completion_through_identity,
+            "completion_date_status": row.completion_date_status,
             "verification_level": "evidence_attached" if evidence else "owner_confirmed",
         }
 
@@ -710,15 +804,7 @@ class OwnerWorkflowService:
             obligation = obligations[-1]
             confirmation = self._current_obligation_confirmation(obligation)
             assert confirmation is not None
-            return self._completed(
-                [
-                    {
-                        "kind": "external_obligation_confirmation",
-                        "confirmation_id": str(confirmation.id),
-                        "obligation_id": obligation["obligation_id"],
-                    }
-                ]
-            )
+            return self._completed([self._obligation_completion_proof(confirmation, obligation)])
         obligation = min(pending, key=lambda item: (item["deadline"], item["obligation_id"]))
         obligation_period = self._period_for_org(
             organization.id, uuid.UUID(obligation["source"]["period_id"])
@@ -895,15 +981,7 @@ class OwnerWorkflowService:
             ) | {"obligation": obligation}
         confirmation = self._current_obligation_confirmation(obligation)
         if confirmation is not None:
-            return self._completed(
-                [
-                    {
-                        "kind": "external_obligation_confirmation",
-                        "confirmation_id": str(confirmation.id),
-                        "obligation_id": obligation["obligation_id"],
-                    }
-                ]
-            )
+            return self._completed([self._obligation_completion_proof(confirmation, obligation)])
         deadline = date.fromisoformat(obligation["deadline"])
         return self._incomplete(
             attention="overdue" if self.today > deadline else "todo",
@@ -927,6 +1005,29 @@ class OwnerWorkflowService:
     ) -> dict[str, Any]:
         establishment = self._establishment_date(organization.id)
         if establishment is None:
+            historical = self._active_historical_obligation_completion(
+                organization.id, code
+            )
+            candidate = self._historical_completion_candidate(organization, code)
+            if historical is not None and self._scope_identity_rank(
+                historical.obligation_scope, historical.completion_through_identity
+            ) >= self._scope_identity_rank(
+                candidate["obligation_scope"],
+                candidate["completion_through_identity"],
+            ):
+                return self._completed(
+                    [
+                        {
+                            "kind": "historical_obligation_completion_confirmation",
+                            "confirmation_id": str(historical.id),
+                            "obligation_code": historical.obligation_code,
+                            "completion_through_identity": (
+                                historical.completion_through_identity
+                            ),
+                            "completion_date_status": historical.completion_date_status,
+                        }
+                    ]
+                )
             return self._incomplete(
                 missing=["organization_establishment_date"],
                 action="请确认公司成立日期，以判断年度法定义务是否适用。",
@@ -947,15 +1048,7 @@ class OwnerWorkflowService:
             obligation = obligations[-1]
             confirmation = self._current_obligation_confirmation(obligation)
             assert confirmation is not None
-            return self._completed(
-                [
-                    {
-                        "kind": "external_obligation_confirmation",
-                        "confirmation_id": str(confirmation.id),
-                        "obligation_id": obligation["obligation_id"],
-                    }
-                ]
-            )
+            return self._completed([self._obligation_completion_proof(confirmation, obligation)])
         obligation = min(pending, key=lambda item: (item["deadline"], item["obligation_id"]))
         report_year = int(obligation["scope_identity"])
         deadline = date.fromisoformat(obligation["deadline"])
@@ -1552,6 +1645,86 @@ class OwnerWorkflowService:
             for row in rows
         ]
 
+    def _historical_completion_candidates(
+        self, organization: Organization
+    ) -> list[dict[str, Any]]:
+        return [
+            self._historical_completion_candidate(organization, code)
+            for code in (
+                "periodic_tax_reporting",
+                "annual_enterprise_income_tax",
+                "annual_business_report",
+            )
+        ]
+
+    def _historical_completion_candidate(
+        self, organization: Organization, code: str
+    ) -> dict[str, Any]:
+        if code == "periodic_tax_reporting":
+            scope = organization.filing_cycle
+            if scope not in {"monthly", "quarterly"}:
+                raise ValueError("UNSUPPORTED_HISTORICAL_OBLIGATION_FILING_CYCLE")
+            obligation_scope = "month" if scope == "monthly" else "quarter"
+            completion_through_identity = self._latest_elapsed_periodic_scope(scope)
+            rule_version = "cn_periodic_tax_deadline_2026.1"
+        elif code in {
+            "annual_enterprise_income_tax",
+            "annual_business_report",
+        }:
+            obligation_scope = "year"
+            deadline_month_day = (
+                (5, 31) if code == "annual_enterprise_income_tax" else (6, 30)
+            )
+            latest_report_year = self.today.year - 1
+            if self.today <= date(self.today.year, *deadline_month_day):
+                latest_report_year -= 1
+            completion_through_identity = str(latest_report_year)
+            rule_version = f"cn_{code}_deadline_2026.1"
+        else:
+            raise ValueError("HISTORICAL_OBLIGATION_CODE_NOT_SUPPORTED")
+        payload = {
+            "version": "historical_obligation_completion_candidate_2026.1",
+            "org_id": str(organization.id),
+            "obligation_code": code,
+            "obligation_scope": obligation_scope,
+            "completion_through_identity": completion_through_identity,
+            "completion_date_status": "not_established",
+            "filing_cycle": organization.filing_cycle,
+            "as_of_date": self.today.isoformat(),
+            "rule_version": rule_version,
+        }
+        active = self._active_historical_obligation_completion(organization.id, code)
+        return payload | {
+            "source_snapshot_hash": canonical_sha256(payload),
+            "active_confirmation": (
+                {
+                    "confirmation_id": str(active.id),
+                    "completion_through_identity": active.completion_through_identity,
+                    "completion_date_status": active.completion_date_status,
+                }
+                if active is not None
+                else None
+            ),
+        }
+
+    def _latest_elapsed_periodic_scope(self, filing_cycle: str) -> str:
+        candidates: list[tuple[date, str]] = []
+        months = range(1, 13) if filing_cycle == "monthly" else (3, 6, 9, 12)
+        for year in range(self.today.year - 2, self.today.year + 1):
+            for month in months:
+                period_end = date(year, month, monthrange(year, month)[1])
+                deadline = self._next_month_deadline(period_end)
+                if deadline < self.today:
+                    identity = (
+                        f"{year:04d}-{month:02d}"
+                        if filing_cycle == "monthly"
+                        else f"{year:04d}-Q{month // 3}"
+                    )
+                    candidates.append((deadline, identity))
+        if not candidates:
+            raise ValueError("HISTORICAL_OBLIGATION_COMPLETION_CUTOFF_NOT_AVAILABLE")
+        return max(candidates)[1]
+
     def _obligation_catalog(self, organization: Organization) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         periods = list(
@@ -1682,17 +1855,55 @@ class OwnerWorkflowService:
 
     def _current_obligation_confirmation(
         self, obligation: dict[str, Any]
-    ) -> ExternalObligationConfirmation | None:
+    ) -> ExternalObligationConfirmation | HistoricalObligationCompletionConfirmation | None:
         row = self._active_obligation_confirmation(
             uuid.UUID(obligation["org_id"]),
             uuid.UUID(obligation["obligation_id"]),
         )
-        return (
-            row
-            if row is not None
-            and row.source_snapshot_hash == obligation["source_snapshot_hash"]
-            else None
+        if row is not None and row.source_snapshot_hash == obligation["source_snapshot_hash"]:
+            return row
+        historical = self._active_historical_obligation_completion(
+            uuid.UUID(obligation["org_id"]), obligation["code"]
         )
+        if historical is None or historical.obligation_scope != obligation["scope"]:
+            return None
+        if self._scope_identity_rank(
+            historical.obligation_scope, historical.completion_through_identity
+        ) < self._scope_identity_rank(obligation["scope"], obligation["scope_identity"]):
+            return None
+        return historical
+
+    @staticmethod
+    def _scope_identity_rank(scope: str, identity: str) -> tuple[int, int]:
+        if scope == "year":
+            return int(identity), 0
+        if scope == "quarter":
+            year, quarter = identity.split("-Q", 1)
+            return int(year), int(quarter)
+        if scope == "month":
+            year, month = identity.split("-", 1)
+            return int(year), int(month)
+        raise ValueError("HISTORICAL_OBLIGATION_SCOPE_NOT_SUPPORTED")
+
+    @staticmethod
+    def _obligation_completion_proof(
+        confirmation: ExternalObligationConfirmation
+        | HistoricalObligationCompletionConfirmation,
+        obligation: dict[str, Any],
+    ) -> dict[str, Any]:
+        if isinstance(confirmation, HistoricalObligationCompletionConfirmation):
+            return {
+                "kind": "historical_obligation_completion_confirmation",
+                "confirmation_id": str(confirmation.id),
+                "obligation_code": confirmation.obligation_code,
+                "completion_through_identity": confirmation.completion_through_identity,
+                "completion_date_status": confirmation.completion_date_status,
+            }
+        return {
+            "kind": "external_obligation_confirmation",
+            "confirmation_id": str(confirmation.id),
+            "obligation_id": obligation["obligation_id"],
+        }
 
     def _establishment_date(self, org_id: uuid.UUID) -> date | None:
         current = self._active_establishment_confirmation(org_id)
@@ -1824,6 +2035,30 @@ class OwnerWorkflowService:
             .order_by(
                 ExternalObligationConfirmation.created_at.desc(),
                 ExternalObligationConfirmation.id.desc(),
+            )
+            .limit(1)
+        )
+
+    def _active_historical_obligation_completion(
+        self, org_id: uuid.UUID, obligation_code: str
+    ) -> HistoricalObligationCompletionConfirmation | None:
+        successor = aliased(HistoricalObligationCompletionConfirmation)
+        return self.session.scalar(
+            select(HistoricalObligationCompletionConfirmation)
+            .where(
+                HistoricalObligationCompletionConfirmation.org_id == org_id,
+                HistoricalObligationCompletionConfirmation.obligation_code
+                == obligation_code,
+                ~exists(
+                    select(successor.id).where(
+                        successor.supersedes_id
+                        == HistoricalObligationCompletionConfirmation.id
+                    )
+                ),
+            )
+            .order_by(
+                HistoricalObligationCompletionConfirmation.created_at.desc(),
+                HistoricalObligationCompletionConfirmation.id.desc(),
             )
             .limit(1)
         )
