@@ -77,8 +77,8 @@ jobs:
         run: |
           uv run alembic upgrade head
           uv run alembic check
-      - name: Run PostgreSQL 17 invariant tests
-        run: uv run pytest -m postgres
+      - name: Run current dual-baseline PostgreSQL 17 gate
+        run: uv run pytest -m postgres_current
 
   gitleaks:
     name: Secret scan

@@ -381,8 +381,18 @@ def authenticated_bank_scope() -> Callable[..., AuthenticatedOwnerAuthority]:
 
 @pytest.fixture(autouse=True)
 def deterministic_business_date(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep fixed-date unit tests stable; boundary tests override this clock."""
+    """Keep unit tests independent from the developer's live local settings."""
 
+    # Child STDIO servers inherit these overrides.  In particular, they must
+    # not accidentally load production mode or the live multi-company router
+    # from a developer's local, Git-ignored .env file.
+    monkeypatch.setenv("FINANCE_ENVIRONMENT", "development")
+    monkeypatch.setenv("FINANCE_COMPANY_DATABASE_URL", "")
+    monkeypatch.setenv("FINANCE_PROVISIONING_DATABASE_URL", "")
+    test_settings = Settings(_env_file=None)
+    monkeypatch.setattr("ai_accounting.bank_import.get_settings", lambda: test_settings)
+    monkeypatch.setattr("ai_accounting.mcp_server.get_settings", lambda: test_settings)
+    monkeypatch.setattr("ai_accounting.identity_cli.get_settings", lambda: test_settings)
     monkeypatch.setattr("ai_accounting.ledger.china_current_date", lambda: date.max)
     monkeypatch.setattr(
         "ai_accounting.accounting_period_service.china_current_date", lambda: date.max

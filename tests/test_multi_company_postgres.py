@@ -8,7 +8,6 @@ from decimal import Decimal
 
 import pytest
 from alembic.config import Config
-from pydantic import SecretStr
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
@@ -17,13 +16,6 @@ from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.accounting_period_schemas import GenerateAccountingPeriodRequest
 from ai_accounting.accounting_period_service import AccountingPeriodService
-from ai_accounting.coa import seed_organization
-from ai_accounting.company_cli import (
-    _copy_catalog_identity,
-    _source_precheck,
-    _upgrade_existing_business,
-    _verify_source_after_cutover,
-)
 from ai_accounting.company_router import (
     CompanyDatabaseRouter,
     CompanyRoutingError,
@@ -42,25 +34,20 @@ from ai_accounting.company_service import CompanyLifecycleError, CompanyService
 from ai_accounting.config import Settings
 from ai_accounting.dashboard_server import load_multi_company_dashboard_context
 from ai_accounting.execution_attribution import persist_execution_attribution
-from ai_accounting.identity import ExecutionContext, ExecutorIdentity, ExecutorKind
-from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
-from ai_accounting.identity_service import IdentityService
+from ai_accounting.identity import ExecutionContext, ExecutorKind
 from ai_accounting.models import (
     BusinessEvent,
     CatalogMetadata,
     CompanyRegistry,
     Evidence,
     Organization,
-    OrganizationDatabaseMetadata,
-    OrganizationProfileVersion,
-    OwnerAccount,
-    OwnerSession,
 )
 from ai_accounting.organization_profiles import profile_as_of
 from alembic import command
 
 pytestmark = [
     pytest.mark.postgres,
+    pytest.mark.postgres_current,
     pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
 ]
 
@@ -198,7 +185,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
             } <= set(inspect(catalog_engine).get_table_names())
             with catalog_engine.connect() as connection:
                 assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "0004_company_backup_locations"
+                    "0001_catalog_baseline_v2"
                 )
             created: list[dict[str, object]] = []
             for request in create_requests:
@@ -539,129 +526,3 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
         finally:
             router.dispose()
             catalog_engine.dispose()
-
-
-def test_single_database_cutover_copies_identity_and_preserves_business_history() -> None:
-    with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
-        base_url = postgres.get_connection_url(driver="psycopg")
-        source_database = "finance"
-        catalog_database = "finance_catalog"
-        admin = create_engine(base_url, isolation_level="AUTOCOMMIT")
-        try:
-            with admin.connect() as connection:
-                connection.exec_driver_sql(f'CREATE DATABASE "{source_database}"')
-                connection.exec_driver_sql(f'CREATE DATABASE "{catalog_database}"')
-        finally:
-            admin.dispose()
-
-        source_url = _database_url(base_url, source_database)
-        catalog_url = _database_url(base_url, catalog_database)
-        source_config = Config("alembic.ini")
-        source_config.set_main_option("sqlalchemy.url", source_url.replace("%", "%%"))
-        source_config.attributes["database_url_override"] = source_url
-        command.upgrade(source_config, "0001_formal_baseline")
-        source_engine = create_engine(source_url)
-        org_id = uuid.uuid4()
-        try:
-            with Session(source_engine) as session:
-                organization = seed_organization(
-                    session,
-                    org_id=org_id,
-                    name="迁移保留公司",
-                    taxpayer_identification_number="91330106MA1234567T",
-                    accounting_period_control_enabled=False,
-                )
-                session.add(
-                    BusinessEvent(
-                        id=uuid.uuid4(),
-                        org_id=organization.id,
-                        idempotency_key="migration-preserved-event",
-                        request_payload_hash="d" * 64,
-                        event_type="expense_payable",
-                        status="draft",
-                        description="迁移前历史事件",
-                        facts={},
-                        business_date=date(2026, 1, 1),
-                        posting_date=date(2026, 1, 1),
-                        rule_trace=[],
-                    )
-                )
-                session.commit()
-                identity = IdentityService(session)
-                identity.provision_owner(
-                    OwnerProvisionRequest(
-                        org_id=org_id,
-                        login_name="migration-owner",
-                        password=SecretStr("Migration-Owner-2026!"),
-                    )
-                )
-                session.commit()
-                login = identity.authenticate(
-                    OwnerLoginRequest(
-                        login_name="migration-owner",
-                        password=SecretStr("Migration-Owner-2026!"),
-                    )
-                )
-                session.commit()
-
-            precheck = _source_precheck(source_engine)
-            assert precheck["counts"]["business_events"] == 1  # type: ignore[index]
-            database_identity = uuid.uuid5(org_id, "finance-company-database")
-            catalog_id = uuid.uuid4()
-            _upgrade_catalog(catalog_url, catalog_id)
-            catalog_engine = create_engine(catalog_url)
-            try:
-                _copy_catalog_identity(
-                    source_engine=source_engine,
-                    catalog_engine=catalog_engine,
-                    org_id=org_id,
-                    database_identity=database_identity,
-                    precheck=precheck,
-                    backup_manifest_sha256="c" * 64,
-                )
-                _upgrade_existing_business(
-                    make_url(source_url),
-                    org_id=org_id,
-                    database_identity=database_identity,
-                    catalog_id=catalog_id,
-                )
-                _verify_source_after_cutover(
-                    source_engine, precheck, database_identity
-                )
-                assert not (
-                    set(inspect(source_engine).get_table_names())
-                    & {
-                        "owner_accounts",
-                        "owner_sessions",
-                        "owner_recovery_codes",
-                        "identity_audit_events",
-                    }
-                )
-                with Session(source_engine) as session:
-                    assert session.scalar(select(BusinessEvent)) is not None
-                    assert session.get(OrganizationDatabaseMetadata, 1) is not None
-                    assert session.scalar(select(OrganizationProfileVersion)) is not None
-                with Session(catalog_engine) as session:
-                    assert session.scalar(select(OwnerAccount)) is not None
-                    assert session.scalar(select(OwnerSession)) is not None
-                    registry = session.get(CompanyRegistry, org_id)
-                    assert registry is not None
-                    assert registry.database_name == "finance"
-                    assert registry.status == "provisioning"
-                    session.info["catalog_mode"] = True
-                    migrated_context = IdentityService(session).authorize_execution(
-                        session_token=login.session_token.get_secret_value(),
-                        executor=ExecutorIdentity(
-                            kind=ExecutorKind.SYSTEM_JOB,
-                            executor_name="migration-token-test",
-                            executor_version="1.0.0",
-                        ),
-                        request_correlation_id=uuid.uuid4(),
-                        expected_org_id=org_id,
-                    )
-                    assert migrated_context.owner_account_id == login.owner_account_id
-                    assert migrated_context.catalog_instance_id == catalog_id
-            finally:
-                catalog_engine.dispose()
-        finally:
-            source_engine.dispose()

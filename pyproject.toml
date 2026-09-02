@@ -41,6 +41,7 @@ finance-login = "ai_accounting.identity_cli:main"
 finance-backup = "ai_accounting.backup_cli:main"
 finance-dashboard = "ai_accounting.dashboard_server:main"
 finance-company = "ai_accounting.company_cli:main"
+finance-replay = "ai_accounting.replay_cli:main"
 
 [tool.uv]
 # Keep local and CI lock-file resolution on the same audited uv release.
@@ -53,7 +54,10 @@ artifacts = ["src/ai_accounting/static/dashboard/**"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
-markers = ["postgres: requires a local Docker daemon and validates PostgreSQL triggers"]
+markers = [
+  "postgres: requires a local Docker daemon and validates PostgreSQL behavior",
+  "postgres_current: current dual-baseline and multi-company PostgreSQL 17 gate",
+]
 
 [tool.ruff]
 target-version = "py312"

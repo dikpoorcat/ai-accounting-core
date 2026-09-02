@@ -2,7 +2,6 @@
 -- PostgreSQL database dump
 --
 
-
 -- Dumped from database version 17.10
 -- Dumped by pg_dump version 17.10
 
@@ -511,7 +510,7 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
                   'accounting_period_close_checker_2026.2',
                   'accounting_period_close_checker_2026.3',
                   'accounting_period_close_checker_2026.4',
-                  'accounting_period_close_checker_2026.5'
+                  'accounting_period_close_checker_2026.5', 'accounting_period_close_checker_2026.6', 'accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8'
                )
                OR target_close.source_urls::jsonb <> jsonb_build_array(
                     'https://kjs.mof.gov.cn/zt/kjfxcgc/kjfqw/202408/t20240814_3941788.htm',
@@ -540,8 +539,12 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
             ) THEN
                 RAISE EXCEPTION 'ACCOUNTING_PERIOD_CLOSE_OUT_OF_SEQUENCE';
             END IF;
-            IF target_period.end_date >
-               (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date THEN
+            IF target_close.checker_version IN ('accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8')
+               AND target_period.end_date >=
+                   (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date THEN
+                RAISE EXCEPTION 'ACCOUNTING_PERIOD_PERIOD_NOT_ENDED';
+            ELSIF target_period.end_date >
+                  (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date THEN
                 RAISE EXCEPTION 'ACCOUNTING_PERIOD_FUTURE_CLOSE_NOT_ALLOWED';
             END IF;
 
@@ -756,14 +759,221 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
                               AND accrual_event.status = 'posted') <> 1
                );
 
+            IF target_close.checker_version = 'accounting_period_close_checker_2026.8'
+               AND target_period.start_date >= DATE '2026-08-01' THEN
+                IF target_close.calculation::jsonb #>>
+                       '{owner_workflow_close_gates,version}'
+                       IS DISTINCT FROM 'owner_workflow_close_gates_2026.3'
+                   OR COALESCE((target_close.calculation::jsonb #>>
+                       '{owner_workflow_close_gates,enforced_for_period}')::boolean,
+                       false) IS NOT TRUE
+                   OR COALESCE((target_close.calculation::jsonb #>>
+                       '{owner_workflow_close_gates,gates,workforce_review,satisfied}')::boolean,
+                       false) IS NOT TRUE
+                   OR COALESCE((target_close.calculation::jsonb #>>
+                       '{owner_workflow_close_gates,gates,contribution_accounting,satisfied}')::boolean,
+                       false) IS NOT TRUE
+                   OR COALESCE((target_close.calculation::jsonb #>>
+                       '{owner_workflow_close_gates,gates,individual_income_tax_declaration,satisfied}')::boolean,
+                       false) IS NOT TRUE
+                   OR COALESCE((target_close.calculation::jsonb #>>
+                       '{owner_workflow_close_gates,gates,individual_income_tax_declaration,applicable}')::boolean,
+                       false) IS DISTINCT FROM EXISTS (
+                       SELECT 1
+                         FROM payroll_batches AS batch
+                         JOIN payroll_lines AS line
+                           ON line.org_id = batch.org_id
+                          AND line.payroll_batch_id = batch.id
+                        WHERE batch.org_id = target_period.org_id
+                          AND batch.batch_kind = 'regular'
+                          AND batch.payroll_period = to_char(target_period.start_date, 'YYYY-MM')
+                          AND batch.status = 'posted'
+                          AND batch.reversal_of_batch_id IS NULL
+                          AND line.wage_tax_declaration_state = 'declared')
+                   OR (
+                       COALESCE((target_close.calculation::jsonb #>>
+                           '{owner_workflow_close_gates,gates,individual_income_tax_declaration,applicable}')::boolean,
+                           false) IS FALSE
+                       AND (
+                           target_close.calculation::jsonb #>>
+                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,obligation_id}'
+                               IS NOT NULL
+                           OR target_close.calculation::jsonb #>>
+                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,source_snapshot_hash}'
+                               IS NOT NULL
+                           OR target_close.calculation::jsonb #>>
+                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,confirmation_id}'
+                               IS NOT NULL
+                           OR target_close.calculation::jsonb #>>
+                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,completion_date_status}'
+                               IS NOT NULL))
+                   OR (
+                       COALESCE((target_close.calculation::jsonb #>>
+                           '{owner_workflow_close_gates,gates,individual_income_tax_declaration,applicable}')::boolean,
+                           false) IS TRUE
+                       AND NOT EXISTS (
+                           SELECT 1
+                             FROM external_obligation_confirmations AS confirmation
+                            WHERE confirmation.org_id = target_period.org_id
+                              AND confirmation.id = (target_close.calculation::jsonb #>>
+                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,confirmation_id}')::uuid
+                              AND confirmation.obligation_id = (target_close.calculation::jsonb #>>
+                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,obligation_id}')::uuid
+                              AND confirmation.obligation_code = 'individual_income_tax'
+                              AND confirmation.obligation_scope = 'month'
+                              AND confirmation.source_snapshot_hash =
+                                  target_close.calculation::jsonb #>>
+                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,source_snapshot_hash}'
+                              AND confirmation.completion_status = 'submitted'
+                              AND confirmation.completion_date_status =
+                                  target_close.calculation::jsonb #>>
+                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,completion_date_status}'
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                    FROM external_obligation_confirmations AS successor
+                                   WHERE successor.supersedes_id = confirmation.id)))
+                   OR COALESCE((target_close.calculation::jsonb #>>
+                       '{owner_workflow_close_gates,gates,non_bank_materials,satisfied}')::boolean,
+                       false) IS NOT TRUE
+                   OR NOT EXISTS (
+                       SELECT 1 FROM owner_period_confirmations AS confirmation
+                        WHERE confirmation.org_id = target_period.org_id
+                          AND confirmation.period_id = target_period.id
+                          AND confirmation.fact_type = 'workforce_review'
+                          AND confirmation.id = (target_close.calculation::jsonb #>>
+                              '{owner_workflow_close_gates,gates,workforce_review,confirmation_id}')::uuid
+                          AND confirmation.source_snapshot_hash =
+                              target_close.calculation::jsonb #>>
+                              '{owner_workflow_close_gates,gates,workforce_review,source_snapshot_hash}'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM owner_period_confirmations AS successor
+                               WHERE successor.supersedes_id = confirmation.id))
+                   OR NOT EXISTS (
+                       SELECT 1 FROM owner_period_confirmations AS confirmation
+                        WHERE confirmation.org_id = target_period.org_id
+                          AND confirmation.period_id = target_period.id
+                          AND confirmation.fact_type = 'non_bank_materials'
+                          AND confirmation.id = (target_close.calculation::jsonb #>>
+                              '{owner_workflow_close_gates,gates,non_bank_materials,confirmation_id}')::uuid
+                          AND confirmation.source_snapshot_hash =
+                              target_close.calculation::jsonb #>>
+                              '{owner_workflow_close_gates,gates,non_bank_materials,source_snapshot_hash}'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM owner_period_confirmations AS successor
+                               WHERE successor.supersedes_id = confirmation.id))
+                   OR (
+                       EXISTS (
+                           SELECT 1 FROM employees AS employee
+                            WHERE employee.org_id = target_period.org_id
+                              AND employee.status = 'active'
+                              AND employee.employment_start_date <= target_period.end_date
+                              AND (employee.employment_end_date IS NULL OR
+                                   employee.employment_end_date >= target_period.start_date))
+                       AND (
+                           NOT EXISTS (
+                               SELECT 1
+                                 FROM payroll_contribution_assessment_confirmations AS assessment
+                                WHERE assessment.org_id = target_period.org_id
+                                  AND assessment.period_id = target_period.id
+                                  AND assessment.id = (target_close.calculation::jsonb #>>
+                                      '{owner_workflow_close_gates,gates,contribution_accounting,confirmation_id}')::uuid
+                                  AND assessment.calculation_hash =
+                                      target_close.calculation::jsonb #>>
+                                      '{owner_workflow_close_gates,gates,contribution_accounting,calculation_hash}'
+                                  AND NOT EXISTS (
+                                      SELECT 1
+                                      FROM payroll_contribution_assessment_confirmations
+                                           AS successor
+                                       WHERE successor.supersedes_id = assessment.id))
+                           OR NOT EXISTS (
+                               SELECT 1 FROM payroll_batches AS batch
+                                WHERE batch.org_id = target_period.org_id
+                                  AND batch.id = (target_close.calculation::jsonb #>>
+                                      '{owner_workflow_close_gates,gates,contribution_accounting,payroll,batch_id}')::uuid
+                                  AND batch.payroll_period =
+                                      to_char(target_period.start_date, 'YYYY-MM')
+                                  AND batch.batch_kind = 'regular'
+                                  AND batch.status = 'posted')))
+                THEN
+                    RAISE EXCEPTION 'ACCOUNTING_PERIOD_OWNER_WORKFLOW_GATE_INVALID';
+                END IF;
+            END IF;
+
             SELECT count(*) INTO unfinished_payroll FROM payroll_batches
              WHERE org_id = target_period.org_id
                AND payroll_period = to_char(target_period.start_date, 'YYYY-MM')
                AND status NOT IN ('posted','reversed','superseded');
+            IF target_close.checker_version IN ('accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8') THEN
+                SELECT GREATEST(unfinished_payroll, count(*))
+                  INTO unfinished_payroll
+                  FROM employees AS employee
+                 WHERE employee.org_id = target_period.org_id
+                   AND employee.employment_start_date <= target_period.end_date
+                   AND (employee.employment_end_date IS NULL
+                        OR employee.employment_end_date >= target_period.start_date)
+                   AND employee.status IN ('active','inactive','terminated')
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM payroll_lines AS line
+                         JOIN payroll_batches AS batch
+                           ON batch.org_id = line.org_id
+                          AND batch.id = line.payroll_batch_id
+                        WHERE line.org_id = employee.org_id
+                          AND line.employee_id = employee.id
+                          AND batch.payroll_period =
+                              to_char(target_period.start_date, 'YYYY-MM')
+                          AND batch.batch_kind = 'regular'
+                          AND batch.status = 'posted'
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM owner_period_confirmations AS confirmation
+                         CROSS JOIN LATERAL jsonb_array_elements(
+                             confirmation.source_snapshot::jsonb #>
+                                 '{regular_payroll_plan,employee_items}'
+                         ) AS plan_item(item)
+                        WHERE confirmation.org_id = employee.org_id
+                          AND confirmation.period_id = target_period.id
+                          AND confirmation.fact_type = 'workforce_review'
+                          AND NOT EXISTS (
+                              SELECT 1
+                                FROM owner_period_confirmations AS successor
+                               WHERE successor.org_id = confirmation.org_id
+                                 AND successor.supersedes_id = confirmation.id)
+                          AND confirmation.source_snapshot::jsonb #>>
+                                  '{regular_payroll_plan,version}' =
+                              'regular_payroll_plan_v1'
+                          AND confirmation.source_snapshot::jsonb #>>
+                                  '{regular_payroll_plan,input_hash}' =
+                              encode(digest(convert_to(finance_canonical_jsonb(
+                                  jsonb_build_object(
+                                      'version', 'regular_payroll_plan_v1',
+                                      'payroll_period',
+                                          to_char(target_period.start_date, 'YYYY-MM'),
+                                      'employee_items',
+                                          confirmation.source_snapshot::jsonb #>
+                                              '{regular_payroll_plan,employee_items}'
+                                  )
+                              ), 'UTF8'), 'sha256'), 'hex')
+                          AND plan_item.item ->> 'employee_id' = employee.id::text
+                          AND plan_item.item ->> 'wage_tax_declaration_state' =
+                              'not_declared'
+                          AND (plan_item.item ->> 'tax_reported_salary_fen' IS NULL
+                               OR (plan_item.item ->> 'tax_reported_salary_fen')::bigint = 0)
+                          AND (plan_item.item ->> 'accounting_gross_salary_fen' IS NULL
+                               OR (plan_item.item ->> 'accounting_gross_salary_fen')::bigint = 0)
+                          AND plan_item.item ->> 'tax_reporting_difference_reason' IS NULL
+                          AND COALESCE((plan_item.item ->>
+                              'special_additional_deduction_fen')::bigint, 0) = 0
+                          AND COALESCE((plan_item.item ->>
+                              'other_legal_deduction_fen')::bigint, 0) = 0
+                          AND COALESCE((plan_item.item ->> 'tax_relief_fen')::bigint, 0) = 0
+                   );
+            END IF;
             unfinished_labor := 0;
             IF target_close.checker_version IN (
                 'accounting_period_close_checker_2026.4',
-                'accounting_period_close_checker_2026.5'
+                'accounting_period_close_checker_2026.5', 'accounting_period_close_checker_2026.6', 'accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8'
             ) THEN
                 SELECT (
                     (SELECT count(*) FROM labor_remuneration_batches AS batch
@@ -790,7 +1000,7 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
             IF target_close.checker_version IN (
                 'accounting_period_close_checker_2026.3',
                 'accounting_period_close_checker_2026.4',
-                'accounting_period_close_checker_2026.5'
+                'accounting_period_close_checker_2026.5', 'accounting_period_close_checker_2026.6', 'accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8'
             ) THEN
                 SELECT finance_open_item_count_as_of_0011(
                     target_period.org_id,
@@ -889,14 +1099,32 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
                AND tax_obligation_date BETWEEN
                    target_period.start_date AND target_period.end_date;
             income_tax_confirmation_count := NULL;
-            IF target_close.checker_version = 'accounting_period_close_checker_2026.5'
+            IF target_close.checker_version IN ('accounting_period_close_checker_2026.5', 'accounting_period_close_checker_2026.6', 'accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8')
                AND target_period.calendar_month IN (3,6,9,12)
-               AND EXISTS (
-                   SELECT 1 FROM organizations AS organization
+               AND COALESCE((
+                   SELECT profile.filing_cycle
+                     FROM organization_profile_versions AS profile
+                    WHERE profile.org_id = target_period.org_id
+                      AND profile.effective_from <= target_period.end_date
+                    ORDER BY profile.effective_from DESC
+                    LIMIT 1
+               ), (
+                   SELECT organization.filing_cycle
+                     FROM organizations AS organization
                     WHERE organization.id = target_period.org_id
-                      AND organization.filing_cycle = 'quarterly'
-                      AND organization.accounting_standard = 'small_enterprise'
-               ) THEN
+               )) = 'quarterly'
+               AND COALESCE((
+                   SELECT profile.accounting_standard
+                     FROM organization_profile_versions AS profile
+                    WHERE profile.org_id = target_period.org_id
+                      AND profile.effective_from <= target_period.end_date
+                    ORDER BY profile.effective_from DESC
+                    LIMIT 1
+               ), (
+                   SELECT organization.accounting_standard
+                     FROM organizations AS organization
+                    WHERE organization.id = target_period.org_id
+               )) = 'small_enterprise' THEN
                 SELECT count(*) INTO income_tax_confirmation_count
                   FROM enterprise_income_tax_quarter_confirmations AS confirmation
                   LEFT JOIN business_events AS event
@@ -948,6 +1176,37 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
                             'passed',true,'count',0)
                     );
                 END IF;
+                IF target_close.checker_version IN ('accounting_period_close_checker_2026.6', 'accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8')
+                   AND COALESCE((
+                   SELECT profile.filing_cycle
+                     FROM organization_profile_versions AS profile
+                    WHERE profile.org_id = target_period.org_id
+                      AND profile.effective_from <= target_period.end_date
+                    ORDER BY profile.effective_from DESC
+                    LIMIT 1
+               ), (
+                   SELECT organization.filing_cycle
+                     FROM organizations AS organization
+                    WHERE organization.id = target_period.org_id
+               )) = 'quarterly'
+               AND COALESCE((
+                   SELECT profile.accounting_standard
+                     FROM organization_profile_versions AS profile
+                    WHERE profile.org_id = target_period.org_id
+                      AND profile.effective_from <= target_period.end_date
+                    ORDER BY profile.effective_from DESC
+                    LIMIT 1
+               ), (
+                   SELECT organization.accounting_standard
+                     FROM organizations AS organization
+                    WHERE organization.id = target_period.org_id
+               )) = 'small_enterprise' THEN
+                    expected_system_checks := expected_system_checks || jsonb_build_array(
+                        jsonb_build_object(
+                            'code','ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_READY',
+                            'passed',true,'count',0)
+                    );
+                END IF;
                 expected_system_checks := expected_system_checks || jsonb_build_array(
                     jsonb_build_object(
                         'code','ACCOUNTING_PERIOD_NO_DRAFT_EVENTS',
@@ -979,7 +1238,7 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
             );
             IF target_close.checker_version IN (
                 'accounting_period_close_checker_2026.4',
-                'accounting_period_close_checker_2026.5'
+                'accounting_period_close_checker_2026.5', 'accounting_period_close_checker_2026.6', 'accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8'
             ) THEN
                 expected_module_checks := expected_module_checks || jsonb_build_object(
                     'labor_remuneration', jsonb_build_object(
@@ -1153,6 +1412,16 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
             ) INTO invalid_source;
             IF invalid_source THEN
                 RAISE EXCEPTION 'ACCOUNTING_PERIOD_SNAPSHOT_IMMUTABLE';
+            END IF;
+
+            IF target_close.checker_version IN ('accounting_period_close_checker_2026.6', 'accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8') AND (
+                jsonb_typeof(
+                    target_close.calculation::jsonb -> 'financial_statement_requirements'
+                ) <> 'array'
+                OR target_close.calculation::jsonb -> 'financial_statement_requirements'
+                   <> '[]'::jsonb
+            ) THEN
+                RAISE EXCEPTION 'ACCOUNTING_PERIOD_CLOSE_BLOCKED';
             END IF;
 
             IF NOT finance_text_is_canonical_jsonb(target_close.calculation_payload)
@@ -2933,6 +3202,109 @@ CREATE FUNCTION public.finance_assert_exact_reversal_voucher(target_event_id uui
 
 
 --
+-- Name: finance_assert_expense_recovery_received_0011(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_expense_recovery_received_0011(target_event_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target_event business_events%ROWTYPE;
+DECLARE target_voucher vouchers%ROWTYPE;
+DECLARE bank_account accounts%ROWTYPE;
+DECLARE expense_account accounts%ROWTYPE;
+DECLARE amount_json jsonb;
+DECLARE amount_numeric numeric;
+DECLARE amount_fen bigint;
+DECLARE bank_account_code varchar;
+DECLARE expense_account_role varchar;
+DECLARE line_count bigint;
+DECLARE bank_line_count bigint;
+DECLARE expense_line_count bigint;
+DECLARE bank_voucher_amount bigint;
+DECLARE expense_voucher_amount bigint;
+BEGIN
+    SELECT * INTO target_event FROM business_events WHERE id = target_event_id;
+    IF NOT FOUND OR target_event.status NOT IN ('posted','reversed')
+       OR target_event.event_type <> 'expense_recovery_received' THEN
+        RETURN;
+    END IF;
+    amount_json := NULLIF(
+        target_event.facts::jsonb #> '{amounts,amount_fen}', 'null'::jsonb
+    );
+    IF jsonb_typeof(amount_json) = 'number' THEN
+        amount_numeric := (amount_json #>> '{}')::numeric;
+        IF amount_numeric > 0 AND amount_numeric = trunc(amount_numeric)
+           AND amount_numeric <= 9223372036854775807 THEN
+            amount_fen := amount_numeric::bigint;
+        END IF;
+    END IF;
+    bank_account_code := target_event.facts::jsonb ->> 'bank_account_code';
+    expense_account_role :=
+        target_event.facts::jsonb #>> '{amounts,expense_account_role}';
+    IF amount_fen IS NULL
+       OR target_event.facts::jsonb #>> '{amounts,currency}' <> 'CNY'
+       OR bank_account_code IS NULL OR length(trim(bank_account_code)) = 0
+       OR expense_account_role IS NULL OR length(trim(expense_account_role)) = 0
+       OR target_event.facts::jsonb #>> '{details,expense_recovery_kind}' <>
+          'owner_managed_payment_account_return'
+       OR COALESCE(target_event.facts::jsonb ->> 'description', '') = ''
+       OR NOT EXISTS (
+           SELECT 1 FROM event_evidence
+            WHERE org_id = target_event.org_id
+              AND event_id = target_event.id
+              AND relation_kind IN ('supporting','inherited')
+       ) THEN
+        RAISE EXCEPTION 'EXPENSE_RECOVERY_RECEIVED_FACTS_INVALID';
+    END IF;
+
+    SELECT * INTO bank_account FROM accounts AS account
+     WHERE account.org_id = target_event.org_id
+       AND account.code = bank_account_code;
+    SELECT * INTO expense_account FROM accounts AS account
+     WHERE account.org_id = target_event.org_id
+       AND account.system_role = expense_account_role;
+    IF bank_account.id IS NULL OR bank_account.active IS NOT TRUE
+       OR bank_account.category <> 'asset' OR bank_account.normal_side <> 'debit'
+       OR bank_account.requires_bank_reconciliation IS NOT TRUE
+       OR expense_account.id IS NULL OR expense_account.active IS NOT TRUE
+       OR expense_account.category <> 'expense'
+       OR expense_account.normal_side <> 'debit' THEN
+        RAISE EXCEPTION 'EXPENSE_RECOVERY_RECEIVED_ACCOUNT_SCOPE_INVALID';
+    END IF;
+
+    SELECT * INTO target_voucher FROM vouchers AS voucher
+     WHERE voucher.org_id = target_event.org_id
+       AND voucher.event_id = target_event.id
+       AND voucher.status IN ('posted','reversed');
+    SELECT count(*),
+           count(*) FILTER (WHERE account.id = bank_account.id),
+           count(*) FILTER (WHERE account.id = expense_account.id),
+           COALESCE(sum(line.debit_fen - line.credit_fen)
+               FILTER (WHERE account.id = bank_account.id), 0)::bigint,
+           COALESCE(sum(line.debit_fen - line.credit_fen)
+               FILTER (WHERE account.id = expense_account.id), 0)::bigint
+      INTO line_count, bank_line_count, expense_line_count,
+           bank_voucher_amount, expense_voucher_amount
+      FROM voucher_lines AS line
+      JOIN accounts AS account
+        ON account.org_id = line.org_id AND account.id = line.account_id
+     WHERE line.org_id = target_event.org_id
+       AND line.voucher_id = target_voucher.id;
+    IF target_voucher.id IS NULL OR line_count <> 2
+       OR bank_line_count <> 1 OR expense_line_count <> 1
+       OR bank_voucher_amount <> amount_fen
+       OR expense_voucher_amount <> -amount_fen THEN
+        RAISE EXCEPTION 'EXPENSE_RECOVERY_RECEIVED_VOUCHER_SHAPE_INVALID';
+    END IF;
+    PERFORM finance_assert_explicit_bank_settlement_0015(target_event_id);
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+                    OR datetime_field_overflow THEN
+    RAISE EXCEPTION 'EXPENSE_RECOVERY_RECEIVED_FACTS_INVALID';
+END;
+$$;
+
+
+--
 -- Name: finance_assert_explicit_bank_settlement_0015(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2974,17 +3346,22 @@ BEGIN
     IF target_event.event_type IN (
         'service_cash_sale','customer_receipt','customer_advance',
         'owner_loan_received','owner_contribution_received',
-        'other_income_received','bank_interest_received',
+        'other_income_received','bank_interest_received','expense_recovery_received',
         'refundable_deposit_return_received'
     ) THEN
         uses_bank := true;
         expected_bank_amount := amount_fen;
     ELSIF target_event.event_type IN (
-        'customer_refund','expense_cash','supplier_payment',
-        'employee_reimbursement_payment','owner_repayment',
+        'customer_refund','expense_cash','supplier_payment','owner_repayment',
         'bank_fee','refundable_deposit_paid','tax_payment','social_insurance_payment',
         'housing_fund_payment','individual_income_tax_payment'
     ) THEN
+        uses_bank := true;
+        expected_bank_amount := -amount_fen;
+    ELSIF target_event.event_type = 'employee_reimbursement_payment'
+          AND COALESCE(
+              target_event.facts::jsonb #>> '{details,settlement_method}', 'bank'
+          ) = 'bank' THEN
         uses_bank := true;
         expected_bank_amount := -amount_fen;
     ELSIF target_event.event_type = 'employee_reimbursement'
@@ -3065,7 +3442,7 @@ BEGIN
         RAISE EXCEPTION 'EXPLICIT_BANK_SETTLEMENT_REVERSED_MATCH_INVALID';
     ELSIF target_event.status = 'posted'
        AND target_event.event_type IN (
-           'other_income_received','bank_interest_received',
+           'other_income_received','bank_interest_received','expense_recovery_received',
            'refundable_deposit_paid',
            'refundable_deposit_return_received'
        )
@@ -3089,65 +3466,69 @@ $$;
 CREATE FUNCTION public.finance_assert_final_business_event(target_event_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-        DECLARE target_event business_events%ROWTYPE;
-        DECLARE reversal_event business_events%ROWTYPE;
-        DECLARE final_voucher_id uuid;
-        BEGIN
-            SELECT * INTO target_event FROM business_events WHERE id = target_event_id;
-            IF NOT FOUND OR target_event.status NOT IN ('posted','reversed') THEN
-                RETURN;
-            END IF;
-            IF target_event.event_type NOT IN (
-                'cash_bank_transfer', 'internal_transfer'
-            ) THEN
-                PERFORM finance_assert_final_business_event_0014(target_event_id);
-                PERFORM finance_assert_explicit_bank_settlement_0015(target_event_id);
-                PERFORM finance_assert_specialized_bank_settlement_0015(
-                    target_event_id
-                );
-                PERFORM finance_assert_bank_interest_event_shape_0006(
-                    target_event_id
-                );
-                PERFORM finance_assert_refundable_deposit_event_shape_0007(
-                    target_event_id
-                );
-                RETURN;
-            END IF;
-            SELECT voucher.id INTO final_voucher_id FROM vouchers AS voucher
-             WHERE voucher.org_id = target_event.org_id
-               AND voucher.event_id = target_event.id
-               AND voucher.status IN ('posted','reversed');
-            IF final_voucher_id IS NULL THEN
-                RAISE EXCEPTION 'final business event requires a complete final voucher';
-            END IF;
-            PERFORM finance_assert_final_voucher(final_voucher_id);
-            IF target_event.event_type = 'cash_bank_transfer' THEN
-                PERFORM finance_assert_cash_bank_transfer_0015(target_event.id);
-            ELSE
-                PERFORM finance_assert_internal_transfer_0015(target_event.id);
-            END IF;
-            IF target_event.status = 'reversed' THEN
-                IF target_event.reversed_by_event_id IS NULL THEN
-                    RAISE EXCEPTION 'reversed business event requires an explicit reversal event';
-                END IF;
-                SELECT * INTO reversal_event FROM business_events
-                 WHERE id = target_event.reversed_by_event_id
-                   AND org_id = target_event.org_id;
-                IF reversal_event.id IS NULL OR reversal_event.status <> 'posted'
-                   OR reversal_event.event_type <> 'reversal'
-                   OR reversal_event.facts::jsonb ->> 'original_event_id' <>
-                      target_event.id::text THEN
-                    RAISE EXCEPTION
-                        'reversed business event requires a canonical same-organization reversal';
-                END IF;
-                PERFORM finance_assert_exact_reversal_voucher(
-                    reversal_event.id, target_event.id
-                );
-            ELSIF target_event.reversed_by_event_id IS NOT NULL THEN
-                RAISE EXCEPTION 'posted business event cannot name a reversal event';
-            END IF;
-        END;
-        $$;
+DECLARE target_event business_events%ROWTYPE;
+DECLARE reversal_event business_events%ROWTYPE;
+DECLARE final_voucher_id uuid;
+BEGIN
+    SELECT * INTO target_event FROM business_events WHERE id = target_event_id;
+    IF NOT FOUND OR target_event.status NOT IN ('posted','reversed') THEN
+        RETURN;
+    END IF;
+    IF target_event.event_type = 'employee_reimbursement_payment'
+       AND target_event.facts::jsonb #>> '{details,settlement_method}' = 'cash' THEN
+        PERFORM finance_assert_final_business_event_0014(target_event_id);
+        PERFORM finance_assert_person_reimbursement_0014(target_event_id);
+        RETURN;
+    END IF;
+    IF target_event.event_type NOT IN ('cash_bank_transfer', 'internal_transfer', 'payment_platform_transfer', 'expense_recovery_received') THEN
+        PERFORM finance_assert_final_business_event_0014(target_event_id);
+        PERFORM finance_assert_explicit_bank_settlement_0015(target_event_id);
+        PERFORM finance_assert_specialized_bank_settlement_0015(target_event_id);
+        PERFORM finance_assert_bank_interest_event_shape_0006(target_event_id);
+        PERFORM finance_assert_refundable_deposit_event_shape_0007(target_event_id);
+        PERFORM finance_assert_person_reimbursement_0014(target_event_id);
+        RETURN;
+    END IF;
+    SELECT voucher.id INTO final_voucher_id FROM vouchers AS voucher
+     WHERE voucher.org_id = target_event.org_id
+       AND voucher.event_id = target_event.id
+       AND voucher.status IN ('posted','reversed');
+    IF final_voucher_id IS NULL THEN
+        RAISE EXCEPTION 'final business event requires a complete final voucher';
+    END IF;
+    PERFORM finance_assert_final_voucher(final_voucher_id);
+    IF target_event.event_type = 'cash_bank_transfer' THEN
+        PERFORM finance_assert_cash_bank_transfer_0015(target_event.id);
+    ELSIF target_event.event_type = 'internal_transfer' THEN
+        PERFORM finance_assert_internal_transfer_0015(target_event.id);
+
+            ELSIF target_event.event_type = 'payment_platform_transfer' THEN
+                PERFORM finance_assert_payment_platform_transfer_0006(target_event.id);
+    ELSIF target_event.event_type = 'expense_recovery_received' THEN
+        PERFORM finance_assert_expense_recovery_received_0011(target_event.id);
+    END IF;
+    IF target_event.status = 'reversed' THEN
+        IF target_event.reversed_by_event_id IS NULL THEN
+            RAISE EXCEPTION 'reversed business event requires an explicit reversal event';
+        END IF;
+        SELECT * INTO reversal_event FROM business_events
+         WHERE id = target_event.reversed_by_event_id
+           AND org_id = target_event.org_id;
+        IF reversal_event.id IS NULL OR reversal_event.status <> 'posted'
+           OR reversal_event.event_type <> 'reversal'
+           OR reversal_event.facts::jsonb ->> 'original_event_id' <>
+              target_event.id::text THEN
+            RAISE EXCEPTION
+                'reversed business event requires a canonical same-organization reversal';
+        END IF;
+        PERFORM finance_assert_exact_reversal_voucher(
+            reversal_event.id, target_event.id
+        );
+    ELSIF target_event.reversed_by_event_id IS NOT NULL THEN
+        RAISE EXCEPTION 'posted business event cannot name a reversal event';
+    END IF;
+END;
+$$;
 
 
 --
@@ -7281,6 +7662,146 @@ CREATE FUNCTION public.finance_assert_opening_correction_dependencies(target_org
 
 
 --
+-- Name: finance_assert_payment_platform_transfer_0006(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_payment_platform_transfer_0006(target_event_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target_event business_events%ROWTYPE;
+DECLARE target_voucher vouchers%ROWTYPE;
+DECLARE bank_account accounts%ROWTYPE;
+DECLARE platform_account accounts%ROWTYPE;
+DECLARE amount_json jsonb;
+DECLARE amount_numeric numeric;
+DECLARE amount_fen bigint;
+DECLARE direction varchar;
+DECLARE expected_bank_account_code varchar;
+DECLARE expected_bank_amount bigint;
+DECLARE line_count bigint;
+DECLARE bank_line_count bigint;
+DECLARE platform_line_count bigint;
+DECLARE bank_voucher_amount bigint;
+DECLARE platform_voucher_amount bigint;
+DECLARE active_match_count bigint;
+DECLARE active_match_amount bigint;
+DECLARE invalid_match boolean;
+BEGIN
+    SELECT * INTO target_event FROM business_events WHERE id = target_event_id;
+    IF NOT FOUND OR target_event.status NOT IN ('posted','reversed')
+       OR target_event.event_type <> 'payment_platform_transfer' THEN
+        RETURN;
+    END IF;
+    direction := target_event.facts::jsonb ->> 'direction';
+    expected_bank_account_code := target_event.facts::jsonb ->> 'bank_account_code';
+    amount_json := COALESCE(
+        NULLIF(target_event.facts::jsonb #> '{amounts,gross_amount_fen}', 'null'::jsonb),
+        NULLIF(target_event.facts::jsonb #> '{amounts,amount_fen}', 'null'::jsonb)
+    );
+    IF jsonb_typeof(amount_json) = 'number' THEN
+        amount_numeric := (amount_json #>> '{}')::numeric;
+        IF amount_numeric > 0 AND amount_numeric = trunc(amount_numeric)
+           AND amount_numeric <= 9223372036854775807 THEN
+            amount_fen := amount_numeric::bigint;
+        END IF;
+    END IF;
+    IF direction NOT IN ('to_platform','from_platform')
+       OR amount_fen IS NULL OR amount_fen <= 0
+       OR expected_bank_account_code IS NULL
+       OR length(trim(expected_bank_account_code)) = 0
+       OR COALESCE(target_event.facts::jsonb ->> 'description', '') = ''
+       OR NOT EXISTS (
+           SELECT 1 FROM event_evidence
+            WHERE org_id = target_event.org_id
+              AND event_id = target_event.id
+              AND relation_kind IN ('supporting','inherited')
+       ) THEN
+        RAISE EXCEPTION 'PAYMENT_PLATFORM_TRANSFER_FACTS_INVALID';
+    END IF;
+    expected_bank_amount := CASE direction
+        WHEN 'from_platform' THEN amount_fen ELSE -amount_fen END;
+
+    SELECT * INTO bank_account FROM accounts AS account
+     WHERE account.org_id = target_event.org_id
+       AND account.code = expected_bank_account_code;
+    IF NOT FOUND OR bank_account.active IS NOT TRUE
+       OR bank_account.category <> 'asset' OR bank_account.normal_side <> 'debit'
+       OR bank_account.system_role = 'cash'
+       OR bank_account.requires_bank_reconciliation IS NOT TRUE
+       OR target_event.posting_date < bank_account.bank_reconciliation_start_date
+       OR (bank_account.bank_reconciliation_end_date IS NOT NULL
+           AND target_event.posting_date > bank_account.bank_reconciliation_end_date)
+       OR NOT EXISTS (
+           SELECT 1 FROM organizations AS organization
+            WHERE organization.id = target_event.org_id
+              AND organization.bank_reconciliation_scope_current_action_id IS NOT NULL
+              AND organization.bank_reconciliation_scope_confirmed_at IS NOT NULL
+       ) THEN
+        RAISE EXCEPTION 'PAYMENT_PLATFORM_TRANSFER_ACCOUNT_SCOPE_INVALID';
+    END IF;
+    SELECT * INTO platform_account FROM accounts AS account
+     WHERE account.org_id = target_event.org_id
+       AND account.system_role = 'payment_platform_funds';
+    IF NOT FOUND OR platform_account.active IS NOT TRUE
+       OR platform_account.category <> 'asset'
+       OR platform_account.normal_side <> 'debit'
+       OR platform_account.requires_bank_reconciliation IS TRUE THEN
+        RAISE EXCEPTION 'PAYMENT_PLATFORM_TRANSFER_ACCOUNT_SCOPE_INVALID';
+    END IF;
+
+    SELECT * INTO target_voucher FROM vouchers AS voucher
+     WHERE voucher.org_id = target_event.org_id
+       AND voucher.event_id = target_event.id
+       AND voucher.status IN ('posted','reversed');
+    SELECT count(*),
+           count(*) FILTER (WHERE account.id = bank_account.id),
+           count(*) FILTER (WHERE account.id = platform_account.id),
+           COALESCE(sum(line.debit_fen - line.credit_fen)
+               FILTER (WHERE account.id = bank_account.id), 0)::bigint,
+           COALESCE(sum(line.debit_fen - line.credit_fen)
+               FILTER (WHERE account.id = platform_account.id), 0)::bigint
+      INTO line_count, bank_line_count, platform_line_count,
+           bank_voucher_amount, platform_voucher_amount
+      FROM voucher_lines AS line
+      JOIN accounts AS account
+        ON account.org_id = line.org_id AND account.id = line.account_id
+     WHERE line.org_id = target_event.org_id
+       AND line.voucher_id = target_voucher.id;
+    IF target_voucher.id IS NULL OR line_count <> 2
+       OR bank_line_count <> 1 OR platform_line_count <> 1
+       OR bank_voucher_amount <> expected_bank_amount
+       OR platform_voucher_amount <> -expected_bank_amount THEN
+        RAISE EXCEPTION 'PAYMENT_PLATFORM_TRANSFER_VOUCHER_SHAPE_INVALID';
+    END IF;
+
+    SELECT count(*), COALESCE(sum(transaction.amount_fen), 0)::bigint,
+           COALESCE(bool_or(
+               transaction.bank_account_code <> expected_bank_account_code
+               OR transaction.currency <> 'CNY'
+           ), false)
+      INTO active_match_count, active_match_amount, invalid_match
+      FROM bank_transaction_matches AS match
+      JOIN bank_transactions AS transaction
+        ON transaction.org_id = match.org_id
+       AND transaction.id = match.bank_transaction_id
+     WHERE match.org_id = target_event.org_id
+       AND match.event_id = target_event.id
+       AND match.invalidated_at IS NULL;
+    IF target_event.status = 'reversed' AND active_match_count <> 0 THEN
+        RAISE EXCEPTION 'PAYMENT_PLATFORM_TRANSFER_REVERSED_MATCH_INVALID';
+    ELSIF target_event.status = 'posted'
+       AND (active_match_count = 0 OR invalid_match
+            OR active_match_amount <> expected_bank_amount) THEN
+        RAISE EXCEPTION 'PAYMENT_PLATFORM_TRANSFER_BANK_MATCH_INVALID';
+    END IF;
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+                    OR datetime_field_overflow THEN
+    RAISE EXCEPTION 'PAYMENT_PLATFORM_TRANSFER_FACTS_INVALID';
+END;
+$$;
+
+
+--
 -- Name: finance_assert_payroll_batch_tax_state(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8053,45 +8574,505 @@ CREATE FUNCTION public.finance_assert_payroll_withholding_payment(target_allocat
 CREATE FUNCTION public.finance_assert_period_close_owner_approval(target_close_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-            DECLARE target_close accounting_period_closes%ROWTYPE;
-            DECLARE target_action accounting_period_actions%ROWTYPE;
-            DECLARE owner_exists boolean;
-            BEGIN
-                SELECT * INTO target_close
-                  FROM accounting_period_closes WHERE id = target_close_id;
-                IF NOT FOUND THEN RETURN; END IF;
-                SELECT * INTO target_action
-                  FROM accounting_period_actions
-                 WHERE org_id = target_close.org_id AND id = target_close.action_id;
-                SELECT EXISTS (
-                    SELECT 1 FROM owner_accounts WHERE org_id = target_close.org_id
-                ) INTO owner_exists;
-                IF target_action.id IS NULL
-                   OR target_action.input_facts::jsonb ->> 'owner_approval_id'
-                        IS DISTINCT FROM target_close.owner_approval_id::text
-                   OR (owner_exists AND (
-                        target_close.owner_approval_id IS NULL
-                        OR NOT EXISTS (
-                            SELECT 1
-                              FROM accounting_period_close_approvals AS approval
-                             WHERE approval.org_id = target_close.org_id
-                               AND approval.id = target_close.owner_approval_id
-                               AND approval.period_id = target_close.period_id
-                               AND approval.calculation_hash = target_close.calculation_hash
-                               AND approval.confirmation_method =
-                                   'local_password_reauthentication'
-                               AND approval.consumed_at IS NOT NULL
-                               AND approval.confirmed_at <= approval.consumed_at
-                               AND approval.consumed_at <= target_close.confirmed_at
-                               AND approval.expires_at >= target_close.confirmed_at
-                        )
-                   ))
-                   OR (NOT owner_exists AND target_close.owner_approval_id IS NOT NULL)
-                THEN
-                    RAISE EXCEPTION 'ACCOUNTING_PERIOD_OWNER_APPROVAL_INVALID';
-                END IF;
-            END;
-            $$;
+DECLARE target_close accounting_period_closes%ROWTYPE;
+DECLARE target_action accounting_period_actions%ROWTYPE;
+DECLARE owner_required boolean;
+BEGIN
+    SELECT * INTO target_close FROM accounting_period_closes WHERE id = target_close_id;
+    IF NOT FOUND THEN RETURN; END IF;
+    SELECT * INTO target_action FROM accounting_period_actions
+     WHERE org_id = target_close.org_id AND id = target_close.action_id;
+    SELECT owner_approval_required INTO owner_required
+      FROM organization_database_metadata WHERE singleton_key = 1;
+    IF target_action.id IS NULL
+       OR target_action.input_facts::jsonb ->> 'owner_approval_id'
+            IS DISTINCT FROM target_close.owner_approval_id::text
+       OR (owner_required AND (
+            target_close.owner_approval_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM accounting_period_close_approvals AS approval
+                 WHERE approval.org_id = target_close.org_id
+                   AND approval.id = target_close.owner_approval_id
+                   AND approval.catalog_instance_id = (
+                       SELECT current_catalog_instance_id
+                         FROM organization_database_metadata WHERE singleton_key = 1)
+                   AND approval.period_id = target_close.period_id
+                   AND approval.calculation_hash = target_close.calculation_hash
+                   AND approval.confirmation_method = 'local_password_reauthentication'
+                   AND approval.consumed_at IS NOT NULL
+                   AND approval.confirmed_at <= approval.consumed_at
+                   AND approval.consumed_at <= target_close.confirmed_at
+                   AND approval.expires_at >= target_close.confirmed_at)))
+       OR (NOT owner_required AND target_close.owner_approval_id IS NOT NULL) THEN
+        RAISE EXCEPTION 'ACCOUNTING_PERIOD_OWNER_APPROVAL_INVALID';
+    END IF;
+END;
+$$;
+
+
+--
+-- Name: finance_assert_person_reimbursement_0014(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_person_reimbursement_0014(target_event_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target_event business_events%ROWTYPE;
+DECLARE target_voucher vouchers%ROWTYPE;
+DECLARE amount_json jsonb;
+DECLARE amount_numeric numeric;
+DECLARE amount_fen bigint;
+DECLARE allocation_count bigint;
+DECLARE settlement_count bigint;
+DECLARE settlement_total bigint;
+DECLARE person counterparties%ROWTYPE;
+DECLARE person_id uuid;
+DECLARE person_kind text;
+DECLARE person_name text;
+DECLARE person_role text;
+DECLARE settlement_method text;
+DECLARE settlement_account_id uuid;
+DECLARE line_count bigint;
+DECLARE debit_total bigint;
+DECLARE credit_total bigint;
+DECLARE person_line_count bigint;
+DECLARE settlement_line_count bigint;
+DECLARE reserve_source business_events%ROWTYPE;
+DECLARE reserve_source_role text;
+DECLARE reserve_source_amount bigint;
+DECLARE reserve_used_amount bigint;
+BEGIN
+    SELECT * INTO target_event FROM business_events WHERE id = target_event_id;
+    IF NOT FOUND OR target_event.status NOT IN ('posted','reversed')
+       OR target_event.event_type NOT IN (
+           'employee_reimbursement','employee_reimbursement_payment'
+       ) THEN
+        RETURN;
+    END IF;
+    IF target_event.event_type = 'employee_reimbursement'
+       AND target_event.facts::jsonb #>> '{details,reimbursement_kind}' <>
+           'existing_payable' THEN
+        RETURN;
+    END IF;
+
+    amount_json := CASE
+        WHEN target_event.event_type = 'employee_reimbursement'
+            THEN NULLIF(
+                target_event.facts::jsonb #> '{amounts,gross_amount_fen}', 'null'::jsonb
+            )
+        ELSE NULLIF(
+            target_event.facts::jsonb #> '{amounts,amount_fen}', 'null'::jsonb
+        )
+    END;
+    IF jsonb_typeof(amount_json) = 'number' THEN
+        amount_numeric := (amount_json #>> '{}')::numeric;
+        IF amount_numeric > 0 AND amount_numeric = trunc(amount_numeric)
+           AND amount_numeric <= 9223372036854775807 THEN
+            amount_fen := amount_numeric::bigint;
+        END IF;
+    END IF;
+    person_id := NULLIF(
+        target_event.facts::jsonb #>> '{counterparty,id}', ''
+    )::uuid;
+    IF person_id IS NOT NULL THEN
+        SELECT * INTO person FROM counterparties AS party
+         WHERE party.org_id = target_event.org_id AND party.id = person_id;
+    ELSE
+        SELECT * INTO person FROM counterparties AS party
+         WHERE party.org_id = target_event.org_id
+           AND party.kind = target_event.facts::jsonb #>> '{counterparty,kind}'
+           AND party.name = target_event.facts::jsonb #>> '{counterparty,name}';
+    END IF;
+    person_kind := person.kind;
+    person_name := person.name;
+    person_role := CASE person_kind
+        WHEN 'employee' THEN 'employee_payable'
+        WHEN 'owner' THEN 'owner_payable'
+        ELSE NULL
+    END;
+    IF amount_fen IS NULL OR person_role IS NULL
+       OR target_event.facts::jsonb #>> '{amounts,currency}' <> 'CNY'
+       OR jsonb_typeof(target_event.facts::jsonb -> 'allocations') <> 'array'
+       OR jsonb_array_length(target_event.facts::jsonb -> 'allocations') = 0 THEN
+        RAISE EXCEPTION 'PERSON_REIMBURSEMENT_FACTS_INVALID';
+    END IF;
+    allocation_count := jsonb_array_length(target_event.facts::jsonb -> 'allocations');
+
+    SELECT count(*), COALESCE(sum(settlement.amount_fen), 0)::bigint
+      INTO settlement_count, settlement_total
+      FROM settlements AS settlement
+     WHERE settlement.org_id = target_event.org_id
+       AND settlement.payment_event_id = target_event.id;
+    IF settlement_count <> allocation_count OR settlement_total <> amount_fen
+       OR EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(
+                 target_event.facts::jsonb -> 'allocations'
+             ) AS allocation
+             LEFT JOIN settlements AS settlement
+               ON settlement.org_id = target_event.org_id
+              AND settlement.payment_event_id = target_event.id
+              AND settlement.open_item_id =
+                  (allocation ->> 'open_item_id')::uuid
+              AND settlement.amount_fen =
+                  (allocation ->> 'amount_fen')::bigint
+            WHERE settlement.id IS NULL
+       ) OR EXISTS (
+           SELECT 1 FROM settlements AS settlement
+            WHERE settlement.org_id = target_event.org_id
+              AND settlement.payment_event_id = target_event.id
+              AND settlement.reversed IS DISTINCT FROM
+                  (target_event.status = 'reversed')
+       ) THEN
+        RAISE EXCEPTION 'PERSON_REIMBURSEMENT_SETTLEMENT_INVALID';
+    END IF;
+
+    SELECT * INTO target_voucher FROM vouchers AS voucher
+     WHERE voucher.org_id = target_event.org_id
+       AND voucher.event_id = target_event.id
+       AND voucher.status IN ('posted','reversed');
+    IF target_voucher.id IS NULL THEN
+        RAISE EXCEPTION 'PERSON_REIMBURSEMENT_VOUCHER_INVALID';
+    END IF;
+
+    IF target_event.event_type = 'employee_reimbursement' THEN
+        IF target_event.facts::jsonb #>> '{details,paid_now}' <> 'false'
+           OR target_event.facts::jsonb #> '{amounts,amount_fen}' <> 'null'::jsonb
+           OR target_event.facts::jsonb #> '{amounts,expense_account_role}' <>
+              'null'::jsonb
+           OR target_event.facts::jsonb #> '{tax_facts}' <> 'null'::jsonb
+           OR target_event.facts::jsonb ->> 'bank_account_code' IS NOT NULL
+           OR jsonb_array_length(
+               target_event.facts::jsonb -> 'bank_transaction_references'
+           ) <> 0
+           OR EXISTS (
+               SELECT 1 FROM bank_transaction_matches AS match
+                WHERE match.org_id = target_event.org_id
+                  AND match.event_id = target_event.id
+                  AND match.invalidated_by_event_id IS NULL
+           )
+           OR EXISTS (
+               SELECT 1
+                 FROM settlements AS settlement
+                 JOIN open_items AS item
+                   ON item.org_id = settlement.org_id
+                  AND item.id = settlement.open_item_id
+                 JOIN counterparties AS party
+                   ON party.org_id = item.org_id
+                  AND party.id = item.counterparty_id
+                WHERE settlement.org_id = target_event.org_id
+                  AND settlement.payment_event_id = target_event.id
+                  AND (
+                      item.item_type <> 'payable'
+                      OR CASE
+                          WHEN item.payable_category = 'salary'
+                              THEN 'employee_salary_payable'
+                          WHEN item.payable_category = 'employer_social'
+                              THEN 'employer_social_payable'
+                          WHEN item.payable_category = 'withheld_employee_social'
+                              THEN 'withheld_employee_social_payable'
+                          WHEN item.payable_category = 'employer_housing'
+                              THEN 'employer_housing_fund_payable'
+                          WHEN item.payable_category = 'withheld_employee_housing'
+                              THEN 'withheld_employee_housing_fund_payable'
+                          WHEN item.payable_category IN (
+                              'individual_income_tax','labor_individual_income_tax'
+                          ) THEN 'individual_income_tax_payable'
+                          WHEN item.payable_category = 'labor_remuneration'
+                              THEN 'labor_remuneration_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'supplier'
+                              THEN 'accounts_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'employee'
+                              THEN 'employee_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'owner'
+                              THEN 'owner_payable'
+                          ELSE NULL
+                      END IS NULL
+                  )
+           )
+           OR EXISTS (
+               (SELECT expected.role, sum(expected.amount_fen)::bigint
+                  FROM (
+                      SELECT CASE
+                          WHEN item.payable_category = 'salary'
+                              THEN 'employee_salary_payable'
+                          WHEN item.payable_category = 'employer_social'
+                              THEN 'employer_social_payable'
+                          WHEN item.payable_category = 'withheld_employee_social'
+                              THEN 'withheld_employee_social_payable'
+                          WHEN item.payable_category = 'employer_housing'
+                              THEN 'employer_housing_fund_payable'
+                          WHEN item.payable_category = 'withheld_employee_housing'
+                              THEN 'withheld_employee_housing_fund_payable'
+                          WHEN item.payable_category IN (
+                              'individual_income_tax','labor_individual_income_tax'
+                          ) THEN 'individual_income_tax_payable'
+                          WHEN item.payable_category = 'labor_remuneration'
+                              THEN 'labor_remuneration_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'supplier'
+                              THEN 'accounts_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'employee'
+                              THEN 'employee_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'owner'
+                              THEN 'owner_payable'
+                          ELSE NULL
+                      END AS role,
+                      settlement.amount_fen
+                        FROM settlements AS settlement
+                        JOIN open_items AS item
+                          ON item.org_id = settlement.org_id
+                         AND item.id = settlement.open_item_id
+                        JOIN counterparties AS party
+                          ON party.org_id = item.org_id
+                         AND party.id = item.counterparty_id
+                       WHERE settlement.org_id = target_event.org_id
+                         AND settlement.payment_event_id = target_event.id
+                  ) AS expected
+                 GROUP BY expected.role
+                EXCEPT
+                SELECT account.system_role, sum(line.debit_fen)::bigint
+                  FROM voucher_lines AS line
+                  JOIN accounts AS account
+                    ON account.org_id = line.org_id
+                   AND account.id = line.account_id
+                 WHERE line.org_id = target_event.org_id
+                   AND line.voucher_id = target_voucher.id
+                   AND line.debit_fen > 0
+                 GROUP BY account.system_role)
+               UNION ALL
+               (SELECT account.system_role, sum(line.debit_fen)::bigint
+                  FROM voucher_lines AS line
+                  JOIN accounts AS account
+                    ON account.org_id = line.org_id
+                   AND account.id = line.account_id
+                 WHERE line.org_id = target_event.org_id
+                   AND line.voucher_id = target_voucher.id
+                   AND line.debit_fen > 0
+                 GROUP BY account.system_role
+                EXCEPT
+                SELECT expected.role, sum(expected.amount_fen)::bigint
+                  FROM (
+                      SELECT CASE
+                          WHEN item.payable_category = 'salary'
+                              THEN 'employee_salary_payable'
+                          WHEN item.payable_category = 'employer_social'
+                              THEN 'employer_social_payable'
+                          WHEN item.payable_category = 'withheld_employee_social'
+                              THEN 'withheld_employee_social_payable'
+                          WHEN item.payable_category = 'employer_housing'
+                              THEN 'employer_housing_fund_payable'
+                          WHEN item.payable_category = 'withheld_employee_housing'
+                              THEN 'withheld_employee_housing_fund_payable'
+                          WHEN item.payable_category IN (
+                              'individual_income_tax','labor_individual_income_tax'
+                          ) THEN 'individual_income_tax_payable'
+                          WHEN item.payable_category = 'labor_remuneration'
+                              THEN 'labor_remuneration_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'supplier'
+                              THEN 'accounts_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'employee'
+                              THEN 'employee_payable'
+                          WHEN item.payable_category IS NULL AND party.kind = 'owner'
+                              THEN 'owner_payable'
+                          ELSE NULL
+                      END AS role,
+                      settlement.amount_fen
+                        FROM settlements AS settlement
+                        JOIN open_items AS item
+                          ON item.org_id = settlement.org_id
+                         AND item.id = settlement.open_item_id
+                        JOIN counterparties AS party
+                          ON party.org_id = item.org_id
+                         AND party.id = item.counterparty_id
+                       WHERE settlement.org_id = target_event.org_id
+                         AND settlement.payment_event_id = target_event.id
+                  ) AS expected
+                 GROUP BY expected.role)
+           )
+           OR (SELECT count(*) FROM open_items AS item
+                JOIN counterparties AS party
+                  ON party.org_id = item.org_id
+                 AND party.id = item.counterparty_id
+               WHERE item.org_id = target_event.org_id
+                 AND item.source_event_id = target_event.id
+                 AND item.item_type = 'payable'
+                 AND item.payable_category IS NULL
+                 AND item.original_amount_fen = amount_fen
+                 AND party.kind = person_kind
+                 AND party.name = person_name) <> 1 THEN
+            RAISE EXCEPTION 'PERSON_PAYMENT_ON_BEHALF_INVALID';
+        END IF;
+        SELECT count(*),
+               COALESCE(sum(line.debit_fen), 0)::bigint,
+               COALESCE(sum(line.credit_fen), 0)::bigint,
+               count(*) FILTER (
+                   WHERE account.system_role = person_role
+                     AND line.debit_fen = 0 AND line.credit_fen = amount_fen
+               )
+          INTO line_count, debit_total, credit_total, person_line_count
+          FROM voucher_lines AS line
+          JOIN accounts AS account
+            ON account.org_id = line.org_id AND account.id = line.account_id
+         WHERE line.org_id = target_event.org_id
+           AND line.voucher_id = target_voucher.id;
+        IF debit_total <> amount_fen OR credit_total <> amount_fen
+           OR person_line_count <> 1 THEN
+            RAISE EXCEPTION 'PERSON_PAYMENT_ON_BEHALF_VOUCHER_INVALID';
+        END IF;
+        RETURN;
+    END IF;
+
+    settlement_method := COALESCE(
+        target_event.facts::jsonb #>> '{details,settlement_method}', 'bank'
+    );
+    IF settlement_method NOT IN ('bank','cash','owner_managed_reserve')
+       OR target_event.facts::jsonb #> '{amounts,gross_amount_fen}' <> 'null'::jsonb
+       OR target_event.facts::jsonb #> '{amounts,expense_account_role}' <>
+          'null'::jsonb
+       OR target_event.facts::jsonb #> '{tax_facts}' <> 'null'::jsonb
+       OR EXISTS (
+           SELECT 1
+             FROM settlements AS settlement
+             JOIN open_items AS item
+               ON item.org_id = settlement.org_id
+              AND item.id = settlement.open_item_id
+             JOIN counterparties AS party
+               ON party.org_id = item.org_id
+              AND party.id = item.counterparty_id
+             JOIN business_events AS source
+               ON source.org_id = item.org_id
+              AND source.id = item.source_event_id
+            WHERE settlement.org_id = target_event.org_id
+              AND settlement.payment_event_id = target_event.id
+              AND (
+                  item.item_type <> 'payable'
+                  OR party.kind <> person_kind
+                  OR party.name <> person_name
+                  OR source.event_type NOT IN (
+                      'employee_reimbursement','fixed_asset_acquisition'
+                  )
+              )
+       ) THEN
+        RAISE EXCEPTION 'PERSON_REIMBURSEMENT_PAYMENT_FACTS_INVALID';
+    END IF;
+    IF settlement_method = 'cash' THEN
+        IF target_event.facts::jsonb ->> 'bank_account_code' IS NOT NULL
+           OR jsonb_array_length(
+               target_event.facts::jsonb -> 'bank_transaction_references'
+           ) <> 0
+           OR EXISTS (
+               SELECT 1 FROM bank_transaction_matches AS match
+                WHERE match.org_id = target_event.org_id
+                  AND match.event_id = target_event.id
+                  AND match.invalidated_by_event_id IS NULL
+           ) THEN
+            RAISE EXCEPTION 'CASH_REIMBURSEMENT_FORBIDS_BANK_FACTS';
+        END IF;
+        SELECT account.id INTO settlement_account_id FROM accounts AS account
+         WHERE account.org_id = target_event.org_id
+           AND account.system_role = 'cash'
+           AND account.active IS TRUE;
+    ELSIF settlement_method = 'owner_managed_reserve' THEN
+        IF target_event.facts::jsonb ->> 'bank_account_code' IS NOT NULL
+           OR jsonb_array_length(
+               target_event.facts::jsonb -> 'bank_transaction_references'
+           ) <> 0
+           OR EXISTS (
+               SELECT 1 FROM bank_transaction_matches AS match
+                WHERE match.org_id = target_event.org_id
+                  AND match.event_id = target_event.id
+                  AND match.invalidated_by_event_id IS NULL
+           ) THEN
+            RAISE EXCEPTION 'OWNER_MANAGED_RESERVE_FORBIDS_BANK_FACTS';
+        END IF;
+        SELECT * INTO reserve_source
+          FROM business_events AS source
+         WHERE source.org_id = target_event.org_id
+           AND source.id = (
+               target_event.facts::jsonb #>> '{details,original_event_id}'
+           )::uuid
+         FOR UPDATE;
+        reserve_source_role := reserve_source.facts::jsonb
+            #>> '{amounts,expense_account_role}';
+        reserve_source_amount := (
+            reserve_source.facts::jsonb #>> '{amounts,gross_amount_fen}'
+        )::bigint;
+        IF reserve_source.id IS NULL
+           OR reserve_source.event_type <> 'expense_cash'
+           OR reserve_source.status <> 'posted'
+           OR reserve_source.reversed_by_event_id IS NOT NULL
+           OR reserve_source.posting_date > target_event.payment_date
+           OR reserve_source_role IS NULL
+           OR reserve_source_amount <= 0 THEN
+            RAISE EXCEPTION 'OWNER_MANAGED_RESERVE_SOURCE_INVALID';
+        END IF;
+        SELECT COALESCE(sum(
+                   (used.facts::jsonb #>> '{amounts,amount_fen}')::bigint
+               ), 0)::bigint
+          INTO reserve_used_amount
+          FROM business_events AS used
+         WHERE used.org_id = target_event.org_id
+           AND used.event_type = 'employee_reimbursement_payment'
+           AND used.status = 'posted'
+           AND used.reversed_by_event_id IS NULL
+           AND used.facts::jsonb #>> '{details,settlement_method}' =
+               'owner_managed_reserve'
+           AND used.facts::jsonb #>> '{details,original_event_id}' =
+               reserve_source.id::text;
+        IF reserve_used_amount > reserve_source_amount THEN
+            RAISE EXCEPTION 'OWNER_MANAGED_RESERVE_SOURCE_EXCEEDED';
+        END IF;
+        SELECT account.id INTO settlement_account_id
+          FROM vouchers AS source_voucher
+          JOIN voucher_lines AS source_line
+            ON source_line.org_id = source_voucher.org_id
+           AND source_line.voucher_id = source_voucher.id
+          JOIN accounts AS account
+            ON account.org_id = source_line.org_id
+           AND account.id = source_line.account_id
+         WHERE source_voucher.org_id = target_event.org_id
+           AND source_voucher.event_id = reserve_source.id
+           AND source_voucher.status = 'posted'
+           AND source_line.debit_fen > 0
+           AND account.system_role = reserve_source_role
+           AND account.active IS TRUE
+         LIMIT 1;
+    ELSE
+        SELECT account.id INTO settlement_account_id FROM accounts AS account
+         WHERE account.org_id = target_event.org_id
+           AND account.code = target_event.facts::jsonb ->> 'bank_account_code'
+           AND account.active IS TRUE
+           AND account.requires_bank_reconciliation IS TRUE;
+    END IF;
+    IF settlement_account_id IS NULL THEN
+        RAISE EXCEPTION 'PERSON_REIMBURSEMENT_SETTLEMENT_ACCOUNT_INVALID';
+    END IF;
+    SELECT count(*),
+           COALESCE(sum(line.debit_fen), 0)::bigint,
+           COALESCE(sum(line.credit_fen), 0)::bigint,
+           count(*) FILTER (
+               WHERE account.system_role = person_role
+                 AND line.debit_fen = amount_fen AND line.credit_fen = 0
+           ),
+           count(*) FILTER (
+               WHERE account.id = settlement_account_id
+                 AND line.debit_fen = 0 AND line.credit_fen = amount_fen
+           )
+      INTO line_count, debit_total, credit_total,
+           person_line_count, settlement_line_count
+      FROM voucher_lines AS line
+      JOIN accounts AS account
+        ON account.org_id = line.org_id AND account.id = line.account_id
+     WHERE line.org_id = target_event.org_id
+       AND line.voucher_id = target_voucher.id;
+    IF line_count <> 2 OR debit_total <> amount_fen OR credit_total <> amount_fen
+       OR person_line_count <> 1 OR settlement_line_count <> 1 THEN
+        RAISE EXCEPTION 'PERSON_REIMBURSEMENT_PAYMENT_VOUCHER_INVALID';
+    END IF;
+EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range
+                    OR datetime_field_overflow THEN
+    RAISE EXCEPTION 'PERSON_REIMBURSEMENT_FACTS_INVALID';
+END;
+$$;
 
 
 --
@@ -8888,7 +9869,7 @@ CREATE FUNCTION public.finance_assert_tax_period_0011(target_period_id uuid) RET
                     (period.filing_cycle_snapshot || '_threshold_fen')
             )::bigint;
             vat_relief_fen := GREATEST(0, CASE
-                WHEN net_sales_fen < threshold_fen THEN COALESCE((
+                WHEN finance_tax_below_threshold_0003(vat_rule.parameters::jsonb, net_sales_fen, threshold_fen) THEN COALESCE((
                     SELECT SUM(source.vat_fen) FROM tax_period_sources AS source
                      WHERE source.org_id = period.org_id
                        AND source.tax_period_id = period.id
@@ -8986,8 +9967,8 @@ CREATE FUNCTION public.finance_assert_tax_period_0011(target_period_id uuid) RET
                 jsonb_build_object(
                     'rule', vat_rule.code,
                     'version', vat_rule.version,
-                    'threshold_operator', 'net_sales_fen < threshold_fen',
-                    'below_threshold', net_sales_fen < threshold_fen,
+                    'threshold_operator', finance_tax_threshold_expression_0003(vat_rule.parameters::jsonb),
+                    'below_threshold', finance_tax_below_threshold_0003(vat_rule.parameters::jsonb, net_sales_fen, threshold_fen),
                     'taxable_event_count', taxable_event_count
                 ),
                 jsonb_build_object(
@@ -9233,7 +10214,7 @@ CREATE FUNCTION public.finance_assert_tax_period_0012(target_period_id uuid) RET
                     (period.filing_cycle_snapshot || '_threshold_fen')
             )::bigint;
             vat_relief_fen := GREATEST(0, CASE
-                WHEN net_sales_fen < threshold_fen THEN COALESCE((
+                WHEN finance_tax_below_threshold_0003(vat_rule.parameters::jsonb, net_sales_fen, threshold_fen) THEN COALESCE((
                     SELECT SUM(source.vat_fen) FROM tax_period_sources AS source
                      WHERE source.org_id = period.org_id
                        AND source.tax_period_id = period.id
@@ -9332,8 +10313,8 @@ CREATE FUNCTION public.finance_assert_tax_period_0012(target_period_id uuid) RET
                 jsonb_build_object(
                     'rule', vat_rule.code,
                     'version', vat_rule.version,
-                    'threshold_operator', 'net_sales_fen < threshold_fen',
-                    'below_threshold', net_sales_fen < threshold_fen,
+                    'threshold_operator', finance_tax_threshold_expression_0003(vat_rule.parameters::jsonb),
+                    'below_threshold', finance_tax_below_threshold_0003(vat_rule.parameters::jsonb, net_sales_fen, threshold_fen),
                     'taxable_event_count', taxable_event_count,
                     'adjustment_posting_date', period.adjustment_posting_date::text
                 ),
@@ -9972,7 +10953,7 @@ BEGIN
         jsonb_build_object(
             'rule', vat_rule.code,
             'version', vat_rule.version,
-            'threshold_operator', 'net_sales_fen < threshold_fen',
+            'threshold_operator', finance_tax_threshold_expression_0003(vat_rule.parameters::jsonb),
             'below_threshold', true,
             'taxable_event_count', 0,
             'adjustment_posting_date', target.adjustment_posting_date::text
@@ -10537,19 +11518,6 @@ CREATE FUNCTION public.finance_block_financial_statement_fact_0028() RETURNS tri
                 RAISE EXCEPTION 'FINANCIAL_STATEMENT_FACT_IMMUTABLE';
             END;
             $$;
-
-
---
--- Name: finance_block_identity_audit_mutation_0013(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.finance_block_identity_audit_mutation_0013() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-        BEGIN
-            RAISE EXCEPTION 'IDENTITY_AUDIT_APPEND_ONLY';
-        END;
-        $$;
 
 
 --
@@ -11326,38 +12294,34 @@ CREATE FUNCTION public.finance_guard_accounting_period_org_mutation() RETURNS tr
 CREATE FUNCTION public.finance_guard_attributed_root_0014() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-        DECLARE owner_mode boolean;
-        DECLARE attribution_xmin xid;
-        DECLARE configured text;
-        BEGIN
-            owner_mode := EXISTS (SELECT 1 FROM owner_accounts);
-            IF TG_OP = 'UPDATE'
-               AND NEW.execution_attribution_id IS DISTINCT FROM OLD.execution_attribution_id
-               AND NOT (OLD.execution_attribution_id IS NULL
-                        AND NEW.execution_attribution_id IS NOT NULL) THEN
-                RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_IMMUTABLE';
-            END IF;
-            IF owner_mode AND NEW.execution_attribution_id IS NULL THEN
-                RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_REQUIRED';
-            END IF;
-            IF NEW.execution_attribution_id IS NOT NULL THEN
-                SELECT xmin INTO attribution_xmin FROM execution_attributions
-                 WHERE org_id = NEW.org_id AND id = NEW.execution_attribution_id;
-                IF attribution_xmin IS NULL THEN
-                    RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_MISMATCH';
-                END IF;
-                IF owner_mode AND (TG_OP = 'INSERT' OR OLD.execution_attribution_id IS NULL) THEN
-                    configured := current_setting('finance.execution_attribution_id', true);
-                    IF configured IS NULL
-                       OR configured <> NEW.execution_attribution_id::text
-                       OR pg_xact_status((attribution_xmin::text)::xid8) <> 'in progress' THEN
-                        RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_NOT_CURRENT';
-                    END IF;
-                END IF;
-            END IF;
-            RETURN NEW;
-        END;
-        $$;
+DECLARE attribution_xmin xid;
+DECLARE configured text;
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND NEW.execution_attribution_id IS DISTINCT FROM OLD.execution_attribution_id
+       AND NOT (OLD.execution_attribution_id IS NULL
+                AND NEW.execution_attribution_id IS NOT NULL) THEN
+        RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_IMMUTABLE';
+    END IF;
+    IF NEW.execution_attribution_id IS NULL THEN
+        RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_REQUIRED';
+    END IF;
+    SELECT xmin INTO attribution_xmin FROM execution_attributions
+     WHERE org_id = NEW.org_id AND id = NEW.execution_attribution_id;
+    IF attribution_xmin IS NULL THEN
+        RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_MISMATCH';
+    END IF;
+    IF TG_OP = 'INSERT' OR OLD.execution_attribution_id IS NULL THEN
+        configured := current_setting('finance.execution_attribution_id', true);
+        IF configured IS NULL
+           OR configured <> NEW.execution_attribution_id::text
+           OR pg_xact_status((attribution_xmin::text)::xid8) <> 'in progress' THEN
+            RAISE EXCEPTION 'BUSINESS_EXECUTION_ATTRIBUTION_NOT_CURRENT';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 
 --
@@ -11937,37 +12901,30 @@ CREATE FUNCTION public.finance_guard_event_identity_0014() RETURNS trigger
 CREATE FUNCTION public.finance_guard_execution_attribution_0014() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
-        DECLARE authority owner_sessions%ROWTYPE;
-        DECLARE owner owner_accounts%ROWTYPE;
-        BEGIN
-            IF TG_OP <> 'INSERT' THEN
-                RAISE EXCEPTION 'EXECUTION_ATTRIBUTION_APPEND_ONLY';
-            END IF;
-            SELECT * INTO owner FROM owner_accounts
-             WHERE org_id = NEW.org_id AND id = NEW.owner_account_id
-             FOR UPDATE;
-            SELECT * INTO authority FROM owner_sessions
-             WHERE org_id = NEW.org_id
-               AND owner_account_id = NEW.owner_account_id
-               AND id = NEW.owner_session_id
-               AND credential_version = NEW.owner_credential_version
-             FOR UPDATE;
-            IF authority.id IS NULL OR owner.id IS NULL
-               OR authority.revoked_at IS NOT NULL
-               OR owner.status <> 'active'
-               OR owner.credential_version <> NEW.owner_credential_version
-               OR clock_timestamp() >= authority.idle_expires_at
-               OR clock_timestamp() >= authority.absolute_expires_at
-               OR NEW.created_at < authority.created_at
-               OR NEW.created_at > clock_timestamp()
-               OR NEW.executor_name !~ '^[A-Za-z0-9._:-]{1,100}$'
-               OR NEW.executor_version !~ '^[A-Za-z0-9._:-]{1,100}$'
-               OR NEW.tool_name !~ '^finance_[a-z0-9_]{1,92}$' THEN
-                RAISE EXCEPTION 'EXECUTION_ATTRIBUTION_AUTHORITY_INVALID';
-            END IF;
-            RETURN NEW;
-        END;
-        $_$;
+DECLARE configured text;
+DECLARE binding organization_database_metadata%ROWTYPE;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'EXECUTION_ATTRIBUTION_APPEND_ONLY';
+    END IF;
+    SELECT * INTO binding FROM organization_database_metadata WHERE singleton_key = 1;
+    configured := current_setting('finance.execution_attribution_id', true);
+    IF binding.org_id IS NULL
+       OR NEW.org_id <> binding.org_id
+       OR NEW.catalog_instance_id <> binding.current_catalog_instance_id
+       OR NEW.catalog_instance_id = '00000000-0000-0000-0000-000000000000'::uuid
+       OR NEW.owner_credential_version < 1
+       OR NEW.created_at > clock_timestamp()
+       OR configured IS NULL
+       OR configured <> NEW.id::text
+       OR NEW.executor_name !~ '^[A-Za-z0-9._:-]{1,100}$'
+       OR NEW.executor_version !~ '^[A-Za-z0-9._:-]{1,100}$'
+       OR NEW.tool_name !~ '^finance_[a-z0-9_]{1,92}$' THEN
+        RAISE EXCEPTION 'EXECUTION_ATTRIBUTION_AUTHORITY_INVALID';
+    END IF;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -12317,151 +13274,66 @@ $$;
 
 
 --
--- Name: finance_guard_owner_account_0013(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: finance_guard_organization_profile_append_only_0002(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.finance_guard_owner_account_0013() RETURNS trigger
+CREATE FUNCTION public.finance_guard_organization_profile_append_only_0002() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-        BEGIN
-            IF TG_OP = 'INSERT' THEN
-                IF NEW.credential_version <> 1
-                   OR NEW.status <> 'active'
-                   OR NEW.password_failed_attempts <> 0
-                   OR NEW.password_throttled_until IS NOT NULL
-                   OR NEW.recovery_failed_attempts <> 0
-                   OR NEW.recovery_throttled_until IS NOT NULL
-                   OR NEW.last_authenticated_at IS NOT NULL THEN
-                    RAISE EXCEPTION 'IDENTITY_OWNER_INITIAL_STATE_INVALID';
-                END IF;
-                RETURN NEW;
-            END IF;
-            IF TG_OP = 'DELETE' THEN
-                RAISE EXCEPTION 'IDENTITY_SUBJECT_DELETE_FORBIDDEN';
-            END IF;
-            IF NEW.id IS DISTINCT FROM OLD.id
-               OR NEW.org_id IS DISTINCT FROM OLD.org_id
-               OR NEW.singleton_key IS DISTINCT FROM OLD.singleton_key
-               OR NEW.login_name IS DISTINCT FROM OLD.login_name
-               OR NEW.login_name_normalized IS DISTINCT FROM OLD.login_name_normalized
-               OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-                RAISE EXCEPTION 'IDENTITY_OWNER_IMMUTABLE_FIELD';
-            END IF;
-            IF OLD.status = 'disabled' AND NEW.status IS DISTINCT FROM OLD.status THEN
-                RAISE EXCEPTION 'IDENTITY_OWNER_REACTIVATION_FORBIDDEN';
-            END IF;
-            IF NEW.updated_at < OLD.updated_at OR NEW.updated_at < NEW.created_at THEN
-                RAISE EXCEPTION 'IDENTITY_OWNER_UPDATED_AT_INVALID';
-            END IF;
-            IF NEW.password_hash IS DISTINCT FROM OLD.password_hash THEN
-                IF NEW.credential_version <> OLD.credential_version + 1
-                   OR NEW.password_changed_at <= OLD.password_changed_at THEN
-                    RAISE EXCEPTION 'IDENTITY_CREDENTIAL_ROTATION_INVALID';
-                END IF;
-            ELSIF NEW.credential_version IS DISTINCT FROM OLD.credential_version
-                  OR NEW.password_changed_at IS DISTINCT FROM OLD.password_changed_at THEN
-                RAISE EXCEPTION 'IDENTITY_CREDENTIAL_ROTATION_INVALID';
-            END IF;
-            RETURN NEW;
-        END;
-        $$;
+BEGIN
+    RAISE EXCEPTION 'ORGANIZATION_PROFILE_IMMUTABLE';
+END;
+$$;
 
 
 --
--- Name: finance_guard_owner_recovery_code_0013(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: finance_guard_organization_profile_projection_0002(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.finance_guard_owner_recovery_code_0013() RETURNS trigger
+CREATE FUNCTION public.finance_guard_organization_profile_projection_0002() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-        BEGIN
-            IF TG_OP = 'INSERT' THEN
-                IF NEW.used_at IS NOT NULL OR NEW.invalidated_at IS NOT NULL
-                   OR NOT EXISTS (
-                        SELECT 1 FROM owner_accounts AS owner
-                         WHERE owner.id = NEW.owner_account_id
-                           AND owner.org_id = NEW.org_id
-                           AND owner.status = 'active'
-                           AND owner.credential_version = NEW.credential_version
-                   ) THEN
-                    RAISE EXCEPTION 'IDENTITY_RECOVERY_INITIAL_STATE_INVALID';
-                END IF;
-                RETURN NEW;
-            END IF;
-            IF TG_OP = 'DELETE' THEN
-                RAISE EXCEPTION 'IDENTITY_RECOVERY_HISTORY_DELETE_FORBIDDEN';
-            END IF;
-            IF NEW.id IS DISTINCT FROM OLD.id
-               OR NEW.org_id IS DISTINCT FROM OLD.org_id
-               OR NEW.owner_account_id IS DISTINCT FROM OLD.owner_account_id
-               OR NEW.code_sha256 IS DISTINCT FROM OLD.code_sha256
-               OR NEW.credential_version IS DISTINCT FROM OLD.credential_version
-               OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-                RAISE EXCEPTION 'IDENTITY_RECOVERY_IMMUTABLE_FIELD';
-            END IF;
-            IF OLD.used_at IS NOT NULL AND NEW.used_at IS DISTINCT FROM OLD.used_at THEN
-                RAISE EXCEPTION 'IDENTITY_RECOVERY_TERMINAL_STATE_IMMUTABLE';
-            END IF;
-            IF OLD.invalidated_at IS NOT NULL
-               AND NEW.invalidated_at IS DISTINCT FROM OLD.invalidated_at THEN
-                RAISE EXCEPTION 'IDENTITY_RECOVERY_TERMINAL_STATE_IMMUTABLE';
-            END IF;
-            IF (OLD.used_at IS NULL AND NEW.used_at IS NOT NULL AND NEW.used_at < OLD.created_at)
-               OR (OLD.invalidated_at IS NULL AND NEW.invalidated_at IS NOT NULL
-                   AND NEW.invalidated_at < OLD.created_at) THEN
-                RAISE EXCEPTION 'IDENTITY_RECOVERY_TERMINAL_TIME_INVALID';
-            END IF;
-            RETURN NEW;
-        END;
-        $$;
-
-
---
--- Name: finance_guard_owner_session_0013(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.finance_guard_owner_session_0013() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-        BEGIN
-            IF TG_OP = 'INSERT' THEN
-                IF NEW.revoked_at IS NOT NULL OR NEW.revoke_reason IS NOT NULL
-                   OR NOT EXISTS (
-                        SELECT 1 FROM owner_accounts AS owner
-                         WHERE owner.id = NEW.owner_account_id
-                           AND owner.org_id = NEW.org_id
-                           AND owner.status = 'active'
-                           AND owner.credential_version = NEW.credential_version
-                   ) THEN
-                    RAISE EXCEPTION 'IDENTITY_SESSION_INITIAL_STATE_INVALID';
-                END IF;
-                RETURN NEW;
-            END IF;
-            IF TG_OP = 'DELETE' THEN
-                RAISE EXCEPTION 'IDENTITY_SESSION_DELETE_FORBIDDEN';
-            END IF;
-            IF NEW.id IS DISTINCT FROM OLD.id
-               OR NEW.org_id IS DISTINCT FROM OLD.org_id
-               OR NEW.owner_account_id IS DISTINCT FROM OLD.owner_account_id
-               OR NEW.secret_sha256 IS DISTINCT FROM OLD.secret_sha256
-               OR NEW.credential_version IS DISTINCT FROM OLD.credential_version
-               OR NEW.created_at IS DISTINCT FROM OLD.created_at
-               OR NEW.absolute_expires_at IS DISTINCT FROM OLD.absolute_expires_at THEN
-                RAISE EXCEPTION 'IDENTITY_SESSION_IMMUTABLE_FIELD';
-            END IF;
-            IF NEW.last_seen_at < OLD.last_seen_at
-               OR NEW.idle_expires_at < OLD.idle_expires_at
-               OR NEW.idle_expires_at > NEW.absolute_expires_at THEN
-                RAISE EXCEPTION 'IDENTITY_SESSION_EXPIRY_INVALID';
-            END IF;
-            IF OLD.revoked_at IS NOT NULL
-               AND (NEW.revoked_at IS DISTINCT FROM OLD.revoked_at
-                    OR NEW.revoke_reason IS DISTINCT FROM OLD.revoke_reason) THEN
-                RAISE EXCEPTION 'IDENTITY_SESSION_REVOCATION_IMMUTABLE';
-            END IF;
-            RETURN NEW;
-        END;
-        $$;
+DECLARE configured text;
+DECLARE profile_record record;
+DECLARE profile_xmin xid;
+BEGIN
+    IF NEW.name IS NOT DISTINCT FROM OLD.name
+       AND NEW.taxpayer_identification_number IS NOT DISTINCT FROM
+           OLD.taxpayer_identification_number
+       AND NEW.taxpayer_type IS NOT DISTINCT FROM OLD.taxpayer_type
+       AND NEW.filing_cycle IS NOT DISTINCT FROM OLD.filing_cycle
+       AND NEW.jurisdiction IS NOT DISTINCT FROM OLD.jurisdiction
+       AND NEW.urban_maintenance_rate IS NOT DISTINCT FROM OLD.urban_maintenance_rate
+       AND NEW.accounting_standard IS NOT DISTINCT FROM OLD.accounting_standard THEN
+        RETURN NEW;
+    END IF;
+    SELECT profile.*, profile.xmin INTO profile_record
+      FROM organization_profile_versions profile
+     WHERE profile.org_id = NEW.id
+     ORDER BY profile.effective_from DESC, profile.id DESC
+     LIMIT 1;
+    profile_xmin := profile_record.xmin;
+    configured := current_setting('finance.execution_attribution_id', true);
+    IF profile_record.id IS NULL
+       OR profile_record.lifecycle_action_id IS NULL
+       OR configured IS NULL
+       OR configured <> profile_record.execution_attribution_id::text
+       OR profile_xmin IS NULL
+       OR pg_xact_status((profile_xmin::text)::xid8) <> 'in progress'
+       OR NEW.name IS DISTINCT FROM profile_record.name
+       OR NEW.taxpayer_identification_number IS DISTINCT FROM
+           profile_record.taxpayer_identification_number
+       OR NEW.taxpayer_type IS DISTINCT FROM profile_record.taxpayer_type
+       OR NEW.filing_cycle IS DISTINCT FROM profile_record.filing_cycle
+       OR NEW.jurisdiction IS DISTINCT FROM profile_record.jurisdiction
+       OR NEW.urban_maintenance_rate IS DISTINCT FROM
+           profile_record.urban_maintenance_rate
+       OR NEW.accounting_standard IS DISTINCT FROM profile_record.accounting_standard THEN
+        RAISE EXCEPTION 'ORGANIZATION_PROFILE_PROJECTION_INVALID';
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 
 --
@@ -12493,16 +13365,14 @@ $$;
 CREATE FUNCTION public.finance_guard_payroll_batch_identity_0014() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM owner_accounts)
-               AND ((TG_OP = 'INSERT' AND NEW.confirmed_by IS NOT NULL)
-                    OR (TG_OP = 'UPDATE' AND OLD.confirmed_by IS NULL
-                        AND NEW.confirmed_by IS NOT NULL)) THEN
-                RAISE EXCEPTION 'CALLER_CONFIRMER_IDENTITY_FORBIDDEN';
-            END IF;
-            RETURN NEW;
-        END;
-        $$;
+BEGIN
+    IF (TG_OP = 'INSERT' AND NEW.confirmed_by IS NOT NULL)
+       OR (TG_OP = 'UPDATE' AND OLD.confirmed_by IS NULL AND NEW.confirmed_by IS NOT NULL) THEN
+        RAISE EXCEPTION 'CALLER_CONFIRMER_IDENTITY_FORBIDDEN';
+    END IF;
+    RETURN NEW;
+END;
+$$;
 
 
 --
@@ -12512,17 +13382,14 @@ CREATE FUNCTION public.finance_guard_payroll_batch_identity_0014() RETURNS trigg
 CREATE FUNCTION public.finance_guard_period_action_identity_0014() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM owner_accounts)
-               AND NEW.confirmed_by IS NOT NULL THEN
-                RAISE EXCEPTION 'CALLER_CONFIRMER_IDENTITY_FORBIDDEN';
-            END IF;
-            IF jsonb_path_exists(NEW.input_facts::jsonb, '$.**.confirmed_by') THEN
-                RAISE EXCEPTION 'CALLER_CONFIRMER_IDENTITY_FORBIDDEN';
-            END IF;
-            RETURN NEW;
-        END;
-        $_$;
+BEGIN
+    IF NEW.confirmed_by IS NOT NULL
+       OR jsonb_path_exists(NEW.input_facts::jsonb, '$.**.confirmed_by') THEN
+        RAISE EXCEPTION 'CALLER_CONFIRMER_IDENTITY_FORBIDDEN';
+    END IF;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -13390,15 +14257,55 @@ CREATE FUNCTION public.finance_payroll_contribution_fact_immutable_0023() RETURN
 --
 
 CREATE FUNCTION public.finance_payroll_tax_date_0017(batch_kind text, payroll_period text, payment_date date) RETURNS date
-    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
     AS $$
-            SELECT CASE
-                WHEN batch_kind = 'regular' THEN
-                    (make_date(substr(payroll_period, 1, 4)::integer,
-                               substr(payroll_period, 6, 2)::integer, 1)
-                     + INTERVAL '1 month - 1 day')::date
-                ELSE payment_date
-            END
+                SELECT CASE
+                    WHEN batch_kind = 'regular' THEN
+                        (make_date(substr(payroll_period, 1, 4)::integer,
+                                   substr(payroll_period, 6, 2)::integer, 1)
+                         + INTERVAL '1 month - 1 day')::date
+                    ELSE payment_date
+                END
+            $$;
+
+
+--
+-- Name: finance_tax_below_threshold_0003(jsonb, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_tax_below_threshold_0003(rule_parameters jsonb, net_sales_fen bigint, threshold_fen bigint) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+        DECLARE threshold_operator text;
+        BEGIN
+            threshold_operator := rule_parameters ->> 'threshold_operator';
+            IF threshold_operator = 'strictly_below' THEN
+                RETURN net_sales_fen < threshold_fen;
+            ELSIF threshold_operator = 'at_or_below' THEN
+                RETURN net_sales_fen <= threshold_fen;
+            END IF;
+            RAISE EXCEPTION 'TAX_RULE_THRESHOLD_OPERATOR_INVALID';
+        END;
+        $$;
+
+
+--
+-- Name: finance_tax_threshold_expression_0003(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_tax_threshold_expression_0003(rule_parameters jsonb) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE STRICT
+    AS $$
+        DECLARE threshold_operator text;
+        BEGIN
+            threshold_operator := rule_parameters ->> 'threshold_operator';
+            IF threshold_operator = 'strictly_below' THEN
+                RETURN 'net_sales_fen < threshold_fen';
+            ELSIF threshold_operator = 'at_or_below' THEN
+                RETURN 'net_sales_fen <= threshold_fen';
+            END IF;
+            RAISE EXCEPTION 'TAX_RULE_THRESHOLD_OPERATOR_INVALID';
+        END;
         $$;
 
 
@@ -14992,6 +15899,39 @@ CREATE FUNCTION public.finance_validate_opening_state_version_chain() RETURNS tr
 
 
 --
+-- Name: finance_validate_organization_profile_insert_0002(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_validate_organization_profile_insert_0002() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE configured text;
+DECLARE attribution_xmin xid;
+DECLARE profile_count bigint;
+BEGIN
+    configured := current_setting('finance.execution_attribution_id', true);
+    SELECT xmin INTO attribution_xmin FROM execution_attributions
+     WHERE org_id = NEW.org_id AND id = NEW.execution_attribution_id;
+    SELECT count(*) INTO profile_count FROM organization_profile_versions
+     WHERE org_id = NEW.org_id;
+    IF NEW.execution_attribution_id IS NULL
+       OR configured IS NULL
+       OR configured <> NEW.execution_attribution_id::text
+       OR attribution_xmin IS NULL
+       OR pg_xact_status((attribution_xmin::text)::xid8) <> 'in progress'
+       OR (profile_count > 1 AND NEW.lifecycle_action_id IS NULL)
+       OR (profile_count > 1 AND NOT EXISTS (
+            SELECT 1 FROM organization_profile_version_evidence evidence
+             WHERE evidence.org_id = NEW.org_id
+               AND evidence.profile_version_id = NEW.id)) THEN
+        RAISE EXCEPTION 'ORGANIZATION_PROFILE_AUTHORITY_INVALID';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: finance_validate_payroll_batch_tax_state_from_batch(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15859,6 +16799,7 @@ CREATE TABLE public.accounting_period_close_approvals (
     confirmed_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone,
+    catalog_instance_id uuid DEFAULT 'fd972709-0332-5c04-84f9-9bc55f76bbf1'::uuid NOT NULL,
     CONSTRAINT ck_period_close_approval_consumed_at CHECK (((consumed_at IS NULL) OR (consumed_at >= confirmed_at))),
     CONSTRAINT ck_period_close_approval_credential_version CHECK ((owner_credential_version >= 1)),
     CONSTRAINT ck_period_close_approval_expiry CHECK ((expires_at > confirmed_at)),
@@ -16620,6 +17561,7 @@ CREATE TABLE public.execution_attributions (
     tool_name character varying(100) NOT NULL,
     request_correlation_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    catalog_instance_id uuid DEFAULT 'fd972709-0332-5c04-84f9-9bc55f76bbf1'::uuid NOT NULL,
     CONSTRAINT ck_execution_attribution_credential_version CHECK ((owner_credential_version >= 1)),
     CONSTRAINT ck_execution_attribution_executor_kind CHECK (((executor_kind)::text = ANY (ARRAY[('ai_agent'::character varying)::text, ('deterministic_kernel'::character varying)::text, ('system_job'::character varying)::text]))),
     CONSTRAINT ck_execution_attribution_executor_name CHECK (((length((executor_name)::text) >= 1) AND (length((executor_name)::text) <= 100))),
@@ -16628,6 +17570,38 @@ CREATE TABLE public.execution_attributions (
     CONSTRAINT ck_execution_attribution_executor_version_ascii CHECK (((executor_version)::text ~ '^[A-Za-z0-9._:-]{1,100}$'::text)),
     CONSTRAINT ck_execution_attribution_tool_name CHECK (((length((tool_name)::text) >= 1) AND (length((tool_name)::text) <= 100))),
     CONSTRAINT ck_execution_attribution_tool_name_ascii CHECK (((tool_name)::text ~ '^finance_[a-z0-9_]{1,92}$'::text))
+);
+
+
+--
+-- Name: external_obligation_confirmations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.external_obligation_confirmations (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    idempotency_key character varying(200) NOT NULL,
+    request_payload_hash character varying(64) NOT NULL,
+    supersedes_id uuid,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    obligation_id uuid NOT NULL,
+    obligation_code character varying(80) NOT NULL,
+    obligation_scope character varying(20) NOT NULL,
+    source_snapshot_hash character varying(64) NOT NULL,
+    completion_status character varying(30) NOT NULL,
+    completion_date date,
+    external_reference character varying(300),
+    confirmation_note text NOT NULL,
+    evidence_snapshot json NOT NULL,
+    completion_date_status character varying(30) NOT NULL,
+    CONSTRAINT ck_external_obligation_confirmation_code CHECK (((obligation_code)::text = ANY (ARRAY[('individual_income_tax'::character varying)::text, ('periodic_tax_reporting'::character varying)::text, ('annual_enterprise_income_tax'::character varying)::text, ('annual_business_report'::character varying)::text]))),
+    CONSTRAINT ck_external_obligation_confirmation_date CHECK (((((completion_status)::text = 'submitted'::text) AND ((((completion_date_status)::text = 'established'::text) AND (completion_date IS NOT NULL)) OR (((completion_date_status)::text = 'not_established'::text) AND (completion_date IS NULL)))) OR (((completion_status)::text = 'not_applicable'::text) AND ((completion_date_status)::text = 'not_applicable'::text) AND (completion_date IS NULL)))),
+    CONSTRAINT ck_external_obligation_confirmation_date_status CHECK (((completion_date_status)::text = ANY (ARRAY[('established'::character varying)::text, ('not_established'::character varying)::text, ('not_applicable'::character varying)::text]))),
+    CONSTRAINT ck_external_obligation_confirmation_hashes CHECK (((length((source_snapshot_hash)::text) = 64) AND (length((request_payload_hash)::text) = 64))),
+    CONSTRAINT ck_external_obligation_confirmation_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
+    CONSTRAINT ck_external_obligation_confirmation_scope CHECK (((obligation_scope)::text = ANY (ARRAY[('month'::character varying)::text, ('quarter'::character varying)::text, ('year'::character varying)::text]))),
+    CONSTRAINT ck_external_obligation_confirmation_status CHECK (((completion_status)::text = ANY (ARRAY[('submitted'::character varying)::text, ('not_applicable'::character varying)::text])))
 );
 
 
@@ -16655,6 +17629,28 @@ CREATE TABLE public.financial_statement_classifications (
     CONSTRAINT ck_financial_statement_classification_parent_role CHECK (((parent_role)::text = ANY (ARRAY[('general_expense'::character varying)::text, ('sales_expense'::character varying)::text, ('finance_expense'::character varying)::text]))),
     CONSTRAINT ck_financial_statement_classification_payload CHECK (((length(allocation_payload) > 0) AND (length((allocation_hash)::text) = 64))),
     CONSTRAINT ck_financial_statement_classification_request CHECK (((length((idempotency_key)::text) >= 1) AND (length((idempotency_key)::text) <= 200) AND (length((request_payload_hash)::text) = 64)))
+);
+
+
+--
+-- Name: financial_statement_opening_balance_confirmations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_statement_opening_balance_confirmations (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    establishment_date date NOT NULL,
+    treatment character varying(40) NOT NULL,
+    idempotency_key character varying(200) NOT NULL,
+    request_payload_hash character varying(64) NOT NULL,
+    confirmation_note text NOT NULL,
+    evidence_references json NOT NULL,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT ck_fs_opening_confirmation_hash_lower_hex CHECK (((request_payload_hash)::text ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT ck_fs_opening_confirmation_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
+    CONSTRAINT ck_fs_opening_confirmation_request CHECK (((length((idempotency_key)::text) >= 1) AND (length((idempotency_key)::text) <= 200) AND (length((request_payload_hash)::text) = 64))),
+    CONSTRAINT ck_fs_opening_confirmation_treatment CHECK (((treatment)::text = 'zero_on_establishment'::text))
 );
 
 
@@ -16866,22 +17862,29 @@ CREATE TABLE public.fixed_assets (
 
 
 --
--- Name: identity_audit_events; Type: TABLE; Schema: public; Owner: -
+-- Name: historical_obligation_completion_confirmations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.identity_audit_events (
+CREATE TABLE public.historical_obligation_completion_confirmations (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
-    owner_account_id uuid,
-    session_id uuid,
-    event_type character varying(50) NOT NULL,
-    outcome character varying(20) NOT NULL,
-    reason_code character varying(100),
-    request_correlation_id uuid NOT NULL,
-    occurred_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    CONSTRAINT ck_identity_audit_event_type CHECK (((event_type)::text = ANY (ARRAY[('owner_provisioned'::character varying)::text, ('login_succeeded'::character varying)::text, ('login_failed'::character varying)::text, ('session_revoked'::character varying)::text, ('session_expired'::character varying)::text, ('password_changed'::character varying)::text, ('recovery_succeeded'::character varying)::text, ('recovery_failed'::character varying)::text, ('recovery_code_replaced'::character varying)::text]))),
-    CONSTRAINT ck_identity_audit_outcome CHECK (((outcome)::text = ANY (ARRAY[('succeeded'::character varying)::text, ('rejected'::character varying)::text, ('blocked'::character varying)::text]))),
-    CONSTRAINT ck_identity_audit_reason_code CHECK (((reason_code IS NULL) OR ((reason_code)::text = ANY (ARRAY[('INVALID_CREDENTIALS'::character varying)::text, ('ACCOUNT_THROTTLED'::character varying)::text, ('ACCOUNT_DISABLED'::character varying)::text, ('SESSION_REVOKED'::character varying)::text, ('SESSION_IDLE_EXPIRED'::character varying)::text, ('SESSION_ABSOLUTE_EXPIRED'::character varying)::text, ('SESSION_CREDENTIAL_VERSION_MISMATCH'::character varying)::text, ('RECOVERY_CODE_INVALID'::character varying)::text, ('RECOVERY_THROTTLED'::character varying)::text, ('PASSWORD_POLICY_REJECTED'::character varying)::text, ('OWNER_ALREADY_PROVISIONED'::character varying)::text]))))
+    obligation_code character varying(80) NOT NULL,
+    obligation_scope character varying(20) NOT NULL,
+    completion_through_identity character varying(7) NOT NULL,
+    completion_date_status character varying(30) NOT NULL,
+    source_snapshot_hash character varying(64) NOT NULL,
+    idempotency_key character varying(200) NOT NULL,
+    request_payload_hash character varying(64) NOT NULL,
+    confirmation_note text NOT NULL,
+    evidence_snapshot json NOT NULL,
+    supersedes_id uuid,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT ck_historical_obligation_completion_code CHECK (((obligation_code)::text = ANY (ARRAY[('individual_income_tax'::character varying)::text, ('periodic_tax_reporting'::character varying)::text, ('annual_enterprise_income_tax'::character varying)::text, ('annual_business_report'::character varying)::text]))),
+    CONSTRAINT ck_historical_obligation_completion_date_status CHECK (((completion_date_status)::text = 'not_established'::text)),
+    CONSTRAINT ck_historical_obligation_completion_hashes CHECK (((length((source_snapshot_hash)::text) = 64) AND (length((request_payload_hash)::text) = 64))),
+    CONSTRAINT ck_historical_obligation_completion_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
+    CONSTRAINT ck_historical_obligation_completion_scope CHECK (((((obligation_code)::text = 'individual_income_tax'::text) AND ((obligation_scope)::text = 'month'::text)) OR (((obligation_code)::text = 'periodic_tax_reporting'::text) AND ((obligation_scope)::text = ANY (ARRAY[('month'::character varying)::text, ('quarter'::character varying)::text]))) OR (((obligation_code)::text = ANY (ARRAY[('annual_enterprise_income_tax'::character varying)::text, ('annual_business_report'::character varying)::text])) AND ((obligation_scope)::text = 'year'::text))))
 );
 
 
@@ -17374,6 +18377,102 @@ CREATE TABLE public.open_items (
 
 
 --
+-- Name: organization_database_metadata; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization_database_metadata (
+    singleton_key integer NOT NULL,
+    org_id uuid NOT NULL,
+    database_identity uuid NOT NULL,
+    current_catalog_instance_id uuid NOT NULL,
+    owner_approval_required boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT ck_org_database_metadata_singleton CHECK ((singleton_key = 1))
+);
+
+
+--
+-- Name: organization_database_metadata_singleton_key_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.organization_database_metadata_singleton_key_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: organization_database_metadata_singleton_key_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.organization_database_metadata_singleton_key_seq OWNED BY public.organization_database_metadata.singleton_key;
+
+
+--
+-- Name: organization_establishment_confirmations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization_establishment_confirmations (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    idempotency_key character varying(200) NOT NULL,
+    request_payload_hash character varying(64) NOT NULL,
+    supersedes_id uuid,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    establishment_date date NOT NULL,
+    confirmation_note text NOT NULL,
+    evidence_snapshot json NOT NULL,
+    CONSTRAINT ck_establishment_confirmation_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
+    CONSTRAINT ck_establishment_confirmation_request_hash CHECK ((length((request_payload_hash)::text) = 64))
+);
+
+
+--
+-- Name: organization_profile_version_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization_profile_version_evidence (
+    org_id uuid NOT NULL,
+    profile_version_id uuid NOT NULL,
+    evidence_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: organization_profile_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization_profile_versions (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    effective_from date NOT NULL,
+    name character varying(200) NOT NULL,
+    taxpayer_identification_number character varying(18) NOT NULL,
+    taxpayer_type character varying(30) NOT NULL,
+    filing_cycle character varying(20) NOT NULL,
+    jurisdiction character varying(100) NOT NULL,
+    urban_maintenance_rate numeric(6,5) NOT NULL,
+    accounting_standard character varying(50) NOT NULL,
+    confirmation_note text NOT NULL,
+    lifecycle_action_id uuid,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT ck_org_profile_accounting_standard CHECK (((accounting_standard)::text = 'small_enterprise'::text)),
+    CONSTRAINT ck_org_profile_confirmation_note CHECK ((length(TRIM(BOTH FROM confirmation_note)) > 0)),
+    CONSTRAINT ck_org_profile_filing_cycle CHECK (((filing_cycle)::text = ANY (ARRAY[('monthly'::character varying)::text, ('quarterly'::character varying)::text]))),
+    CONSTRAINT ck_org_profile_jurisdiction CHECK (((jurisdiction)::text = 'CN'::text)),
+    CONSTRAINT ck_org_profile_small_scale CHECK (((taxpayer_type)::text = 'small_scale'::text)),
+    CONSTRAINT ck_org_profile_taxpayer_id CHECK (((length((taxpayer_identification_number)::text) = 18) AND ((taxpayer_identification_number)::text = upper((taxpayer_identification_number)::text)))),
+    CONSTRAINT ck_org_profile_urban_rate CHECK ((urban_maintenance_rate = ANY (ARRAY[0.07, 0.05, 0.01])))
+);
+
+
+--
 -- Name: organizations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17402,87 +18501,28 @@ CREATE TABLE public.organizations (
 
 
 --
--- Name: owner_accounts; Type: TABLE; Schema: public; Owner: -
+-- Name: owner_period_confirmations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.owner_accounts (
+CREATE TABLE public.owner_period_confirmations (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
-    singleton_key integer DEFAULT 1 NOT NULL,
-    login_name character varying(100) NOT NULL,
-    login_name_normalized character varying(100) NOT NULL,
-    status character varying(20) DEFAULT 'active'::character varying NOT NULL,
-    password_hash character varying(512) NOT NULL,
-    credential_version integer DEFAULT 1 NOT NULL,
-    password_failed_attempts integer DEFAULT 0 NOT NULL,
-    password_throttled_until timestamp with time zone,
-    recovery_failed_attempts integer DEFAULT 0 NOT NULL,
-    recovery_throttled_until timestamp with time zone,
-    last_authenticated_at timestamp with time zone,
-    password_changed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    idempotency_key character varying(200) NOT NULL,
+    request_payload_hash character varying(64) NOT NULL,
+    supersedes_id uuid,
+    execution_attribution_id uuid,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    CONSTRAINT ck_owner_account_credential_version CHECK ((credential_version >= 1)),
-    CONSTRAINT ck_owner_account_login_ascii CHECK (((login_name)::text ~ '^[A-Za-z0-9][A-Za-z0-9._-]{2,99}$'::text)),
-    CONSTRAINT ck_owner_account_login_name CHECK (((length((login_name)::text) >= 3) AND (length((login_name)::text) <= 100) AND ((login_name)::text = TRIM(BOTH FROM login_name)))),
-    CONSTRAINT ck_owner_account_login_normalized CHECK (((login_name_normalized)::text = lower(TRIM(BOTH FROM login_name)))),
-    CONSTRAINT ck_owner_account_password_failures CHECK ((password_failed_attempts >= 0)),
-    CONSTRAINT ck_owner_account_password_hash CHECK (((length((password_hash)::text) = 97) AND ((password_hash)::text ~~ '$argon2id$v=19$m=65536,t=3,p=4$%'::text))),
-    CONSTRAINT ck_owner_account_password_hash_shape CHECK (((password_hash)::text ~ '^\$argon2id\$v=19\$m=65536,t=3,p=4\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$'::text)),
-    CONSTRAINT ck_owner_account_recovery_failures CHECK ((recovery_failed_attempts >= 0)),
-    CONSTRAINT ck_owner_account_singleton CHECK ((singleton_key = 1)),
-    CONSTRAINT ck_owner_account_status CHECK (((status)::text = ANY (ARRAY[('active'::character varying)::text, ('disabled'::character varying)::text])))
-);
-
-
---
--- Name: owner_recovery_codes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.owner_recovery_codes (
-    id uuid NOT NULL,
-    org_id uuid NOT NULL,
-    owner_account_id uuid NOT NULL,
-    code_sha256 character varying(64) NOT NULL,
-    credential_version integer NOT NULL,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    used_at timestamp with time zone,
-    invalidated_at timestamp with time zone,
-    CONSTRAINT ck_owner_recovery_code_credential_version CHECK ((credential_version >= 1)),
-    CONSTRAINT ck_owner_recovery_code_invalidated_at CHECK (((invalidated_at IS NULL) OR (invalidated_at >= created_at))),
-    CONSTRAINT ck_owner_recovery_code_lowerhex CHECK (((code_sha256)::text ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT ck_owner_recovery_code_sha256 CHECK ((length((code_sha256)::text) = 64)),
-    CONSTRAINT ck_owner_recovery_code_terminal_state CHECK (((used_at IS NULL) OR (invalidated_at IS NULL))),
-    CONSTRAINT ck_owner_recovery_code_used_at CHECK (((used_at IS NULL) OR (used_at >= created_at)))
-);
-
-
---
--- Name: owner_sessions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.owner_sessions (
-    id uuid NOT NULL,
-    org_id uuid NOT NULL,
-    owner_account_id uuid NOT NULL,
-    secret_sha256 character varying(64) NOT NULL,
-    credential_version integer NOT NULL,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    last_seen_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    idle_expires_at timestamp with time zone NOT NULL,
-    absolute_expires_at timestamp with time zone NOT NULL,
-    revoked_at timestamp with time zone,
-    revoke_reason character varying(50),
-    CONSTRAINT ck_owner_session_absolute_expiry CHECK ((absolute_expires_at > created_at)),
-    CONSTRAINT ck_owner_session_credential_version CHECK ((credential_version >= 1)),
-    CONSTRAINT ck_owner_session_expiry_order CHECK ((idle_expires_at <= absolute_expires_at)),
-    CONSTRAINT ck_owner_session_idle_expiry CHECK ((idle_expires_at > created_at)),
-    CONSTRAINT ck_owner_session_last_seen CHECK ((last_seen_at >= created_at)),
-    CONSTRAINT ck_owner_session_revocation_state CHECK ((((revoked_at IS NULL) AND (revoke_reason IS NULL)) OR ((revoked_at IS NOT NULL) AND (revoke_reason IS NOT NULL)))),
-    CONSTRAINT ck_owner_session_revoke_reason CHECK (((revoke_reason IS NULL) OR ((revoke_reason)::text = ANY (ARRAY[('logout'::character varying)::text, ('credential_changed'::character varying)::text, ('recovery_used'::character varying)::text, ('idle_expired'::character varying)::text, ('absolute_expired'::character varying)::text, ('credential_version_mismatch'::character varying)::text])))),
-    CONSTRAINT ck_owner_session_revoked_at CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
-    CONSTRAINT ck_owner_session_secret_lowerhex CHECK (((secret_sha256)::text ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT ck_owner_session_secret_sha256 CHECK ((length((secret_sha256)::text) = 64))
+    period_id uuid NOT NULL,
+    fact_type character varying(40) NOT NULL,
+    confirmation_state character varying(40) NOT NULL,
+    source_snapshot_hash character varying(64) NOT NULL,
+    source_snapshot json NOT NULL,
+    confirmation_note text NOT NULL,
+    evidence_snapshot json NOT NULL,
+    CONSTRAINT ck_owner_period_confirmation_fact_type CHECK (((fact_type)::text = ANY (ARRAY[('workforce_review'::character varying)::text, ('non_bank_materials'::character varying)::text]))),
+    CONSTRAINT ck_owner_period_confirmation_hashes CHECK (((length((source_snapshot_hash)::text) = 64) AND (length((request_payload_hash)::text) = 64))),
+    CONSTRAINT ck_owner_period_confirmation_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
+    CONSTRAINT ck_owner_period_confirmation_state CHECK (((((fact_type)::text = 'workforce_review'::text) AND ((confirmation_state)::text = ANY (ARRAY[('no_change'::character varying)::text, ('changes_resolved'::character varying)::text]))) OR (((fact_type)::text = 'non_bank_materials'::text) AND ((confirmation_state)::text = 'complete'::text))))
 );
 
 
@@ -17546,7 +18586,7 @@ CREATE TABLE public.payroll_batches (
     policy_snapshot json NOT NULL,
     policy_version_id uuid NOT NULL,
     posting_date date NOT NULL,
-    payment_date date NOT NULL,
+    payment_date date,
     tax_method character varying(20),
     confirmed_by character varying(100),
     confirmation_note text,
@@ -17555,6 +18595,7 @@ CREATE TABLE public.payroll_batches (
     reversal_of_batch_id uuid,
     created_at timestamp with time zone NOT NULL,
     execution_attribution_id uuid,
+    CONSTRAINT ck_payroll_batch_bonus_payment_date CHECK ((((batch_kind)::text = 'regular'::text) OR (payment_date IS NOT NULL))),
     CONSTRAINT ck_payroll_batch_kind CHECK (((batch_kind)::text = ANY (ARRAY[('regular'::character varying)::text, ('annual_bonus'::character varying)::text]))),
     CONSTRAINT ck_payroll_batch_period CHECK (((length((payroll_period)::text) = 7) AND (substr((payroll_period)::text, 5, 1) = '-'::text) AND ((substr((payroll_period)::text, 6, 2) >= '01'::text) AND (substr((payroll_period)::text, 6, 2) <= '12'::text)))),
     CONSTRAINT ck_payroll_batch_posted_bonus_tax_method CHECK ((((status)::text <> 'posted'::text) OR ((batch_kind)::text = 'regular'::text) OR (tax_method IS NOT NULL))),
@@ -17630,6 +18671,45 @@ CREATE TABLE public.payroll_contribution_actual_uses (
     actual_item_id uuid NOT NULL,
     payroll_batch_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: payroll_contribution_assessment_confirmations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.payroll_contribution_assessment_confirmations (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    idempotency_key character varying(200) NOT NULL,
+    request_payload_hash character varying(64) NOT NULL,
+    supersedes_id uuid,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    period_id uuid NOT NULL,
+    contribution_period character varying(7) NOT NULL,
+    declaration_status character varying(30) NOT NULL,
+    declaration_date date,
+    payment_status character varying(20) NOT NULL,
+    payment_date date,
+    external_reference character varying(300),
+    calculation_hash character varying(64) NOT NULL,
+    calculation json NOT NULL,
+    employee_social_insurance_fen bigint NOT NULL,
+    employer_social_insurance_fen bigint NOT NULL,
+    employee_housing_fund_fen bigint NOT NULL,
+    employer_housing_fund_fen bigint NOT NULL,
+    confirmation_note text NOT NULL,
+    evidence_snapshot json NOT NULL,
+    declaration_date_status character varying(30) NOT NULL,
+    CONSTRAINT ck_contribution_assessment_amounts CHECK (((employee_social_insurance_fen >= 0) AND (employer_social_insurance_fen >= 0) AND (employee_housing_fund_fen >= 0) AND (employer_housing_fund_fen >= 0))),
+    CONSTRAINT ck_contribution_assessment_declaration_date_status CHECK (((declaration_date_status)::text = ANY (ARRAY[('established'::character varying)::text, ('not_established'::character varying)::text, ('not_applicable'::character varying)::text]))),
+    CONSTRAINT ck_contribution_assessment_declaration_status CHECK (((declaration_status)::text = ANY (ARRAY[('declared'::character varying)::text, ('declared_paid'::character varying)::text, ('declared_unpaid'::character varying)::text, ('not_declared'::character varying)::text]))),
+    CONSTRAINT ck_contribution_assessment_hashes CHECK (((length((calculation_hash)::text) = 64) AND (length((request_payload_hash)::text) = 64))),
+    CONSTRAINT ck_contribution_assessment_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
+    CONSTRAINT ck_contribution_assessment_payment_status CHECK (((payment_status)::text = ANY (ARRAY[('not_tracked'::character varying)::text, ('paid'::character varying)::text, ('unpaid'::character varying)::text, ('not_applicable'::character varying)::text]))),
+    CONSTRAINT ck_contribution_assessment_period CHECK (((length((contribution_period)::text) = 7) AND (substr((contribution_period)::text, 5, 1) = '-'::text))),
+    CONSTRAINT ck_contribution_assessment_status_dates CHECK (((((declaration_status)::text = 'declared'::text) AND ((((declaration_date_status)::text = 'established'::text) AND (declaration_date IS NOT NULL)) OR (((declaration_date_status)::text = 'not_established'::text) AND (declaration_date IS NULL))) AND ((payment_status)::text = 'not_tracked'::text) AND (payment_date IS NULL)) OR (((declaration_status)::text = 'declared_paid'::text) AND ((declaration_date_status)::text = 'established'::text) AND (declaration_date IS NOT NULL) AND ((payment_status)::text = 'paid'::text) AND (payment_date IS NOT NULL)) OR (((declaration_status)::text = 'declared_unpaid'::text) AND ((declaration_date_status)::text = 'established'::text) AND (declaration_date IS NOT NULL) AND ((payment_status)::text = 'unpaid'::text) AND (payment_date IS NULL)) OR (((declaration_status)::text = 'not_declared'::text) AND ((declaration_date_status)::text = 'not_applicable'::text) AND (declaration_date IS NULL) AND ((payment_status)::text = 'not_applicable'::text) AND (payment_date IS NULL))))
 );
 
 
@@ -17767,9 +18847,10 @@ CREATE TABLE public.payroll_lines (
     regular_payroll_batch_id uuid,
     tax_reported_salary_fen bigint,
     wage_tax_declaration_state character varying(20) NOT NULL,
-    CONSTRAINT ck_payroll_line_gross_salary CHECK (((((wage_tax_declaration_state)::text = 'declared'::text) AND (tax_reported_salary_fen IS NOT NULL) AND (annual_bonus_fen = 0) AND (gross_salary_fen = tax_reported_salary_fen)) OR (((wage_tax_declaration_state)::text = 'not_declared'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen = 0) AND (gross_salary_fen = 0)) OR (((wage_tax_declaration_state)::text = 'not_applicable'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen > 0) AND (gross_salary_fen = annual_bonus_fen)))),
+    tax_reporting_difference_reason text,
+    CONSTRAINT ck_payroll_line_gross_salary CHECK (((((wage_tax_declaration_state)::text = 'declared'::text) AND (tax_reported_salary_fen IS NOT NULL) AND (annual_bonus_fen = 0) AND (((gross_salary_fen = tax_reported_salary_fen) AND (tax_reporting_difference_reason IS NULL)) OR ((gross_salary_fen <> tax_reported_salary_fen) AND (tax_reporting_difference_reason IS NOT NULL) AND ((length(TRIM(BOTH FROM tax_reporting_difference_reason)) >= 1) AND (length(TRIM(BOTH FROM tax_reporting_difference_reason)) <= 2000))))) OR (((wage_tax_declaration_state)::text = 'not_declared'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen = 0) AND (gross_salary_fen = 0) AND (tax_reporting_difference_reason IS NULL)) OR (((wage_tax_declaration_state)::text = 'not_applicable'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen > 0) AND (gross_salary_fen = annual_bonus_fen) AND (tax_reporting_difference_reason IS NULL)))),
     CONSTRAINT ck_payroll_line_net_salary CHECK (((net_salary_fen = (((gross_salary_fen - employee_social_insurance_fen) - employee_housing_fund_fen) - individual_income_tax_fen)) AND (net_salary_fen >= 0))),
-    CONSTRAINT ck_payroll_line_nonnegative_amounts CHECK ((((tax_reported_salary_fen IS NULL) OR (tax_reported_salary_fen >= 0)) AND (special_additional_deduction_fen >= 0) AND (other_legal_deduction_fen >= 0) AND (annual_bonus_fen >= 0) AND (employee_social_insurance_fen >= 0) AND (employer_social_insurance_fen >= 0) AND (employee_housing_fund_fen >= 0) AND (employer_housing_fund_fen >= 0) AND (individual_income_tax_fen >= 0))),
+    CONSTRAINT ck_payroll_line_nonnegative_amounts CHECK ((((tax_reported_salary_fen IS NULL) OR (tax_reported_salary_fen >= 0)) AND (special_additional_deduction_fen >= 0) AND (other_legal_deduction_fen >= 0) AND (annual_bonus_fen >= 0) AND (employee_social_insurance_fen >= 0) AND (employer_social_insurance_fen >= 0) AND (employee_housing_fund_fen >= 0) AND (employer_housing_fund_fen >= 0) AND (individual_income_tax_fen >= 0) AND (gross_salary_fen >= 0))),
     CONSTRAINT ck_payroll_line_wage_tax_declaration_state CHECK (((wage_tax_declaration_state)::text = ANY (ARRAY[('declared'::character varying)::text, ('not_declared'::character varying)::text, ('not_applicable'::character varying)::text])))
 );
 
@@ -17839,6 +18920,32 @@ CREATE TABLE public.payroll_salary_actual_deduction_allocations (
     CONSTRAINT ck_salary_actual_deduction_expense_role CHECK (((expense_role)::text = ANY (ARRAY[('payroll_management_expense'::character varying)::text, ('payroll_sales_expense'::character varying)::text, ('payroll_service_cost'::character varying)::text]))),
     CONSTRAINT ck_salary_actual_deduction_positive CHECK ((amount_fen > 0)),
     CONSTRAINT ck_salary_actual_deduction_reversal CHECK ((((reversed IS FALSE) AND (reversed_by_event_id IS NULL)) OR ((reversed IS TRUE) AND (reversed_by_event_id IS NOT NULL))))
+);
+
+
+--
+-- Name: payroll_tax_import_exports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.payroll_tax_import_exports (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    idempotency_key character varying(200) NOT NULL,
+    request_payload_hash character varying(64) NOT NULL,
+    supersedes_id uuid,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    payroll_period character varying(7) NOT NULL,
+    payroll_source_hash character varying(64) NOT NULL,
+    source_snapshot_hash character varying(64) NOT NULL,
+    source_batches json NOT NULL,
+    relative_storage_path text NOT NULL,
+    file_name character varying(255) NOT NULL,
+    file_sha256 character varying(64) NOT NULL,
+    row_count integer NOT NULL,
+    CONSTRAINT ck_payroll_tax_import_export_hashes CHECK (((length((payroll_source_hash)::text) = 64) AND (length((source_snapshot_hash)::text) = 64) AND (length((request_payload_hash)::text) = 64) AND (length((file_sha256)::text) = 64))),
+    CONSTRAINT ck_payroll_tax_import_export_period CHECK (((length((payroll_period)::text) = 7) AND (substr((payroll_period)::text, 5, 1) = '-'::text))),
+    CONSTRAINT ck_payroll_tax_import_export_row_count CHECK ((row_count > 0))
 );
 
 
@@ -18210,6 +19317,13 @@ CREATE TABLE public.zero_tax_period_confirmations (
 
 
 --
+-- Name: organization_database_metadata singleton_key; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_database_metadata ALTER COLUMN singleton_key SET DEFAULT nextval('public.organization_database_metadata_singleton_key_seq'::regclass);
+
+
+--
 -- Name: account_bank_reconciliation_scope_history account_bank_reconciliation_scope_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18578,6 +19692,14 @@ ALTER TABLE ONLY public.financial_statement_classifications
 
 
 --
+-- Name: financial_statement_opening_balance_confirmations financial_statement_opening_balance_confirmations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_statement_opening_balance_confirmations
+    ADD CONSTRAINT financial_statement_opening_balance_confirmations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: fixed_asset_account_migration_actions fixed_asset_account_migration_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18639,14 +19761,6 @@ ALTER TABLE ONLY public.fixed_asset_tax_rule_migration_actions
 
 ALTER TABLE ONLY public.fixed_assets
     ADD CONSTRAINT fixed_assets_pkey PRIMARY KEY (id);
-
-
---
--- Name: identity_audit_events identity_audit_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.identity_audit_events
-    ADD CONSTRAINT identity_audit_events_pkey PRIMARY KEY (id);
 
 
 --
@@ -18858,35 +19972,51 @@ ALTER TABLE ONLY public.open_items
 
 
 --
+-- Name: organization_database_metadata organization_database_metadata_database_identity_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_database_metadata
+    ADD CONSTRAINT organization_database_metadata_database_identity_key UNIQUE (database_identity);
+
+
+--
+-- Name: organization_database_metadata organization_database_metadata_org_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_database_metadata
+    ADD CONSTRAINT organization_database_metadata_org_id_key UNIQUE (org_id);
+
+
+--
+-- Name: organization_database_metadata organization_database_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_database_metadata
+    ADD CONSTRAINT organization_database_metadata_pkey PRIMARY KEY (singleton_key);
+
+
+--
+-- Name: organization_profile_version_evidence organization_profile_version_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_profile_version_evidence
+    ADD CONSTRAINT organization_profile_version_evidence_pkey PRIMARY KEY (org_id, profile_version_id, evidence_id);
+
+
+--
+-- Name: organization_profile_versions organization_profile_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_profile_versions
+    ADD CONSTRAINT organization_profile_versions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: organizations organizations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.organizations
     ADD CONSTRAINT organizations_pkey PRIMARY KEY (id);
-
-
---
--- Name: owner_accounts owner_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_accounts
-    ADD CONSTRAINT owner_accounts_pkey PRIMARY KEY (id);
-
-
---
--- Name: owner_recovery_codes owner_recovery_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_recovery_codes
-    ADD CONSTRAINT owner_recovery_codes_pkey PRIMARY KEY (id);
-
-
---
--- Name: owner_sessions owner_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_sessions
-    ADD CONSTRAINT owner_sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -19119,6 +20249,54 @@ ALTER TABLE ONLY public.payroll_withholding_entitlements
 
 ALTER TABLE ONLY public.payroll_withholding_payment_allocations
     ADD CONSTRAINT payroll_withholding_payment_allocations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: external_obligation_confirmations pk_external_obligation_confirmations; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.external_obligation_confirmations
+    ADD CONSTRAINT pk_external_obligation_confirmations PRIMARY KEY (id);
+
+
+--
+-- Name: historical_obligation_completion_confirmations pk_historical_obligation_completion_confirmations; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.historical_obligation_completion_confirmations
+    ADD CONSTRAINT pk_historical_obligation_completion_confirmations PRIMARY KEY (id);
+
+
+--
+-- Name: organization_establishment_confirmations pk_organization_establishment_confirmations; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_establishment_confirmations
+    ADD CONSTRAINT pk_organization_establishment_confirmations PRIMARY KEY (id);
+
+
+--
+-- Name: owner_period_confirmations pk_owner_period_confirmations; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.owner_period_confirmations
+    ADD CONSTRAINT pk_owner_period_confirmations PRIMARY KEY (id);
+
+
+--
+-- Name: payroll_contribution_assessment_confirmations pk_payroll_contribution_assessment_confirmations; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
+    ADD CONSTRAINT pk_payroll_contribution_assessment_confirmations PRIMARY KEY (id);
+
+
+--
+-- Name: payroll_tax_import_exports pk_payroll_tax_import_exports; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_tax_import_exports
+    ADD CONSTRAINT pk_payroll_tax_import_exports PRIMARY KEY (id);
 
 
 --
@@ -19554,6 +20732,30 @@ ALTER TABLE ONLY public.payroll_contribution_actual_sets
 
 
 --
+-- Name: payroll_contribution_assessment_confirmations uq_contribution_assessment_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
+    ADD CONSTRAINT uq_contribution_assessment_idempotency UNIQUE (org_id, idempotency_key);
+
+
+--
+-- Name: payroll_contribution_assessment_confirmations uq_contribution_assessment_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
+    ADD CONSTRAINT uq_contribution_assessment_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: payroll_contribution_assessment_confirmations uq_contribution_assessment_successor; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
+    ADD CONSTRAINT uq_contribution_assessment_successor UNIQUE (supersedes_id);
+
+
+--
 -- Name: payroll_contribution_supplements uq_contribution_supplement_assessment; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19674,6 +20876,30 @@ ALTER TABLE ONLY public.enterprise_income_tax_quarter_confirmations
 
 
 --
+-- Name: organization_establishment_confirmations uq_establishment_confirmation_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_establishment_confirmations
+    ADD CONSTRAINT uq_establishment_confirmation_idempotency UNIQUE (org_id, idempotency_key);
+
+
+--
+-- Name: organization_establishment_confirmations uq_establishment_confirmation_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_establishment_confirmations
+    ADD CONSTRAINT uq_establishment_confirmation_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: organization_establishment_confirmations uq_establishment_confirmation_successor; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_establishment_confirmations
+    ADD CONSTRAINT uq_establishment_confirmation_successor UNIQUE (supersedes_id);
+
+
+--
 -- Name: business_events uq_event_org_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19711,6 +20937,30 @@ ALTER TABLE ONLY public.execution_attributions
 
 ALTER TABLE ONLY public.execution_attributions
     ADD CONSTRAINT uq_execution_attribution_request_correlation UNIQUE (request_correlation_id);
+
+
+--
+-- Name: external_obligation_confirmations uq_external_obligation_confirmation_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.external_obligation_confirmations
+    ADD CONSTRAINT uq_external_obligation_confirmation_idempotency UNIQUE (org_id, idempotency_key);
+
+
+--
+-- Name: external_obligation_confirmations uq_external_obligation_confirmation_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.external_obligation_confirmations
+    ADD CONSTRAINT uq_external_obligation_confirmation_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: external_obligation_confirmations uq_external_obligation_confirmation_successor; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.external_obligation_confirmations
+    ADD CONSTRAINT uq_external_obligation_confirmation_successor UNIQUE (supersedes_id);
 
 
 --
@@ -19863,6 +21113,54 @@ ALTER TABLE ONLY public.fixed_assets
 
 ALTER TABLE ONLY public.fixed_assets
     ADD CONSTRAINT uq_fixed_asset_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: financial_statement_opening_balance_confirmations uq_fs_opening_confirmation_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_statement_opening_balance_confirmations
+    ADD CONSTRAINT uq_fs_opening_confirmation_idempotency UNIQUE (org_id, idempotency_key);
+
+
+--
+-- Name: financial_statement_opening_balance_confirmations uq_fs_opening_confirmation_org; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_statement_opening_balance_confirmations
+    ADD CONSTRAINT uq_fs_opening_confirmation_org UNIQUE (org_id);
+
+
+--
+-- Name: financial_statement_opening_balance_confirmations uq_fs_opening_confirmation_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_statement_opening_balance_confirmations
+    ADD CONSTRAINT uq_fs_opening_confirmation_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: historical_obligation_completion_confirmations uq_historical_obligation_completion_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.historical_obligation_completion_confirmations
+    ADD CONSTRAINT uq_historical_obligation_completion_idempotency UNIQUE (org_id, idempotency_key);
+
+
+--
+-- Name: historical_obligation_completion_confirmations uq_historical_obligation_completion_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.historical_obligation_completion_confirmations
+    ADD CONSTRAINT uq_historical_obligation_completion_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: historical_obligation_completion_confirmations uq_historical_obligation_completion_successor; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.historical_obligation_completion_confirmations
+    ADD CONSTRAINT uq_historical_obligation_completion_successor UNIQUE (supersedes_id);
 
 
 --
@@ -20090,75 +21388,43 @@ ALTER TABLE ONLY public.open_items
 
 
 --
--- Name: owner_accounts uq_owner_account_login_normalized; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: organization_profile_versions uq_org_profile_version_effective_from; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.owner_accounts
-    ADD CONSTRAINT uq_owner_account_login_normalized UNIQUE (login_name_normalized);
-
-
---
--- Name: owner_accounts uq_owner_account_org; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_accounts
-    ADD CONSTRAINT uq_owner_account_org UNIQUE (org_id);
+ALTER TABLE ONLY public.organization_profile_versions
+    ADD CONSTRAINT uq_org_profile_version_effective_from UNIQUE (org_id, effective_from);
 
 
 --
--- Name: owner_accounts uq_owner_account_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: organization_profile_versions uq_org_profile_version_org_id; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.owner_accounts
-    ADD CONSTRAINT uq_owner_account_org_id UNIQUE (org_id, id);
-
-
---
--- Name: owner_accounts uq_owner_account_singleton; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_accounts
-    ADD CONSTRAINT uq_owner_account_singleton UNIQUE (singleton_key);
+ALTER TABLE ONLY public.organization_profile_versions
+    ADD CONSTRAINT uq_org_profile_version_org_id UNIQUE (org_id, id);
 
 
 --
--- Name: owner_recovery_codes uq_owner_recovery_code_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: owner_period_confirmations uq_owner_period_confirmation_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.owner_recovery_codes
-    ADD CONSTRAINT uq_owner_recovery_code_org_id UNIQUE (org_id, id);
-
-
---
--- Name: owner_recovery_codes uq_owner_recovery_code_sha256; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_recovery_codes
-    ADD CONSTRAINT uq_owner_recovery_code_sha256 UNIQUE (code_sha256);
+ALTER TABLE ONLY public.owner_period_confirmations
+    ADD CONSTRAINT uq_owner_period_confirmation_idempotency UNIQUE (org_id, idempotency_key);
 
 
 --
--- Name: owner_sessions uq_owner_session_execution_authority; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: owner_period_confirmations uq_owner_period_confirmation_org_id; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.owner_sessions
-    ADD CONSTRAINT uq_owner_session_execution_authority UNIQUE (org_id, owner_account_id, id, credential_version);
-
-
---
--- Name: owner_sessions uq_owner_session_org_id; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_sessions
-    ADD CONSTRAINT uq_owner_session_org_id UNIQUE (org_id, id);
+ALTER TABLE ONLY public.owner_period_confirmations
+    ADD CONSTRAINT uq_owner_period_confirmation_org_id UNIQUE (org_id, id);
 
 
 --
--- Name: owner_sessions uq_owner_session_secret_sha256; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: owner_period_confirmations uq_owner_period_confirmation_successor; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.owner_sessions
-    ADD CONSTRAINT uq_owner_session_secret_sha256 UNIQUE (secret_sha256);
+ALTER TABLE ONLY public.owner_period_confirmations
+    ADD CONSTRAINT uq_owner_period_confirmation_successor UNIQUE (supersedes_id);
 
 
 --
@@ -20335,6 +21601,30 @@ ALTER TABLE ONLY public.employee_payroll_profile_versions
 
 ALTER TABLE ONLY public.employee_payroll_profile_versions
     ADD CONSTRAINT uq_payroll_profile_successor UNIQUE (supersedes_id);
+
+
+--
+-- Name: payroll_tax_import_exports uq_payroll_tax_import_export_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_tax_import_exports
+    ADD CONSTRAINT uq_payroll_tax_import_export_idempotency UNIQUE (org_id, idempotency_key);
+
+
+--
+-- Name: payroll_tax_import_exports uq_payroll_tax_import_export_org_id; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_tax_import_exports
+    ADD CONSTRAINT uq_payroll_tax_import_export_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: payroll_tax_import_exports uq_payroll_tax_import_export_successor; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_tax_import_exports
+    ADD CONSTRAINT uq_payroll_tax_import_export_successor UNIQUE (supersedes_id);
 
 
 --
@@ -20781,6 +22071,13 @@ CREATE INDEX ix_business_events_posting_date ON public.business_events USING btr
 
 
 --
+-- Name: ix_contribution_assessment_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_contribution_assessment_period ON public.payroll_contribution_assessment_confirmations USING btree (contribution_period);
+
+
+--
 -- Name: ix_counterparties_org_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20879,6 +22176,20 @@ CREATE INDEX ix_execution_attributions_org_id ON public.execution_attributions U
 
 
 --
+-- Name: ix_external_obligation_confirmations_obligation_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_external_obligation_confirmations_obligation_id ON public.external_obligation_confirmations USING btree (obligation_id);
+
+
+--
+-- Name: ix_external_obligation_confirmations_org_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_external_obligation_confirmations_org_id ON public.external_obligation_confirmations USING btree (org_id);
+
+
+--
 -- Name: ix_financial_statement_classifications_org_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20890,6 +22201,13 @@ CREATE INDEX ix_financial_statement_classifications_org_id ON public.financial_s
 --
 
 CREATE INDEX ix_financial_statement_classifications_voucher_line_id ON public.financial_statement_classifications USING btree (voucher_line_id);
+
+
+--
+-- Name: ix_financial_statement_opening_balance_confirmations_org_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_financial_statement_opening_balance_confirmations_org_id ON public.financial_statement_opening_balance_confirmations USING btree (org_id);
 
 
 --
@@ -21005,17 +22323,10 @@ CREATE INDEX ix_fixed_assets_org_id ON public.fixed_assets USING btree (org_id);
 
 
 --
--- Name: ix_identity_audit_events_org_id; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_historical_obligation_completion_confirmations_org_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_identity_audit_events_org_id ON public.identity_audit_events USING btree (org_id);
-
-
---
--- Name: ix_identity_audit_events_request_correlation_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_identity_audit_events_request_correlation_id ON public.identity_audit_events USING btree (request_correlation_id);
+CREATE INDEX ix_historical_obligation_completion_confirmations_org_id ON public.historical_obligation_completion_confirmations USING btree (org_id);
 
 
 --
@@ -21173,38 +22484,31 @@ CREATE INDEX ix_open_items_payable_category ON public.open_items USING btree (or
 
 
 --
--- Name: ix_owner_accounts_org_id; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_organization_establishment_confirmations_org_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_owner_accounts_org_id ON public.owner_accounts USING btree (org_id);
-
-
---
--- Name: ix_owner_recovery_codes_org_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_owner_recovery_codes_org_id ON public.owner_recovery_codes USING btree (org_id);
+CREATE INDEX ix_organization_establishment_confirmations_org_id ON public.organization_establishment_confirmations USING btree (org_id);
 
 
 --
--- Name: ix_owner_recovery_codes_owner_account_id; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_organization_profile_versions_org_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_owner_recovery_codes_owner_account_id ON public.owner_recovery_codes USING btree (owner_account_id);
-
-
---
--- Name: ix_owner_sessions_org_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_owner_sessions_org_id ON public.owner_sessions USING btree (org_id);
+CREATE INDEX ix_organization_profile_versions_org_id ON public.organization_profile_versions USING btree (org_id);
 
 
 --
--- Name: ix_owner_sessions_owner_account_id; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_owner_period_confirmations_org_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_owner_sessions_owner_account_id ON public.owner_sessions USING btree (owner_account_id);
+CREATE INDEX ix_owner_period_confirmations_org_id ON public.owner_period_confirmations USING btree (org_id);
+
+
+--
+-- Name: ix_owner_period_confirmations_period_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_owner_period_confirmations_period_id ON public.owner_period_confirmations USING btree (period_id);
 
 
 --
@@ -21268,6 +22572,20 @@ CREATE INDEX ix_payroll_contribution_actual_sets_employee_id ON public.payroll_c
 --
 
 CREATE INDEX ix_payroll_contribution_actual_sets_org_id ON public.payroll_contribution_actual_sets USING btree (org_id);
+
+
+--
+-- Name: ix_payroll_contribution_assessment_confirmations_org_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_payroll_contribution_assessment_confirmations_org_id ON public.payroll_contribution_assessment_confirmations USING btree (org_id);
+
+
+--
+-- Name: ix_payroll_contribution_assessment_confirmations_period_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_payroll_contribution_assessment_confirmations_period_id ON public.payroll_contribution_assessment_confirmations USING btree (period_id);
 
 
 --
@@ -21387,6 +22705,20 @@ CREATE INDEX ix_payroll_policy_effective ON public.payroll_policy_versions USING
 --
 
 CREATE INDEX ix_payroll_policy_versions_org_id ON public.payroll_policy_versions USING btree (org_id);
+
+
+--
+-- Name: ix_payroll_tax_import_exports_org_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_payroll_tax_import_exports_org_id ON public.payroll_tax_import_exports USING btree (org_id);
+
+
+--
+-- Name: ix_payroll_tax_import_exports_payroll_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_payroll_tax_import_exports_payroll_period ON public.payroll_tax_import_exports USING btree (payroll_period);
 
 
 --
@@ -21579,6 +22911,27 @@ CREATE UNIQUE INDEX uq_contribution_actual_root_kind ON public.payroll_contribut
 
 
 --
+-- Name: uq_contribution_assessment_root; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_contribution_assessment_root ON public.payroll_contribution_assessment_confirmations USING btree (org_id, period_id) WHERE (supersedes_id IS NULL);
+
+
+--
+-- Name: uq_establishment_confirmation_root; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_establishment_confirmation_root ON public.organization_establishment_confirmations USING btree (org_id) WHERE (supersedes_id IS NULL);
+
+
+--
+-- Name: uq_external_obligation_confirmation_root; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_external_obligation_confirmation_root ON public.external_obligation_confirmations USING btree (org_id, obligation_id) WHERE (supersedes_id IS NULL);
+
+
+--
 -- Name: uq_financial_statement_classification_initial; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21593,10 +22946,17 @@ CREATE UNIQUE INDEX uq_first_wage_treatment_root ON public.payroll_first_wage_ta
 
 
 --
--- Name: uq_owner_recovery_code_current; Type: INDEX; Schema: public; Owner: -
+-- Name: uq_historical_obligation_completion_root; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_owner_recovery_code_current ON public.owner_recovery_codes USING btree (owner_account_id) WHERE ((used_at IS NULL) AND (invalidated_at IS NULL));
+CREATE UNIQUE INDEX uq_historical_obligation_completion_root ON public.historical_obligation_completion_confirmations USING btree (org_id, obligation_code) WHERE (supersedes_id IS NULL);
+
+
+--
+-- Name: uq_owner_period_confirmation_root; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_owner_period_confirmation_root ON public.owner_period_confirmations USING btree (org_id, period_id, fact_type) WHERE (supersedes_id IS NULL);
 
 
 --
@@ -22279,6 +23639,20 @@ CREATE CONSTRAINT TRIGGER close_bank_reconciliation_invariant_deferred_0015 AFTE
 
 
 --
+-- Name: payroll_contribution_assessment_confirmations contribution_assessment_append_only_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER contribution_assessment_append_only_guard BEFORE DELETE OR UPDATE ON public.payroll_contribution_assessment_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_block_financial_statement_fact_0028();
+
+
+--
+-- Name: payroll_contribution_assessment_confirmations contribution_assessment_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER contribution_assessment_execution_attribution_guard BEFORE INSERT OR UPDATE ON public.payroll_contribution_assessment_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
+
+
+--
 -- Name: deferred_output_vat_transfers deferred_output_vat_transfer_immutable_0019; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22349,6 +23723,20 @@ CREATE TRIGGER enterprise_income_tax_quarter_confirmations_immutable_0028 BEFORE
 
 
 --
+-- Name: organization_establishment_confirmations establishment_confirmation_append_only_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER establishment_confirmation_append_only_guard BEFORE DELETE OR UPDATE ON public.organization_establishment_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_block_financial_statement_fact_0028();
+
+
+--
+-- Name: organization_establishment_confirmations establishment_confirmation_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER establishment_confirmation_execution_attribution_guard BEFORE INSERT OR UPDATE ON public.organization_establishment_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
+
+
+--
 -- Name: evidence evidence_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22367,6 +23755,20 @@ CREATE CONSTRAINT TRIGGER evidence_reference_invariant_deferred AFTER INSERT OR 
 --
 
 CREATE TRIGGER execution_attribution_guard BEFORE INSERT OR DELETE OR UPDATE ON public.execution_attributions FOR EACH ROW EXECUTE FUNCTION public.finance_guard_execution_attribution_0014();
+
+
+--
+-- Name: external_obligation_confirmations external_obligation_append_only_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER external_obligation_append_only_guard BEFORE DELETE OR UPDATE ON public.external_obligation_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_block_financial_statement_fact_0028();
+
+
+--
+-- Name: external_obligation_confirmations external_obligation_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER external_obligation_execution_attribution_guard BEFORE INSERT OR UPDATE ON public.external_obligation_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
 
 
 --
@@ -22720,10 +24122,31 @@ CREATE CONSTRAINT TRIGGER fixed_asset_voucher_line_invariant_deferred AFTER INSE
 
 
 --
--- Name: identity_audit_events identity_audit_event_append_only; Type: TRIGGER; Schema: public; Owner: -
+-- Name: financial_statement_opening_balance_confirmations fs_opening_balance_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER identity_audit_event_append_only BEFORE DELETE OR UPDATE ON public.identity_audit_events FOR EACH ROW EXECUTE FUNCTION public.finance_block_identity_audit_mutation_0013();
+CREATE TRIGGER fs_opening_balance_execution_attribution_guard BEFORE INSERT OR UPDATE ON public.financial_statement_opening_balance_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
+
+
+--
+-- Name: financial_statement_opening_balance_confirmations fs_opening_balance_immutable_0007; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER fs_opening_balance_immutable_0007 BEFORE DELETE OR UPDATE ON public.financial_statement_opening_balance_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_block_financial_statement_fact_0028();
+
+
+--
+-- Name: historical_obligation_completion_confirmations historical_obligation_completion_append_only_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER historical_obligation_completion_append_only_guard BEFORE DELETE OR UPDATE ON public.historical_obligation_completion_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_block_financial_statement_fact_0028();
+
+
+--
+-- Name: historical_obligation_completion_confirmations historical_obligation_completion_execution_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER historical_obligation_completion_execution_guard BEFORE INSERT OR UPDATE ON public.historical_obligation_completion_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
 
 
 --
@@ -23329,24 +24752,52 @@ CREATE TRIGGER organization_bank_reconciliation_scope_guard_0015 BEFORE UPDATE O
 
 
 --
--- Name: owner_accounts owner_account_mutation_guard; Type: TRIGGER; Schema: public; Owner: -
+-- Name: organization_profile_versions organization_profile_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER owner_account_mutation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.owner_accounts FOR EACH ROW EXECUTE FUNCTION public.finance_guard_owner_account_0013();
-
-
---
--- Name: owner_recovery_codes owner_recovery_code_mutation_guard; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER owner_recovery_code_mutation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.owner_recovery_codes FOR EACH ROW EXECUTE FUNCTION public.finance_guard_owner_recovery_code_0013();
+CREATE TRIGGER organization_profile_append_only BEFORE DELETE OR UPDATE ON public.organization_profile_versions FOR EACH ROW EXECUTE FUNCTION public.finance_guard_organization_profile_append_only_0002();
 
 
 --
--- Name: owner_sessions owner_session_mutation_guard; Type: TRIGGER; Schema: public; Owner: -
+-- Name: organization_profile_versions organization_profile_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER owner_session_mutation_guard BEFORE INSERT OR DELETE OR UPDATE ON public.owner_sessions FOR EACH ROW EXECUTE FUNCTION public.finance_guard_owner_session_0013();
+CREATE TRIGGER organization_profile_attribution_guard BEFORE INSERT OR UPDATE ON public.organization_profile_versions FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
+
+
+--
+-- Name: organization_profile_version_evidence organization_profile_evidence_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER organization_profile_evidence_append_only BEFORE DELETE OR UPDATE ON public.organization_profile_version_evidence FOR EACH ROW EXECUTE FUNCTION public.finance_guard_organization_profile_append_only_0002();
+
+
+--
+-- Name: organization_profile_versions organization_profile_insert_validation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER organization_profile_insert_validation AFTER INSERT ON public.organization_profile_versions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_organization_profile_insert_0002();
+
+
+--
+-- Name: organizations organization_profile_projection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER organization_profile_projection_guard BEFORE UPDATE ON public.organizations FOR EACH ROW EXECUTE FUNCTION public.finance_guard_organization_profile_projection_0002();
+
+
+--
+-- Name: owner_period_confirmations owner_period_fact_append_only_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER owner_period_fact_append_only_guard BEFORE DELETE OR UPDATE ON public.owner_period_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_block_financial_statement_fact_0028();
+
+
+--
+-- Name: owner_period_confirmations owner_period_fact_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER owner_period_fact_execution_attribution_guard BEFORE INSERT OR UPDATE ON public.owner_period_confirmations FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
 
 
 --
@@ -23543,6 +24994,20 @@ CREATE CONSTRAINT TRIGGER payroll_profile_version_lineage_deferred AFTER INSERT 
 --
 
 CREATE CONSTRAINT TRIGGER payroll_source_settlement_invariant_deferred AFTER INSERT OR DELETE OR UPDATE ON public.settlements DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_payroll_links_from_settlement();
+
+
+--
+-- Name: payroll_tax_import_exports payroll_tax_import_export_append_only_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER payroll_tax_import_export_append_only_guard BEFORE DELETE OR UPDATE ON public.payroll_tax_import_exports FOR EACH ROW EXECUTE FUNCTION public.finance_block_financial_statement_fact_0028();
+
+
+--
+-- Name: payroll_tax_import_exports payroll_tax_import_export_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER payroll_tax_import_export_execution_attribution_guard BEFORE INSERT OR UPDATE ON public.payroll_tax_import_exports FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
 
 
 --
@@ -24403,6 +25868,30 @@ ALTER TABLE ONLY public.payroll_contribution_actual_uses
 
 
 --
+-- Name: payroll_contribution_assessment_confirmations fk_contribution_assessment_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
+    ADD CONSTRAINT fk_contribution_assessment_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: payroll_contribution_assessment_confirmations fk_contribution_assessment_org_period; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
+    ADD CONSTRAINT fk_contribution_assessment_org_period FOREIGN KEY (org_id, period_id) REFERENCES public.accounting_periods(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: payroll_contribution_assessment_confirmations fk_contribution_assessment_org_supersedes; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
+    ADD CONSTRAINT fk_contribution_assessment_org_supersedes FOREIGN KEY (org_id, supersedes_id) REFERENCES public.payroll_contribution_assessment_confirmations(org_id, id) ON DELETE RESTRICT;
+
+
+--
 -- Name: payroll_contribution_supplement_items fk_contribution_supplement_item_org_supplement; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24507,6 +25996,30 @@ ALTER TABLE ONLY public.enterprise_income_tax_quarter_confirmations
 
 
 --
+-- Name: organization_establishment_confirmations fk_establishment_confirmation_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_establishment_confirmations
+    ADD CONSTRAINT fk_establishment_confirmation_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: organization_establishment_confirmations fk_establishment_confirmation_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_establishment_confirmations
+    ADD CONSTRAINT fk_establishment_confirmation_org FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: organization_establishment_confirmations fk_establishment_confirmation_org_supersedes; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_establishment_confirmations
+    ADD CONSTRAINT fk_establishment_confirmation_org_supersedes FOREIGN KEY (org_id, supersedes_id) REFERENCES public.organization_establishment_confirmations(org_id, id) ON DELETE RESTRICT;
+
+
+--
 -- Name: event_evidence fk_event_evidence_org_event; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24531,11 +26044,27 @@ ALTER TABLE ONLY public.evidence
 
 
 --
--- Name: execution_attributions fk_execution_attribution_session_authority; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: external_obligation_confirmations fk_external_obligation_confirmation_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.execution_attributions
-    ADD CONSTRAINT fk_execution_attribution_session_authority FOREIGN KEY (org_id, owner_account_id, owner_session_id, owner_credential_version) REFERENCES public.owner_sessions(org_id, owner_account_id, id, credential_version) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.external_obligation_confirmations
+    ADD CONSTRAINT fk_external_obligation_confirmation_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: external_obligation_confirmations fk_external_obligation_confirmation_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.external_obligation_confirmations
+    ADD CONSTRAINT fk_external_obligation_confirmation_org FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: external_obligation_confirmations fk_external_obligation_confirmation_org_supersedes; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.external_obligation_confirmations
+    ADD CONSTRAINT fk_external_obligation_confirmation_org_supersedes FOREIGN KEY (org_id, supersedes_id) REFERENCES public.external_obligation_confirmations(org_id, id) ON DELETE RESTRICT;
 
 
 --
@@ -24787,27 +26316,43 @@ ALTER TABLE ONLY public.fixed_asset_tax_rule_migration_actions
 
 
 --
--- Name: identity_audit_events fk_identity_audit_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: financial_statement_opening_balance_confirmations fk_fs_opening_confirmation_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.identity_audit_events
-    ADD CONSTRAINT fk_identity_audit_org FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
-
-
---
--- Name: identity_audit_events fk_identity_audit_org_account; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.identity_audit_events
-    ADD CONSTRAINT fk_identity_audit_org_account FOREIGN KEY (org_id, owner_account_id) REFERENCES public.owner_accounts(org_id, id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.financial_statement_opening_balance_confirmations
+    ADD CONSTRAINT fk_fs_opening_confirmation_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
 
 
 --
--- Name: identity_audit_events fk_identity_audit_org_session; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: financial_statement_opening_balance_confirmations fk_fs_opening_confirmation_org; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.identity_audit_events
-    ADD CONSTRAINT fk_identity_audit_org_session FOREIGN KEY (org_id, session_id) REFERENCES public.owner_sessions(org_id, id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.financial_statement_opening_balance_confirmations
+    ADD CONSTRAINT fk_fs_opening_confirmation_org FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: historical_obligation_completion_confirmations fk_historical_obligation_completion_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.historical_obligation_completion_confirmations
+    ADD CONSTRAINT fk_historical_obligation_completion_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: historical_obligation_completion_confirmations fk_historical_obligation_completion_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.historical_obligation_completion_confirmations
+    ADD CONSTRAINT fk_historical_obligation_completion_org FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: historical_obligation_completion_confirmations fk_historical_obligation_completion_org_supersedes; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.historical_obligation_completion_confirmations
+    ADD CONSTRAINT fk_historical_obligation_completion_org_supersedes FOREIGN KEY (org_id, supersedes_id) REFERENCES public.historical_obligation_completion_confirmations(org_id, id) ON DELETE RESTRICT;
 
 
 --
@@ -25235,27 +26780,67 @@ ALTER TABLE ONLY public.organizations
 
 
 --
--- Name: owner_accounts fk_owner_account_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: organization_database_metadata fk_org_database_metadata_org; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.owner_accounts
-    ADD CONSTRAINT fk_owner_account_org FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
-
-
---
--- Name: owner_recovery_codes fk_owner_recovery_code_org_account; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.owner_recovery_codes
-    ADD CONSTRAINT fk_owner_recovery_code_org_account FOREIGN KEY (org_id, owner_account_id) REFERENCES public.owner_accounts(org_id, id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.organization_database_metadata
+    ADD CONSTRAINT fk_org_database_metadata_org FOREIGN KEY (org_id) REFERENCES public.organizations(id);
 
 
 --
--- Name: owner_sessions fk_owner_session_org_account; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: organization_profile_version_evidence fk_org_profile_evidence_evidence; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.owner_sessions
-    ADD CONSTRAINT fk_owner_session_org_account FOREIGN KEY (org_id, owner_account_id) REFERENCES public.owner_accounts(org_id, id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.organization_profile_version_evidence
+    ADD CONSTRAINT fk_org_profile_evidence_evidence FOREIGN KEY (org_id, evidence_id) REFERENCES public.evidence(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: organization_profile_version_evidence fk_org_profile_evidence_version; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_profile_version_evidence
+    ADD CONSTRAINT fk_org_profile_evidence_version FOREIGN KEY (org_id, profile_version_id) REFERENCES public.organization_profile_versions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: organization_profile_versions fk_org_profile_version_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_profile_versions
+    ADD CONSTRAINT fk_org_profile_version_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: organization_profile_versions fk_org_profile_version_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_profile_versions
+    ADD CONSTRAINT fk_org_profile_version_org FOREIGN KEY (org_id) REFERENCES public.organizations(id);
+
+
+--
+-- Name: owner_period_confirmations fk_owner_period_confirmation_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.owner_period_confirmations
+    ADD CONSTRAINT fk_owner_period_confirmation_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: owner_period_confirmations fk_owner_period_confirmation_org_period; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.owner_period_confirmations
+    ADD CONSTRAINT fk_owner_period_confirmation_org_period FOREIGN KEY (org_id, period_id) REFERENCES public.accounting_periods(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: owner_period_confirmations fk_owner_period_confirmation_org_supersedes; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.owner_period_confirmations
+    ADD CONSTRAINT fk_owner_period_confirmation_org_supersedes FOREIGN KEY (org_id, supersedes_id) REFERENCES public.owner_period_confirmations(org_id, id) ON DELETE RESTRICT;
 
 
 --
@@ -25547,6 +27132,30 @@ ALTER TABLE ONLY public.payroll_tax_year_guards
 
 
 --
+-- Name: payroll_tax_import_exports fk_payroll_tax_import_export_execution_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_tax_import_exports
+    ADD CONSTRAINT fk_payroll_tax_import_export_execution_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: payroll_tax_import_exports fk_payroll_tax_import_export_org; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_tax_import_exports
+    ADD CONSTRAINT fk_payroll_tax_import_export_org FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: payroll_tax_import_exports fk_payroll_tax_import_export_org_supersedes; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_tax_import_exports
+    ADD CONSTRAINT fk_payroll_tax_import_export_org_supersedes FOREIGN KEY (org_id, supersedes_id) REFERENCES public.payroll_tax_import_exports(org_id, id) ON DELETE RESTRICT;
+
+
+--
 -- Name: payroll_tax_state_slots fk_payroll_tax_slot_org_employee; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25595,27 +27204,11 @@ ALTER TABLE ONLY public.accounting_period_actions
 
 
 --
--- Name: accounting_period_close_approvals fk_period_close_approval_org_owner; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.accounting_period_close_approvals
-    ADD CONSTRAINT fk_period_close_approval_org_owner FOREIGN KEY (org_id, owner_account_id) REFERENCES public.owner_accounts(org_id, id) ON DELETE RESTRICT;
-
-
---
 -- Name: accounting_period_close_approvals fk_period_close_approval_org_period; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.accounting_period_close_approvals
     ADD CONSTRAINT fk_period_close_approval_org_period FOREIGN KEY (org_id, period_id) REFERENCES public.accounting_periods(org_id, id) ON DELETE RESTRICT;
-
-
---
--- Name: accounting_period_close_approvals fk_period_close_approval_owner_session; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.accounting_period_close_approvals
-    ADD CONSTRAINT fk_period_close_approval_owner_session FOREIGN KEY (org_id, owner_account_id, owner_session_id, owner_credential_version) REFERENCES public.owner_sessions(org_id, owner_account_id, id, credential_version) ON DELETE RESTRICT;
 
 
 --

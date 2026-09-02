@@ -1,24 +1,26 @@
 <!-- @format -->
 
-# 正式空库启动检查单模板
+# 正式空库回放检查单模板
 
-此清单只保留给迁移前的单库部署验收。多公司目录及独立公司业务库应使用 [`multi-company-operations.md`](multi-company-operations.md) 的受控创建或迁移流程；当前有效约束以仓库根目录 [`AGENTS.md`](../AGENTS.md) 为准。
+本清单配合[双基线空库回放手册](empty-database-replay.md)使用。实际完成状态、数据库名称、
+证据摘要和负责人资料只保存在 Git 忽略的本地记录中。
 
-- [ ] 已确认目标数据库没有未知历史业务数据，也不是已删除的旧 Alembic revision；否则停止并等待用户决定处理方式。
-- [ ] 已确认使用隔离的本地 PostgreSQL 17 实例和正式使用所需的存储目录；不复用共享环境。
-- [ ] 已完成依赖安装，并执行 `alembic upgrade head`；数据库 revision 已到当前仓库 head。
-- [ ] Docker Desktop 已启动，当前用户可访问 `desktop-linux` 上下文；执行下列空库演练并确认通过：
+- [ ] 已确认源目录库和全部已登记公司业务库在导出期间只读。
+- [ ] 已确认私有包只包含计划内公司；未登记旧副本不回放、不自动删除。
+- [ ] 已执行 `finance-replay verify-package`，总清单、证据 SHA-256、稳定引用及格式版本通过。
+- [ ] 已确认目标 PostgreSQL 17 目录库和公司库不存在或为空；任何非空目标均已停止处理。
+- [ ] 已执行 `finance-replay prepare-empty`，目录 revision 为 `0001_catalog_baseline_v2`，每个
+  业务库 revision 为 `0001_business_baseline_v2`。
+- [ ] 已确认两棵迁移树各只有一个 revision 和一个 head；没有旧 revision 原地升级步骤。
+- [ ] 已使用 `prepare-empty` 输出的默认公司 `org_id` 设置一次新负责人，保存恢复码并完成登录。
+- [ ] 已执行 `finance-replay replay`；如中断，仅使用相同包和状态文件断点续跑。
+- [ ] 历史重建模式在回放完成或失败后均已关闭。
+- [ ] 已执行 `finance-replay verify`，公司隔离、凭证平衡、余额、开放项、银行、工资、期间、
+  证据和报表终态全部通过。
+- [ ] 已核对回放报告中的公司数、事件数、凭证数、关闭月份和开放月份与包内检查点一致。
+- [ ] 已分别为每家公司配置并复核关账备份位置。
+- [ ] 旧私有文档、临时脚本和旧包已进入新包只读 `archive/`，重新封装清单且继续被 Git 忽略。
+- [ ] 已完成完整测试、Ruff、两棵 Alembic check 与 `git diff --check`。
+- [ ] 已由负责人明确同意启动 MCP 和看板；启动前未向目标库执行包外业务写入。
 
-  ```powershell
-  .\.venv\Scripts\pytest.exe -q tests\test_private_pilot_simulation_postgres.py::test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17
-  ```
-
-  该测试仅创建并自动清理临时 PostgreSQL 17 容器，不连接默认 Compose 数据库或真实资料。
-
-- [ ] 已使用 `finance-bootstrap` 创建唯一的正式企业，并妥善保存输出的 `org_id`。
-- [ ] 在录入任何正式业务前，已从开始记账月份连续生成所需的开放会计期间。
-- [ ] 已创建唯一的本地负责人账号，妥善保存一次性恢复码，并完成 `finance-login` 登录。
-- [ ] 已在同一 Codex 会话中确认登录后的下一次企业数据工具调用使用已认证的负责人会话，无需重启 Codex。
-- [ ] 已由用户明确授权开始正式使用；未获授权前不导入真实业务资料或部署为共享服务。
-
-真实企业资料、处理进度、证据指纹、数据库标识和凭证编号只保存在已排除 Git 跟踪的本地资料目录中，不写入公共仓库。
+任何一步失败都不得通过手工 SQL、任意凭证行、复制密码哈希或修改清单来绕过。

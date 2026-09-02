@@ -111,29 +111,31 @@ docker compose up -d
 docker compose ps
 ```
 
-等待数据库状态显示 `healthy`，再创建空库结构和首个企业：
+等待数据库状态显示 `healthy`。当前使用两个独立迁移树；不要把业务库和目录库合并为一个
+Alembic revision。需要恢复已有系统时，先验证本地私有回放包，再由执行器按目录库、公司业务库
+顺序创建空基线：
 
 ```powershell
-.\.venv\Scripts\alembic.exe upgrade head
-.\.venv\Scripts\finance-bootstrap.exe `
-  --name "测试服务公司" `
-  --taxpayer-identification-number "填写18位统一社会信用代码" `
-  --filing-cycle quarterly
+.\.venv\Scripts\python.exe -m ai_accounting.replay_cli verify-package `
+  --package .\outputs\system-replay-YYYYMMDD
+.\.venv\Scripts\python.exe -m ai_accounting.replay_cli prepare-empty `
+  --package .\outputs\system-replay-YYYYMMDD
 ```
 
-`finance-bootstrap` 只运行一次；企业名称和 18 位统一社会信用代码（纳税人识别号）均为
-必填业务事实。命令会输出企业 `org_id`，请妥善保存；后续所有工具调用都必须携带该 ID。
-不要在已经存在试用企业的数据库中重复执行该命令。
+命令输出默认公司的 `primary_org_id`；用它设置新负责人并登录后，再执行 `finance-replay replay`
+和 `finance-replay verify`。回放固定先处理非默认公司、最后处理默认公司，以便高风险公司
+尽早失败。全新公司仍通过登录后的 `finance_create_company` 类型化入口创建，正常公司创建会把
+业务库升级到 `0001_business_baseline_v2`。
 
-`0001_formal_baseline` 是试用结束时由最终结构冻结的正式空数据库基线。试用期的 29 段
-前向 revision 已合并移除，项目不支持从这些旧 revision 原地升级；旧试用库只能销毁后从
-正式基线新建。正式库启用后的结构变化继续使用新的前向 revision 管理。对包含正式业务数据
-的数据库执行 `alembic upgrade head` 前必须先完成备份和迁移前置检查；因此拉取新代码后不要
-把迁移命令当成日常启动命令直接执行。
+`0001_catalog_baseline_v2` 和 `0001_business_baseline_v2` 分别是目录库与业务库的唯一空库
+基线。旧业务 revision `0001`–`0022`、旧目录 revision `0001`–`0004` 已移除，均不支持原地
+升级；旧库只能按受控空库回放重建。正式库启用后的结构变化继续使用新的前向 revision 管理。
+拉取新代码后不要把迁移命令当成日常启动命令直接执行。
 
-现有单公司正式库升级为目录库加独立公司库时，不执行普通的 `alembic upgrade head`，必须
-使用停止服务、备份和恢复演练保护的 `finance-company migrate-single-database` 流程。完整的
-账号分离、配置、生命周期、备份和移交步骤见[多公司运行手册](docs/multi-company-operations.md)。
+旧单库转多库兼容入口已经移除。需要重建本地系统时，使用 `finance-replay` 只读导出、离线验包、
+空库建双基线、登录后类型化回放并验证终态；完整顺序见
+[双基线空库回放手册](docs/empty-database-replay.md)。公司生命周期、备份和移交步骤见
+[多公司运行手册](docs/multi-company-operations.md)。
 
 首次正式启用前，请复制并完成[正式空库启动检查单模板](docs/formal-empty-db-startup-checklist-template.md)。实际完成状态和业务进度只保存在本地资料中。
 
@@ -395,12 +397,12 @@ Set-Location ..
 
 ```powershell
 .\.venv\Scripts\pytest.exe -m "not postgres"
-.\.venv\Scripts\pytest.exe -m postgres
+.\.venv\Scripts\pytest.exe -m postgres_current
 .\.venv\Scripts\pytest.exe --cov=ai_accounting --cov-report=term-missing
 .\.venv\Scripts\ruff.exe check .
 ```
 
-以上命令是可选验证入口，不构成固定顺序或统一门禁。每次修改运行哪些检查、是否使用 PostgreSQL、迁移、STDIO 或覆盖率，由用户针对当前步骤决定；不要求每个小改动执行全套验证。测试目标仍须由执行者明确选择，不得破坏未经用户授权的数据。
+`postgres_current` 只运行当前双基线往返和目录库／业务库隔离测试，避免重复执行已经失效的单库身份架构场景。以上命令是可选验证入口，不构成固定顺序或统一门禁。每次修改运行哪些检查、是否使用 PostgreSQL、迁移、STDIO 或覆盖率，由用户针对当前步骤决定；不要求每个小改动执行全套验证。测试目标仍须由执行者明确选择，不得破坏未经用户授权的数据。
 
 ## 当前税务规则边界
 

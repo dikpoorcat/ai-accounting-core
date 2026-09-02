@@ -13,7 +13,7 @@ from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from .accounting_period_schemas import (
     AccountingPeriodInformationRequirement,
@@ -74,6 +74,7 @@ from .models import (
     Organization,
     OrganizationDatabaseMetadata,
     OwnerAccount,
+    OwnerPeriodConfirmation,
     PayrollBatch,
     PayrollContributionActualItem,
     PayrollContributionActualSet,
@@ -2538,6 +2539,9 @@ class AccountingPeriodService:
                 )
             ).all()
         )
+        no_payroll_employee_ids = self._confirmed_no_payroll_employee_ids(
+            org_id, period
+        )
         posted_regular_payroll_employee_ids = set(
             self.session.scalars(
                 select(PayrollLine.employee_id)
@@ -2555,7 +2559,11 @@ class AccountingPeriodService:
                 )
             ).all()
         )
-        missing_payroll_employees = len(active_employee_ids - posted_regular_payroll_employee_ids)
+        missing_payroll_employees = len(
+            active_employee_ids
+            - posted_regular_payroll_employee_ids
+            - no_payroll_employee_ids
+        )
         payroll_pending = max(int(unfinished_payroll), missing_payroll_employees)
         unfinished_labor_batches = (
             self.session.scalar(
@@ -2629,6 +2637,81 @@ class AccountingPeriodService:
                 "obligation": "known_labor_remuneration_workflow",
             },
         }
+
+    def _confirmed_no_payroll_employee_ids(
+        self, org_id: uuid.UUID, period: AccountingPeriod
+    ) -> set[uuid.UUID]:
+        """Return employees covered by an explicit zero-wage monthly plan.
+
+        A zero-wage month is a close-control fact, not a zero-amount journal
+        entry.  The owner workflow already persists the exact monthly employee
+        plan in an append-only workforce confirmation.  Requiring every wage
+        and deduction field to be empty or zero keeps this exception narrower
+        than a posted payroll batch and prevents a missing positive accrual from
+        being waived.
+        """
+
+        successor = aliased(OwnerPeriodConfirmation)
+        confirmation = self.session.scalar(
+            select(OwnerPeriodConfirmation)
+            .where(
+                OwnerPeriodConfirmation.org_id == org_id,
+                OwnerPeriodConfirmation.period_id == period.id,
+                OwnerPeriodConfirmation.fact_type == "workforce_review",
+                ~select(successor.id)
+                .where(
+                    successor.org_id == OwnerPeriodConfirmation.org_id,
+                    successor.supersedes_id == OwnerPeriodConfirmation.id,
+                )
+                .exists(),
+            )
+            .order_by(
+                OwnerPeriodConfirmation.created_at.desc(),
+                OwnerPeriodConfirmation.id.desc(),
+            )
+            .limit(1)
+        )
+        if confirmation is None:
+            return set()
+        plan = confirmation.source_snapshot.get("regular_payroll_plan")
+        if not isinstance(plan, dict) or plan.get("version") != "regular_payroll_plan_v1":
+            return set()
+        items = plan.get("employee_items")
+        if not isinstance(items, list) or not items:
+            return set()
+        expected_hash = canonical_sha256(
+            {
+                "version": "regular_payroll_plan_v1",
+                "payroll_period": f"{period.calendar_year:04d}-{period.calendar_month:02d}",
+                "employee_items": items,
+            }
+        )
+        if plan.get("input_hash") != expected_hash:
+            return set()
+        covered: set[uuid.UUID] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                return set()
+            try:
+                employee_id = uuid.UUID(str(item["employee_id"]))
+            except (KeyError, TypeError, ValueError):
+                return set()
+            if (
+                item.get("wage_tax_declaration_state") == "not_declared"
+                and all(
+                    item.get(field) in {None, 0}
+                    for field in (
+                        "tax_reported_salary_fen",
+                        "accounting_gross_salary_fen",
+                        "special_additional_deduction_fen",
+                        "other_legal_deduction_fen",
+                        "tax_relief_fen",
+                    )
+                )
+                and item.get("tax_reporting_difference_reason") is None
+            ):
+                covered.add(employee_id)
+        return covered
 
     def _fixed_asset_due_missing(self, org_id: uuid.UUID, period: AccountingPeriod) -> int:
         active = self.session.scalars(

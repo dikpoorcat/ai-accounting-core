@@ -1,8 +1,8 @@
-"""Create the complete accounting-core schema from one fresh-database baseline.
+"""Create the flattened business-database schema from an empty database.
 
-Revision ID: 0001_formal_baseline
+Revision ID: 0001_business_baseline_v2
 Revises:
-Create Date: 2026-08-28
+Create Date: 2026-09-02
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0001_formal_baseline"
+revision = "0001_business_baseline_v2"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -25,7 +25,10 @@ depends_on = None
 _BASELINE_DIR = Path(__file__).resolve().parents[1] / "baseline"
 _FIXED_ASSET_TAX_RULE_ID = uuid.UUID("04c1ac27-aca0-439a-8224-f19634d391a5")
 _LABOR_REMUNERATION_TAX_POLICY_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000013")
-_CREATED_AT = datetime(2026, 8, 28, tzinfo=UTC)
+_VAT_2022_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000031")
+_VAT_2023_2025_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000032")
+_SURTAX_2022_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000033")
+_CREATED_AT = datetime(2026, 9, 2, tzinfo=UTC)
 
 
 def _read_asset(name: str) -> str:
@@ -79,7 +82,72 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
                     "effective_levy_rate_percent": "2",
                     "calculation": "tax_sales_fen=gross_fen/(1+3%);vat_fen=tax_sales_fen*2%",
                 },
-            }
+            },
+            {
+                "id": _VAT_2022_ID,
+                "code": "small_scale_vat_2026_2027",
+                "jurisdiction": "CN",
+                "effective_from": date(2022, 4, 1),
+                "effective_to": date(2022, 12, 31),
+                "version": "2022.15",
+                "source_url": (
+                    "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5202026/content.html"
+                ),
+                "parameters": {
+                    "monthly_threshold_fen": 15_000_000,
+                    "quarterly_threshold_fen": 45_000_000,
+                    "standard_rate_percent": "3",
+                    "reduced_rate_percent": "0",
+                    "threshold_operator": "at_or_below",
+                    "basis_source_urls": [
+                        "https://jiangsu.chinatax.gov.cn/art/2022/3/24/"
+                        "art_22639_404403.html"
+                    ],
+                },
+            },
+            {
+                "id": _VAT_2023_2025_ID,
+                "code": "small_scale_vat_2026_2027",
+                "jurisdiction": "CN",
+                "effective_from": date(2023, 1, 1),
+                "effective_to": date(2025, 12, 31),
+                "version": "2023.19",
+                "source_url": (
+                    "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5210457/content.html"
+                ),
+                "parameters": {
+                    "monthly_threshold_fen": 10_000_000,
+                    "quarterly_threshold_fen": 30_000_000,
+                    "standard_rate_percent": "3",
+                    "reduced_rate_percent": "1",
+                    "threshold_operator": "at_or_below",
+                },
+            },
+            {
+                "id": _SURTAX_2022_ID,
+                "code": "small_scale_surtax_2023_2027",
+                "jurisdiction": "CN",
+                "effective_from": date(2022, 1, 1),
+                "effective_to": date(2022, 12, 31),
+                "version": "2022.10-ZJ.4",
+                "source_url": (
+                    "https://zhejiang.chinatax.gov.cn/art/2022/3/22/"
+                    "art_12793_541127.html"
+                ),
+                "parameters": {
+                    "small_tax_reduction_factor": "0.5",
+                    "education_surcharge_rate": "0.03",
+                    "local_education_surcharge_rate": "0.02",
+                    "basis_source_urls": [
+                        "https://zhejiang.chinatax.gov.cn/art/2022/3/7/"
+                        "art_8409_82432.html",
+                        "https://fgk.chinatax.gov.cn/zcfgk/c100009/"
+                        "c5193055/content.html",
+                        "https://www.chinatax.gov.cn/chinatax/n810214/n810641/"
+                        "n2985871/c101728/c5160742/content.html",
+                    ],
+                },
+            },
         ],
     )
 

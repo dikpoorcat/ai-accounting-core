@@ -40,6 +40,16 @@ class Settings(BaseSettings):
 
     def __init__(self, **values: Any) -> None:
         super().__init__(**values)
+        # Empty optional URLs are a practical way for a process-specific
+        # environment to disable values inherited from a local dotenv file.
+        # Treat them exactly like an omitted optional setting.
+        for field_name in (
+            "finance_company_database_url",
+            "finance_migration_database_url",
+            "finance_provisioning_database_url",
+        ):
+            if getattr(self, field_name) == "":
+                setattr(self, field_name, None)
         self._validate_production_controls()
 
     def _validate_production_controls(self) -> None:
@@ -103,7 +113,7 @@ class Settings(BaseSettings):
 
     @property
     def multi_company_enabled(self) -> bool:
-        return self.finance_company_database_url is not None
+        return bool(self.finance_company_database_url)
 
     def migration_database_url(self, configured_url: str | None = None) -> str:
         """URL used by Alembic, preserving explicit development test configuration."""

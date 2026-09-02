@@ -75,7 +75,7 @@ CREATE TABLE "accounting_period_close_approvals" (
 	confirmation_method VARCHAR(40) NOT NULL,
 	confirmed_at DATETIME NOT NULL,
 	expires_at DATETIME NOT NULL,
-	consumed_at DATETIME,
+	consumed_at DATETIME, catalog_instance_id CHAR(32) DEFAULT 'fd972709-0332-5c04-84f9-9bc55f76bbf1' NOT NULL,
 	PRIMARY KEY (id),
 	CONSTRAINT ck_period_close_approval_method CHECK (confirmation_method = 'local_password_reauthentication'),
 	CONSTRAINT ck_period_close_approval_credential_version CHECK (owner_credential_version >= 1),
@@ -831,7 +831,7 @@ CREATE TABLE execution_attributions (
 	executor_version VARCHAR(100) NOT NULL,
 	tool_name VARCHAR(100) NOT NULL,
 	request_correlation_id CHAR(32) NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL, catalog_instance_id CHAR(32) DEFAULT 'fd972709-0332-5c04-84f9-9bc55f76bbf1' NOT NULL,
 	PRIMARY KEY (id),
 	CONSTRAINT fk_execution_attribution_session_authority FOREIGN KEY(org_id, owner_account_id, owner_session_id, owner_credential_version) REFERENCES owner_sessions (org_id, owner_account_id, id, credential_version) ON DELETE RESTRICT,
 	CONSTRAINT uq_execution_attribution_org_id UNIQUE (org_id, id),
@@ -841,6 +841,39 @@ CREATE TABLE execution_attributions (
 	CONSTRAINT ck_execution_attribution_executor_name CHECK (length(executor_name) BETWEEN 1 AND 100),
 	CONSTRAINT ck_execution_attribution_executor_version CHECK (length(executor_version) BETWEEN 1 AND 100),
 	CONSTRAINT ck_execution_attribution_tool_name CHECK (length(tool_name) BETWEEN 1 AND 100)
+);
+CREATE TABLE "external_obligation_confirmations" (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	supersedes_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	obligation_id CHAR(32) NOT NULL,
+	obligation_code VARCHAR(80) NOT NULL,
+	obligation_scope VARCHAR(20) NOT NULL,
+	source_snapshot_hash VARCHAR(64) NOT NULL,
+	completion_status VARCHAR(30) NOT NULL,
+	completion_date DATE,
+	external_reference VARCHAR(300),
+	confirmation_note TEXT NOT NULL,
+	evidence_snapshot JSON NOT NULL,
+	completion_date_status VARCHAR(30) NOT NULL,
+	CONSTRAINT pk_external_obligation_confirmations PRIMARY KEY (id),
+	CONSTRAINT uq_external_obligation_confirmation_successor UNIQUE (supersedes_id),
+	CONSTRAINT ck_external_obligation_confirmation_hashes CHECK (length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64),
+	CONSTRAINT ck_external_obligation_confirmation_code CHECK (obligation_code IN ('individual_income_tax','periodic_tax_reporting','annual_enterprise_income_tax','annual_business_report')),
+	CONSTRAINT fk_external_obligation_confirmation_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_external_obligation_confirmation_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES external_obligation_confirmations (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_external_obligation_confirmation_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000),
+	CONSTRAINT fk_external_obligation_confirmation_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_external_obligation_confirmation_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT ck_external_obligation_confirmation_scope CHECK (obligation_scope IN ('month','quarter','year')),
+	CONSTRAINT uq_external_obligation_confirmation_org_id UNIQUE (org_id, id),
+	CONSTRAINT ck_external_obligation_confirmation_status CHECK (completion_status IN ('submitted','not_applicable')),
+	CONSTRAINT ck_external_obligation_confirmation_date_status CHECK (completion_date_status IN ('established','not_established','not_applicable')),
+	CONSTRAINT ck_external_obligation_confirmation_date CHECK ((completion_status = 'submitted' AND ((completion_date_status = 'established' AND completion_date IS NOT NULL) OR (completion_date_status = 'not_established' AND completion_date IS NULL))) OR (completion_status = 'not_applicable' AND completion_date_status = 'not_applicable' AND completion_date IS NULL))
 );
 CREATE TABLE financial_statement_classifications (
 	id CHAR(32) NOT NULL,
@@ -869,6 +902,28 @@ CREATE TABLE financial_statement_classifications (
 	CONSTRAINT ck_financial_statement_classification_payload CHECK (length(allocation_payload) > 0 AND length(allocation_hash) = 64),
 	CONSTRAINT ck_financial_statement_classification_request CHECK (length(idempotency_key) BETWEEN 1 AND 200 AND length(request_payload_hash) = 64),
 	CONSTRAINT ck_financial_statement_classification_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000)
+);
+CREATE TABLE "financial_statement_opening_balance_confirmations" (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	establishment_date DATE NOT NULL,
+	treatment VARCHAR(40) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	evidence_references JSON NOT NULL,
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_fs_opening_confirmation_hash_lower_hex CHECK (request_payload_hash NOT GLOB '*[^0-9a-f]*'),
+	CONSTRAINT ck_fs_opening_confirmation_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000),
+	CONSTRAINT fk_fs_opening_confirmation_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT ck_fs_opening_confirmation_request CHECK (length(idempotency_key) BETWEEN 1 AND 200 AND length(request_payload_hash) = 64),
+	CONSTRAINT ck_fs_opening_confirmation_treatment CHECK (treatment = 'zero_on_establishment'),
+	CONSTRAINT fk_fs_opening_confirmation_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_fs_opening_confirmation_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT uq_fs_opening_confirmation_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_fs_opening_confirmation_org UNIQUE (org_id)
 );
 CREATE TABLE fixed_asset_account_migration_actions (
 	org_id CHAR(32) NOT NULL,
@@ -1068,6 +1123,34 @@ CREATE TABLE "fixed_assets" (
 	CONSTRAINT ck_fixed_asset_settlement_dates CHECK ((settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL AND reimbursing_employee_id IS NULL) OR (settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL AND reimbursing_employee_id IS NULL) OR (settlement_method = 'employee_payable' AND payment_date IS NULL AND due_date IS NOT NULL AND reimbursing_employee_id IS NOT NULL) OR (settlement_method = 'allocated_employee_payables' AND payment_date IS NULL AND due_date IS NULL AND reimbursing_employee_id IS NULL)),
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE,
 	UNIQUE (acquisition_event_id)
+);
+CREATE TABLE "historical_obligation_completion_confirmations" (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	obligation_code VARCHAR(80) NOT NULL,
+	obligation_scope VARCHAR(20) NOT NULL,
+	completion_through_identity VARCHAR(7) NOT NULL,
+	completion_date_status VARCHAR(30) NOT NULL,
+	source_snapshot_hash VARCHAR(64) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	evidence_snapshot JSON NOT NULL,
+	supersedes_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	CONSTRAINT pk_historical_obligation_completion_confirmations PRIMARY KEY (id),
+	CONSTRAINT fk_historical_obligation_completion_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_historical_obligation_completion_date_status CHECK (completion_date_status = 'not_established'),
+	CONSTRAINT ck_historical_obligation_completion_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000),
+	CONSTRAINT uq_historical_obligation_completion_successor UNIQUE (supersedes_id),
+	CONSTRAINT uq_historical_obligation_completion_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_historical_obligation_completion_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT fk_historical_obligation_completion_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT fk_historical_obligation_completion_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES historical_obligation_completion_confirmations (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_historical_obligation_completion_hashes CHECK (length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64),
+	CONSTRAINT ck_historical_obligation_completion_code CHECK (obligation_code IN ('individual_income_tax','periodic_tax_reporting','annual_enterprise_income_tax','annual_business_report')),
+	CONSTRAINT ck_historical_obligation_completion_scope CHECK ((obligation_code = 'individual_income_tax' AND obligation_scope = 'month') OR (obligation_code = 'periodic_tax_reporting' AND obligation_scope IN ('month','quarter')) OR (obligation_code IN ('annual_enterprise_income_tax','annual_business_report') AND obligation_scope = 'year'))
 );
 CREATE TABLE identity_audit_events (
 	id CHAR(32) NOT NULL,
@@ -1554,6 +1637,77 @@ CREATE TABLE "open_items" (
 	FOREIGN KEY(counterparty_id) REFERENCES counterparties (id) ON DELETE RESTRICT,
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE
 );
+CREATE TABLE organization_database_metadata (
+	singleton_key INTEGER NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	database_identity CHAR(32) NOT NULL,
+	current_catalog_instance_id CHAR(32) NOT NULL,
+	owner_approval_required BOOLEAN NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (singleton_key),
+	CONSTRAINT ck_org_database_metadata_singleton CHECK (singleton_key = 1),
+	CONSTRAINT fk_org_database_metadata_org FOREIGN KEY(org_id) REFERENCES organizations (id),
+	UNIQUE (database_identity),
+	UNIQUE (org_id)
+);
+CREATE TABLE organization_establishment_confirmations (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	supersedes_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	establishment_date DATE NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	evidence_snapshot JSON NOT NULL,
+	CONSTRAINT pk_organization_establishment_confirmations PRIMARY KEY (id),
+	CONSTRAINT uq_establishment_confirmation_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_establishment_confirmation_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT uq_establishment_confirmation_successor UNIQUE (supersedes_id),
+	CONSTRAINT fk_establishment_confirmation_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES organization_establishment_confirmations (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_establishment_confirmation_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_establishment_confirmation_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT ck_establishment_confirmation_request_hash CHECK (length(request_payload_hash) = 64),
+	CONSTRAINT ck_establishment_confirmation_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000)
+);
+CREATE TABLE organization_profile_version_evidence (
+	org_id CHAR(32) NOT NULL,
+	profile_version_id CHAR(32) NOT NULL,
+	evidence_id CHAR(32) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (org_id, profile_version_id, evidence_id),
+	CONSTRAINT fk_org_profile_evidence_evidence FOREIGN KEY(org_id, evidence_id) REFERENCES evidence (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_org_profile_evidence_version FOREIGN KEY(org_id, profile_version_id) REFERENCES organization_profile_versions (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE organization_profile_versions (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	effective_from DATE NOT NULL,
+	name VARCHAR(200) NOT NULL,
+	taxpayer_identification_number VARCHAR(18) NOT NULL,
+	taxpayer_type VARCHAR(30) NOT NULL,
+	filing_cycle VARCHAR(20) NOT NULL,
+	jurisdiction VARCHAR(100) NOT NULL,
+	urban_maintenance_rate NUMERIC(6, 5) NOT NULL,
+	accounting_standard VARCHAR(50) NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	lifecycle_action_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT ck_org_profile_accounting_standard CHECK (accounting_standard = 'small_enterprise'),
+	CONSTRAINT ck_org_profile_filing_cycle CHECK (filing_cycle IN ('monthly','quarterly')),
+	CONSTRAINT ck_org_profile_jurisdiction CHECK (jurisdiction = 'CN'),
+	CONSTRAINT ck_org_profile_confirmation_note CHECK (length(trim(confirmation_note)) > 0),
+	CONSTRAINT ck_org_profile_small_scale CHECK (taxpayer_type = 'small_scale'),
+	CONSTRAINT ck_org_profile_taxpayer_id CHECK (length(taxpayer_identification_number) = 18 AND taxpayer_identification_number = upper(taxpayer_identification_number)),
+	CONSTRAINT ck_org_profile_urban_rate CHECK (urban_maintenance_rate IN (0.07,0.05,0.01)),
+	CONSTRAINT fk_org_profile_version_org FOREIGN KEY(org_id) REFERENCES organizations (id),
+	CONSTRAINT fk_org_profile_version_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_org_profile_version_effective_from UNIQUE (org_id, effective_from),
+	CONSTRAINT uq_org_profile_version_org_id UNIQUE (org_id, id)
+);
 CREATE TABLE "organizations" (
 	id CHAR(32) NOT NULL,
 	name VARCHAR(200) NOT NULL,
@@ -1610,6 +1764,33 @@ CREATE TABLE owner_accounts (
 	CONSTRAINT ck_owner_account_credential_version CHECK (credential_version >= 1),
 	CONSTRAINT ck_owner_account_password_failures CHECK (password_failed_attempts >= 0),
 	CONSTRAINT ck_owner_account_recovery_failures CHECK (recovery_failed_attempts >= 0)
+);
+CREATE TABLE owner_period_confirmations (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	supersedes_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	period_id CHAR(32) NOT NULL,
+	fact_type VARCHAR(40) NOT NULL,
+	confirmation_state VARCHAR(40) NOT NULL,
+	source_snapshot_hash VARCHAR(64) NOT NULL,
+	source_snapshot JSON NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	evidence_snapshot JSON NOT NULL,
+	CONSTRAINT pk_owner_period_confirmations PRIMARY KEY (id),
+	CONSTRAINT uq_owner_period_confirmation_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_owner_period_confirmation_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT uq_owner_period_confirmation_successor UNIQUE (supersedes_id),
+	CONSTRAINT fk_owner_period_confirmation_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES owner_period_confirmations (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_owner_period_confirmation_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_owner_period_confirmation_org_period FOREIGN KEY(org_id, period_id) REFERENCES accounting_periods (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_owner_period_confirmation_fact_type CHECK (fact_type IN ('workforce_review','non_bank_materials')),
+	CONSTRAINT ck_owner_period_confirmation_state CHECK ((fact_type = 'workforce_review' AND confirmation_state IN ('no_change','changes_resolved')) OR (fact_type = 'non_bank_materials' AND confirmation_state = 'complete')),
+	CONSTRAINT ck_owner_period_confirmation_hashes CHECK (length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64),
+	CONSTRAINT ck_owner_period_confirmation_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000)
 );
 CREATE TABLE owner_recovery_codes (
 	id CHAR(32) NOT NULL,
@@ -1689,7 +1870,7 @@ CREATE TABLE payroll_batch_version_sequences (
 	CONSTRAINT ck_payroll_sequence_next_version CHECK (next_version > 0),
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE
 );
-CREATE TABLE payroll_batches (
+CREATE TABLE "payroll_batches" (
 	id CHAR(32) NOT NULL,
 	org_id CHAR(32) NOT NULL,
 	idempotency_key VARCHAR(200) NOT NULL,
@@ -1704,7 +1885,7 @@ CREATE TABLE payroll_batches (
 	policy_snapshot JSON NOT NULL,
 	policy_version_id CHAR(32) NOT NULL,
 	posting_date DATE NOT NULL,
-	payment_date DATE NOT NULL,
+	payment_date DATE,
 	tax_method VARCHAR(20),
 	confirmed_by VARCHAR(100),
 	confirmation_note TEXT,
@@ -1714,23 +1895,24 @@ CREATE TABLE payroll_batches (
 	execution_attribution_id CHAR(32),
 	created_at DATETIME NOT NULL,
 	PRIMARY KEY (id),
-	CONSTRAINT fk_payroll_batch_org_policy FOREIGN KEY(org_id, policy_version_id) REFERENCES payroll_policy_versions (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_batch_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_batch_org_event FOREIGN KEY(org_id, business_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT fk_payroll_batch_org_reversal FOREIGN KEY(org_id, reversal_of_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT uq_payroll_batch_org_id UNIQUE (org_id, id),
-	CONSTRAINT uq_payroll_batch_idempotency UNIQUE (org_id, idempotency_key),
-	CONSTRAINT uq_payroll_batch_calculation_hash UNIQUE (org_id, calculation_hash),
-	CONSTRAINT uq_payroll_batch_version UNIQUE (org_id, batch_kind, payroll_period, version),
-	CONSTRAINT ck_payroll_batch_kind CHECK (batch_kind IN ('regular','annual_bonus')),
-	CONSTRAINT ck_payroll_batch_period CHECK (length(payroll_period) = 7 AND substr(payroll_period, 5, 1) = '-' AND substr(payroll_period, 6, 2) BETWEEN '01' AND '12'),
-	CONSTRAINT ck_payroll_batch_version_positive CHECK (version > 0),
-	CONSTRAINT ck_payroll_batch_status CHECK (status IN ('draft','calculated','posted','reversed','superseded')),
 	CONSTRAINT ck_payroll_batch_tax_method CHECK (tax_method IS NULL OR tax_method IN ('separate','combined')),
+	CONSTRAINT fk_payroll_batch_org_policy FOREIGN KEY(org_id, policy_version_id) REFERENCES payroll_policy_versions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_payroll_batch_calculation_hash UNIQUE (org_id, calculation_hash),
+	CONSTRAINT ck_payroll_batch_period CHECK (length(payroll_period) = 7 AND substr(payroll_period, 5, 1) = '-' AND substr(payroll_period, 6, 2) BETWEEN '01' AND '12'),
+	CONSTRAINT uq_payroll_batch_version UNIQUE (org_id, batch_kind, payroll_period, version),
+	CONSTRAINT ck_payroll_batch_version_positive CHECK (version > 0),
 	CONSTRAINT ck_payroll_batch_posted_bonus_tax_method CHECK (status <> 'posted' OR batch_kind = 'regular' OR tax_method IS NOT NULL),
+	CONSTRAINT ck_payroll_batch_status CHECK (status IN ('draft','calculated','posted','reversed','superseded')),
+	CONSTRAINT ck_payroll_batch_kind CHECK (batch_kind IN ('regular','annual_bonus')),
+	CONSTRAINT uq_payroll_batch_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT fk_payroll_batch_org_event FOREIGN KEY(org_id, business_event_id) REFERENCES business_events (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_payroll_batch_org_id UNIQUE (org_id, id),
+	CONSTRAINT fk_payroll_batch_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payroll_batch_bonus_payment_date CHECK (batch_kind = 'regular' OR payment_date IS NOT NULL),
 	FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE CASCADE,
-	UNIQUE (business_event_id),
-	UNIQUE (reversal_of_batch_id)
+	UNIQUE (reversal_of_batch_id),
+	UNIQUE (business_event_id)
 );
 CREATE TABLE payroll_contribution_actual_evidence (
 	org_id CHAR(32) NOT NULL,
@@ -1794,6 +1976,46 @@ CREATE TABLE payroll_contribution_actual_uses (
 	PRIMARY KEY (org_id, actual_item_id, payroll_batch_id),
 	CONSTRAINT fk_contribution_actual_use_org_item FOREIGN KEY(org_id, actual_item_id) REFERENCES payroll_contribution_actual_items (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT fk_contribution_actual_use_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT
+);
+CREATE TABLE "payroll_contribution_assessment_confirmations" (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	supersedes_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	period_id CHAR(32) NOT NULL,
+	contribution_period VARCHAR(7) NOT NULL,
+	declaration_status VARCHAR(30) NOT NULL,
+	declaration_date DATE,
+	payment_status VARCHAR(20) NOT NULL,
+	payment_date DATE,
+	external_reference VARCHAR(300),
+	calculation_hash VARCHAR(64) NOT NULL,
+	calculation JSON NOT NULL,
+	employee_social_insurance_fen BIGINT NOT NULL,
+	employer_social_insurance_fen BIGINT NOT NULL,
+	employee_housing_fund_fen BIGINT NOT NULL,
+	employer_housing_fund_fen BIGINT NOT NULL,
+	confirmation_note TEXT NOT NULL,
+	evidence_snapshot JSON NOT NULL,
+	declaration_date_status VARCHAR(30) NOT NULL,
+	CONSTRAINT pk_payroll_contribution_assessment_confirmations PRIMARY KEY (id),
+	CONSTRAINT ck_contribution_assessment_hashes CHECK (length(calculation_hash) = 64 AND length(request_payload_hash) = 64),
+	CONSTRAINT fk_contribution_assessment_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES payroll_contribution_assessment_confirmations (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_assessment_org_period FOREIGN KEY(org_id, period_id) REFERENCES accounting_periods (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_contribution_assessment_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_contribution_assessment_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT ck_contribution_assessment_note CHECK (length(trim(confirmation_note)) BETWEEN 1 AND 2000),
+	CONSTRAINT uq_contribution_assessment_successor UNIQUE (supersedes_id),
+	CONSTRAINT ck_contribution_assessment_payment_status CHECK (payment_status IN ('not_tracked','paid','unpaid','not_applicable')),
+	CONSTRAINT ck_contribution_assessment_declaration_status CHECK (declaration_status IN ('declared','declared_paid','declared_unpaid','not_declared')),
+	CONSTRAINT ck_contribution_assessment_amounts CHECK (employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 AND employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0),
+	CONSTRAINT ck_contribution_assessment_period CHECK (length(contribution_period) = 7 AND substr(contribution_period, 5, 1) = '-'),
+	CONSTRAINT uq_contribution_assessment_org_id UNIQUE (org_id, id),
+	CONSTRAINT ck_contribution_assessment_declaration_date_status CHECK (declaration_date_status IN ('established','not_established','not_applicable')),
+	CONSTRAINT ck_contribution_assessment_status_dates CHECK ((declaration_status = 'declared' AND ((declaration_date_status = 'established' AND declaration_date IS NOT NULL) OR (declaration_date_status = 'not_established' AND declaration_date IS NULL)) AND payment_status = 'not_tracked' AND payment_date IS NULL) OR (declaration_status = 'declared_paid' AND declaration_date_status = 'established' AND declaration_date IS NOT NULL AND payment_status = 'paid' AND payment_date IS NOT NULL) OR (declaration_status = 'declared_unpaid' AND declaration_date_status = 'established' AND declaration_date IS NOT NULL AND payment_status = 'unpaid' AND payment_date IS NULL) OR (declaration_status = 'not_declared' AND declaration_date_status = 'not_applicable' AND declaration_date IS NULL AND payment_status = 'not_applicable' AND payment_date IS NULL))
 );
 CREATE TABLE payroll_contribution_supplement_items (
 	id CHAR(32) NOT NULL,
@@ -1918,18 +2140,19 @@ CREATE TABLE "payroll_lines" (
 	calculation_trace JSON NOT NULL,
 	tax_reported_salary_fen BIGINT,
 	wage_tax_declaration_state VARCHAR(20) NOT NULL,
+	tax_reporting_difference_reason TEXT,
 	PRIMARY KEY (id),
-	CONSTRAINT uq_payroll_line_org_batch_employee_id UNIQUE (org_id, payroll_batch_id, employee_id, id),
-	CONSTRAINT fk_payroll_line_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT fk_payroll_line_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT ck_payroll_line_net_salary CHECK (net_salary_fen = gross_salary_fen - employee_social_insurance_fen - employee_housing_fund_fen - individual_income_tax_fen AND net_salary_fen >= 0),
-	CONSTRAINT fk_payroll_line_org_regular_batch FOREIGN KEY(org_id, regular_payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
-	CONSTRAINT ck_payroll_line_nonnegative_amounts CHECK ((tax_reported_salary_fen IS NULL OR tax_reported_salary_fen >= 0) AND special_additional_deduction_fen >= 0 AND other_legal_deduction_fen >= 0 AND annual_bonus_fen >= 0 AND employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 AND employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0),
-	CONSTRAINT uq_payroll_line_org_id UNIQUE (org_id, id),
 	CONSTRAINT uq_payroll_line_employee UNIQUE (payroll_batch_id, employee_id),
+	CONSTRAINT fk_payroll_line_org_batch FOREIGN KEY(org_id, payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payroll_line_net_salary CHECK (net_salary_fen = gross_salary_fen - employee_social_insurance_fen - employee_housing_fund_fen - individual_income_tax_fen AND net_salary_fen >= 0),
+	CONSTRAINT fk_payroll_line_org_employee FOREIGN KEY(org_id, employee_id) REFERENCES employees (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT uq_payroll_line_org_id UNIQUE (org_id, id),
+	CONSTRAINT fk_payroll_line_org_regular_batch FOREIGN KEY(org_id, regular_payroll_batch_id) REFERENCES payroll_batches (org_id, id) ON DELETE RESTRICT,
 	CONSTRAINT fk_payroll_line_org_employee_profile FOREIGN KEY(org_id, employee_id, employee_payroll_profile_version_id) REFERENCES employee_payroll_profile_versions (org_id, employee_id, id) ON DELETE RESTRICT,
-	CONSTRAINT ck_payroll_line_gross_salary CHECK (((wage_tax_declaration_state = 'declared' AND tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND gross_salary_fen = tax_reported_salary_fen) OR (wage_tax_declaration_state = 'not_declared' AND tax_reported_salary_fen IS NULL AND annual_bonus_fen = 0 AND gross_salary_fen = 0) OR (wage_tax_declaration_state = 'not_applicable' AND tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND gross_salary_fen = annual_bonus_fen))),
-	CONSTRAINT ck_payroll_line_wage_tax_declaration_state CHECK (wage_tax_declaration_state IN ('declared','not_declared','not_applicable'))
+	CONSTRAINT uq_payroll_line_org_batch_employee_id UNIQUE (org_id, payroll_batch_id, employee_id, id),
+	CONSTRAINT ck_payroll_line_wage_tax_declaration_state CHECK (wage_tax_declaration_state IN ('declared','not_declared','not_applicable')),
+	CONSTRAINT ck_payroll_line_nonnegative_amounts CHECK ((tax_reported_salary_fen IS NULL OR tax_reported_salary_fen >= 0) AND special_additional_deduction_fen >= 0 AND other_legal_deduction_fen >= 0 AND annual_bonus_fen >= 0 AND employee_social_insurance_fen >= 0 AND employer_social_insurance_fen >= 0 AND employee_housing_fund_fen >= 0 AND employer_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0 AND gross_salary_fen >= 0),
+	CONSTRAINT ck_payroll_line_gross_salary CHECK (((wage_tax_declaration_state = 'declared' AND tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND ((gross_salary_fen = tax_reported_salary_fen AND tax_reporting_difference_reason IS NULL) OR (gross_salary_fen <> tax_reported_salary_fen AND tax_reporting_difference_reason IS NOT NULL AND length(trim(tax_reporting_difference_reason)) BETWEEN 1 AND 2000))) OR (wage_tax_declaration_state = 'not_declared' AND tax_reported_salary_fen IS NULL AND annual_bonus_fen = 0 AND gross_salary_fen = 0 AND tax_reporting_difference_reason IS NULL) OR (wage_tax_declaration_state = 'not_applicable' AND tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND gross_salary_fen = annual_bonus_fen AND tax_reporting_difference_reason IS NULL)))
 );
 CREATE TABLE payroll_opening_states (
 	id CHAR(32) NOT NULL,
@@ -2000,6 +2223,33 @@ CREATE TABLE payroll_salary_actual_deduction_allocations (
 	CONSTRAINT ck_salary_actual_deduction_positive CHECK (amount_fen > 0),
 	CONSTRAINT ck_salary_actual_deduction_expense_role CHECK (expense_role IN ('payroll_management_expense','payroll_sales_expense','payroll_service_cost')),
 	CONSTRAINT ck_salary_actual_deduction_reversal CHECK ((reversed IS FALSE AND reversed_by_event_id IS NULL) OR (reversed IS TRUE AND reversed_by_event_id IS NOT NULL))
+);
+CREATE TABLE payroll_tax_import_exports (
+	id CHAR(32) NOT NULL,
+	org_id CHAR(32) NOT NULL,
+	idempotency_key VARCHAR(200) NOT NULL,
+	request_payload_hash VARCHAR(64) NOT NULL,
+	supersedes_id CHAR(32),
+	execution_attribution_id CHAR(32),
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	payroll_period VARCHAR(7) NOT NULL,
+	payroll_source_hash VARCHAR(64) NOT NULL,
+	source_snapshot_hash VARCHAR(64) NOT NULL,
+	source_batches JSON NOT NULL,
+	relative_storage_path TEXT NOT NULL,
+	file_name VARCHAR(255) NOT NULL,
+	file_sha256 VARCHAR(64) NOT NULL,
+	row_count INTEGER NOT NULL,
+	CONSTRAINT pk_payroll_tax_import_exports PRIMARY KEY (id),
+	CONSTRAINT uq_payroll_tax_import_export_org_id UNIQUE (org_id, id),
+	CONSTRAINT uq_payroll_tax_import_export_idempotency UNIQUE (org_id, idempotency_key),
+	CONSTRAINT uq_payroll_tax_import_export_successor UNIQUE (supersedes_id),
+	CONSTRAINT fk_payroll_tax_import_export_org_supersedes FOREIGN KEY(org_id, supersedes_id) REFERENCES payroll_tax_import_exports (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payroll_tax_import_export_execution_attribution FOREIGN KEY(org_id, execution_attribution_id) REFERENCES execution_attributions (org_id, id) ON DELETE RESTRICT,
+	CONSTRAINT fk_payroll_tax_import_export_org FOREIGN KEY(org_id) REFERENCES organizations (id) ON DELETE RESTRICT,
+	CONSTRAINT ck_payroll_tax_import_export_period CHECK (length(payroll_period) = 7 AND substr(payroll_period, 5, 1) = '-'),
+	CONSTRAINT ck_payroll_tax_import_export_hashes CHECK (length(payroll_source_hash) = 64 AND length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64 AND length(file_sha256) = 64),
+	CONSTRAINT ck_payroll_tax_import_export_row_count CHECK (row_count > 0)
 );
 CREATE TABLE payroll_tax_state_slots (
 	id CHAR(32) NOT NULL,
@@ -2378,6 +2628,7 @@ CREATE INDEX ix_business_event_dependencies_parent_event_id ON business_event_de
 CREATE INDEX ix_business_events_event_type ON business_events (event_type);
 CREATE INDEX ix_business_events_org_id ON business_events (org_id);
 CREATE INDEX ix_business_events_posting_date ON business_events (posting_date);
+CREATE INDEX ix_contribution_assessment_period ON payroll_contribution_assessment_confirmations (contribution_period);
 CREATE INDEX ix_counterparties_org_id ON counterparties (org_id);
 CREATE INDEX ix_deferred_output_vat_transfers_org_id ON deferred_output_vat_transfers (org_id);
 CREATE INDEX ix_deferred_output_vat_transfers_source_event_id ON deferred_output_vat_transfers (source_event_id);
@@ -2392,8 +2643,11 @@ CREATE INDEX ix_event_evidence_org_id ON event_evidence (org_id);
 CREATE INDEX ix_events_org_posting ON business_events (org_id, posting_date);
 CREATE INDEX ix_evidence_org_id ON evidence (org_id);
 CREATE INDEX ix_execution_attributions_org_id ON execution_attributions (org_id);
+CREATE INDEX ix_external_obligation_confirmations_obligation_id ON external_obligation_confirmations (obligation_id);
+CREATE INDEX ix_external_obligation_confirmations_org_id ON external_obligation_confirmations (org_id);
 CREATE INDEX ix_financial_statement_classifications_org_id ON financial_statement_classifications (org_id);
 CREATE INDEX ix_financial_statement_classifications_voucher_line_id ON financial_statement_classifications (voucher_line_id);
+CREATE INDEX ix_financial_statement_opening_balance_confirmations_org_id ON financial_statement_opening_balance_confirmations (org_id);
 CREATE INDEX ix_fixed_asset_activation_org_group ON fixed_asset_activations (org_id, depreciation_group_code);
 CREATE INDEX ix_fixed_asset_activations_asset_id ON fixed_asset_activations (asset_id);
 CREATE INDEX ix_fixed_asset_activations_org_id ON fixed_asset_activations (org_id);
@@ -2410,6 +2664,7 @@ CREATE INDEX ix_fixed_asset_disposals_activation_id ON fixed_asset_disposals (ac
 CREATE INDEX ix_fixed_asset_disposals_asset_id ON fixed_asset_disposals (asset_id);
 CREATE INDEX ix_fixed_asset_disposals_org_id ON fixed_asset_disposals (org_id);
 CREATE INDEX ix_fixed_assets_org_id ON fixed_assets (org_id);
+CREATE INDEX ix_historical_obligation_completion_confirmations_org_id ON historical_obligation_completion_confirmations (org_id);
 CREATE INDEX ix_identity_audit_events_org_id ON identity_audit_events (org_id);
 CREATE INDEX ix_identity_audit_events_request_correlation_id ON identity_audit_events (request_correlation_id);
 CREATE INDEX ix_intangible_asset_amortizations_asset_id ON intangible_asset_amortizations (asset_id);
@@ -2434,7 +2689,11 @@ CREATE INDEX ix_open_items_counterparty_id ON open_items (counterparty_id);
 CREATE INDEX ix_open_items_org_id ON open_items (org_id);
 CREATE INDEX ix_open_items_org_status ON open_items (org_id, item_type, status);
 CREATE INDEX ix_open_items_payable_category ON open_items (org_id, payable_category, payable_agency_code, insurance_kind, status);
+CREATE INDEX ix_organization_establishment_confirmations_org_id ON organization_establishment_confirmations (org_id);
+CREATE INDEX ix_organization_profile_versions_org_id ON organization_profile_versions (org_id);
 CREATE INDEX ix_owner_accounts_org_id ON owner_accounts (org_id);
+CREATE INDEX ix_owner_period_confirmations_org_id ON owner_period_confirmations (org_id);
+CREATE INDEX ix_owner_period_confirmations_period_id ON owner_period_confirmations (period_id);
 CREATE INDEX ix_owner_recovery_codes_org_id ON owner_recovery_codes (org_id);
 CREATE INDEX ix_owner_recovery_codes_owner_account_id ON owner_recovery_codes (owner_account_id);
 CREATE INDEX ix_owner_sessions_org_id ON owner_sessions (org_id);
@@ -2448,6 +2707,8 @@ CREATE INDEX ix_payroll_contribution_actual_items_org_id ON payroll_contribution
 CREATE INDEX ix_payroll_contribution_actual_sets_contribution_period ON payroll_contribution_actual_sets (contribution_period);
 CREATE INDEX ix_payroll_contribution_actual_sets_employee_id ON payroll_contribution_actual_sets (employee_id);
 CREATE INDEX ix_payroll_contribution_actual_sets_org_id ON payroll_contribution_actual_sets (org_id);
+CREATE INDEX ix_payroll_contribution_assessment_confirmations_org_id ON payroll_contribution_assessment_confirmations (org_id);
+CREATE INDEX ix_payroll_contribution_assessment_confirmations_period_id ON payroll_contribution_assessment_confirmations (period_id);
 CREATE INDEX ix_payroll_contribution_supplement_items_org_id ON payroll_contribution_supplement_items (org_id);
 CREATE INDEX ix_payroll_contribution_supplement_items_supplement_id ON payroll_contribution_supplement_items (supplement_id);
 CREATE INDEX ix_payroll_contribution_supplements_contribution_period ON payroll_contribution_supplements (contribution_period);
@@ -2465,6 +2726,8 @@ CREATE INDEX ix_payroll_opening_states_employee_id ON payroll_opening_states (em
 CREATE INDEX ix_payroll_opening_states_org_id ON payroll_opening_states (org_id);
 CREATE INDEX ix_payroll_policy_effective ON payroll_policy_versions (org_id, region, effective_from, effective_to);
 CREATE INDEX ix_payroll_policy_versions_org_id ON payroll_policy_versions (org_id);
+CREATE INDEX ix_payroll_tax_import_exports_org_id ON payroll_tax_import_exports (org_id);
+CREATE INDEX ix_payroll_tax_import_exports_payroll_period ON payroll_tax_import_exports (payroll_period);
 CREATE INDEX ix_payroll_tax_state_slots_employee_id ON payroll_tax_state_slots (employee_id);
 CREATE INDEX ix_payroll_tax_state_slots_org_id ON payroll_tax_state_slots (org_id);
 CREATE INDEX ix_payroll_withholding_allocations_org_id ON payroll_withholding_allocations (org_id);
@@ -2492,8 +2755,13 @@ CREATE UNIQUE INDEX uq_bank_transaction_account_external_id ON bank_transactions
 CREATE UNIQUE INDEX uq_bank_transaction_account_source_row ON bank_transactions (org_id, bank_account_code, row_identity_sha256) WHERE row_identity_sha256 IS NOT NULL;
 CREATE UNIQUE INDEX uq_bank_transaction_match_current ON bank_transaction_matches (org_id, bank_transaction_id) WHERE invalidated_by_event_id IS NULL;
 CREATE UNIQUE INDEX uq_contribution_actual_root_kind ON payroll_contribution_actual_items (org_id, employee_id, contribution_period, contribution_group, insurance_kind) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_contribution_assessment_root ON payroll_contribution_assessment_confirmations (org_id, period_id) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_establishment_confirmation_root ON organization_establishment_confirmations (org_id) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_external_obligation_confirmation_root ON external_obligation_confirmations (org_id, obligation_id) WHERE supersedes_id IS NULL;
 CREATE UNIQUE INDEX uq_financial_statement_classification_initial ON financial_statement_classifications (org_id, voucher_line_id) WHERE supersedes_id IS NULL;
 CREATE UNIQUE INDEX uq_first_wage_treatment_root ON payroll_first_wage_tax_treatments (org_id, employee_id, tax_year) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_historical_obligation_completion_root ON historical_obligation_completion_confirmations (org_id, obligation_code) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX uq_owner_period_confirmation_root ON owner_period_confirmations (org_id, period_id, fact_type) WHERE supersedes_id IS NULL;
 CREATE UNIQUE INDEX uq_owner_recovery_code_current ON owner_recovery_codes (owner_account_id) WHERE used_at IS NULL AND invalidated_at IS NULL;
 CREATE UNIQUE INDEX uq_payroll_event_link_payment_source ON payroll_event_links (org_id, event_id, link_kind, source_payment_event_id, source_open_item_id) WHERE source_payment_event_id IS NOT NULL AND source_open_item_id IS NOT NULL;
 CREATE UNIQUE INDEX uq_payroll_event_link_reversal_source ON payroll_event_links (org_id, event_id, link_kind, source_payment_event_id) WHERE source_payment_event_id IS NOT NULL AND source_open_item_id IS NULL;

@@ -40,8 +40,6 @@ def test_postgres_person_payment_on_behalf_and_cash_settlement_are_final(
         migration_config = Config("alembic.ini")
         migration_config.attributes["database_url_override"] = database_url
         command.upgrade(migration_config, "head")
-        command.downgrade(migration_config, "0013_close_gate_hardening")
-        command.upgrade(migration_config, "head")
 
         engine = create_engine(database_url)
         try:

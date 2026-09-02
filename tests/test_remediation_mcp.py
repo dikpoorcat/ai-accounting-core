@@ -58,9 +58,9 @@ def test_payroll_mcp_list_tools_exposes_strict_typed_schemas() -> None:
         "batch_kind",
         "payroll_period",
         "posting_date",
-        "payment_date",
         "employee_items",
     } <= set(preview_request["required"])
+    assert "payment_date" not in preview_request["required"]
 
     batch_kind = _definition(preview, preview_request["properties"]["batch_kind"])
     assert set(batch_kind["enum"]) == {"regular", "annual_bonus"}

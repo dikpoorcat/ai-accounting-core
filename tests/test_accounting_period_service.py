@@ -45,6 +45,8 @@ from ai_accounting.models import (
     Organization,
     Settlement,
 )
+from ai_accounting.owner_workflow import OwnerWorkflowService
+from ai_accounting.owner_workflow_schemas import ConfirmWorkforceReviewRequest
 
 
 def _session() -> Session:
@@ -261,6 +263,74 @@ def test_close_blocks_when_active_employee_has_no_posted_regular_payroll() -> No
         "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
         "count": 1,
         "blocking": True,
+    }
+
+
+def test_explicit_no_payroll_plan_satisfies_legacy_close_module_without_voucher() -> None:
+    session = _session()
+    organization, evidence = _organization_and_evidence(session)
+    employee_counterparty = Counterparty(
+        org_id=organization.id,
+        kind="employee",
+        name="本月无工资员工",
+    )
+    session.add(employee_counterparty)
+    session.flush()
+    employee = Employee(
+        org_id=organization.id,
+        counterparty_id=employee_counterparty.id,
+        employee_code="EMP-NO-PAYROLL",
+        name="本月无工资员工",
+        employment_start_date=date(2026, 3, 1),
+        status="active",
+    )
+    session.add(employee)
+    session.flush()
+    period_service = AccountingPeriodService(session, current_date=date(2026, 4, 1))
+    generated = period_service.generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-03",
+            idempotency_key="no-payroll-period",
+            confirmation_note="建立无工资确认测试期间",
+            evidence_references=[evidence.id],
+        )
+    )
+    period = session.get(AccountingPeriod, generated.period_id)
+    assert period is not None
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 4, 1))
+    workforce = workflow._workforce_snapshot(organization.id, period)
+    confirmed = workflow.confirm_workforce_review(
+        ConfirmWorkforceReviewRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "period_id": period.id,
+                "workforce_snapshot_hash": workforce["hash"],
+                "change_state": "changes_resolved",
+                "regular_payroll_items": [
+                    {
+                        "employee_id": employee.id,
+                        "wage_tax_declaration_state": "not_declared",
+                        "accounting_gross_salary_fen": 0,
+                        "special_additional_deduction_fen": 0,
+                        "other_legal_deduction_fen": 0,
+                        "tax_relief_fen": 0,
+                    }
+                ],
+                "idempotency_key": "confirm-no-payroll-plan",
+                "confirmation_note": "负责人确认本月无工资、奖金和个税事项。",
+                "evidence_references": [evidence.id],
+            }
+        )
+    )
+
+    assert confirmed["status"] == "confirmed"
+    assert period_service._module_checks(organization.id, period)["payroll"] == {
+        "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
+        "count": 0,
+        "blocking": False,
+        "enforcement": "hard_blocker",
+        "obligation": "regular_payroll_accrual",
     }
 
 

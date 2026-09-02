@@ -27,23 +27,16 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 
 正式环境会拒绝运行角色与迁移角色相同的配置。仓库不保存任何真实密码。
 
-## 从现有 `finance` 迁移
+## 双基线与旧库边界
 
-`0001_formal_baseline` 不修改；业务库只通过前向 revision `0002_multi_company_business` 升级，目录库使用独立的 `catalog_alembic` 迁移树。
+目录库和业务库分别只有一个空库基线：`0001_catalog_baseline_v2` 与
+`0001_business_baseline_v2`。旧业务 revision `0001`–`0022`、旧目录 revision
+`0001`–`0004` 以及 `migrate-single-database` 过渡入口均已移除。
 
-迁移前停止 MCP 和看板，并确认没有连接目标库的运行进程。先用现有 `finance-backup` 生成完整的停止服务 `pre_upgrade` 备份，在隔离数据库执行一次恢复演练，并保存已验证清单文件的 SHA-256。然后执行：
-
-```powershell
-.\.venv\Scripts\finance-company.exe migrate-single-database `
-  --backup-root D:\Protected\finance-backups `
-  --backup-directory D:\Protected\finance-backups\<backup-id> `
-  --restore-drill-manifest-sha256 <恢复演练确认的64位摘要> `
-  --env-file .env
-```
-
-命令会先只读检查 `finance` 恰有一个企业、revision 为已知正式基线且目录目标为空，再创建和迁移目录、复制并核对身份记录、升级业务库、写入数据库身份和资料基线版本，最后才把 `.env` 的 `DATABASE_URL` 切到目录库。遇到未知历史、数量/摘要差异或不完整复制会立即停止；不会覆盖未知库，也不会自动删除失败时已创建的数据库。
-
-切换后至少核对原企业的业务事件、凭证、开放项、期间关闭快照和执行归因数量及摘要，并验证原负责人登录令牌仍可用。失败恢复只使用切换前已验证备份，不提供自动跨数据库 downgrade。
+这些新基线不支持旧库原地升级，也不接受通过 SQL 搬运业务行。需要重建已有系统时，只读导出
+登记公司，验证私有回放包，在空目标中创建双基线，重新设置负责人并登录，然后按类型化入口回放
+和验证。完整执行顺序及拒绝边界见[双基线空库回放手册](empty-database-replay.md)。未登记的旧副本
+库不属于回放范围，不自动删除。
 
 ## 公司生命周期
 

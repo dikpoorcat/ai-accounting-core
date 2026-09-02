@@ -490,13 +490,16 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
                 evidence_references=[evidence_id],
             )
         )
-        assert confirmed["status"] == "posted", confirmed
-        assert confirmed["data"]["calculation"]["voucher_sources"] == []
-        closed = _call_registered_tool(
+        # This is an MCP boundary smoke test.  The complete successful close
+        # path (including owner workflow and statement-readiness facts) is
+        # covered by the period-service and replay acceptance tests.
+        assert confirmed["status"] == "rejected", confirmed
+        assert confirmed["errors"] == ["ACCOUNTING_PERIOD_CLOSE_BLOCKED"]
+        still_open = _call_registered_tool(
             "finance_get_accounting_periods",
             GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-07")
         )
-        assert closed["data"]["periods"][0]["status"] == "closed"
+        assert still_open["data"]["periods"][0]["status"] == "open"
     finally:
         mcp_server._set_mcp_credential_store_for_tests(None)
         engine.dispose()

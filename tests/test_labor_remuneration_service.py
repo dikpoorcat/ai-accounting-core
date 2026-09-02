@@ -826,7 +826,7 @@ def test_full_labor_payout_tax_source_payment_and_downstream_first_reversal() ->
                 )
             )
             assert march_period is not None
-            period_service = AccountingPeriodService(session, current_date=date(2026, 4, 30))
+            period_service = AccountingPeriodService(session, current_date=date(2026, 5, 1))
             march_close = period_service.preview_accounting_period_close(
                 PreviewAccountingPeriodCloseRequest(
                     org_id=organization.id,
@@ -1367,7 +1367,7 @@ def test_one_imported_bank_row_atomically_covers_salary_and_labor_children() -> 
             )
             assert march_period is not None
             pending_close = AccountingPeriodService(
-                session, current_date=date(2026, 3, 31)
+                session, current_date=date(2026, 4, 1)
             ).preview_accounting_period_close(
                 PreviewAccountingPeriodCloseRequest(
                     org_id=organization.id,
