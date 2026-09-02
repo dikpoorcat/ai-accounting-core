@@ -27,14 +27,14 @@ filing service, or the deterministic kernel itself.
    workflow response is the only authority for the internal nine rows, displayed `queue_steps`,
    symbols, deadlines, completion proof, current owner action, and close gates. Do not recreate a row state from chat history,
    unmatched counts, or a separate close checklist.
-4. End a generic opening with the returned `current_action`, followed immediately by every row in
-   returned `queue_steps`, in that order and with its canonical order number. Rows 1–6 remain visible;
+4. End a generic opening with `当前处理：` and the returned `current_action`, followed immediately
+   by every row in returned `queue_steps`, in that order and with its canonical order number. Do not
+   call the opening action `下一步`. Rows 1–6 remain visible;
    rows 7–9 appear only while the kernel says they require owner attention. Copy each returned symbol
    exactly: `✅`, `🔄`, `⏰`, `⬜`, or `➖`.
    Include only the owner's returned action; do not turn calculations, matching, posting, file
    generation, or tool calls into owner work. If no period exists, ask only for the first month to
-   process and use the controlled period-generation workflow. In every ordinary accounting reply
-   that contains `下一步：`, put the complete current workflow queue immediately below it.
+   process and use the controlled period-generation workflow.
 5. If the user provides a concrete task or materials, begin that task after company selection; do
    not insert an unrelated dashboard-style briefing.
 
@@ -43,10 +43,26 @@ the interrupted call after login. Never request or handle a password in chat.
 If MCP, the database, or login remains unavailable, report only the returned state and the concrete
 recovery action. Do not invent a company, work queue, or posting result.
 
+A blocking error in the current operation takes precedence over the ordinary workflow display. If
+a tool error, rejected approval, file collision, authentication failure, or unavailable service must
+be resolved before that operation can continue, report only that it was not completed, the plain
+cause, one concrete recovery action, and the stable error code. Do not write `下一步：` and do not
+show the workflow queue in that response. After the blocker is resolved and the operation continues
+successfully, re-read the workflow and resume the normal next-action-plus-queue format.
+`needs_information` for a missing business fact is not automatically a technical error and may keep
+the current-node conversation, but it does not by itself justify a `下一步` heading or repeat the
+queue.
+
 ## Advance the fixed owner workflow
 
 Never mark a row yourself. After any owner answer or accounting write, call the corresponding typed
 tool and then re-read `finance_get_owner_workflow` before replying:
+
+Rows 1–6 always refer only to the selected accounting period returned by the workflow. A closed
+period is their durable terminal baseline: do not reopen its bank, workforce, contribution, payroll
+IIT, or materials work from older source records or missing newer workflow confirmations. Row 6 may
+still report an unfinished automatic close backup. Rows 7–9 are separate post-close obligations and
+continue to use their own typed completion facts.
 
 1. `银行流水` — use the existing controlled bank-scope, import, matching, late-evidence, and
    reconciliation workflows. Zero unmatched rows alone is not completion proof.
@@ -84,7 +100,8 @@ tool and then re-read `finance_get_owner_workflow` before replying:
    `finance_confirm_external_obligation` with the returned obligation id and source hash. Include
    `completion_date` only when the declaration date is already established in the available facts;
    an unknown date does not keep the row open. Do not ask for payment status or payment date; later
-   payment is handled from its actual bank statement.
+   payment is handled from its actual bank statement. Use only the current step's target for the
+   selected accounting period; never gather older closed payroll months into this row.
 5. `票据及非银行业务` — after the materials are actually reviewed and any supported entries are
    posted, call `finance_confirm_period_material_completeness` with the current activity snapshot.
 6. `关账确认` — reach this step only after rows 3 and 4 have completed their external declaration
@@ -99,11 +116,12 @@ tool and then re-read `finance_get_owner_workflow` before replying:
    it once with the typed establishment tool; a current financial-statement opening confirmation
    may already supply it.
 
-For historical payroll IIT and rows 7–9 completed before the kernel tracked them, use only the
+For rows 7–9 completed before the kernel tracked them, use only the
 matching `historical_obligation_completion_candidates` returned by the workflow and call
 `finance_confirm_historical_obligation_completion` once per returned obligation type. This records
 an owner-confirmed cutoff with `completion_date_status=not_established`. Re-read the workflow after
-each write. This migration fact cannot confirm a current or future obligation.
+each write. This migration fact cannot confirm a current or future obligation. Do not construct a
+historical payroll-IIT cutoff: closed accounting periods already terminate that pre-close row.
 
 Use `confirmation_targets` as the machine-readable set of kernel-generated obligations available
 for confirmation. Interpret phrases such as “都完成了” from the selected company, current workflow
@@ -131,6 +149,12 @@ Use this compact shape when the queue is shown:
 6. ⬜ 关账确认
 ```
 
+Use `下一步：` only after the current workflow row has become completed or not applicable and the
+workflow has advanced to a different row. During investigation, clarification, owner confirmation,
+external work, or any other exchange inside the same row, speak directly about the current matter
+without `下一步：` and without repeating the queue. A generic opening uses `当前处理：`; an explicit
+owner request for status may show the queue without implying that a row has just finished.
+
 If an active statutory obligation exists, append only the returned conditional row, preserving its
 number, for example `8. ⏰ 企业所得税年度汇算清缴（5月31日前）`. Do not renumber it to 7.
 
@@ -138,9 +162,9 @@ Do not add bracketed status words such as `[当前]` or a separate legend in ord
 symbol, fixed row order, concise item label, and optional deadline are sufficient.
 
 Keep completed rows 1–6 in the queue so the owner can see month-close progress, but shorten them to
-the label and completion state. Show the complete returned `queue_steps` every time `下一步：` is
-shown, not only at the generic opening or when the current step changes. The queue must immediately
-follow the next action; do not insert a long accounting summary between them.
+the label and completion state. Show the complete returned `queue_steps` every time a real node
+transition uses `下一步：`. The queue must immediately follow the next action; do not insert a long
+accounting summary between them.
 
 ## Perform the work
 

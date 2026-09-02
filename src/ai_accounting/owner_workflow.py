@@ -54,7 +54,7 @@ from .payroll.types import CalculationValidationError, NeedsInformationError
 from .schemas import PayrollEmployeeItem
 from .service import FinanceService
 
-OWNER_WORKFLOW_CLOSE_GATE_VERSION = "owner_workflow_close_gates_2026.2"
+OWNER_WORKFLOW_CLOSE_GATE_VERSION = "owner_workflow_close_gates_2026.3"
 OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM = date(2026, 8, 1)
 
 _IIT_SOURCE_URL = (
@@ -170,7 +170,9 @@ class OwnerWorkflowService:
                 organization
             ),
             "external_materials_completeness": (
-                "owner_confirmed_current"
+                "period_closed"
+                if gate_snapshot.get("terminal_for_monthly_workflow")
+                else "owner_confirmed_current"
                 if gate_snapshot["gates"]["non_bank_materials"]["satisfied"]
                 else "not_established"
             ),
@@ -465,16 +467,6 @@ class OwnerWorkflowService:
         organization = self.session.get(Organization, request.org_id)
         if organization is None:
             return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
-        candidate = self._historical_completion_candidate(organization, request.obligation_code)
-        if (
-            request.completion_through_identity != candidate["completion_through_identity"]
-            or request.source_snapshot_hash != candidate["source_snapshot_hash"]
-        ):
-            return {
-                "status": "rejected",
-                "errors": ["HISTORICAL_OBLIGATION_COMPLETION_SNAPSHOT_STALE"],
-                "current_candidate": candidate,
-            }
         payload_hash = self._request_hash(
             "finance_confirm_historical_obligation_completion", request
         )
@@ -487,6 +479,19 @@ class OwnerWorkflowService:
         )
         if replay is not None:
             return replay
+        try:
+            candidate = self._historical_completion_candidate(organization, request.obligation_code)
+        except ValueError as exc:
+            return {"status": "rejected", "errors": [str(exc)]}
+        if (
+            request.completion_through_identity != candidate["completion_through_identity"]
+            or request.source_snapshot_hash != candidate["source_snapshot_hash"]
+        ):
+            return {
+                "status": "rejected",
+                "errors": ["HISTORICAL_OBLIGATION_COMPLETION_SNAPSHOT_STALE"],
+                "current_candidate": candidate,
+            }
         active = self._active_historical_obligation_completion(
             request.org_id, request.obligation_code
         )
@@ -602,6 +607,8 @@ class OwnerWorkflowService:
         organization = self.session.get(Organization, org_id)
         if organization is None:
             raise ValueError("ORGANIZATION_NOT_FOUND")
+        if period.status == "closed":
+            return self._closed_period_gate_snapshot(period)
         workforce = self._workforce_snapshot(org_id, period)
         workforce_fact = self._active_period_confirmation(org_id, period.id, "workforce_review")
         workforce_current = bool(
@@ -765,6 +772,79 @@ class OwnerWorkflowService:
             "regular_payroll_preparation": regular_payroll_preparation,
         }
 
+    @staticmethod
+    def _closed_period_gate_snapshot(period: AccountingPeriod) -> dict[str, Any]:
+        close_id = str(period.close_id) if period.close_id else None
+        terminal_proof = {
+            "kind": "accounting_period_close",
+            "period_id": str(period.id),
+            "close_id": close_id,
+        }
+        return {
+            "version": OWNER_WORKFLOW_CLOSE_GATE_VERSION,
+            "effective_from": OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM.isoformat(),
+            "enforced_for_period": period.start_date >= OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM,
+            "terminal_for_monthly_workflow": True,
+            "terminal_proof": terminal_proof,
+            "snapshot_hash": canonical_sha256(
+                {
+                    "version": OWNER_WORKFLOW_CLOSE_GATE_VERSION,
+                    "period_id": str(period.id),
+                    "period_status": "closed",
+                    "close_id": close_id,
+                }
+            ),
+            "gates": {
+                "workforce_review": {
+                    "satisfied": True,
+                    "satisfaction_basis": "accounting_period_close",
+                    "source_snapshot_hash": None,
+                    "confirmation_id": None,
+                    "stale": False,
+                },
+                "contribution_accounting": {
+                    "satisfied": True,
+                    "satisfaction_basis": "accounting_period_close",
+                    "active_employee_count": None,
+                    "calculation_hash": None,
+                    "confirmation_id": None,
+                    "confirmation_current": False,
+                    "declaration_status": None,
+                    "declaration_date": None,
+                    "declaration_date_status": None,
+                    "payroll": {
+                        "satisfied": True,
+                        "batch_id": None,
+                        "calculation_hash": None,
+                        "reason": "period_closed",
+                    },
+                    "missing_information": [],
+                },
+                "individual_income_tax_declaration": {
+                    "satisfied": True,
+                    "satisfaction_basis": "accounting_period_close",
+                    "applicable": None,
+                    "obligation_id": None,
+                    "source_snapshot_hash": None,
+                    "confirmation_id": None,
+                    "completion_date_status": None,
+                },
+                "non_bank_materials": {
+                    "satisfied": True,
+                    "satisfaction_basis": "accounting_period_close",
+                    "source_snapshot_hash": None,
+                    "confirmation_id": None,
+                    "stale": False,
+                },
+            },
+            "regular_payroll_preparation": {
+                "status": "not_required_period_closed",
+                "source": "accounting_period_close",
+                "input_hash": None,
+                "employee_items": [],
+            },
+        }
+
     def _build_steps(
         self,
         organization: Organization,
@@ -784,7 +864,22 @@ class OwnerWorkflowService:
         }
         result = []
         for order, code, label in _STEPS:
-            step = builders[code](organization, period, gates)
+            # A period close is the immutable terminal fact for the monthly
+            # preparation workflow.  Never reopen rows 1-5 merely because a
+            # later workflow version introduced a new typed confirmation or a
+            # rebuild did not recreate redundant pre-close prompt state.
+            if period.status == "closed" and order <= 5:
+                step = self._completed(
+                    [
+                        {
+                            "kind": "accounting_period_close",
+                            "period_id": str(period.id),
+                            "close_id": str(period.close_id) if period.close_id else None,
+                        }
+                    ]
+                )
+            else:
+                step = builders[code](organization, period, gates)
             step.update({"order": order, "code": code, "label": label})
             step.setdefault("deadline", None)
             step.setdefault("completion_proof", [])
@@ -895,33 +990,14 @@ class OwnerWorkflowService:
                 action=None,
                 ready=False,
             )
-        obligations = []
-        for candidate in self.session.scalars(
-            select(AccountingPeriod)
-            .where(AccountingPeriod.org_id == organization.id)
-            .order_by(AccountingPeriod.start_date, AccountingPeriod.id)
-        ):
-            source = self._posted_payroll_source_snapshot(organization.id, candidate)
-            if source["declared_line_count"]:
-                obligations.append(self._iit_obligation(organization, candidate))
-        if not obligations:
-            return self._not_applicable("内核当前没有工资个税扣缴义务。")
-        pending = [
-            obligation
-            for obligation in obligations
-            if self._current_obligation_confirmation(obligation) is None
-        ]
-        if not pending:
-            obligation = obligations[-1]
-            confirmation = self._current_obligation_confirmation(obligation)
-            assert confirmation is not None
+        source = self._posted_payroll_source_snapshot(organization.id, period)
+        if not source["declared_line_count"]:
+            return self._not_applicable("本期没有工资个税扣缴义务。")
+        obligation = self._iit_obligation(organization, period)
+        confirmation = self._current_obligation_confirmation(obligation)
+        if confirmation is not None:
             return self._completed([self._obligation_completion_proof(confirmation, obligation)])
-        obligation = min(pending, key=lambda item: (item["deadline"], item["obligation_id"]))
-        obligation_period = self._period_for_org(
-            organization.id, uuid.UUID(obligation["source"]["period_id"])
-        )
-        assert obligation_period is not None
-        exports = self._period_exports(organization.id, self._period_month(obligation_period))
+        exports = self._period_exports(organization.id, self._period_month(period))
         current_export = next((item for item in exports if item["current"]), None)
         deadline = date.fromisoformat(obligation["deadline"])
         action = (
@@ -940,7 +1016,7 @@ class OwnerWorkflowService:
             deadline=obligation["deadline"],
         ) | {
             "obligation": obligation,
-            "confirmation_targets": [self._confirmation_target(item) for item in pending],
+            "confirmation_targets": [self._confirmation_target(obligation)],
             "existing_export": current_export,
         }
 
@@ -1944,7 +2020,6 @@ class OwnerWorkflowService:
     def _historical_completion_candidates(self, organization: Organization) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         for code in (
-            "individual_income_tax",
             "periodic_tax_reporting",
             "annual_enterprise_income_tax",
             "annual_business_report",
@@ -1960,20 +2035,10 @@ class OwnerWorkflowService:
         self, organization: Organization, code: str
     ) -> dict[str, Any]:
         if code == "individual_income_tax":
-            obligation_scope = "month"
-            eligible = [
-                obligation
-                for obligation in self._individual_income_tax_obligations(organization)
-                if date.fromisoformat(obligation["deadline"]) < self.today
-            ]
-            if not eligible:
-                raise ValueError("HISTORICAL_OBLIGATION_COMPLETION_CUTOFF_NOT_AVAILABLE")
-            latest = max(
-                eligible,
-                key=lambda item: (item["deadline"], item["scope_identity"]),
-            )
-            completion_through_identity = latest["scope_identity"]
-            rule_version = "cn_iit_withholding_deadline_2026.1"
+            # Payroll IIT is a pre-close monthly row.  Closed periods are its
+            # durable historical baseline, so they must not be converted into
+            # a new owner-confirmation backlog after an upgrade or rebuild.
+            raise ValueError("HISTORICAL_OBLIGATION_COMPLETION_CUTOFF_NOT_AVAILABLE")
         elif code == "periodic_tax_reporting":
             scope = organization.filing_cycle
             if scope not in {"monthly", "quarterly"}:
@@ -2064,20 +2129,6 @@ class OwnerWorkflowService:
                     self._annual_obligation(organization, "annual_business_report", report_year)
                 )
         return result
-
-    def _individual_income_tax_obligations(
-        self, organization: Organization
-    ) -> list[dict[str, Any]]:
-        obligations: list[dict[str, Any]] = []
-        for period in self.session.scalars(
-            select(AccountingPeriod)
-            .where(AccountingPeriod.org_id == organization.id)
-            .order_by(AccountingPeriod.start_date, AccountingPeriod.id)
-        ):
-            source = self._posted_payroll_source_snapshot(organization.id, period)
-            if source["declared_line_count"]:
-                obligations.append(self._iit_obligation(organization, period))
-        return obligations
 
     def _iit_obligation(
         self, organization: Organization, period: AccountingPeriod

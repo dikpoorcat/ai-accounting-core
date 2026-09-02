@@ -261,9 +261,24 @@ def test_close_blocks_when_active_employee_has_no_posted_regular_payroll() -> No
         "code": "ACCOUNTING_PERIOD_PAYROLL_PENDING",
         "count": 1,
         "blocking": True,
-        "enforcement": "hard_blocker",
-        "obligation": "regular_payroll_accrual",
     }
+
+
+def test_immutable_close_projection_keeps_runtime_guidance_out_of_snapshot() -> None:
+    system_check = {
+        "code": "ACCOUNTING_PERIOD_OPEN",
+        "passed": True,
+        "count": 0,
+    }
+    owner_gate = {
+        "code": "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT",
+        "passed": True,
+        "count": 0,
+    }
+
+    assert AccountingPeriodService._immutable_system_checks([system_check, owner_gate]) == [
+        system_check
+    ]
 
 
 def test_payroll_cash_settlement_waits_for_bank_without_close_review() -> None:
@@ -943,6 +958,20 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
         "ACCOUNTING_PERIOD_UNMATCHED_BANK_REVIEW",
     ]
     assert close is not None
+    close_action = session.get(AccountingPeriodAction, close.action_id)
+    assert close_action is not None
+    assert "payroll_settlements_reviewed" not in close_action.input_facts["review_facts"]
+    assert set(closed.data["calculation"]["module_checks"]) == {
+        "borrowings",
+        "fixed_assets",
+        "intangible_assets",
+        "labor_remuneration",
+        "payroll",
+    }
+    assert all(
+        set(item) == {"code", "count", "blocking"}
+        for item in closed.data["calculation"]["module_checks"].values()
+    )
     assert commentary.close_id == close.id
     assert commentary.commentary == "本月尚无经营活动，现有事实不足以评价经营表现。"
     assert commentary.prompt_version == "period_close_management_commentary_v2"

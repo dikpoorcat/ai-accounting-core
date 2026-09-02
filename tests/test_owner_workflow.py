@@ -379,49 +379,121 @@ def test_historical_obligation_cutoffs_persist_without_invented_completion_dates
     assert workflow._current_obligation_confirmation(q3_obligation) is None  # noqa: SLF001
 
 
-def test_historical_iit_cutoff_uses_only_elapsed_existing_payroll_obligations(
+def test_closed_payroll_iit_never_becomes_a_historical_confirmation_backlog(
     session: Session,
     organization: Organization,
 ) -> None:
     workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
-    historical = workflow._obligation(  # noqa: SLF001 - deterministic cutoff regression
-        organization.id,
-        "individual_income_tax",
-        "month",
-        "2022-08",
-        date(2022, 9, 15),
-        {"rule_version": "test", "period_id": str(uuid.uuid4())},
-        [],
-    )
-    current = workflow._obligation(  # noqa: SLF001 - current boundary regression
-        organization.id,
-        "individual_income_tax",
-        "month",
-        "2026-08",
-        date(2026, 9, 15),
-        {"rule_version": "test", "period_id": str(uuid.uuid4())},
-        [],
-    )
-    workflow._individual_income_tax_obligations = MagicMock(  # type: ignore[method-assign]
-        return_value=[historical, current]
-    )
+    candidates = workflow._historical_completion_candidates(organization)  # noqa: SLF001
+    assert "individual_income_tax" not in {item["obligation_code"] for item in candidates}
 
-    candidate = workflow._historical_completion_candidate(  # noqa: SLF001
-        organization, "individual_income_tax"
-    )
-    assert candidate["obligation_scope"] == "month"
-    assert candidate["completion_through_identity"] == "2022-08"
-    confirmed = workflow.confirm_historical_obligation_completion(
+    rejected = workflow.confirm_historical_obligation_completion(
         ConfirmHistoricalObligationCompletionRequest(
             org_id=organization.id,
             obligation_code="individual_income_tax",
             completion_through_identity="2022-08",
-            source_snapshot_hash=candidate["source_snapshot_hash"],
+            source_snapshot_hash="a" * 64,
             completion_date_status="not_established",
             idempotency_key="historical-iit-through-2022-08",
             confirmation_note="负责人确认截至该月份的历史工资个税申报均已完成。",
         )
     )
-    assert confirmed["status"] == "confirmed"
-    assert workflow._current_obligation_confirmation(historical) is not None  # noqa: SLF001
-    assert workflow._current_obligation_confirmation(current) is None  # noqa: SLF001
+    assert rejected == {
+        "status": "rejected",
+        "errors": ["HISTORICAL_OBLIGATION_COMPLETION_CUTOFF_NOT_AVAILABLE"],
+    }
+
+
+def test_iit_step_is_scoped_to_selected_period_and_exposes_one_target() -> None:
+    organization = SimpleNamespace(id=uuid.uuid4(), filing_cycle="quarterly")
+    period = SimpleNamespace(
+        id=uuid.uuid4(),
+        calendar_year=2026,
+        calendar_month=8,
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+        status="open",
+    )
+    session = MagicMock()
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
+    source = {
+        "hash": "b" * 64,
+        "data": {"payroll_period": "2026-08"},
+        "declared_line_count": 2,
+    }
+    workflow._posted_payroll_source_snapshot = MagicMock(  # type: ignore[method-assign]
+        return_value=source
+    )
+    workflow._current_obligation_confirmation = MagicMock(  # type: ignore[method-assign]
+        return_value=None
+    )
+    workflow._period_exports = MagicMock(return_value=[])  # type: ignore[method-assign]
+
+    step = workflow._iit_step(  # noqa: SLF001 - selected-period scope regression
+        organization,
+        period,
+        {"gates": {"contribution_accounting": {"active_employee_count": 0, "satisfied": True}}},
+    )
+
+    assert step["obligation"]["scope_identity"] == "2026-08"
+    assert [target["scope_identity"] for target in step["confirmation_targets"]] == ["2026-08"]
+    workflow._posted_payroll_source_snapshot.assert_called_with(organization.id, period)
+    session.scalars.assert_not_called()
+
+
+def test_closed_period_is_terminal_for_monthly_rows_without_replaying_prompt_facts() -> None:
+    organization = SimpleNamespace(id=uuid.uuid4())
+    period = SimpleNamespace(
+        id=uuid.uuid4(),
+        close_id=uuid.uuid4(),
+        start_date=date(2022, 8, 1),
+        status="closed",
+    )
+    session = MagicMock()
+    session.get.return_value = organization
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
+    for method_name in (
+        "_bank_step",
+        "_workforce_step",
+        "_contribution_step",
+        "_iit_step",
+        "_materials_step",
+    ):
+        setattr(
+            workflow,
+            method_name,
+            MagicMock(side_effect=AssertionError("closed monthly row was re-derived")),
+        )
+    workflow._close_step = MagicMock(  # type: ignore[method-assign]
+        return_value=workflow._completed(  # noqa: SLF001
+            [{"kind": "period_close", "close_id": str(period.close_id)}]
+        )
+    )
+    workflow._periodic_reporting_step = MagicMock(  # type: ignore[method-assign]
+        return_value=workflow._not_applicable("test")  # noqa: SLF001
+    )
+    workflow._annual_eit_step = MagicMock(  # type: ignore[method-assign]
+        return_value=workflow._not_applicable("test")  # noqa: SLF001
+    )
+    workflow._annual_business_report_step = MagicMock(  # type: ignore[method-assign]
+        return_value=workflow._not_applicable("test")  # noqa: SLF001
+    )
+
+    steps = workflow._build_steps(organization, period, {})  # noqa: SLF001
+
+    assert [step["completion_state"] for step in steps[:6]] == ["completed"] * 6
+    for step in steps[:5]:
+        assert step["completion_proof"] == [
+            {
+                "kind": "accounting_period_close",
+                "period_id": str(period.id),
+                "close_id": str(period.close_id),
+            }
+        ]
+    gates = workflow.close_gate_snapshot(organization.id, period)
+    assert gates["terminal_for_monthly_workflow"] is True
+    assert all(gate["satisfied"] for gate in gates["gates"].values())
+    assert gates["regular_payroll_preparation"]["status"] == "not_required_period_closed"
+    session.scalar.assert_not_called()
+    session.scalars.assert_not_called()
+    session.execute.assert_not_called()

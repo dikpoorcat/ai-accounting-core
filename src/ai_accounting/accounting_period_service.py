@@ -96,6 +96,21 @@ from .tax import calculate_tax_period
 _BANK_AWARE_CLOSE_CHECKER_VERSION = "accounting_period_close_checker_2026.8"
 _PERIODIC_REVIEW_SCHEDULE_VERSION = "cn_periodic_review_schedule_2026.2"
 _CLOSE_OBLIGATION_POLICY_VERSION = "accounting_period_close_obligations_2026.2"
+_OWNER_WORKFLOW_CHECK_CODES = frozenset(
+    {
+        "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT",
+        "ACCOUNTING_PERIOD_CONTRIBUTION_ASSESSMENT_CURRENT",
+        "ACCOUNTING_PERIOD_IIT_DECLARATION_CURRENT",
+        "ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT",
+    }
+)
+_IMMUTABLE_MODULE_CHECK_NAMES = (
+    "borrowings",
+    "fixed_assets",
+    "intangible_assets",
+    "labor_remuneration",
+    "payroll",
+)
 _PAYROLL_SETTLEMENT_CATEGORIES = (
     "salary",
     "employer_social",
@@ -399,10 +414,11 @@ class AccountingPeriodService:
                 period_id=request.period_id,
                 errors=["ORGANIZATION_NOT_FOUND"],
             )
+        request_snapshot = self._close_request_snapshot(request)
         payload_hash = canonical_sha256(
             {
                 "command": "finance_confirm_accounting_period_close",
-                "request": request.model_dump(mode="json"),
+                "request": request_snapshot,
             }
         )
         existing = self._existing_action(request.org_id, "period_close", request.idempotency_key)
@@ -455,7 +471,11 @@ class AccountingPeriodService:
             )
         try:
             with self.session.begin_nested():
-                result = self._confirm_close_write(request, payload_hash)
+                result = self._confirm_close_write(
+                    request,
+                    payload_hash,
+                    request_snapshot=request_snapshot,
+                )
                 self._assert_period_constraints_now()
                 return result
         except _PeriodDecision as exc:
@@ -616,7 +636,11 @@ class AccountingPeriodService:
         )
 
     def _confirm_close_write(
-        self, request: ConfirmAccountingPeriodCloseRequest, payload_hash: str
+        self,
+        request: ConfirmAccountingPeriodCloseRequest,
+        payload_hash: str,
+        *,
+        request_snapshot: dict[str, Any],
     ) -> AccountingPeriodResult:
         self._lock_tax_period_org(request.org_id)
         self._lock_month(request.org_id, request.closing_date)
@@ -713,7 +737,7 @@ class AccountingPeriodService:
             request.idempotency_key,
             payload_hash,
             "posted",
-            request.model_dump(mode="json"),
+            request_snapshot,
             request.confirmation_note,
         )
         self.session.add(action)
@@ -803,6 +827,17 @@ class AccountingPeriodService:
             calculation_hash=close.calculation_hash,
             trace=snapshot["trace"] + [{"stage": "period_close_posted", "close_id": str(close.id)}],
             data=result_data,
+        )
+
+    @staticmethod
+    def _close_request_snapshot(
+        request: ConfirmAccountingPeriodCloseRequest,
+    ) -> dict[str, Any]:
+        """Return the canonical database contract, excluding ignored legacy input."""
+
+        return request.model_dump(
+            mode="json",
+            exclude={"review_facts": {"payroll_settlements_reviewed"}},
         )
 
     def _owner_close_approval_required(self, org_id: uuid.UUID) -> bool:
@@ -1113,11 +1148,11 @@ class AccountingPeriodService:
             end_date=period.end_date,
             closing_date=request.closing_date,
             previous_close_hash=previous_close_hash,
-            system_checks=checks,
+            system_checks=self._immutable_system_checks(checks),
             review_counts=review_counts,
             voucher_sources=sources,
             account_totals=account_totals,
-            module_checks=module_checks,
+            module_checks=self._immutable_module_checks(module_checks),
             warnings=warnings,
         )
         payload["checker_version"] = _BANK_AWARE_CLOSE_CHECKER_VERSION
@@ -2325,6 +2360,27 @@ class AccountingPeriodService:
             "completed_count": sum(item["completed"] for item in items),
             "pending_count": sum(not item["completed"] for item in items),
             "items": items,
+        }
+
+    @staticmethod
+    def _immutable_system_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep owner workflow gates in their dedicated immutable snapshot only."""
+
+        return [item for item in checks if item["code"] not in _OWNER_WORKFLOW_CHECK_CODES]
+
+    @staticmethod
+    def _immutable_module_checks(
+        module_checks: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Project runtime guidance onto the database-enforced close contract."""
+
+        return {
+            name: {
+                "code": module_checks[name]["code"],
+                "count": module_checks[name]["count"],
+                "blocking": module_checks[name]["blocking"],
+            }
+            for name in _IMMUTABLE_MODULE_CHECK_NAMES
         }
 
     @staticmethod

@@ -264,6 +264,12 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 assert "ACCOUNTING_PERIOD_PERIOD_NOT_ENDED" in close_assertion
                 assert "FROM employees AS employee" in close_assertion
                 assert "FROM payroll_lines AS line" in close_assertion
+                assert "owner_workflow_close_gates_2026.3" in close_assertion
+                assert "individual_income_tax_declaration,satisfied" in close_assertion
+                assert "FROM external_obligation_confirmations AS confirmation" in (
+                    close_assertion
+                )
+                assert "payroll_tax_import_source_v1" not in close_assertion
                 assert (
                     "PERFORM finance_assert_accounting_period_close(NEW.close_id)"
                     not in source_validator

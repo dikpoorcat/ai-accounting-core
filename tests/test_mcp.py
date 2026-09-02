@@ -265,6 +265,9 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "current_action_count": 1,
         "queue_length": "core_steps_1_to_6_plus_active_steps_7_to_9",
         "queue_source": "finance_get_owner_workflow.queue_steps",
+        "generic_opening_heading": "当前处理",
+        "next_action_heading_when": "current_workflow_step_completed_and_transitioned",
+        "same_step_follow_up": "no_next_action_heading_or_queue_unless_status_requested",
         "next_action_requires_queue": True,
         "queue_position": "immediately_after_next_action",
         "queue_status_display": {
@@ -284,15 +287,39 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
             "owner_external_filing_or_payment",
         ],
         "exclude": ["ai_internal_work"],
-        "show_when": ["every_response_with_next_action", "owner_requests_status"],
+        "show_when": ["generic_opening", "workflow_step_transition", "owner_requests_status"],
+        "suppress_when": "current_operation_is_blocked_by_an_error_requiring_recovery",
     }
-    assert protocol["version"] == "accounting_execution_assistant_v27"
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.10"
+    assert protocol["communication_policy"]["blocking_error_response"] == {
+        "takes_precedence_over_workflow_display": True,
+        "include_only": [
+            "not_completed_status",
+            "plain_error_reason",
+            "one_recovery_action",
+            "stable_error_code",
+        ],
+        "show_next_action_heading": False,
+        "show_workflow_queue": False,
+        "resume_queue_after": "blocker_resolved_and_operation_continued",
+        "needs_information_is_technical_error": False,
+    }
+    assert protocol["version"] == "accounting_execution_assistant_v29"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.11"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
     assert protocol["owner_workflow"]["target_selection"] == (
         "ai_interprets_selected_company_step_and_conversation_context"
     )
+    assert protocol["owner_workflow"]["period_scope"] == {
+        "steps_1_to_6": "selected_accounting_period_only",
+        "closed_periods": "terminal_for_steps_1_to_5_step_6_reports_close_backup_state",
+        "post_close_steps_7_to_9": "independent_typed_external_obligations",
+    }
+    assert protocol["owner_workflow"]["rebuild_policy"] == {
+        "monthly_close_baseline": "accounting_period_close",
+        "closed_payroll_iit_backlog": False,
+        "post_close_obligation_facts_remain_replayable_state": True,
+    }
     assert protocol["owner_workflow"]["external_completion_date"] == {
         "required": False,
         "when_known": "persist_as_established",
@@ -382,9 +409,11 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert individual_income_tax_step["completion_date_when_known"] == (
         "external_declaration_date"
     )
-    assert individual_income_tax_step["historical_completion_tool"] == (
-        "finance_confirm_historical_obligation_completion"
+    assert individual_income_tax_step["obligation_scope"] == "selected_accounting_period_only"
+    assert individual_income_tax_step["closed_period_history"] == (
+        "satisfied_by_accounting_period_close"
     )
+    assert "historical_completion_tool" not in individual_income_tax_step
     assert individual_income_tax_step["payment_tracking"] == (
         "later_bank_statement_only_not_owner_workflow_input"
     )

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v27"
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.10"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v29"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.11"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -20,15 +20,21 @@ IDENTITY_RUNTIME_INSTRUCTION = (
 
 COMMUNICATION_RUNTIME_INSTRUCTION = (
     "与负责人使用中文、执行秘书型表达，不使用固定称呼；先说明结论、完成状态或准确缺口。"
-    "通用开场和阶段切换时只突出一个负责人当前动作，并附按固定月度流程排序的完整待办清单"
-    "队列；不得把相邻步骤合并成一个大问题。队列只列负责人需要提供、确认或在外部办理的"
+    "通用开场使用“当前处理”突出一个负责人当前动作，并附按固定月度流程排序的完整待办清单"
+    "队列；只有当前节点明确完成并切换到下一节点时才使用“下一步”。同一节点内的核对、追问、"
+    "等待和普通沟通不重复输出“下一步”或清单；负责人主动查询进度时仍可展示清单。不得把"
+    "相邻步骤合并成一个大问题。队列只列负责人需要提供、确认或在外部办理的"
     "事项，不报告AI自身的核对、计算、入账或工具调用。"
     "队列始终展示月结主流程第1至6项；第7至9项仅在当前确有待办、到期、逾期或等待关账的"
     "外部义务时展示，已完成或当前不适用时隐藏。出现的提醒必须一次性展示，排序只决定当前"
     "追问，不得把活跃的后续义务隐藏到前一步完成之后。每行只使用一个状态符号：✅已完成、"
     "🔄当前、⏰到期或逾期、⬜待办、➖本期无；不再附加方括号状态文字。"
-    "凡普通会计回复中出现“下一步：”，必须在其正下方立即附finance_get_owner_workflow返回的"
-    "完整queue_steps；完成具体业务后转入下一事项也不例外，不得只输出孤立的下一步问题。"
+    "凡节点切换回复中出现“下一步：”，必须在其正下方立即附finance_get_owner_workflow返回的"
+    "完整queue_steps，不得只输出孤立的下一步问题。"
+    "当前操作因工具错误、审批拒绝、文件冲突、认证或服务故障而中断，且必须先解除该阻断时，"
+    "本次回复只说明未完成状态、错误原因、一个恢复动作和稳定错误码；不得输出“下一步：”或"
+    "待办清单。阻断解除并成功继续操作后，再重新读取并恢复展示正常流程。needs_information属于"
+    "业务事实补充，不自动按技术错误隐藏清单。"
     "正常完成时使用业务语言说明公司、事项、金额、入账日期和结果；除非负责人要求审计细节，"
     "不展示原始JSON、科目借贷行或内部UUID。稳定错误码应保留在简明中文解释后。"
     "返回needs_information时，先完成AI能够自行完成的核对和推理；如存在一个有证据支持的最可能"
@@ -43,16 +49,19 @@ OWNER_WORKFLOW_RUNTIME_INSTRUCTION = (
     "期限、当前动作和关账门禁只能使用该工具返回值，不得从聊天记忆或提示词自行推断。"
     "展示必须逐行复制工具返回的queue_steps：第1至6项固定展示，第7至9项只有需要负责人注意"
     "时才出现；不得自行从完整steps增删或重新编号。所有当前活跃提醒必须一次性展示，排序只"
-    "决定当前追问。社保公积金和个人所得税必须先完成外部申报并核对申报值，再进入后续关账步骤；"
+    "决定当前追问。第1至6项只处理工具返回的当前会计期间；期间一经关闭即成为这些月结步骤的"
+    "终态依据，不得把已关闭月份重新展开为工资个税或其他月结待办。社保公积金和个人所得税必须"
+    "先完成外部申报并核对申报值，再进入后续关账步骤；"
     "工资及社保公积金计提是关账义务，正常次月实发和实际缴款不是关上月账的直接前置条件。"
 )
 
 HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION = (
-    "负责人确认适用的历史个税或第7至9项历史义务已完成、但具体外部完成日期未建立时，使用"
+    "负责人确认第7至9项适用历史义务已完成、但具体外部完成日期未建立时，使用"
     "finance_get_owner_workflow返回的"
     "historical_obligation_completion_candidates，并按义务类型调用"
     "finance_confirm_historical_obligation_completion保存负责人追认截止范围。该工具只覆盖候选"
-    "范围内已经到期的适用历史义务，不得用于提前确认当前或未来义务；写入后重新读取完整清单。"
+    "范围内已经到期的适用历史义务；工资个税属于关账前月结步骤，已关闭月份由关账事实终结，"
+    "不生成历史补确认候选。写入后重新读取完整清单。"
 )
 
 PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION = (
@@ -252,6 +261,9 @@ def agent_operating_protocol() -> dict[str, Any]:
                 "current_action_count": 1,
                 "queue_length": "core_steps_1_to_6_plus_active_steps_7_to_9",
                 "queue_source": "finance_get_owner_workflow.queue_steps",
+                "generic_opening_heading": "当前处理",
+                "next_action_heading_when": "current_workflow_step_completed_and_transitioned",
+                "same_step_follow_up": "no_next_action_heading_or_queue_unless_status_requested",
                 "next_action_requires_queue": True,
                 "queue_position": "immediately_after_next_action",
                 "queue_status_display": {
@@ -272,9 +284,24 @@ def agent_operating_protocol() -> dict[str, Any]:
                 ],
                 "exclude": ["ai_internal_work"],
                 "show_when": [
-                    "every_response_with_next_action",
+                    "generic_opening",
+                    "workflow_step_transition",
                     "owner_requests_status",
                 ],
+                "suppress_when": "current_operation_is_blocked_by_an_error_requiring_recovery",
+            },
+            "blocking_error_response": {
+                "takes_precedence_over_workflow_display": True,
+                "include_only": [
+                    "not_completed_status",
+                    "plain_error_reason",
+                    "one_recovery_action",
+                    "stable_error_code",
+                ],
+                "show_next_action_heading": False,
+                "show_workflow_queue": False,
+                "resume_queue_after": "blocker_resolved_and_operation_continued",
+                "needs_information_is_technical_error": False,
             },
             "stable_error_code": "append_after_plain_chinese_explanation",
         },
@@ -289,6 +316,16 @@ def agent_operating_protocol() -> dict[str, Any]:
             "internal_status_source": "steps",
             "confirmation_target_source": "confirmation_targets",
             "target_selection": "ai_interprets_selected_company_step_and_conversation_context",
+            "period_scope": {
+                "steps_1_to_6": "selected_accounting_period_only",
+                "closed_periods": "terminal_for_steps_1_to_5_step_6_reports_close_backup_state",
+                "post_close_steps_7_to_9": "independent_typed_external_obligations",
+            },
+            "rebuild_policy": {
+                "monthly_close_baseline": "accounting_period_close",
+                "closed_payroll_iit_backlog": False,
+                "post_close_obligation_facts_remain_replayable_state": True,
+            },
             "external_completion_date": {
                 "required": False,
                 "when_known": "persist_as_established",
@@ -373,6 +410,8 @@ def agent_operating_protocol() -> dict[str, Any]:
                         "ensure_posted_regular_payroll_then_generate_before_status_question"
                     ),
                     "auto_generate_when": "current_and_posted_regular_payroll_requires_declaration",
+                    "obligation_scope": "selected_accounting_period_only",
+                    "closed_period_history": "satisfied_by_accounting_period_close",
                     "payroll_import_rule": PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION,
                     "desktop_delivery": {
                         "destination": "os_current_user_desktop_known_folder",
@@ -392,9 +431,6 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "completion_date_required": False,
                     "completion_date_when_known": "external_declaration_date",
                     "payment_tracking": "later_bank_statement_only_not_owner_workflow_input",
-                    "historical_completion_tool": (
-                        "finance_confirm_historical_obligation_completion"
-                    ),
                 },
                 {
                     "order": 5,
