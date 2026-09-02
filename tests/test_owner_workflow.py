@@ -245,6 +245,19 @@ def test_annual_obligations_remain_overdue_until_typed_confirmation(
     assert annual_eit["deadline"] == "2025-05-31"
     assert business_report["attention_state"] == "overdue"
     assert business_report["deadline"] == "2025-06-30"
+    assert annual_eit["confirmation_targets"] == [
+        workflow._confirmation_target(item)  # noqa: SLF001 - public workflow payload regression
+        for item in [
+            workflow._annual_obligation(  # noqa: SLF001 - deterministic target regression
+                organization, "annual_enterprise_income_tax", year
+            )
+            for year in (2024, 2025)
+        ]
+    ]
+    assert all(
+        target in before["confirmation_targets"]
+        for target in annual_eit["confirmation_targets"]
+    )
 
     obligation = annual_eit["obligation"]
     confirmed = workflow.confirm_external_obligation(
@@ -259,6 +272,9 @@ def test_annual_obligations_remain_overdue_until_typed_confirmation(
         )
     )
     assert confirmed["status"] == "confirmed"
+    assert confirmed["completion_date"] == "2025-05-20"
+    assert confirmed["completion_date_status"] == "established"
+    assert confirmed["timeliness"] == "on_time"
     after = OwnerWorkflowService(session, current_date=date(2026, 9, 2)).get(
         GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
     )
@@ -361,3 +377,51 @@ def test_historical_obligation_cutoffs_persist_without_invented_completion_dates
     )
     assert workflow._current_obligation_confirmation(q2_obligation) is not None  # noqa: SLF001
     assert workflow._current_obligation_confirmation(q3_obligation) is None  # noqa: SLF001
+
+
+def test_historical_iit_cutoff_uses_only_elapsed_existing_payroll_obligations(
+    session: Session,
+    organization: Organization,
+) -> None:
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
+    historical = workflow._obligation(  # noqa: SLF001 - deterministic cutoff regression
+        organization.id,
+        "individual_income_tax",
+        "month",
+        "2022-08",
+        date(2022, 9, 15),
+        {"rule_version": "test", "period_id": str(uuid.uuid4())},
+        [],
+    )
+    current = workflow._obligation(  # noqa: SLF001 - current boundary regression
+        organization.id,
+        "individual_income_tax",
+        "month",
+        "2026-08",
+        date(2026, 9, 15),
+        {"rule_version": "test", "period_id": str(uuid.uuid4())},
+        [],
+    )
+    workflow._individual_income_tax_obligations = MagicMock(  # type: ignore[method-assign]
+        return_value=[historical, current]
+    )
+
+    candidate = workflow._historical_completion_candidate(  # noqa: SLF001
+        organization, "individual_income_tax"
+    )
+    assert candidate["obligation_scope"] == "month"
+    assert candidate["completion_through_identity"] == "2022-08"
+    confirmed = workflow.confirm_historical_obligation_completion(
+        ConfirmHistoricalObligationCompletionRequest(
+            org_id=organization.id,
+            obligation_code="individual_income_tax",
+            completion_through_identity="2022-08",
+            source_snapshot_hash=candidate["source_snapshot_hash"],
+            completion_date_status="not_established",
+            idempotency_key="historical-iit-through-2022-08",
+            confirmation_note="负责人确认截至该月份的历史工资个税申报均已完成。",
+        )
+    )
+    assert confirmed["status"] == "confirmed"
+    assert workflow._current_obligation_confirmation(historical) is not None  # noqa: SLF001
+    assert workflow._current_obligation_confirmation(current) is None  # noqa: SLF001

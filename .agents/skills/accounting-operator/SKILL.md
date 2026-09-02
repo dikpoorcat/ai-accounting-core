@@ -63,8 +63,9 @@ tool and then re-read `finance_get_owner_workflow` before replying:
 3. `社保及公积金` — call `finance_preview_payroll_contribution_assessment`. If the external
    assessment differs from policy, first register the actual amounts with the existing typed tool.
    After the external declaration is complete, call
-   `finance_confirm_payroll_contribution_assessment` with only the declaration date and the final
-   declared snapshot, then use that same snapshot and the workflow's recovered
+   `finance_confirm_payroll_contribution_assessment` with the final declared snapshot. Include
+   `declaration_date` only when it is already established in the available facts; do not ask for it
+   merely to complete the row. Then use that same snapshot and the workflow's recovered
    `regular_payroll_preparation.employee_items` to preview and confirm regular payroll. Omit
    `payment_date` for a regular payroll: its accrual belongs to `payroll_period`, and actual payment
    is recorded only from the later bank statement. `payment_date` remains required for annual-bonus
@@ -80,10 +81,10 @@ tool and then re-read `finance_get_owner_workflow` before replying:
    `scripts/copy-export-to-desktop.ps1 -SourcePath <file_path> -ExpectedSha256 <sha256>
    -FileName <file_name>`. Never invent identity or deduction facts. Export generation is not filing
    completion; after the owner confirms the tax-client submission, call
-   `finance_confirm_external_obligation` with the returned obligation id, source hash, and external
-   declaration date. For this row, `completion_date` means the declaration date, never a payment
-   date. Do not ask for payment status or payment date; later payment is handled from its actual bank
-   statement.
+   `finance_confirm_external_obligation` with the returned obligation id and source hash. Include
+   `completion_date` only when the declaration date is already established in the available facts;
+   an unknown date does not keep the row open. Do not ask for payment status or payment date; later
+   payment is handled from its actual bank statement.
 5. `票据及非银行业务` — after the materials are actually reviewed and any supported entries are
    posted, call `finance_confirm_period_material_completeness` with the current activity snapshot.
 6. `关账确认` — reach this step only after rows 3 and 4 have completed their external declaration
@@ -98,13 +99,19 @@ tool and then re-read `finance_get_owner_workflow` before replying:
    it once with the typed establishment tool; a current financial-statement opening confirmation
    may already supply it.
 
-If the owner explicitly confirms that every applicable historical item in rows 7–9 was completed
-before the kernel tracked it, but the exact external completion dates are unavailable, use only the
+For historical payroll IIT and rows 7–9 completed before the kernel tracked them, use only the
 matching `historical_obligation_completion_candidates` returned by the workflow and call
 `finance_confirm_historical_obligation_completion` once per returned obligation type. This records
-an owner-confirmed cutoff with `completion_date_status=not_established`; never substitute a legal
-deadline, the current date, or a guessed establishment date for an unknown filing date. Re-read the
-workflow after each write. This migration fact cannot confirm a current or future obligation.
+an owner-confirmed cutoff with `completion_date_status=not_established`. Re-read the workflow after
+each write. This migration fact cannot confirm a current or future obligation.
+
+Use `confirmation_targets` as the machine-readable set of kernel-generated obligations available
+for confirmation. Interpret phrases such as “都完成了” from the selected company, current workflow
+step, the most recently displayed queue, and the surrounding conversation. When that context clearly
+identifies one or more targets, call the existing typed confirmation tool for each without imposing
+an extra kernel scope rule or asking the owner to restate periods. If materially different targets
+remain equally plausible, present the best-supported interpretation for correction under the normal
+communication policy. Never invent an obligation id or move a confirmation across companies.
 
 Upstream employee, payroll, policy, contribution-actual, event, evidence, or material changes can
 make an old confirmation or export stale. If the workflow reopens a row, follow its missing facts

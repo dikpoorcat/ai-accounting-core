@@ -1516,6 +1516,7 @@ class PayrollContributionAssessmentConfirmation(Base):
     contribution_period: Mapped[str] = mapped_column(String(7), nullable=False)
     declaration_status: Mapped[str] = mapped_column(String(30), nullable=False)
     declaration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    declaration_date_status: Mapped[str] = mapped_column(String(30), nullable=False)
     payment_status: Mapped[str] = mapped_column(String(20), nullable=False)
     payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     external_reference: Mapped[str | None] = mapped_column(String(300), nullable=True)
@@ -1568,13 +1569,22 @@ class PayrollContributionAssessmentConfirmation(Base):
             name="ck_contribution_assessment_payment_status",
         ),
         CheckConstraint(
-            "(declaration_status = 'declared' AND declaration_date IS NOT NULL "
+            "declaration_date_status IN ('established','not_established','not_applicable')",
+            name="ck_contribution_assessment_declaration_date_status",
+        ),
+        CheckConstraint(
+            "(declaration_status = 'declared' AND "
+            "((declaration_date_status = 'established' AND declaration_date IS NOT NULL) OR "
+            "(declaration_date_status = 'not_established' AND declaration_date IS NULL)) "
             "AND payment_status = 'not_tracked' AND payment_date IS NULL) OR "
-            "(declaration_status = 'declared_paid' AND declaration_date IS NOT NULL "
+            "(declaration_status = 'declared_paid' AND declaration_date_status = 'established' "
+            "AND declaration_date IS NOT NULL "
             "AND payment_status = 'paid' AND payment_date IS NOT NULL) OR "
-            "(declaration_status = 'declared_unpaid' AND declaration_date IS NOT NULL "
+            "(declaration_status = 'declared_unpaid' AND declaration_date_status = 'established' "
+            "AND declaration_date IS NOT NULL "
             "AND payment_status = 'unpaid' AND payment_date IS NULL) OR "
-            "(declaration_status = 'not_declared' AND declaration_date IS NULL "
+            "(declaration_status = 'not_declared' "
+            "AND declaration_date_status = 'not_applicable' AND declaration_date IS NULL "
             "AND payment_status = 'not_applicable' AND payment_date IS NULL)",
             name="ck_contribution_assessment_status_dates",
         ),
@@ -1684,7 +1694,8 @@ class ExternalObligationConfirmation(Base):
     obligation_scope: Mapped[str] = mapped_column(String(20), nullable=False)
     source_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     completion_status: Mapped[str] = mapped_column(String(30), nullable=False)
-    completion_date: Mapped[date] = mapped_column(Date, nullable=False)
+    completion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    completion_date_status: Mapped[str] = mapped_column(String(30), nullable=False)
     external_reference: Mapped[str | None] = mapped_column(String(300), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1729,6 +1740,18 @@ class ExternalObligationConfirmation(Base):
         CheckConstraint(
             "completion_status IN ('submitted','not_applicable')",
             name="ck_external_obligation_confirmation_status",
+        ),
+        CheckConstraint(
+            "completion_date_status IN ('established','not_established','not_applicable')",
+            name="ck_external_obligation_confirmation_date_status",
+        ),
+        CheckConstraint(
+            "(completion_status = 'submitted' AND "
+            "((completion_date_status = 'established' AND completion_date IS NOT NULL) OR "
+            "(completion_date_status = 'not_established' AND completion_date IS NULL))) OR "
+            "(completion_status = 'not_applicable' "
+            "AND completion_date_status = 'not_applicable' AND completion_date IS NULL)",
+            name="ck_external_obligation_confirmation_date",
         ),
         CheckConstraint(
             "length(source_snapshot_hash) = 64 AND length(request_payload_hash) = 64",
@@ -1800,11 +1823,12 @@ class HistoricalObligationCompletionConfirmation(Base):
             name="uq_historical_obligation_completion_idempotency",
         ),
         CheckConstraint(
-            "obligation_code IN ('periodic_tax_reporting',"
+            "obligation_code IN ('individual_income_tax','periodic_tax_reporting',"
             "'annual_enterprise_income_tax','annual_business_report')",
             name="ck_historical_obligation_completion_code",
         ),
         CheckConstraint(
+            "(obligation_code = 'individual_income_tax' AND obligation_scope = 'month') OR "
             "(obligation_code = 'periodic_tax_reporting' AND obligation_scope IN "
             "('month','quarter')) OR "
             "(obligation_code IN ('annual_enterprise_income_tax','annual_business_report') "

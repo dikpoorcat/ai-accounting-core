@@ -102,7 +102,12 @@ class ConfirmPayrollContributionAssessmentRequest(_StrictRequest):
     period_id: uuid.UUID
     calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     declaration_status: Literal["declared"]
-    declaration_date: date
+    declaration_date: date | None = Field(
+        default=None,
+        description=(
+            "仅在负责人明确提供或可靠回执已经载明时填写；申报完成事实不依赖日期。"
+        ),
+    )
     external_reference: str | None = Field(default=None, max_length=300)
     idempotency_key: str = Field(min_length=1, max_length=200)
     confirmation_note: str = Field(min_length=1, max_length=2000)
@@ -149,7 +154,12 @@ class ConfirmExternalObligationRequest(_StrictRequest):
     obligation_id: uuid.UUID
     source_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     completion_status: Literal["submitted", "not_applicable"]
-    completion_date: date
+    completion_date: date | None = Field(
+        default=None,
+        description=(
+            "仅在现有业务事实中已经建立时填写；申报完成事实不依赖日期。"
+        ),
+    )
     external_reference: str | None = Field(default=None, max_length=300)
     idempotency_key: str = Field(min_length=1, max_length=200)
     confirmation_note: str = Field(min_length=1, max_length=2000)
@@ -172,12 +182,19 @@ class ConfirmExternalObligationRequest(_StrictRequest):
         normalized = value.strip()
         return normalized or None
 
+    @model_validator(mode="after")
+    def not_applicable_has_no_completion_date(self) -> ConfirmExternalObligationRequest:
+        if self.completion_status == "not_applicable" and self.completion_date is not None:
+            raise ValueError("not_applicable external obligation cannot have a completion_date")
+        return self
+
 
 class ConfirmHistoricalObligationCompletionRequest(_StrictRequest):
     """Confirm an applicable history cutoff without inventing filing dates."""
 
     org_id: uuid.UUID
     obligation_code: Literal[
+        "individual_income_tax",
         "periodic_tax_reporting",
         "annual_enterprise_income_tax",
         "annual_business_report",
@@ -203,12 +220,16 @@ class ConfirmHistoricalObligationCompletionRequest(_StrictRequest):
         self,
     ) -> ConfirmHistoricalObligationCompletionRequest:
         identity = self.completion_through_identity
-        if self.obligation_code == "periodic_tax_reporting":
+        if self.obligation_code in {"individual_income_tax", "periodic_tax_reporting"}:
             valid = (
                 len(identity) == 7
                 and identity[:4].isdigit()
                 and (
-                    (identity[4:6] == "-Q" and identity[6] in "1234")
+                    (
+                        self.obligation_code == "periodic_tax_reporting"
+                        and identity[4:6] == "-Q"
+                        and identity[6] in "1234"
+                    )
                     or (
                         identity[4] == "-"
                         and identity[5:].isdigit()

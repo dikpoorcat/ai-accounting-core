@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v26"
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.9"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v27"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.10"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -48,8 +48,8 @@ OWNER_WORKFLOW_RUNTIME_INSTRUCTION = (
 )
 
 HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION = (
-    "负责人明确确认第7至9项全部适用历史义务已完成、但具体外部完成日期未建立时，不得按法定"
-    "截止日或确认当天伪造逐笔完成日期。必须使用finance_get_owner_workflow返回的"
+    "负责人确认适用的历史个税或第7至9项历史义务已完成、但具体外部完成日期未建立时，使用"
+    "finance_get_owner_workflow返回的"
     "historical_obligation_completion_candidates，并按义务类型调用"
     "finance_confirm_historical_obligation_completion保存负责人追认截止范围。该工具只覆盖候选"
     "范围内已经到期的适用历史义务，不得用于提前确认当前或未来义务；写入后重新读取完整清单。"
@@ -65,9 +65,10 @@ PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION = (
     "发送payment_date；实际发薪日期只由次月银行流水及工资付款事件记录。只有实际支付日决定"
     "个税所属期的年终奖批次保留payment_date。"
     "第3项先调用finance_preview_payroll_contribution_assessment供外部申报核对；申报值与政策数"
-    "不一致时先登记实际数。外部申报完成后，只用申报日和最终核定金额调用"
+    "不一致时先登记实际数。外部申报完成后，使用最终核定金额调用"
     "finance_confirm_payroll_contribution_assessment绑定同一核定快照，随后使用同一快照完成工资"
-    "及单位社保公积金计提。不得询问或提交缴款状态、缴款日期；实际缴款以后由发生月份的银行"
+    "及单位社保公积金计提；申报日期仅在现有事实已经建立时一并保存，不作为完成条件。不得询问"
+    "或提交缴款状态、缴款日期；实际缴款以后由发生月份的银行"
     "流水和类型化付款事件核销。申报事实当前且正式工资批次使用同一快照后第3项完成。"
 )
 
@@ -81,8 +82,9 @@ PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION = (
     "操作系统当前用户桌面已知目录而非硬编码路径，将返回file_name复制到桌面；新会话先复用"
     "finance_get_owner_workflow返回的当前导出记录，同名同哈希视为"
     "幂等成功，同名不同内容不得覆盖。只向老板报告桌面文件名、行数和去税务客户端导入核对的"
-    "下一动作，不在聊天中展示证件号码。文件生成不等于已申报；第4项只在老板确认外部申报日"
-    "后完成，不得询问缴款状态或缴款日期。实际个税缴款以后由发生月份的银行流水和"
+    "下一动作，不在聊天中展示证件号码。文件生成不等于已申报；第4项在老板确认外部申报结果"
+    "后完成，申报日期仅在现有事实已经建立时一并保存。不得询问缴款状态或缴款日期。实际个税"
+    "缴款以后由发生月份的银行流水和"
     "individual_income_tax_payment事件核销。返回needs_information时先继续核对历史同公司导出"
     "和已有材料，再按交流策略"
     "只追问真正缺少的员工事实，不得擅自补零。只有劳务报酬等非工资扣缴情形时不得误用该工具。"
@@ -285,6 +287,14 @@ def agent_operating_protocol() -> dict[str, Any]:
             ),
             "display_source": "queue_steps",
             "internal_status_source": "steps",
+            "confirmation_target_source": "confirmation_targets",
+            "target_selection": "ai_interprets_selected_company_step_and_conversation_context",
+            "external_completion_date": {
+                "required": False,
+                "when_known": "persist_as_established",
+                "when_unknown": "persist_as_not_established",
+                "affects_completion": False,
+            },
             "state_fields": [
                 "completion_state",
                 "attention_state",
@@ -340,7 +350,8 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "row_completion_gate": (
                         "accounting_close_gate_and_external_declaration_confirmed"
                     ),
-                    "confirmation_fields": ["declaration_date", "declared_amount_snapshot"],
+                    "confirmation_fields": ["declared_amount_snapshot"],
+                    "optional_confirmation_fields": ["declaration_date"],
                     "payment_tracking": "later_bank_statement_only_not_owner_workflow_input",
                     "not_declared_behavior": "keep_current_without_persisting_completion",
                 },
@@ -378,8 +389,12 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "export_record_is_persistent": True,
                     "remains_current_until": "owner_confirms_external_declaration_status",
                     "declaration_close_gate": "current_external_submission_confirmation",
-                    "completion_date_semantics": "external_declaration_date_not_payment_date",
+                    "completion_date_required": False,
+                    "completion_date_when_known": "external_declaration_date",
                     "payment_tracking": "later_bank_statement_only_not_owner_workflow_input",
+                    "historical_completion_tool": (
+                        "finance_confirm_historical_obligation_completion"
+                    ),
                 },
                 {
                     "order": 5,
@@ -451,7 +466,7 @@ def agent_operating_protocol() -> dict[str, Any]:
                 ),
             },
             {
-                "code": "persist_historical_obligation_cutoffs_without_fake_dates",
+                "code": "persist_historical_obligation_cutoffs",
                 "instruction": HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION,
             },
             {

@@ -906,7 +906,7 @@ def finance_preview_payroll_contribution_assessment(
 def finance_confirm_payroll_contribution_assessment(
     request: ConfirmPayrollContributionAssessmentRequest,
 ) -> dict[str, Any]:
-    """确认社保公积金已申报并绑定申报日及不可变核定快照；不收集缴款事实。"""
+    """确认社保公积金已申报并绑定不可变核定快照；已知申报日可选，不收集缴款事实。"""
     try:
         with SessionLocal.begin() as session:
             return OwnerWorkflowService(session).confirm_payroll_contribution_assessment(request)
@@ -942,7 +942,7 @@ def finance_confirm_external_obligation(
 def finance_confirm_historical_obligation_completion(
     request: ConfirmHistoricalObligationCompletionRequest,
 ) -> dict[str, Any]:
-    """追认截至内核给定范围的适用历史法定义务已完成，不虚构完成日期。"""
+    """追认截至内核给定范围的适用历史法定义务已完成，具体完成日期可以未建立。"""
     try:
         with SessionLocal.begin() as session:
             return OwnerWorkflowService(session).confirm_historical_obligation_completion(request)

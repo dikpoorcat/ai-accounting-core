@@ -348,16 +348,16 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
         )
     )
     assert assessment["status"] == "calculated"
+    assessment_confirmation_request = ConfirmPayrollContributionAssessmentRequest(
+        org_id=organization.id,
+        period_id=period.id,
+        calculation_hash=assessment["calculation_hash"],
+        declaration_status="declared",
+        idempotency_key="workflow-contribution-declared-2026-08",
+        confirmation_note="确认八月社保公积金已申报，核定金额与快照一致。",
+    )
     confirmed_assessment = workflow.confirm_payroll_contribution_assessment(
-        ConfirmPayrollContributionAssessmentRequest(
-            org_id=organization.id,
-            period_id=period.id,
-            calculation_hash=assessment["calculation_hash"],
-            declaration_status="declared",
-            declaration_date=date(2026, 9, 1),
-            idempotency_key="workflow-contribution-declared-2026-08",
-            confirmation_note="确认八月社保公积金已申报，核定金额与快照一致。",
-        )
+        assessment_confirmation_request
     )
     assert confirmed_assessment["status"] == "confirmed"
     stored_assessment = session.get(
@@ -366,7 +366,16 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
     )
     assert stored_assessment is not None
     assert stored_assessment.declaration_status == "declared"
-    assert stored_assessment.declaration_date == date(2026, 9, 1)
+    assert stored_assessment.declaration_date is None
+    assert stored_assessment.declaration_date_status == "not_established"
+    assert confirmed_assessment["declaration_date"] is None
+    assert confirmed_assessment["declaration_date_status"] == "not_established"
+    assessment_replay = workflow.confirm_payroll_contribution_assessment(
+        assessment_confirmation_request
+    )
+    assert assessment_replay["idempotent_replay"] is True
+    assert assessment_replay["declaration_date"] is None
+    assert assessment_replay["declaration_date_status"] == "not_established"
     assert stored_assessment.payment_status == "not_tracked"
     assert stored_assessment.payment_date is None
 
@@ -453,6 +462,8 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
     assert step.get("deadline") is None
     assert step["next_owner_action"] is None
     assert step["close_gate_satisfied"] is True
+    assert step["completion_proof"][0]["declaration_date"] is None
+    assert step["completion_proof"][0]["declaration_date_status"] == "not_established"
 
     before_iit_declaration = OwnerWorkflowService(
         session, current_date=date(2026, 9, 10)
@@ -474,20 +485,47 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
         item for item in result["steps"] if item["code"] == "INDIVIDUAL_INCOME_TAX_WITHHOLDING"
     )
     obligation = iit_step["obligation"]
+    iit_confirmation_request = ConfirmExternalObligationRequest(
+        org_id=organization.id,
+        obligation_id=uuid.UUID(obligation["obligation_id"]),
+        source_snapshot_hash=obligation["source_snapshot_hash"],
+        completion_status="submitted",
+        idempotency_key="workflow-iit-declared-2026-08",
+        confirmation_note="确认八月个税已申报，具体申报日期未记录。",
+    )
     iit_confirmed = OwnerWorkflowService(
         session, current_date=date(2026, 9, 10)
     ).confirm_external_obligation(
-        ConfirmExternalObligationRequest(
-            org_id=organization.id,
-            obligation_id=uuid.UUID(obligation["obligation_id"]),
-            source_snapshot_hash=obligation["source_snapshot_hash"],
-            completion_status="submitted",
-            completion_date=date(2026, 9, 2),
-            idempotency_key="workflow-iit-declared-2026-08",
-            confirmation_note="确认八月个税已申报；日期为申报日，不是缴款日。",
-        )
+        iit_confirmation_request
     )
     assert iit_confirmed["status"] == "confirmed"
+    assert iit_confirmed["completion_date_status"] == "not_established"
+    assert iit_confirmed["completion_date"] is None
+    assert iit_confirmed["timeliness"] == "not_established"
+    iit_replay = OwnerWorkflowService(
+        session, current_date=date(2026, 9, 10)
+    ).confirm_external_obligation(iit_confirmation_request)
+    assert iit_replay["idempotent_replay"] is True
+    assert iit_replay["completion_date"] is None
+    assert iit_replay["completion_date_status"] == "not_established"
+    assert iit_replay["timeliness"] == "not_established"
+    session.flush()
+    session.expire_all()
+    completed_workflow = OwnerWorkflowService(
+        session, current_date=date(2026, 9, 10)
+    ).get(GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id))
+    completed_iit_step = next(
+        item
+        for item in completed_workflow["steps"]
+        if item["code"] == "INDIVIDUAL_INCOME_TAX_WITHHOLDING"
+    )
+    assert completed_iit_step["completion_state"] == "completed"
+    assert completed_iit_step["symbol"] == "✅"
+    assert completed_iit_step["completion_proof"][0]["completion_date"] is None
+    assert completed_iit_step["completion_proof"][0]["completion_date_status"] == (
+        "not_established"
+    )
+    assert completed_iit_step["completion_proof"][0]["timeliness"] == "not_established"
     after_iit_declaration = OwnerWorkflowService(
         session, current_date=date(2026, 9, 10)
     ).close_gate_snapshot(organization.id, period)

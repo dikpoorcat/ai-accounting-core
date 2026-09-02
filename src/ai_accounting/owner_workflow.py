@@ -143,6 +143,9 @@ class OwnerWorkflowService:
             for step in steps
             if step["order"] <= 6 or step["completion_state"] not in {"completed", "not_applicable"}
         ]
+        confirmation_targets = [
+            target for step in steps for target in step.get("confirmation_targets", [])
+        ]
         exports = self._period_exports(request.org_id, self._period_month(period))
         return {
             "status": "ok",
@@ -153,6 +156,7 @@ class OwnerWorkflowService:
             "current_action": current_action,
             "steps": steps,
             "queue_steps": queue_steps,
+            "confirmation_targets": confirmation_targets,
             "queue_visibility": {
                 "always_visible_orders": [1, 2, 3, 4, 5, 6],
                 "conditional_orders": [7, 8, 9],
@@ -305,6 +309,9 @@ class OwnerWorkflowService:
             contribution_period=self._period_month(period),
             declaration_status=request.declaration_status,
             declaration_date=request.declaration_date,
+            declaration_date_status=(
+                "established" if request.declaration_date is not None else "not_established"
+            ),
             payment_status="not_tracked",
             payment_date=None,
             external_reference=request.external_reference,
@@ -339,6 +346,10 @@ class OwnerWorkflowService:
             "status": "confirmed",
             "confirmation_id": str(row.id),
             "calculation_hash": row.calculation_hash,
+            "declaration_date": (
+                row.declaration_date.isoformat() if row.declaration_date is not None else None
+            ),
+            "declaration_date_status": row.declaration_date_status,
             "verification_level": "evidence_attached" if evidence else "owner_confirmed",
         }
 
@@ -373,6 +384,12 @@ class OwnerWorkflowService:
             "EXTERNAL_OBLIGATION_IDEMPOTENCY_PAYLOAD_MISMATCH",
         )
         if replay is not None:
+            if replay.get("status") == "confirmed":
+                replay["timeliness"] = self._completion_timeliness_payload(
+                    replay.get("completion_date"),
+                    replay.get("completion_date_status"),
+                    obligation,
+                )
             return replay
         active = self._active_obligation_confirmation(request.org_id, request.obligation_id)
         invalid = self._validate_supersedes(
@@ -395,6 +412,13 @@ class OwnerWorkflowService:
             source_snapshot_hash=obligation["source_snapshot_hash"],
             completion_status=request.completion_status,
             completion_date=request.completion_date,
+            completion_date_status=(
+                "not_applicable"
+                if request.completion_status == "not_applicable"
+                else "established"
+                if request.completion_date is not None
+                else "not_established"
+            ),
             external_reference=request.external_reference,
             idempotency_key=request.idempotency_key,
             request_payload_hash=payload_hash,
@@ -411,6 +435,12 @@ class OwnerWorkflowService:
             "EXTERNAL_OBLIGATION_CONCURRENT_WRITE_CONFLICT",
         )
         if result is not None:
+            if result.get("status") == "confirmed":
+                result["timeliness"] = self._completion_timeliness_payload(
+                    result.get("completion_date"),
+                    result.get("completion_date_status"),
+                    obligation,
+                )
             return result
         self._audit(
             request.org_id,
@@ -421,6 +451,11 @@ class OwnerWorkflowService:
             "status": "confirmed",
             "confirmation_id": str(row.id),
             "obligation_id": str(row.obligation_id),
+            "completion_date": (
+                row.completion_date.isoformat() if row.completion_date is not None else None
+            ),
+            "completion_date_status": row.completion_date_status,
+            "timeliness": self._completion_timeliness(row, obligation),
             "verification_level": "evidence_attached" if evidence else "owner_confirmed",
         }
 
@@ -681,6 +716,18 @@ class OwnerWorkflowService:
                     "declaration_status": (
                         assessment.declaration_status if assessment_current and assessment else None
                     ),
+                    "declaration_date": (
+                        assessment.declaration_date.isoformat()
+                        if assessment_current
+                        and assessment
+                        and assessment.declaration_date is not None
+                        else None
+                    ),
+                    "declaration_date_status": (
+                        assessment.declaration_date_status
+                        if assessment_current and assessment
+                        else None
+                    ),
                     "payroll": payroll_match,
                     "missing_information": contribution["missing_information"],
                 },
@@ -698,6 +745,13 @@ class OwnerWorkflowService:
                     "confirmation_id": (
                         str(iit_confirmation.id)
                         if iit_declaration_current and iit_confirmation
+                        else None
+                    ),
+                    "completion_date_status": (
+                        iit_confirmation.completion_date_status
+                        if isinstance(iit_confirmation, ExternalObligationConfirmation)
+                        else iit_confirmation.completion_date_status
+                        if isinstance(iit_confirmation, HistoricalObligationCompletionConfirmation)
                         else None
                     ),
                 },
@@ -737,6 +791,7 @@ class OwnerWorkflowService:
             step.setdefault("missing_facts", [])
             step.setdefault("next_owner_action", None)
             step.setdefault("close_gate_satisfied", True)
+            step.setdefault("confirmation_targets", [])
             step.setdefault("_ready", True)
             step["symbol"] = self._base_symbol(step)
             result.append(step)
@@ -803,6 +858,8 @@ class OwnerWorkflowService:
                     "kind": "contribution_assessment",
                     "confirmation_id": gate["confirmation_id"],
                     "calculation_hash": gate["calculation_hash"],
+                    "declaration_date": gate["declaration_date"],
+                    "declaration_date_status": gate["declaration_date_status"],
                 },
                 {
                     "kind": "posted_regular_payroll",
@@ -815,7 +872,7 @@ class OwnerWorkflowService:
             action = "请先补齐员工社保公积金档案或有效政策。"
         elif not gate["confirmation_current"]:
             missing = ["contribution_assessment_confirmation"]
-            action = "请先完成本期社保及公积金申报，再确认申报日和最终核定金额。"
+            action = "请先完成本期社保及公积金申报，再确认申报结果和最终核定金额。"
         else:
             missing = ["posted_regular_payroll_using_same_assessment"]
             preparation = gates["regular_payroll_preparation"]
@@ -881,7 +938,11 @@ class OwnerWorkflowService:
             ),
             action=action,
             deadline=obligation["deadline"],
-        ) | {"obligation": obligation, "existing_export": current_export}
+        ) | {
+            "obligation": obligation,
+            "confirmation_targets": [self._confirmation_target(item) for item in pending],
+            "existing_export": current_export,
+        }
 
     def _materials_step(
         self, _organization: Organization, _period: AccountingPeriod, gates: dict[str, Any]
@@ -1008,7 +1069,10 @@ class OwnerWorkflowService:
                 missing=["periodic_tax_and_financial_reporting_submission"],
                 action="请完成最早未结的税费申报及财务报表报送，完成后确认结果。",
                 deadline=obligation["deadline"],
-            ) | {"obligation": obligation}
+            ) | {
+                "obligation": obligation,
+                "confirmation_targets": [self._confirmation_target(item) for item in pending],
+            }
         applicable = organization.filing_cycle == "monthly" or period.calendar_month in {
             3,
             6,
@@ -1036,7 +1100,10 @@ class OwnerWorkflowService:
             missing=["periodic_tax_and_financial_reporting_submission"],
             action="请完成本期税费申报及财务报表报送，完成后确认结果。",
             deadline=obligation["deadline"],
-        ) | {"obligation": obligation}
+        ) | {
+            "obligation": obligation,
+            "confirmation_targets": [self._confirmation_target(obligation)],
+        }
 
     def _annual_eit_step(
         self, organization: Organization, period: AccountingPeriod, _gates: dict[str, Any]
@@ -1101,7 +1168,10 @@ class OwnerWorkflowService:
             missing=[code],
             action=f"请完成 {report_year} 年度{label}，完成后确认结果。",
             deadline=obligation["deadline"],
-        ) | {"obligation": obligation}
+        ) | {
+            "obligation": obligation,
+            "confirmation_targets": [self._confirmation_target(item) for item in pending],
+        }
 
     @staticmethod
     def _completed(proof: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1872,19 +1942,39 @@ class OwnerWorkflowService:
         ]
 
     def _historical_completion_candidates(self, organization: Organization) -> list[dict[str, Any]]:
-        return [
-            self._historical_completion_candidate(organization, code)
-            for code in (
-                "periodic_tax_reporting",
-                "annual_enterprise_income_tax",
-                "annual_business_report",
-            )
-        ]
+        result: list[dict[str, Any]] = []
+        for code in (
+            "individual_income_tax",
+            "periodic_tax_reporting",
+            "annual_enterprise_income_tax",
+            "annual_business_report",
+        ):
+            try:
+                result.append(self._historical_completion_candidate(organization, code))
+            except ValueError as exc:
+                if str(exc) != "HISTORICAL_OBLIGATION_COMPLETION_CUTOFF_NOT_AVAILABLE":
+                    raise
+        return result
 
     def _historical_completion_candidate(
         self, organization: Organization, code: str
     ) -> dict[str, Any]:
-        if code == "periodic_tax_reporting":
+        if code == "individual_income_tax":
+            obligation_scope = "month"
+            eligible = [
+                obligation
+                for obligation in self._individual_income_tax_obligations(organization)
+                if date.fromisoformat(obligation["deadline"]) < self.today
+            ]
+            if not eligible:
+                raise ValueError("HISTORICAL_OBLIGATION_COMPLETION_CUTOFF_NOT_AVAILABLE")
+            latest = max(
+                eligible,
+                key=lambda item: (item["deadline"], item["scope_identity"]),
+            )
+            completion_through_identity = latest["scope_identity"]
+            rule_version = "cn_iit_withholding_deadline_2026.1"
+        elif code == "periodic_tax_reporting":
             scope = organization.filing_cycle
             if scope not in {"monthly", "quarterly"}:
                 raise ValueError("UNSUPPORTED_HISTORICAL_OBLIGATION_FILING_CYCLE")
@@ -1974,6 +2064,20 @@ class OwnerWorkflowService:
                     self._annual_obligation(organization, "annual_business_report", report_year)
                 )
         return result
+
+    def _individual_income_tax_obligations(
+        self, organization: Organization
+    ) -> list[dict[str, Any]]:
+        obligations: list[dict[str, Any]] = []
+        for period in self.session.scalars(
+            select(AccountingPeriod)
+            .where(AccountingPeriod.org_id == organization.id)
+            .order_by(AccountingPeriod.start_date, AccountingPeriod.id)
+        ):
+            source = self._posted_payroll_source_snapshot(organization.id, period)
+            if source["declared_line_count"]:
+                obligations.append(self._iit_obligation(organization, period))
+        return obligations
 
     def _iit_obligation(
         self, organization: Organization, period: AccountingPeriod
@@ -2124,7 +2228,53 @@ class OwnerWorkflowService:
             "kind": "external_obligation_confirmation",
             "confirmation_id": str(confirmation.id),
             "obligation_id": obligation["obligation_id"],
+            "completion_status": confirmation.completion_status,
+            "completion_date": (
+                confirmation.completion_date.isoformat()
+                if confirmation.completion_date is not None
+                else None
+            ),
+            "completion_date_status": confirmation.completion_date_status,
+            "timeliness": OwnerWorkflowService._completion_timeliness(
+                confirmation, obligation
+            ),
         }
+
+    @staticmethod
+    def _confirmation_target(obligation: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "obligation_id": obligation["obligation_id"],
+            "code": obligation["code"],
+            "scope": obligation["scope"],
+            "scope_identity": obligation["scope_identity"],
+            "deadline": obligation["deadline"],
+            "source_snapshot_hash": obligation["source_snapshot_hash"],
+        }
+
+    @staticmethod
+    def _completion_timeliness(
+        confirmation: ExternalObligationConfirmation,
+        obligation: dict[str, Any],
+    ) -> str:
+        if confirmation.completion_status == "not_applicable":
+            return "not_applicable"
+        if confirmation.completion_date is None:
+            return "not_established"
+        deadline = date.fromisoformat(obligation["deadline"])
+        return "on_time" if confirmation.completion_date <= deadline else "late"
+
+    @staticmethod
+    def _completion_timeliness_payload(
+        completion_date: str | None,
+        completion_date_status: str | None,
+        obligation: dict[str, Any],
+    ) -> str:
+        if completion_date_status == "not_applicable":
+            return "not_applicable"
+        if completion_date is None:
+            return "not_established"
+        deadline = date.fromisoformat(obligation["deadline"])
+        return "on_time" if date.fromisoformat(completion_date) <= deadline else "late"
 
     def _establishment_date(self, org_id: uuid.UUID) -> date | None:
         current = self._active_establishment_confirmation(org_id)
@@ -2340,11 +2490,37 @@ class OwnerWorkflowService:
             return None
         if existing.request_payload_hash != payload_hash:
             return {"status": "rejected", "errors": [mismatch_code]}
-        return {
+        return self._confirmation_replay_payload(existing)
+
+    @staticmethod
+    def _confirmation_replay_payload(existing: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "status": "confirmed",
             "confirmation_id": str(existing.id),
             "idempotent_replay": True,
         }
+        for field in (
+            "calculation_hash",
+            "declaration_date_status",
+            "completion_status",
+            "completion_date_status",
+            "obligation_code",
+            "completion_through_identity",
+        ):
+            if hasattr(existing, field):
+                payload[field] = getattr(existing, field)
+        for field in ("obligation_id",):
+            if hasattr(existing, field):
+                payload[field] = str(getattr(existing, field))
+        for field in ("declaration_date", "completion_date"):
+            if hasattr(existing, field):
+                value = getattr(existing, field)
+                payload[field] = value.isoformat() if value is not None else None
+        if hasattr(existing, "evidence_snapshot"):
+            payload["verification_level"] = (
+                "evidence_attached" if existing.evidence_snapshot else "owner_confirmed"
+            )
+        return payload
 
     @staticmethod
     def _validate_supersedes(
@@ -2382,11 +2558,7 @@ class OwnerWorkflowService:
                 )
             )
             if concurrent is not None and concurrent.request_payload_hash == payload_hash:
-                return {
-                    "status": "confirmed",
-                    "confirmation_id": str(concurrent.id),
-                    "idempotent_replay": True,
-                }
+                return self._confirmation_replay_payload(concurrent)
             return {"status": "rejected", "errors": [conflict_code]}
         return None
 

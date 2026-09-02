@@ -185,6 +185,7 @@ def test_historical_obligation_completion_is_a_strict_typed_write() -> None:
         "confirmation_note",
     }
     assert request_schema["properties"]["completion_date_status"]["const"] == ("not_established")
+    assert "individual_income_tax" in request_schema["properties"]["obligation_code"]["enum"]
 
 
 def test_contribution_confirmation_tracks_declaration_without_payment_fields() -> None:
@@ -196,9 +197,19 @@ def test_contribution_confirmation_tracks_declaration_without_payment_fields() -
 
     assert request_schema["additionalProperties"] is False
     assert request_schema["properties"]["declaration_status"]["const"] == "declared"
-    assert "declaration_date" in request_schema["required"]
+    assert "declaration_date" not in request_schema["required"]
     assert "payment_status" not in request_schema["properties"]
     assert "payment_date" not in request_schema["properties"]
+
+
+def test_external_obligation_completion_date_is_optional() -> None:
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    confirmation = tools["finance_confirm_external_obligation"]
+    request_schema = confirmation.inputSchema["$defs"]["ConfirmExternalObligationRequest"]
+
+    assert request_schema["additionalProperties"] is False
+    assert "completion_date" in request_schema["properties"]
+    assert "completion_date" not in request_schema["required"]
 
 
 def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> None:
@@ -275,9 +286,19 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "exclude": ["ai_internal_work"],
         "show_when": ["every_response_with_next_action", "owner_requests_status"],
     }
-    assert protocol["version"] == "accounting_execution_assistant_v26"
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.9"
+    assert protocol["version"] == "accounting_execution_assistant_v27"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.10"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
+    assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
+    assert protocol["owner_workflow"]["target_selection"] == (
+        "ai_interprets_selected_company_step_and_conversation_context"
+    )
+    assert protocol["owner_workflow"]["external_completion_date"] == {
+        "required": False,
+        "when_known": "persist_as_established",
+        "when_unknown": "persist_as_not_established",
+        "affects_completion": False,
+    }
     assert protocol["owner_workflow"]["prohibit_chat_derived_completion"] is True
     assert protocol["owner_workflow"]["visibility_rule"] == (
         "always_show_steps_1_to_6_and_show_steps_7_to_9_only_while_attention_required"
@@ -316,10 +337,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "current_amount_assessment_and_posted_payroll_use_same_snapshot"
     )
     assert contribution_step["status_choices"] == ["已申报", "尚未申报"]
-    assert contribution_step["confirmation_fields"] == [
-        "declaration_date",
-        "declared_amount_snapshot",
-    ]
+    assert contribution_step["confirmation_fields"] == ["declared_amount_snapshot"]
+    assert contribution_step["optional_confirmation_fields"] == ["declaration_date"]
     assert contribution_step["payment_tracking"] == (
         "later_bank_statement_only_not_owner_workflow_input"
     )
@@ -359,8 +378,12 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert individual_income_tax_step["declaration_close_gate"] == (
         "current_external_submission_confirmation"
     )
-    assert individual_income_tax_step["completion_date_semantics"] == (
-        "external_declaration_date_not_payment_date"
+    assert individual_income_tax_step["completion_date_required"] is False
+    assert individual_income_tax_step["completion_date_when_known"] == (
+        "external_declaration_date"
+    )
+    assert individual_income_tax_step["historical_completion_tool"] == (
+        "finance_confirm_historical_obligation_completion"
     )
     assert individual_income_tax_step["payment_tracking"] == (
         "later_bank_statement_only_not_owner_workflow_input"
@@ -385,7 +408,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert [item["code"] for item in protocol["required_sequence"]] == [
         "inspect_available_materials",
         "derive_when_unique",
-        "persist_historical_obligation_cutoffs_without_fake_dates",
+        "persist_historical_obligation_cutoffs",
         "identify_material_unknowns",
         "propose_best_supported_treatment",
         "persist_workforce_then_assess_contributions_before_income_tax",
