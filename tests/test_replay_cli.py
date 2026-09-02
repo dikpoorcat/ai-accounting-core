@@ -20,6 +20,21 @@ def test_replay_orders_non_primary_company_before_primary() -> None:
     ] == ["secondary", "primary"]
 
 
+def test_catalog_migration_target_uses_migration_credentials() -> None:
+    runtime = make_url(
+        "postgresql+psycopg://finance_runtime:runtime@127.0.0.1/finance_catalog"
+    )
+    migration = (
+        "postgresql+psycopg://finance_migrator:migrator@127.0.0.1/finance"
+    )
+
+    target = replay_cli._migration_url_for_runtime_database(migration, runtime)
+
+    assert target.username == "finance_migrator"
+    assert target.password == "migrator"
+    assert target.database == "finance_catalog"
+
+
 def test_financial_statement_normalization_format_is_typed(tmp_path) -> None:
     path = tmp_path / "normalizations.json"
     path.write_text(

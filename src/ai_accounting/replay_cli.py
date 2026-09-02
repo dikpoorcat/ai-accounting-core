@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from alembic import command
 
 from .coa import seed_organization
+from .company_router import grant_runtime_database_access
 from .config import get_settings
 from .models import (
     Account,
@@ -478,6 +479,14 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _database_url_for_name(base_url: str | URL, database_name: str) -> URL:
     return make_url(base_url).set(database=database_name)
+
+
+def _migration_url_for_runtime_database(
+    migration_base: str | URL, runtime_url: URL
+) -> URL:
+    if not runtime_url.database:
+        raise ReplayError("REPLAY_TARGET_DATABASE_NAME_INVALID")
+    return _database_url_for_name(migration_base, runtime_url.database)
 
 
 def _render_url(url: str | URL) -> str:
@@ -2866,6 +2875,15 @@ def _ensure_empty_database(
     return True
 
 
+def _grant_runtime_access(database_url: URL, runtime_role: str) -> None:
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            grant_runtime_database_access(connection, runtime_role)
+    finally:
+        engine.dispose()
+
+
 def _apply_account_controls(
     session: Session,
     *,
@@ -3002,15 +3020,29 @@ def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, An
         raise ReplayError("REPLAY_TARGET_PROVISIONING_NOT_CONFIGURED")
     if catalog_url.get_backend_name() != "postgresql":
         raise ReplayError("REPLAY_TARGET_POSTGRESQL_REQUIRED")
+    if not catalog_url.database:
+        raise ReplayError("REPLAY_TARGET_DATABASE_NAME_INVALID")
+    company_runtime_base = settings.finance_company_database_url
+    if company_runtime_base is None:
+        raise ReplayError("REPLAY_TARGET_RUNTIME_ROLE_NOT_CONFIGURED")
+    catalog_runtime_role = catalog_url.username
+    company_runtime_url = make_url(company_runtime_base)
+    company_runtime_role = company_runtime_url.username
+    if catalog_runtime_role is None or company_runtime_role is None:
+        raise ReplayError("REPLAY_TARGET_RUNTIME_ROLE_NOT_CONFIGURED")
+    catalog_migration_url = _migration_url_for_runtime_database(
+        migration_base, catalog_url
+    )
     provisioning_engine = create_engine(provisioning_url, isolation_level="AUTOCOMMIT")
     created_databases: list[str] = []
     try:
         if _ensure_empty_database(provisioning_engine, url=catalog_url):
             created_databases.append(str(catalog_url.database))
         catalog_id = uuid.uuid4()
-        catalog_config = _migration_config("catalog_alembic.ini", catalog_url)
+        catalog_config = _migration_config("catalog_alembic.ini", catalog_migration_url)
         catalog_config.attributes["catalog_instance_id"] = catalog_id
         command.upgrade(catalog_config, "head")
+        _grant_runtime_access(catalog_migration_url, catalog_runtime_role)
         catalog_engine = create_engine(catalog_url)
         company_states: list[dict[str, Any]] = []
         try:
@@ -3035,6 +3067,7 @@ def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, An
                         }
                     )
                     command.upgrade(business_config, "head")
+                    _grant_runtime_access(company_url, company_runtime_role)
                     _initialize_empty_company(
                         company_url=company_url,
                         catalog_id=catalog_id,
