@@ -105,19 +105,25 @@ PostgreSQL 17 `pg_dump`/`pg_restore`；未就绪时不会关账。关账业务�
 
 公司包只包含该业务数据库和它实际引用的内容寻址证据，清单记录 artifact 类型、`org_id`、数据库身份、schema revision 和摘要；包内不得出现负责人密码哈希、恢复码或会话秘密表。目录包才包含本机身份和生命周期数据。
 
-目录形式的已验证公司包可以封装成单个便携 ZIP，并在传输后逐字节验证、受控解包：
+`create` 生成的 `.complete` 目录只是中间产物。公司手工备份（包括正式库启用后的初始备份）
+必须继续封装并验证为单个便携 ZIP 才算完成；完成品按
+`<统一社会信用代码>.finance-company.zip` 命名。多家公司必须各自生成独立 ZIP，不得合并。
+初始备份只有这一份当前版 ZIP；后续成功关账滚动时才产生
+`<统一社会信用代码>.previous.finance-company.zip`。目录库备份不伪装成公司便携 ZIP。
+
+目录形式的已验证公司包必须按以下步骤封装、逐字节验证，并可在传输后受控解包：
 
 ```powershell
 .\.venv\Scripts\finance-backup.exe pack `
   --backup-root D:\Protected\finance-backups `
   --backup-directory D:\Protected\finance-backups\<handoff-backup-id>.complete `
-  --output E:\company.finance-company.zip
+  --output E:\<统一社会信用代码>.finance-company.zip
 
 .\.venv\Scripts\finance-backup.exe verify-portable `
-  --file E:\company.finance-company.zip
+  --file E:\<统一社会信用代码>.finance-company.zip
 
 .\.venv\Scripts\finance-backup.exe unpack `
-  --file E:\company.finance-company.zip `
+  --file E:\<统一社会信用代码>.finance-company.zip `
   --output-root D:\Protected\finance-import
 ```
 
