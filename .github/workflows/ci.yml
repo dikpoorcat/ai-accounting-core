@@ -3,6 +3,8 @@ name: Continuous integration
 on:
   pull_request:
   push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -22,6 +24,11 @@ jobs:
           enable-cache: true
       - name: Install the locked project and development tools
         run: uv sync --locked --all-extras
+      - name: Build the dashboard
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build:release
       - name: Verify installed dependencies
         run: uv run python -m pip check
       - name: Lint
@@ -73,6 +80,11 @@ jobs:
           enable-cache: true
       - name: Install the locked project and development tools
         run: uv sync --locked --all-extras
+      - name: Build the dashboard
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build:release
       - name: Apply and validate Alembic migrations
         run: |
           uv run alembic upgrade head

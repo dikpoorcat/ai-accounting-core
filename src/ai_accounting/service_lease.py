@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ctypes
-import msvcrt
 import os
 import stat
 import sys
@@ -93,6 +92,8 @@ def acquire_windows_service_lease(
     """
     if mode not in _LEASE_MODES or sys.platform != "win32":
         raise ServiceLeaseError("SERVICE_LEASE_UNAVAILABLE")
+    import msvcrt
+
     candidate = _validated_lock_file(lock_file)
     before_open = _lstat_regular_file(candidate)
     access_verifier.assert_current_windows_user_only(candidate)
