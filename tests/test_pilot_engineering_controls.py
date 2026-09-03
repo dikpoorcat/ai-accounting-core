@@ -26,9 +26,14 @@ def test_supply_chain_controls_pin_dependencies_actions_and_vulnerability_gate()
     repository_root = Path(__file__).parents[1]
     lock_file = repository_root / "uv.lock"
     pyproject = (repository_root / "pyproject.toml").read_text(encoding="utf-8")
-    workflow = (repository_root / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
+    workflows_dir = repository_root / ".github" / "workflows"
+    workflows = {
+        path.name: path.read_text(encoding="utf-8") for path in workflows_dir.glob("*.yml")
+    }
+    workflow = workflows["ci.yml"]
+    dependency_security = workflows["dependency-security.yml"]
+    secret_scan = workflows["secret-scan.yml"]
+    all_workflows = "\n".join(workflows.values())
     dependabot = (repository_root / ".github" / "dependabot.yml").read_text(encoding="utf-8")
     compose = (repository_root / "docker-compose.yml").read_text(encoding="utf-8")
 
@@ -37,12 +42,27 @@ def test_supply_chain_controls_pin_dependencies_actions_and_vulnerability_gate()
     assert 'required-version = "==0.12.3"' in pyproject
     assert 'artifacts = ["src/ai_accounting/static/dashboard/**"]' in pyproject
     assert "uv sync --locked --all-extras" in workflow
-    assert "continue-on-error" not in workflow
-    assert "uv run pip-audit --format json --output pip-audit.json" in workflow
+    assert "uv sync --locked --all-extras" in dependency_security
+    assert "continue-on-error" not in all_workflows
+    assert workflow.count("paths-ignore:") == 2
+    assert '      - "**/*.md"' in workflow
+    assert "timeout-minutes: 20" in workflow
+    assert "timeout-minutes: 10" in workflow
+    assert (
+        "uv run pip-audit --format json --output pip-audit.json" in dependency_security
+    )
+    assert 'cron: "0 17 * * 0"' in dependency_security
+    assert "retention-days: 14" in dependency_security
+    assert "gitleaks/gitleaks-action" in secret_scan
+    assert "paths-ignore:" not in secret_scan
+    assert "timeout-minutes: 5" in secret_scan
+    assert all("cancel-in-progress: true" in content for content in workflows.values())
     assert "package-ecosystem: pip" in dependabot
     assert "package-ecosystem: github-actions" in dependabot
 
-    action_references = re.findall(r"^\s*- uses: [^@\s]+@([^\s#]+) # v\S+$", workflow, re.MULTILINE)
+    action_references = re.findall(
+        r"^\s*- uses: [^@\s]+@([^\s#]+) # v\S+$", all_workflows, re.MULTILINE
+    )
     assert action_references
     assert all(re.fullmatch(r"[0-9a-f]{40}", reference) for reference in action_references)
 
