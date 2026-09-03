@@ -88,7 +88,7 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
-        command=getattr(sys, "_base_executable", sys.executable),
+        command=sys.executable,
         args=["-m", "ai_accounting.mcp_server"],
         cwd=Path(__file__).parents[1],
         env=_stdio_environment(database_url, tmp_path / "evidence"),

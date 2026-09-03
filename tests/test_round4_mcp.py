@@ -58,7 +58,7 @@ def _raising_stdio_program(exception_statement: str) -> str:
 def test_r4_010_stdio_prevalidation_keeps_paths_but_hides_request_sentinels() -> None:
     async def run() -> str:
         parameters = StdioServerParameters(
-            command=getattr(sys, "_base_executable", sys.executable),
+            command=sys.executable,
             args=["-m", "ai_accounting.mcp_server"],
             cwd=Path(__file__).parents[1],
             env=_stdio_environment(),
@@ -109,7 +109,7 @@ def test_r4_010_stdio_outer_tool_boundary_never_leaks_unknown_exceptions(
 
     async def run() -> str:
         parameters = StdioServerParameters(
-            command=getattr(sys, "_base_executable", sys.executable),
+            command=sys.executable,
             args=["-c", _raising_stdio_program(exception_statement)],
             cwd=Path(__file__).parents[1],
             env=_stdio_environment(),

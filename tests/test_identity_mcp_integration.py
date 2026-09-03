@@ -330,12 +330,23 @@ def test_mcp_authentication_required_requests_the_local_login_launcher(
 
 
 def test_mcp_credential_store_failure_is_stable_and_fail_closed(
+    session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FailingCredentialStore(InMemoryCredentialStore):
         def load_session_token(self) -> SecretStr | None:
             raise IdentityError("IDENTITY_CREDENTIAL_STORE_READ_FAILED")
 
+    session.commit()
+    monkeypatch.setattr(
+        mcp_server,
+        "SessionLocal",
+        mcp_server._ContextAwareSessionFactory(  # type: ignore[attr-defined]
+            __import__("sqlalchemy.orm").orm.sessionmaker(
+                bind=session.get_bind(), expire_on_commit=False
+            )
+        ),
+    )
     monkeypatch.setattr(
         mcp_server,
         "get_settings",

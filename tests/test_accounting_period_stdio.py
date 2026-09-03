@@ -235,7 +235,7 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
-        command=getattr(sys, "_base_executable", sys.executable),
+        command=sys.executable,
         args=stdio_args,
         cwd=Path(__file__).parents[1],
         env=_environment(database_url, tmp_path / "evidence"),
@@ -584,7 +584,7 @@ def test_zero_voucher_month_closes_through_real_stdio(
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
-        command=getattr(sys, "_base_executable", sys.executable),
+        command=sys.executable,
         args=stdio_args,
         cwd=Path(__file__).parents[1],
         env=_environment(database_url, tmp_path / "zero-evidence"),
@@ -726,7 +726,7 @@ def test_real_stdio_uses_china_current_date_for_posting_boundary(tmp_path: Path)
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
-        command=getattr(sys, "_base_executable", sys.executable),
+        command=sys.executable,
         args=["-m", "ai_accounting.mcp_server"],
         cwd=Path(__file__).parents[1],
         env=_environment(database_url, tmp_path / "china-date-evidence"),
@@ -928,7 +928,7 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
-        command=getattr(sys, "_base_executable", sys.executable),
+        command=sys.executable,
         args=["-m", "ai_accounting.mcp_server"],
         cwd=Path(__file__).parents[1],
         env=_environment(database_url, tmp_path / "payroll-preview-evidence"),

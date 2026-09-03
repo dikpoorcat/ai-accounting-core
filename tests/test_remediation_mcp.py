@@ -460,7 +460,7 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
             # The virtualenv launcher on Windows starts a second interpreter
             # process.  Launch the base interpreter directly so stdio_client
             # owns the real server process and can terminate it reliably.
-            command=getattr(sys, "_base_executable", sys.executable),
+            command=sys.executable,
             args=["-m", "ai_accounting.mcp_server"],
             cwd=Path(__file__).parents[1],
             env=environment,

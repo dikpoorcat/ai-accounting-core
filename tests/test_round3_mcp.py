@@ -34,7 +34,7 @@ def test_r3_012_stdio_prevalidation_errors_expose_paths_but_not_input_values() -
 
     async def run() -> None:
         parameters = StdioServerParameters(
-            command=getattr(sys, "_base_executable", sys.executable),
+            command=sys.executable,
             args=["-m", "ai_accounting.mcp_server"],
             cwd=Path(__file__).parents[1],
             env=_stdio_environment(),

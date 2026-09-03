@@ -90,7 +90,7 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
-        command=getattr(sys, "_base_executable", sys.executable),
+        command=sys.executable,
         args=["-m", "ai_accounting.mcp_server"],
         cwd=Path(__file__).parents[1],
         env=_stdio_environment(database_url, tmp_path / "evidence"),

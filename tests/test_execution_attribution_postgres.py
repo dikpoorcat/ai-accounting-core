@@ -636,7 +636,7 @@ mcp_server.main()
 
             async def invoke() -> tuple[object, object, object]:
                 parameters = StdioServerParameters(
-                    command=getattr(sys, "_base_executable", sys.executable),
+                    command=sys.executable,
                     args=["-c", script, target],
                     cwd=repository_root,
                     env=environment,

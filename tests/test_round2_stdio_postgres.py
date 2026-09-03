@@ -213,7 +213,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
 
             async def run_stdio_lifecycle() -> dict[str, Any]:
                 parameters = StdioServerParameters(
-                    command=getattr(sys, "_base_executable", sys.executable),
+                    command=sys.executable,
                     args=stdio_args,
                     cwd=Path(__file__).parents[1],
                     env=_stdio_environment(
@@ -1367,7 +1367,7 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
 
             async def run_stdio_import_errors() -> dict[str, tuple[dict[str, Any], str]]:
                 parameters = StdioServerParameters(
-                    command=getattr(sys, "_base_executable", sys.executable),
+                    command=sys.executable,
                     args=["-m", "ai_accounting.mcp_server"],
                     cwd=Path(__file__).parents[1],
                     env=_stdio_environment(database_url, tmp_path / "evidence"),

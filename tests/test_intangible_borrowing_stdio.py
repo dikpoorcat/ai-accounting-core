@@ -199,7 +199,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
         )
     )
     parameters = StdioServerParameters(
-        command=getattr(sys, "_base_executable", sys.executable),
+        command=sys.executable,
         args=stdio_args,
         cwd=Path(__file__).parents[1],
         env=environment,

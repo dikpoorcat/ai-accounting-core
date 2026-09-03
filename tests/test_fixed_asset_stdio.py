@@ -171,7 +171,7 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(
             )
         )
         parameters = StdioServerParameters(
-            command=getattr(sys, "_base_executable", sys.executable),
+            command=sys.executable,
             args=stdio_args,
             cwd=Path(__file__).parents[1],
             env=environment,

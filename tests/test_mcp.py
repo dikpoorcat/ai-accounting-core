@@ -850,7 +850,7 @@ def test_stdio_server_initializes_and_lists_tools() -> None:
             # On Windows the virtualenv launcher starts a second process that
             # stdio_client cannot reliably reap.  The base interpreter plus the
             # virtualenv dependencies keeps this smoke test self-contained.
-            command=getattr(sys, "_base_executable", sys.executable),
+            command=sys.executable,
             args=["-m", "ai_accounting.mcp_server"],
             cwd=repository_root,
             env=environment,
@@ -959,7 +959,7 @@ mcp_server._OWNER_LOGIN_WINDOW_LAUNCHER = SimpleNamespace(
 mcp_server.main()
 """
         parameters = StdioServerParameters(
-            command=getattr(sys, "_base_executable", sys.executable),
+            command=sys.executable,
             args=["-c", script],
             cwd=repository_root,
             env=environment,
