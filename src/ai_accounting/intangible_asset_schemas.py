@@ -52,6 +52,7 @@ class IntangibleAssetBenefitArea(StrEnum):
 class IntangibleAssetResultStatus(StrEnum):
     CALCULATED = "calculated"
     POSTED = "posted"
+    DELETED = "deleted"
     REVERSED = "reversed"
     NEEDS_INFORMATION = "needs_information"
     REJECTED = "rejected"

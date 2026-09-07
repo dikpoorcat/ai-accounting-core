@@ -4203,7 +4203,7 @@ class BusinessEvent(Base):
         UniqueConstraint("org_id", "id", name="uq_business_event_org_id"),
         UniqueConstraint("org_id", "idempotency_key", name="uq_event_org_idempotency"),
         CheckConstraint(
-            "status IN ('draft','posted','needs_information','rejected','reversed')",
+            "status IN ('draft','posted','needs_information','rejected','reversed','deleted')",
             name="ck_event_status",
         ),
     )
@@ -4217,6 +4217,7 @@ class BusinessEventAmendment(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"))
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    operation: Mapped[str] = mapped_column(String(10), server_default="amend")
     revision: Mapped[int] = mapped_column(Integer)
     idempotency_key: Mapped[str] = mapped_column(String(200))
     request_hash: Mapped[str] = mapped_column(String(64))
@@ -4243,6 +4244,7 @@ class BusinessEventAmendment(Base):
         ),
         UniqueConstraint("org_id", "idempotency_key", name="uq_event_amendment_key"),
         UniqueConstraint("org_id", "event_id", "revision", name="uq_event_amendment_revision"),
+        CheckConstraint("operation IN ('amend','delete')", name="ck_event_amendment_operation"),
         CheckConstraint("revision > 0", name="ck_event_amendment_revision"),
     )
 
@@ -5800,6 +5802,33 @@ class BankStatementImportAction(Base):
     )
 
 
+class BankStatementImportWithdrawal(Base):
+    """Retained audit of an import removed from the active bank ledger."""
+
+    __tablename__ = "bank_statement_import_withdrawals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    action_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(Text)
+    before_state: Mapped[dict[str, Any]] = mapped_column(JSON)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["org_id", "action_id"],
+            ["bank_statement_import_actions.org_id", "bank_statement_import_actions.id"],
+            ondelete="RESTRICT"),
+        ForeignKeyConstraint(["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"], ondelete="RESTRICT"),
+        UniqueConstraint("org_id", "action_id", name="uq_bank_withdrawal_action"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_bank_withdrawal_key"),
+    )
+
+
 class BankStatementImportFailure(Base):
     """Minimal, value-free row error retained only for a formal confirmation."""
 
@@ -6873,6 +6902,7 @@ class EnterpriseIncomeTaxSettlementLine(Base):
 
 EXECUTION_ATTRIBUTION_SESSION_KEY = "finance_execution_attribution_id"
 _ATTRIBUTED_ROOT_TYPES = (
+    BankStatementImportWithdrawal,
     BusinessEventAmendment,
     EnterpriseIncomeTaxResult,
     EnterpriseIncomeTaxSettlement,
@@ -7019,6 +7049,17 @@ def _enforce_organization_profile_append_only(
     for item in session.dirty:
         if isinstance(item, immutable_types) and session.is_modified(item):
             raise ValueError("ORGANIZATION_PROFILE_IMMUTABLE")
+
+
+@event.listens_for(Session, "before_flush")
+def _enforce_bank_withdrawal_audit(
+    session: Session, _flush_context: object, _instances: object
+) -> None:
+    if any(isinstance(item, BankStatementImportWithdrawal) for item in session.deleted) or any(
+        isinstance(item, BankStatementImportWithdrawal) and session.is_modified(item)
+        for item in session.dirty
+    ):
+        raise ValueError("BANK_IMPORT_WITHDRAWAL_IMMUTABLE")
 
 
 @event.listens_for(Session, "before_flush")

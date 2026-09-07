@@ -13,6 +13,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
+from test_business_deletions import delete_event
 from test_service import sale_request
 from testcontainers.community.postgres import PostgresContainer
 
@@ -215,7 +216,126 @@ def banked_checks(engine, context, evidence_id, tmp_path):
                 assert result["voucher_id"] == str(source.voucher_id)
                 assert session.get(BankTransaction, bank.id).matched_event_id == source.event_id
                 session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+                from ai_accounting.bank_import_withdrawals import BankImportWithdrawalService
+                from ai_accounting.event_amendment_schemas import WithdrawBankImportRequest
+                from ai_accounting.models import BankStatementImportAction
+
+                action = session.get(BankStatementImportAction, bank.import_action_id)
+                with attributed(session, "finance_withdraw_bank_statement_import"):
+                    blocked = BankImportWithdrawalService(session).withdraw(
+                        WithdrawBankImportRequest(
+                            org_id=org.id,
+                            action_id=action.id,
+                            expected_calculation_hash=action.calculation_hash,
+                            idempotency_key="blocked-withdraw",
+                            reason="In use",
+                        )
+                    )
+                    assert blocked["errors"] == ["BANK_IMPORT_TRANSACTIONS_IN_USE"]
+                with attributed(session, "finance_delete_event"):
+                    delete_event(session, session.get(BusinessEvent, source.event_id))
+                    assert session.get(BankTransaction, bank.id).matched_event_id is None
+                    session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
             transaction.rollback()
+
+    from ai_accounting.bank_import_withdrawals import BankImportWithdrawalService
+    from ai_accounting.event_amendment_schemas import WithdrawBankImportRequest
+    from ai_accounting.models import BankStatementImportAction
+
+    with Session(engine) as session:
+        transaction = session.begin()
+        bank = import_bank(session, 22704, "2026-08-26", "wrong-import")
+        action = session.get(BankStatementImportAction, bank.import_action_id)
+        request = WithdrawBankImportRequest(
+            org_id=context.org_id,
+            action_id=action.id,
+            expected_calculation_hash=action.calculation_hash,
+            idempotency_key="withdraw-import",
+            reason="Wrong ID column",
+        )
+        with attributed(session, "finance_withdraw_bank_statement_import"):
+            result = BankImportWithdrawalService(session).withdraw(request)
+            assert result["status"] == "withdrawn", result
+            assert result["removed_count"] == 1
+            assert session.get(BankTransaction, bank.id) is None
+            assert BankImportWithdrawalService(session).withdraw(request)["idempotent_replay"]
+            session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+        replacement = import_bank(session, 22704, "2026-08-26", "correct-import")
+        assert replacement.id != bank.id
+        session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        transaction.rollback()
+
+    def import_rows(session, key, rows):
+        filename = key + ".csv"
+        (tmp_path / filename).write_text(
+            "date,amount,reference\n"
+            + "\n".join(
+                f"2026-08-26,{Decimal(amount) / Decimal(100):.2f},{external_id}"
+                for external_id, amount in rows
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        service = BankStatementService(
+            session,
+            settings=Settings(
+                finance_bank_import_dir=tmp_path, finance_evidence_dir=tmp_path / "evidence"
+            ),
+        )
+        request = PreviewBankStatementFileImportRequest(
+            org_id=context.org_id,
+            bank_account_code="1002",
+            source_file_name=filename,
+            file_format="csv",
+            column_mapping={"booking_date": "date", "amount": "amount", "external_id": "reference"},
+        )
+        preview = service.preview_bank_statement_import(request)
+        assert preview.status == "calculated", preview
+        with attributed(session, "finance_confirm_bank_statement_import"):
+            confirmed = service.confirm_bank_statement_import(
+                ConfirmBankStatementFileImportRequest.model_validate(
+                    request.model_dump()
+                    | {"calculation_hash": preview.calculation_hash, "idempotency_key": key}
+                )
+            )
+        assert confirmed.status == "posted", confirmed
+        return confirmed
+
+    with Session(engine) as session:
+        transaction = session.begin()
+        original_rows = [(f"bank-{i}", 10000 + i) for i in range(8)]
+        original = import_rows(session, "eight-original", original_rows)
+        wrong = import_rows(
+            session,
+            "nine-wrong",
+            [(f"unique-{i}", amount) for i, (_, amount) in enumerate(original_rows)]
+            + [("unique-8", 22704)],
+        )
+        assert wrong.data["imported_count"] == 9
+        with attributed(session, "finance_withdraw_bank_statement_import"):
+            result = BankImportWithdrawalService(session).withdraw(
+                WithdrawBankImportRequest(
+                    org_id=context.org_id,
+                    action_id=wrong.action_id,
+                    expected_calculation_hash=wrong.calculation_hash,
+                    idempotency_key="remove-nine",
+                    reason="Wrong identifier column",
+                )
+            )
+            assert result["status"] == "withdrawn", result
+            assert result["removed_count"] == 9
+            session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+        corrected = import_rows(session, "nine-correct", original_rows + [("bank-new", 22704)])
+        assert corrected.data["imported_count"] == 1
+        assert corrected.data["duplicate_count"] == 8
+        assert set(corrected.data["duplicate_transaction_ids"]) == set(
+            original.data["imported_transaction_ids"]
+        )
+        session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        transaction.rollback()
 
 
 def test_forward_migration_and_all_posting_families(tmp_path):
@@ -331,6 +451,26 @@ def test_forward_migration_and_all_posting_families(tmp_path):
                 ):
                     check(session, session.get(Organization, org_id), *args)
                     session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                if check != cases.test_income_tax_result_amendment_reuses_prior_reversal:
+                    session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+                    latest = session.scalar(
+                        select(BusinessEventAmendment).order_by(
+                            BusinessEventAmendment.created_at.desc()
+                        )
+                    )
+                    with persist_execution_attribution(
+                        session,
+                        context=replace(context, request_correlation_id=uuid.uuid4()),
+                        tool_name="finance_delete_event",
+                    ):
+                        delete_event(session, session.get(BusinessEvent, latest.event_id))
+                        session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                        with pytest.raises(DBAPIError, match="DELETED_EVENT_IMMUTABLE"):
+                            with session.begin_nested():
+                                session.execute(
+                                    text("UPDATE business_events SET status='posted' WHERE id=:id"),
+                                    {"id": latest.event_id},
+                                )
                 transaction.rollback()
         banked_checks(engine, context, evidence_id, tmp_path)
         with (

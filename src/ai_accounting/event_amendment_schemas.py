@@ -76,3 +76,23 @@ class AmendEventRequest(BaseModel):
         if self.replacement.org_id != self.org_id:
             raise ValueError("replacement must belong to the same organization")
         return self
+
+
+class DeleteEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    event_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    expected_facts_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class WithdrawBankImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    org_id: uuid.UUID
+    action_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    expected_calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str = Field(min_length=1, max_length=1000)

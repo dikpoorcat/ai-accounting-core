@@ -69,6 +69,7 @@ class BankStatementPreviewStatus(StrEnum):
 
 
 class BankStatementActionStatus(StrEnum):
+    WITHDRAWN = "withdrawn"
     POSTED = "posted"
     PARTIALLY_POSTED = "partially_posted"
     NEEDS_INFORMATION = "needs_information"

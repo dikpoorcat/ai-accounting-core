@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v31"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v32"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
@@ -204,6 +204,21 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "open_month_deletions": {
+            "event_tool": "finance_delete_event",
+            "bank_import_tool": "finance_withdraw_bank_statement_import",
+            "instructions": [
+                "未关账误记业务可删除：先读取 finance_get_event，"
+                "提交事件编号、facts_hash、新幂等键和原因。",
+                "删除撤去原凭证及派生明细、恢复核销余额，保留事件删除标记、原编号和删除前快照。",
+                "误导入流水先查询 finance_query_bank_statement_state，"
+                "读取批次编号和 calculation_hash。",
+                "撤销导入只移除该批次新增且未使用的开放月流水，保留既有重复行、原文件和导入审计。",
+                "撤销成功后可按正确列映射用新幂等键重新导入，无需为此恢复整个公司数据库。",
+                "已关账、已对账或存在后续依赖时按 blocking_records 先处理依赖，禁止级联删除。",
+                "含关联冲正的所得税更正结果不能单独删除；可修改结果，不自动恢复被冲正的历史计提。",
+            ],
+        },
         "open_month_amendments": {
             "tool": "finance_amend_event",
             "instructions": [

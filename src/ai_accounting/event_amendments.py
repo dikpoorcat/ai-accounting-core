@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from . import models as m
 from .accounting_periods import canonical_sha256
 from .enterprise_income_tax import lock_income_tax
-from .event_amendment_schemas import AmendEventRequest
+from .event_amendment_schemas import AmendEventRequest, DeleteEventRequest
 from .ledger import assert_period_open
 
 # Each edge names ownership, not merely a foreign-key reference. Other incoming
@@ -220,7 +220,7 @@ class EventAmendmentService:
     def __init__(self, session: Session):
         self.session = session
 
-    def amend(self, request: AmendEventRequest) -> dict[str, Any]:
+    def amend(self, request: AmendEventRequest | DeleteEventRequest) -> dict[str, Any]:
         try:
             with self.session.begin_nested():
                 return self._write(request)
@@ -233,9 +233,10 @@ class EventAmendmentService:
         finally:
             self.session.info.pop("event_amendment", None)
 
-    def _write(self, request: AmendEventRequest) -> dict[str, Any]:
+    def _write(self, request: AmendEventRequest | DeleteEventRequest) -> dict[str, Any]:
         session = self.session
         lock_income_tax(session, request.org_id)
+        deleting = isinstance(request, DeleteEventRequest)
         request_hash = canonical_sha256(request.model_dump(mode="json"))
         existing = session.scalar(
             select(m.BusinessEventAmendment).where(
@@ -268,6 +269,20 @@ class EventAmendmentService:
         if canonical_sha256(source.facts) != request.expected_facts_hash:
             raise ValueError("AMENDMENT_FACTS_STALE")
         before = _graph(session, source)
+        if deleting and any(
+            row["reversal_event_id"] is not None for row in before["enterprise_income_tax_results"]
+        ):
+            raise AmendmentRejected(
+                {
+                    "status": "rejected",
+                    "errors": ["DELETION_LINKED_REVERSAL_EXISTS"],
+                    "blocking_records": [
+                        {"table": "business_events", "id": str(row["reversal_event_id"])}
+                        for row in before["enterprise_income_tax_results"]
+                        if row["reversal_event_id"]
+                    ],
+                }
+            )
         if blockers := _dependencies(session, source, before):
             raise AmendmentRejected(
                 {
@@ -292,6 +307,7 @@ class EventAmendmentService:
             org_id=source.org_id,
             event_id=source.id,
             revision=revision,
+            operation="delete" if deleting else "amend",
             idempotency_key=request.idempotency_key,
             request_hash=request_hash,
             reason=request.reason,
@@ -313,11 +329,17 @@ class EventAmendmentService:
             "identities": deepcopy(before),
             "original_tables": before,
         }
-        result = self._repost(request, amendment.id)
+        if deleting:
+            session.delete(voucher)
+            source.status = "deleted"
+            session.flush()
+            result = {"status": "deleted"}
+        else:
+            result = self._repost(request, amendment.id)
         session.flush()
-        if result.get("status") != "posted":
+        if result.get("status") != ("deleted" if deleting else "posted"):
             raise AmendmentRejected(result)
-        if source.status != "posted" or voucher.status != "posted":
+        if not deleting and (source.status != "posted" or voucher.status != "posted"):
             raise ValueError("AMENDMENT_REQUIRES_POSTED_REPLACEMENT")
         if source.posting_date.strftime("%Y-%m") != before["business_events"][0][
             "posting_date"
@@ -338,7 +360,7 @@ class EventAmendmentService:
             m.AuditLog(
                 org_id=source.org_id,
                 event_id=source.id,
-                action="event_amended",
+                action="event_deleted" if deleting else "event_amended",
                 details={
                     "amendment_id": str(amendment.id),
                     "revision": revision,
@@ -348,7 +370,8 @@ class EventAmendmentService:
         )
         session.flush()
         session.expire(source, ["vouchers", "evidence"])
-        session.expire(voucher, ["lines"])
+        if not deleting:
+            session.expire(voucher, ["lines"])
         return result
 
     def _remove_owned_facts(

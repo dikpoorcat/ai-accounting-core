@@ -514,6 +514,7 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
 
 class ResultStatus(StrEnum):
     POSTED = "posted"
+    DELETED = "deleted"
     NEEDS_INFORMATION = "needs_information"
     REJECTED = "rejected"
 
@@ -1278,6 +1279,7 @@ class ConfirmPayrollRequest(BaseModel):
 class PayrollResultStatus(StrEnum):
     CALCULATED = "calculated"
     POSTED = "posted"
+    DELETED = "deleted"
     REVERSED = "reversed"
     SUPERSEDED = "superseded"
     NEEDS_INFORMATION = "needs_information"
@@ -2071,6 +2073,7 @@ class DisposeFixedAssetRequest(BaseModel):
 class FixedAssetResultStatus(StrEnum):
     CALCULATED = "calculated"
     POSTED = "posted"
+    DELETED = "deleted"
     REVERSED = "reversed"
     NEEDS_INFORMATION = "needs_information"
     REJECTED = "rejected"

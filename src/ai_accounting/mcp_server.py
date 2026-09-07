@@ -35,6 +35,7 @@ from .agent_contract import (
     agent_operating_protocol,
 )
 from .bank_import import BankStatementInputError, import_bank_statement
+from .bank_import_withdrawals import BankImportWithdrawalService
 from .bank_statement_schemas import (
     ConfirmBankReconciliationRequest,
     ConfirmBankReconciliationScopeRequest,
@@ -75,7 +76,11 @@ from .enterprise_income_tax_schemas import (
     PreviewEnterpriseIncomeTaxResultRequest,
     QueryEnterpriseIncomeTaxRequest,
 )
-from .event_amendment_schemas import AmendEventRequest
+from .event_amendment_schemas import (
+    AmendEventRequest,
+    DeleteEventRequest,
+    WithdrawBankImportRequest,
+)
 from .event_amendments import EventAmendmentService
 from .evidence import register_evidence
 from .execution_attribution import persist_execution_attribution
@@ -1149,6 +1154,10 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
         "record_event_schema": mcp._tool_manager.get_tool("finance_record_event").parameters,
         "reverse_event_schema": mcp._tool_manager.get_tool("finance_reverse_event").parameters,
         "amend_event_schema": mcp._tool_manager.get_tool("finance_amend_event").parameters,
+        "delete_event_schema": mcp._tool_manager.get_tool("finance_delete_event").parameters,
+        "withdraw_bank_import_schema": mcp._tool_manager.get_tool(
+            "finance_withdraw_bank_statement_import"
+        ).parameters,
         "event_amendment_protocol": {
             "open_month": (
                 "finance_get_event 后提交 finance_amend_event，按类型化事实原子重算，"
@@ -2538,6 +2547,26 @@ def finance_amend_event(request: AmendEventRequest) -> dict[str, Any]:
         return _invalid(exc)
 
 
+@mcp.tool(annotations=REVERSAL_WRITE)
+def finance_delete_event(request: DeleteEventRequest) -> dict[str, Any]:
+    """删除未关账业务和凭证，恢复核销余额，保留删除前快照；有后续依赖时拒绝。"""
+    try:
+        with SessionLocal.begin() as session:
+            return EventAmendmentService(session).amend(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=REVERSAL_WRITE)
+def finance_withdraw_bank_statement_import(request: WithdrawBankImportRequest) -> dict[str, Any]:
+    """撤销误导入批次新增的未关账、未使用流水；保留原导入记录及重复行来源。"""
+    try:
+        with SessionLocal.begin() as session:
+            return BankImportWithdrawalService(session).withdraw(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_database_error_boundary
 def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
@@ -2792,6 +2821,7 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 {
                     "id": str(amendment.id),
                     "revision": amendment.revision,
+                    "operation": amendment.operation,
                     "reason": amendment.reason,
                     "created_at": amendment.created_at.isoformat(),
                     "execution_attribution_id": (

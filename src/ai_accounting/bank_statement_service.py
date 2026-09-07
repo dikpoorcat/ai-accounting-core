@@ -76,6 +76,7 @@ from .models import (
     BankStatementImportAction,
     BankStatementImportActionEvidence,
     BankStatementImportFailure,
+    BankStatementImportWithdrawal,
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
@@ -766,6 +767,22 @@ class BankStatementService:
                 }
                 for item in import_rows
             ]
+        withdrawn = {
+            str(item.action_id): item for item in self.session.scalars(
+                select(BankStatementImportWithdrawal).where(
+                    BankStatementImportWithdrawal.org_id == request.org_id
+                )
+            )
+        }
+        for item in import_actions:
+            if withdrawal := withdrawn.get(item["action_id"]):
+                item["status"] = "withdrawn"
+                item["withdrawal"] = {
+                    "id": str(withdrawal.id), "reason": withdrawal.reason,
+                    "created_at": self._aware(withdrawal.created_at).isoformat(),
+                    "result": withdrawal.result,
+                    "execution_attribution_id": str(withdrawal.execution_attribution_id),
+                }
         reconciliations: list[dict[str, object]] = []
         if request.include_reconciliations:
             reconciliation_query = select(BankReconciliation).where(
@@ -1905,6 +1922,7 @@ class BankStatementService:
         action_query = select(BankStatementImportAction).where(
             BankStatementImportAction.org_id == request.org_id,
             BankStatementImportAction.id.in_(request.statement_import_action_ids),
+            ~BankStatementImportAction.id.in_(select(BankStatementImportWithdrawal.action_id)),
         )
         if lock:
             action_query = action_query.with_for_update()
@@ -2575,6 +2593,16 @@ class BankStatementService:
         self,
         action: BankStatementImportAction,
     ) -> BankStatementActionResult:
+        withdrawal = self.session.scalar(select(BankStatementImportWithdrawal).where(
+            BankStatementImportWithdrawal.org_id == action.org_id,
+            BankStatementImportWithdrawal.action_id == action.id,
+        ))
+        if withdrawal:
+            return BankStatementActionResult(
+                status=BankStatementActionStatus.WITHDRAWN, action_id=action.id,
+                calculation_hash=action.calculation_hash,
+                data=withdrawal.result | {"idempotent_replay": True},
+            )
         failures = self.session.scalars(
             select(BankStatementImportFailure)
             .where(

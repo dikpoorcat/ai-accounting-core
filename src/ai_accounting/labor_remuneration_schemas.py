@@ -24,6 +24,7 @@ class LaborResultStatus(StrEnum):
     REGISTERED = "registered"
     CALCULATED = "calculated"
     POSTED = "posted"
+    DELETED = "deleted"
     REVERSED = "reversed"
     NEEDS_INFORMATION = "needs_information"
     REJECTED = "rejected"
