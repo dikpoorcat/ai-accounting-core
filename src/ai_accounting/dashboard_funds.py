@@ -48,6 +48,7 @@ _EVENT_LABELS = {
     "unified_payout_run": "工资与劳务统一付款",
     "labor_withholding_tax_payment": "劳务个税缴纳",
     "tax_payment": "税费缴纳",
+    "enterprise_income_tax_refund": "企业所得税退税",
     "tax_relief": "税费减免",
     "fixed_asset_acquisition": "固定资产购置",
     "fixed_asset_disposal": "固定资产处置",

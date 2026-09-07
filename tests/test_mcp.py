@@ -128,6 +128,10 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_confirm_financial_statement_opening_balance",
         "finance_confirm_financial_statement_classification",
         "finance_confirm_enterprise_income_tax_quarter",
+        "finance_preview_enterprise_income_tax_result",
+        "finance_confirm_enterprise_income_tax_result",
+        "finance_query_enterprise_income_tax",
+        "finance_link_enterprise_income_tax_payment",
         "finance_query_context",
         "finance_record_event",
         "finance_calculate_tax_period",
@@ -303,8 +307,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "resume_queue_after": "blocker_resolved_and_operation_continued",
         "needs_information_is_technical_error": False,
     }
-    assert protocol["version"] == "accounting_execution_assistant_v29"
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.11"
+    assert protocol["version"] == "accounting_execution_assistant_v30"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.12"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
     assert protocol["owner_workflow"]["target_selection"] == (

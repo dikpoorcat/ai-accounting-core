@@ -1,3 +1,5 @@
+<!-- @format -->
+
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
@@ -20,20 +22,29 @@ const route = useRoute();
 const router = useRouter();
 const savedTheme = localStorage.getItem("finance-dashboard-theme");
 const theme = ref<Theme>(savedTheme === "dark" ? "dark" : "light");
-const { context, load: loadContext, cancel: cancelContext } = useDashboardContext();
+const {
+  context,
+  load: loadContext,
+  cancel: cancelContext,
+} = useDashboardContext();
 const companyName = computed(() => context.value?.company || "只读财务工作台");
 const companies = computed(() => context.value?.companies ?? []);
 const currentCompany = computed(() => context.value?.current_company ?? null);
 const sidebarCollapsed = ref(
   localStorage.getItem("finance-dashboard-sidebar") === "collapsed",
 );
-const brandInitial = computed(() => companyName.value.trim().slice(0, 1) || "财");
+const brandInitial = computed(
+  () => companyName.value.trim().slice(0, 1) || "财",
+);
 const periods = computed(() => context.value?.periods ?? []);
 const selectedPeriod = computed(() => {
-  const requested = typeof route.query.period === "string" ? route.query.period : null;
-  if (periods.value.some((period) => period.key === requested)) return requested ?? "";
+  const requested =
+    typeof route.query.period === "string" ? route.query.period : null;
+  if (periods.value.some((period) => period.key === requested))
+    return requested ?? "";
   const defaultPeriod = context.value?.default_period;
-  if (periods.value.some((period) => period.key === defaultPeriod)) return defaultPeriod ?? "";
+  if (periods.value.some((period) => period.key === defaultPeriod))
+    return defaultPeriod ?? "";
   return periods.value.at(-1)?.key ?? "";
 });
 
@@ -71,7 +82,8 @@ watch(
         });
       }
     } catch (caught: unknown) {
-      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      if (caught instanceof DOMException && caught.name === "AbortError")
+        return;
       if (saved && routeOrgId === saved) {
         localStorage.removeItem("finance-dashboard-org-id");
         await router.replace({ query: { ...route.query, org_id: undefined } });
@@ -111,7 +123,12 @@ async function selectCompany(orgId: string) {
   if (route.query.org_id === orgId) return;
   cancelContext();
   await router.push({
-    query: { ...route.query, org_id: orgId, period: undefined, quarter: undefined },
+    query: {
+      ...route.query,
+      org_id: orgId,
+      period: undefined,
+      quarter: undefined,
+    },
   });
 }
 </script>
@@ -129,7 +146,11 @@ async function selectCompany(orgId: string) {
         :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
         @click="toggleSidebar"
       >
-        <svg class="sidebar-icon sidebar-toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <svg
+          class="sidebar-icon sidebar-toggle-icon"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
           <path d="m14 6-6 6 6 6" />
         </svg>
       </button>
@@ -138,17 +159,29 @@ async function selectCompany(orgId: string) {
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">{{ brandInitial }}</span>
           <div v-if="companies.length" class="company-switcher">
-            <strong class="company-switcher-name" aria-hidden="true">{{ companyName }}</strong>
+            <strong class="company-switcher-name" aria-hidden="true">{{
+              companyName
+            }}</strong>
             <select
               :value="currentCompany?.org_id"
               aria-label="切换公司"
-              @change="selectCompany(($event.target as HTMLSelectElement).value)"
+              @change="
+                selectCompany(($event.target as HTMLSelectElement).value)
+              "
             >
-              <option v-for="company in companies" :key="company.org_id" :value="company.org_id">
-                {{ company.name }}{{ company.status === "archived" ? "（已归档）" : "" }}
+              <option
+                v-for="company in companies"
+                :key="company.org_id"
+                :value="company.org_id"
+              >
+                {{ company.name
+                }}{{ company.status === "archived" ? "（已归档）" : "" }}
               </option>
             </select>
-            <small v-if="currentCompany?.status === 'archived'" class="archived-company-badge">
+            <small
+              v-if="currentCompany?.status === 'archived'"
+              class="archived-company-badge"
+            >
               只读 · 已归档
             </small>
           </div>
@@ -166,21 +199,48 @@ async function selectCompany(orgId: string) {
             :aria-label="item.label"
             :title="item.label"
           >
-            <svg v-if="item.icon === 'chart'" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              v-if="item.icon === 'chart'"
+              class="sidebar-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
               <path d="M4 19V9M10 19V5M16 19v-7M3 19h18" />
             </svg>
-            <svg v-else-if="item.icon === 'wallet'" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              v-else-if="item.icon === 'wallet'"
+              class="sidebar-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
               <rect x="3" y="6" width="18" height="13" rx="2" />
               <path d="M7 6V4h10v2M3 10h18M16 14h2" />
             </svg>
-            <svg v-else-if="item.icon === 'people'" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              v-else-if="item.icon === 'people'"
+              class="sidebar-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
               <circle cx="9" cy="8" r="3" />
-              <path d="M3.5 19c.5-3.5 2.3-5.5 5.5-5.5s5 2 5.5 5.5M16 8.5h4M18 6.5v4" />
+              <path
+                d="M3.5 19c.5-3.5 2.3-5.5 5.5-5.5s5 2 5.5 5.5M16 8.5h4M18 6.5v4"
+              />
             </svg>
-            <svg v-else-if="item.icon === 'box'" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              v-else-if="item.icon === 'box'"
+              class="sidebar-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
               <path d="m4 7 8-4 8 4-8 4zM4 7v10l8 4 8-4V7M12 11v10" />
             </svg>
-            <svg v-else class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              v-else
+              class="sidebar-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
               <path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6" />
             </svg>
             <span class="module-link-label">{{ item.label }}</span>
@@ -203,14 +263,28 @@ async function selectCompany(orgId: string) {
             :title="theme === 'dark' ? '切换浅色外观' : '切换深色外观'"
             @click="toggleTheme"
           >
-            <svg v-if="theme === 'light'" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              v-if="theme === 'light'"
+              class="sidebar-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
               <path d="M20 15.2A8 8 0 0 1 8.8 4 8 8 0 1 0 20 15.2Z" />
             </svg>
-            <svg v-else class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <svg
+              v-else
+              class="sidebar-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
               <circle cx="12" cy="12" r="3.5" />
-              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+              <path
+                d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+              />
             </svg>
-            <span class="control-label">{{ theme === "dark" ? "浅色外观" : "深色外观" }}</span>
+            <span class="control-label">{{
+              theme === "dark" ? "浅色外观" : "深色外观"
+            }}</span>
           </button>
           <small class="app-version">{{ appVersion }}</small>
         </div>

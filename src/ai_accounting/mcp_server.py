@@ -67,6 +67,13 @@ from .company_service import CompanyLifecycleError, CompanyService
 from .config import get_settings
 from .credential_store import CredentialStore, WindowsCredentialStore
 from .database import SessionLocal
+from .enterprise_income_tax import EnterpriseIncomeTaxService
+from .enterprise_income_tax_schemas import (
+    ConfirmEnterpriseIncomeTaxResultRequest,
+    LinkEnterpriseIncomeTaxPaymentRequest,
+    PreviewEnterpriseIncomeTaxResultRequest,
+    QueryEnterpriseIncomeTaxRequest,
+)
 from .evidence import register_evidence
 from .execution_attribution import persist_execution_attribution
 from .financial_statement_schemas import (
@@ -1118,6 +1125,18 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
                 ],
                 "xlsx_download": "local_read_only_dashboard",
                 "annual_report": "not_available",
+                "automatic_tax_submission": "not_available",
+            },
+            "enterprise_income_tax_results": {
+                "status": "enabled",
+                "entry_tools": [
+                    "finance_query_enterprise_income_tax",
+                    "finance_preview_enterprise_income_tax_result",
+                    "finance_confirm_enterprise_income_tax_result",
+                    "finance_link_enterprise_income_tax_payment",
+                ],
+                "payment_event": "tax_payment",
+                "refund_event": "enterprise_income_tax_refund",
                 "automatic_tax_submission": "not_available",
             },
         },
@@ -2336,6 +2355,54 @@ def finance_confirm_enterprise_income_tax_quarter(
         return _invalid(exc)
 
 
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_enterprise_income_tax_result(
+    request: PreviewEnterpriseIncomeTaxResultRequest,
+) -> dict[str, Any]:
+    """核对季度更正或年度汇算的外部结果，分别预览所得税费用差额和待缴退税款。"""
+    try:
+        with SessionLocal() as session:
+            return EnterpriseIncomeTaxService(session).preview(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_enterprise_income_tax_result(
+    request: ConfirmEnterpriseIncomeTaxResultRequest,
+) -> dict[str, Any]:
+    """按预览哈希追加申报结果及关联冲正、替代凭证；不向税务机关提交申报。"""
+    try:
+        with SessionLocal.begin() as session:
+            return EnterpriseIncomeTaxService(session).confirm(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_query_enterprise_income_tax(
+    request: QueryEnterpriseIncomeTaxRequest,
+) -> dict[str, Any]:
+    """查询所属期、更正链、缴退税来源余额和待补充归属的历史缴款。"""
+    try:
+        with SessionLocal() as session:
+            return EnterpriseIncomeTaxService(session).query(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_link_enterprise_income_tax_payment(
+    request: LinkEnterpriseIncomeTaxPaymentRequest,
+) -> dict[str, Any]:
+    """根据证据追加历史企业所得税缴款的所属期分配，不修改原凭证。"""
+    try:
+        with SessionLocal.begin() as session:
+            return EnterpriseIncomeTaxService(session).link_payment(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_record_event(request: RecordEventRequest) -> dict[str, Any]:
     """提交结构化业务事实；只在资料完整且规则唯一时原子入账。"""
@@ -2691,6 +2758,19 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 "trace": event.rule_trace,
                 "rule_version": event.rule_version,
             },
+            "enterprise_income_tax": (
+                EnterpriseIncomeTaxService(session).query(
+                    QueryEnterpriseIncomeTaxRequest(org_id=parsed_org)
+                )["data"]
+                if event.event_type
+                in {
+                    "enterprise_income_tax_assessment",
+                    "enterprise_income_tax_result",
+                    "enterprise_income_tax_refund",
+                    "tax_payment",
+                }
+                else None
+            ),
             "vouchers": [
                 {
                     "id": str(voucher.id),

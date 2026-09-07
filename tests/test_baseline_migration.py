@@ -12,6 +12,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 
 BUSINESS_REVISION = "0001_business_baseline_v2"
+BUSINESS_HEAD = "0002_cit_results"
 POSTGRES_IMAGE = "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 
 
@@ -41,7 +42,7 @@ def _assert_business_baseline(engine: sa.Engine) -> None:
     } <= tables
     with engine.connect() as connection:
         assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
-            BUSINESS_REVISION
+            BUSINESS_HEAD
         )
         payroll_columns = {
             column["name"] for column in inspect(connection).get_columns("payroll_lines")
@@ -75,9 +76,10 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     config = _config(database_url)
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == [BUSINESS_REVISION]
+    assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
-        BUSINESS_REVISION
+        BUSINESS_HEAD,
+        BUSINESS_REVISION,
     ]
 
     command.upgrade(config, "head")

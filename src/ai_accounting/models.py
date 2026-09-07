@@ -6697,8 +6697,146 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class EnterpriseIncomeTaxResult(Base):
+    """An immutable revision of an externally declared CIT result."""
+
+    __tablename__ = "enterprise_income_tax_results"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"))
+    calendar_year: Mapped[int] = mapped_column(Integer)
+    calendar_quarter: Mapped[int] = mapped_column(Integer)
+    revision: Mapped[int] = mapped_column(Integer)
+    previous_result_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    original_confirmation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    declaration_date: Mapped[date] = mapped_column(Date)
+    posting_date: Mapped[date] = mapped_column(Date)
+    target_tax_fen: Mapped[int] = mapped_column(BigInteger)
+    contribution_fen: Mapped[int] = mapped_column(BigInteger)
+    expense_adjustment_fen: Mapped[int] = mapped_column(BigInteger)
+    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    reversal_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    idempotency_key: Mapped[str] = mapped_column(String(160))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    input_facts: Mapped[dict[str, Any]] = mapped_column(JSON)
+    calculation: Mapped[dict[str, Any]] = mapped_column(JSON)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_cit_result_org_id"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_cit_result_key"),
+        UniqueConstraint(
+            "org_id", "calendar_year", "calendar_quarter", "revision", name="uq_cit_result_revision"
+        ),
+        CheckConstraint(
+            "calendar_year >= 2013 AND calendar_quarter BETWEEN 0 AND 4 AND revision > 0",
+            name="ck_cit_result_period",
+        ),
+        CheckConstraint(
+            "calendar_quarter <> 0 OR target_tax_fen >= 0", name="ck_cit_result_annual_tax"
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "previous_result_id"],
+            ["enterprise_income_tax_results.org_id", "enterprise_income_tax_results.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "original_confirmation_id"],
+            [
+                "enterprise_income_tax_quarter_confirmations.org_id",
+                "enterprise_income_tax_quarter_confirmations.id",
+            ],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "business_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "reversal_event_id"],
+            ["business_events.org_id", "business_events.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class EnterpriseIncomeTaxSettlement(Base):
+    """Evidenced attribution of a payment/refund, including historical payments."""
+
+    __tablename__ = "enterprise_income_tax_settlements"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"))
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    input_facts: Mapped[dict[str, Any]] = mapped_column(JSON)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_cit_settlement_org_id"),
+        UniqueConstraint("org_id", "event_id", name="uq_cit_settlement_event"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_cit_settlement_key"),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class EnterpriseIncomeTaxSettlementLine(Base):
+    __tablename__ = "enterprise_income_tax_settlement_lines"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    settlement_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    result_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    original_confirmation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    calendar_year: Mapped[int] = mapped_column(Integer)
+    calendar_quarter: Mapped[int] = mapped_column(Integer)
+    amount_fen: Mapped[int] = mapped_column(BigInteger)
+    __table_args__ = (
+        CheckConstraint("amount_fen > 0", name="ck_cit_settlement_amount"),
+        CheckConstraint(
+            "(result_id IS NULL) <> (original_confirmation_id IS NULL)",
+            name="ck_cit_settlement_source",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "settlement_id"],
+            ["enterprise_income_tax_settlements.org_id", "enterprise_income_tax_settlements.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "result_id"],
+            ["enterprise_income_tax_results.org_id", "enterprise_income_tax_results.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "original_confirmation_id"],
+            [
+                "enterprise_income_tax_quarter_confirmations.org_id",
+                "enterprise_income_tax_quarter_confirmations.id",
+            ],
+            ondelete="RESTRICT",
+        ),
+    )
+
+
 EXECUTION_ATTRIBUTION_SESSION_KEY = "finance_execution_attribution_id"
 _ATTRIBUTED_ROOT_TYPES = (
+    EnterpriseIncomeTaxResult,
+    EnterpriseIncomeTaxSettlement,
     AccountingPeriodAction,
     BankTransaction,
     BusinessEvent,
@@ -6802,6 +6940,9 @@ def _enforce_financial_statement_facts_append_only(
         FinancialStatementClassification,
         FinancialStatementOpeningBalanceConfirmation,
         EnterpriseIncomeTaxQuarterConfirmation,
+        EnterpriseIncomeTaxResult,
+        EnterpriseIncomeTaxSettlement,
+        EnterpriseIncomeTaxSettlementLine,
     )
     if any(isinstance(item, fact_types) for item in session.deleted):
         raise ValueError("FINANCIAL_STATEMENT_FACT_IMMUTABLE")

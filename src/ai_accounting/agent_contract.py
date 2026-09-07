@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v29"
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.11"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v30"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -204,6 +204,21 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "enterprise_income_tax_results": {
+            "query_tool": "finance_query_enterprise_income_tax",
+            "preview_tool": "finance_preview_enterprise_income_tax_result",
+            "confirm_tool": "finance_confirm_enterprise_income_tax_result",
+            "historical_payment_link_tool": "finance_link_enterprise_income_tax_payment",
+            "instructions": [
+                "更正申报或年度汇算补退税先查询原计提、历次更正和已缴税归属，不能把流水扣款直接当成新增费用。",
+                "季度填1至4，年度汇算填0；明确申报表为本季数、累计数或年度数。补税通知必须明确差额及原计提金额。",
+                "缺资料按needs_information列出具体缺项，不默认原税额为零，不要求负责人选择技术方案。",
+                "旧缴款缺少所属期时根据证据追加关联，再预览及确认更正结果；开放期入账，保留原税款所属期。",
+                "缴款使用tax_payment，退税使用enterprise_income_tax_refund；均提供最新来源分配、凭证和银行流水。",
+                "年度多缴保留待退余额，不自动抵缴下一年度；登记申报结果不等于向税务机关提交申报或实际缴退完成。",
+                "已有年度汇算结果后发现季度变化，应取得包含该变化的年度更正结果，避免季度和年度重复调整。",
+            ],
+        },
         "version": AI_OPERATING_PROTOCOL_VERSION,
         "objective": "充分利用已有事实，在不臆测的前提下把对用户的打扰降到最低。",
         "identity": {

@@ -21,6 +21,7 @@ from typing import Any, get_type_hints
 
 import sqlalchemy as sa
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from pydantic import BaseModel
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy import inspect as sa_inspect
@@ -45,6 +46,19 @@ _ROOT = Path(__file__).resolve().parents[2]
 _FORMAT_VERSION = "ai-accounting-system-replay-v1"
 _BUSINESS_REVISION = "0001_business_baseline_v2"
 _CATALOG_REVISION = "0001_catalog_baseline_v2"
+
+
+def _current_schema_revision(*, catalog: bool) -> str:
+    config = Config(str(_ROOT / ("catalog_alembic.ini" if catalog else "alembic.ini")))
+    config.set_main_option(
+        "script_location", str(_ROOT / ("catalog_alembic" if catalog else "alembic"))
+    )
+    head = ScriptDirectory.from_config(config).get_current_head()
+    if head is None:
+        raise ReplayError("REPLAY_SCHEMA_HEAD_MISSING")
+    return head
+
+
 _MANIFEST = "MANIFEST.sha256"
 _STATE_VERSION = "ai-accounting-replay-state-v1"
 _NORMALIZATION_VERSION = "ai-accounting-replay-normalizations-v1"
@@ -95,6 +109,7 @@ _GENERIC_EVENT_TYPES = frozenset(
         "cash_bank_transfer",
         "payment_platform_transfer",
         "tax_payment",
+        "enterprise_income_tax_refund",
         "salary_payment",
         "social_insurance_payment",
         "housing_fund_payment",
@@ -410,11 +425,7 @@ def verify_package(package: Path) -> dict[str, Any]:
         evidence_hashes: set[str] = set()
         for row in evidence_rows:
             digest = str(row.get("sha256", ""))
-            if (
-                len(digest) != 64
-                or set(digest) - _HEX_64
-                or digest in evidence_hashes
-            ):
+            if len(digest) != 64 or set(digest) - _HEX_64 or digest in evidence_hashes:
                 raise ReplayError("REPLAY_PACKAGE_EVIDENCE_HASH_INVALID")
             evidence_hashes.add(digest)
             evidence_path = _safe_package_file(root, f"{directory}/{row['relative_path']}")
@@ -526,6 +537,7 @@ def _stable_maps(session: Session, org_id: uuid.UUID) -> dict[str, dict[str, Any
         "intangible": {},
         "labor_person": {},
         "borrowing": {},
+        "income_tax": {},
     }
     for row in _query_rows(
         session,
@@ -613,6 +625,50 @@ def _stable_maps(session: Session, org_id: uuid.UUID) -> dict[str, dict[str, Any
                 org_id=org_id,
             ):
                 maps[target][str(row["id"])] = {"$ref": target, "code": row["code"]}
+    if sa_inspect(session.bind).has_table("enterprise_income_tax_results"):
+        income_tax_event_ids: set[str] = set()
+        for row in _query_rows(
+            session,
+            "SELECT id, calendar_year, calendar_quarter, treatment, business_event_id "
+            "FROM enterprise_income_tax_quarter_confirmations WHERE org_id=:org_id",
+            org_id=org_id,
+        ):
+            key = (
+                f"enterprise-income-tax:{row['calendar_year']}-"
+                f"Q{row['calendar_quarter']}:{row['treatment']}"
+            )
+            maps["income_tax"][str(row["id"])] = {
+                "$ref": "operation_result",
+                "operation_key": key,
+                "field": "enterprise_income_tax_confirmation_id",
+            }
+            if row["business_event_id"]:
+                income_tax_event_ids.add(str(row["business_event_id"]))
+                maps["event"][str(row["business_event_id"])] = {
+                    "$ref": "operation_result",
+                    "operation_key": key,
+                    "field": "event_id",
+                }
+        for row in _query_rows(
+            session,
+            "SELECT id, idempotency_key, business_event_id, reversal_event_id "
+            "FROM enterprise_income_tax_results WHERE org_id=:org_id ORDER BY created_at, revision",
+            org_id=org_id,
+        ):
+            key = "cit-result:" + _semantic_replay_key(row["idempotency_key"])
+            maps["income_tax"][str(row["id"])] = {
+                "$ref": "operation_result",
+                "operation_key": key,
+                "field": "result_id",
+            }
+            for field in ("business_event_id", "reversal_event_id"):
+                if row[field] and str(row[field]) not in income_tax_event_ids:
+                    income_tax_event_ids.add(str(row[field]))
+                    maps["event"][str(row[field])] = {
+                        "$ref": "operation_result",
+                        "operation_key": key,
+                        "field": "event_id" if field == "business_event_id" else field,
+                    }
     return maps
 
 
@@ -661,6 +717,9 @@ def _replace_stable_references(
         if value == str(org_id):
             return "${ORG_ID}"
         lookup_order = {
+            "source_id": ("income_tax",),
+            "previous_result_id": ("income_tax",),
+            "original_confirmation_id": ("income_tax",),
             "evidence_references": ("evidence",),
             "bank_transaction_id": ("bank",),
             "bank_transaction_ids": ("bank",),
@@ -679,6 +738,7 @@ def _replace_stable_references(
             if value in maps[map_name]:
                 return maps[map_name][value]
         for map_name in (
+            "income_tax",
             "evidence",
             "bank",
             "employee",
@@ -717,8 +777,7 @@ def _evidence_refs_for(
 ) -> list[dict[str, Any]]:
     rows = _query_rows(
         session,
-        f'SELECT evidence_id FROM "{table}" WHERE "{owner_column}"=:owner_id '
-        "ORDER BY evidence_id",
+        f'SELECT evidence_id FROM "{table}" WHERE "{owner_column}"=:owner_id ORDER BY evidence_id',
         owner_id=owner_id,
     )
     return [evidence_by_id[str(row["evidence_id"])] for row in rows]
@@ -944,8 +1003,7 @@ def _payroll_fact_operations(
         operations.append(
             {
                 "key": (
-                    f"payroll-opening:{employee_code}:{row['tax_year']}:"
-                    f"{row['through_month']:02d}"
+                    f"payroll-opening:{employee_code}:{row['tax_year']}:{row['through_month']:02d}"
                 ),
                 "kind": "tool",
                 "tool": "finance_register_payroll_opening_state",
@@ -1136,6 +1194,7 @@ def _event_operation(
         "source_business_date": event["business_date"],
         "source_posting_date": event["posting_date"],
         "source_event_type": event_type,
+        "source_created_at": str(event["created_at"]),
         "source_fact_sha256": hashlib.sha256(
             json.dumps(_jsonable(facts), ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
@@ -1265,6 +1324,14 @@ def _company_checkpoints(session: Session, org_id: uuid.UUID) -> dict[str, Any]:
         ),
         "enterprise_income_tax_confirmation_count": count(
             "enterprise_income_tax_quarter_confirmations"
+        ),
+        "enterprise_income_tax_result_count": (
+            count("enterprise_income_tax_results")
+            if sa_inspect(session.bind).has_table("enterprise_income_tax_results") else 0
+        ),
+        "enterprise_income_tax_settlement_count": (
+            count("enterprise_income_tax_settlements")
+            if sa_inspect(session.bind).has_table("enterprise_income_tax_settlements") else 0
         ),
         "closed_period_count": sum(item["status"] == "closed" for item in periods),
         "closed_periods": [
@@ -1819,6 +1886,175 @@ def _financial_statement_operations(
     return operations
 
 
+def _income_tax_operations(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    maps: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Replay the complete CIT chain, including zero facts and replaced assessments."""
+    operations = []
+    roots = _query_rows(
+        session,
+        "SELECT * FROM enterprise_income_tax_quarter_confirmations WHERE org_id=:org_id "
+        "ORDER BY created_at, calendar_year, calendar_quarter",
+        org_id=org_id,
+    )
+    for row in roots:
+        key = (
+            f"enterprise-income-tax:{row['calendar_year']}-"
+            f"Q{row['calendar_quarter']}:{row['treatment']}"
+        )
+        operations.append(
+            {
+                "key": key,
+                "kind": "tool",
+                "source_created_at": str(row["created_at"]),
+                "tool": "finance_confirm_enterprise_income_tax_quarter",
+                "request": {
+                    "org_id": "${ORG_ID}",
+                    "year": row["calendar_year"],
+                    "quarter": row["calendar_quarter"],
+                    "treatment": row["treatment"],
+                    "amount_fen": row["amount_fen"],
+                    "posting_date": row["posting_date"],
+                    "confirmation_note": row["confirmation_note"],
+                    "evidence_references": [
+                        maps["evidence"][str(v)] for v in row["evidence_references"]
+                    ],
+                    "idempotency_key": _replay_idempotency(key),
+                },
+                "allowed_statuses": ["posted"],
+            }
+        )
+    if not sa_inspect(session.bind).has_table("enterprise_income_tax_results"):
+        return operations
+    results = _query_rows(
+        session,
+        "SELECT * FROM enterprise_income_tax_results WHERE org_id=:org_id "
+        "ORDER BY created_at, revision",
+        org_id=org_id,
+    )
+    for row in results:
+        key = "cit-result:" + _semantic_replay_key(row["idempotency_key"])
+        request = _replace_stable_references(row["input_facts"], org_id=org_id, maps=maps)
+        request.pop("idempotency_key", None)
+        request.pop("calculation_hash", None)
+        operations.append(
+            {
+                "key": key,
+                "kind": "preview_confirm",
+                "source_created_at": str(row["created_at"]),
+                "preview_tool": "finance_preview_enterprise_income_tax_result",
+                "confirm_tool": "finance_confirm_enterprise_income_tax_result",
+                "preview_request": request,
+                "confirm_request": {"idempotency_key": _replay_idempotency(key)},
+                "allowed_preview_statuses": ["calculated"],
+                "allowed_confirm_statuses": ["posted"],
+            }
+        )
+    cash = _query_rows(
+        session,
+        """
+        SELECT * FROM business_events WHERE org_id=:org_id
+         AND status IN ('posted','reversed') AND (
+           event_type='enterprise_income_tax_refund' OR
+           (event_type='tax_payment' AND
+            facts::jsonb #>> '{details,tax_type}'='enterprise_income_tax'))
+         ORDER BY created_at, id
+    """,
+        org_id=org_id,
+    )
+    for event in cash:
+        facts = dict(event["facts"])
+        if not facts.get("income_tax_allocations"):
+            # Use only the explicitly evidenced historical attribution. No inference
+            # from amount, memo, bank date, or another year's aggregate GL balance.
+            links = _query_rows(
+                session,
+                """
+                SELECT line.result_id, line.original_confirmation_id, line.amount_fen
+                  FROM enterprise_income_tax_settlement_lines line
+                  JOIN enterprise_income_tax_settlements settlement
+                    ON settlement.id=line.settlement_id
+                 WHERE settlement.org_id=:org_id AND settlement.event_id=:event_id
+                 ORDER BY line.id
+            """,
+                org_id=org_id,
+                event_id=event["id"],
+            )
+            if not links:
+                raise ReplayError("REPLAY_CIT_HISTORICAL_PAYMENT_ATTRIBUTION_REQUIRED")
+            facts["income_tax_allocations"] = [
+                {
+                    "source_id": str(v["result_id"] or v["original_confirmation_id"]),
+                    "amount_fen": v["amount_fen"],
+                }
+                for v in links
+            ]
+        operation = _event_operation(session, event | {"facts": facts}, org_id=org_id, maps=maps)
+        operations.append(operation)
+        if event["reversed_by_event_id"]:
+            reversal = _query_rows(
+                session,
+                "SELECT * FROM business_events WHERE id=:id",
+                id=event["reversed_by_event_id"],
+            )[0]
+            key = _semantic_replay_key(reversal["idempotency_key"])
+            operations.append(
+                {
+                    "key": key,
+                    "kind": "tool",
+                    "source_created_at": str(reversal["created_at"]),
+                    "tool": "finance_reverse_event",
+                    "request": {
+                        "org_id": "${ORG_ID}",
+                        "event_id": {
+                            "$ref": "operation_result",
+                            "operation_key": operation["key"],
+                            "field": "event_id",
+                        },
+                        "posting_date": reversal["posting_date"],
+                        "reason": reversal["facts"]["reason"],
+                        "idempotency_key": _replay_idempotency(key),
+                    },
+                    "allowed_statuses": ["posted"],
+                }
+            )
+    return sorted(operations, key=lambda v: v["source_created_at"])
+
+
+def _income_tax_event_inventory(
+    events: list[dict[str, Any]], maps: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Keep effective CIT events in the package's independently checked inventory."""
+    inventory = []
+    for event in events:
+        if event["event_type"] not in {
+            "enterprise_income_tax_assessment",
+            "enterprise_income_tax_result",
+            "enterprise_income_tax_refund",
+        } and not (
+            event["event_type"] == "tax_payment"
+            and event["facts"].get("details", {}).get("tax_type") == "enterprise_income_tax"
+        ):
+            continue
+        reference = maps["event"].get(str(event["id"]), {})
+        key = reference.get("operation_key") or _semantic_replay_key(event["idempotency_key"])
+        inventory.append(
+            {
+                "replay_key": key,
+                "source_event_type": event["event_type"],
+                "source_business_date": event["business_date"],
+                "source_posting_date": event["posting_date"],
+                "source_fact_sha256": hashlib.sha256(
+                    json.dumps(_jsonable(event["facts"]), sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+            }
+        )
+    return inventory
+
+
 def _period_close_operations(
     session: Session,
     *,
@@ -2226,22 +2462,26 @@ def _financial_classification_normalization_operation(
         event["facts"], ensure_ascii=False, sort_keys=True
     ):
         raise ReplayError("REPLAY_NORMALIZATION_SOURCE_ASSERTION_MISSING")
-    line = session.execute(
-        text(
-            "SELECT line.id, line.line_number, account.code AS account_code, "
-            "line.debit_fen, line.credit_fen "
-            "FROM vouchers AS voucher "
-            "JOIN voucher_lines AS line ON line.voucher_id=voucher.id "
-            "JOIN accounts AS account ON account.id=line.account_id "
-            "WHERE voucher.org_id=:org_id AND voucher.event_id=:event_id "
-            "AND voucher.status='posted' AND line.line_number=:line_number"
-        ),
-        {
-            "org_id": org_id,
-            "event_id": event["id"],
-            "line_number": int(control["line_number"]),
-        },
-    ).mappings().one_or_none()
+    line = (
+        session.execute(
+            text(
+                "SELECT line.id, line.line_number, account.code AS account_code, "
+                "line.debit_fen, line.credit_fen "
+                "FROM vouchers AS voucher "
+                "JOIN voucher_lines AS line ON line.voucher_id=voucher.id "
+                "JOIN accounts AS account ON account.id=line.account_id "
+                "WHERE voucher.org_id=:org_id AND voucher.event_id=:event_id "
+                "AND voucher.status='posted' AND line.line_number=:line_number"
+            ),
+            {
+                "org_id": org_id,
+                "event_id": event["id"],
+                "line_number": int(control["line_number"]),
+            },
+        )
+        .mappings()
+        .one_or_none()
+    )
     if line is None or any(
         line[field] != control[field]
         for field in ("account_code", "debit_fen", "credit_fen")
@@ -2323,9 +2563,10 @@ def _normalization_operations(
             )
             continue
         month = str(control["period_month"])
-        period_row = session.execute(
-            text(
-                """
+        period_row = (
+            session.execute(
+                text(
+                    """
                 SELECT period.id, period.start_date, period.end_date, period.status,
                        action.id AS action_id, action.confirmation_note,
                        action.input_facts
@@ -2338,13 +2579,16 @@ def _normalization_operations(
                    AND period.calendar_year=:calendar_year
                    AND period.calendar_month=:calendar_month
                 """
-            ),
-            {
-                "org_id": org_id,
-                "calendar_year": int(month[:4]),
-                "calendar_month": int(month[5:]),
-            },
-        ).mappings().one_or_none()
+                ),
+                {
+                    "org_id": org_id,
+                    "calendar_year": int(month[:4]),
+                    "calendar_month": int(month[5:]),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
         if period_row is None or period_row["status"] != "closed":
             raise ReplayError("REPLAY_NORMALIZATION_CLOSED_PERIOD_REQUIRED")
         source_assertion = str(control["source_assertion"]).strip()
@@ -2536,7 +2780,18 @@ def _export_company(
         accounts = _account_controls(session, org_id)
         events = _effective_events(session, org_id)
         typed_events = [
-            _event_operation(session, event, org_id=org_id, maps=maps) for event in events
+            _event_operation(session, event, org_id=org_id, maps=maps)
+            for event in events
+            if event["event_type"]
+            not in {
+                "enterprise_income_tax_assessment",
+                "enterprise_income_tax_result",
+                "enterprise_income_tax_refund",
+            }
+            and not (
+                event["event_type"] == "tax_payment"
+                and event["facts"].get("details", {}).get("tax_type") == "enterprise_income_tax"
+            )
         ]
         checkpoints = _company_checkpoints(session, org_id)
         checkpoints["financial_statement_classification_count"] += sum(
@@ -2629,16 +2884,30 @@ def _export_company(
             business_timeline.append(successors[next_successor][1])
             business_timeline.extend(actual_buckets[next_successor])
             next_successor += 1
+        # Preserve existing setup/event order while inserting CIT facts where they
+        # were originally confirmed. Financial classifications still follow events.
+        anchored = []
+        anchor = ""
+        for index, operation in enumerate(business_timeline):
+            anchor = str(operation.get("source_created_at", anchor))
+            anchored.append((anchor, 1, index, operation))
+        for index, operation in enumerate(
+            _income_tax_operations(session, org_id=org_id, maps=maps)
+        ):
+            anchored.append((operation["source_created_at"], 0, index, operation))
+        business_timeline = [item[3] for item in sorted(anchored, key=lambda v: v[:3])]
         operations = [
             *_evidence_operations(evidence),
             *_period_operations(session, org_id=org_id, support_evidence=support_evidence),
             *initial_setup_operations,
             *undated_payroll_facts,
-            *_bank_operations(
-                bank_exports, accounts=accounts, support_evidence=support_evidence
-            ),
+            *_bank_operations(bank_exports, accounts=accounts, support_evidence=support_evidence),
             *business_timeline,
-            *_financial_statement_operations(session, org_id=org_id, maps=maps),
+            *(
+                operation
+                for operation in _financial_statement_operations(session, org_id=org_id, maps=maps)
+                if operation.get("tool") != "finance_confirm_enterprise_income_tax_quarter"
+            ),
             *_bank_reconciliation_operations(session, org_id=org_id, maps=maps),
             *_owner_control_operations(session, org_id=org_id, maps=maps),
             *_normalization_operations(
@@ -2679,7 +2948,10 @@ def _export_company(
             "normalization_count": len(normalizations),
         }
         _write_json(company_dir / "company.json", descriptor)
-        _write_jsonl(company_dir / "typed-events.jsonl", typed_events)
+        _write_jsonl(
+            company_dir / "typed-events.jsonl",
+            typed_events + _income_tax_event_inventory(events, maps),
+        )
         _write_jsonl(company_dir / "operations.jsonl", operations)
         _write_json(company_dir / "checkpoints.json", checkpoints)
         _write_json(company_dir / "account-balances.json", account_balances)
@@ -3172,10 +3444,7 @@ class _ReplayResolver:
                 )
             elif ref_type == "employee":
                 result = session.scalar(
-                    text(
-                        "SELECT id FROM employees WHERE org_id=:org_id "
-                        "AND employee_code=:code"
-                    ),
+                    text("SELECT id FROM employees WHERE org_id=:org_id AND employee_code=:code"),
                     {"org_id": self.org_id, "code": value["employee_code"]},
                 )
             elif ref_type in {"bank_transaction", "bank_transaction_reference"}:
@@ -3763,16 +4032,9 @@ def replay_system(package: Path, state_path: Path | None = None) -> dict[str, An
         }
         for operation in operations:
             for value in _walk_package_values(operation):
-                if (
-                    isinstance(value, Mapping)
-                    and value.get("$ref") == "operation_result"
-                ):
-                    required_result_fields[str(value["operation_key"])].add(
-                        str(value["field"])
-                    )
-        company_state = next(
-            item for item in state["companies"] if item["org_id"] == str(org_id)
-        )
+                if isinstance(value, Mapping) and value.get("$ref") == "operation_result":
+                    required_result_fields[str(value["operation_key"])].add(str(value["field"]))
+        company_state = next(item for item in state["companies"] if item["org_id"] == str(org_id))
         completed = set(company_state["completed_operations"])
         results = company_state["operation_results"]
         base = settings.finance_migration_database_url or settings.finance_company_database_url
@@ -3871,8 +4133,7 @@ def verify_replay(package: Path, state_path: Path | None = None) -> dict[str, An
         with Session(catalog_engine) as session:
             registered = _query_rows(
                 session,
-                "SELECT org_id, database_name, is_primary FROM company_registry "
-                "ORDER BY org_id",
+                "SELECT org_id, database_name, is_primary FROM company_registry ORDER BY org_id",
             )
             expected_orgs = sorted(str(item["org_id"]) for item in system["companies"])
             actual_orgs = sorted(str(item["org_id"]) for item in registered)
@@ -3881,7 +4142,7 @@ def verify_replay(package: Path, state_path: Path | None = None) -> dict[str, An
             if sum(bool(item["is_primary"]) for item in registered) != 1:
                 raise ReplayError("REPLAY_VERIFY_PRIMARY_COMPANY_MISMATCH")
             revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-            if revision != _CATALOG_REVISION:
+            if revision != _current_schema_revision(catalog=True):
                 raise ReplayError("REPLAY_VERIFY_CATALOG_REVISION_MISMATCH")
         for company in system["companies"]:
             org_id = uuid.UUID(str(company["org_id"]))
@@ -3906,7 +4167,7 @@ def verify_replay(package: Path, state_path: Path | None = None) -> dict[str, An
                     if organizations != [str(org_id)]:
                         raise ReplayError("REPLAY_VERIFY_COMPANY_ISOLATION_MISMATCH")
                     revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-                    if revision != _BUSINESS_REVISION:
+                    if revision != _current_schema_revision(catalog=False):
                         raise ReplayError("REPLAY_VERIFY_BUSINESS_REVISION_MISMATCH")
                     actual = _company_checkpoints(session, org_id)
                     descriptor = _load_json(

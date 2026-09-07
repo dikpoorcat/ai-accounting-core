@@ -75,6 +75,8 @@ EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
     "tax_payment": ("tax", "税费缴纳"),
     "tax_relief": ("tax", "税费减免"),
     "enterprise_income_tax_assessment": ("tax", "企业所得税季度确认"),
+    "enterprise_income_tax_result": ("tax", "企业所得税更正及汇算调整"),
+    "enterprise_income_tax_refund": ("tax", "企业所得税退税"),
     "fixed_asset": ("assets", "固定资产事项"),
     "fixed_asset_acquisition": ("assets", "固定资产购置"),
     "fixed_asset_activation": ("assets", "固定资产启用"),

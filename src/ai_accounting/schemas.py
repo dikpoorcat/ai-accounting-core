@@ -18,6 +18,8 @@ from pydantic import (
     model_validator,
 )
 
+from .enterprise_income_tax_schemas import IncomeTaxSourceAllocation
+
 # Monetary accounting facts are always integer fen.  ``StrictInt`` is
 # intentional: JSON 12.0, ``true`` and "12" must never be silently accepted
 # as a monetary value merely because they can be coerced by Python.
@@ -50,6 +52,7 @@ class EventType(StrEnum):
     CASH_BANK_TRANSFER = "cash_bank_transfer"
     PAYMENT_PLATFORM_TRANSFER = "payment_platform_transfer"
     TAX_PAYMENT = "tax_payment"
+    ENTERPRISE_INCOME_TAX_REFUND = "enterprise_income_tax_refund"
     TAX_RELIEF = "tax_relief"
     SALARY_PAYMENT = "salary_payment"
     SOCIAL_INSURANCE_PAYMENT = "social_insurance_payment"
@@ -368,6 +371,20 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "constraint": "cannot exceed posted tax payable balance",
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
+        "income_tax_allocations": (
+            "enterprise_income_tax requires current source allocations, evidence and bank rows"
+        ),
+    },
+    EventType.ENTERPRISE_INCOME_TAX_REFUND.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "required_fields": [
+            "bank_account_code",
+            "income_tax_allocations",
+            "evidence_references",
+            "bank_transaction_references",
+        ],
+        "constraint": "cannot exceed evidenced source refundable balance; no cross-year offset",
     },
     EventType.SALARY_PAYMENT.value: {
         "amount": "amount_fen",
@@ -2075,6 +2092,29 @@ class FixedAssetResult(BaseModel):
 
 
 class RecordEventRequest(BaseModel):
+    income_tax_allocations: list[IncomeTaxSourceAllocation] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def income_tax_source_shape(self) -> RecordEventRequest:
+        is_cit = self.event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND or (
+            self.event_type == EventType.TAX_PAYMENT
+            and self.details.tax_type == "enterprise_income_tax"
+        )
+        if self.income_tax_allocations and not is_cit:
+            raise ValueError("income_tax_allocations are only for enterprise income tax")
+        if is_cit and (
+            self.tax_facts is not None
+            or self.allocations
+            or self.amounts.expense_account_role is not None
+        ):
+            raise ValueError("enterprise income tax uses fixed accounts and dedicated allocations")
+        if (
+            self.event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND
+            and self.details.tax_type not in {None, "enterprise_income_tax"}
+        ):
+            raise ValueError("refund supports enterprise income tax only")
+        return self
+
     model_config = ConfigDict(extra="forbid")
 
     org_id: uuid.UUID
@@ -2223,6 +2263,7 @@ class RecordEventRequest(BaseModel):
             EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
             EventType.BANK_FEE,
             EventType.TAX_PAYMENT,
+            EventType.ENTERPRISE_INCOME_TAX_REFUND,
             EventType.SOCIAL_INSURANCE_PAYMENT,
             EventType.HOUSING_FUND_PAYMENT,
             EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,

@@ -1115,7 +1115,39 @@ class OwnerWorkflowService:
             action="本期会计完整性门禁已通过，请完成关账确认。",
         )
 
-    def _periodic_reporting_step(
+    def _income_tax_settlement_step(self, organization, step, *, annual):
+        from .enterprise_income_tax import EnterpriseIncomeTaxService
+        from .enterprise_income_tax_schemas import QueryEnterpriseIncomeTaxRequest
+
+        income_tax = EnterpriseIncomeTaxService(self.session).query(
+            QueryEnterpriseIncomeTaxRequest(org_id=organization.id)
+        )["data"]
+        sources = [
+            item
+            for item in income_tax["sources"]
+            if bool(item["quarter"] == 0) == annual and item.get("result_id")
+        ]
+        pending = [item for item in sources if item["balance_fen"] != 0]
+        step["enterprise_income_tax_results"] = sources
+        step["enterprise_income_tax_pending_settlements"] = pending
+        if pending and step["completion_state"] in {"completed", "not_applicable"}:
+            step["external_reporting_completion_state"] = step["completion_state"]
+            step["external_reporting_completion_proof"] = step["completion_proof"]
+            step.update(
+                self._incomplete(
+                    missing=["enterprise_income_tax_settlement"],
+                    action="企业所得税申报结果已记录，请按缴退税凭证处理尚未结清的税款。",
+                    close_gate=True,
+                )
+            )
+        return step
+
+    def _periodic_reporting_step(self, organization, period, gates):
+        return self._income_tax_settlement_step(
+            organization, self._periodic_reporting_status(organization, period, gates), annual=False
+        )
+
+    def _periodic_reporting_status(
         self, organization: Organization, period: AccountingPeriod, _gates: dict[str, Any]
     ) -> dict[str, Any]:
         pending = []
@@ -1184,7 +1216,11 @@ class OwnerWorkflowService:
     def _annual_eit_step(
         self, organization: Organization, period: AccountingPeriod, _gates: dict[str, Any]
     ) -> dict[str, Any]:
-        return self._annual_step(organization, period, code="annual_enterprise_income_tax")
+        return self._income_tax_settlement_step(
+            organization,
+            self._annual_step(organization, period, code="annual_enterprise_income_tax"),
+            annual=True,
+        )
 
     def _annual_business_report_step(
         self, organization: Organization, period: AccountingPeriod, _gates: dict[str, Any]

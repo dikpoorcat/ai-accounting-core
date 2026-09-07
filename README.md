@@ -271,6 +271,15 @@ Set-Location ..
 
 ### 小企业会计准则季度财务报表工作流
 
+企业所得税季度更正和年度汇算结果通过专用接口追加记录，不改写历史季度确认或凭证：
+
+1. `finance_query_enterprise_income_tax` 查询原计提、更正链、各所属期已缴和待缴退税额。旧缴款没有归属时，凭证据调用 `finance_link_enterprise_income_tax_payment` 追加来源分配。
+2. `finance_preview_enterprise_income_tax_result` 接收外部申报结果。`quarter=1..4` 为季度更正，`quarter=0` 为年度汇算；`amount_basis` 明确为本季 `quarter`、年初累计 `year_to_date`、全年 `annual` 或差额通知 `adjustment_notice`。差额通知同时要求已核对的 `previously_recognized_fen`；资料不足返回 `needs_information`。
+3. 使用同一事实与预览哈希调用 `finance_confirm_enterprise_income_tax_result`。税款所属期、申报日期与开放期入账日期分别记录；原有金额变更通过关联冲正及替代凭证原子完成。金额未变仅追加记录，年度结果扣除已确认季度税额，不重复计提。
+4. 实际补缴使用 `tax_payment`（`tax_type=enterprise_income_tax`），实际退税使用 `enterprise_income_tax_refund`；均要求 `income_tax_allocations=[{source_id, amount_fen}]`、证据及银行流水。来源由查询工具返回，支持明确分配的合并缴款与部分缴退。历史年度待退税款不抵销下一年度应缴税款。
+
+季度首次确认仍使用下述原接口；年度结果需要全年四个季度的明确确认，包括不适用季度。已有年度汇算后发现季度变化时，应录入包含该变化的年度更正结果。这里记录外部申报事实，不自动申报；滞纳金、罚款、其他税种更正不在本功能范围内。
+
 首版只支持 `accounting_standard=small_enterprise`、`filing_cycle=quarterly` 的月季报模板，
 不提供年报入口：
 

@@ -9,6 +9,12 @@ from sqlalchemy.engine import make_url
 from ai_accounting import replay_cli
 
 
+def test_replay_distinguishes_baseline_identity_from_current_heads() -> None:
+    assert replay_cli._BUSINESS_REVISION == "0001_business_baseline_v2"
+    assert replay_cli._current_schema_revision(catalog=False) == "0002_cit_results"
+    assert replay_cli._current_schema_revision(catalog=True) == "0001_catalog_baseline_v2"
+
+
 def test_replay_orders_non_primary_company_before_primary() -> None:
     companies = [
         {"org_id": "primary", "display_name": "魂道", "is_primary": True},

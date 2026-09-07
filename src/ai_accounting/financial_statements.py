@@ -929,6 +929,9 @@ class FinancialStatementService(FinanceService):
     def confirm_enterprise_income_tax(
         self, request: ConfirmEnterpriseIncomeTaxQuarterRequest
     ) -> FinancialStatementResult:
+        from .enterprise_income_tax import lock_income_tax
+
+        lock_income_tax(self.session, request.org_id)
         if self.session.get(Organization, request.org_id) is None:
             return self._statement_result(
                 FinancialStatementResultStatus.REJECTED,
@@ -1332,8 +1335,11 @@ class FinancialStatementService(FinanceService):
                 )
                 continue
             if item.business_event_id is not None:
-                event = self.session.get(BusinessEvent, item.business_event_id)
-                if event is None or event.status != "posted":
+                from .enterprise_income_tax import confirmation_effective
+
+                if not confirmation_effective(
+                    self.session, item, _quarter_dates(year, through_quarter)[1]
+                ):
                     missing.append(
                         _requirement(
                             "ENTERPRISE_INCOME_TAX_CONFIRMATION_EVENT_INACTIVE",
@@ -1697,6 +1703,8 @@ class FinancialStatementService(FinanceService):
                     "labor_withholding_tax_payment",
                 }:
                     result[5] += -cash_delta
+                elif event_type == "enterprise_income_tax_refund":
+                    result[2] += cash_delta
                 elif event_type in {"refundable_deposit_paid", "bank_fee"}:
                     result[6] += -cash_delta
                 elif event_type == "fixed_asset_disposal":

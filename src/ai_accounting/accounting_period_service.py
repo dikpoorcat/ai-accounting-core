@@ -1039,6 +1039,12 @@ class AccountingPeriodService:
                 income_tax_confirmation.business_event_id is None
                 or income_tax_event_status == "posted"
             )
+            if income_tax_confirmation is not None:
+                from .enterprise_income_tax import confirmation_effective
+
+                income_tax_confirmed = confirmation_effective(
+                    self.session, income_tax_confirmation, period.end_date
+                )
             self._add_check(
                 checks,
                 blockers,

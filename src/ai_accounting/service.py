@@ -16,6 +16,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session, aliased
 
+from .enterprise_income_tax import EnterpriseIncomeTaxService, lock_income_tax
 from .ledger import (
     AccountingPeriodError,
     Entry,
@@ -157,12 +158,25 @@ class FinanceService:
     def _preview_request_payload_hash(self, request: PreviewPayrollRequest) -> str:
         return self._canonical_payload_hash(request.model_dump(mode="json"))
 
-    def _request_payload_hash(self, request: Any) -> str:
+    @staticmethod
+    def _request_payload_hash(request: Any) -> str:
         """Hash only caller-supplied business facts, before service derivation."""
-        return self._canonical_payload_hash(request.model_dump(mode="json"))
+        payload = request.model_dump(mode="json")
+        if payload.get("income_tax_allocations") == []:
+            payload.pop("income_tax_allocations")
+        return FinanceService._canonical_payload_hash(payload)
+
+    @staticmethod
+    def _is_income_tax_settlement(request: RecordEventRequest) -> bool:
+        return request.event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND or (
+            request.event_type == EventType.TAX_PAYMENT
+            and request.details.tax_type == "enterprise_income_tax"
+        )
 
     @staticmethod
     def _uses_bank_settlement(request: RecordEventRequest) -> bool:
+        if request.event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND:
+            return True
         if request.event_type is EventType.INTERNAL_TRANSFER:
             return True
         if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
@@ -579,6 +593,8 @@ class FinanceService:
         return int(next_version) - 1
 
     def record_event(self, request: RecordEventRequest) -> FinanceResult:
+        if self._is_income_tax_settlement(request):
+            lock_income_tax(self.session, request.org_id)
         organization = self.session.get(Organization, request.org_id)
         if organization is None:
             return FinanceResult(status=ResultStatus.REJECTED, errors=["ORGANIZATION_NOT_FOUND"])
@@ -890,6 +906,13 @@ class FinanceService:
             # must exist before its draft -> posted transition is flushed.
             self.session.flush()
         self._attach_evidence(event, request.evidence_references)
+        if self._is_income_tax_settlement(request):
+            EnterpriseIncomeTaxService(self.session).attach_payment(
+                event,
+                request.income_tax_allocations,
+                request.model_dump(mode="json"),
+                request.idempotency_key,
+            )
         self._create_invoices(event, request)
         if request.event_type == EventType.SALARY_PAYMENT:
             self._record_payroll_withholding_allocations(event, derived)
@@ -1442,6 +1465,12 @@ class FinanceService:
                     Entry(account_code=request.bank_account_code, debit_fen=amount),
                     Entry(account_role="payment_platform_funds", credit_fen=amount),
                 ]
+
+        elif event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND:
+            entries = [
+                Entry(account_code=request.bank_account_code, debit_fen=amount),
+                Entry(account_role="enterprise_income_tax_payable", credit_fen=amount),
+            ]
 
         elif event_type == EventType.TAX_PAYMENT:
             tax_role = {
@@ -2789,6 +2818,7 @@ class FinanceService:
             return
 
         inflows = {
+            EventType.ENTERPRISE_INCOME_TAX_REFUND,
             EventType.SERVICE_CASH_SALE,
             EventType.CUSTOMER_RECEIPT,
             EventType.CUSTOMER_ADVANCE,
@@ -2932,6 +2962,10 @@ class FinanceService:
                 self._validate_bank_account(request.org_id, account_code, settlement_date)
 
         if request.event_type == EventType.INTERNAL_TRANSFER:
+            return None
+
+        if self._is_income_tax_settlement(request):
+            EnterpriseIncomeTaxService(self.session).validate_payment(request)
             return None
 
         if request.event_type == EventType.TAX_PAYMENT:
@@ -3333,6 +3367,13 @@ class FinanceService:
             "enterprise_income_tax",
         }:
             missing.append("details.tax_type ('vat', 'surtax', or 'enterprise_income_tax')")
+        if self._is_income_tax_settlement(request):
+            if not request.income_tax_allocations:
+                missing.append("income_tax_allocations")
+            if not request.evidence_references:
+                missing.append("evidence_references")
+            if not request.bank_transaction_references:
+                missing.append("bank_transaction_references")
         expense_events = {
             EventType.EXPENSE_CASH,
             EventType.EXPENSE_RECOVERY_RECEIVED,
@@ -3375,6 +3416,7 @@ class FinanceService:
             EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED: ("payment_date",),
             EventType.BANK_FEE: ("payment_date",),
             EventType.TAX_PAYMENT: ("payment_date",),
+            EventType.ENTERPRISE_INCOME_TAX_REFUND: ("payment_date",),
             EventType.SALARY_PAYMENT: ("payment_date",),
             EventType.SOCIAL_INSURANCE_PAYMENT: ("payment_date",),
             EventType.HOUSING_FUND_PAYMENT: ("payment_date",),
@@ -3414,9 +3456,7 @@ class FinanceService:
         return BusinessEvent(
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
-            request_payload_hash=FinanceService._canonical_payload_hash(
-                request.model_dump(mode="json")
-            ),
+            request_payload_hash=FinanceService._request_payload_hash(request),
             event_type=request.event_type.value,
             status=status,
             description=request.description,
@@ -8459,6 +8499,7 @@ class FinanceService:
             )
 
     def _reverse_event_write(self, request: ReverseEventRequest) -> FinanceResult:
+        lock_income_tax(self.session, request.org_id)
         request_payload_hash = self._request_payload_hash(request)
         existing = self.session.scalar(
             select(BusinessEvent).where(
@@ -8496,6 +8537,8 @@ class FinanceService:
             return self._result_for_existing(existing_after_lock)
         if original.status != "posted" or original.reversed_by_event_id:
             return FinanceResult(status=ResultStatus.REJECTED, errors=["EVENT_IS_NOT_REVERSIBLE"])
+        if error := EnterpriseIncomeTaxService(self.session).reversal_error(original):
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
         dependent_children = self.session.scalars(
             select(BusinessEvent)
             .join(
