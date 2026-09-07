@@ -21,6 +21,7 @@ const response = ref<EmployeesDashboardResponse | null>(null);
 const loading = ref(false);
 const error = ref("");
 const filter = ref<EmployeeFilter>("in_period");
+const displayMode = ref<"cards" | "list">("cards");
 let controller: AbortController | null = null;
 let initialized = false;
 
@@ -89,6 +90,31 @@ const filteredEmployees = computed(() => {
   if (filter.value === "ended") return items.filter((item) => item.period_state === "ended");
   return items;
 });
+const employeeListColumns = [
+  { key: "tax-salary", label: "报税工资", amount: (item: EmployeeDashboardItem) => fen(item.tax_reported_salary_fen) },
+  { key: "bonus", label: "全年一次性奖金", amount: (item: EmployeeDashboardItem) => fen(item.annual_bonus_fen) },
+  { key: "company-insurance", label: "公司社保", amount: (item: EmployeeDashboardItem) => fen(item.employer_social_insurance_fen) },
+  { key: "company-fund", label: "公司公积金", amount: (item: EmployeeDashboardItem) => fen(item.employer_housing_fund_fen) },
+  {
+    key: "personal-contribution",
+    label: "个人社保公积金",
+    amount: (item: EmployeeDashboardItem) => fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen),
+  },
+  { key: "tax", label: "个人所得税", amount: (item: EmployeeDashboardItem) => fen(item.individual_income_tax_fen) },
+  { key: "deductions", label: "个人扣减合计", amount: (item: EmployeeDashboardItem) => fen(item.personal_deduction_fen) },
+  { key: "net", label: "到手金额", amount: (item: EmployeeDashboardItem) => fen(item.net_salary_fen) },
+];
+const visibleListColumns = computed(() =>
+  employeeListColumns.filter((column) =>
+    filteredEmployees.value.some((item) => column.amount(item) !== 0n),
+  ),
+);
+const employeeListStyle = computed(() => ({
+  "--employee-list-columns": visibleListColumns.value.length
+    ? `minmax(160px, 1.4fr) repeat(${visibleListColumns.value.length}, minmax(100px, 1fr)) 16px`
+    : "minmax(160px, 1fr) 16px",
+  "--employee-list-min-width": `${240 + visibleListColumns.value.length * 112}px`,
+}));
 const filterLabel = computed(
   () =>
     ({
@@ -281,99 +307,163 @@ onBeforeUnmount(() => controller?.abort());
         </div>
         <div class="employee-toolbar">
           <p class="muted">{{ filterLabel }} · 显示 {{ filteredEmployees.length }} 人</p>
-          <select v-model="filter" class="control" aria-label="筛选员工">
-            <option value="in_period">本月核算范围内</option>
-            <option value="payroll">本月有已过账工资</option>
-            <option value="no_payroll">本月暂无已过账工资</option>
-            <option value="ended">本月前已结束核算</option>
-            <option value="all">全部已登记员工</option>
-          </select>
+          <div class="employee-toolbar-controls">
+            <select v-model="filter" class="control" aria-label="筛选员工">
+              <option value="in_period">本月核算范围内</option>
+              <option value="payroll">本月有已过账工资</option>
+              <option value="no_payroll">本月暂无已过账工资</option>
+              <option value="ended">本月前已结束核算</option>
+              <option value="all">全部已登记员工</option>
+            </select>
+            <div class="display-mode-switch" role="group" aria-label="员工明细显示模式">
+              <button type="button" :aria-pressed="displayMode === 'cards'" @click="displayMode = 'cards'">
+                卡片
+              </button>
+              <button type="button" :aria-pressed="displayMode === 'list'" @click="displayMode = 'list'">
+                列表
+              </button>
+            </div>
+          </div>
         </div>
 
         <div v-if="!filteredEmployees.length" class="empty-result">
           当前筛选条件下没有员工记录。
         </div>
-        <div v-else class="employee-grid">
-          <details
-            v-for="item in filteredEmployees"
-            :key="item.code"
-            class="employee-card"
-            :class="{ attention: employeeHasAttention(item) }"
-          >
-            <summary class="employee-card-summary">
-              <div class="employee-card-head">
-                <div class="employee-name">
-                  <span>{{ item.code }}</span>
-                  <h3>{{ item.name }}</h3>
-                </div>
-                <div class="employee-amount">
-                  <span>本月公司成本</span>
-                  <strong>{{ formatFen(item.company_cost_fen) }}</strong>
-                </div>
-              </div>
-
-              <div class="employee-meta">
-                <span>{{ item.period_state_label }}</span>
-                <span>
-                  核算日期 {{ item.employment_start_date }} 至
-                  {{ item.employment_end_date || "未设结束日" }}
-                </span>
-                <span v-if="item.has_payroll_activity">
-                  {{ item.batch_count }} 个已过账工资批次<span v-if="item.payroll_periods.length">
-                    · 归属期 {{ item.payroll_periods.join("、") }}</span
-                  >
-                </span>
-                <span v-else>本月暂无已过账工资</span>
-              </div>
-
-              <div class="employee-pay-grid">
-                <div><span>工资毛额</span><strong>{{ formatFen(item.gross_salary_fen) }}</strong></div>
-                <div><span>报税工资</span><strong>{{ formatFen(item.tax_reported_salary_fen) }}</strong></div>
-                <div><span>全年一次性奖金</span><strong>{{ formatFen(item.annual_bonus_fen) }}</strong></div>
-                <div><span>公司社保</span><strong>{{ formatFen(item.employer_social_insurance_fen) }}</strong></div>
-                <div><span>公司公积金</span><strong>{{ formatFen(item.employer_housing_fund_fen) }}</strong></div>
-                <div>
-                  <span>个人社保公积金</span>
-                  <strong>{{ formatFen(fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen)) }}</strong>
-                </div>
-                <div><span>个人所得税</span><strong>{{ formatFen(item.individual_income_tax_fen) }}</strong></div>
-                <div><span>个人扣减合计</span><strong>{{ formatFen(item.personal_deduction_fen) }}</strong></div>
-                <div><span>到手金额</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div>
-              </div>
-
-              <div class="employee-status-row">
-                <span class="employee-status" :class="[item.period_state, item.declaration_state]">
-                  {{ item.declaration_label }}
-                </span>
-                <span>
-                  {{ item.expense_areas.length ? `费用归属：${item.expense_areas.join("、")}` : "暂无费用归属" }}
-                </span>
-              </div>
-            </summary>
-
-            <div class="employee-profile">
-              <dl v-if="item.profile_available" class="employee-profile-grid">
-                <div>
-                  <dt>社保</dt>
-                  <dd>{{ participationLabel(item.social_insurance_participating, item.social_insurance_base_fen, "参保", "未参保") }}</dd>
-                </div>
-                <div>
-                  <dt>住房公积金</dt>
-                  <dd>{{ participationLabel(item.housing_fund_participating, item.housing_fund_base_fen, "参缴", "未参缴") }}</dd>
-                </div>
-                <div><dt>个税扣缴起始日</dt><dd>{{ item.tax_withholding_start_date || "未设置" }}</dd></div>
-                <div>
-                  <dt>居民身份口径</dt>
-                  <dd>{{ item.resident_employee === null ? "未设置" : item.resident_employee ? "居民个人" : "非居民个人" }}</dd>
-                </div>
-                <div><dt>费用归属</dt><dd>{{ item.expense_areas.join("、") || "未设置" }}</dd></div>
-                <div><dt>员工档案状态</dt><dd>{{ item.record_status === "active" ? "启用" : "停用" }}</dd></div>
-              </dl>
-              <p v-else class="muted">
-                当前月份末未找到有效的工资核算配置；页面不会据此推断参保、缴存或税务口径。
-              </p>
+        <div v-else class="employee-results" :class="{ 'list-results': displayMode === 'list' }"
+          :tabindex="displayMode === 'list' ? 0 : undefined" aria-label="员工明细记录">
+          <div class="employee-grid" :class="{ 'employee-list': displayMode === 'list' }"
+            :style="displayMode === 'list' ? employeeListStyle : undefined">
+            <div v-if="displayMode === 'list'" class="employee-list-header">
+              <span>员工</span>
+              <span v-for="column in visibleListColumns" :id="`employee-column-${column.key}`" :key="column.key">
+                {{ column.label }}
+              </span>
+              <span aria-hidden="true"></span>
             </div>
-          </details>
+            <details
+              v-for="item in filteredEmployees"
+              :key="item.code"
+              class="employee-card"
+              :class="{ attention: employeeHasAttention(item) }"
+            >
+              <summary class="employee-card-summary">
+                <div v-if="displayMode === 'list'" class="employee-list-summary">
+                  <div class="employee-list-identity">
+                    <span
+                      class="employee-status"
+                      :class="item.declaration_state"
+                      role="img"
+                      :aria-label="`个税申报：${item.declaration_label}`"
+                      :title="`个税申报：${item.declaration_label}`"
+                    ></span>
+                    <div class="employee-name">
+                      <span>{{ item.code }}</span>
+                      <h3>{{ item.name }}</h3>
+                    </div>
+                  </div>
+                  <div v-for="column in visibleListColumns" :key="column.key" :aria-describedby="`employee-column-${column.key}`">
+                    <strong>{{ formatFen(column.amount(item)) }}</strong>
+                  </div>
+                  <span class="employee-list-expand" aria-hidden="true">⌄</span>
+                </div>
+                <template v-else>
+                  <div class="employee-card-head">
+                    <div class="employee-name">
+                      <span>{{ item.code }}</span>
+                      <h3>{{ item.name }}</h3>
+                    </div>
+                    <div class="employee-amount">
+                      <span>本月公司成本</span>
+                      <strong>{{ formatFen(item.company_cost_fen) }}</strong>
+                    </div>
+                  </div>
+
+                  <div class="employee-meta">
+                    <span>{{ item.period_state_label }}</span>
+                    <span>
+                      核算日期 {{ item.employment_start_date }} 至
+                      {{ item.employment_end_date || "未设结束日" }}
+                    </span>
+                    <span v-if="item.has_payroll_activity">
+                      {{ item.batch_count }} 个已过账工资批次<span v-if="item.payroll_periods.length">
+                        · 归属期 {{ item.payroll_periods.join("、") }}</span
+                      >
+                    </span>
+                    <span v-else>本月暂无已过账工资</span>
+                  </div>
+
+                  <div class="employee-pay-grid">
+                    <div><span>报税工资</span><strong>{{ formatFen(item.tax_reported_salary_fen) }}</strong></div>
+                    <div><span>全年一次性奖金</span><strong>{{ formatFen(item.annual_bonus_fen) }}</strong></div>
+                    <div><span>公司社保</span><strong>{{ formatFen(item.employer_social_insurance_fen) }}</strong></div>
+                    <div><span>公司公积金</span><strong>{{ formatFen(item.employer_housing_fund_fen) }}</strong></div>
+                    <div>
+                      <span>个人社保公积金</span>
+                      <strong>{{ formatFen(fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen)) }}</strong>
+                    </div>
+                    <div><span>个人所得税</span><strong>{{ formatFen(item.individual_income_tax_fen) }}</strong></div>
+                    <div><span>个人扣减合计</span><strong>{{ formatFen(item.personal_deduction_fen) }}</strong></div>
+                    <div><span>到手金额</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div>
+                  </div>
+
+                  <div class="employee-status-row">
+                    <span class="employee-status" :class="[item.period_state, item.declaration_state]">
+                      {{ item.declaration_label }}
+                    </span>
+                    <span>
+                      {{ item.expense_areas.length ? `费用归属：${item.expense_areas.join("、")}` : "暂无费用归属" }}
+                    </span>
+                  </div>
+                </template>
+              </summary>
+
+              <div class="employee-profile">
+                <p
+                  v-if="fen(item.gross_salary_fen) !== fen(item.tax_reported_salary_fen)"
+                  class="employee-gross-detail muted"
+                >
+                  工资毛额 {{ formatFen(item.gross_salary_fen) }}
+                </p>
+                <template v-if="displayMode === 'list'">
+                  <div class="employee-meta">
+                    <span>{{ item.period_state_label }}</span>
+                    <span>核算日期 {{ item.employment_start_date }} 至 {{ item.employment_end_date || "未设结束日" }}</span>
+                    <span v-if="item.has_payroll_activity">
+                      {{ item.batch_count }} 个已过账工资批次<span v-if="item.payroll_periods.length"> · 归属期 {{ item.payroll_periods.join("、") }}</span>
+                    </span>
+                    <span v-else>本月暂无已过账工资</span>
+                  </div>
+                  <dl class="employee-profile-grid employee-list-facts">
+                    <div><dt>本月公司成本</dt><dd>{{ formatFen(item.company_cost_fen) }}</dd></div>
+                    <div class="employee-declaration-detail"><dt>个税申报</dt><dd>{{ item.declaration_label }}</dd></div>
+                  </dl>
+                  <p v-if="!item.profile_available" class="muted employee-list-expense">
+                    费用归属：{{ item.expense_areas.join("、") || "未设置" }}
+                  </p>
+                </template>
+                <dl v-if="item.profile_available" class="employee-profile-grid">
+                  <div>
+                    <dt>社保</dt>
+                    <dd>{{ participationLabel(item.social_insurance_participating, item.social_insurance_base_fen, "参保", "未参保") }}</dd>
+                  </div>
+                  <div>
+                    <dt>住房公积金</dt>
+                    <dd>{{ participationLabel(item.housing_fund_participating, item.housing_fund_base_fen, "参缴", "未参缴") }}</dd>
+                  </div>
+                  <div><dt>个税扣缴起始日</dt><dd>{{ item.tax_withholding_start_date || "未设置" }}</dd></div>
+                  <div>
+                    <dt>居民身份口径</dt>
+                    <dd>{{ item.resident_employee === null ? "未设置" : item.resident_employee ? "居民个人" : "非居民个人" }}</dd>
+                  </div>
+                  <div><dt>费用归属</dt><dd>{{ item.expense_areas.join("、") || "未设置" }}</dd></div>
+                  <div><dt>员工档案状态</dt><dd>{{ item.record_status === "active" ? "启用" : "停用" }}</dd></div>
+                </dl>
+                <p v-else class="muted">
+                  当前月份末未找到有效的工资核算配置；页面不会据此推断参保、缴存或税务口径。
+                </p>
+              </div>
+            </details>
+          </div>
         </div>
       </section>
 
@@ -653,11 +743,138 @@ small {
   padding: 0 12px;
 }
 
+.employee-toolbar-controls,
+.display-mode-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.display-mode-switch {
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.display-mode-switch button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.display-mode-switch button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.display-mode-switch button:focus-visible,
+.employee-card-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .employee-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 10px;
+}
+
+.employee-grid.employee-list {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: var(--employee-list-min-width);
+  gap: 0;
+}
+
+.list-results {
+  overflow-x: auto;
+}
+
+.employee-list-header,
+.employee-list-summary {
+  display: grid;
+  grid-template-columns: var(--employee-list-columns);
+  align-items: center;
+  gap: 12px;
+}
+
+.employee-list-header {
+  padding: 10px 17px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.employee-list .employee-card {
+  border-radius: 0;
+  border-width: 0 0 1px;
+  background: var(--surface);
+}
+
+.employee-list .employee-card-summary {
+  padding: 12px 17px;
+}
+
+.employee-list .employee-profile-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.employee-list .employee-list-facts,
+.employee-list .employee-list-expense {
+  margin-bottom: 16px;
+}
+
+.employee-list-summary > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.employee-list-summary > .employee-list-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.employee-list-header > span:not(:first-child):not(:last-child),
+.employee-list-summary > div:not(:first-child) {
+  text-align: right;
+}
+
+.employee-list .employee-declaration-detail {
+  grid-column: span 3;
+}
+
+.employee-list .employee-status.not_applicable::before {
+  background: var(--muted);
+}
+
+.employee-list .employee-status.mixed::before {
+  background: var(--info);
+}
+
+.employee-list-summary strong,
+.employee-list-summary h3 {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.employee-list-expand {
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.employee-list .employee-card[open] .employee-list-expand {
+  transform: rotate(180deg);
 }
 
 .employee-card {
@@ -718,7 +935,7 @@ small {
 
 .employee-pay-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   padding: 1px;
@@ -789,6 +1006,10 @@ small {
 
 .employee-profile > p {
   margin: 0;
+}
+
+.employee-profile > .employee-gross-detail {
+  margin-bottom: 12px;
 }
 
 .employee-profile-grid div {
@@ -864,8 +1085,25 @@ small {
     min-height: 44px;
   }
 
+  .employee-toolbar-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .display-mode-switch button {
+    min-height: 38px;
+  }
+
   .employee-amount {
     justify-items: start;
+  }
+
+  .employee-list .employee-profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .employee-list .employee-declaration-detail {
+    grid-column: 1 / -1;
   }
 }
 
