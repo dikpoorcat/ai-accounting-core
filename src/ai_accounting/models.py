@@ -4209,6 +4209,44 @@ class BusinessEvent(Base):
     )
 
 
+class BusinessEventAmendment(Base):
+    """An audited replacement of an open-month event and its derived voucher."""
+
+    __tablename__ = "business_event_amendments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"))
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    revision: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(Text)
+    before_state: Mapped[dict[str, Any]] = mapped_column(JSON)
+    after_state: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+    result: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True, active_history=True
+    )
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id"], ["business_events.org_id", "business_events.id"],
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_event_amendment_key"),
+        UniqueConstraint("org_id", "event_id", "revision", name="uq_event_amendment_revision"),
+        CheckConstraint("revision > 0", name="ck_event_amendment_revision"),
+    )
+
+
 class BusinessEventDependency(Base):
     """Immutable normalized dependency between supported customer events."""
 
@@ -6835,6 +6873,7 @@ class EnterpriseIncomeTaxSettlementLine(Base):
 
 EXECUTION_ATTRIBUTION_SESSION_KEY = "finance_execution_attribution_id"
 _ATTRIBUTED_ROOT_TYPES = (
+    BusinessEventAmendment,
     EnterpriseIncomeTaxResult,
     EnterpriseIncomeTaxSettlement,
     AccountingPeriodAction,
@@ -6980,6 +7019,28 @@ def _enforce_organization_profile_append_only(
     for item in session.dirty:
         if isinstance(item, immutable_types) and session.is_modified(item):
             raise ValueError("ORGANIZATION_PROFILE_IMMUTABLE")
+
+
+@event.listens_for(Session, "before_flush")
+def _enforce_event_amendment_audit(
+    session: Session, _flush_context: object, _instances: object
+) -> None:
+    if any(isinstance(item, BusinessEventAmendment) for item in session.deleted):
+        raise ValueError("AMENDMENT_AUDIT_IMMUTABLE")
+    for item in session.dirty:
+        if not isinstance(item, BusinessEventAmendment) or not session.is_modified(item):
+            continue
+        changed = {
+            column.name for column in item.__table__.columns
+            if attributes.get_history(item, column.name).has_changes()
+        }
+        previous_result = attributes.get_history(item, "result").deleted
+        if changed - {"result", "after_state"} or any(
+            value is not None for value in previous_result
+        ):
+            raise ValueError("AMENDMENT_AUDIT_IMMUTABLE")
+        if "result" not in changed or item.result is None or item.after_state is None:
+            raise ValueError("AMENDMENT_AUDIT_IMMUTABLE")
 
 
 Index("ix_open_items_org_status", OpenItem.org_id, OpenItem.item_type, OpenItem.status)

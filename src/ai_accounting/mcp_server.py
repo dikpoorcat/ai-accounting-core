@@ -28,6 +28,7 @@ from .accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
     RequestAccountingPeriodCloseApprovalWindowRequest,
 )
+from .accounting_periods import canonical_sha256
 from .agent_contract import (
     MCP_SERVER_INSTRUCTIONS,
     OWNER_WORKFLOW_VERSION,
@@ -74,6 +75,8 @@ from .enterprise_income_tax_schemas import (
     PreviewEnterpriseIncomeTaxResultRequest,
     QueryEnterpriseIncomeTaxRequest,
 )
+from .event_amendment_schemas import AmendEventRequest
+from .event_amendments import EventAmendmentService
 from .evidence import register_evidence
 from .execution_attribution import persist_execution_attribution
 from .financial_statement_schemas import (
@@ -110,6 +113,7 @@ from .models import (
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
+    BusinessEventAmendment,
     Evidence,
     LaborRemunerationTaxPolicyVersion,
     OpenItem,
@@ -1144,6 +1148,21 @@ def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
         # tool envelope, rather than maintaining a second model-only contract.
         "record_event_schema": mcp._tool_manager.get_tool("finance_record_event").parameters,
         "reverse_event_schema": mcp._tool_manager.get_tool("finance_reverse_event").parameters,
+        "amend_event_schema": mcp._tool_manager.get_tool("finance_amend_event").parameters,
+        "event_amendment_protocol": {
+            "open_month": (
+                "finance_get_event 后提交 finance_amend_event，按类型化事实原子重算，"
+                "保留原凭证编号和修改历史。"
+            ),
+            "closed_month": "原事实与凭证锁定，通过后续开放月冲正及重记更正。",
+            "concurrency": (
+                "expected_facts_hash 使用 finance_get_event 返回的 facts_hash；陈旧时重新读取。"
+            ),
+            "dependencies": (
+                "存在后续核销、计提、税期或其他依赖时返回 blocking_records，先处理后续业务。"
+            ),
+            "posting_date": "修改后的入账日必须仍在原未关账月份。",
+        },
         "event_requirements": (
             EVENT_REQUIREMENTS.get(event_type) if event_type else EVENT_REQUIREMENTS
         ),
@@ -2509,6 +2528,16 @@ def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
         return _invalid(exc)
 
 
+@mcp.tool(annotations=REVERSAL_WRITE)
+def finance_amend_event(request: AmendEventRequest) -> dict[str, Any]:
+    """直接修改未关账业务；复用原类型化流程重算，保留凭证编号和修改前后记录。"""
+    try:
+        with SessionLocal.begin() as session:
+            return EventAmendmentService(session).amend(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_database_error_boundary
 def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
@@ -2758,6 +2787,25 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 "trace": event.rule_trace,
                 "rule_version": event.rule_version,
             },
+            "facts_hash": canonical_sha256(event.facts),
+            "amendments": [
+                {
+                    "id": str(amendment.id),
+                    "revision": amendment.revision,
+                    "reason": amendment.reason,
+                    "created_at": amendment.created_at.isoformat(),
+                    "execution_attribution_id": (
+                        str(amendment.execution_attribution_id)
+                        if amendment.execution_attribution_id else None
+                    ),
+                    "before_state": amendment.before_state,
+                    "after_state": amendment.after_state,
+                }
+                for amendment in session.scalars(select(BusinessEventAmendment).where(
+                    BusinessEventAmendment.org_id == parsed_org,
+                    BusinessEventAmendment.event_id == parsed_event,
+                ).order_by(BusinessEventAmendment.revision))
+            ],
             "enterprise_income_tax": (
                 EnterpriseIncomeTaxService(session).query(
                     QueryEnterpriseIncomeTaxRequest(org_id=parsed_org)

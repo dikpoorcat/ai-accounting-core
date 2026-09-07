@@ -29,7 +29,7 @@ from .intangible_assets import (
     calculate_straight_line_amortization,
     intangible_asset_calculation_hash,
 )
-from .ledger import AccountingPeriodError, Entry, create_voucher
+from .ledger import AccountingPeriodError, Entry, build_business_event, create_voucher
 from .models import (
     AuditLog,
     BankTransactionMatch,
@@ -941,7 +941,8 @@ class IntangibleAssetService(FinanceService):
             "missing": [item.model_dump(mode="json") for item in missing],
             "errors": errors,
         }
-        event = BusinessEvent(
+        event = build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=self._intangible_request_hash(command, request),
@@ -998,7 +999,8 @@ class IntangibleAssetService(FinanceService):
         facts["_command"] = command
         facts["accounting_rule_version"] = SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION
         facts["accounting_rule_source_url"] = ACCOUNTING_RULE_SOURCE_URL
-        return BusinessEvent(
+        return build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=self._intangible_request_hash(command, request),

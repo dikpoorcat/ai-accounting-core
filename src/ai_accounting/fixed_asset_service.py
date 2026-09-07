@@ -30,7 +30,7 @@ from .fixed_assets import (
     calculate_used_fixed_asset_vat,
     fixed_asset_calculation_hash,
 )
-from .ledger import AccountingPeriodError, Entry, create_voucher
+from .ledger import AccountingPeriodError, Entry, build_business_event, create_voucher
 from .models import (
     AuditLog,
     BankTransactionMatch,
@@ -1868,7 +1868,8 @@ class FixedAssetService(FinanceService):
             "missing": [item.model_dump(mode="json") for item in missing],
             "errors": errors,
         }
-        event = BusinessEvent(
+        event = build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=self._fixed_asset_request_hash(command, request),
@@ -1926,7 +1927,8 @@ class FixedAssetService(FinanceService):
     ) -> BusinessEvent:
         facts = request.model_dump(mode="json")
         facts["_command"] = command
-        return BusinessEvent(
+        return build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=self._fixed_asset_request_hash(command, request),

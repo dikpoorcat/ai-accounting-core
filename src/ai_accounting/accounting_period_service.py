@@ -54,6 +54,7 @@ from .models import (
     Borrowing,
     BorrowingInterestAccrual,
     BusinessEvent,
+    BusinessEventAmendment,
     Counterparty,
     Employee,
     EnterpriseIncomeTaxQuarterConfirmation,
@@ -2585,7 +2586,15 @@ class AccountingPeriodService:
                     "description": voucher.description,
                     "event_type": event.event_type,
                     "event_status_at_close": event.status,
-                    "request_payload_hash_at_close": event.request_payload_hash,
+                    "request_payload_hash_at_close": (
+                        self.session.scalar(
+                            select(BusinessEventAmendment.request_hash).where(
+                                BusinessEventAmendment.org_id == org_id,
+                                BusinessEventAmendment.event_id == event.id,
+                                BusinessEventAmendment.result.is_not(None),
+                            ).order_by(BusinessEventAmendment.revision.desc()).limit(1)
+                        ) or event.request_payload_hash
+                    ),
                     "debit_fen": debit_fen,
                     "credit_fen": credit_fen,
                     "line_snapshot": [

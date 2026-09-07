@@ -31,7 +31,13 @@ from .financial_statement_schemas import (
     GetFinancialStatementRequirementsRequest,
     PreviewQuarterlyFinancialStatementsRequest,
 )
-from .ledger import AccountingPeriodError, Entry, account_balance_fen, create_voucher
+from .ledger import (
+    AccountingPeriodError,
+    Entry,
+    account_balance_fen,
+    build_business_event,
+    create_voucher,
+)
 from .models import (
     Account,
     AccountingPeriod,
@@ -1022,7 +1028,8 @@ class FinancialStatementService(FinanceService):
                     EnterpriseIncomeTaxTreatment.REDUCE,
                 }:
                     assert request.posting_date is not None
-                    event = BusinessEvent(
+                    event = build_business_event(
+                        self.session,
                         org_id=request.org_id,
                         idempotency_key=request.idempotency_key,
                         request_payload_hash=request_hash,

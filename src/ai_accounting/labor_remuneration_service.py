@@ -37,6 +37,7 @@ from .ledger import (
     Entry,
     OpenItemPlan,
     assert_period_open,
+    build_business_event,
     create_open_items,
     create_voucher,
 )
@@ -764,7 +765,8 @@ class LaborRemunerationService:
                         LaborRemunerationBatchEvidence.batch_id == batch.id,
                     )
                 ).all()
-                event = BusinessEvent(
+                event = build_business_event(
+                    self.session,
                     org_id=batch.org_id,
                     idempotency_key=request.idempotency_key,
                     request_payload_hash=request_hash,
@@ -1554,7 +1556,8 @@ class LaborRemunerationService:
                     .with_for_update()
                 ).all()
                 source_by_id = {item.id: item for item in source_items}
-                event = BusinessEvent(
+                event = build_business_event(
+                    self.session,
                     org_id=run.org_id,
                     idempotency_key=request.idempotency_key,
                     request_payload_hash=request_hash,
@@ -1907,7 +1910,8 @@ class LaborRemunerationService:
                     .with_for_update()
                 ).all()
                 by_id = {item.id: item for item in open_items}
-                event = BusinessEvent(
+                event = build_business_event(
+                    self.session,
                     org_id=request.org_id,
                     idempotency_key=request.idempotency_key,
                     request_payload_hash=request_hash,

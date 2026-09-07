@@ -27,7 +27,7 @@ from .borrowings import (
     borrowing_calculation_hash,
     calculate_simple_interest,
 )
-from .ledger import AccountingPeriodError, Entry, create_voucher
+from .ledger import AccountingPeriodError, Entry, build_business_event, create_voucher
 from .models import (
     AuditLog,
     BankTransactionMatch,
@@ -860,7 +860,8 @@ class BorrowingService(FinanceService):
         facts["_command"] = command
         facts["accounting_rule_version"] = SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION
         facts["accounting_rule_source_url"] = ACCOUNTING_RULE_SOURCE_URL
-        return BusinessEvent(
+        return build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=self._borrowing_request_hash(command, request),

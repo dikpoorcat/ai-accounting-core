@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v30"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v31"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
 
 IDENTITY_RUNTIME_INSTRUCTION = (
@@ -204,6 +204,18 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "open_month_amendments": {
+            "tool": "finance_amend_event",
+            "instructions": [
+                "未关账业务需要修改时，先读取 finance_get_event，"
+                "使用其 facts_hash 防止覆盖他人的修改。",
+                "提交修改原因、新幂等键和完整类型化 replacement 事实；复用对应业务原有的事实结构。",
+                "普通收支、工资、资产、借款、劳务和税务均可走修改入口；原凭证编号保留，修改历史可查询。",
+                "存在后续业务依赖时按 blocking_records 处理，"
+                "不自动改变后续业务事实；失败时原业务不变。",
+                "已关账月份仍须在后续开放月冲正及重记；不得通过修改日期绕过关账锁定。",
+            ],
+        },
         "enterprise_income_tax_results": {
             "query_tool": "finance_query_enterprise_income_tax",
             "preview_tool": "finance_preview_enterprise_income_tax_result",

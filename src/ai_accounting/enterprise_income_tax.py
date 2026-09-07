@@ -20,7 +20,13 @@ from .enterprise_income_tax_schemas import (
     PreviewEnterpriseIncomeTaxResultRequest,
     QueryEnterpriseIncomeTaxRequest,
 )
-from .ledger import Entry, assert_period_open, create_voucher, posting_period_error_code
+from .ledger import (
+    Entry,
+    assert_period_open,
+    build_business_event,
+    create_voucher,
+    posting_period_error_code,
+)
 from .models import (
     AuditLog,
     BusinessEvent,
@@ -328,7 +334,17 @@ class EnterpriseIncomeTaxService:
         for item in quarters.values():
             if item["event_id"]:
                 event = self.session.get(BusinessEvent, uuid.UUID(item["event_id"]))
-                if event is None or event.status != "posted":
+                amendment = self.session.info.get("event_amendment")
+                replaced_result = (
+                    amendment["original_tables"].get("enterprise_income_tax_results", [])
+                    if amendment else []
+                )
+                already_reversed_predecessor = bool(
+                    event is not None and replaced_result
+                    and event.reversed_by_event_id == replaced_result[0]["reversal_event_id"]
+                    and event.reversed_by_event_id is not None
+                )
+                if event is None or (event.status != "posted" and not already_reversed_predecessor):
                     return self.missing("active_quarter_income_tax_confirmation")
         quarter_total = sum(v["recognized_tax_fen"] for v in quarters.values())
         before = current["recognized_tax_fen"] if current else quarter_total
@@ -419,8 +435,20 @@ class EnterpriseIncomeTaxService:
                 assert_period_open(self.session, request.org_id, request.posting_date)
                 event_id = calc["previous_event_id"]
                 reversal_id = None
-                if calc["expense_adjustment_fen"] != 0:
-                    if event_id:
+                amendment = self.session.info.get("event_amendment")
+                if amendment:
+                    old_result = amendment["original_tables"]["enterprise_income_tax_results"][0]
+                    if (
+                        old_result["calendar_year"] != request.year
+                        or old_result["calendar_quarter"] != request.quarter
+                        or old_result["previous_result_id"] != request.previous_result_id
+                        or old_result["original_confirmation_id"]
+                        != request.original_confirmation_id
+                    ):
+                        raise ValueError("AMENDMENT_TAX_SOURCE_CHANGE_NOT_ALLOWED")
+                    reversal_id = old_result["reversal_event_id"]
+                if calc["expense_adjustment_fen"] != 0 or amendment:
+                    if event_id and not amendment:
                         # This private guard only authorizes an atomic replacement; it is
                         # never a public request field or a bypass for cash reversals.
                         self.session.info["cit_replacement_event_id"] = uuid.UUID(event_id)
@@ -445,7 +473,8 @@ class EnterpriseIncomeTaxService:
                     event_id = None
                     amount = calc["contribution_fen"]
                     if amount:
-                        event = BusinessEvent(
+                        event = build_business_event(
+                            self.session,
                             org_id=request.org_id,
                             idempotency_key=request.idempotency_key + ":assessment",
                             request_payload_hash=digest(payload),

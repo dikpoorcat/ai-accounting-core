@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -28,6 +29,26 @@ class AccountingPeriodError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def build_business_event(session: Session, **facts: Any) -> BusinessEvent:
+    """Reuse the locked event only inside an audited open-month amendment."""
+    amendment = session.info.get("event_amendment")
+    if amendment is None:
+        return BusinessEvent(**facts)
+    original = amendment["event"]
+    if (
+        amendment.get("event_built")
+        or original.status != "draft"
+        or facts["org_id"] != original.org_id
+        or facts["event_type"] != original.event_type
+    ):
+        raise ValueError("AMENDMENT_EVENT_TYPE_MISMATCH")
+    amendment["event_built"] = True
+    for key, value in facts.items():
+        if key not in {"id", "idempotency_key", "request_payload_hash", "execution_attribution_id"}:
+            setattr(original, key, value)
+    return original
 
 
 @dataclass(frozen=True)
@@ -172,9 +193,7 @@ def assert_period_open(session: Session, org_id: uuid.UUID, posting_date: date) 
             ),
             {"org_id": str(org_id), "posting_date": posting_date},
         )
-    if code := posting_period_error_code(
-        session, org_id, posting_date, current_date=today
-    ):
+    if code := posting_period_error_code(session, org_id, posting_date, current_date=today):
         raise AccountingPeriodError(code)
 
 
@@ -223,6 +242,7 @@ def create_voucher(
     description: str,
     entries: list[Entry],
     reversal_of: Voucher | None = None,
+    existing_voucher: Voucher | None = None,
 ) -> Voucher:
     if len(entries) < 2:
         raise ValueError("a voucher requires at least two lines")
@@ -236,7 +256,18 @@ def create_voucher(
         raise ValueError("voucher total must be positive")
 
     assert_period_open(session, event.org_id, posting_date)
-    voucher = Voucher(
+    amendment = session.info.get("event_amendment")
+    if amendment is not None:
+        existing_voucher = amendment["voucher"]
+    if existing_voucher is not None and (
+        existing_voucher.status != "draft"
+        or existing_voucher.event_id != event.id
+        or existing_voucher.org_id != event.org_id
+        or existing_voucher.posting_date.strftime("%Y%m") != posting_date.strftime("%Y%m")
+        or reversal_of is not None
+    ):
+        raise ValueError("INVALID_AMENDMENT_VOUCHER")
+    voucher = existing_voucher or Voucher(
         org_id=event.org_id,
         event_id=event.id,
         voucher_number=_next_voucher_number(session, event.org_id, posting_date),
@@ -245,6 +276,8 @@ def create_voucher(
         status="draft",
         reversal_of_voucher_id=reversal_of.id if reversal_of else None,
     )
+    voucher.posting_date = posting_date
+    voucher.description = description
     session.add(voucher)
     session.flush()
     for index, entry in enumerate(entries, start=1):

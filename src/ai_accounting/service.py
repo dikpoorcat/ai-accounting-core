@@ -23,6 +23,7 @@ from .ledger import (
     OpenItemPlan,
     account_balance_fen,
     assert_period_open,
+    build_business_event,
     create_open_items,
     create_voucher,
     posting_period_error_code,
@@ -3443,9 +3444,8 @@ class FinanceService:
             return value
         return date.fromisoformat(str(value))
 
-    @staticmethod
     def _new_event(
-        request: RecordEventRequest,
+        self, request: RecordEventRequest,
         status: str,
         trace: list[dict[str, Any]],
         *,
@@ -3453,7 +3453,8 @@ class FinanceService:
         rule_version: str | None = None,
     ) -> BusinessEvent:
         dates = request.business_dates
-        return BusinessEvent(
+        return build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=FinanceService._request_payload_hash(request),
@@ -4694,7 +4695,8 @@ class FinanceService:
                     "employee_amount_treatment": item.employee_amount_treatment,
                 }
             )
-        event = BusinessEvent(
+        event = build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=payload_hash,
@@ -5181,7 +5183,8 @@ class FinanceService:
             tax_state_savepoint.commit()
         self._create_payroll_withholding_entitlements(batch, lines)
         entries, open_item_plans = self._payroll_accrual_template(batch, lines)
-        event = BusinessEvent(
+        event = build_business_event(
+            self.session,
             org_id=batch.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=confirm_payload_hash,
@@ -8173,7 +8176,8 @@ class FinanceService:
                 confirmation,
                 idempotent_replay=False,
             )
-        event = BusinessEvent(
+        event = build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=request_payload_hash,
@@ -8696,7 +8700,8 @@ class FinanceService:
                     errors=["REVERSE_DEPENDENT_PAYROLL_BATCHES_FIRST"],
                 )
 
-        reversal = BusinessEvent(
+        reversal = build_business_event(
+            self.session,
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=request_payload_hash,

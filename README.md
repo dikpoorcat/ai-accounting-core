@@ -36,7 +36,7 @@
 - 应收应付开放项及严格核销，禁止超额核销制造负数往来。
 - 小规模纳税人价税分离、期间起征点、增值税减免和附加税试算。
 - SHA-256 内容寻址证据库；正式 CSV 银行导入采用预览、计算哈希和确认提交，支持缺稳定流水号的逐行人工确认、迟到外部证据、逐实际账户对账及追加式处理历史；旧 CSV/XLSX 直接写入口只保留开发回归。
-- 幂等入账、期间关闭校验、关联冲正、凭证规则轨迹和审计日志。
+- 幂等入账、未关账月份直接修改、期间关闭校验、关联冲正、凭证规则轨迹和审计日志。
 - PostgreSQL 延迟借贷平衡约束及已入账凭证不可改删触发器。
 - 工资、社保、公积金、累计个税和全年一次性奖金的登记、试算、确认、支付与冲正闭环。
 - 非员工个人劳务报酬的人员登记、固定劳务费与佣金试算、计提、扣缴、支付和冲正闭环；一笔已导入银行汇总扣款可原子覆盖工资与劳务子项。
@@ -228,7 +228,9 @@ Set-Location ..
 4. `finance_query_context`：查询开放项；银行导入、迟到处理和对账状态使用 `finance_query_bank_statement_state`。
 5. `finance_record_event`：提交业务事实。凡涉及银行收付款，必须显式提供已确认范围内的 `bank_account_code`；内部银行转账分别提供来源和目标账户代码。
 6. `finance_get_event`：审阅事实、凭证、证据和轨迹。
-7. 需要更正时使用 `finance_reverse_event`，不要修改旧凭证。
+7. 未关账月份需要修改时，先用 `finance_get_event` 读取当前事实与 `facts_hash`，再调用 `finance_amend_event`，提交 `expected_facts_hash`、修改原因、新幂等键和完整的 `replacement` 类型化事实。支持普通收支、工资及社保补缴、固定资产、无形资产、借款、劳务及发放、增值税税期和企业所得税业务；需要试算的业务在修改事务内复用专用试算与确认流程。修改保留事件、原凭证编号和业务主体编号，追加修改前后审计快照，不产生冲正凭证。入账日仍须属于原未关账月份；已关账业务继续使用 `finance_reverse_event` 在后续开放月更正。
+
+   修改不会自动改写后续业务。存在核销、后续计提、税期快照或报表分类等引用时，返回 `AMENDMENT_DEPENDENT_FACTS_EXIST` 与 `blocking_records`，应先处理依赖；陈旧事实返回 `AMENDMENT_FACTS_STALE`，应重新读取。资料不全或任何重算失败都会回滚整次修改。该入口只替换仍产生正式凭证的业务，不将非零入账转换为无凭证的零额确认，也不改变企业所得税更正的原所属期和前序来源。
 
 所有金额均为整数“分”，日期均为 ISO `YYYY-MM-DD`。
 
@@ -323,7 +325,7 @@ Set-Location ..
 
 税务客户端的实际导入、申报与提交仍由 AI 在外部协助完成，生成文件不等于已经申报。银行流水只能证明汇总税款实际支付，不能单独证明逐人申报明细；内核保存工资计算形成的个税应付款，并要求银行税款支付与指定开放项精确一致，金额不一致时不得静默核销。
 
-8. `finance_get_payroll_batch` 查询完整计算、政策、凭证、支付和冲正链；更正仍使用 `finance_reverse_event`。
+8. `finance_get_payroll_batch` 查询完整计算、政策、凭证、支付和冲正链；未关账业务可使用 `finance_amend_event` 修改，已关账业务使用 `finance_reverse_event` 更正。
 
 资料缺失、政策无有效版本、累计状态断层或支付无法唯一归属时，内核返回 `needs_information` 或稳定拒绝原因，不推测会改变会计处理的事实。
 
@@ -337,7 +339,7 @@ Set-Location ..
 4. `finance_preview_unified_payout_run` 与 `finance_confirm_unified_payout_run` 可把一个工资批次的一个或多个工资开放项和一个或多个劳务开放项放入同一父发放批次。所有子项净额必须精确等于一笔已通过受控导入动作进入系统的银行汇总扣款；银行流水只在父事件匹配一次，任何子项失败整批回滚。
 5. 劳务支付首期只支持全额结算，不按比例猜测部分支付的个税分配。每个劳务子项必须显式选择 `net_after_withholding` 或 `gross_paid_without_withholding`。前者按政策税额扣缴并支付净额；后者仅表达有单独证据支持的“毛额已全部支付、实际未扣税”历史事实，仍保存理论税额和未扣差异，按毛额匹配银行且不虚构个税应付。支付模板固定，不接受调用方自组分录或自填税额。
 6. `finance_pay_labor_withholding_tax` 只能核销逐人劳务扣缴来源的 `labor_individual_income_tax` 开放项，不能冒充工资个税来源。`finance_confirm_labor_external_declaration` 以追加式记录保存外部申报日期、引用和证据，不改写计提快照；本系统不宣称完成报税。
-7. `finance_get_labor_remuneration` 查询人员、计提批次或统一发放批次；更正使用 `finance_reverse_event`，并按个税缴款、发放、计提的下游优先顺序冲正。
+7. `finance_get_labor_remuneration` 查询人员、计提批次或统一发放批次；未关账业务可使用 `finance_amend_event` 修改。需冲正时使用 `finance_reverse_event`，按个税缴款、发放、计提的下游优先顺序处理。
 
 完整字段、会计模板和边界见[个人劳务报酬工作流](docs/personal-labor-remuneration-workflow.md)。
 
@@ -351,7 +353,7 @@ Set-Location ..
 4. `finance_confirm_fixed_asset_depreciation_batch` 复算同一哈希后原子写入一个月度批次、多条逐资产折旧明细和一张汇总凭证；月份必须连续且入账日必须属于该折旧月份。当前同属管理受益区域时只形成“借管理费用—折旧费、贷累计折旧”两条汇总分录；以后存在不同受益区域时可有多条借方和一条汇总贷方。
 5. `finance_dispose_fixed_asset` 处理单项非不动产资产出售或零收入报废，自动读取原值和累计折旧并计算清理损益；出售按有效的旧固定资产专项增值税规则计算。
 6. `finance_get_fixed_asset` 查询资产卡片、政策版本、全部历史规范事实、凭证、证据和冲正链。
-7. 更正仍使用 `finance_reverse_event`，顺序为处置、最新折旧、启用、购置；原凭证和规范事实不修改。
+7. 未关账业务可使用 `finance_amend_event` 修改；需冲正时使用 `finance_reverse_event`，顺序为处置、最新折旧、启用、购置。已关账原凭证和规范事实不修改。
 
 房屋建筑物、土地、自建/改建、融资租赁、减值、加速折旧、所得税折旧及税会差异仍不在本阶段范围。
 
