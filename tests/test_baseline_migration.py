@@ -12,7 +12,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 
 BUSINESS_REVISION = "0001_business_baseline_v2"
-BUSINESS_HEAD = "0004_business_deletions"
+BUSINESS_HEAD = "0005_event_amount_null"
 POSTGRES_IMAGE = "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 
 
@@ -79,6 +79,7 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         BUSINESS_HEAD,
+        "0004_business_deletions",
         "0003_event_amendments",
         "0002_cit_results",
         BUSINESS_REVISION,
