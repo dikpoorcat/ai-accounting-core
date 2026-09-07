@@ -14,6 +14,10 @@ filing service, or the deterministic kernel itself.
 
 ## Start the accounting conversation
 
+For an explicit request to prepare the environment (such as “启动” or “启动并开始记账”),
+use the repository `$accounting-startup` skill first. A standalone “启动” ends after readiness;
+continue this accounting workflow only when the user also requests accounting work.
+
 1. Call `finance_get_event_schema` before any enterprise-data tool and follow the returned
    `agent_operating_protocol` as the authoritative runtime contract.
 2. Call `finance_list_companies(include_archived=false)`.

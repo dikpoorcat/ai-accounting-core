@@ -18,6 +18,8 @@
 
 ### Codex 新会话如何开始记账
 
+开机后可先说“启动”：仓库级 `$accounting-startup` Skill 会启动 Docker 和已有数据库、验证 MCP 连接及登录，并打开只读看板。单独“启动”只准备环境；说“启动并开始记账”则准备完成后直接进入下面的会计流程。详见 [Windows 本地运行速查](docs/windows-local-operations.md)。
+
 在 Codex 中信任并打开本仓库后，新建会话并说“开始记账”，或直接发送需要处理的真实业务资料。仓库级 `accounting-operator` Skill 会自动进入会计操作模式；也可以显式输入 `$accounting-operator`。
 
 会计操作模式先读取最新版运行契约，再列出当前负责人可访问的公司。只有一家公司时自动选择；存在多家公司且本次会话尚未明确公司时，先让负责人选择一次。本次会话后续固定使用该公司，直到负责人明确切换。
@@ -57,7 +59,13 @@
 
 ### 已安装项目：每次如何启动
 
-下面是日常启动流程。`finance-bootstrap`、负责人账号设置等首次初始化命令不要重复执行。
+在 Codex 本仓库会话中说“启动”即可自动完成服务准备、MCP 与登录检查并打开看板。手工准备本机服务可运行：
+
+```powershell
+.\deploy\windows\start_accounting.ps1 -OpenBrowser
+```
+
+下面是分步手工启动流程。`finance-bootstrap`、负责人账号设置等首次初始化命令不要重复执行。
 
 1. 启动 Docker Desktop，等待界面显示 Docker Engine 已运行。
 2. 打开 PowerShell，进入本仓库目录：
@@ -69,7 +77,7 @@
 3. 启动本地 PostgreSQL：
 
    ```powershell
-   docker compose up -d
+   docker compose start --wait --wait-timeout 120 postgres
    docker compose ps
    ```
 

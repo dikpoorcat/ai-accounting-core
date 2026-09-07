@@ -3,7 +3,9 @@ param(
     [ValidateRange(1, 65535)]
     [int]$Port = 8765,
 
-    [switch]$OpenBrowser
+    [switch]$OpenBrowser,
+
+    [switch]$EnsureRunning
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,6 +34,23 @@ foreach ($listenerProcessId in $listenerProcessIds) {
     }
 
     $managedProcesses += $listenerProcess
+}
+
+if ($EnsureRunning -and $managedProcesses.Count -gt 0) {
+    try {
+        $response = Invoke-WebRequest -Uri $dashboardUrl -UseBasicParsing -TimeoutSec 15
+        if ($response.StatusCode -ne 200) {
+            throw "HTTP $($response.StatusCode)"
+        }
+    }
+    catch {
+        throw "DASHBOARD_NOT_READY: 已有看板页面检查失败，请检查看板日志后执行显式重启。"
+    }
+    if ($OpenBrowser) {
+        Start-Process $dashboardUrl
+    }
+    Write-Host "财务看板已就绪（复用已有进程）：$dashboardUrl"
+    return
 }
 
 foreach ($managedProcess in $managedProcesses) {
