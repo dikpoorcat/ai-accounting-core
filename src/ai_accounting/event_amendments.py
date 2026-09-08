@@ -196,6 +196,7 @@ def _reuse_owned_identity(session: Session, instance: object) -> None:
             "line_number",
             "payable_category",
             "payable_agency_code",
+            "pass_through_key",
             "insurance_kind",
             "source_key",
         )

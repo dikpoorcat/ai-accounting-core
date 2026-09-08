@@ -6546,12 +6546,31 @@ class OpenItem(Base):
     payable_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
     payable_agency_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     insurance_kind: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    pass_through_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pass_through_beneficiary_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
     settlements: Mapped[list[Settlement]] = relationship(
         back_populates="open_item", foreign_keys="Settlement.open_item_id"
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "pass_through_beneficiary_id"],
+            ["counterparties.org_id", "counterparties.id"],
+            name="fk_open_item_pass_through_beneficiary",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "source_event_id", "pass_through_key", name="uq_open_item_pass_through_key"
+        ),
+        CheckConstraint(
+            "(payable_category IS NOT NULL AND payable_category = 'pass_through' "
+            "AND pass_through_key IS NOT NULL "
+            "AND pass_through_beneficiary_id IS NOT NULL) OR "
+            "((payable_category IS NULL OR payable_category <> 'pass_through') "
+            "AND pass_through_key IS NULL AND pass_through_beneficiary_id IS NULL)",
+            name="ck_open_item_pass_through_metadata",
+        ),
         ForeignKeyConstraint(
             ["org_id", "counterparty_id"],
             ["counterparties.org_id", "counterparties.id"],
@@ -6578,7 +6597,7 @@ class OpenItem(Base):
             "payable_category IS NULL OR (item_type = 'payable' AND payable_category IN "
             "('salary','employer_social','withheld_employee_social','employer_housing',"
             "'withheld_employee_housing','individual_income_tax','labor_remuneration',"
-            "'labor_individual_income_tax'))",
+            "'labor_individual_income_tax','pass_through'))",
             name="ck_open_item_payable_category",
         ),
         CheckConstraint(
@@ -7072,7 +7091,8 @@ def _enforce_event_amendment_audit(
         if not isinstance(item, BusinessEventAmendment) or not session.is_modified(item):
             continue
         changed = {
-            column.name for column in item.__table__.columns
+            column.name
+            for column in item.__table__.columns
             if attributes.get_history(item, column.name).has_changes()
         }
         previous_result = attributes.get_history(item, "result").deleted

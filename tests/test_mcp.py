@@ -310,7 +310,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "resume_queue_after": "blocker_resolved_and_operation_continued",
         "needs_information_is_technical_error": False,
     }
-    assert protocol["version"] == "accounting_execution_assistant_v32"
+    assert protocol["version"] == "accounting_execution_assistant_v33"
     assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.12"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"

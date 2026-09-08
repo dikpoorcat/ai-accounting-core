@@ -9,8 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v32"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v33"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
+
+PASS_THROUGH_RUNTIME_INSTRUCTION = (
+    "混合收款使用customer_receipt.allocations核销应收，pass_through_items明确代收份额、最终受益人和实际债权人；"
+    "代收不是收入或预收款，不能用customer_refund退款替代代付。"
+    "代垫发生在收款前时须明确advance_reimbursement、代垫日期与证据；未确认代垫关系不得默认为直接受益人。"
+    "收款后员工或股东代付可用employee_reimbursement的existing_payable分支转移已列明债务，再报销支付。"
+    "直接代付使用pass_through_payment按债权人核销代收应付款；任何余款用途不明时先补充事实。"
+)
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -178,6 +186,7 @@ CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
 
 MCP_SERVER_INSTRUCTIONS = (
     f"{IDENTITY_RUNTIME_INSTRUCTION}"
+    f"{PASS_THROUGH_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
     f"{OWNER_WORKFLOW_RUNTIME_INSTRUCTION}"
     f"{HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION}"
@@ -204,6 +213,17 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "pass_through_funds": {
+            "tool": "finance_record_event",
+            "receipt_event_type": "customer_receipt",
+            "payment_event_type": "pass_through_payment",
+            "instruction": PASS_THROUGH_RUNTIME_INSTRUCTION,
+            "query_tool": "finance_query_context",
+            "amendment_rule": (
+                "未关账原 customer_receipt 可用 finance_amend_event 保留编号重算；"
+                "保留原应收 allocations 和整笔银行匹配。先处理后续依赖。"
+            ),
+        },
         "open_month_deletions": {
             "event_tool": "finance_delete_event",
             "bank_import_tool": "finance_withdraw_bank_statement_import",

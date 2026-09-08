@@ -1948,7 +1948,7 @@ def finance_query_context(
         if session.get(Organization, parsed_org) is None:
             return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
         item_query = select(OpenItem).where(
-            OpenItem.org_id == parsed_org, OpenItem.status == "open"
+            OpenItem.org_id == parsed_org, OpenItem.status.in_(["open", "partial"])
         )
         if parsed_counterparty:
             item_query = item_query.where(OpenItem.counterparty_id == parsed_counterparty)
@@ -1966,6 +1966,10 @@ def finance_query_context(
                     "due_date": item.due_date.isoformat() if item.due_date else None,
                     "source_event_id": str(item.source_event_id),
                     "payable_category": item.payable_category,
+                    "pass_through_key": item.pass_through_key,
+                    "pass_through_beneficiary_id": str(item.pass_through_beneficiary_id)
+                    if item.pass_through_beneficiary_id
+                    else None,
                     "payable_agency_code": item.payable_agency_code,
                     "insurance_kind": item.insurance_kind,
                 }

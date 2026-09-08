@@ -225,6 +225,7 @@ _EMPLOYEE_COMPENSATION_ROLES = {
 }
 _OTHER_PAYABLE_ROLES = {
     "employee_payable",
+    "pass_through_payable",
     "owner_payable",
     "withheld_employee_social_payable",
     "withheld_employee_housing_fund_payable",

@@ -165,6 +165,8 @@ class FinanceService:
         payload = request.model_dump(mode="json")
         if payload.get("income_tax_allocations") == []:
             payload.pop("income_tax_allocations")
+        if payload.get("pass_through_items") == []:
+            payload.pop("pass_through_items")
         return FinanceService._canonical_payload_hash(payload)
 
     @staticmethod
@@ -190,6 +192,7 @@ class FinanceService:
         if request.event_type is EventType.SALARY_PAYMENT:
             return request.amounts.amount_fen != 0
         return request.event_type in {
+            EventType.PASS_THROUGH_PAYMENT,
             EventType.SERVICE_CASH_SALE,
             EventType.CUSTOMER_RECEIPT,
             EventType.CUSTOMER_ADVANCE,
@@ -958,6 +961,20 @@ class FinanceService:
                 event=event,
                 plans=self._salary_withholding_open_item_plans(event, derived),
             )
+        pass_through_open_items = []
+        for split in derived.get("pass_through_items", []):
+            item = OpenItem(
+                org_id=event.org_id,
+                source_event_id=event.id,
+                counterparty_id=uuid.UUID(split["creditor_id"]),
+                item_type="payable",
+                payable_category="pass_through",
+                original_amount_fen=split["amount_fen"],
+                pass_through_key=split["key"],
+                pass_through_beneficiary_id=uuid.UUID(split["beneficiary_id"]),
+            )
+            self.session.add(item)
+            pass_through_open_items.append(item)
         event.status = "posted"
         self.session.add(
             AuditLog(
@@ -971,6 +988,10 @@ class FinanceService:
         result_data: dict[str, Any] = {"derived": derived}
         if created_open_item is not None:
             result_data["created_open_items"] = [self._open_item_result(created_open_item)]
+        if pass_through_open_items:
+            result_data["created_open_items"] = [
+                self._open_item_result(item) for item in pass_through_open_items
+            ]
         return FinanceResult(
             status=ResultStatus.POSTED,
             event_id=event.id,
@@ -1109,7 +1130,9 @@ class FinanceService:
 
         elif event_type == EventType.CUSTOMER_RECEIPT:
             allocated = sum(item.amount_fen for item in request.allocations)
-            excess = amount - allocated
+            splits = self._pass_through_receipt_items(request)
+            pass_through_total = sum(item["amount_fen"] for item in splits)
+            excess = amount - allocated - pass_through_total
             vat_transfer_plans = self._deferred_output_vat_transfer_plans(request)
             vat_transfer_total = sum(plan["amount_fen"] for plan in vat_transfer_plans)
             entries = [
@@ -1131,6 +1154,15 @@ class FinanceService:
                         account_role="contract_liability", credit_fen=excess, counterparty_id=cp_id
                     )
                 )
+            entries.extend(
+                Entry(
+                    account_role="pass_through_payable",
+                    credit_fen=item["amount_fen"],
+                    counterparty_id=uuid.UUID(item["creditor_id"]),
+                    memo=item["purpose"],
+                )
+                for item in splits
+            )
             if vat_transfer_total:
                 entries.extend(
                     [
@@ -1141,6 +1173,8 @@ class FinanceService:
             derived = {
                 "allocated_fen": allocated,
                 "advance_fen": excess,
+                "pass_through_fen": pass_through_total,
+                "pass_through_items": splits,
                 "deferred_output_vat_transfer_fen": vat_transfer_total,
                 "deferred_output_vat_transfers": vat_transfer_plans,
             }
@@ -1235,6 +1269,15 @@ class FinanceService:
                 "expense_recovery_kind": request.details.expense_recovery_kind,
                 "expense_recovery_fen": amount,
             }
+
+        elif event_type == EventType.PASS_THROUGH_PAYMENT:
+            entries = [
+                Entry(account_role="pass_through_payable", debit_fen=amount, counterparty_id=cp_id),
+                Entry(
+                    account_code=request.bank_account_code, credit_fen=amount, counterparty_id=cp_id
+                ),
+            ]
+            derived = {"allocated_fen": sum(item.amount_fen for item in request.allocations)}
 
         elif event_type == EventType.SUPPLIER_PAYMENT:
             entries = [
@@ -1725,6 +1768,48 @@ class FinanceService:
             "exemption_eligible": eligible,
         }
 
+    def _pass_through_receipt_items(self, request: RecordEventRequest) -> list[dict[str, Any]]:
+        result = []
+        for split in request.pass_through_items:
+            beneficiary = self._resolve_counterparty_reference(request.org_id, split.beneficiary)
+            creditor = self._resolve_counterparty_reference(request.org_id, split.creditor)
+            if beneficiary is None or creditor is None:
+                raise ValueError("PASS_THROUGH_PARTIES_REQUIRED")
+            if split.creditor_basis == "beneficiary":
+                if (
+                    creditor.id != beneficiary.id
+                    or split.advance_payment_date
+                    or split.advance_evidence_ids
+                ):
+                    raise ValueError("PASS_THROUGH_BENEFICIARY_CREDITOR_MISMATCH")
+            elif split.creditor_basis == "advance_reimbursement":
+                if creditor.id == beneficiary.id or creditor.kind not in {
+                    "employee",
+                    "owner",
+                    "other",
+                }:
+                    raise ValueError("PASS_THROUGH_ADVANCING_PERSON_INVALID")
+                if (
+                    split.advance_payment_date is None
+                    or split.advance_payment_date > request.business_dates.payment_date
+                ):
+                    raise ValueError("PASS_THROUGH_ADVANCE_MUST_PRECEDE_RECEIPT")
+                if not set(split.advance_evidence_ids).issubset(request.evidence_references):
+                    raise ValueError("PASS_THROUGH_ADVANCE_EVIDENCE_MUST_BE_ATTACHED")
+            else:
+                raise ValueError("PASS_THROUGH_CREDITOR_BASIS_REQUIRED")
+            result.append(
+                {
+                    "key": split.key,
+                    "amount_fen": split.amount_fen,
+                    "beneficiary_id": str(beneficiary.id),
+                    "creditor_id": str(creditor.id),
+                    "creditor_basis": split.creditor_basis,
+                    "purpose": split.purpose,
+                }
+            )
+        return result
+
     def _apply_settlements(
         self,
         event: BusinessEvent,
@@ -1754,6 +1839,7 @@ class FinanceService:
                     OpenItem.org_id == request.org_id,
                 )
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
             if item is None:
                 if request.event_type in {
@@ -1765,6 +1851,23 @@ class FinanceService:
                 raise ValueError(f"open item not found: {allocation.open_item_id}")
             if item.item_type != expected_type or item.status not in {"open", "partial"}:
                 raise ValueError(f"open item is not an active {expected_type}: {item.id}")
+            is_pass_through_payment = request.event_type == EventType.PASS_THROUGH_PAYMENT
+            paid_on_behalf = (
+                request.event_type == EventType.EMPLOYEE_REIMBURSEMENT
+                and request.details.reimbursement_kind == "existing_payable"
+            )
+            if is_pass_through_payment and item.payable_category != "pass_through":
+                raise ValueError("PASS_THROUGH_PAYMENT_SOURCE_REQUIRED")
+            if item.payable_category == "pass_through":
+                if not is_pass_through_payment and not paid_on_behalf:
+                    raise ValueError("PASS_THROUGH_REQUIRES_TYPED_SETTLEMENT")
+                source = self.session.get(BusinessEvent, item.source_event_id)
+                if (
+                    source.status != "posted"
+                    or source.posting_date > request.business_dates.posting_date
+                    or source.payment_date > request.business_dates.payment_date
+                ):
+                    raise ValueError("PASS_THROUGH_SOURCE_NOT_ACTIVE_OR_FUTURE")
             if payroll_categories is not None and item.payable_category not in payroll_categories:
                 if request.event_type in {
                     EventType.SOCIAL_INSURANCE_PAYMENT,
@@ -1902,6 +2005,7 @@ class FinanceService:
     @staticmethod
     def _open_payable_account_role(item: OpenItem, counterparty: Counterparty) -> str:
         category_roles = {
+            "pass_through": "pass_through_payable",
             "salary": "employee_salary_payable",
             "employer_social": "employer_social_payable",
             "withheld_employee_social": "withheld_employee_social_payable",
@@ -1955,6 +2059,7 @@ class FinanceService:
             )
             .order_by(OpenItem.id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         ).all()
         by_id = {item.id: item for item in items}
         if len(by_id) != len(allocation_ids):
@@ -1991,7 +2096,8 @@ class FinanceService:
                     debit_fen=allocation.amount_fen,
                     counterparty_id=(
                         item.counterparty_id
-                        if item.payable_category in {None, "salary", "labor_remuneration"}
+                        if item.payable_category
+                        in {None, "salary", "labor_remuneration", "pass_through"}
                         else None
                     ),
                 )
@@ -2831,6 +2937,7 @@ class FinanceService:
             EventType.EXPENSE_RECOVERY_RECEIVED,
         }
         outflows = {
+            EventType.PASS_THROUGH_PAYMENT,
             EventType.CUSTOMER_REFUND,
             EventType.EXPENSE_CASH,
             EventType.SUPPLIER_PAYMENT,
@@ -3150,6 +3257,7 @@ class FinanceService:
             missing.append("direction")
 
         counterparty_events = {
+            EventType.PASS_THROUGH_PAYMENT,
             EventType.SERVICE_CREDIT_SALE,
             EventType.SERVICE_FULFILLMENT,
             EventType.CUSTOMER_RECEIPT,
@@ -3282,9 +3390,12 @@ class FinanceService:
             missing.append("business_dates.tax_obligation_date")
 
         if event_type == EventType.CUSTOMER_RECEIPT:
-            allocated = sum(item.amount_fen for item in request.allocations)
+            allocated = sum(item.amount_fen for item in request.allocations) + sum(
+                item.amount_fen for item in request.pass_through_items
+            )
             if (
                 not request.allocations
+                and not request.pass_through_items
                 and request.details.get("unallocated_treatment") != "advance"
             ):
                 missing.append("allocations or details.unallocated_treatment='advance'")
@@ -3298,6 +3409,7 @@ class FinanceService:
                 missing.append("allocations whose total does not exceed the receipt")
 
         if event_type in {
+            EventType.PASS_THROUGH_PAYMENT,
             EventType.SUPPLIER_PAYMENT,
             EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
             EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
@@ -3307,6 +3419,21 @@ class FinanceService:
                 missing.append("allocations")
             elif amount and allocated != amount:
                 missing.append("allocations whose total equals the payment")
+
+        if request.pass_through_items or event_type == EventType.PASS_THROUGH_PAYMENT:
+            if not request.evidence_references:
+                missing.append("evidence_references")
+            if not request.description.strip():
+                missing.append("description")
+        for index, split in enumerate(request.pass_through_items):
+            for field in ("beneficiary", "creditor", "creditor_basis", "purpose"):
+                if not getattr(split, field):
+                    missing.append(f"pass_through_items.{index}.{field}")
+            if split.creditor_basis == "advance_reimbursement":
+                if split.advance_payment_date is None:
+                    missing.append(f"pass_through_items.{index}.advance_payment_date")
+                if not split.advance_evidence_ids:
+                    missing.append(f"pass_through_items.{index}.advance_evidence_ids")
 
         if self._payroll_payment_categories(event_type) is not None:
             allocated = sum(item.amount_fen for item in request.allocations)
@@ -3402,6 +3529,7 @@ class FinanceService:
             EventType.SERVICE_CREDIT_SALE: ("fulfillment_date",),
             EventType.SERVICE_FULFILLMENT: ("fulfillment_date",),
             EventType.CUSTOMER_RECEIPT: ("payment_date",),
+            EventType.PASS_THROUGH_PAYMENT: ("payment_date",),
             EventType.CUSTOMER_ADVANCE: ("payment_date",),
             EventType.CUSTOMER_REFUND: ("payment_date",),
             EventType.EXPENSE_CASH: ("payment_date",),
@@ -3445,7 +3573,8 @@ class FinanceService:
         return date.fromisoformat(str(value))
 
     def _new_event(
-        self, request: RecordEventRequest,
+        self,
+        request: RecordEventRequest,
         status: str,
         trace: list[dict[str, Any]],
         *,
@@ -3515,6 +3644,11 @@ class FinanceService:
             "settled_amount_fen": item.settled_amount_fen,
             "status": item.status,
             "counterparty_id": str(item.counterparty_id),
+            "payable_category": item.payable_category,
+            "pass_through_key": item.pass_through_key,
+            "pass_through_beneficiary_id": str(item.pass_through_beneficiary_id)
+            if item.pass_through_beneficiary_id
+            else None,
             "due_date": item.due_date.isoformat() if item.due_date else None,
         }
 

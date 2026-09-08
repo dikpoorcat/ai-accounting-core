@@ -32,6 +32,7 @@ class EventType(StrEnum):
     SERVICE_CREDIT_SALE = "service_credit_sale"
     SERVICE_FULFILLMENT = "service_fulfillment"
     CUSTOMER_RECEIPT = "customer_receipt"
+    PASS_THROUGH_PAYMENT = "pass_through_payment"
     CUSTOMER_ADVANCE = "customer_advance"
     CUSTOMER_REFUND = "customer_refund"
     EXPENSE_CASH = "expense_cash"
@@ -155,7 +156,10 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "amount": "amount_fen",
         "required_dates": ["business_date", "payment_date", "posting_date"],
         "counterparty": "customer required",
-        "required_choice": "allocations, or details.unallocated_treatment=advance",
+        "required_choice": (
+            "receivable allocations + explicit pass_through_items; any remaining amount requires "
+            "details.unallocated_treatment=advance"
+        ),
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
     },
@@ -166,6 +170,19 @@ EVENT_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "tax_facts": "required; set tax_due_on_event explicitly",
         "required_fields": ["bank_account_code"],
         "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
+    },
+    EventType.PASS_THROUGH_PAYMENT.value: {
+        "amount": "amount_fen",
+        "required_dates": ["business_date", "payment_date", "posting_date"],
+        "counterparty": "actual creditor/payee required",
+        "allocations": (
+            "required; only pass_through payables belonging to this creditor; total equals payment"
+        ),
+        "required_fields": ["bank_account_code", "evidence_references", "description"],
+        "bank_transaction_references": BANK_TRANSACTION_REFERENCES_OPTIONAL,
+        "posting_template": (
+            "debit pass_through_payable; credit selected reconciled bank/platform account"
+        ),
     },
     EventType.CUSTOMER_REFUND.value: {
         "amount": "amount_fen",
@@ -545,6 +562,21 @@ class CounterpartyRef(BaseModel):
         if self.kind and self.kind not in {"customer", "supplier", "employee", "owner", "other"}:
             raise ValueError("unsupported counterparty kind")
         return self
+
+
+class PassThroughItem(BaseModel):
+    """Explicit non-revenue funds owed to a beneficiary or a documented advancing person."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=100)
+    amount_fen: PositiveFen
+    beneficiary: CounterpartyRef | None = None
+    creditor: CounterpartyRef | None = None
+    creditor_basis: Literal["beneficiary", "advance_reimbursement"] | None = None
+    purpose: str | None = Field(default=None, min_length=1, max_length=1000)
+    advance_payment_date: date | None = None
+    advance_evidence_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class AmountFacts(BaseModel):
@@ -2095,6 +2127,22 @@ class FixedAssetResult(BaseModel):
 
 
 class RecordEventRequest(BaseModel):
+    pass_through_items: list[PassThroughItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def pass_through_shape(self) -> RecordEventRequest:
+        if self.pass_through_items and self.event_type != EventType.CUSTOMER_RECEIPT:
+            raise ValueError("pass_through_items are only for customer_receipt")
+        if self.pass_through_items or self.event_type == EventType.PASS_THROUGH_PAYMENT:
+            if self.amounts.amount_fen is None or self.tax_facts is not None:
+                raise ValueError("pass-through funds require amount_fen and no tax_facts")
+            if self.invoice_references or self.amounts.expense_account_role is not None:
+                raise ValueError("pass-through funds do not accept expense roles or invoices")
+        keys = [item.key for item in self.pass_through_items]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate pass-through item key")
+        return self
+
     income_tax_allocations: list[IncomeTaxSourceAllocation] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -2250,6 +2298,7 @@ class RecordEventRequest(BaseModel):
             raise ValueError("payment_platform_transfer requires a platform direction")
 
         bank_settled = self.event_type in {
+            EventType.PASS_THROUGH_PAYMENT,
             EventType.SERVICE_CASH_SALE,
             EventType.CUSTOMER_RECEIPT,
             EventType.CUSTOMER_ADVANCE,

@@ -50,6 +50,7 @@ EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
     "service_credit_sale": ("income_customer", "赊销服务收入"),
     "service_fulfillment": ("income_customer", "服务履约确认"),
     "customer_receipt": ("income_customer", "客户回款"),
+    "pass_through_payment": ("fund_movement", "代收款支付"),
     "customer_advance": ("income_customer", "客户预收款"),
     "customer_refund": ("income_customer", "客户退款"),
     "other_income_received": ("income_customer", "营业外收入"),
@@ -314,6 +315,8 @@ def _voucher_event_label(event: BusinessEvent) -> str:
         return label
     facts = event.facts if isinstance(event.facts, dict) else {}
     derived = facts.get("derived")
+    if isinstance(derived, dict) and derived.get("pass_through_fen", 0) > 0:
+        return "客户回款及代收款" if derived.get("allocated_fen", 0) > 0 else "代收款到账"
     transfer_fen = (
         derived.get("deferred_output_vat_transfer_fen") if isinstance(derived, dict) else None
     )
@@ -476,6 +479,7 @@ def _compact_voucher_summary(
         "expense_recovery_received": ("收回", "费用款"),
         "expense_payable": ("确认", "应付费用"),
         "supplier_payment": ("支付", "供应商款"),
+        "pass_through_payment": ("支付", "代收款"),
         "owner_loan_received": ("收到", "借款"),
         "owner_repayment": ("归还", "款项"),
     }

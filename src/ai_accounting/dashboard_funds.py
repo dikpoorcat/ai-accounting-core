@@ -39,6 +39,7 @@ _EVENT_LABELS = {
     "expense_cash": "现付费用",
     "expense_recovery_received": "费用退回",
     "supplier_payment": "供应商付款",
+    "pass_through_payment": "代收款支付",
     "bank_fee": "银行手续费",
     "employee_reimbursement_payment": "个人垫付款清偿",
     "salary_payment": "工资结算",
