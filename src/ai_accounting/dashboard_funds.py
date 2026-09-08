@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import Engine, or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from .bank_statement_service import BankStatementService
 from .dashboard_common import (
@@ -21,6 +21,7 @@ from .models import (
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
+    BusinessEventComponent,
     Counterparty,
     Organization,
     Voucher,
@@ -29,67 +30,41 @@ from .models import (
 
 FINAL_VOUCHER_STATUSES = ("posted", "reversed")
 
-_EVENT_LABELS = {
-    "service_cash_sale": "现款服务收入",
-    "customer_receipt": "客户回款",
+_COMPONENT_LABELS = {
+    "expense": "费用",
+    "service_sale": "服务收入",
     "customer_advance": "客户预收款",
+    "service_fulfillment": "服务履约确认",
     "customer_refund": "客户退款",
-    "other_income_received": "营业外收入",
-    "bank_interest_received": "银行存款利息",
-    "expense_cash": "现付费用",
-    "expense_recovery_received": "费用退回",
-    "supplier_payment": "供应商付款",
-    "pass_through_payment": "代收款支付",
-    "bank_fee": "银行手续费",
-    "employee_reimbursement_payment": "个人垫付款清偿",
-    "salary_payment": "工资结算",
-    "social_insurance_payment": "社保缴纳",
-    "housing_fund_payment": "公积金缴纳",
-    "individual_income_tax_payment": "工资个税缴纳",
-    "unified_payout_run": "工资与劳务统一付款",
-    "labor_withholding_tax_payment": "劳务个税缴纳",
-    "tax_payment": "税费缴纳",
-    "enterprise_income_tax_refund": "企业所得税退税",
-    "tax_relief": "税费减免",
+    "receivable_settlement": "应收款结算",
+    "payable_settlement": "应付款结算",
+    "pass_through": "代收代付",
+    "debt_transfer": "债务转移",
+    "refundable_deposit": "可退保证金",
+    "owner_funding": "股东投入或借款",
+    "other_income": "其他收入",
+    "managed_account_return": "备用金退回",
+    "expense_recovery": "费用退回",
+    "expense_reserve_settlement": "费用备用金结算",
+    "funds_transfer": "资金调拨",
+    "tax_settlement": "税费结算",
+    "salary_settlement": "工资与社保结算",
+    "labor_settlement": "个人劳务结算",
+    "labor_tax_settlement": "劳务个税结算",
     "fixed_asset_acquisition": "固定资产购置",
     "fixed_asset_disposal": "固定资产处置",
     "intangible_asset_acquisition": "无形资产购置",
     "intangible_asset_retirement": "无形资产退役",
-    "owner_loan_received": "股东借款",
-    "owner_contribution_received": "股东投入",
-    "owner_repayment": "归还股东款",
     "borrowing_drawdown": "借款到账",
     "borrowing_interest_payment": "借款利息支付",
     "borrowing_principal_repayment": "借款本金归还",
-    "refundable_deposit_paid": "可退保证金支付",
-    "refundable_deposit_return_received": "可退保证金收回",
-    "internal_transfer": "银行账户内部转账",
-    "cash_bank_transfer": "现金与银行互转",
-    "payment_platform_transfer": "银行与支付平台互转",
-    "reversal": "冲正凭证",
 }
 
 
 def _bank_activity_party(
     transaction: BankTransaction,
-    matched_event: BusinessEvent | None,
 ) -> str:
-    original_party = transaction.counterparty_name or "未提供往来对方"
-    platform_origin_event = matched_event is not None and (
-        matched_event.event_type
-        in {"payment_platform_transfer", "expense_recovery_received"}
-        or (
-            matched_event.event_type == "owner_contribution_received"
-            and "支付宝" in matched_event.description
-        )
-    )
-    if (
-        transaction.amount_fen > 0
-        and platform_origin_event
-        and "网商银行转入" in transaction.memo
-    ):
-        return f"企业支付宝余额转入（{original_party}）"
-    return original_party
+    return transaction.counterparty_name or "未提供往来对方"
 
 
 def load_funds_dashboard(
@@ -152,19 +127,6 @@ def build_bank_activity(
         else []
     )
     matches = {item.bank_transaction_id: item for item in active_matches}
-    matched_events = (
-        {
-            event.id: event
-            for event in session.scalars(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == org_id,
-                    BusinessEvent.id.in_({item.event_id for item in active_matches}),
-                )
-            )
-        }
-        if active_matches
-        else {}
-    )
     account_names = dict(
         session.execute(
             select(Account.code, Account.name).where(
@@ -182,7 +144,6 @@ def build_bank_activity(
     rows: list[dict[str, Any]] = []
     for transaction in transactions:
         state = "matched"
-        matched_event: BusinessEvent | None = None
         if transaction.is_late:
             late_count += 1
             if service._current_late_action(transaction) is None:
@@ -199,8 +160,6 @@ def build_bank_activity(
                     active_match,
                 )
                 state = "matched" if matched else "unmatched"
-                if matched and active_match is not None:
-                    matched_event = matched_events.get(active_match.event_id)
             except ValueError:
                 matched = False
                 state = "invalid_match"
@@ -219,7 +178,7 @@ def build_bank_activity(
                 "direction": "inflow" if transaction.amount_fen > 0 else "outflow",
                 "amount_fen": abs(transaction.amount_fen),
                 "signed_amount_fen": transaction.amount_fen,
-                "party": _bank_activity_party(transaction, matched_event),
+                "party": _bank_activity_party(transaction),
                 "memo": transaction.memo.strip() or "无摘要",
                 "state": state,
                 "is_late": transaction.is_late,
@@ -307,6 +266,7 @@ def build_funds_data(
             .where(
                 Account.org_id == organization.id,
                 or_(
+                    Account.business_class.in_(("bank", "cash", "payment_platform_funds")),
                     Account.system_role.in_(("bank", "cash", "payment_platform_funds")),
                     Account.requires_bank_reconciliation.is_(True),
                 ),
@@ -317,10 +277,37 @@ def build_funds_data(
     if not fund_accounts:
         return _empty_funds(bank_activity)
 
-    original_voucher = aliased(Voucher)
-    original_event = aliased(BusinessEvent)
+    event_components = session.scalars(
+        select(BusinessEventComponent)
+        .join(Voucher, Voucher.event_id == BusinessEventComponent.event_id)
+        .where(BusinessEventComponent.org_id == organization.id)
+        .where(
+            Voucher.org_id == organization.id,
+            Voucher.posting_date <= period.end_date,
+            Voucher.status.in_(FINAL_VOUCHER_STATUSES),
+        )
+        .order_by(BusinessEventComponent.event_id, BusinessEventComponent.ordinal)
+    ).all()
+    components_by_event: dict[uuid.UUID, dict[str, BusinessEventComponent]] = {}
+    for component in event_components:
+        components_by_event.setdefault(component.event_id, {})[component.key] = component
+    party_rows = session.execute(
+        select(Voucher.event_id, Counterparty.name)
+        .join(VoucherLine, VoucherLine.voucher_id == Voucher.id)
+        .join(Counterparty, Counterparty.id == VoucherLine.counterparty_id)
+        .where(
+            Voucher.org_id == organization.id,
+            Voucher.posting_date <= period.end_date,
+            Voucher.status.in_(FINAL_VOUCHER_STATUSES),
+        )
+        .distinct()
+    ).all()
+    parties_by_event: dict[uuid.UUID, set[str]] = {}
+    for event_id, party_name in party_rows:
+        parties_by_event.setdefault(event_id, set()).add(party_name)
     movement_rows = session.execute(
         select(
+            Voucher.event_id,
             VoucherLine.account_id,
             Voucher.posting_date,
             Voucher.voucher_number,
@@ -331,19 +318,14 @@ def build_funds_data(
             Account.code.label("account_code"),
             Account.name.label("account_name"),
             Account.system_role,
-            BusinessEvent.event_type,
+            Account.business_class,
             BusinessEvent.description,
-            Counterparty.name.label("party_name"),
-            original_event.event_type.label("original_event_type"),
+            BusinessEventComponent.facts.label("component_facts"),
         )
         .join(Voucher, Voucher.id == VoucherLine.voucher_id)
         .join(Account, Account.id == VoucherLine.account_id)
         .join(BusinessEvent, BusinessEvent.id == Voucher.event_id)
-        .outerjoin(Counterparty, Counterparty.id == VoucherLine.counterparty_id)
-        .outerjoin(
-            original_voucher, original_voucher.id == Voucher.reversal_of_voucher_id
-        )
-        .outerjoin(original_event, original_event.id == original_voucher.event_id)
+        .join(BusinessEventComponent, BusinessEventComponent.id == VoucherLine.component_id)
         .where(
             VoucherLine.account_id.in_([account.id for account in fund_accounts]),
             Voucher.org_id == organization.id,
@@ -393,11 +375,6 @@ def build_funds_data(
         for account in fund_accounts
     }
     movements = []
-    transfer_types = {
-        "internal_transfer",
-        "cash_bank_transfer",
-        "payment_platform_transfer",
-    }
     for row in movement_rows:
         values = values_by_account[row.account_id]
         signed_fen = int(row.debit_fen) - int(row.credit_fen)
@@ -411,11 +388,19 @@ def build_funds_data(
         activity_date = row.posting_date.isoformat()
         if values["last_book_activity_date"] is None:
             values["last_book_activity_date"] = activity_date
-        internal_transfer = (
-            row.event_type in transfer_types
-            or row.original_event_type in transfer_types
-        )
-        event_label = _EVENT_LABELS.get(row.event_type, "其他业务")
+        facts = row.component_facts if isinstance(row.component_facts, dict) else {}
+        allocations = facts.get("allocations", [])
+        allocated_components = [
+            components_by_event.get(row.event_id, {}).get(allocation.get("component_key"))
+            for allocation in allocations
+            if isinstance(allocation, dict)
+        ]
+        allocated_components = [component for component in allocated_components if component]
+        kinds = list(dict.fromkeys(component.kind for component in allocated_components))
+        internal_transfer = "funds_transfer" in kinds
+        labels = [_COMPONENT_LABELS.get(kind, kind) for kind in kinds]
+        event_label = "、".join(labels) or "资金结算"
+        classification = row.business_class or row.system_role
         movements.append(
             {
                 "date": activity_date,
@@ -423,10 +408,10 @@ def build_funds_data(
                 "account_name": row.account_name,
                 "account_type": (
                     "cash"
-                    if row.system_role == "cash"
+                    if classification == "cash"
                     else (
                         "payment_platform"
-                        if row.system_role == "payment_platform_funds"
+                        if classification == "payment_platform_funds"
                         else "bank"
                     )
                 ),
@@ -438,7 +423,8 @@ def build_funds_data(
                 "summary": " ".join(
                     (row.description or row.memo or event_label).strip().split()
                 ),
-                "party": row.party_name or "—",
+                "party": "、".join(sorted(parties_by_event.get(row.event_id, set()))) or "—",
+                "component_kinds": kinds,
                 "internal_transfer": internal_transfer,
             }
         )
@@ -466,12 +452,13 @@ def build_funds_data(
             for key in ("opening_fen", "inflow_fen", "outflow_fen", "movement_count")
         )
         has_statement_facts = bool(statement and statement["transaction_count"])
+        classification = account.business_class or account.system_role
         account_type = (
             "cash"
-            if account.system_role == "cash"
+            if classification == "cash"
             else (
                 "payment_platform"
-                if account.system_role == "payment_platform_funds"
+                if classification == "payment_platform_funds"
                 else "bank"
             )
         )
@@ -574,9 +561,10 @@ def _fund_reconciliation_view(
     latest: BankReconciliation | None,
     in_scope: bool,
 ) -> dict[str, Any]:
-    if account.system_role == "cash":
+    classification = account.business_class or account.system_role
+    if classification == "cash":
         return {"state": "not_applicable", "label": "现金账户无需银行对账"}
-    if account.system_role == "payment_platform_funds":
+    if classification == "payment_platform_funds":
         return {"state": "not_applicable", "label": "支付平台余额待平台明细核验"}
     if not account.requires_bank_reconciliation:
         return {"state": "not_configured", "label": "未纳入逐账户银行对账"}

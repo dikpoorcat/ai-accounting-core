@@ -6,13 +6,13 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from ai_accounting import mcp_server
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.mcp_server import mcp
 from ai_accounting.models import BusinessEvent, Counterparty, OpenItem, Organization
 from ai_accounting.schemas import (
     ConfirmPayrollRequest,
     GeneratePayrollTaxImportRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RecordPayrollContributionSupplementRequest,
     RegisterPayrollContributionActualRequest,
 )
@@ -68,7 +68,7 @@ def test_payroll_mcp_contract_exposes_only_structured_business_facts() -> None:
     } <= set(tax_import_item_schema["required"])
     assert "debit_fen" not in schema_text
     assert "credit_fen" not in schema_text
-    assert "'account_code'" not in schema_text
+    assert "journal_lines" not in schema_text
 
 
 def test_query_context_exposes_payroll_payable_target_metadata(

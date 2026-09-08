@@ -10,6 +10,7 @@ from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.dashboard_employees import build_employees_data, load_employees_dashboard
 from ai_accounting.database import Base, make_engine, make_session_factory
+from ai_accounting.ledger import ComponentPostingPlan, Entry, commit_posting_plan
 from ai_accounting.models import (
     Account,
     AccountingPeriod,
@@ -22,8 +23,6 @@ from ai_accounting.models import (
     PayrollBatch,
     PayrollLine,
     PayrollPolicyVersion,
-    Voucher,
-    VoucherLine,
 )
 
 
@@ -139,10 +138,10 @@ def _add_payroll(
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key="dashboard-employees-payroll-event",
-        event_type="payroll_accrual",
-        status="posted",
+        event_type="composite",
+        status="draft",
         description="二月工资计提",
-        facts={},
+        facts={"components": ["payroll"]},
         business_date=date(2026, 2, 28),
         posting_date=date(2026, 2, 28),
         rule_trace=[],
@@ -197,40 +196,27 @@ def _add_payroll(
         )
     )
     assert expense is not None and bank is not None
-    voucher = Voucher(
-        org_id=organization.id,
-        event_id=event.id,
-        voucher_number="202602-0001",
+    company_cost_fen = gross_salary_fen + employer_social_insurance_fen
+    commit_posting_plan(
+        session,
+        event=event,
         posting_date=date(2026, 2, 28),
         description=event.description,
-        status="posted",
+        components=[
+            ComponentPostingPlan(
+                key="payroll",
+                kind="payroll_accrual",
+                facts={"key": "payroll", "kind": "payroll_accrual"},
+                derived={},
+                entries=[
+                    Entry(account_code=expense.code, debit_fen=company_cost_fen),
+                    Entry(account_code=bank.code, credit_fen=company_cost_fen),
+                ],
+                cash_flows=[],
+                rule_version="test-components",
+            )
+        ],
     )
-    session.add(voucher)
-    session.flush()
-    company_cost_fen = gross_salary_fen + employer_social_insurance_fen
-    session.add_all(
-        [
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=1,
-                account_id=expense.id,
-                debit_fen=company_cost_fen,
-                credit_fen=0,
-                memo=event.description,
-            ),
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=2,
-                account_id=bank.id,
-                debit_fen=0,
-                credit_fen=company_cost_fen,
-                memo=event.description,
-            ),
-        ]
-    )
-    session.flush()
 
 
 def test_employee_dashboard_uses_explicit_payroll_dates_without_inference(
@@ -332,47 +318,34 @@ def test_employee_dashboard_marks_unexplained_payroll_ledger_cost_unavailable(
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key="dashboard-employees-unexplained-event",
-        event_type="expense_cash",
-        status="posted",
+        event_type="composite",
+        status="draft",
         description="缺少工资批次的职工薪酬费用",
-        facts={},
+        facts={"components": ["unexplained"]},
         business_date=date(2026, 2, 20),
         posting_date=date(2026, 2, 20),
         rule_trace=[],
     )
-    session.add(event)
-    session.flush()
-    voucher = Voucher(
-        org_id=organization.id,
-        event_id=event.id,
-        voucher_number="202602-0002",
+    commit_posting_plan(
+        session,
+        event=event,
         posting_date=date(2026, 2, 20),
         description=event.description,
-        status="posted",
+        components=[
+            ComponentPostingPlan(
+                key="unexplained",
+                kind="expense",
+                facts={"key": "unexplained", "kind": "expense"},
+                derived={},
+                entries=[
+                    Entry(account_code=expense.code, debit_fen=1),
+                    Entry(account_code=bank.code, credit_fen=1),
+                ],
+                cash_flows=[],
+                rule_version="test-components",
+            )
+        ],
     )
-    session.add(voucher)
-    session.flush()
-    session.add_all(
-        [
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=1,
-                account_id=expense.id,
-                debit_fen=1,
-                credit_fen=0,
-            ),
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=2,
-                account_id=bank.id,
-                debit_fen=0,
-                credit_fen=1,
-            ),
-        ]
-    )
-    session.flush()
 
     data = build_employees_data(session, organization=organization, period=period)
     employees = data["employees"]

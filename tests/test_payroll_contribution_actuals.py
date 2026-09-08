@@ -12,6 +12,7 @@ from ai_accounting.accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.models import (
     BusinessEvent,
     Evidence,
@@ -30,7 +31,6 @@ from ai_accounting.models import (
 from ai_accounting.schemas import (
     ConfirmPayrollRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RecordPayrollContributionSupplementRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
@@ -505,11 +505,10 @@ def test_historical_supplement_posts_now_without_rewriting_original_payroll(
         bank=bank,
         key="supplement-social-payment",
     ).model_dump()
-    payment_payload["business_dates"] = {
-        "business_date": "2026-09-15",
-        "payment_date": "2026-09-15",
-        "posting_date": "2026-09-15",
-    }
+    payment_payload["posting_date"] = "2026-09-15"
+    payment_payload["components"][0]["business_date"] = "2026-09-15"
+    payment_payload["components"][0]["payment_date"] = "2026-09-15"
+    payment_payload["funds"][0]["payment_date"] = "2026-09-15"
     payment = service.record_event(RecordEventRequest.model_validate(payment_payload))
     assert payment.status == "posted", payment.model_dump(mode="json")
     reversed_payment = service.reverse_event(

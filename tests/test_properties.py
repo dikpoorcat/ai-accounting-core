@@ -9,9 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm.attributes import set_committed_value
 
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.database import Base, make_engine, make_session_factory
-from ai_accounting.models import Account, OpenItem
-from ai_accounting.schemas import RecordEventRequest
+from ai_accounting.models import Account, Evidence, OpenItem
 from ai_accounting.service import FinanceService
 
 
@@ -63,51 +63,80 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
                 "bank_reconciliation_scope_confirmed_at",
                 configured_at,
             )
+            evidence = Evidence(
+                org_id=organization.id,
+                sha256="a" * 64,
+                original_name="property-test.txt",
+                media_type="text/plain",
+                source="test",
+                size_bytes=1,
+                storage_path="test/property-test.txt",
+            )
+            session.add(evidence)
+            session.flush()
             service = FinanceService(session)
             sale = service.record_event(
-                RecordEventRequest.model_validate(
-                    {
-                        "org_id": organization.id,
-                        "idempotency_key": f"sale-{uuid.uuid4()}",
-                        "event_type": "service_credit_sale",
-                        "business_dates": {
-                            "business_date": "2026-08-01",
-                            "posting_date": "2026-08-01",
-                            "fulfillment_date": "2026-08-01",
-                        },
-                        "counterparty": {"kind": "customer", "name": "性质测试客户"},
-                        "amounts": {"gross_amount_fen": original},
-                        "tax_facts": {
-                            "taxable": False,
-                            "rate_percent": "0",
-                            "invoice_type": "none",
-                            "waive_exemption": False,
-                            "tax_due_on_event": False,
-                        },
-                    }
-                )
-            )
-            item = session.scalar(select(OpenItem).where(OpenItem.source_event_id == sale.event_id))
-            for index, payment in enumerate(payments):
-                result = service.record_event(
-                    RecordEventRequest.model_validate(
+                RecordEventRequest(
+                    org_id=organization.id,
+                    idempotency_key=f"sale-{uuid.uuid4()}",
+                    posting_date=date(2026, 8, 1),
+                    evidence_references=[evidence.id],
+                    components=[
                         {
-                            "org_id": organization.id,
-                            "idempotency_key": f"receipt-{index}-{uuid.uuid4()}",
-                            "event_type": "customer_receipt",
-                            "bank_account_code": "1002",
-                            "business_dates": {
-                                "business_date": "2026-08-02",
-                                "posting_date": "2026-08-02",
-                                "payment_date": "2026-08-02",
-                            },
+                            "key": "sale",
+                            "kind": "service_sale",
+                            "business_date": "2026-08-01",
+                            "fulfillment_date": "2026-08-01",
+                            "amount_fen": original,
                             "counterparty": {
                                 "kind": "customer",
                                 "name": "性质测试客户",
                             },
-                            "amounts": {"amount_fen": payment},
-                            "allocations": [{"open_item_id": item.id, "amount_fen": payment}],
+                            "recognition_basis": "credit",
+                            "tax_facts": {
+                                "taxable": False,
+                                "rate_percent": "0",
+                                "invoice_type": "none",
+                                "waive_exemption": False,
+                                "tax_due_on_event": False,
+                            },
                         }
+                    ],
+                )
+            )
+            assert sale.status == "posted", (sale.errors, sale.missing_information)
+            item = session.scalar(select(OpenItem).where(OpenItem.source_event_id == sale.event_id))
+            assert item is not None
+            for index, payment in enumerate(payments):
+                result = service.record_event(
+                    RecordEventRequest(
+                        org_id=organization.id,
+                        idempotency_key=f"receipt-{index}-{uuid.uuid4()}",
+                        posting_date=date(2026, 8, 2),
+                        evidence_references=[evidence.id],
+                        components=[
+                            {
+                                "key": "settle",
+                                "kind": "receivable_settlement",
+                                "business_date": "2026-08-02",
+                                "payment_date": "2026-08-02",
+                                "counterparty": {
+                                    "kind": "customer",
+                                    "name": "性质测试客户",
+                                },
+                                "allocations": [{"open_item_id": item.id, "amount_fen": payment}],
+                            }
+                        ],
+                        funds=[
+                            {
+                                "key": "receipt",
+                                "account_code": "1002",
+                                "direction": "receipt",
+                                "payment_date": "2026-08-02",
+                                "amount_fen": payment,
+                                "allocations": [{"component_key": "settle", "amount_fen": payment}],
+                            }
+                        ],
                     )
                 )
                 assert result.status == "posted"

@@ -16,16 +16,11 @@ from threading import Barrier
 
 import pytest
 import sqlalchemy as sa
-from alembic.config import Config
-from sqlalchemy import create_engine, select
+from _postgres_helpers import authenticated_business_database, confirmed_payroll
+from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from test_round4_event_integrity_postgres import (
-    _confirmed_payroll_with_evidence,
-)
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
 from ai_accounting.database import make_session_factory
 from ai_accounting.models import (
     EmployeePayrollProfileVersion,
@@ -36,7 +31,6 @@ from ai_accounting.models import (
 )
 from ai_accounting.schemas import RegisterEmployeeRequest
 from ai_accounting.service import FinanceService
-from alembic import command
 
 pytestmark = [
     pytest.mark.postgres,
@@ -44,29 +38,10 @@ pytestmark = [
 ]
 
 
-def _alembic_config(database_url: str) -> Config:
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url)
-    return config
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture
 def postgres_engine() -> Iterator[object]:
-    """A clean current-head database for commit-boundary attacks."""
-
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url(driver="psycopg")
-        config = _alembic_config(database_url)
-        command.upgrade(config, "head")
-        command.check(config)
-        engine = create_engine(database_url)
-        try:
-            yield engine
-        finally:
-            engine.dispose()
+    with authenticated_business_database("round5_database") as database:
+        yield database
 
 
 def _assert_commit_rejects(
@@ -88,18 +63,13 @@ def test_r5_002_sealed_evidence_blocks_every_content_and_identity_mutation(
 ) -> None:
     """Final event/batch references seal content, location, hash, metadata and owner."""
 
+    postgres_engine, org_id, evidence_id, authority = postgres_engine
     with Session(postgres_engine) as session:
-        organization, _batch, _line, evidence, _event = _confirmed_payroll_with_evidence(
-            session, key="r5-evidence-seal"
-        )
-        foreign_organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R5 密封证据外部企业",
+        organization, _batch, _line, evidence, _event = confirmed_payroll(
+            session, org_id, evidence_id, authority, key="r5-evidence-seal"
         )
         draft_evidence = Evidence(
-            org_id=organization.id,
+            org_id=org_id,
             sha256="d" * 64,
             original_name="draft.txt",
             media_type="text/plain",
@@ -108,11 +78,12 @@ def test_r5_002_sealed_evidence_blocks_every_content_and_identity_mutation(
             storage_path="/r5/draft.txt",
             metadata_json={"draft": True},
         )
-        session.add(draft_evidence)
+        with authority.attributed_call(session, tool_name="finance_register_evidence"):
+            session.add(draft_evidence)
         session.commit()
         identifiers = {
             "evidence_id": evidence.id,
-            "foreign_org_id": foreign_organization.id,
+            "foreign_org_id": uuid.uuid4(),
             "draft_evidence_id": draft_evidence.id,
         }
 
@@ -170,7 +141,11 @@ def test_r5_002_sealed_evidence_blocks_every_content_and_identity_mutation(
             postgres_engine,
             attack,
             {**identifiers, **extra_parameters},
-            code="R5_SEALED_EVIDENCE_CONTENT_IMMUTABLE",
+            code=(
+                "BUSINESS_EXECUTION_ATTRIBUTION_MISMATCH"
+                if "SET org_id" in str(attack)
+                else "R5_SEALED_EVIDENCE_CONTENT_IMMUTABLE"
+            ),
         )
 
 
@@ -179,25 +154,20 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
 ) -> None:
     """A concurrent direct insert cannot write-skew any guarded version dimension."""
 
+    postgres_engine, org_id, _evidence_id, authority = postgres_engine
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R5 版本锁并发企业",
-        )
-        employee = FinanceService(session).register_employee(
-            RegisterEmployeeRequest(
-                org_id=organization.id,
-                employee_code="R5-VERSION-GUARD",
-                name="版本锁员工",
-                employment_start_date=date(2025, 7, 1),
-                status="active",
+        with authority.attributed_call(session, tool_name="finance_register_employee"):
+            employee = FinanceService(session).register_employee(
+                RegisterEmployeeRequest(
+                    org_id=org_id,
+                    employee_code="R5-VERSION-GUARD",
+                    name="版本锁员工",
+                    employment_start_date=date(2025, 7, 1),
+                    status="active",
+                )
             )
-        )
         assert employee["status"] == "registered"
-        org_id = organization.id
         employee_id = uuid.UUID(employee["employee_id"])
 
     VersionFactory = Callable[[int], object]
@@ -255,11 +225,19 @@ def test_r5_003_persistent_version_guards_serialize_direct_overlapping_inserts(
             *,
             synchronization: Barrier = barrier,
             create: VersionFactory = create_version,
+            guard_kind: str = kind,
         ) -> str:
             session = factory()
             try:
                 synchronization.wait(timeout=10)
-                session.add(create(variant))
+                tools = {
+                    "profile": "finance_register_employee_payroll_profile_version",
+                    "policy": "finance_register_payroll_policy_version",
+                    "opening": "finance_register_payroll_opening_state",
+                }
+                with authority.attributed_call(session, tool_name=tools[guard_kind]):
+                    session.add(create(variant))
+                    session.flush()
                 session.commit()
                 return "posted"
             except DBAPIError as exc:

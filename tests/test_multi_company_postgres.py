@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import shutil
 import uuid
-from dataclasses import replace
+from contextlib import ExitStack, contextmanager
 from datetime import date
 from decimal import Decimal
 
 import pytest
 from alembic.config import Config
+from conftest import AuthenticatedOwnerAuthority
+from pydantic import SecretStr
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
@@ -31,10 +33,12 @@ from ai_accounting.company_schemas import (
     PreviewCompanyStatusChangeRequest,
 )
 from ai_accounting.company_service import CompanyLifecycleError, CompanyService
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.config import Settings
 from ai_accounting.dashboard_server import load_multi_company_dashboard_context
-from ai_accounting.execution_attribution import persist_execution_attribution
-from ai_accounting.identity import ExecutionContext, ExecutorKind
+from ai_accounting.identity import ExecutionContext, ExecutorIdentity, ExecutorKind
+from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
+from ai_accounting.identity_service import IdentityService
 from ai_accounting.models import (
     BusinessEvent,
     CatalogMetadata,
@@ -43,6 +47,7 @@ from ai_accounting.models import (
     Organization,
 )
 from ai_accounting.organization_profiles import profile_as_of
+from ai_accounting.service import FinanceService
 from alembic import command
 
 pytestmark = [
@@ -51,7 +56,9 @@ pytestmark = [
     pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
 ]
 
-POSTGRES_IMAGE = "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
+POSTGRES_IMAGE = (
+    "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
+)
 
 
 def _database_url(base_url: str, database_name: str) -> str:
@@ -73,6 +80,42 @@ def _check_business_schema(url: str) -> None:
     command.check(config)
 
 
+@contextmanager
+def _catalog_owner_authorities(catalog_engine, owner_org_id):
+    """Keep one real catalog owner login alive across attributed company calls."""
+    with Session(catalog_engine, info={"catalog_mode": True}) as session:
+        password = SecretStr("Multi-Company-Owner-2026!")
+        identity = IdentityService(session)
+        identity.provision_owner(
+            OwnerProvisionRequest(
+                org_id=owner_org_id,
+                login_name="multi-company-owner",
+                password=password,
+            )
+        )
+        login = identity.authenticate(
+            OwnerLoginRequest(login_name="multi-company-owner", password=password)
+        )
+        token = login.session_token.get_secret_value()
+        session.commit()
+
+        def authority_for(org_id):
+            context = identity.authorize_execution(
+                session_token=token,
+                executor=ExecutorIdentity(
+                    kind=ExecutorKind.AI_AGENT,
+                    executor_name="multi-company-postgres-test",
+                    executor_version="v1",
+                ),
+                request_correlation_id=uuid.uuid4(),
+                expected_org_id=org_id,
+            )
+            session.commit()
+            return AuthenticatedOwnerAuthority(context)
+
+        yield authority_for
+
+
 def test_database_roles_enforce_runtime_and_provisioning_boundaries() -> None:
     with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
         base = make_url(postgres.get_connection_url(driver="psycopg"))
@@ -83,7 +126,7 @@ def test_database_roles_enforce_runtime_and_provisioning_boundaries() -> None:
         try:
             with admin.connect() as connection:
                 connection.exec_driver_sql(
-                    f'CREATE ROLE "{runtime_role}" LOGIN PASSWORD \'runtime-test-password\' '
+                    f"CREATE ROLE \"{runtime_role}\" LOGIN PASSWORD 'runtime-test-password' "
                     "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
                 )
                 connection.exec_driver_sql(
@@ -128,7 +171,7 @@ def test_database_roles_enforce_runtime_and_provisioning_boundaries() -> None:
 def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres:
+    with PostgresContainer(POSTGRES_IMAGE, driver="psycopg") as postgres, ExitStack() as stack:
         base_url = postgres.get_connection_url(driver="psycopg")
         admin = create_engine(base_url, isolation_level="AUTOCOMMIT")
         catalog_database_name = "finance_catalog"
@@ -141,8 +184,6 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
         catalog_url = _database_url(base_url, catalog_database_name)
         catalog_id = uuid.uuid4()
         _upgrade_catalog(catalog_url, catalog_id)
-        owner_account_id = uuid.uuid4()
-        owner_session_id = uuid.uuid4()
         routing_settings = Settings(
             finance_environment="development",
             database_url=catalog_url,
@@ -151,10 +192,10 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
             finance_provisioning_database_url=base_url,
         )
         router = CompanyDatabaseRouter(routing_settings)
-        context = ExecutionContext(
+        bootstrap_context = ExecutionContext(
             org_id=uuid.uuid4(),
-            owner_account_id=owner_account_id,
-            owner_session_id=owner_session_id,
+            owner_account_id=uuid.uuid4(),
+            owner_session_id=uuid.uuid4(),
             owner_credential_version=1,
             executor_kind=ExecutorKind.AI_AGENT,
             executor_name="multi-company-test",
@@ -173,9 +214,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                 confirmation_note="多公司 PostgreSQL 隔离测试",
                 make_primary=index == 1,
             )
-            for index, taxpayer_id in enumerate(
-                ("91330106MA1234567T", "91330106MA7654321P")
-            )
+            for index, taxpayer_id in enumerate(("91330106MA1234567T", "91330106MA7654321P"))
         ]
         catalog_engine = create_engine(catalog_url)
         try:
@@ -187,14 +226,22 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                 assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                     "0001_catalog_baseline_v2"
                 )
-            created: list[dict[str, object]] = []
-            for request in create_requests:
-                with Session(catalog_engine) as session, session.begin():
-                    result = CompanyService(
-                        session, context=context, database_router=router
-                    ).create_company(request)
-                    assert result["status"] == "created", result
-                    created.append(result)
+            with Session(catalog_engine) as session, session.begin():
+                first = CompanyService(
+                    session, context=bootstrap_context, database_router=router
+                ).create_company(create_requests[0])
+                assert first["status"] == "created", first
+            first_org_id = uuid.UUID(str(first["company"]["org_id"]))  # type: ignore[index]
+            authority_for = stack.enter_context(
+                _catalog_owner_authorities(catalog_engine, first_org_id)
+            )
+            context = authority_for(first_org_id).context
+            with Session(catalog_engine) as session, session.begin():
+                second = CompanyService(
+                    session, context=context, database_router=router
+                ).create_company(create_requests[1])
+                assert second["status"] == "created", second
+            created: list[dict[str, object]] = [first, second]
             with Session(catalog_engine) as session, session.begin():
                 replay = CompanyService(
                     session, context=context, database_router=router
@@ -248,28 +295,14 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                     with Session(engine) as session, session.begin():
                         organization = session.get(Organization, org_ids[index])
                         assert organization is not None
-                        attributed_context = ExecutionContext(
-                            org_id=organization.id,
-                            owner_account_id=owner_account_id,
-                            owner_session_id=owner_session_id,
-                            owner_credential_version=1,
-                            executor_kind=ExecutorKind.AI_AGENT,
-                            executor_name="multi-company-test",
-                            executor_version="1.0.0",
-                            request_correlation_id=uuid.uuid4(),
-                            catalog_instance_id=catalog_id,
-                        )
-                        with persist_execution_attribution(
+                        authority = authority_for(organization.id)
+                        with authority.attributed_call(
                             session,
-                            context=attributed_context,
                             tool_name="finance_generate_accounting_period",
                         ):
                             evidence = Evidence(
                                 org_id=organization.id,
-                                sha256=uuid.uuid5(
-                                    organization.id, "period-evidence"
-                                ).hex
-                                * 2,
+                                sha256=uuid.uuid5(organization.id, "period-evidence").hex * 2,
                                 original_name="period-evidence.txt",
                                 media_type="text/plain",
                                 source="multi-company-test",
@@ -292,29 +325,54 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                                 )
                             )
                             assert generated.status == "posted"
-                        with persist_execution_attribution(
+                        with authority.attributed_call(
                             session,
-                            context=replace(
-                                attributed_context,
-                                request_correlation_id=uuid.uuid4(),
-                            ),
                             tool_name="finance_record_event",
                         ):
-                            session.add(
-                                BusinessEvent(
-                                    id=shared_event_id,
-                                    org_id=organization.id,
-                                    idempotency_key="same-business-key",
-                                    request_payload_hash="a" * 64,
-                                    event_type="expense_payable",
-                                    status="draft",
-                                    description=f"company-{index + 1}",
-                                    facts={},
-                                    business_date=date(2026, 8, 1),
-                                    posting_date=date(2026, 8, 1),
-                                    rule_trace=[],
+                            from ai_accounting import component_service
+
+                            original_build = component_service.build_business_event
+
+                            def build_with_shared_id(
+                                target_session, original_build=original_build, **facts
+                            ):
+                                event = original_build(target_session, **facts)
+                                event.id = shared_event_id
+                                return event
+
+                            with monkeypatch.context() as patcher:
+                                patcher.setattr(
+                                    component_service,
+                                    "build_business_event",
+                                    build_with_shared_id,
                                 )
-                            )
+                                event_result = FinanceService(session).record_event(
+                                    RecordEventRequest.model_validate(
+                                        {
+                                            "org_id": organization.id,
+                                            "idempotency_key": "same-business-key",
+                                            "posting_date": "2026-08-01",
+                                            "description": f"company-{index + 1}",
+                                            "evidence_references": [evidence.id],
+                                            "components": [
+                                                {
+                                                    "key": "isolated-expense",
+                                                    "kind": "expense",
+                                                    "business_date": "2026-08-01",
+                                                    "expense_class": "general_expense",
+                                                    "counterparty": {
+                                                        "kind": "supplier",
+                                                        "name": "Shared supplier name",
+                                                    },
+                                                    "amount_fen": 10_000,
+                                                    "payment_basis": "supplier_credit",
+                                                }
+                                            ],
+                                        }
+                                    )
+                                )
+                            assert event_result.status == "posted", event_result
+                            assert event_result.event_id == shared_event_id
                 finally:
                     engine.dispose()
 
@@ -338,23 +396,20 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                 query={},
                 fixed_org_id=None,
             )
-            assert default_dashboard_context["current_company"]["org_id"] == str(
-                org_ids[1]
-            )
+            assert default_dashboard_context["current_company"]["org_id"] == str(org_ids[1])
             fixed_dashboard_context = load_multi_company_dashboard_context(
                 catalog_engine,
                 query={"org_id": [str(org_ids[0])]},
                 fixed_org_id=org_ids[0],
             )
-            assert [
-                item["org_id"] for item in fixed_dashboard_context["companies"]
-            ] == [str(org_ids[0])]
+            assert [item["org_id"] for item in fixed_dashboard_context["companies"]] == [
+                str(org_ids[0])
+            ]
 
             with Session(catalog_engine) as catalog_session:
                 assert catalog_session.get(CatalogMetadata, 1).catalog_instance_id == catalog_id
                 registries = [
-                    router.resolve(catalog_session, org_id, for_write=False)
-                    for org_id in org_ids
+                    router.resolve(catalog_session, org_id, for_write=False) for org_id in org_ids
                 ]
                 for index, registry in enumerate(registries):
                     with Session(router.engine_for(registry)) as business_session:
@@ -367,9 +422,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                         assert event is not None
                         assert event.org_id == org_ids[index]
                         assert event.description == f"company-{index + 1}"
-                lifecycle_context = replace(
-                    context, request_correlation_id=uuid.uuid4()
-                )
+                lifecycle_context = authority_for(org_ids[0]).context
                 company_service = CompanyService(
                     catalog_session, context=lifecycle_context, database_router=router
                 )
@@ -383,9 +436,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                     confirmation_note="隔离测试资料变更",
                     evidence_references=[profile_evidence_ids[0]],
                 )
-                profile_preview = company_service.preview_profile_change(
-                    profile_preview_request
-                )
+                profile_preview = company_service.preview_profile_change(profile_preview_request)
                 rejected_profile = company_service.confirm_profile_change(
                     ConfirmCompanyProfileChangeRequest(
                         **profile_preview_request.model_dump(),
@@ -394,9 +445,9 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                     )
                 )
                 assert rejected_profile["errors"] == ["CALCULATION_HASH_MISMATCH"]
-                assert router.resolve(
-                    catalog_session, org_ids[0], for_write=True
-                ).status == "active"
+                assert (
+                    router.resolve(catalog_session, org_ids[0], for_write=True).status == "active"
+                )
                 profile_confirm_request = ConfirmCompanyProfileChangeRequest(
                     **profile_preview_request.model_dump(),
                     idempotency_key="change-company-1-profile",
@@ -421,9 +472,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                     "_profile_preview_facts",
                     fail_once_during_business_write,
                 )
-                failed_profile = company_service.confirm_profile_change(
-                    profile_confirm_request
-                )
+                failed_profile = company_service.confirm_profile_change(profile_confirm_request)
                 assert failed_profile["errors"] == ["PROFILE_CHANGE_SIMULATED_FAILURE"]
                 assert catalog_session.get(CompanyRegistry, org_ids[0]).status == (
                     "attention_required"
@@ -433,9 +482,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                     "_profile_preview_facts",
                     original_profile_preview,
                 )
-                profile_confirmed = company_service.confirm_profile_change(
-                    profile_confirm_request
-                )
+                profile_confirmed = company_service.confirm_profile_change(profile_confirm_request)
                 assert profile_confirmed["status"] == "confirmed", profile_confirmed
                 assert profile_confirmed["company"]["urban_maintenance_rate"] == "0.05"
                 profile_engine = create_engine(company_urls[0])
@@ -451,9 +498,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                             org_id=org_ids[0],
                             as_of=date(2026, 10, 1),
                         ).urban_maintenance_rate == Decimal("0.05000")
-                        with pytest.raises(
-                            ValueError, match="ORGANIZATION_PROFILE_NOT_EFFECTIVE"
-                        ):
+                        with pytest.raises(ValueError, match="ORGANIZATION_PROFILE_NOT_EFFECTIVE"):
                             profile_as_of(
                                 business_session,
                                 org_id=org_ids[0],
@@ -479,9 +524,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                             )
                 finally:
                     profile_engine.dispose()
-                profile_replay = company_service.confirm_profile_change(
-                    profile_confirm_request
-                )
+                profile_replay = company_service.confirm_profile_change(profile_confirm_request)
                 assert profile_replay["idempotent_replay"] is True
                 preview_request = PreviewCompanyStatusChangeRequest(
                     org_id=org_ids[0],
@@ -509,9 +552,7 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                     target_status="active",
                     confirmation_note="隔离测试恢复",
                 )
-                restore_preview = company_service.preview_status_change(
-                    restore_preview_request
-                )
+                restore_preview = company_service.preview_status_change(restore_preview_request)
                 restored = company_service.confirm_status_change(
                     ConfirmCompanyStatusChangeRequest(
                         **restore_preview_request.model_dump(),
@@ -520,9 +561,9 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                     )
                 )
                 assert restored["status"] == "confirmed"
-                assert router.resolve(
-                    catalog_session, org_ids[0], for_write=True
-                ).status == "active"
+                assert (
+                    router.resolve(catalog_session, org_ids[0], for_write=True).status == "active"
+                )
         finally:
             router.dispose()
             catalog_engine.dispose()

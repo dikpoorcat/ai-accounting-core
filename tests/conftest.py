@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -44,7 +44,11 @@ from ai_accounting.models import (
 )
 
 _AUTHENTICATED_STDIO_SCRIPT = """
+import os
 import sys
+if len(sys.argv) > 2:
+    os.environ['DATABASE_URL'] = sys.argv[2]
+    os.environ['FINANCE_COMPANY_DATABASE_URL'] = sys.argv[3]
 from ai_accounting import mcp_server
 from ai_accounting.credential_store import WindowsCredentialStore
 
@@ -64,6 +68,8 @@ class AuthenticatedOwnerAuthority:
     """One authenticated owner session reusable across real test write calls."""
 
     context: ExecutionContext
+    catalog_url: str | None = field(default=None, repr=False)
+    session_token: SecretStr | None = field(default=None, repr=False)
 
     @contextmanager
     def attributed_call(
@@ -108,9 +114,7 @@ def authenticate_and_confirm_bank_scope(
     # production calls.  PostgreSQL verifies the owner session from its
     # trigger, so commit that authority before creating the formal scope.
     session.commit()
-    login = identity.authenticate(
-        OwnerLoginRequest(login_name=login_name, password=password)
-    )
+    login = identity.authenticate(OwnerLoginRequest(login_name=login_name, password=password))
     context = identity.authorize_execution(
         session_token=login.session_token.get_secret_value(),
         executor=ExecutorIdentity(
@@ -180,7 +184,34 @@ def _ensure_test_accounting_period(
         .order_by(AccountingPeriod.start_date)
     ).all()
     if not periods:
-        raise AssertionError("authenticated bank fixture has no generated period")
+        evidence = session.scalar(
+            select(Evidence).where(
+                Evidence.org_id == organization.id,
+                Evidence.original_name == "test-bank-scope.txt",
+            )
+        )
+        if evidence is None:
+            evidence = session.scalar(
+                select(Evidence).where(Evidence.org_id == organization.id).order_by(Evidence.id)
+            )
+        assert evidence is not None
+        with authority.attributed_call(
+            session, tool_name="finance_generate_accounting_period"
+        ) as period_attribution:
+            generated = AccountingPeriodService(
+                session, current_date=date.max
+            ).generate_accounting_period(
+                GenerateAccountingPeriodRequest(
+                    org_id=organization.id,
+                    period_month=f"{desired_month:%Y-%m}",
+                    idempotency_key=(f"test-bank-period-{organization.id}-{desired_month:%Y-%m}"),
+                    confirmation_note=(f"测试生成 {desired_month:%Y-%m} 受控银行导入期间"),
+                    evidence_references=[evidence.id],
+                )
+            )
+            assert generated.status == "posted", generated
+        session.info[EXECUTION_ATTRIBUTION_SESSION_KEY] = period_attribution.id
+        return
     next_month = periods[-1].start_date
     while next_month < desired_month:
         next_month = (
@@ -194,6 +225,10 @@ def _ensure_test_accounting_period(
                 Evidence.original_name == "test-bank-scope.txt",
             )
         )
+        if evidence is None:
+            evidence = session.scalar(
+                select(Evidence).where(Evidence.org_id == organization.id).order_by(Evidence.id)
+            )
         assert evidence is not None
         with authority.attributed_call(
             session, tool_name="finance_generate_accounting_period"
@@ -218,6 +253,9 @@ def prepare_authenticated_bank_account(
     organization: Organization,
     *,
     booking_date: date = date(2026, 3, 5),
+    authority: AuthenticatedOwnerAuthority | None = None,
+    evidence_id: uuid.UUID | None = None,
+    accounts: list[dict[str, object]] | None = None,
 ) -> AuthenticatedOwnerAuthority:
     """Prepare one real owner-controlled bank scope and accounting month.
 
@@ -225,6 +263,49 @@ def prepare_authenticated_bank_account(
     It deliberately follows the production scope and period workflows so a
     later statement row can only arrive through a formal import action.
     """
+
+    scope_accounts = (
+        accounts
+        if accounts is not None
+        else [
+            {
+                "bank_account_code": "1002",
+                "account_name": "银行存款",
+                "start_date": booking_date.replace(day=1),
+            }
+        ]
+    )
+    if authority is not None:
+        if authority.context.org_id != organization.id or evidence_id is None:
+            raise AssertionError("known catalog authority requires its explicit company evidence")
+        if organization.bank_reconciliation_scope_current_action_id is None:
+            request = PreviewBankReconciliationScopeRequest(
+                org_id=organization.id,
+                action_type="initial_confirmation",
+                accounts=scope_accounts,
+                confirm_zero_accounts=not scope_accounts,
+                explanation="目录库身份确认测试银行账户范围",
+                evidence_references=[evidence_id],
+            )
+            with authority.attributed_call(
+                session, tool_name="finance_confirm_bank_reconciliation_scope"
+            ):
+                service = BankStatementService(session)
+                preview = service.preview_bank_reconciliation_scope(request)
+                assert preview.status == "calculated", preview
+                result = service.confirm_bank_reconciliation_scope(
+                    ConfirmBankReconciliationScopeRequest.model_validate(
+                        request.model_dump()
+                        | {
+                            "calculation_hash": preview.calculation_hash,
+                            "idempotency_key": f"test-catalog-bank-scope-{organization.id}",
+                        }
+                    )
+                )
+                assert result.status == "posted", result
+        bind_authenticated_bank_account(session, authority)
+        _ensure_test_accounting_period(session, organization, authority, booking_date)
+        return authority
 
     existing = session.info.get(_TEST_BANK_AUTHORITY_SESSION_KEY)
     if isinstance(existing, AuthenticatedOwnerAuthority):
@@ -249,13 +330,7 @@ def prepare_authenticated_bank_account(
         session,
         organization,
         evidence_id=evidence.id,
-        accounts=[
-            {
-                "bank_account_code": "1002",
-                "account_name": "银行存款",
-                "start_date": booking_date.replace(day=1),
-            }
-        ],
+        accounts=scope_accounts,
         executor_name="postgres-bank-fixture",
     )
     with authority.attributed_call(
@@ -301,6 +376,7 @@ def import_test_bank_transaction(
     amount_fen: int,
     key: str,
     booking_date: date = date(2026, 3, 5),
+    bank_account_code: str = "1002",
 ) -> BankTransaction:
     """Import one test row through the production CSV preview/confirm path."""
 
@@ -331,7 +407,7 @@ def import_test_bank_transaction(
         )
         request = PreviewBankStatementFileImportRequest(
             org_id=organization.id,
-            bank_account_code="1002",
+            bank_account_code=bank_account_code,
             source_file_name=file_name,
             file_format="csv",
             column_mapping={
@@ -400,6 +476,20 @@ def deterministic_business_date(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def committable_session() -> Iterator[Session]:
+    """Isolated SQLite session for workflows with real commit boundaries."""
+    engine = make_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    factory = make_session_factory(engine)
+    try:
+        with factory() as test_session:
+            yield test_session
+            test_session.rollback()
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
 def session() -> Iterator[Session]:
     engine = make_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -461,34 +551,41 @@ def authenticated_stdio_bank_scope() -> Iterator[AuthenticatedStdioBankScope]:
         organization: Organization,
         evidence_id: uuid.UUID,
         accounts: list[dict[str, object]],
+        *,
+        authority: AuthenticatedOwnerAuthority | None = None,
     ) -> list[str]:
-        password = SecretStr("Authenticated-STDIO-Scope-2026!")
-        login_name = f"stdio-owner-{organization.id.hex[:12]}"
-        identity = IdentityService(session)
-        identity.provision_owner(
-            OwnerProvisionRequest(
-                org_id=organization.id,
-                login_name=login_name,
-                password=password,
+        if authority is None:
+            if session.get_bind().dialect.name == "postgresql":
+                raise AssertionError("PostgreSQL STDIO requires separate catalog authority")
+            password = SecretStr("Authenticated-STDIO-Scope-2026!")
+            login_name = f"stdio-owner-{organization.id.hex[:12]}"
+            identity = IdentityService(session)
+            identity.provision_owner(
+                OwnerProvisionRequest(
+                    org_id=organization.id,
+                    login_name=login_name,
+                    password=password,
+                )
             )
-        )
-        if session.get_bind().dialect.name == "postgresql":
-            # PostgreSQL's transaction timestamp is also the attribution row's
-            # created_at.  Start authentication in a fresh transaction so that
-            # it cannot predate the newly issued owner session authority.
-            session.commit()
-        login = identity.authenticate(
-            OwnerLoginRequest(login_name=login_name, password=password)
-        )
-        context = identity.authorize_execution(
-            session_token=login.session_token.get_secret_value(),
-            executor=ExecutorIdentity(
-                kind=ExecutorKind.AI_AGENT,
-                executor_name="stdio-scope-test",
-                executor_version="v1",
-            ),
-            request_correlation_id=uuid.uuid4(),
-        )
+            login = identity.authenticate(
+                OwnerLoginRequest(login_name=login_name, password=password)
+            )
+            context = identity.authorize_execution(
+                session_token=login.session_token.get_secret_value(),
+                executor=ExecutorIdentity(
+                    kind=ExecutorKind.AI_AGENT,
+                    executor_name="stdio-scope-test",
+                    executor_version="v1",
+                ),
+                request_correlation_id=uuid.uuid4(),
+            )
+            authority = AuthenticatedOwnerAuthority(context, session_token=login.session_token)
+        if authority.context.org_id != organization.id or authority.session_token is None:
+            raise AssertionError("STDIO requires its company owner credential")
+        if session.get_bind().dialect.name == "postgresql" and authority.catalog_url is None:
+            raise AssertionError("PostgreSQL STDIO requires a catalog URL")
+        context = authority.context
+        session.info[_TEST_BANK_AUTHORITY_SESSION_KEY] = authority
         request = PreviewBankReconciliationScopeRequest(
             org_id=organization.id,
             action_type="initial_confirmation",
@@ -518,9 +615,17 @@ def authenticated_stdio_bank_scope() -> Iterator[AuthenticatedStdioBankScope]:
 
         target = f"ai-accounting-core/test-stdio-scope/{uuid.uuid4()}"
         store = WindowsCredentialStore(target_name=target)
-        store.save_session_token(login.session_token)
+        store.save_session_token(authority.session_token)
         stores.append(store)
-        return ["-c", _AUTHENTICATED_STDIO_SCRIPT, target]
+        arguments = ["-c", _AUTHENTICATED_STDIO_SCRIPT, target]
+        if authority.catalog_url is not None:
+            arguments.extend(
+                [
+                    authority.catalog_url,
+                    session.get_bind().url.render_as_string(hide_password=False),
+                ]
+            )
+        return arguments
 
     try:
         yield prepare

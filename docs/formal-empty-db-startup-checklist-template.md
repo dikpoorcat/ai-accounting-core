@@ -10,7 +10,7 @@
 - [ ] 已执行 `finance-replay verify-package`，总清单、证据 SHA-256、稳定引用及格式版本通过。
 - [ ] 已确认目标 PostgreSQL 17 目录库和公司库不存在或为空；任何非空目标均已停止处理。
 - [ ] 已执行 `finance-replay prepare-empty`，目录 revision 为 `0001_catalog_baseline_v2`，每个
-  业务库 revision 为 `0001_business_baseline_v2`。
+  业务库 revision 为 `0001_business_baseline_v3`。
 - [ ] 已确认两棵迁移树各只有一个 revision 和一个 head；没有旧 revision 原地升级步骤。
 - [ ] 已使用 `prepare-empty` 输出的默认公司 `org_id` 设置一次新负责人，保存恢复码并完成登录。
 - [ ] 已执行 `finance-replay replay`；如中断，仅使用相同包和状态文件断点续跑。

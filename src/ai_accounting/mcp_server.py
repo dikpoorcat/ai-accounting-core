@@ -31,7 +31,6 @@ from .accounting_period_schemas import (
 from .accounting_periods import canonical_sha256
 from .agent_contract import (
     MCP_SERVER_INSTRUCTIONS,
-    OWNER_WORKFLOW_VERSION,
     agent_operating_protocol,
 )
 from .bank_import import BankStatementInputError, import_bank_statement
@@ -50,9 +49,7 @@ from .bank_statement_schemas import (
 from .borrowing_schemas import (
     ConfirmBorrowingInterestRequest,
     DrawBorrowingRequest,
-    PayBorrowingInterestRequest,
     PreviewBorrowingInterestRequest,
-    RepayBorrowingPrincipalRequest,
 )
 from .close_backup import CloseBackupError, CloseBackupRuntime, CloseBackupService
 from .company_router import CompanyRoutingError, assert_runtime_role
@@ -66,13 +63,13 @@ from .company_schemas import (
     PreviewCompanyStatusChangeRequest,
 )
 from .company_service import CompanyLifecycleError, CompanyService
+from .component_schemas import ConfigureAccountRequest, RecordEventRequest
 from .config import get_settings
 from .credential_store import CredentialStore, WindowsCredentialStore
 from .database import SessionLocal
 from .enterprise_income_tax import EnterpriseIncomeTaxService
 from .enterprise_income_tax_schemas import (
     ConfirmEnterpriseIncomeTaxResultRequest,
-    LinkEnterpriseIncomeTaxPaymentRequest,
     PreviewEnterpriseIncomeTaxResultRequest,
     QueryEnterpriseIncomeTaxRequest,
 )
@@ -102,12 +99,9 @@ from .intangible_asset_schemas import (
 from .labor_remuneration_schemas import (
     ConfirmLaborExternalDeclarationRequest,
     ConfirmLaborRemunerationBatchRequest,
-    ConfirmUnifiedPayoutRunRequest,
     EndLaborServicePersonRequest,
     GetLaborRemunerationRequest,
-    PayLaborWithholdingTaxRequest,
     PreviewLaborRemunerationBatchRequest,
-    PreviewUnifiedPayoutRunRequest,
     RegisterLaborServicePersonRequest,
 )
 from .models import (
@@ -119,6 +113,8 @@ from .models import (
     BankTransactionMatch,
     BusinessEvent,
     BusinessEventAmendment,
+    BusinessEventComponent,
+    BusinessEventDependency,
     Evidence,
     LaborRemunerationTaxPolicyVersion,
     OpenItem,
@@ -127,6 +123,7 @@ from .models import (
     OwnerAccount,
     PayrollBatch,
     PayrollEventLink,
+    Settlement,
     TaxRule,
     Voucher,
     event_evidence,
@@ -145,22 +142,17 @@ from .owner_workflow_schemas import (
     PreviewPayrollContributionAssessmentRequest,
 )
 from .schemas import (
-    DISABLED_EVENT_TYPES,
-    EVENT_REQUIREMENTS,
-    INTERNAL_EVENT_TYPES,
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
     ConfirmFixedAssetDepreciationBatchRequest,
     ConfirmFixedAssetDepreciationRequest,
     ConfirmPayrollRequest,
     DisposeFixedAssetRequest,
-    EventType,
     GeneratePayrollTaxImportRequest,
     ImportBankStatementRequest,
     PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RecordPayrollContributionSupplementRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
@@ -516,6 +508,11 @@ def _secure_registered_data_tools() -> None:
                                         tool_name=_tool_name,
                                     ):
                                         tool_result = _original(*args, **kwargs)
+                                elif _tool_name == "finance_preview_event":
+                                    tool_result = _preview_with_ephemeral_attribution(
+                                        business_session, context,
+                                        lambda: _original(*args, **kwargs),
+                                    )
                                 else:
                                     tool_result = _original(*args, **kwargs)
                             finally:
@@ -561,12 +558,29 @@ def _secure_registered_data_tools() -> None:
                             tool_name=_tool_name,
                         ):
                             return _original(*args, **kwargs)
+                    if _tool_name == "finance_preview_event":
+                        return _preview_with_ephemeral_attribution(
+                            session, context, lambda: _original(*args, **kwargs)
+                        )
                     return _original(*args, **kwargs)
                 finally:
                     _ACTIVE_EXECUTION_CONTEXT.reset(context_marker)
                     _ACTIVE_TOOL_SESSION.reset(marker)
 
         object.__setattr__(tool, "fn", authenticated)
+
+
+def _preview_with_ephemeral_attribution(session, context, invoke):
+    """Apply normal identity checks to temporary plans without leaving call records."""
+    transaction = session.begin_nested()
+    try:
+        with persist_execution_attribution(
+            session, context=context, tool_name="finance_preview_event"
+        ):
+            return invoke()
+    finally:
+        if transaction.is_active:
+            transaction.rollback()
 
 
 def _database_error_code(exc: SQLAlchemyError) -> str:
@@ -979,208 +993,58 @@ def finance_confirm_organization_establishment(
 
 
 @mcp.tool(annotations=READ_ONLY)
-def finance_get_event_schema(event_type: str | None = None) -> dict[str, Any]:
-    """返回可提交业务事件、停用模块及 finance_record_event 的 JSON Schema。"""
-    enabled = [
-        item.value
-        for item in EventType
-        if item not in DISABLED_EVENT_TYPES and item not in INTERNAL_EVENT_TYPES
-    ]
-    # ``payroll`` remains rejected by the generic event writer.  It is not a
-    # disabled product module, though: payroll has a typed, dedicated workflow
-    # below.  Report the legacy sentinel as internal so an MCP client does not
-    # conclude incorrectly that payroll is unavailable.
-    specialized_sentinels = {
-        EventType.PAYROLL,
-        EventType.INTANGIBLE_ASSET,
-        EventType.LOAN_INTEREST,
-    }
-    disabled = [item.value for item in DISABLED_EVENT_TYPES if item not in specialized_sentinels]
-    internal = [item.value for item in INTERNAL_EVENT_TYPES] + [
-        item.value for item in specialized_sentinels
-    ]
-    if event_type and event_type not in {item.value for item in EventType}:
-        return {"status": "rejected", "errors": ["UNKNOWN_EVENT_TYPE"]}
+def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any]:
+    """发现可复用业务组件、资金分配及领域计算工具。"""
+    from .component_schemas import COMPONENT_TYPES
+
+    if component_type is not None and component_type not in COMPONENT_TYPES:
+        return {"status": "rejected", "errors": ["UNKNOWN_COMPONENT_TYPE"]}
+    schema = RecordEventRequest.model_json_schema()
+    selected = None
+    if component_type is not None:
+        reference = schema["properties"]["components"]["items"]["discriminator"]["mapping"][
+            component_type
+        ]
+        selected = {"$ref": reference, "$defs": schema["$defs"]}
     return {
         "status": "ok",
-        "requested_event_type": event_type,
-        "enabled_event_types": enabled,
-        "disabled_event_types": disabled,
-        "internal_event_types": internal,
-        "module_capabilities": {
-            "owner_workflow": {
-                "status": "enabled",
-                "read_tool": "finance_get_owner_workflow",
-                "typed_confirmation_tools": [
-                    "finance_confirm_workforce_review",
-                    "finance_preview_payroll_contribution_assessment",
-                    "finance_confirm_payroll_contribution_assessment",
-                    "finance_confirm_period_material_completeness",
-                    "finance_confirm_external_obligation",
-                    "finance_confirm_historical_obligation_completion",
-                    "finance_confirm_organization_establishment",
-                ],
-                "workflow_version": OWNER_WORKFLOW_VERSION,
-                "generic_mark_complete_tool": "not_available",
-            },
-            "payroll": {
-                "status": "enabled",
-                "entry_tools": [
-                    "finance_register_employee",
-                    "finance_register_employee_profile_version",
-                    "finance_register_payroll_policy_version",
-                    "finance_register_payroll_opening_state",
-                    "finance_register_payroll_first_wage_tax_treatment",
-                    "finance_register_payroll_contribution_actual",
-                    "finance_record_payroll_contribution_supplement",
-                    "finance_preview_payroll",
-                    "finance_confirm_payroll",
-                    "finance_get_payroll_batch",
-                    "finance_generate_payroll_tax_import",
-                ],
-                "generic_event_writer": "not_available",
-                "accrual_entry": "finance_confirm_payroll",
-                "individual_income_tax_import": "finance_generate_payroll_tax_import",
-            },
-            "personal_labor_remuneration": {
-                "status": "enabled",
-                "entry_tools": [
-                    "finance_register_labor_service_person",
-                    "finance_end_labor_service_person",
-                    "finance_preview_labor_remuneration_batch",
-                    "finance_confirm_labor_remuneration_batch",
-                    "finance_get_labor_remuneration",
-                    "finance_preview_unified_payout_run",
-                    "finance_confirm_unified_payout_run",
-                    "finance_pay_labor_withholding_tax",
-                    "finance_confirm_labor_external_declaration",
-                ],
-                "generic_event_writer": "not_available",
-                "accrual_entry": "finance_confirm_labor_remuneration_batch",
-                "mixed_salary_labor_bank_match": "finance_confirm_unified_payout_run",
-                "labor_settlement_modes": [
-                    "net_after_withholding",
-                    "gross_paid_without_withholding",
-                ],
-                "gross_paid_without_withholding_requires_exception_evidence": True,
-            },
-            "fixed_asset": {
-                "status": "enabled",
-                "entry_tools": [
-                    "finance_acquire_fixed_asset",
-                    "finance_activate_fixed_asset",
-                    "finance_preview_fixed_asset_depreciation_batch",
-                    "finance_confirm_fixed_asset_depreciation_batch",
-                    "finance_dispose_fixed_asset",
-                    "finance_get_fixed_asset",
-                ],
-                "generic_event_writer": "not_available",
-                "accrual_entry": "finance_confirm_fixed_asset_depreciation_batch",
-            },
-            "intangible_asset": {
-                "status": "enabled",
-                "entry_tools": [
-                    "finance_acquire_intangible_asset",
-                    "finance_preview_intangible_asset_amortization",
-                    "finance_confirm_intangible_asset_amortization",
-                    "finance_retire_intangible_asset",
-                    "finance_get_intangible_asset",
-                ],
-                "generic_event_writer": "not_available",
-                "accrual_entry": "finance_confirm_intangible_asset_amortization",
-            },
-            "borrowing": {
-                "status": "enabled",
-                "entry_tools": [
-                    "finance_draw_borrowing",
-                    "finance_preview_borrowing_interest",
-                    "finance_confirm_borrowing_interest",
-                    "finance_pay_borrowing_interest",
-                    "finance_repay_borrowing_principal",
-                    "finance_get_borrowing",
-                ],
-                "generic_event_writer": "not_available",
-                "accrual_entry": "finance_confirm_borrowing_interest",
-            },
-            "accounting_period": {
-                "status": "enabled",
-                "entry_tools": [
-                    "finance_generate_accounting_period",
-                    "finance_preview_accounting_period_close",
-                    "finance_confirm_accounting_period_close",
-                    "finance_get_accounting_periods",
-                ],
-                "generic_event_writer": "controlled_by_period_status",
-                "reopen_entry": "not_available",
-                "automatic_company_backup_after_close": True,
-                "backup_configuration_tools": [
-                    "finance_get_close_backup_configuration",
-                    "finance_configure_close_backup",
-                ],
-                "historical_test_rebuild_tools": [
-                    "finance_configure_historical_test_close_mode",
-                    "finance_confirm_historical_test_period_close",
-                ],
-            },
-            "quarterly_financial_statements": {
-                "status": "enabled",
-                "accounting_standard": "small_enterprise",
-                "filing_cycle": "quarterly",
-                "entry_tools": [
-                    "finance_preview_quarterly_financial_statements",
-                    "finance_get_financial_statement_requirements",
-                    "finance_confirm_financial_statement_classification",
-                    "finance_confirm_enterprise_income_tax_quarter",
-                ],
-                "xlsx_download": "local_read_only_dashboard",
-                "annual_report": "not_available",
-                "automatic_tax_submission": "not_available",
-            },
-            "enterprise_income_tax_results": {
-                "status": "enabled",
-                "entry_tools": [
-                    "finance_query_enterprise_income_tax",
-                    "finance_preview_enterprise_income_tax_result",
-                    "finance_confirm_enterprise_income_tax_result",
-                    "finance_link_enterprise_income_tax_payment",
-                ],
-                "payment_event": "tax_payment",
-                "refund_event": "enterprise_income_tax_refund",
-                "automatic_tax_submission": "not_available",
-            },
+        "protocol_version": "business-components-v1",
+        "component_types": COMPONENT_TYPES,
+        "selected_component_type": component_type,
+        "component_schema": selected,
+        "domain_calculation_tools": {
+            tool.name: tool.parameters
+            for tool in mcp._tool_manager.list_tools()
+            if tool.name.startswith(("finance_preview_", "finance_confirm_"))
+            and any(
+                domain in tool.name
+                for domain in (
+                    "payroll",
+                    "labor_remuneration_batch",
+                    "borrowing_interest",
+                    "fixed_asset_depreciation",
+                    "intangible_asset_amortization",
+                    "tax_period",
+                    "enterprise_income_tax",
+                )
+            )
         },
-        # Return the schema actually advertised by FastMCP, including its strict
-        # tool envelope, rather than maintaining a second model-only contract.
         "record_event_schema": mcp._tool_manager.get_tool("finance_record_event").parameters,
-        "reverse_event_schema": mcp._tool_manager.get_tool("finance_reverse_event").parameters,
+        "preview_event_schema": mcp._tool_manager.get_tool("finance_preview_event").parameters,
+        "configure_account_schema": mcp._tool_manager.get_tool(
+            "finance_configure_account"
+        ).parameters,
         "amend_event_schema": mcp._tool_manager.get_tool("finance_amend_event").parameters,
         "delete_event_schema": mcp._tool_manager.get_tool("finance_delete_event").parameters,
-        "withdraw_bank_import_schema": mcp._tool_manager.get_tool(
-            "finance_withdraw_bank_statement_import"
-        ).parameters,
-        "event_amendment_protocol": {
-            "open_month": (
-                "finance_get_event 后提交 finance_amend_event，按类型化事实原子重算，"
-                "保留原凭证编号和修改历史。"
-            ),
-            "closed_month": "原事实与凭证锁定，通过后续开放月冲正及重记更正。",
-            "concurrency": (
-                "expected_facts_hash 使用 finance_get_event 返回的 facts_hash；陈旧时重新读取。"
-            ),
-            "dependencies": (
-                "存在后续核销、计提、税期或其他依赖时返回 blocking_records，先处理后续业务。"
-            ),
-            "posting_date": "修改后的入账日必须仍在原未关账月份。",
-        },
-        "event_requirements": (
-            EVENT_REQUIREMENTS.get(event_type) if event_type else EVENT_REQUIREMENTS
-        ),
+        "reverse_event_schema": mcp._tool_manager.get_tool("finance_reverse_event").parameters,
         "agent_operating_protocol": agent_operating_protocol(),
         "rules": {
             "amount_unit": "fen",
             "currency": "CNY",
             "no_freeform_entries": True,
             "ambiguous_facts": "return needs_information",
+            "composition": "one organization and posting date; each component retains its facts",
+            "funds": "allocate each real movement explicitly; match each bank row once",
         },
     }
 
@@ -1634,50 +1498,6 @@ def finance_get_labor_remuneration(request: GetLaborRemunerationRequest) -> dict
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_preview_unified_payout_run(
-    request: PreviewUnifiedPayoutRunRequest,
-) -> dict[str, Any]:
-    """按逐劳务项显式结算模式试算统一发放，并精确勾稽已导入银行扣款。"""
-    try:
-        with SessionLocal.begin() as session:
-            return (
-                _labor_remuneration_service(session).preview_payout(request).model_dump(mode="json")
-            )
-    except (ValidationError, ValueError, SQLAlchemyError) as exc:
-        return _invalid(exc)
-
-
-@mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_confirm_unified_payout_run(
-    request: ConfirmUnifiedPayoutRunRequest,
-) -> dict[str, Any]:
-    """锁后复算混合发放哈希，整批原子过账且银行流水只匹配一次。"""
-    try:
-        with SessionLocal.begin() as session:
-            return (
-                _labor_remuneration_service(session).confirm_payout(request).model_dump(mode="json")
-            )
-    except (ValidationError, ValueError, SQLAlchemyError) as exc:
-        return _invalid(exc)
-
-
-@mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_pay_labor_withholding_tax(
-    request: PayLaborWithholdingTaxRequest,
-) -> dict[str, Any]:
-    """仅核销劳务报酬扣缴来源的个税应付，不冒充工资个税来源。"""
-    try:
-        with SessionLocal.begin() as session:
-            return (
-                _labor_remuneration_service(session)
-                .pay_withholding_tax(request)
-                .model_dump(mode="json")
-            )
-    except (ValidationError, ValueError, SQLAlchemyError) as exc:
-        return _invalid(exc)
-
-
-@mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_confirm_labor_external_declaration(
     request: ConfirmLaborExternalDeclarationRequest,
 ) -> dict[str, Any]:
@@ -1888,32 +1708,6 @@ def finance_confirm_borrowing_interest(
     try:
         with SessionLocal.begin() as session:
             result = _borrowing_service(session).confirm_borrowing_interest(request)
-            return result.model_dump(mode="json")
-    except (ValidationError, ValueError, SQLAlchemyError) as exc:
-        return _invalid(exc)
-
-
-@mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_pay_borrowing_interest(
-    request: PayBorrowingInterestRequest,
-) -> dict[str, Any]:
-    """按唯一计息事件和精确银行流水支付全部应付利息。"""
-    try:
-        with SessionLocal.begin() as session:
-            result = _borrowing_service(session).pay_borrowing_interest(request)
-            return result.model_dump(mode="json")
-    except (ValidationError, ValueError, SQLAlchemyError) as exc:
-        return _invalid(exc)
-
-
-@mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_repay_borrowing_principal(
-    request: RepayBorrowingPrincipalRequest,
-) -> dict[str, Any]:
-    """在合同到期日、全部利息已支付后一次归还全部本金。"""
-    try:
-        with SessionLocal.begin() as session:
-            result = _borrowing_service(session).repay_borrowing_principal(request)
             return result.model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
@@ -2403,7 +2197,7 @@ def finance_preview_enterprise_income_tax_result(
 def finance_confirm_enterprise_income_tax_result(
     request: ConfirmEnterpriseIncomeTaxResultRequest,
 ) -> dict[str, Any]:
-    """按预览哈希追加申报结果及关联冲正、替代凭证；不向税务机关提交申报。"""
+    """按预览哈希追加申报结果，将核算差额通过统一组件提交器入账。"""
     try:
         with SessionLocal.begin() as session:
             return EnterpriseIncomeTaxService(session).confirm(request)
@@ -2423,61 +2217,34 @@ def finance_query_enterprise_income_tax(
         return _invalid(exc)
 
 
-@mcp.tool(annotations=IDEMPOTENT_WRITE)
-def finance_link_enterprise_income_tax_payment(
-    request: LinkEnterpriseIncomeTaxPaymentRequest,
-) -> dict[str, Any]:
-    """根据证据追加历史企业所得税缴款的所属期分配，不修改原凭证。"""
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_event(request: RecordEventRequest) -> dict[str, Any]:
+    """试算整笔业务的组件依赖、资金分配和确认哈希，不生成正式凭证。"""
     try:
-        with SessionLocal.begin() as session:
-            return EnterpriseIncomeTaxService(session).link_payment(request)
+        with SessionLocal() as session:
+            return FinanceService(session).preview_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_record_event(request: RecordEventRequest) -> dict[str, Any]:
-    """提交结构化业务事实；只在资料完整且规则唯一时原子入账。"""
+    """将类型化业务组件和明确资金分配原子记入一张凭证。"""
     try:
-        if request.event_type is EventType.PAYROLL:
-            return {
-                "status": "rejected",
-                "errors": ["PAYROLL_REQUIRES_SPECIALIZED_WORKFLOW"],
-            }
-        if request.event_type in {
-            EventType.FIXED_ASSET,
-            EventType.FIXED_ASSET_ACQUISITION,
-            EventType.FIXED_ASSET_ACTIVATION,
-            EventType.FIXED_ASSET_DEPRECIATION,
-            EventType.FIXED_ASSET_DISPOSAL,
-        }:
-            return {
-                "status": "rejected",
-                "errors": ["FIXED_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
-            }
-        if request.event_type in {
-            EventType.INTANGIBLE_ASSET,
-            EventType.INTANGIBLE_ASSET_ACQUISITION,
-            EventType.INTANGIBLE_ASSET_AMORTIZATION,
-            EventType.INTANGIBLE_ASSET_RETIREMENT,
-        }:
-            return {
-                "status": "rejected",
-                "errors": ["INTANGIBLE_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
-            }
-        if request.event_type in {
-            EventType.LOAN_INTEREST,
-            EventType.BORROWING_DRAWDOWN,
-            EventType.BORROWING_INTEREST_ACCRUAL,
-            EventType.BORROWING_INTEREST_PAYMENT,
-            EventType.BORROWING_PRINCIPAL_REPAYMENT,
-        }:
-            return {
-                "status": "rejected",
-                "errors": ["BORROWING_REQUIRES_SPECIALIZED_WORKFLOW"],
-            }
         with SessionLocal.begin() as session:
             return FinanceService(session).record_event(request).model_dump(mode="json")
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_configure_account(request: ConfigureAccountRequest) -> dict[str, Any]:
+    """在已有业务分类下登记明细科目，继承核算和报表属性。"""
+    from .component_service import ComponentService
+
+    try:
+        with SessionLocal.begin() as session:
+            return ComponentService(session).configure_account(request)
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -2507,36 +2274,7 @@ def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
     """生成关联冲正凭证；原凭证保持不变。"""
     try:
         with SessionLocal.begin() as session:
-            event_type = None
-            if hasattr(session, "scalar"):
-                event_type = session.scalar(
-                    select(BusinessEvent.event_type).where(
-                        BusinessEvent.org_id == request.org_id,
-                        BusinessEvent.id == request.event_id,
-                    )
-                )
-            if event_type in {
-                "intangible_asset_acquisition",
-                "intangible_asset_amortization",
-                "intangible_asset_retirement",
-            }:
-                service = _intangible_asset_service(session)
-            elif event_type in {
-                "borrowing_drawdown",
-                "borrowing_interest_accrual",
-                "borrowing_interest_payment",
-                "borrowing_principal_repayment",
-            }:
-                service = _borrowing_service(session)
-            elif event_type in {
-                "labor_remuneration_accrual",
-                "unified_payout_run",
-                "labor_withholding_tax_payment",
-            }:
-                service = _labor_remuneration_service(session)
-            else:
-                service = _fixed_asset_service(session)
-            return service.reverse_event(request).model_dump(mode="json")
+            return FinanceService(session).reverse_event(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
@@ -2783,6 +2521,14 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 ),
             }
 
+        components = session.scalars(
+            select(BusinessEventComponent)
+            .where(
+                BusinessEventComponent.org_id == parsed_org,
+                BusinessEventComponent.event_id == parsed_event,
+            )
+            .order_by(BusinessEventComponent.ordinal)
+        ).all()
         evidence_projection = [
             {
                 "event_id": str(row.event_id),
@@ -2820,6 +2566,59 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 "trace": event.rule_trace,
                 "rule_version": event.rule_version,
             },
+            "components": [
+                {
+                    "id": str(component.id),
+                    "key": component.key,
+                    "kind": component.kind,
+                    "facts": component.facts,
+                    "derived": component.derived,
+                    "rule_version": component.rule_version,
+                }
+                for component in components
+            ],
+            "funds": [
+                {"component_id": str(component.id), **component.facts}
+                for component in components
+                if component.kind == "funds"
+            ],
+            "source_references": {
+                "dependencies": [
+                    {
+                        "source_event_id": str(edge.parent_event_id),
+                        "source_component_id": str(edge.parent_component_id)
+                        if edge.parent_component_id
+                        else None,
+                        "component_id": str(edge.child_component_id)
+                        if edge.child_component_id
+                        else None,
+                        "kind": edge.dependency_kind,
+                        "amount_fen": edge.amount_fen,
+                    }
+                    for edge in session.scalars(
+                        select(BusinessEventDependency).where(
+                            BusinessEventDependency.child_event_id == parsed_event,
+                            BusinessEventDependency.org_id == parsed_org,
+                        )
+                    )
+                ],
+                "settlements": [
+                    {
+                        "component_id": str(allocation.payment_component_id),
+                        "source_open_item_id": str(allocation.open_item_id),
+                        "source_component_id": str(allocation.open_item.source_component_id),
+                        "amount_fen": allocation.amount_fen,
+                        "purpose": allocation.purpose,
+                        "reversed": allocation.reversed,
+                    }
+                    for allocation in session.scalars(
+                        select(Settlement).where(
+                            Settlement.payment_event_id == parsed_event,
+                            Settlement.org_id == parsed_org,
+                        )
+                    )
+                ],
+            },
             "facts_hash": canonical_sha256(event.facts),
             "amendments": [
                 {
@@ -2830,27 +2629,34 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                     "created_at": amendment.created_at.isoformat(),
                     "execution_attribution_id": (
                         str(amendment.execution_attribution_id)
-                        if amendment.execution_attribution_id else None
+                        if amendment.execution_attribution_id
+                        else None
                     ),
                     "before_state": amendment.before_state,
                     "after_state": amendment.after_state,
                 }
-                for amendment in session.scalars(select(BusinessEventAmendment).where(
-                    BusinessEventAmendment.org_id == parsed_org,
-                    BusinessEventAmendment.event_id == parsed_event,
-                ).order_by(BusinessEventAmendment.revision))
+                for amendment in session.scalars(
+                    select(BusinessEventAmendment)
+                    .where(
+                        BusinessEventAmendment.org_id == parsed_org,
+                        BusinessEventAmendment.event_id == parsed_event,
+                    )
+                    .order_by(BusinessEventAmendment.revision)
+                )
             ],
             "enterprise_income_tax": (
                 EnterpriseIncomeTaxService(session).query(
                     QueryEnterpriseIncomeTaxRequest(org_id=parsed_org)
                 )["data"]
-                if event.event_type
-                in {
-                    "enterprise_income_tax_assessment",
-                    "enterprise_income_tax_result",
-                    "enterprise_income_tax_refund",
-                    "tax_payment",
-                }
+                if any(
+                    component.kind
+                    in {"enterprise_income_tax_assessment", "enterprise_income_tax_result"}
+                    or (
+                        component.kind == "tax_settlement"
+                        and component.facts["tax_type"] == "enterprise_income_tax"
+                    )
+                    for component in components
+                )
                 else None
             ),
             "vouchers": [
@@ -2866,6 +2672,7 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                     "lines": [
                         {
                             "line_number": line.line_number,
+                            "component_id": str(line.component_id),
                             "account_code": line.account.code,
                             "account_name": line.account.name,
                             "debit_fen": line.debit_fen,

@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from ai_accounting import mcp_server
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.mcp_server import mcp
 from ai_accounting.models import (
@@ -31,8 +32,6 @@ from ai_accounting.schemas import (
     FixedAssetResult,
     FixedAssetResultStatus,
     PreviewFixedAssetDepreciationRequest,
-    RecordEventRequest,
-    ReverseEventRequest,
     TaxPeriodConfirmRequest,
     TaxPeriodPreviewRequest,
 )
@@ -87,36 +86,14 @@ def test_fixed_asset_tools_publish_strict_typed_contracts_without_free_entries()
 
 
 def test_fixed_asset_capability_is_discoverable_and_generic_event_is_rejected() -> None:
-    capability = mcp_server.finance_get_event_schema("fixed_asset")
-
-    assert "fixed_asset" not in capability["disabled_event_types"]
-    assert "fixed_asset" in capability["internal_event_types"]
-    assert capability["module_capabilities"]["fixed_asset"] == {
-        "status": "enabled",
-        "entry_tools": [
-            "finance_acquire_fixed_asset",
-            "finance_activate_fixed_asset",
-            "finance_preview_fixed_asset_depreciation_batch",
-            "finance_confirm_fixed_asset_depreciation_batch",
-            "finance_dispose_fixed_asset",
-            "finance_get_fixed_asset",
-        ],
-        "generic_event_writer": "not_available",
-        "accrual_entry": "finance_confirm_fixed_asset_depreciation_batch",
-    }
-    request = RecordEventRequest.model_validate(
-        {
-            "org_id": _id(),
-            "idempotency_key": "must-not-post-fixed-asset-directly",
-            "event_type": "fixed_asset",
-            "business_dates": {"business_date": "2026-01-01", "posting_date": "2026-01-01"},
-            "amounts": {"amount_fen": 1},
-        }
-    )
-    assert mcp_server.finance_record_event(request) == {
-        "status": "rejected",
-        "errors": ["FIXED_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
-    }
+    capability = mcp_server.finance_get_event_schema()
+    assert {
+        "fixed_asset_acquisition",
+        "fixed_asset_activation",
+        "fixed_asset_depreciation",
+        "fixed_asset_depreciation_batch",
+        "fixed_asset_disposal",
+    } <= set(capability["component_types"])
 
 
 def test_fixed_asset_mcp_rejects_extra_fields_and_float_fen_without_echoing_input() -> None:
@@ -181,10 +158,6 @@ def test_fixed_asset_tools_delegate_to_specialized_service(
             calls.append(("get", (org_id, asset_id)))
             return FixedAssetResult(status=FixedAssetResultStatus.POSTED, asset_id=asset_id)
 
-        def reverse_event(self, request: object) -> FixedAssetResult:
-            calls.append(("reverse", request))
-            return FixedAssetResult(status=FixedAssetResultStatus.REVERSED)
-
     service = FakeFixedAssetService()
     monkeypatch.setattr(mcp_server, "SessionLocal", _SessionFactory())
     monkeypatch.setattr(mcp_server, "_fixed_asset_service", lambda _: service)
@@ -196,20 +169,11 @@ def test_fixed_asset_tools_delegate_to_specialized_service(
     preview = PreviewFixedAssetDepreciationRequest(org_id=org_id)
     confirm = ConfirmFixedAssetDepreciationRequest(org_id=org_id, idempotency_key="confirm")
     disposal = DisposeFixedAssetRequest(org_id=org_id, idempotency_key="dispose")
-    reversal = ReverseEventRequest(
-        org_id=org_id,
-        event_id=asset_id,
-        idempotency_key="reverse",
-        reason="correct acquisition facts",
-        posting_date=date(2026, 1, 1),
-    )
-
     assert mcp_server.finance_acquire_fixed_asset(acquisition)["status"] == "posted"
     assert mcp_server.finance_activate_fixed_asset(activation)["status"] == "posted"
     assert mcp_server.finance_preview_fixed_asset_depreciation(preview)["status"] == "calculated"
     assert mcp_server.finance_confirm_fixed_asset_depreciation(confirm)["status"] == "posted"
     assert mcp_server.finance_dispose_fixed_asset(disposal)["status"] == "posted"
-    assert mcp_server.finance_reverse_event(reversal)["status"] == "reversed"
     assert mcp_server.finance_get_fixed_asset(org_id, asset_id) == {
         "status": "posted",
         "asset_id": str(asset_id),
@@ -228,7 +192,6 @@ def test_fixed_asset_tools_delegate_to_specialized_service(
         "preview",
         "confirm",
         "dispose",
-        "reverse",
         "get",
     ]
 
@@ -366,19 +329,18 @@ def test_ready_for_use_acquisition_posts_one_voucher_and_starts_depreciation_nex
         with factory() as session:
             asset = session.get(FixedAsset, asset_id)
             activation = session.scalar(
-                select(FixedAssetActivation).where(
-                    FixedAssetActivation.asset_id == asset_id
-                )
+                select(FixedAssetActivation).where(FixedAssetActivation.asset_id == asset_id)
             )
             assert asset is not None
             assert activation is not None
             assert activation.event_id == event_id == asset.acquisition_event_id
-            assert session.scalar(
-                select(BusinessEvent).where(BusinessEvent.id == event_id)
-            ) is not None
-            assert len(
-                session.scalars(select(Voucher).where(Voucher.event_id == event_id)).all()
-            ) == 1
+            assert (
+                session.scalar(select(BusinessEvent).where(BusinessEvent.id == event_id))
+                is not None
+            )
+            assert (
+                len(session.scalars(select(Voucher).where(Voucher.event_id == event_id)).all()) == 1
+            )
             debit_role = session.scalar(
                 select(Account.system_role)
                 .join(VoucherLine, VoucherLine.account_id == Account.id)
@@ -482,23 +444,28 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
                 {
                     "org_id": org_id,
                     "idempotency_key": "mcp-tax-lock-source",
-                    "event_type": "service_credit_sale",
-                    "business_dates": {
-                        "business_date": "2026-01-15",
-                        "fulfillment_date": "2026-01-15",
-                        "payment_date": "2026-01-15",
-                        "tax_obligation_date": "2026-01-15",
-                        "posting_date": "2026-01-15",
-                    },
-                    "amounts": {"gross_amount_fen": 101_000},
-                    "counterparty": {"kind": "customer", "name": "MCP tax customer"},
-                    "tax_facts": {
-                        "taxable": True,
-                        "rate_percent": "1",
-                        "invoice_type": "special",
-                        "waive_exemption": False,
-                        "tax_due_on_event": True,
-                    },
+                    "posting_date": "2026-01-15",
+                    "evidence_references": [evidence_id],
+                    "components": [
+                        {
+                            "key": "sale",
+                            "kind": "service_sale",
+                            "business_date": "2026-01-15",
+                            "fulfillment_date": "2026-01-15",
+                            "payment_date": "2026-01-15",
+                            "tax_obligation_date": "2026-01-15",
+                            "amount_fen": 101_000,
+                            "recognition_basis": "credit",
+                            "counterparty": {"kind": "customer", "name": "MCP tax customer"},
+                            "tax_facts": {
+                                "taxable": True,
+                                "rate_percent": "1",
+                                "invoice_type": "special",
+                                "waive_exemption": False,
+                                "tax_due_on_event": True,
+                            },
+                        }
+                    ],
                 }
             )
         )

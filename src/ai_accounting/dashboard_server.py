@@ -566,8 +566,9 @@ def _requirement_detail(requirement: dict[str, Any]) -> dict[str, Any]:
             "secondary": message,
         }
     if code == "FINANCIAL_STATEMENT_UNMAPPED_CASH_EVENT":
+        component = data.get("component_kind") or data.get("component_key") or "类型未知"
         return {
-            "primary": f"现金事件 {data.get('event_type') or '类型未知'}",
+            "primary": f"资金组件 {component}",
             "secondary": message,
             "amount_fen": data.get("cash_delta_fen"),
         }

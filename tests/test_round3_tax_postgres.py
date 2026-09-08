@@ -8,16 +8,15 @@ from datetime import date
 from threading import Barrier, Event, Lock
 
 import pytest
-from alembic.config import Config
-from sqlalchemy import create_engine, select
+from _postgres_helpers import authenticated_business_database
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_payroll_service import payroll_parameters
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
 from ai_accounting.database import make_session_factory
 from ai_accounting.models import (
     BusinessEvent,
+    BusinessEventComponent,
     Organization,
     PayrollBatch,
     PayrollTaxStateSlot,
@@ -32,7 +31,6 @@ from ai_accounting.schemas import (
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
-from alembic import command
 
 pytestmark = [
     pytest.mark.postgres,
@@ -40,31 +38,26 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
-def postgres_engine() -> object:
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        command.check(config)
-        engine = create_engine(url)
-        try:
-            yield engine
-        finally:
-            engine.dispose()
+@pytest.fixture
+def postgres_engine():
+    with authenticated_business_database("round3_tax") as database:
+        yield database
+
+
+def _call(session, authority, method, request):
+    with authority.attributed_call(session, tool_name="finance_" + method):
+        return getattr(FinanceService(session), method)(request)
 
 
 def _register_payroll_facts(
-    session: Session, organization: Organization, employee_count: int = 1
+    session: Session, organization: Organization, authority, employee_count: int = 1
 ) -> list[uuid.UUID]:
-    service = FinanceService(session)
     employee_ids: list[uuid.UUID] = []
     for number in range(employee_count):
-        employee = service.register_employee(
+        employee = _call(
+            session,
+            authority,
+            "register_employee",
             RegisterEmployeeRequest(
                 org_id=organization.id,
                 employee_code=f"R3-TAX-{number + 1}",
@@ -72,12 +65,15 @@ def _register_payroll_facts(
                 employment_start_date=date(2026, 3, 1),
                 tax_withholding_start_date=date(2026, 3, 1),
                 status="active",
-            )
+            ),
         )
         employee_id = uuid.UUID(employee["employee_id"])
         employee_ids.append(employee_id)
         assert (
-            service.register_employee_payroll_profile_version(
+            _call(
+                session,
+                authority,
+                "register_employee_payroll_profile_version",
                 RegisterEmployeePayrollProfileVersionRequest(
                     org_id=organization.id,
                     employee_id=employee_id,
@@ -86,12 +82,15 @@ def _register_payroll_facts(
                     social_insurance_base_fen=1_000_000,
                     housing_fund_base_fen=1_000_000,
                     resident_employee=True,
-                )
+                ),
             )["status"]
             == "registered"
         )
     assert (
-        service.register_payroll_policy_version(
+        _call(
+            session,
+            authority,
+            "register_payroll_policy_version",
             RegisterPayrollPolicyVersionRequest.model_validate(
                 {
                     "org_id": organization.id,
@@ -105,7 +104,7 @@ def _register_payroll_facts(
                     ),
                     "parameters": payroll_parameters(),
                 }
-            )
+            ),
         )["status"]
         == "registered"
     )
@@ -118,14 +117,20 @@ def _preview_regular(
     employee_ids: list[uuid.UUID],
     *,
     payroll_month: int,
+    authority,
+    evidence_id,
     key: str,
 ) -> object:
     payroll_date = date(2026, payroll_month, 5)
-    return FinanceService(session).preview_payroll(
+    return _call(
+        session,
+        authority,
+        "preview_payroll",
         PreviewPayrollRequest.model_validate(
             {
                 "org_id": org_id,
                 "idempotency_key": key,
+                "evidence_references": [evidence_id],
                 "batch_kind": "regular",
                 "payroll_period": f"2026-{payroll_month:02d}",
                 "posting_date": payroll_date,
@@ -140,7 +145,7 @@ def _preview_regular(
                     for employee_id in employee_ids
                 ],
             }
-        )
+        ),
     )
 
 
@@ -156,19 +161,22 @@ def _confirm_request(org_id: uuid.UUID, preview: object, key: str) -> ConfirmPay
 def _run_guard_race(
     monkeypatch: pytest.MonkeyPatch,
     factory: object,
+    authority,
     first: Callable[[Session], object],
     second: Callable[[Session], object],
+    *,
+    first_tool_name="finance_confirm_payroll",
 ) -> list[object]:
     """Run two independent PG transactions through the same locked guard.
 
-    Both workers wait immediately before the production guard acquisition.  The
-    first worker keeps its row lock until the main test releases it, proving the
-    other transaction cannot pass an empty-range query and post concurrently.
+    Both workers start their operations together.  The first worker keeps its
+    tax-year row lock until the main test releases it.  The common submitter may
+    acquire its organization lock first, so synchronizing inside the year guard
+    would deadlock the harness before either operation could acquire that guard.
     """
 
     original = FinanceService._lock_payroll_tax_year
     both_ready = Barrier(2)
-    both_attempting = Barrier(2)
     first_guard_locked = Event()
     release_first = Event()
     counter_lock = Lock()
@@ -178,8 +186,6 @@ def _run_guard_race(
         service: FinanceService, org_id: uuid.UUID, employee_ids: list[uuid.UUID], tax_year: int
     ) -> None:
         nonlocal passed_guard
-        both_ready.wait(timeout=15)
-        both_attempting.wait(timeout=15)
         original(service, org_id, employee_ids, tax_year)
         with counter_lock:
             passed_guard += 1
@@ -192,14 +198,17 @@ def _run_guard_race(
 
     def invoke(operation: Callable[[Session], object]) -> object:
         with factory.begin() as worker:  # type: ignore[union-attr]
-            return operation(worker)
+            tool_name = first_tool_name if operation is first else "finance_confirm_payroll"
+            with authority.attributed_call(worker, tool_name=tool_name):
+                both_ready.wait(timeout=15)
+                return operation(worker)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(invoke, operation) for operation in (first, second)]
         assert first_guard_locked.wait(timeout=15)
         with counter_lock:
-            # The other worker crossed the deterministic barrier before either
-            # invoked the DB guard, yet it cannot pass the same row lock.
+            # Both calls started, yet the other writer cannot pass the locked
+            # year guard while the first transaction still owns it.
             assert passed_guard == 1
         release_first.set()
         results = [future.result(timeout=20) for future in futures]
@@ -209,20 +218,28 @@ def _run_guard_race(
 def test_r3_001_january_and_march_confirmations_are_linearized_by_tax_year_guard(
     postgres_engine: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    postgres_engine, org_id, evidence_id, authority = postgres_engine
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
-        organization = seed_organization(
-            setup,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-001 跨月并发企业",
-        )
-        employee_id = _register_payroll_facts(setup, organization)[0]
+        organization = setup.get(Organization, org_id)
+        employee_id = _register_payroll_facts(setup, organization, authority)[0]
         january = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=3, key="r3-001-jan-preview"
+            setup,
+            organization.id,
+            [employee_id],
+            payroll_month=3,
+            authority=authority,
+            evidence_id=evidence_id,
+            key="r3-001-jan-preview",
         )
         march = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=5, key="r3-001-mar-preview"
+            setup,
+            organization.id,
+            [employee_id],
+            payroll_month=5,
+            authority=authority,
+            evidence_id=evidence_id,
+            key="r3-001-mar-preview",
         )
         assert january.status == march.status == "calculated"
         org_id = organization.id
@@ -230,6 +247,7 @@ def test_r3_001_january_and_march_confirmations_are_linearized_by_tax_year_guard
     results = _run_guard_race(
         monkeypatch,
         factory,
+        authority,
         lambda session: FinanceService(session).confirm_payroll(
             _confirm_request(org_id, january, "r3-001-jan-confirm")
         ),
@@ -261,9 +279,11 @@ def test_r3_001_january_and_march_confirmations_are_linearized_by_tax_year_guard
         ).all()
         assert len(slots) == 1
         posted_events = verification.scalars(
-            select(BusinessEvent).where(
+            select(BusinessEvent)
+            .join(BusinessEventComponent, BusinessEventComponent.event_id == BusinessEvent.id)
+            .where(
                 BusinessEvent.org_id == org_id,
-                BusinessEvent.event_type == "payroll_accrual",
+                BusinessEventComponent.kind == "payroll_accrual",
                 BusinessEvent.status == "posted",
             )
         ).all()
@@ -273,24 +293,35 @@ def test_r3_001_january_and_march_confirmations_are_linearized_by_tax_year_guard
 def test_r3_001_confirmation_and_reversal_cannot_cross_the_same_tax_year_guard(
     postgres_engine: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    postgres_engine, org_id, evidence_id, authority = postgres_engine
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
-        organization = seed_organization(
-            setup,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-001 确认冲正并发企业",
-        )
-        employee_id = _register_payroll_facts(setup, organization)[0]
+        organization = setup.get(Organization, org_id)
+        employee_id = _register_payroll_facts(setup, organization, authority)[0]
         january = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=3, key="r3-001-reverse-jan"
+            setup,
+            organization.id,
+            [employee_id],
+            payroll_month=3,
+            authority=authority,
+            evidence_id=evidence_id,
+            key="r3-001-reverse-jan",
         )
-        january_confirmed = FinanceService(setup).confirm_payroll(
-            _confirm_request(organization.id, january, "r3-001-reverse-jan-confirm")
+        january_confirmed = _call(
+            setup,
+            authority,
+            "confirm_payroll",
+            _confirm_request(organization.id, january, "r3-001-reverse-jan-confirm"),
         )
         assert january_confirmed.status == "posted", january_confirmed.errors
         march = _preview_regular(
-            setup, organization.id, [employee_id], payroll_month=5, key="r3-001-reverse-mar"
+            setup,
+            organization.id,
+            [employee_id],
+            payroll_month=5,
+            authority=authority,
+            evidence_id=evidence_id,
+            key="r3-001-reverse-mar",
         )
         assert march.status == "calculated", march.errors
         org_id = organization.id
@@ -298,6 +329,7 @@ def test_r3_001_confirmation_and_reversal_cannot_cross_the_same_tax_year_guard(
     results = _run_guard_race(
         monkeypatch,
         factory,
+        authority,
         lambda session: FinanceService(session).reverse_event(
             ReverseEventRequest(
                 org_id=org_id,
@@ -310,6 +342,7 @@ def test_r3_001_confirmation_and_reversal_cannot_cross_the_same_tax_year_guard(
         lambda session: FinanceService(session).confirm_payroll(
             _confirm_request(org_id, march, "r3-001-reverse-mar-confirm")
         ),
+        first_tool_name="finance_reverse_event",
     )
     assert sum(result.status == "posted" for result in results) == 1
     rejected = next(result for result in results if result.status == "rejected")
@@ -322,17 +355,19 @@ def test_r3_001_confirmation_and_reversal_cannot_cross_the_same_tax_year_guard(
 def test_r3_001_multi_employee_guards_are_locked_in_employee_id_order(
     postgres_engine: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    postgres_engine, org_id, evidence_id, authority = postgres_engine
     factory = make_session_factory(postgres_engine)  # type: ignore[arg-type]
     with factory.begin() as setup:
-        organization = seed_organization(
-            setup,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-001 多员工锁顺序企业",
-        )
-        employee_ids = _register_payroll_facts(setup, organization, employee_count=2)
+        organization = setup.get(Organization, org_id)
+        employee_ids = _register_payroll_facts(setup, organization, authority, employee_count=2)
         january = _preview_regular(
-            setup, organization.id, employee_ids, payroll_month=3, key="r3-001-order-jan"
+            setup,
+            organization.id,
+            employee_ids,
+            payroll_month=3,
+            authority=authority,
+            evidence_id=evidence_id,
+            key="r3-001-order-jan",
         )
         # The second client sends the same employees in the opposite business
         # order.  The service must still lock guards by UUID, not request order.
@@ -341,6 +376,8 @@ def test_r3_001_multi_employee_guards_are_locked_in_employee_id_order(
             organization.id,
             list(reversed(employee_ids)),
             payroll_month=5,
+            authority=authority,
+            evidence_id=evidence_id,
             key="r3-001-order-mar",
         )
         org_id = organization.id
@@ -348,6 +385,7 @@ def test_r3_001_multi_employee_guards_are_locked_in_employee_id_order(
     results = _run_guard_race(
         monkeypatch,
         factory,
+        authority,
         lambda session: FinanceService(session).confirm_payroll(
             _confirm_request(org_id, january, "r3-001-order-jan-confirm")
         ),

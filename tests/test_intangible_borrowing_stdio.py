@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from conftest import import_test_bank_transaction
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from ai_accounting.models import (
     BorrowingInterestAccrual,
     BorrowingPayment,
     BusinessEvent,
+    BusinessEventComponent,
     Evidence,
     IntangibleAsset,
     IntangibleAssetAmortization,
@@ -43,8 +45,6 @@ BORROWING_TOOLS = {
     "finance_draw_borrowing",
     "finance_preview_borrowing_interest",
     "finance_confirm_borrowing_interest",
-    "finance_pay_borrowing_interest",
-    "finance_repay_borrowing_principal",
     "finance_get_borrowing",
 }
 SPECIALIZED_TOOLS = INTANGIBLE_TOOLS | BORROWING_TOOLS
@@ -59,25 +59,6 @@ def _evidence(organization_id: uuid.UUID, seed: str) -> Evidence:
         source="stdio-test",
         size_bytes=1,
         storage_path=f"stdio/{seed}",
-    )
-
-
-def _bank_transaction(
-    organization_id: uuid.UUID,
-    *,
-    amount_fen: int,
-    booking_date: date,
-    seed: str,
-) -> BankTransaction:
-    return BankTransaction(
-        org_id=organization_id,
-        bank_account_code="1002",
-        fingerprint=(seed * 64)[:64],
-        booking_date=booking_date,
-        amount_fen=amount_fen,
-        currency="CNY",
-        memo=f"stdio-{seed}",
-        source_sha256=(("s" + seed) * 64)[:64],
     )
 
 
@@ -122,21 +103,6 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
         first_interest_evidence = _evidence(org_id, "loan-interest-one")
         second_interest_evidence = _evidence(org_id, "loan-interest-two")
         principal_evidence = _evidence(org_id, "loan-principal")
-        intangible_bank = _bank_transaction(
-            org_id, amount_fen=-12_000, booking_date=date(2026, 1, 2), seed="ia-bank"
-        )
-        drawdown_bank = _bank_transaction(
-            org_id, amount_fen=1_000_000, booking_date=date(2025, 1, 1), seed="loan-draw"
-        )
-        first_interest_bank = _bank_transaction(
-            org_id, amount_fen=-18_100, booking_date=date(2025, 7, 1), seed="loan-pay-one"
-        )
-        second_interest_bank = _bank_transaction(
-            org_id, amount_fen=-18_400, booking_date=date(2026, 1, 1), seed="loan-pay-two"
-        )
-        principal_bank = _bank_transaction(
-            org_id, amount_fen=-1_000_000, booking_date=date(2026, 1, 1), seed="loan-principal"
-        )
         database_session.add_all(
             [
                 intangible_acquisition_evidence,
@@ -145,11 +111,6 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 first_interest_evidence,
                 second_interest_evidence,
                 principal_evidence,
-                intangible_bank,
-                drawdown_bank,
-                first_interest_bank,
-                second_interest_bank,
-                principal_bank,
             ]
         )
         database_session.flush()
@@ -164,6 +125,41 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                     "start_date": "2025-01-01",
                 }
             ],
+        )
+        drawdown_bank = import_test_bank_transaction(
+            database_session,
+            organization,
+            amount_fen=1_000_000,
+            booking_date=date(2025, 1, 1),
+            key="loan-draw",
+        )
+        first_interest_bank = import_test_bank_transaction(
+            database_session,
+            organization,
+            amount_fen=-18_100,
+            booking_date=date(2025, 7, 1),
+            key="loan-pay-one",
+        )
+        second_interest_bank = import_test_bank_transaction(
+            database_session,
+            organization,
+            amount_fen=-18_400,
+            booking_date=date(2026, 1, 1),
+            key="loan-pay-two",
+        )
+        principal_bank = import_test_bank_transaction(
+            database_session,
+            organization,
+            amount_fen=-1_000_000,
+            booking_date=date(2026, 1, 1),
+            key="loan-principal",
+        )
+        intangible_bank = import_test_bank_transaction(
+            database_session,
+            organization,
+            amount_fen=-12_000,
+            booking_date=date(2026, 1, 2),
+            key="ia-bank",
         )
         ids = {
             "intangible_acquisition_evidence": intangible_acquisition_evidence.id,
@@ -234,44 +230,13 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                     for object_schema in _object_schemas(schema)
                 )
 
-                generic_facts = {
-                    "org_id": str(org_id),
-                    "business_dates": {
-                        "business_date": "2026-01-01",
-                        "posting_date": "2026-01-01",
-                    },
-                    "amounts": {"amount_fen": 1},
-                }
-                generic_intangible = await call(
-                    client,
-                    "finance_record_event",
-                    {
-                        "request": {
-                            **generic_facts,
-                            "idempotency_key": "stdio-generic-intangible",
-                            "event_type": "intangible_asset",
-                        }
-                    },
+                composition_schema = json.dumps(
+                    tools["finance_record_event"].inputSchema, ensure_ascii=False
                 )
-                generic_borrowing = await call(
-                    client,
-                    "finance_record_event",
-                    {
-                        "request": {
-                            **generic_facts,
-                            "idempotency_key": "stdio-generic-borrowing",
-                            "event_type": "loan_interest",
-                        }
-                    },
-                )
-                assert generic_intangible == {
-                    "status": "rejected",
-                    "errors": ["INTANGIBLE_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
-                }
-                assert generic_borrowing == {
-                    "status": "rejected",
-                    "errors": ["BORROWING_REQUIRES_SPECIALIZED_WORKFLOW"],
-                }
+                assert '"components"' in composition_schema
+                assert '"intangible_asset_acquisition"' in composition_schema
+                assert '"borrowing_drawdown"' in composition_schema
+                assert '"event_type"' not in composition_schema
 
                 intangible_request = {
                     "org_id": str(org_id),
@@ -442,24 +407,49 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 assert first_accrual["status"] == "posted", first_accrual
                 first_payment = await call(
                     client,
-                    "finance_pay_borrowing_interest",
+                    "finance_record_event",
                     {
                         "request": {
                             "org_id": str(org_id),
-                            "borrowing_id": drawn["borrowing_id"],
-                            "accrual_event_id": first_accrual["event_id"],
                             "idempotency_key": "stdio-borrowing-pay-one",
-                            "bank_account_code": "1002",
-                            "payment_date": "2025-07-01",
                             "posting_date": "2025-07-01",
-                            "bank_transaction_references": [
-                                {"id": str(ids["first_interest_bank"])}
-                            ],
                             "evidence_references": [str(ids["first_interest_evidence"])],
+                            "components": [
+                                {
+                                    "key": "interest",
+                                    "kind": "borrowing_interest_payment",
+                                    "business_date": "2025-07-01",
+                                    "payment_date": "2025-07-01",
+                                    "borrowing_id": drawn["borrowing_id"],
+                                    "accrual_event_id": first_accrual["event_id"],
+                                    "amount_fen": first_preview["data"]["interest_fen"],
+                                }
+                            ],
+                            "funds": [
+                                {
+                                    "key": "payment",
+                                    "account_code": "1002",
+                                    "direction": "payment",
+                                    "payment_date": "2025-07-01",
+                                    "amount_fen": first_preview["data"]["interest_fen"],
+                                    "allocations": [
+                                        {
+                                            "component_key": "interest",
+                                            "amount_fen": first_preview["data"]["interest_fen"],
+                                        }
+                                    ],
+                                    "bank_transaction_references": [
+                                        {"id": str(ids["first_interest_bank"])}
+                                    ],
+                                }
+                            ],
                         }
                     },
                 )
-                assert first_payment["status"] == "posted", first_payment
+                assert first_payment["status"] == "posted", (
+                    first_payment.get("errors"),
+                    first_payment.get("missing_information"),
+                )
 
                 second_period = {
                     "org_id": str(org_id),
@@ -486,41 +476,93 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 assert second_accrual["status"] == "posted", second_accrual
                 second_payment = await call(
                     client,
-                    "finance_pay_borrowing_interest",
+                    "finance_record_event",
                     {
                         "request": {
                             "org_id": str(org_id),
-                            "borrowing_id": drawn["borrowing_id"],
-                            "accrual_event_id": second_accrual["event_id"],
                             "idempotency_key": "stdio-borrowing-pay-two",
-                            "bank_account_code": "1002",
-                            "payment_date": "2026-01-01",
                             "posting_date": "2026-01-01",
-                            "bank_transaction_references": [
-                                {"id": str(ids["second_interest_bank"])}
-                            ],
                             "evidence_references": [str(ids["second_interest_evidence"])],
+                            "components": [
+                                {
+                                    "key": "interest",
+                                    "kind": "borrowing_interest_payment",
+                                    "business_date": "2026-01-01",
+                                    "payment_date": "2026-01-01",
+                                    "borrowing_id": drawn["borrowing_id"],
+                                    "accrual_event_id": second_accrual["event_id"],
+                                    "amount_fen": second_preview["data"]["interest_fen"],
+                                }
+                            ],
+                            "funds": [
+                                {
+                                    "key": "payment",
+                                    "account_code": "1002",
+                                    "direction": "payment",
+                                    "payment_date": "2026-01-01",
+                                    "amount_fen": second_preview["data"]["interest_fen"],
+                                    "allocations": [
+                                        {
+                                            "component_key": "interest",
+                                            "amount_fen": second_preview["data"]["interest_fen"],
+                                        }
+                                    ],
+                                    "bank_transaction_references": [
+                                        {"id": str(ids["second_interest_bank"])}
+                                    ],
+                                }
+                            ],
                         }
                     },
                 )
-                assert second_payment["status"] == "posted", second_payment
+                assert second_payment["status"] == "posted", (
+                    second_payment.get("errors"),
+                    second_payment.get("missing_information"),
+                )
                 repaid = await call(
                     client,
-                    "finance_repay_borrowing_principal",
+                    "finance_record_event",
                     {
                         "request": {
                             "org_id": str(org_id),
-                            "borrowing_id": drawn["borrowing_id"],
                             "idempotency_key": "stdio-borrowing-repay",
-                            "bank_account_code": "1002",
-                            "repayment_date": "2026-01-01",
                             "posting_date": "2026-01-01",
-                            "bank_transaction_references": [{"id": str(ids["principal_bank"])}],
                             "evidence_references": [str(ids["principal_evidence"])],
+                            "components": [
+                                {
+                                    "key": "principal",
+                                    "kind": "borrowing_principal_repayment",
+                                    "business_date": "2026-01-01",
+                                    "payment_date": "2026-01-01",
+                                    "borrowing_id": drawn["borrowing_id"],
+                                    "amount_fen": drawing_request["principal_fen"],
+                                }
+                            ],
+                            "funds": [
+                                {
+                                    "key": "payment",
+                                    "account_code": "1002",
+                                    "direction": "payment",
+                                    "payment_date": "2026-01-01",
+                                    "amount_fen": drawing_request["principal_fen"],
+                                    "allocations": [
+                                        {
+                                            "component_key": "principal",
+                                            "amount_fen": drawing_request["principal_fen"],
+                                        }
+                                    ],
+                                    "bank_transaction_references": [
+                                        {"id": str(ids["principal_bank"])}
+                                    ],
+                                }
+                            ],
                         }
                     },
                 )
-                assert repaid["status"] == "posted", repaid
+                assert repaid["status"] == "posted", (
+                    repaid.get("errors"),
+                    repaid.get("missing_information"),
+                )
                 repaid_borrowing = await call(
                     client,
                     "finance_get_borrowing",
@@ -656,9 +698,9 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
             assert amortization is not None
             assert retirement is not None
             assert amortization.amount_fen == 1_000
-            assert amortization.calculation_hash == result["amortization_preview"][
-                "calculation_hash"
-            ]
+            assert (
+                amortization.calculation_hash == result["amortization_preview"]["calculation_hash"]
+            )
             assert retirement.book_value_fen == 11_000
             assert [(row.actual_days, row.amount_fen) for row in accruals] == [
                 (181, 18_100),
@@ -678,25 +720,25 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
             }
             assert all(events[event_id].status == "reversed" for event_id in original_event_ids)
             assert all(
-                events[event_id].status == "posted"
-                for event_id in reversal_event_ids.values()
+                events[event_id].status == "posted" for event_id in reversal_event_ids.values()
             )
-            assert all(events[event_id].rule_version for event_id in original_event_ids)
-            assert all(
-                any(
-                    item.get("source_url", "").startswith("https://")
-                    for item in events[event_id].rule_trace
+            components = database_session.scalars(
+                select(BusinessEventComponent).where(
+                    BusinessEventComponent.event_id.in_(original_event_ids),
+                    BusinessEventComponent.kind != "funds",
                 )
-                for event_id in original_event_ids
-            )
-            assert any(
-                item.get("calculation_hash") == result["amortization_preview"]["calculation_hash"]
-                for item in events[intangible_event_ids["amortized"]].rule_trace
-            )
-            assert any(
-                item.get("calculation_hash") == result["first_preview"]["calculation_hash"]
-                for item in events[borrowing_event_ids["first_accrual"]].rule_trace
-            )
+            ).all()
+            assert {component.event_id for component in components} == original_event_ids
+            assert all(component.rule_version for component in components)
+            assert {
+                "intangible_asset_acquisition",
+                "intangible_asset_amortization",
+                "intangible_asset_retirement",
+                "borrowing_drawdown",
+                "borrowing_interest_accrual",
+                "borrowing_interest_payment",
+                "borrowing_principal_repayment",
+            } <= {component.kind for component in components}
 
             vouchers = database_session.scalars(
                 select(Voucher).where(
@@ -733,8 +775,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 select(Account.system_role, VoucherLine.debit_fen, VoucherLine.credit_fen)
                 .join(VoucherLine, VoucherLine.account_id == Account.id)
                 .where(
-                    VoucherLine.voucher_id
-                    == voucher_by_event[intangible_event_ids["acquired"]].id
+                    VoucherLine.voucher_id == voucher_by_event[intangible_event_ids["acquired"]].id
                 )
             ).all()
             assert [(row.system_role, row.debit_fen, row.credit_fen) for row in role_lines] == [
@@ -771,7 +812,9 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 "supporting",
             ) in evidence_edges
             assert (
-                borrowing_event_ids["drawn"], ids["borrowing_contract_evidence"], "supporting"
+                borrowing_event_ids["drawn"],
+                ids["borrowing_contract_evidence"],
+                "supporting",
             ) in evidence_edges
             assert (
                 reversal_event_ids["borrowing_draw"],

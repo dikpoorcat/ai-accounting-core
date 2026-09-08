@@ -1398,6 +1398,7 @@ class BankStatementService:
                     category="asset",
                     normal_side="debit",
                     system_role=None,
+                    business_class="bank",
                     active=True,
                     requires_bank_reconciliation=True,
                     bank_reconciliation_start_date=start_date,

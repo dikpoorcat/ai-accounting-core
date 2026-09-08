@@ -39,8 +39,8 @@
 
 ## 数据库基线
 
-- 目录库 `0001_catalog_baseline_v2` 与业务库 `0001_business_baseline_v2` 是两棵独立迁移树的正式空库基线；两种物理数据库不得合并成同一 Alembic revision。
-- 已删除的旧业务 revision `0001`–`0022` 和旧目录 revision `0001`–`0004` 不支持原地升级；旧库只允许只读导出后按 `docs/empty-database-replay.md` 在空库回放。
+- 目录库 `0001_catalog_baseline_v2` 与业务库 `0001_business_baseline_v3` 是两棵独立迁移树的正式空库基线；两种物理数据库不得合并成同一 Alembic revision。
+- 旧业务 revision `0001`–`0022`、`0001_business_baseline_v2` 及其后续旧场景 revision（至 `0006_pass_through`），以及旧目录 revision `0001`–`0004` 不支持原地升级；旧库只允许只读导出后按 `docs/empty-database-replay.md` 在空库回放。
 - 基线启用后的结构变化必须通过后续前向 revision 迁移，不得回写基线或用未跟踪的现场脚本代替迁移；发现未知历史库或非空回放目标时立即停止。
 
 ## 初始备份交付

@@ -9,15 +9,29 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v33"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v34"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
 
+COMPOSITION_RUNTIME_INSTRUCTION = (
+    "一笔业务通过finance_record_event提交业务组件和独立资金结算项；单项业务也使用同一组件协议。"
+    "需要计算确认的组合先用finance_preview_event试算整笔事实，复核reviewed_request中的组件哈希后"
+    "再原样提交；预览不产生业务记录，同笔税期计算包含同笔新增税源。"
+    "各组件使用唯一稳定键，明确金额、往来方、日期、证据及来源关系；不得提交任意借贷分录。"
+    "按真实业务组合已支持的能力，不按混合场景寻找专用事件；同类明细科目复用受控业务分类。"
+    "资金结算明确对应组件，银行流水只在整笔业务匹配一次；无现金事项不虚构资金项。"
+    "同笔依赖通过组件稳定键表达；关键事实、资金用途或分配不明时补充事实，不推断默认值。"
+    "调用finance_get_event_schema时用component_type取得单个组件结构；新增受控明细科目时只通过"
+    "finance_configure_account配置business_class，不得配置系统角色或借贷模板。"
+    "工资、劳务、资产、借款和税务的专用计算及预览确认仍按内核要求执行；"
+    "已计算的工资和劳务使用对应计提组件携带批次与计算哈希，可与同笔结算组合。"
+    "社保公积金历史补缴使用payroll_contribution_supplement组件，核销保留具体来源。"
+)
+
 PASS_THROUGH_RUNTIME_INSTRUCTION = (
-    "混合收款使用customer_receipt.allocations核销应收，pass_through_items明确代收份额、最终受益人和实际债权人；"
-    "代收不是收入或预收款，不能用customer_refund退款替代代付。"
-    "代垫发生在收款前时须明确advance_reimbursement、代垫日期与证据；未确认代垫关系不得默认为直接受益人。"
-    "收款后员工或股东代付可用employee_reimbursement的existing_payable分支转移已列明债务，再报销支付。"
-    "直接代付使用pass_through_payment按债权人核销代收应付款；任何余款用途不明时先补充事实。"
+    "收款中的应收核销、预收及代收义务分别由组件表达；代收不确认为收入或预收款。"
+    "每项代收义务明确最终受益人、实际债权人和金额；已发生的代垫须给出日期、证据和债务关系。"
+    "付款按每个组件的实际债权人核销，可在同笔业务组合多个债权人；不得跨公司或超余额核销。"
+    "收款后发生代付时根据真实代垫事实转移已有债务；不能用客户退款冒充代付款。"
 )
 
 IDENTITY_RUNTIME_INSTRUCTION = (
@@ -101,8 +115,8 @@ PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION = (
     "幂等成功，同名不同内容不得覆盖。只向老板报告桌面文件名、行数和去税务客户端导入核对的"
     "下一动作，不在聊天中展示证件号码。文件生成不等于已申报；第4项在老板确认外部申报结果"
     "后完成，申报日期仅在现有事实已经建立时一并保存。不得询问缴款状态或缴款日期。实际个税"
-    "缴款以后由发生月份的银行流水和"
-    "individual_income_tax_payment事件核销。返回needs_information时先继续核对历史同公司导出"
+    "缴款以后由发生月份的银行流水以及finance_record_event中的payable_settlement组件核销。"
+    "返回needs_information时先继续核对历史同公司导出"
     "和已有材料，再按交流策略"
     "只追问真正缺少的员工事实，不得擅自补零。只有劳务报酬等非工资扣缴情形时不得误用该工具。"
 )
@@ -186,6 +200,7 @@ CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
 
 MCP_SERVER_INSTRUCTIONS = (
     f"{IDENTITY_RUNTIME_INSTRUCTION}"
+    f"{COMPOSITION_RUNTIME_INSTRUCTION}"
     f"{PASS_THROUGH_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
     f"{OWNER_WORKFLOW_RUNTIME_INSTRUCTION}"
@@ -213,16 +228,25 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "composed_accounting": {
+            "tool": "finance_record_event",
+            "preview_tool": "finance_preview_event",
+            "schema_tool": "finance_get_event_schema(component_type=...)",
+            "account_classification_tool": "finance_configure_account",
+            "instruction": COMPOSITION_RUNTIME_INSTRUCTION,
+            "single_component_uses_same_protocol": True,
+            "arbitrary_voucher_lines_allowed": False,
+            "settlements_separate_from_business_components": True,
+            "amendment_rule": (
+                "未关账整笔修改使用完整 replacement，保留组件稳定键、原凭证编号和审计历史；"
+                "先处理后续依赖。已关账通过关联冲正更正。"
+            ),
+        },
         "pass_through_funds": {
             "tool": "finance_record_event",
-            "receipt_event_type": "customer_receipt",
-            "payment_event_type": "pass_through_payment",
             "instruction": PASS_THROUGH_RUNTIME_INSTRUCTION,
             "query_tool": "finance_query_context",
-            "amendment_rule": (
-                "未关账原 customer_receipt 可用 finance_amend_event 保留编号重算；"
-                "保留原应收 allocations 和整笔银行匹配。先处理后续依赖。"
-            ),
+            "multiple_creditors_per_event": True,
         },
         "open_month_deletions": {
             "event_tool": "finance_delete_event",
@@ -236,7 +260,8 @@ def agent_operating_protocol() -> dict[str, Any]:
                 "撤销导入只移除该批次新增且未使用的开放月流水，保留既有重复行、原文件和导入审计。",
                 "撤销成功后可按正确列映射用新幂等键重新导入，无需为此恢复整个公司数据库。",
                 "已关账、已对账或存在后续依赖时按 blocking_records 先处理依赖，禁止级联删除。",
-                "含关联冲正的所得税更正结果不能单独删除；可修改结果，不自动恢复被冲正的历史计提。",
+                "删除所得税更正结果所在的整笔业务时，恢复上一有效计提；"
+                "同笔其他组件同时撤去，仍须通过期间及后续依赖检查。",
             ],
         },
         "open_month_amendments": {
@@ -246,6 +271,8 @@ def agent_operating_protocol() -> dict[str, Any]:
                 "使用其 facts_hash 防止覆盖他人的修改。",
                 "提交修改原因、新幂等键和完整类型化 replacement 事实；复用对应业务原有的事实结构。",
                 "普通收支、工资、资产、借款、劳务和税务均可走修改入口；原凭证编号保留，修改历史可查询。",
+                "组件 replacement 在原业务撤去后的事务状态中重新预览、生成确认哈希，"
+                "再统一提交；不能沿用旧来源状态推断新的计算结果。",
                 "存在后续业务依赖时按 blocking_records 处理，"
                 "不自动改变后续业务事实；失败时原业务不变。",
                 "已关账月份仍须在后续开放月冲正及重记；不得通过修改日期绕过关账锁定。",
@@ -255,13 +282,12 @@ def agent_operating_protocol() -> dict[str, Any]:
             "query_tool": "finance_query_enterprise_income_tax",
             "preview_tool": "finance_preview_enterprise_income_tax_result",
             "confirm_tool": "finance_confirm_enterprise_income_tax_result",
-            "historical_payment_link_tool": "finance_link_enterprise_income_tax_payment",
             "instructions": [
                 "更正申报或年度汇算补退税先查询原计提、历次更正和已缴税归属，不能把流水扣款直接当成新增费用。",
                 "季度填1至4，年度汇算填0；明确申报表为本季数、累计数或年度数。补税通知必须明确差额及原计提金额。",
                 "缺资料按needs_information列出具体缺项，不默认原税额为零，不要求负责人选择技术方案。",
-                "旧缴款缺少所属期时根据证据追加关联，再预览及确认更正结果；开放期入账，保留原税款所属期。",
-                "缴款使用tax_payment，退税使用enterprise_income_tax_refund；均提供最新来源分配、凭证和银行流水。",
+                "缴退组件入账时必须具备明确所属期及来源；资料缺失先补齐依据，再预览及确认更正结果。",
+                "缴退使用tax_settlement组件，tax_type=enterprise_income_tax，settlement_kind为payment或refund；提供最新income_tax_allocations和资金结算事实。",
                 "年度多缴保留待退余额，不自动抵缴下一年度；登记申报结果不等于向税务机关提交申报或实际缴退完成。",
                 "已有年度汇算结果后发现季度变化，应取得包含该变化的年度更正结果，避免季度和年度重复调整。",
             ],
@@ -597,13 +623,12 @@ def agent_operating_protocol() -> dict[str, Any]:
             {
                 "code": "settle_person_paid_existing_payables_without_new_expense",
                 "instruction": (
-                    "员工或股东已经代公司清偿正式开放应付款时，使用employee_reimbursement的"
-                    "existing_payable分支精确核销原开放项并转为对代付个人的应付款，不得再次"
-                    "确认费用。公司随后清偿个人往来时使用employee_reimbursement_payment；"
-                    "银行支付明确选择bank并绑定实际银行账户，备用金现金报销明确选择cash且"
-                    "不得提供或虚构银行流水。若实际从此前转入时已经直接费用化、由负责人管理"
-                    "的备用金支付，则选择owner_managed_reserve并引用原费用事件；内核从原事件"
-                    "确定冲减的费用角色和可用上限，不得借此虚构库存现金或重复确认费用。"
+                    "员工或股东已经代公司清偿正式开放应付款时，在finance_record_event中使用"
+                    "debt_transfer组件精确核销原开放项并转为对代付个人的应付款，不得再次确认"
+                    "费用。公司随后清偿个人往来时使用payable_settlement组件并配置对应funds；"
+                    "银行支付绑定实际银行账户和流水，现金支付明确使用现金账户且不得虚构银行"
+                    "流水。若实际从此前已直接费用化、由负责人管理的备用金支付，则使用"
+                    "expense_reserve_settlement组件引用原来源；不得借此虚构库存现金或重复确认费用。"
                 ),
             },
             {

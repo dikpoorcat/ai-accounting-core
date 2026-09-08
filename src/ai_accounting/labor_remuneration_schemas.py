@@ -14,8 +14,6 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
-from .schemas import Allocation, SalaryActualDeductionAllocation, SalaryWithholdingAllocation
-
 Fen = Annotated[StrictInt, Field(ge=0)]
 PositiveFen = Annotated[StrictInt, Field(gt=0)]
 
@@ -182,208 +180,6 @@ class ConfirmLaborRemunerationBatchRequest(BaseModel):
     confirmation_note: str = Field(min_length=1, max_length=2000)
 
 
-class LaborPayoutItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    source_open_item_id: uuid.UUID | None = None
-    settlement_mode: Literal["net_after_withholding", "gross_paid_without_withholding"] | None = (
-        None
-    )
-
-
-class SalaryPettyCashRecoveryAllocation(BaseModel):
-    """Salary withholding repaid after a mistaken gross bank payout.
-
-    This is intentionally narrower than a generic cash-receipt adjustment.  It
-    is only accepted when the employee repays the full statutory withholding
-    for the same salary line into an off-ledger petty-cash pool whose established
-    accounting treatment is immediate general expense recognition.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    open_item_id: uuid.UUID
-    amount_fen: PositiveFen
-
-
-class PreviewUnifiedPayoutRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    org_id: uuid.UUID
-    idempotency_key: str = Field(min_length=1, max_length=200)
-    business_date: date | None = None
-    payment_date: date | None = None
-    posting_date: date | None = None
-    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
-    bank_transaction_id: uuid.UUID | None = None
-    bank_transaction_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
-    salary_allocations: list[Allocation] = Field(default_factory=list, max_length=1000)
-    salary_withholding_allocations: list[SalaryWithholdingAllocation] = Field(
-        default_factory=list, max_length=1000
-    )
-    salary_actual_deduction_allocations: list[SalaryActualDeductionAllocation] = Field(
-        default_factory=list, max_length=1000
-    )
-    salary_petty_cash_recovery_allocations: list[
-        SalaryPettyCashRecoveryAllocation
-    ] = Field(default_factory=list, max_length=1000)
-    salary_petty_cash_recovery_treatment: (
-        Literal["offbook_petty_cash_expense"] | None
-    ) = None
-    salary_petty_cash_recovery_evidence_references: list[uuid.UUID] = Field(
-        default_factory=list, max_length=100
-    )
-    labor_items: list[LaborPayoutItem] = Field(default_factory=list, max_length=1000)
-    withholding_agency_code: str | None = Field(default=None, min_length=1, max_length=100)
-    withholding_agency_name: str | None = Field(default=None, min_length=1, max_length=200)
-    evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
-    withholding_exception_evidence_references: list[uuid.UUID] = Field(
-        default_factory=list, max_length=100
-    )
-    description: str = Field(default="工资及个人劳务统一发放", max_length=2000)
-
-    @model_validator(mode="after")
-    def exception_evidence_is_scoped(self) -> PreviewUnifiedPayoutRunRequest:
-        gross_without_withholding = any(
-            item.settlement_mode == "gross_paid_without_withholding" for item in self.labor_items
-        )
-        if not gross_without_withholding and self.withholding_exception_evidence_references:
-            raise ValueError(
-                "withholding exception evidence is only accepted for gross_paid_without_withholding"
-            )
-        if not set(self.withholding_exception_evidence_references).issubset(
-            self.evidence_references
-        ):
-            raise ValueError(
-                "withholding exception evidence must also be included in evidence_references"
-            )
-        petty_recovery = bool(self.salary_petty_cash_recovery_allocations)
-        if petty_recovery != (
-            self.salary_petty_cash_recovery_treatment
-            == "offbook_petty_cash_expense"
-        ):
-            raise ValueError(
-                "salary petty-cash recovery allocations and treatment must be provided together"
-            )
-        if not petty_recovery and self.salary_petty_cash_recovery_evidence_references:
-            raise ValueError(
-                "salary petty-cash recovery evidence is only accepted with recovery allocations"
-            )
-        if not set(self.salary_petty_cash_recovery_evidence_references).issubset(
-            self.evidence_references
-        ):
-            raise ValueError(
-                "salary petty-cash recovery evidence must also be included in evidence_references"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def bank_transaction_selection_is_unambiguous(self) -> PreviewUnifiedPayoutRunRequest:
-        if self.bank_transaction_id is not None and self.bank_transaction_ids:
-            raise ValueError(
-                "provide bank_transaction_id or bank_transaction_ids, not both"
-            )
-        if len(self.bank_transaction_ids) != len(set(self.bank_transaction_ids)):
-            raise ValueError("bank_transaction_ids must not contain duplicates")
-        return self
-
-    def selected_bank_transaction_ids(self) -> list[uuid.UUID]:
-        if self.bank_transaction_ids:
-            return list(self.bank_transaction_ids)
-        return [self.bank_transaction_id] if self.bank_transaction_id is not None else []
-
-    def missing_fields(self) -> list[str]:
-        fields = [
-            name
-            for name in (
-                "business_date",
-                "payment_date",
-                "posting_date",
-                "bank_account_code",
-            )
-            if getattr(self, name) is None
-        ]
-        if not self.selected_bank_transaction_ids():
-            fields.append("bank_transaction_id_or_ids")
-        if not self.salary_allocations and not self.labor_items:
-            fields.append("salary_allocations_or_labor_items")
-        if self.salary_allocations and not self.salary_withholding_allocations:
-            fields.append("salary_withholding_allocations")
-        for index, item in enumerate(self.labor_items):
-            if item.source_open_item_id is None:
-                fields.append(f"labor_items.{index}.source_open_item_id")
-            if item.settlement_mode is None:
-                fields.append(f"labor_items.{index}.settlement_mode")
-        if any(item.settlement_mode == "net_after_withholding" for item in self.labor_items) and (
-            self.withholding_agency_code is None or self.withholding_agency_name is None
-        ):
-            if self.withholding_agency_code is None:
-                fields.append("withholding_agency_code")
-            if self.withholding_agency_name is None:
-                fields.append("withholding_agency_name")
-        if (
-            any(
-                item.settlement_mode == "gross_paid_without_withholding"
-                for item in self.labor_items
-            )
-            and not self.withholding_exception_evidence_references
-        ):
-            fields.append("withholding_exception_evidence_references")
-        if (
-            self.salary_petty_cash_recovery_allocations
-            and not self.salary_petty_cash_recovery_evidence_references
-        ):
-            fields.append("salary_petty_cash_recovery_evidence_references")
-        if not self.evidence_references:
-            fields.append("evidence_references")
-        return fields
-
-
-class ConfirmUnifiedPayoutRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    org_id: uuid.UUID
-    payout_run_id: uuid.UUID
-    idempotency_key: str = Field(min_length=1, max_length=200)
-    calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    confirmation_note: str = Field(min_length=1, max_length=2000)
-
-
-class PayLaborWithholdingTaxRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    org_id: uuid.UUID
-    idempotency_key: str = Field(min_length=1, max_length=200)
-    business_date: date | None = None
-    payment_date: date | None = None
-    posting_date: date | None = None
-    amount_fen: PositiveFen | None = None
-    bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
-    bank_transaction_id: uuid.UUID | None = None
-    allocations: list[Allocation] = Field(default_factory=list, max_length=1000)
-    evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
-    description: str = Field(default="个人劳务报酬个税缴纳", max_length=2000)
-
-    def missing_fields(self) -> list[str]:
-        fields = [
-            name
-            for name in (
-                "business_date",
-                "payment_date",
-                "posting_date",
-                "amount_fen",
-                "bank_account_code",
-                "bank_transaction_id",
-            )
-            if getattr(self, name) is None
-        ]
-        if not self.allocations:
-            fields.append("allocations")
-        if not self.evidence_references:
-            fields.append("evidence_references")
-        return fields
-
-
 class ConfirmLaborExternalDeclarationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -401,13 +197,12 @@ class GetLaborRemunerationRequest(BaseModel):
     org_id: uuid.UUID
     labor_person_id: uuid.UUID | None = None
     batch_id: uuid.UUID | None = None
-    payout_run_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def exactly_one_identity(self) -> GetLaborRemunerationRequest:
-        supplied = [self.labor_person_id, self.batch_id, self.payout_run_id]
+        supplied = [self.labor_person_id, self.batch_id]
         if sum(item is not None for item in supplied) != 1:
-            raise ValueError("provide exactly one labor_person_id, batch_id, or payout_run_id")
+            raise ValueError("provide exactly one labor_person_id or batch_id")
         return self
 
 
@@ -417,7 +212,6 @@ class LaborResult(BaseModel):
     status: LaborResultStatus
     labor_person_id: uuid.UUID | None = None
     batch_id: uuid.UUID | None = None
-    payout_run_id: uuid.UUID | None = None
     event_id: uuid.UUID | None = None
     voucher_id: uuid.UUID | None = None
     voucher_number: str | None = None

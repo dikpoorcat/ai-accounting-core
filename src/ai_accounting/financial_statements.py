@@ -31,29 +31,20 @@ from .financial_statement_schemas import (
     GetFinancialStatementRequirementsRequest,
     PreviewQuarterlyFinancialStatementsRequest,
 )
-from .ledger import (
-    AccountingPeriodError,
-    Entry,
-    account_balance_fen,
-    build_business_event,
-    create_voucher,
-)
 from .models import (
     Account,
     AccountingPeriod,
     AccountingPeriodClose,
     AuditLog,
     BusinessEvent,
+    BusinessEventComponent,
+    ComponentCashFlowAllocation,
     EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
     FinancialStatementClassification,
     FinancialStatementOpeningBalanceConfirmation,
-    OpenItem,
     Organization,
-    Settlement,
     TaxPeriod,
-    UnifiedPayoutRun,
-    UnifiedPayoutRunItem,
     Voucher,
     VoucherLine,
 )
@@ -326,10 +317,41 @@ class _LedgerRow:
     voucher: Voucher
     event: BusinessEvent
     account: Account
+    component: BusinessEventComponent | None
 
     @property
     def role(self) -> str | None:
-        return self.account.system_role
+        return self.account.business_class or self.account.system_role
+
+    @property
+    def component_kind(self) -> str | None:
+        if self.component is None:
+            return None
+        return (
+            self.component.derived["original_kind"]
+            if self.component.kind == "reversal"
+            else self.component.kind
+        )
+
+    @property
+    def component_facts(self) -> dict[str, Any]:
+        if self.component is None:
+            return {}
+        return (
+            self.component.derived["original_facts"]
+            if self.component.kind == "reversal"
+            else self.component.facts
+        )
+
+    @property
+    def component_derived(self) -> dict[str, Any]:
+        if self.component is None:
+            return {}
+        return (
+            self.component.derived["original_derived"]
+            if self.component.kind == "reversal"
+            else self.component.derived
+        )
 
     @property
     def debit_signed(self) -> int:
@@ -419,9 +441,7 @@ class FinancialStatementService(FinanceService):
             period.end_date,
         )
         if opening_missing or period.calendar_month not in {3, 6, 9, 12}:
-            return self._deduplicate_requirements(
-                [*opening_missing, *current_month_missing]
-            )
+            return self._deduplicate_requirements([*opening_missing, *current_month_missing])
 
         quarter = (period.calendar_month - 1) // 3 + 1
         preview = self.preview_quarterly(
@@ -453,21 +473,10 @@ class FinancialStatementService(FinanceService):
                 .order_by(AccountingPeriod.start_date, AccountingPeriod.id)
             )
         )
-        if (
-            len(report_periods) == expected_months
-            and all(
-                (
-                    item.id == period.id
-                    and item.status == "open"
-                    and item.close_id is None
-                )
-                or (
-                    item.id != period.id
-                    and item.status == "closed"
-                    and item.close_id is not None
-                )
-                for item in report_periods
-            )
+        if len(report_periods) == expected_months and all(
+            (item.id == period.id and item.status == "open" and item.close_id is None)
+            or (item.id != period.id and item.status == "closed" and item.close_id is not None)
+            for item in report_periods
         ):
             transient_codes.update(
                 {
@@ -479,11 +488,7 @@ class FinancialStatementService(FinanceService):
         # blocker and validates the same confirmation in the close transaction.
         transient_codes.add("ENTERPRISE_INCOME_TAX_QUARTER_CONFIRMATION_REQUIRED")
         return self._deduplicate_requirements(
-            [
-                item
-                for item in preview.missing_information
-                if item.code not in transient_codes
-            ]
+            [item for item in preview.missing_information if item.code not in transient_codes]
         )
 
     def preview_quarterly(
@@ -702,9 +707,7 @@ class FinancialStatementService(FinanceService):
             if existing.request_payload_hash != request_hash:
                 return self._statement_result(
                     FinancialStatementResultStatus.REJECTED,
-                    errors=[
-                        "FINANCIAL_STATEMENT_OPENING_BALANCE_IDEMPOTENCY_MISMATCH"
-                    ],
+                    errors=["FINANCIAL_STATEMENT_OPENING_BALANCE_IDEMPOTENCY_MISMATCH"],
                 )
             return self._statement_result(
                 FinancialStatementResultStatus.POSTED,
@@ -936,6 +939,8 @@ class FinancialStatementService(FinanceService):
     def confirm_enterprise_income_tax(
         self, request: ConfirmEnterpriseIncomeTaxQuarterRequest
     ) -> FinancialStatementResult:
+        from .component_schemas import RecordEventRequest
+        from .component_service import ComponentService
         from .enterprise_income_tax import lock_income_tax
 
         lock_income_tax(self.session, request.org_id)
@@ -991,162 +996,126 @@ class FinancialStatementService(FinanceService):
                 FinancialStatementResultStatus.REJECTED, errors=[evidence_error]
             )
         quarter_start, quarter_end, _year_start = _quarter_dates(request.year, request.quarter)
-        event: BusinessEvent | None = None
-        voucher: Voucher | None = None
         if request.treatment in {
-            EnterpriseIncomeTaxTreatment.ACCRUE,
-            EnterpriseIncomeTaxTreatment.REDUCE,
+            EnterpriseIncomeTaxTreatment.ZERO,
+            EnterpriseIncomeTaxTreatment.NOT_APPLICABLE,
         }:
-            assert request.posting_date is not None
-            if not quarter_start <= request.posting_date <= quarter_end:
+            calculation = {
+                "org_id": str(request.org_id),
+                "year": request.year,
+                "quarter": request.quarter,
+                "treatment": request.treatment.value,
+                "amount_fen": 0,
+                "posting_date": None,
+                "event_id": None,
+                "rule_version": ACCOUNTING_RULE_VERSION,
+                "source_url": ACCOUNTING_RULE_SOURCE_URL,
+            }
+            calculation_payload, calculation_hash = _hash(calculation)
+            confirmation = EnterpriseIncomeTaxQuarterConfirmation(
+                org_id=request.org_id,
+                calendar_year=request.year,
+                calendar_quarter=request.quarter,
+                treatment=request.treatment.value,
+                amount_fen=0,
+                posting_date=None,
+                business_event_id=None,
+                component_id=None,
+                idempotency_key=request.idempotency_key,
+                request_payload_hash=request_hash,
+                calculation_payload=calculation_payload,
+                calculation_hash=calculation_hash,
+                confirmation_note=request.confirmation_note,
+                evidence_references=[str(item) for item in request.evidence_references],
+            )
+            try:
+                with self.session.begin_nested():
+                    self.session.add(confirmation)
+                    self.session.flush()
+                    self.session.add(
+                        AuditLog(
+                            org_id=request.org_id,
+                            event_id=None,
+                            action="enterprise_income_tax_quarter_confirmed",
+                            details={
+                                "confirmation_id": str(confirmation.id),
+                                "year": request.year,
+                                "quarter": request.quarter,
+                                "treatment": request.treatment.value,
+                                "calculation_hash": calculation_hash,
+                            },
+                        )
+                    )
+            except IntegrityError:
                 return self._statement_result(
                     FinancialStatementResultStatus.REJECTED,
-                    errors=["ENTERPRISE_INCOME_TAX_POSTING_DATE_OUTSIDE_QUARTER"],
+                    errors=["ENTERPRISE_INCOME_TAX_CONCURRENT_CONFLICT"],
                 )
-            if request.treatment is EnterpriseIncomeTaxTreatment.REDUCE:
-                expense_balance = max(
-                    0,
-                    account_balance_fen(
-                        self.session, request.org_id, "enterprise_income_tax_expense"
-                    ),
-                )
-                payable_balance = max(
-                    0,
-                    -account_balance_fen(
-                        self.session, request.org_id, "enterprise_income_tax_payable"
-                    ),
-                )
-                if request.amount_fen > min(expense_balance, payable_balance):
-                    return self._statement_result(
-                        FinancialStatementResultStatus.REJECTED,
-                        errors=["ENTERPRISE_INCOME_TAX_REDUCTION_EXCEEDS_BALANCE"],
-                    )
-
-        try:
-            with self.session.begin_nested():
-                if request.treatment in {
-                    EnterpriseIncomeTaxTreatment.ACCRUE,
-                    EnterpriseIncomeTaxTreatment.REDUCE,
-                }:
-                    assert request.posting_date is not None
-                    event = build_business_event(
-                        self.session,
-                        org_id=request.org_id,
-                        idempotency_key=request.idempotency_key,
-                        request_payload_hash=request_hash,
-                        event_type="enterprise_income_tax_assessment",
-                        status="draft",
-                        description=f"{request.year}年第{request.quarter}季度企业所得税确认",
-                        facts=request.model_dump(mode="json"),
-                        business_date=quarter_end,
-                        tax_obligation_date=quarter_end,
-                        posting_date=request.posting_date,
-                        rule_trace=[
-                            {
-                                "stage": "rule_selected",
-                                "rule": ACCOUNTING_RULE_VERSION,
-                                "source_url": ACCOUNTING_RULE_SOURCE_URL,
-                            }
-                        ],
-                        rule_version=ACCOUNTING_RULE_VERSION,
-                    )
-                    self.session.add(event)
-                    self.session.flush()
-                    self._attach_evidence(event, request.evidence_references)
-                    entries = (
-                        [
-                            Entry(
-                                account_role="enterprise_income_tax_expense",
-                                debit_fen=request.amount_fen,
-                            ),
-                            Entry(
-                                account_role="enterprise_income_tax_payable",
-                                credit_fen=request.amount_fen,
-                            ),
-                        ]
-                        if request.treatment is EnterpriseIncomeTaxTreatment.ACCRUE
-                        else [
-                            Entry(
-                                account_role="enterprise_income_tax_payable",
-                                debit_fen=request.amount_fen,
-                            ),
-                            Entry(
-                                account_role="enterprise_income_tax_expense",
-                                credit_fen=request.amount_fen,
-                            ),
-                        ]
-                    )
-                    voucher = create_voucher(
-                        self.session,
-                        event=event,
-                        posting_date=request.posting_date,
-                        description=event.description,
-                        entries=entries,
-                    )
-                    event.status = "posted"
-                    self.session.flush()
-                calculation = {
-                    "org_id": str(request.org_id),
-                    "year": request.year,
-                    "quarter": request.quarter,
-                    "treatment": request.treatment.value,
-                    "amount_fen": request.amount_fen,
-                    "posting_date": (
-                        request.posting_date.isoformat() if request.posting_date else None
-                    ),
-                    "event_id": str(event.id) if event else None,
-                    "voucher_id": str(voucher.id) if voucher else None,
-                    "rule_version": ACCOUNTING_RULE_VERSION,
-                    "source_url": ACCOUNTING_RULE_SOURCE_URL,
-                }
-                calculation_payload, calculation_hash = _hash(calculation)
-                confirmation = EnterpriseIncomeTaxQuarterConfirmation(
-                    org_id=request.org_id,
-                    calendar_year=request.year,
-                    calendar_quarter=request.quarter,
-                    treatment=request.treatment.value,
-                    amount_fen=request.amount_fen,
-                    posting_date=request.posting_date,
-                    business_event_id=event.id if event else None,
-                    idempotency_key=request.idempotency_key,
-                    request_payload_hash=request_hash,
-                    calculation_payload=calculation_payload,
-                    calculation_hash=calculation_hash,
-                    confirmation_note=request.confirmation_note,
-                    evidence_references=[str(item) for item in request.evidence_references],
-                )
-                self.session.add(confirmation)
-                self.session.flush()
-        except AccountingPeriodError as exc:
             return self._statement_result(
-                FinancialStatementResultStatus.REJECTED, errors=[exc.code]
+                FinancialStatementResultStatus.POSTED,
+                calculation_hash=calculation_hash,
+                enterprise_income_tax_confirmation_id=confirmation.id,
+                data={"idempotent_replay": False},
             )
-        except IntegrityError:
+
+        assert request.posting_date is not None
+        component_request = RecordEventRequest.model_validate(
+            {
+                "org_id": request.org_id,
+                "idempotency_key": request.idempotency_key,
+                "posting_date": request.posting_date,
+                "description": f"{request.year}年第{request.quarter}季度企业所得税确认",
+                "evidence_references": request.evidence_references,
+                "components": [
+                    {
+                        "key": "assessment",
+                        "kind": "enterprise_income_tax_assessment",
+                        "business_date": quarter_end,
+                        "year": request.year,
+                        "quarter": request.quarter,
+                        "treatment": request.treatment.value,
+                        "amount_fen": request.amount_fen,
+                        "confirmation_note": request.confirmation_note,
+                    }
+                ],
+            }
+        )
+        result = ComponentService(self.session).record(component_request)
+        if result.status.value == "needs_information":
+            return self._statement_result(
+                FinancialStatementResultStatus.NEEDS_INFORMATION,
+                missing=[
+                    _requirement(
+                        "ENTERPRISE_INCOME_TAX_INFORMATION_REQUIRED",
+                        "企业所得税季度确认缺少必要事实。",
+                        fields=result.missing_information,
+                    )
+                ],
+            )
+        if result.status.value != "posted":
             return self._statement_result(
                 FinancialStatementResultStatus.REJECTED,
-                errors=["ENTERPRISE_INCOME_TAX_CONCURRENT_CONFLICT"],
+                errors=result.errors,
             )
-        self.session.add(
-            AuditLog(
-                org_id=request.org_id,
-                event_id=event.id if event else None,
-                action="enterprise_income_tax_quarter_confirmed",
-                details={
-                    "confirmation_id": str(confirmation.id),
-                    "year": request.year,
-                    "quarter": request.quarter,
-                    "treatment": request.treatment.value,
-                    "calculation_hash": calculation_hash,
-                },
+        confirmation = self.session.scalar(
+            select(EnterpriseIncomeTaxQuarterConfirmation).where(
+                EnterpriseIncomeTaxQuarterConfirmation.org_id == request.org_id,
+                EnterpriseIncomeTaxQuarterConfirmation.business_event_id == result.event_id,
             )
         )
+        if confirmation is None:
+            return self._statement_result(
+                FinancialStatementResultStatus.REJECTED,
+                errors=["ENTERPRISE_INCOME_TAX_COMPONENT_RESULT_MISSING"],
+            )
         return self._statement_result(
             FinancialStatementResultStatus.POSTED,
-            calculation_hash=calculation_hash,
+            calculation_hash=confirmation.calculation_hash,
             enterprise_income_tax_confirmation_id=confirmation.id,
-            event_id=event.id if event else None,
-            voucher_id=voucher.id if voucher else None,
-            voucher_number=voucher.voucher_number if voucher else None,
+            event_id=result.event_id,
+            voucher_id=result.voucher_id,
+            voucher_number=result.voucher_number,
+            trace=result.trace,
             data={"idempotent_replay": False},
         )
 
@@ -1160,10 +1129,15 @@ class FinancialStatementService(FinanceService):
 
     def _ledger_rows(self, org_id: uuid.UUID, through_date: date) -> list[_LedgerRow]:
         rows = self.session.execute(
-            select(VoucherLine, Voucher, BusinessEvent, Account)
+            select(VoucherLine, Voucher, BusinessEvent, Account, BusinessEventComponent)
             .join(Voucher, Voucher.id == VoucherLine.voucher_id)
             .join(BusinessEvent, BusinessEvent.id == Voucher.event_id)
             .join(Account, Account.id == VoucherLine.account_id)
+            .outerjoin(
+                BusinessEventComponent,
+                (BusinessEventComponent.org_id == VoucherLine.org_id)
+                & (BusinessEventComponent.id == VoucherLine.component_id),
+            )
             .where(
                 VoucherLine.org_id == org_id,
                 Voucher.posting_date <= through_date,
@@ -1261,7 +1235,7 @@ class FinancialStatementService(FinanceService):
             for row in rows
             if start <= row.voucher.posting_date <= end
             and row.role in _ALLOWED_DETAILS
-            and row.event.event_type not in {"bank_fee", "bank_interest_received", "reversal"}
+            and not self._has_automatic_profit_detail(row)
             and row.voucher.reversal_of_voucher_id is None
             and row.debit_signed > 0
         ]
@@ -1527,14 +1501,11 @@ class FinancialStatementService(FinanceService):
                     result[14] += amount
                 elif role in {"finance_expense", "borrowing_interest_expense"}:
                     result[18] += amount
-                    if (
-                        role == "borrowing_interest_expense"
-                        or row.event.event_type == "bank_interest_received"
-                    ):
+                    if role == "borrowing_interest_expense" or self._is_bank_interest(row):
                         result[19] += amount
                 elif role in _NONOPERATING_INCOME_ROLES:
                     result[22] += amount
-                    if role == "tax_relief_income" and row.event.event_type == "tax_relief":
+                    if role == "tax_relief_income" and self._is_tax_relief(row):
                         result[23] += amount
                 elif role in _NONOPERATING_EXPENSE_ROLES:
                     result[24] += amount
@@ -1609,6 +1580,27 @@ class FinancialStatementService(FinanceService):
             for line in PROFIT_NAMES
         }
 
+    @staticmethod
+    def _is_bank_interest(row: _LedgerRow) -> bool:
+        return row.component_kind == "bank_interest_received" or (
+            row.component_kind == "other_income"
+            and row.component_facts.get("income_kind") == "bank_interest"
+        )
+
+    @staticmethod
+    def _is_tax_relief(row: _LedgerRow) -> bool:
+        return row.component_kind in {"tax_relief", "tax_period_adjustment"} or bool(
+            row.component_derived.get("tax_relief_fen")
+        )
+
+    @classmethod
+    def _has_automatic_profit_detail(cls, row: _LedgerRow) -> bool:
+        return (
+            cls._is_bank_interest(row)
+            or row.component_facts.get("expense_nature") == "bank_service_fee"
+            or cls._is_tax_relief(row)
+        )
+
     def _cash_flow_statement(
         self,
         rows: list[_LedgerRow],
@@ -1621,6 +1613,34 @@ class FinancialStatementService(FinanceService):
         by_voucher: defaultdict[uuid.UUID, list[_LedgerRow]] = defaultdict(list)
         for row in rows:
             by_voucher[row.voucher.id].append(row)
+
+        allocation_rows = self.session.execute(
+            select(ComponentCashFlowAllocation, BusinessEventComponent)
+            .join(
+                BusinessEventComponent,
+                (BusinessEventComponent.org_id == ComponentCashFlowAllocation.org_id)
+                & (BusinessEventComponent.id == ComponentCashFlowAllocation.component_id),
+            )
+            .join(
+                BusinessEvent,
+                (BusinessEvent.org_id == ComponentCashFlowAllocation.org_id)
+                & (BusinessEvent.id == ComponentCashFlowAllocation.event_id),
+            )
+            .where(
+                ComponentCashFlowAllocation.org_id == org_id,
+                BusinessEvent.status.in_(("posted", "reversed")),
+            )
+            .order_by(
+                ComponentCashFlowAllocation.event_id,
+                BusinessEventComponent.ordinal,
+                ComponentCashFlowAllocation.id,
+            )
+        ).all()
+        allocations_by_event: defaultdict[
+            uuid.UUID, list[tuple[ComponentCashFlowAllocation, BusinessEventComponent]]
+        ] = defaultdict(list)
+        for allocation, component in allocation_rows:
+            allocations_by_event[allocation.event_id].append((allocation, component))
 
         def cash_balance(as_of: date) -> int:
             return sum(
@@ -1639,120 +1659,73 @@ class FinancialStatementService(FinanceService):
                 row0 = voucher_rows[0]
                 if not start <= row0.voucher.posting_date <= end:
                     continue
-                cash_delta = sum(
-                    row.debit_signed
-                    for row in voucher_rows
-                    if row.account.requires_bank_reconciliation
-                    or row.role in {"cash", "bank", "payment_platform_funds"}
-                )
-                if cash_delta == 0:
+                expected: defaultdict[tuple[uuid.UUID, int], int] = defaultdict(int)
+                for row in voucher_rows:
+                    if row.account.requires_bank_reconciliation or row.role in {
+                        "cash",
+                        "bank",
+                        "payment_platform_funds",
+                    }:
+                        direction = 1 if row.debit_signed > 0 else -1
+                        expected[(row.account.id, direction)] += abs(row.debit_signed)
+                if not expected:
                     continue
-                event_type = row0.event.event_type
+
+                allocations = allocations_by_event.get(row0.event.id, [])
                 source_event_id = row0.event.id
-                source_event = row0.event
-                if event_type == "reversal" and row0.voucher.reversal_of_voucher_id is not None:
-                    original = by_voucher.get(row0.voucher.reversal_of_voucher_id)
-                    if original:
-                        event_type = original[0].event.event_type
-                        source_event_id = original[0].event.id
-                        source_event = original[0].event
-                if event_type in {
-                    "internal_transfer",
-                    "cash_bank_transfer",
-                    "payment_platform_transfer",
-                }:
-                    continue
-                if event_type in {
-                    "service_cash_sale",
-                    "customer_receipt",
-                    "customer_advance",
-                    "customer_refund",
-                }:
-                    result[1] += cash_delta
-                elif event_type in {
-                    "other_income_received",
-                    "bank_interest_received",
-                    "expense_recovery_received",
-                    "refundable_deposit_return_received",
-                }:
-                    result[2] += cash_delta
-                elif event_type == "expense_cash":
-                    expense_roles = {
-                        row.role for row in voucher_rows if row.account.category == "expense"
-                    }
-                    result[3 if expense_roles & _SERVICE_COST_ROLES else 6] += -cash_delta
-                elif event_type == "supplier_payment":
-                    self._allocate_settlement_cash(result, source_event_id, -cash_delta, missing)
-                elif event_type == "employee_reimbursement":
-                    expense_roles = {
-                        row.role for row in voucher_rows if row.account.category == "expense"
-                    }
-                    result[3 if expense_roles & _SERVICE_COST_ROLES else 6] += -cash_delta
-                elif event_type == "employee_reimbursement_payment":
-                    self._allocate_settlement_cash(result, source_event_id, -cash_delta, missing)
-                elif event_type == "unified_payout_run":
-                    self._allocate_unified_payout_cash(
-                        result, source_event_id, -cash_delta, missing
-                    )
-                elif event_type == "social_insurance_payment":
-                    late_fee_fen = int(
-                        source_event.facts.get("derived", {}).get(
-                            "social_insurance_late_fee_fen", 0
+
+                allocated: defaultdict[tuple[uuid.UUID, int], int] = defaultdict(int)
+                for allocation, _component in allocations:
+                    amount = allocation.amount_fen
+                    allocated[(allocation.bank_account_id, 1 if amount > 0 else -1)] += abs(amount)
+                mismatches = []
+                for account_id, direction in sorted(set(expected) | set(allocated), key=str):
+                    expected_fen = expected[(account_id, direction)]
+                    allocated_fen = allocated[(account_id, direction)]
+                    if expected_fen != allocated_fen:
+                        mismatches.append(
+                            {
+                                "bank_account_id": str(account_id),
+                                "direction": "receipt" if direction > 0 else "payment",
+                                "ledger_fen": expected_fen,
+                                "allocated_fen": allocated_fen,
+                            }
                         )
-                    )
-                    signed_late_fee_fen = late_fee_fen if cash_delta < 0 else -late_fee_fen
-                    result[4] += -cash_delta - signed_late_fee_fen
-                    result[6] += signed_late_fee_fen
-                elif event_type in {"salary_payment", "housing_fund_payment"}:
-                    result[4] += -cash_delta
-                elif event_type in {
-                    "tax_payment",
-                    "individual_income_tax_payment",
-                    "labor_withholding_tax_payment",
-                }:
-                    result[5] += -cash_delta
-                elif event_type == "enterprise_income_tax_refund":
-                    result[2] += cash_delta
-                elif event_type in {"refundable_deposit_paid", "bank_fee"}:
-                    result[6] += -cash_delta
-                elif event_type == "fixed_asset_disposal":
-                    result[10] += cash_delta
-                elif event_type in {
-                    "fixed_asset_acquisition",
-                    "intangible_asset_acquisition",
-                }:
-                    result[12] += -cash_delta
-                elif event_type in {"borrowing_drawdown", "owner_loan_received"}:
-                    result[14] += cash_delta
-                elif event_type == "owner_contribution_received":
-                    result[15] += cash_delta
-                elif event_type == "borrowing_principal_repayment":
-                    result[16] += -cash_delta
-                elif event_type == "owner_repayment":
-                    total_outflow = -cash_delta
-                    fee_fen = int(
-                        source_event.facts.get("details", {}).get(
-                            "owner_repayment_fee_fen"
-                        )
-                        or 0
-                    )
-                    signed_fee_fen = fee_fen if total_outflow >= 0 else -fee_fen
-                    result[6] += signed_fee_fen
-                    result[16] += total_outflow - signed_fee_fen
-                elif event_type == "borrowing_interest_payment":
-                    result[17] += -cash_delta
-                else:
+                if mismatches:
                     missing.append(
                         _requirement(
-                            "FINANCIAL_STATEMENT_UNMAPPED_CASH_EVENT",
-                            "存在未映射的现金收支事件。",
+                            "FINANCIAL_STATEMENT_CASH_ALLOCATION_MISMATCH",
+                            "现金流分类与凭证中的资金账户及收付方向不一致。",
                             data={
                                 "event_id": str(row0.event.id),
-                                "event_type": event_type,
-                                "cash_delta_fen": cash_delta,
+                                "voucher_id": str(row0.voucher.id),
+                                "source_event_id": str(source_event_id),
+                                "accounts": mismatches,
                             },
                         )
                     )
+                    continue
+
+                for allocation, component in allocations:
+                    if allocation.category == "internal_transfer":
+                        continue
+                    match = re.fullmatch(r"cash_flow_(\d+)", allocation.category)
+                    line = int(match.group(1)) if match else 0
+                    if line not in CASH_FLOW_NAMES or line in {7, 13, 19, 20, 21, 22}:
+                        missing.append(
+                            _requirement(
+                                "FINANCIAL_STATEMENT_CASH_CATEGORY_INVALID",
+                                "现金流分类不是可填报的现金流量表行次。",
+                                data={
+                                    "event_id": str(row0.event.id),
+                                    "component_id": str(component.id),
+                                    "category": allocation.category,
+                                },
+                            )
+                        )
+                        continue
+                    amount = allocation.amount_fen
+                    result[line] += amount if line in {1, 2, 8, 9, 10, 14, 15} else -amount
             result[7] = result[1] + result[2] - result[3] - result[4] - result[5] - result[6]
             result[13] = result[8] + result[9] + result[10] - result[11] - result[12]
             result[19] = result[14] + result[15] - result[16] - result[17] - result[18]
@@ -1771,125 +1744,6 @@ class FinancialStatementService(FinanceService):
             }
             for line in CASH_FLOW_NAMES
         }
-
-    def _allocate_settlement_cash(
-        self,
-        result: dict[int, int],
-        payment_event_id: uuid.UUID,
-        cash_outflow: int,
-        missing: list[FinancialStatementInformationRequirement],
-    ) -> None:
-        settlements = list(
-            self.session.scalars(
-                select(Settlement).where(Settlement.payment_event_id == payment_event_id)
-            )
-        )
-        allocation_sign = 1 if cash_outflow >= 0 else -1
-        if sum(item.amount_fen for item in settlements) != abs(cash_outflow):
-            missing.append(
-                _requirement(
-                    "FINANCIAL_STATEMENT_CASH_SETTLEMENT_MISMATCH",
-                    "付款金额与原始事项分配不一致。",
-                    data={"payment_event_id": str(payment_event_id)},
-                )
-            )
-            return
-        for settlement in settlements:
-            source_row = self.session.execute(
-                select(BusinessEvent, OpenItem)
-                .join(OpenItem, OpenItem.source_event_id == BusinessEvent.id)
-                .where(OpenItem.id == settlement.open_item_id)
-            ).one_or_none()
-            if source_row is None:
-                missing.append(
-                    _requirement(
-                        "FINANCIAL_STATEMENT_CASH_SOURCE_MISSING",
-                        "找不到付款对应的原始事项。",
-                    )
-                )
-                continue
-            source, source_item = source_row
-            signed_amount = settlement.amount_fen * allocation_sign
-            if source_item.payable_category in {
-                "salary",
-                "employer_social",
-                "withheld_employee_social",
-                "employer_housing",
-                "withheld_employee_housing",
-            }:
-                result[4] += signed_amount
-                continue
-            if source_item.payable_category in {
-                "individual_income_tax",
-                "labor_individual_income_tax",
-            }:
-                result[5] += signed_amount
-                continue
-            if source_item.payable_category == "labor_remuneration":
-                result[3] += signed_amount
-                continue
-            if (
-                source.event_type == "employee_reimbursement"
-                and source.facts.get("derived", {}).get("reimbursement_kind")
-                == "existing_payable"
-            ):
-                self._allocate_settlement_cash(
-                    result,
-                    source.id,
-                    signed_amount,
-                    missing,
-                )
-                continue
-            roles = set(
-                self.session.scalars(
-                    select(Account.system_role)
-                    .join(VoucherLine, VoucherLine.account_id == Account.id)
-                    .join(Voucher, Voucher.id == VoucherLine.voucher_id)
-                    .where(Voucher.event_id == source.id, Account.category == "expense")
-                )
-            )
-            if roles & _SERVICE_COST_ROLES or source.event_type == "labor_remuneration_accrual":
-                result[3] += signed_amount
-            elif source.event_type in {
-                "fixed_asset_acquisition",
-                "intangible_asset_acquisition",
-            }:
-                result[12] += signed_amount
-            else:
-                result[6] += signed_amount
-
-    def _allocate_unified_payout_cash(
-        self,
-        result: dict[int, int],
-        payment_event_id: uuid.UUID,
-        cash_outflow: int,
-        missing: list[FinancialStatementInformationRequirement],
-    ) -> None:
-        run = self.session.scalar(
-            select(UnifiedPayoutRun).where(UnifiedPayoutRun.business_event_id == payment_event_id)
-        )
-        if run is None:
-            missing.append(
-                _requirement("FINANCIAL_STATEMENT_PAYOUT_SOURCE_MISSING", "找不到统一付款明细。")
-            )
-            return
-        items = list(
-            self.session.scalars(
-                select(UnifiedPayoutRunItem).where(UnifiedPayoutRunItem.payout_run_id == run.id)
-            )
-        )
-        allocation_sign = 1 if cash_outflow >= 0 else -1
-        if sum(item.net_amount_fen for item in items) != abs(cash_outflow):
-            missing.append(
-                _requirement(
-                    "FINANCIAL_STATEMENT_PAYOUT_AMOUNT_MISMATCH",
-                    "统一付款明细与现金流出不一致。",
-                    data={"payout_run_id": str(run.id)},
-                )
-            )
-            return
-        for item in items:
-            result[4 if item.item_kind == "salary" else 3] += item.net_amount_fen * allocation_sign
 
     @staticmethod
     def _checks(
@@ -2006,7 +1860,7 @@ def _yuan_text(fen: int) -> str:
 
 def _cell_span(xml: str, reference: str) -> tuple[int, int, str, str]:
     start_match = re.search(
-        rf'<c\b(?=[^>]*\br={quoteattr(reference)}(?:\s|/?>))[^>]*>',
+        rf"<c\b(?=[^>]*\br={quoteattr(reference)}(?:\s|/?>))[^>]*>",
         xml,
     )
     if start_match is None:
@@ -2042,10 +1896,7 @@ def _replace_cell(
 ) -> str:
     start, end, start_tag, body = _cell_span(xml, reference)
     replacement = (
-        _cell_start_tag(start_tag, cell_type=cell_type)
-        + _formula_xml(body)
-        + value_xml
-        + "</c>"
+        _cell_start_tag(start_tag, cell_type=cell_type) + _formula_xml(body) + value_xml + "</c>"
     )
     return xml[:start] + replacement + xml[end:]
 
@@ -2107,12 +1958,9 @@ def render_quarterly_template(data: dict[str, Any]) -> bytes:
 
     with zipfile.ZipFile(io.BytesIO(template), "r") as source:
         sheets = [
-            source.read(f"xl/worksheets/sheet{index}.xml").decode("utf-8")
-            for index in (1, 2, 3)
+            source.read(f"xl/worksheets/sheet{index}.xml").decode("utf-8") for index in (1, 2, 3)
         ]
-        sheets[0] = _set_text(
-            sheets[0], "D3", organization["taxpayer_identification_number"]
-        )
+        sheets[0] = _set_text(sheets[0], "D3", organization["taxpayer_identification_number"])
         sheets[0] = _set_text(sheets[0], "H3", organization["name"])
         sheets[0] = _set_numeric(sheets[0], "D4", str(_excel_serial(start)))
         sheets[0] = _set_numeric(sheets[0], "H4", str(_excel_serial(end)))
@@ -2123,15 +1971,9 @@ def render_quarterly_template(data: dict[str, Any]) -> bytes:
                 organization["taxpayer_identification_number"],
                 formula_cache=True,
             )
-            sheets[index] = _set_text(
-                sheets[index], "F3", organization["name"], formula_cache=True
-            )
-            sheets[index] = _set_numeric(
-                sheets[index], "D4", str(_excel_serial(start))
-            )
-            sheets[index] = _set_numeric(
-                sheets[index], "F4", str(_excel_serial(end))
-            )
+            sheets[index] = _set_text(sheets[index], "F3", organization["name"], formula_cache=True)
+            sheets[index] = _set_numeric(sheets[index], "D4", str(_excel_serial(start)))
+            sheets[index] = _set_numeric(sheets[index], "F4", str(_excel_serial(end)))
 
         balance_cells: dict[int, tuple[str, str]] = {}
         for line in range(1, 16):
@@ -2146,18 +1988,14 @@ def render_quarterly_template(data: dict[str, Any]) -> bytes:
             balance_cells[line] = (f"H{line - 16}", f"I{line - 16}")
         for line, (ending_cell, beginning_cell) in balance_cells.items():
             row = balance[str(line)]
-            sheets[0] = _set_numeric(
-                sheets[0], ending_cell, _yuan_text(int(row["ending_fen"]))
-            )
+            sheets[0] = _set_numeric(sheets[0], ending_cell, _yuan_text(int(row["ending_fen"])))
             sheets[0] = _set_numeric(
                 sheets[0], beginning_cell, _yuan_text(int(row["beginning_fen"]))
             )
 
         for line in range(1, 33):
             row = profit[str(line)]
-            sheets[1] = _set_numeric(
-                sheets[1], f"D{line + 5}", _yuan_text(int(row["current_fen"]))
-            )
+            sheets[1] = _set_numeric(sheets[1], f"D{line + 5}", _yuan_text(int(row["current_fen"])))
             sheets[1] = _set_numeric(
                 sheets[1], f"E{line + 5}", _yuan_text(int(row["year_to_date_fen"]))
             )

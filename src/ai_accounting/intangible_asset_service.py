@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from .bank_matching import BankMatchingError
 from .intangible_asset_schemas import (
     AcquireIntangibleAssetRequest,
     ConfirmIntangibleAssetAmortizationRequest,
@@ -29,22 +30,29 @@ from .intangible_assets import (
     calculate_straight_line_amortization,
     intangible_asset_calculation_hash,
 )
-from .ledger import AccountingPeriodError, Entry, build_business_event, create_voucher
+from .ledger import (
+    AccountingPeriodError,
+    CashFlowPlan,
+    ComponentPostingPlan,
+    Entry,
+    OpenItemPlan,
+    build_business_event,
+    commit_posting_plan,
+    funds_posting_plan,
+)
 from .models import (
     AuditLog,
-    BankTransactionMatch,
     BusinessEvent,
     Counterparty,
     Evidence,
     IntangibleAsset,
     IntangibleAssetAmortization,
     IntangibleAssetRetirement,
-    OpenItem,
     Organization,
     Voucher,
     event_evidence,
 )
-from .schemas import FinanceResult, ResultStatus, ReverseEventRequest
+from .schemas import ReverseEventRequest
 from .service import FinanceService
 
 ACCOUNTING_RULE_SOURCE_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878.pdf"
@@ -241,55 +249,8 @@ class IntangibleAssetService(FinanceService):
             },
         )
 
-    def reverse_event(self, request: ReverseEventRequest) -> FinanceResult:
-        original = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.id == request.event_id,
-            )
-        )
-        if original is None or original.event_type not in INTANGIBLE_ASSET_EVENT_TYPES:
-            return super().reverse_event(request)
-        request_payload_hash = self._request_payload_hash(request)
-        existing = self._idempotent_event(request.org_id, request.idempotency_key)
-        if existing is not None:
-            if existing.request_payload_hash != request_payload_hash:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"],
-                )
-            return self._result_for_existing(existing)
-        return super().reverse_event(request)
-
-    def _reverse_event_write(self, request: ReverseEventRequest) -> FinanceResult:
-        original = self.session.scalar(
-            select(BusinessEvent)
-            .where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.id == request.event_id,
-            )
-            .with_for_update()
-        )
-        if original is None or original.event_type not in INTANGIBLE_ASSET_EVENT_TYPES:
-            return super()._reverse_event_write(request)
-        asset = self._asset_for_event(original)
-        if asset is None:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["INTANGIBLE_ASSET_NORMALIZED_FACT_NOT_FOUND"],
-            )
-        asset = self._get_asset(request.org_id, asset.id, lock=True)
-        if asset is None:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["INTANGIBLE_ASSET_NOT_FOUND"],
-            )
-        if self.intangible_asset_reversal_dependency_error(original, asset):
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["INTANGIBLE_ASSET_OPEN_DEPENDENCIES_EXIST"],
-            )
-        return super()._reverse_event_write(request)
+    def reverse_event(self, request: ReverseEventRequest):
+        return FinanceService.reverse_event(self, request)
 
     def _run_intangible_write(
         self,
@@ -355,6 +316,10 @@ class IntangibleAssetService(FinanceService):
                 status=IntangibleAssetResultStatus.REJECTED,
                 errors=[exc.code],
             )
+        except BankMatchingError as exc:
+            return IntangibleAssetResult(
+                status=IntangibleAssetResultStatus.REJECTED, errors=[str(exc)]
+            )
         except AccountingPeriodError as exc:
             return IntangibleAssetResult(
                 status=IntangibleAssetResultStatus.REJECTED,
@@ -410,9 +375,9 @@ class IntangibleAssetService(FinanceService):
                 errors=["INTANGIBLE_ASSET_CONCURRENT_WRITE_CONFLICT"],
             )
 
-    def _acquire_intangible_asset_write(
-        self, request: AcquireIntangibleAssetRequest
-    ) -> IntangibleAssetResult:
+    def compile_acquisition(
+        self, request: AcquireIntangibleAssetRequest, *, key: str
+    ) -> ComponentPostingPlan:
         if request.is_available_for_use is not True:
             self._reject("INTANGIBLE_ASSET_NOT_READY_WORKFLOW_NOT_ENABLED")
         if request.claims_creditable_input_vat is not False:
@@ -456,9 +421,6 @@ class IntangibleAssetService(FinanceService):
         if settlement == "bank":
             if request.due_date is not None:
                 self._reject("INTANGIBLE_ASSET_BANK_SETTLEMENT_FORBIDS_DUE_DATE")
-            self._validate_bank_account(
-                request.org_id, request.bank_account_code, request.payment_date
-            )
         else:
             if (
                 request.payment_date is not None
@@ -467,115 +429,140 @@ class IntangibleAssetService(FinanceService):
             ):
                 self._reject("INTANGIBLE_ASSET_PAYABLE_FORBIDS_BANK_FACTS")
         self._validate_evidence(request.org_id, request.evidence_references)
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_acquire_intangible_asset",
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-                "cost_components": asdict(calculation),
+        asset_id = uuid.uuid4()
+        entries = [Entry(account_role="intangible_asset_cost", debit_fen=calculation.cost_fen)]
+        open_items = []
+        if settlement == "payable":
+            entries.append(
+                Entry(
+                    account_role="accounts_payable",
+                    credit_fen=calculation.cost_fen,
+                    counterparty_id=supplier.id,
+                )
+            )
+            open_items.append(
+                OpenItemPlan(
+                    counterparty_id=supplier.id,
+                    item_type="payable",
+                    original_amount_fen=calculation.cost_fen,
+                    due_date=request.due_date,
+                    account_role="accounts_payable",
+                )
+            )
+
+        def persist(session, event, component):
+            asset = IntangibleAsset(
+                id=asset_id,
+                component_id=component.id,
+                org_id=request.org_id,
+                asset_code=request.asset_code,
+                name=request.asset_name,
+                category=request.category.value,
+                rights_description=request.rights_description,
+                other_right_type_description=request.other_right_type_description,
+                identifiability_basis=request.identifiability_basis,
+                supplier_id=supplier.id,
+                acquisition_date=request.acquisition_date,
+                available_for_use_date=request.available_for_use_date,
+                posting_date=request.posting_date,
+                purchase_price_fen=calculation.purchase_price_fen,
+                noncreditable_tax_fen=calculation.noncreditable_tax_fen,
+                directly_attributable_cost_fen=calculation.directly_attributable_cost_fen,
+                cost_fen=calculation.cost_fen,
+                settlement_method=settlement,
+                payment_date=request.payment_date if settlement == "bank" else None,
+                due_date=request.due_date if settlement == "payable" else None,
+                benefit_area=request.benefit_area.value,
+                life_basis=request.life_basis.value,
+                useful_life_months=request.useful_life_months,
+                life_basis_explanation=request.life_basis_explanation,
+                is_available_for_use=True,
+                claims_creditable_input_vat=False,
+                acquisition_event_id=event.id,
+                accounting_rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(asset)
+            session.flush()
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="intangible_asset_acquisition",
+            facts=request.model_dump(mode="json"),
+            rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
+            derived={
+                "asset_id": str(asset_id),
+                "cost_fen": calculation.cost_fen,
                 "residual_value_fen": 0,
-                "life_basis": request.life_basis.value,
                 "useful_life_months": request.useful_life_months,
-                "bank_account_code": request.bank_account_code,
+                "next_amortization_period": self._month_start(
+                    request.available_for_use_date
+                ).strftime("%Y-%m"),
+                "cash_outflow_fen": calculation.cost_fen if settlement == "bank" else 0,
+                "cash_flow_category": "cash_flow_12",
             },
-            self._rule_trace(),
-        ]
+            entries=entries,
+            open_items=open_items,
+            effects=[persist],
+        )
+
+    def _acquire_intangible_asset_write(
+        self, request: AcquireIntangibleAssetRequest
+    ) -> IntangibleAssetResult:
+        plan = self.compile_acquisition(request, key="domain")
         event = self._new_event(
             request,
             command="finance_acquire_intangible_asset",
             event_type="intangible_asset_acquisition",
             business_date=request.acquisition_date,
             posting_date=request.posting_date,
-            payment_date=request.payment_date if settlement == "bank" else None,
-            trace=trace,
+            payment_date=request.payment_date,
+            trace=[self._rule_trace()],
         )
+        event.facts = {**event.facts, **plan.derived, "_result_data": plan.derived}
         self.session.add(event)
         self.session.flush()
         self._attach_evidence(event, request.evidence_references)
-        if settlement == "bank" and request.bank_transaction_references:
-            self._match_bank_transactions(
-                event,
-                request.bank_transaction_references,
-                bank_account_code=request.bank_account_code,
-                expected_outflow_fen=calculation.cost_fen,
-                expected_date=request.payment_date,
+        components = [plan]
+        if request.settlement_method.value == "bank":
+            self._validate_bank_account(
+                request.org_id, request.bank_account_code, request.payment_date
             )
-        asset = IntangibleAsset(
-            org_id=request.org_id,
-            asset_code=request.asset_code,
-            name=request.asset_name,
-            category=request.category.value,
-            rights_description=request.rights_description,
-            other_right_type_description=request.other_right_type_description,
-            identifiability_basis=request.identifiability_basis,
-            supplier_id=supplier.id,
-            acquisition_date=request.acquisition_date,
-            available_for_use_date=request.available_for_use_date,
-            posting_date=request.posting_date,
-            purchase_price_fen=calculation.purchase_price_fen,
-            noncreditable_tax_fen=calculation.noncreditable_tax_fen,
-            directly_attributable_cost_fen=calculation.directly_attributable_cost_fen,
-            cost_fen=calculation.cost_fen,
-            settlement_method=settlement,
-            payment_date=request.payment_date if settlement == "bank" else None,
-            due_date=request.due_date if settlement == "payable" else None,
-            benefit_area=request.benefit_area.value,
-            life_basis=request.life_basis.value,
-            useful_life_months=request.useful_life_months,
-            life_basis_explanation=request.life_basis_explanation,
-            is_available_for_use=True,
-            claims_creditable_input_vat=False,
-            acquisition_event_id=event.id,
-            accounting_rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(asset)
-        self.session.flush()
-        entries = [
-            Entry(account_role="intangible_asset_cost", debit_fen=calculation.cost_fen),
-            Entry(
-                account_code=request.bank_account_code if settlement == "bank" else None,
-                account_role=None if settlement == "bank" else "accounts_payable",
-                credit_fen=calculation.cost_fen,
-                counterparty_id=supplier.id if settlement == "payable" else None,
-            ),
-        ]
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.posting_date,
-            description=request.description or f"取得无形资产 {request.asset_code}",
-            entries=entries,
-        )
-        if settlement == "payable":
-            self.session.add(
-                OpenItem(
-                    org_id=request.org_id,
-                    counterparty_id=supplier.id,
-                    source_event_id=event.id,
-                    item_type="payable",
-                    original_amount_fen=calculation.cost_fen,
-                    due_date=request.due_date,
+            components.append(
+                funds_posting_plan(
+                    {
+                        "key": "payment",
+                        "account_code": request.bank_account_code,
+                        "bank_transaction_references": [
+                            r.model_dump(mode="json") for r in request.bank_transaction_references
+                        ],
+                        "direction": "payment",
+                        "payment_date": request.payment_date,
+                        "amount_fen": plan.derived["cash_outflow_fen"],
+                        "allocations": [
+                            {
+                                "component_key": plan.key,
+                                "amount_fen": plan.derived["cash_outflow_fen"],
+                            }
+                        ],
+                    }
                 )
             )
-        trace.extend(
-            [
-                self._entries_trace(entries),
-                {"stage": "normalized_fact_created", "asset_id": str(asset.id)},
-            ]
+            plan.cash_flows.append(
+                CashFlowPlan(
+                    request.bank_account_code, "cash_flow_12", -plan.derived["cash_outflow_fen"]
+                )
+            )
+        voucher = commit_posting_plan(
+            self.session,
+            event=event,
+            components=components,
+            posting_date=request.posting_date,
+            description=request.description or f"取得无形资产 {request.asset_code}",
         )
-        event.rule_trace = [dict(item) for item in trace]
-        event.facts = {**event.facts, "asset_id": str(asset.id)}
-        data = {
-            "cost_fen": calculation.cost_fen,
-            "residual_value_fen": 0,
-            "useful_life_months": asset.useful_life_months,
-            "next_amortization_period": self._month_start(asset.available_for_use_date).strftime(
-                "%Y-%m"
-            ),
-        }
-        self._finalize_event(event, voucher, asset.id, data)
-        return self._posted_result(asset.id, event, voucher, data=data)
+        return self._posted_result(
+            uuid.UUID(plan.derived["asset_id"]), event, voucher, data=plan.derived
+        )
 
     def _amortization_snapshot(
         self,
@@ -672,50 +659,13 @@ class IntangibleAssetService(FinanceService):
             "data": data,
         }
 
-    def _confirm_intangible_asset_amortization_write(
-        self, request: ConfirmIntangibleAssetAmortizationRequest
-    ) -> IntangibleAssetResult:
+    def compile_amortization(
+        self, request: ConfirmIntangibleAssetAmortizationRequest, *, key: str
+    ) -> ComponentPostingPlan:
         snapshot = self._amortization_snapshot(request, lock=True)
         if request.calculation_hash != snapshot["calculation_hash"]:
             self._reject("INTANGIBLE_ASSET_CALCULATION_STALE")
-        calculation = snapshot["calculation"]
-        asset = snapshot["asset"]
-        trace = [dict(item) for item in snapshot["trace"]]
-        trace.append(
-            {
-                "stage": "calculation_confirmed",
-                "confirmation_note": request.confirmation_note,
-            }
-        )
-        event = self._new_event(
-            request,
-            command="finance_confirm_intangible_asset_amortization",
-            event_type="intangible_asset_amortization",
-            business_date=snapshot["period_start"],
-            posting_date=request.posting_date,
-            trace=trace,
-        )
-        self.session.add(event)
-        self.session.flush()
-        self._attach_evidence(
-            event,
-            self._event_evidence_ids(asset.acquisition_event_id),
-            relation_kind="inherited",
-        )
-        row = IntangibleAssetAmortization(
-            org_id=request.org_id,
-            asset_id=asset.id,
-            event_id=event.id,
-            period_start=snapshot["period_start"],
-            posting_date=request.posting_date,
-            sequence_no=snapshot["data"]["sequence_no"],
-            amount_fen=calculation.amortization_fen,
-            accumulated_after_fen=calculation.closing_accumulated_amortization_fen,
-            calculation_hash=snapshot["calculation_hash"],
-            accounting_rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(row)
+        calculation, asset = snapshot["calculation"], snapshot["asset"]
         expense_role = {
             "management": "management_amortization_expense",
             "sales": "sales_amortization_expense",
@@ -728,32 +678,59 @@ class IntangibleAssetService(FinanceService):
                 credit_fen=calculation.amortization_fen,
             ),
         ]
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.posting_date,
-            description=request.confirmation_note
-            or f"无形资产摊销 {asset.asset_code} {request.amortization_period}",
-            entries=entries,
-        )
-        trace.extend(
-            [
-                self._entries_trace(entries),
-                {
-                    "stage": "normalized_fact_created",
-                    "asset_id": str(asset.id),
-                    "amortization_id": str(row.id),
-                },
-            ]
-        )
-        event.rule_trace = [dict(item) for item in trace]
-        event.facts = {**event.facts, "asset_id": str(asset.id)}
-        self._finalize_event(event, voucher, asset.id, snapshot["data"])
-        return self._posted_result(asset.id, event, voucher, data=snapshot["data"])
 
-    def _retire_intangible_asset_write(
-        self, request: RetireIntangibleAssetRequest
+        def persist(session, event, component):
+            self._attach_evidence(
+                event,
+                self._event_evidence_ids(asset.acquisition_event_id),
+                relation_kind="inherited",
+            )
+            row = IntangibleAssetAmortization(
+                component_id=component.id,
+                org_id=request.org_id,
+                asset_id=asset.id,
+                event_id=event.id,
+                period_start=snapshot["period_start"],
+                posting_date=request.posting_date,
+                sequence_no=snapshot["data"]["sequence_no"],
+                amount_fen=calculation.amortization_fen,
+                accumulated_after_fen=calculation.closing_accumulated_amortization_fen,
+                calculation_hash=snapshot["calculation_hash"],
+                accounting_rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(row)
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="intangible_asset_amortization",
+            facts=request.model_dump(mode="json"),
+            derived={
+                **snapshot["data"],
+                "asset_id": str(asset.id),
+                "calculation_hash": snapshot["calculation_hash"],
+                "source_event_ids": [str(asset.acquisition_event_id)],
+            },
+            rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
+            entries=entries,
+            effects=[persist],
+        )
+
+    def _confirm_intangible_asset_amortization_write(
+        self, request: ConfirmIntangibleAssetAmortizationRequest
     ) -> IntangibleAssetResult:
+        plan = self.compile_amortization(request, key="domain")
+        return self._post_noncash_component(
+            request,
+            plan,
+            "finance_confirm_intangible_asset_amortization",
+            date.fromisoformat(request.amortization_period + "-01"),
+            request.confirmation_note,
+        )
+
+    def compile_retirement(
+        self, request: RetireIntangibleAssetRequest, *, key: str
+    ) -> ComponentPostingPlan:
         asset = self._get_asset(request.org_id, request.asset_id, lock=True)
         if asset is None or not self._acquisition_is_active(asset):
             self._reject("INTANGIBLE_ASSET_NOT_FOUND")
@@ -787,55 +764,6 @@ class IntangibleAssetService(FinanceService):
         self._validate_evidence(request.org_id, request.evidence_references)
         book_value = asset.cost_fen - accumulated
         dependency_ids = [str(item.event_id) for item in amortizations]
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_retire_intangible_asset",
-                "asset_id": str(asset.id),
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-                "zero_income_facts": {
-                    "gross_proceeds_fen": request.gross_proceeds_fen,
-                    "compensation_fen": request.compensation_fen,
-                    "taxes_and_fees_fen": request.taxes_and_fees_fen,
-                    "residual_proceeds_fen": request.residual_proceeds_fen,
-                },
-                "dependency_event_ids": dependency_ids,
-            },
-            self._rule_trace(),
-            {
-                "stage": "retirement_book_value_calculated",
-                "cost_fen": asset.cost_fen,
-                "accumulated_amortization_fen": accumulated,
-                "book_value_fen": book_value,
-            },
-        ]
-        event = self._new_event(
-            request,
-            command="finance_retire_intangible_asset",
-            event_type="intangible_asset_retirement",
-            business_date=request.retirement_date,
-            posting_date=request.posting_date,
-            trace=trace,
-        )
-        self.session.add(event)
-        self.session.flush()
-        self._attach_evidence(event, request.evidence_references)
-        row = IntangibleAssetRetirement(
-            org_id=request.org_id,
-            asset_id=asset.id,
-            event_id=event.id,
-            retirement_date=request.retirement_date,
-            posting_date=request.posting_date,
-            gross_proceeds_fen=0,
-            compensation_fen=0,
-            taxes_and_fees_fen=0,
-            residual_proceeds_fen=0,
-            accumulated_amortization_fen=accumulated,
-            book_value_fen=book_value,
-            accounting_rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(row)
         entries: list[Entry] = []
         if accumulated:
             entries.append(Entry(account_role="accumulated_amortization", debit_fen=accumulated))
@@ -844,32 +772,83 @@ class IntangibleAssetService(FinanceService):
                 Entry(account_role="intangible_asset_retirement_loss", debit_fen=book_value)
             )
         entries.append(Entry(account_role="intangible_asset_cost", credit_fen=asset.cost_fen))
-        voucher = create_voucher(
+
+        def persist(session, event, component):
+            row = IntangibleAssetRetirement(
+                component_id=component.id,
+                org_id=request.org_id,
+                asset_id=asset.id,
+                event_id=event.id,
+                retirement_date=request.retirement_date,
+                posting_date=request.posting_date,
+                gross_proceeds_fen=0,
+                compensation_fen=0,
+                taxes_and_fees_fen=0,
+                residual_proceeds_fen=0,
+                accumulated_amortization_fen=accumulated,
+                book_value_fen=book_value,
+                accounting_rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(row)
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="intangible_asset_retirement",
+            facts=request.model_dump(mode="json"),
+            derived={
+                "asset_id": str(asset.id),
+                "accumulated_amortization_fen": accumulated,
+                "book_value_fen": book_value,
+                "dependency_event_ids": dependency_ids,
+                "source_event_ids": [str(asset.acquisition_event_id), *dependency_ids],
+            },
+            rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
+            entries=entries,
+            effects=[persist],
+        )
+
+    def _retire_intangible_asset_write(
+        self, request: RetireIntangibleAssetRequest
+    ) -> IntangibleAssetResult:
+        plan = self.compile_retirement(request, key="domain")
+        return self._post_noncash_component(
+            request,
+            plan,
+            "finance_retire_intangible_asset",
+            request.retirement_date,
+            request.description or "报废无形资产",
+        )
+
+    def _post_noncash_component(
+        self, request, plan, command: str, business_date: date, description: str
+    ):
+        event = self._new_event(
+            request,
+            command=command,
+            event_type=plan.kind,
+            business_date=business_date,
+            posting_date=request.posting_date,
+            trace=[self._rule_trace()],
+        )
+        event.facts = {
+            **event.facts,
+            "asset_id": plan.derived["asset_id"],
+            "_result_data": plan.derived,
+        }
+        self.session.add(event)
+        self.session.flush()
+        self._attach_evidence(event, getattr(request, "evidence_references", []))
+        voucher = commit_posting_plan(
             self.session,
             event=event,
+            components=[plan],
             posting_date=request.posting_date,
-            description=request.description or f"报废无形资产 {asset.asset_code}",
-            entries=entries,
+            description=description,
         )
-        trace.extend(
-            [
-                self._entries_trace(entries),
-                {
-                    "stage": "normalized_fact_created",
-                    "asset_id": str(asset.id),
-                    "retirement_id": str(row.id),
-                },
-            ]
+        return self._posted_result(
+            uuid.UUID(plan.derived["asset_id"]), event, voucher, data=plan.derived
         )
-        event.rule_trace = [dict(item) for item in trace]
-        event.facts = {**event.facts, "asset_id": str(asset.id)}
-        data = {
-            "accumulated_amortization_fen": accumulated,
-            "book_value_fen": book_value,
-            "dependency_event_ids": dependency_ids,
-        }
-        self._finalize_event(event, voucher, asset.id, data)
-        return self._posted_result(asset.id, event, voucher, data=data)
 
     def _intangible_request_hash(self, command: str, request: Any) -> str:
         return self._canonical_payload_hash(
@@ -1161,51 +1140,6 @@ class IntangibleAssetService(FinanceService):
             ).all()
         )
 
-    def _match_bank_transactions(
-        self,
-        event: BusinessEvent,
-        references: list[Any],
-        *,
-        bank_account_code: str,
-        expected_outflow_fen: int,
-        expected_date: date,
-    ) -> None:
-        try:
-            rows = self._resolve_bank_transaction_references(event.org_id, references)
-        except ValueError as exc:
-            self._reject(str(exc))
-        resolved_ids = [row.id for row in rows]
-        if any(row.bank_account_code != bank_account_code for row in rows):
-            self._reject("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-        if any(row.currency != "CNY" for row in rows):
-            self._reject("INTANGIBLE_ASSET_BANK_TRANSACTION_CURRENCY_MISMATCH")
-        if any(row.booking_date != expected_date for row in rows):
-            self._reject("INTANGIBLE_ASSET_BANK_TRANSACTION_DATE_MISMATCH")
-        inflow = sum(row.amount_fen for row in rows if row.amount_fen > 0)
-        outflow = -sum(row.amount_fen for row in rows if row.amount_fen < 0)
-        if inflow != 0 or outflow != expected_outflow_fen:
-            self._reject("INTANGIBLE_ASSET_BANK_TRANSACTION_AMOUNT_MISMATCH")
-        matches = self.session.scalars(
-            select(BankTransactionMatch)
-            .where(
-                BankTransactionMatch.org_id == event.org_id,
-                BankTransactionMatch.bank_transaction_id.in_(resolved_ids),
-                BankTransactionMatch.invalidated_by_event_id.is_(None),
-            )
-            .with_for_update()
-        ).all()
-        if matches or any(row.matched_event_id is not None for row in rows):
-            self._reject("BANK_TRANSACTION_ALREADY_MATCHED")
-        for row in rows:
-            self.session.add(
-                BankTransactionMatch(
-                    org_id=event.org_id,
-                    bank_transaction_id=row.id,
-                    event_id=event.id,
-                )
-            )
-            row.matched_event_id = event.id
-
     def _asset_for_event(self, event: BusinessEvent) -> IntangibleAsset | None:
         if event.event_type == "intangible_asset_acquisition":
             return self.session.scalar(
@@ -1227,61 +1161,6 @@ class IntangibleAssetService(FinanceService):
             )
         )
         return self._get_asset(event.org_id, asset_id)
-
-    def intangible_asset_reversal_dependency_error(
-        self, original: BusinessEvent, asset: IntangibleAsset
-    ) -> str | None:
-        if original.status != "posted" or original.reversed_by_event_id is not None:
-            return None
-        retirement = self._active_retirement(asset.id)
-        amortizations = self._active_amortizations(asset.id, lock=True)
-        if original.event_type == "intangible_asset_retirement":
-            return None
-        if original.event_type == "intangible_asset_amortization":
-            source = self.session.scalar(
-                select(IntangibleAssetAmortization).where(
-                    IntangibleAssetAmortization.org_id == original.org_id,
-                    IntangibleAssetAmortization.event_id == original.id,
-                )
-            )
-            if source is None or retirement is not None:
-                return "INTANGIBLE_ASSET_OPEN_DEPENDENCIES_EXIST"
-            if any(item.period_start > source.period_start for item in amortizations):
-                return "INTANGIBLE_ASSET_OPEN_DEPENDENCIES_EXIST"
-            return None
-        if original.event_type == "intangible_asset_acquisition" and (
-            retirement is not None or amortizations
-        ):
-            return "INTANGIBLE_ASSET_OPEN_DEPENDENCIES_EXIST"
-        return None
-
-    def _finalize_event(
-        self,
-        event: BusinessEvent,
-        voucher: Voucher,
-        asset_id: uuid.UUID,
-        result_data: dict[str, Any],
-    ) -> None:
-        event.facts = {
-            **event.facts,
-            "_result_data": result_data,
-            "_result_calculation_hash": result_data.get("calculation_hash"),
-        }
-        self.session.flush()
-        event.status = "posted"
-        self.session.add(
-            AuditLog(
-                org_id=event.org_id,
-                event_id=event.id,
-                action="intangible_asset_event_posted",
-                details={
-                    "asset_id": str(asset_id),
-                    "voucher_id": str(voucher.id),
-                    "voucher_number": voucher.voucher_number,
-                },
-            )
-        )
-        self.session.flush()
 
     @staticmethod
     def _posted_result(
@@ -1338,23 +1217,6 @@ class IntangibleAssetService(FinanceService):
             "effective_from": "2013-01-01",
             "source_url": ACCOUNTING_RULE_SOURCE_URL,
             "scope": "book accounting only; no tax amortization adjustment",
-        }
-
-    @staticmethod
-    def _entries_trace(entries: list[Entry]) -> dict[str, Any]:
-        return {
-            "stage": "entries_created",
-            "template_lines": [
-                {
-                    "account_role": line.account_role,
-                    "account_code": line.account_code,
-                    "debit_fen": line.debit_fen,
-                    "credit_fen": line.credit_fen,
-                }
-                for line in entries
-            ],
-            "debit_fen": sum(line.debit_fen for line in entries),
-            "credit_fen": sum(line.credit_fen for line in entries),
         }
 
     def _event_projection(self, event: BusinessEvent | None) -> dict[str, Any] | None:

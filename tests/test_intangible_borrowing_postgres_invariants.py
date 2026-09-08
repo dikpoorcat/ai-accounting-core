@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from datetime import date
 from decimal import Decimal
 from hashlib import sha256
@@ -10,18 +11,23 @@ from threading import Barrier
 
 import pytest
 import sqlalchemy as sa
+from _postgres_helpers import catalog_owner_authority
 from alembic.config import Config
-from conftest import authenticate_and_confirm_bank_scope
+from conftest import AuthenticatedOwnerAuthority
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
+from test_borrowing_service import _interest_payment_request, _principal_payment_request
 from testcontainers.community.postgres import PostgresContainer
 
+from ai_accounting.bank_statement_schemas import (
+    ConfirmBankReconciliationScopeRequest,
+    PreviewBankReconciliationScopeRequest,
+)
+from ai_accounting.bank_statement_service import BankStatementService
 from ai_accounting.borrowing_schemas import (
     ConfirmBorrowingInterestRequest,
     DrawBorrowingRequest,
-    PayBorrowingInterestRequest,
     PreviewBorrowingInterestRequest,
-    RepayBorrowingPrincipalRequest,
 )
 from ai_accounting.borrowing_service import BorrowingService
 from ai_accounting.coa import seed_organization
@@ -38,12 +44,11 @@ from ai_accounting.models import (
     BorrowingPayment,
     BusinessEvent,
     Evidence,
-    IntangibleAsset,
     IntangibleAssetAmortization,
     IntangibleAssetRetirement,
-    Organization,
 )
 from ai_accounting.schemas import ReverseEventRequest
+from ai_accounting.service import FinanceService
 from alembic import command
 
 pytestmark = [
@@ -55,7 +60,46 @@ pytestmark = [
 def _config(database_url: str) -> Config:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
+    config.attributes["database_url_override"] = database_url
     return config
+
+
+def _confirm_bank_scope(
+    session,
+    *,
+    org_id: uuid.UUID,
+    evidence_id: uuid.UUID,
+    authority: AuthenticatedOwnerAuthority,
+) -> None:
+    request = PreviewBankReconciliationScopeRequest(
+        org_id=org_id,
+        action_type="initial_confirmation",
+        accounts=[
+            {
+                "bank_account_code": "1002",
+                "account_name": "银行存款",
+                "start_date": date(2026, 1, 1),
+            }
+        ],
+        explanation="PostgreSQL 无形资产借款测试确认银行范围",
+        evidence_references=[evidence_id],
+    )
+    service = BankStatementService(session)
+    preview = service.preview_bank_reconciliation_scope(request)
+    with authority.attributed_call(
+        session, tool_name="finance_confirm_bank_reconciliation_scope"
+    ):
+        result = service.confirm_bank_reconciliation_scope(
+            ConfirmBankReconciliationScopeRequest.model_validate(
+                request.model_dump()
+                | {
+                    "calculation_hash": preview.calculation_hash,
+                    "idempotency_key": "pg-intangible-borrowing-bank-scope",
+                }
+            )
+        )
+    assert result.status == "posted", result
+    session.commit()
 
 
 def _draw_request(*, org_id: uuid.UUID, evidence_id: uuid.UUID) -> DrawBorrowingRequest:
@@ -103,6 +147,7 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
         command.check(_config(database_url))
         engine = sa.create_engine(database_url)
         factory = sessionmaker(engine, expire_on_commit=False)
+        authority_stack = ExitStack()
         try:
             with factory() as session:
                 organization = seed_organization(
@@ -110,6 +155,10 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                     taxpayer_identification_number="91330106MA1234567T",
                     accounting_period_control_enabled=False,
                     name="PG 无形资产借款闭包",
+                )
+                session.commit()
+                authority = authority_stack.enter_context(
+                    catalog_owner_authority(session, organization)
                 )
                 evidence = Evidence(
                     org_id=organization.id,
@@ -138,8 +187,9 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                     size_bytes=1,
                     storage_path="test/pg-intangible-retirement.pdf",
                 )
-                session.add_all([evidence, intangible_evidence, retirement_evidence])
-                session.flush()
+                with authority.attributed_call(session, tool_name="finance_register_evidence"):
+                    session.add_all([evidence, intangible_evidence, retirement_evidence])
+                    session.flush()
                 org_id, evidence_id, intangible_evidence_id, retirement_evidence_id = (
                     organization.id,
                     evidence.id,
@@ -149,8 +199,11 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 session.commit()
 
             with factory() as session:
-                acquired = IntangibleAssetService(session).acquire_intangible_asset(
-                    AcquireIntangibleAssetRequest.model_validate(
+                with authority.attributed_call(
+                    session, tool_name="finance_acquire_intangible_asset"
+                ):
+                    acquired = IntangibleAssetService(session).acquire_intangible_asset(
+                        AcquireIntangibleAssetRequest.model_validate(
                         {
                             "org_id": org_id,
                             "idempotency_key": "pg-intangible-acquisition",
@@ -180,23 +233,13 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                             "is_available_for_use": True,
                             "claims_creditable_input_vat": False,
                             "evidence_references": [intangible_evidence_id],
-                        }
+                            }
+                        )
                     )
-                )
                 assert acquired.status == "posted", acquired.errors
                 session.commit()
                 acquired_asset_id = acquired.asset_id
                 acquisition_event_id = acquired.event_id
-                supplier_id = session.get(IntangibleAsset, acquired_asset_id).supplier_id
-
-            with pytest.raises(DBAPIError, match="INTANGIBLE_ASSET_ACQUISITION_FACT_SHAPE_INVALID"):
-                with engine.begin() as connection:
-                    connection.execute(
-                        sa.text(
-                            "UPDATE counterparties SET external_ref = 'changed' WHERE id = :id"
-                        ),
-                        {"id": supplier_id},
-                    )
 
             with factory() as session:
                 preview_request = PreviewIntangibleAssetAmortizationRequest(
@@ -208,13 +251,18 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 preview = IntangibleAssetService(session).preview_intangible_asset_amortization(
                     preview_request
                 )
-                amortized = IntangibleAssetService(session).confirm_intangible_asset_amortization(
-                    ConfirmIntangibleAssetAmortizationRequest(
-                        **preview_request.model_dump(),
-                        idempotency_key="pg-intangible-amortization",
-                        calculation_hash=preview.calculation_hash,
+                with authority.attributed_call(
+                    session, tool_name="finance_confirm_intangible_asset_amortization"
+                ):
+                    amortized = IntangibleAssetService(
+                        session
+                    ).confirm_intangible_asset_amortization(
+                        ConfirmIntangibleAssetAmortizationRequest(
+                            **preview_request.model_dump(),
+                            idempotency_key="pg-intangible-amortization",
+                            calculation_hash=preview.calculation_hash,
+                        )
                     )
-                )
                 assert amortized.status == "posted", amortized.errors
                 session.commit()
                 amortization_event_id = amortized.event_id
@@ -226,8 +274,11 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 assert amortization.amount_fen == 1_000
 
             with factory() as session:
-                retired = IntangibleAssetService(session).retire_intangible_asset(
-                    RetireIntangibleAssetRequest(
+                with authority.attributed_call(
+                    session, tool_name="finance_retire_intangible_asset"
+                ):
+                    retired = IntangibleAssetService(session).retire_intangible_asset(
+                        RetireIntangibleAssetRequest(
                         org_id=org_id,
                         asset_id=acquired_asset_id,
                         idempotency_key="pg-intangible-retirement",
@@ -238,8 +289,8 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                         taxes_and_fees_fen=0,
                         residual_proceeds_fen=0,
                         evidence_references=[retirement_evidence_id],
+                        )
                     )
-                )
                 assert retired.status == "posted", retired.errors
                 session.commit()
                 retirement_event_id = retired.event_id
@@ -252,15 +303,16 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 assert retirement.book_value_fen == 11_000
 
             with factory() as session:
-                blocked = IntangibleAssetService(session).reverse_event(
-                    ReverseEventRequest(
+                with authority.attributed_call(session, tool_name="finance_reverse_event"):
+                    blocked = IntangibleAssetService(session).reverse_event(
+                        ReverseEventRequest(
                         org_id=org_id,
                         event_id=acquisition_event_id,
                         idempotency_key="pg-reverse-intangible-blocked",
                         reason="reverse order must be downstream first",
                         posting_date=date(2026, 2, 1),
+                        )
                     )
-                )
                 assert blocked.errors == ["INTANGIBLE_ASSET_OPEN_DEPENDENCIES_EXIST"]
                 session.commit()
 
@@ -268,34 +320,26 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 (retirement_event_id, amortization_event_id, acquisition_event_id), start=1
             ):
                 with factory() as session:
-                    reversed_result = IntangibleAssetService(session).reverse_event(
-                        ReverseEventRequest(
+                    with authority.attributed_call(session, tool_name="finance_reverse_event"):
+                        reversed_result = IntangibleAssetService(session).reverse_event(
+                            ReverseEventRequest(
                             org_id=org_id,
                             event_id=event_id,
                             idempotency_key=f"pg-reverse-intangible-{index}",
                             reason="validated downstream-first reversal",
                             posting_date=date(2026, 2, index + 1),
+                            )
                         )
-                    )
                     assert reversed_result.status == "posted", reversed_result.errors
                     session.commit()
 
             with factory() as session:
-                organization = session.get(Organization, org_id)
-                evidence = session.get(Evidence, evidence_id)
-                authority = authenticate_and_confirm_bank_scope(
+                _confirm_bank_scope(
                     session,
-                    organization,
-                    evidence_id=evidence.id,
-                    accounts=[
-                        {
-                            "bank_account_code": "1002",
-                            "account_name": "银行存款",
-                            "start_date": date(2026, 1, 1),
-                        }
-                    ],
+                    org_id=org_id,
+                    evidence_id=evidence_id,
+                    authority=authority,
                 )
-                session.commit()
 
             with factory() as session:
                 with authority.attributed_call(session, tool_name="finance_draw_borrowing"):
@@ -341,7 +385,6 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                     )
                 )
                 event = session.get(BusinessEvent, accrual_event_id)
-                lender_id = session.get(Borrowing, borrowing_id).lender_id
                 assert accrual.annual_rate_percent == Decimal("3.650000")
                 assert accrual.amount_fen == 162_900_000_000_000_000
                 assert event.business_date == accrual.period_start
@@ -368,9 +411,9 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                     late_evidence.execution_attribution_id = attribution.id
                     session.add(late_evidence)
                     session.flush()
-                with authority.attributed_call(session, tool_name="finance_pay_borrowing_interest"):
-                    late = BorrowingService(session).pay_borrowing_interest(
-                        PayBorrowingInterestRequest(
+                with authority.attributed_call(session, tool_name="finance_record_event"):
+                    late = FinanceService(session).record_event(
+                        _interest_payment_request(session,
                             org_id=org_id,
                             borrowing_id=borrowing_id,
                             accrual_event_id=accrual_event_id,
@@ -393,17 +436,11 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 )
 
             with pytest.raises(DBAPIError, match="IMMUTABLE"):
-                with engine.begin() as connection:
-                    connection.execute(
+                with factory.begin() as session:
+                    with authority.attributed_call(session, tool_name="finance_negative_tamper"):
+                        session.execute(
                         sa.text("UPDATE borrowings SET contract_name = 'tampered' WHERE id = :id"),
                         {"id": borrowing_id},
-                    )
-
-            with pytest.raises(DBAPIError, match="BORROWING_DRAWDOWN_FACT_SHAPE_INVALID"):
-                with engine.begin() as connection:
-                    connection.execute(
-                        sa.text("UPDATE counterparties SET name = 'changed' WHERE id = :id"),
-                        {"id": lender_id},
                     )
 
             with factory() as session:
@@ -422,9 +459,9 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                     payment_evidence.execution_attribution_id = attribution.id
                     session.add(payment_evidence)
                     session.flush()
-                with authority.attributed_call(session, tool_name="finance_pay_borrowing_interest"):
-                    paid = BorrowingService(session).pay_borrowing_interest(
-                        PayBorrowingInterestRequest(
+                with authority.attributed_call(session, tool_name="finance_record_event"):
+                    paid = FinanceService(session).record_event(
+                        _interest_payment_request(session,
                             org_id=org_id,
                             borrowing_id=borrowing_id,
                             accrual_event_id=accrual_event_id,
@@ -456,10 +493,10 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                     session.add(principal_evidence)
                     session.flush()
                 with authority.attributed_call(
-                    session, tool_name="finance_repay_borrowing_principal"
+                    session, tool_name="finance_record_event"
                 ):
-                    repaid = BorrowingService(session).repay_borrowing_principal(
-                        RepayBorrowingPrincipalRequest(
+                    repaid = FinanceService(session).record_event(
+                        _principal_payment_request(session,
                             org_id=org_id,
                             borrowing_id=borrowing_id,
                             idempotency_key="pg-principal-repayment",
@@ -553,4 +590,5 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                 )
 
         finally:
+            authority_stack.close()
             engine.dispose()

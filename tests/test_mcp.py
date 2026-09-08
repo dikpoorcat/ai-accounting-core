@@ -92,9 +92,6 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_preview_labor_remuneration_batch",
         "finance_confirm_labor_remuneration_batch",
         "finance_get_labor_remuneration",
-        "finance_preview_unified_payout_run",
-        "finance_confirm_unified_payout_run",
-        "finance_pay_labor_withholding_tax",
         "finance_confirm_labor_external_declaration",
         "finance_acquire_fixed_asset",
         "finance_activate_fixed_asset",
@@ -112,8 +109,6 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_draw_borrowing",
         "finance_preview_borrowing_interest",
         "finance_confirm_borrowing_interest",
-        "finance_pay_borrowing_interest",
-        "finance_repay_borrowing_principal",
         "finance_get_borrowing",
         "finance_generate_accounting_period",
         "finance_preview_accounting_period_close",
@@ -131,9 +126,10 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_preview_enterprise_income_tax_result",
         "finance_confirm_enterprise_income_tax_result",
         "finance_query_enterprise_income_tax",
-        "finance_link_enterprise_income_tax_payment",
         "finance_query_context",
         "finance_record_event",
+        "finance_preview_event",
+        "finance_configure_account",
         "finance_calculate_tax_period",
         "finance_confirm_tax_period",
         "finance_reverse_event",
@@ -223,10 +219,16 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     schema = mcp_server.finance_get_event_schema()
     protocol = schema["agent_operating_protocol"]
 
-    assert (
-        "finance_confirm_historical_obligation_completion"
-        in schema["module_capabilities"]["owner_workflow"]["typed_confirmation_tools"]
-    )
+    assert schema["protocol_version"] == "business-components-v1"
+    assert {
+        key: value for key, value in schema["preview_event_schema"].items() if key != "title"
+    } == {
+        key: value for key, value in schema["record_event_schema"].items() if key != "title"
+    }
+    assert protocol["composed_accounting"]["preview_tool"] == "finance_preview_event"
+    preview_tool = mcp._tool_manager.get_tool("finance_preview_event")
+    assert preview_tool.annotations.readOnlyHint is True
+    assert "salary_settlement" in schema["component_types"]
     assert protocol["version"] == AI_OPERATING_PROTOCOL_VERSION
     assert protocol["identity"] == {
         "role": "accounting_execution_assistant",
@@ -310,7 +312,6 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "resume_queue_after": "blocker_resolved_and_operation_continued",
         "needs_information_is_technical_error": False,
     }
-    assert protocol["version"] == "accounting_execution_assistant_v33"
     assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.12"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
@@ -413,9 +414,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "current_external_submission_confirmation"
     )
     assert individual_income_tax_step["completion_date_required"] is False
-    assert individual_income_tax_step["completion_date_when_known"] == (
-        "external_declaration_date"
-    )
+    assert individual_income_tax_step["completion_date_when_known"] == ("external_declaration_date")
     assert individual_income_tax_step["obligation_scope"] == "selected_accounting_period_only"
     assert individual_income_tax_step["closed_period_history"] == (
         "satisfied_by_accounting_period_close"
@@ -497,17 +496,10 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "finance_confirm_historical_test_period_close" in mcp.instructions
     assert "close_backup.status=deferred" in mcp.instructions
 
-    on_behalf = mcp_server.finance_get_event_schema("employee_reimbursement")
-    assert "existing_payable" in on_behalf["event_requirements"]["existing_payable_workflow"]
-    cash_payment = mcp_server.finance_get_event_schema("employee_reimbursement_payment")
-    assert cash_payment["event_requirements"]["optional_details"] == [
-        "settlement_method=bank|cash|owner_managed_reserve; omitted means bank"
-    ]
-    assert "inventory-cash" in cash_payment["event_requirements"]["cash_settlement"]
-    assert (
-        "original_event_id"
-        in cash_payment["event_requirements"]["owner_managed_reserve_settlement"]
+    assert {"debt_transfer", "payable_settlement", "expense_reserve_settlement"} <= set(
+        schema["component_types"]
     )
+    assert "bank_transaction_references" in str(schema["record_event_schema"])
 
 
 def test_close_approval_window_and_result_are_exposed_as_mcp_tools(
@@ -901,8 +893,6 @@ def test_stdio_server_initializes_and_lists_tools() -> None:
         "finance_draw_borrowing",
         "finance_preview_borrowing_interest",
         "finance_confirm_borrowing_interest",
-        "finance_pay_borrowing_interest",
-        "finance_repay_borrowing_principal",
         "finance_get_borrowing",
     } <= names
 

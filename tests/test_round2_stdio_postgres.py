@@ -7,18 +7,19 @@ import os
 import shutil
 import sys
 import uuid
+from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
+from _postgres_helpers import catalog_owner_authority, isolated_postgres_url
 from alembic.config import Config
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.coa import seed_organization
 from ai_accounting.models import (
@@ -168,15 +169,13 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
         (date(2026, 3, 7), -140_000, "公积金中心", "公积金缴纳", "R2-HOUSING"),
         (date(2026, 3, 7), -10_500, "税务局", "个税缴纳", "R2-IIT"),
     )
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url(driver="psycopg")
+    with isolated_postgres_url("finance_company") as database_url:
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
+        config.attributes["database_url_override"] = database_url
         command.upgrade(config, "head")
         engine = create_engine(database_url)
+        authority_stack = ExitStack()
         try:
             with Session(engine) as session:
                 organization = seed_organization(
@@ -184,17 +183,26 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                     taxpayer_identification_number="91330106MA1234567T",
                     name="R2 STDIO 全生命周期企业",
                 )
-                scope_evidence = Evidence(
-                    org_id=organization.id,
-                    sha256="8" * 64,
-                    original_name="r2-stdio-bank-scope.txt",
-                    media_type="text/plain",
-                    source="r2-stdio-test",
-                    size_bytes=1,
-                    storage_path="stdio/r2-stdio-bank-scope.txt",
+                session.commit()
+                authority = authority_stack.enter_context(
+                    catalog_owner_authority(
+                        session,
+                        organization,
+                        registry_database_name=engine.url.database,
+                    )
                 )
-                session.add(scope_evidence)
-                session.flush()
+                with authority.attributed_call(session, tool_name="finance_register_evidence"):
+                    scope_evidence = Evidence(
+                        org_id=organization.id,
+                        sha256="8" * 64,
+                        original_name="r2-stdio-bank-scope.txt",
+                        media_type="text/plain",
+                        source="r2-stdio-test",
+                        size_bytes=1,
+                        storage_path="stdio/r2-stdio-bank-scope.txt",
+                    )
+                    session.add(scope_evidence)
+                    session.flush()
                 stdio_args = authenticated_stdio_bank_scope(
                     session,
                     organization,
@@ -206,6 +214,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             "start_date": "2026-03-01",
                         }
                     ],
+                    authority=authority,
                 )
                 session.commit()
                 org_id = str(organization.id)
@@ -234,7 +243,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             assert result.get("status") not in {
                                 "rejected",
                                 "needs_information",
-                            }, result
+                            }, json.dumps(result, ensure_ascii=False, default=str)
                             return result
 
                         def assert_batch_status(batch_id: str, expected_status: str) -> None:
@@ -721,7 +730,9 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             assert batch.batch_kind == "regular"
                             assert batch.payroll_period == "2026-03"
                             assert batch.posting_date == date(2026, 3, 5)
-                            assert batch.payment_date == date(2026, 3, 5)
+                            # Regular payroll is accrued by payroll month.  Actual salary
+                            # payment is recorded later by the typed bank-backed payment.
+                            assert batch.payment_date is None
                             assert batch.calculation_hash == preview["calculation_hash"]
                             assert batch.request_payload_hash is not None
                             assert batch.policy_version_id == policy.id
@@ -760,7 +771,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 }
                             },
                         )
-                        assert_posted_event(confirmed["event_id"], "payroll_accrual")
+                        assert_posted_event(confirmed["event_id"], "composite")
                         assert_batch_status(preview["batch_id"], "posted")
                         assert_exact_payroll_links(
                             confirmed["event_id"],
@@ -793,31 +804,57 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                             amount_fen: int,
                             bank_id: str,
                             tax_fen: int,
+                            payment_date: str = "2026-03-05",
                         ) -> dict[str, Any]:
                             return {
                                 "request": {
                                     "org_id": org_id,
                                     "idempotency_key": key,
-                                    "event_type": "salary_payment",
-                                    "bank_account_code": "1002",
-                                    "business_dates": {
-                                        "business_date": "2026-03-05",
-                                        "posting_date": "2026-03-05",
-                                        "payment_date": "2026-03-05",
-                                    },
-                                    "amounts": {"amount_fen": amount_fen},
-                                    "allocations": [
-                                        {"open_item_id": salary["id"], "amount_fen": 500_000}
-                                    ],
-                                    "salary_withholding_allocations": [
+                                    "posting_date": payment_date,
+                                    "evidence_references": [evidence["evidence_id"]],
+                                    "components": [
                                         {
-                                            "open_item_id": salary["id"],
-                                            "employee_social_insurance_items": {"pension": 40_000},
-                                            "employee_housing_fund_items": {"housing_fund": 35_000},
-                                            "individual_income_tax_fen": tax_fen,
+                                            "key": "salary",
+                                            "kind": "salary_settlement",
+                                            "business_date": payment_date,
+                                            "payment_date": payment_date,
+                                            "amount_fen": amount_fen,
+                                            "allocations": [
+                                                {
+                                                    "open_item_id": salary["id"],
+                                                    "amount_fen": 500_000,
+                                                }
+                                            ],
+                                            "withholding_allocations": [
+                                                {
+                                                    "open_item_id": salary["id"],
+                                                    "employee_social_insurance_items": {
+                                                        "pension": 40_000
+                                                    },
+                                                    "employee_housing_fund_items": {
+                                                        "housing_fund": 35_000
+                                                    },
+                                                    "individual_income_tax_fen": tax_fen,
+                                                }
+                                            ],
                                         }
                                     ],
-                                    "bank_transaction_references": [{"id": bank_id}],
+                                    "funds": [
+                                        {
+                                            "key": "payment",
+                                            "account_code": "1002",
+                                            "direction": "payment",
+                                            "payment_date": payment_date,
+                                            "amount_fen": amount_fen,
+                                            "allocations": [
+                                                {
+                                                    "component_key": "salary",
+                                                    "amount_fen": amount_fen,
+                                                }
+                                            ],
+                                            "bank_transaction_references": [{"id": bank_id}],
+                                        }
+                                    ],
                                 }
                             }
 
@@ -830,7 +867,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 tax_fen=0,
                             ),
                         )
-                        assert_posted_event(salary_first["event_id"], "salary_payment")
+                        assert_posted_event(salary_first["event_id"], "composite")
                         assert_bank_pointer(salary_bank_first, salary_first["event_id"])
                         assert_bank_history(
                             salary_bank_first,
@@ -892,7 +929,7 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 tax_fen=0,
                             ),
                         )
-                        assert_posted_event(salary_reissued["event_id"], "salary_payment")
+                        assert_posted_event(salary_reissued["event_id"], "composite")
                         assert_bank_pointer(salary_bank_first, salary_reissued["event_id"])
                         assert_bank_history(
                             salary_bank_first,
@@ -923,9 +960,10 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 amount_fen=414_500,
                                 bank_id=salary_bank_second,
                                 tax_fen=10_500,
+                                payment_date="2026-03-06",
                             ),
                         )
-                        assert_posted_event(salary_second["event_id"], "salary_payment")
+                        assert_posted_event(salary_second["event_id"], "composite")
                         assert_bank_pointer(salary_bank_second, salary_second["event_id"])
                         assert_bank_history(
                             salary_bank_second,
@@ -950,7 +988,6 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                         payable_items = lifecycle_before_reversal["lifecycle"]["open_items"]
 
                         def statutory_payment(
-                            event_type: str,
                             key: str,
                             bank_id: str,
                             categories: set[str],
@@ -964,37 +1001,63 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                 if item["payable_category"] in categories
                                 and item["status"] in {"open", "partial"}
                             ]
+                            counterparty_ids = {
+                                item["counterparty_id"]
+                                for item in payable_items
+                                if item["payable_category"] in categories
+                                and item["status"] in {"open", "partial"}
+                            }
+                            assert len(counterparty_ids) == 1
                             return {
                                 "request": {
                                     "org_id": org_id,
                                     "idempotency_key": key,
-                                    "event_type": event_type,
-                                    "bank_account_code": "1002",
-                                    "business_dates": {
-                                        "business_date": "2026-03-07",
-                                        "posting_date": "2026-03-07",
-                                        "payment_date": "2026-03-07",
-                                    },
-                                    "amounts": {
-                                        "amount_fen": sum(
-                                            item["amount_fen"] for item in allocations
-                                        )
-                                    },
-                                    "allocations": allocations,
-                                    "bank_transaction_references": [{"id": bank_id}],
+                                    "posting_date": "2026-03-07",
+                                    "evidence_references": [evidence["evidence_id"]],
+                                    "components": [
+                                        {
+                                            "key": "statutory",
+                                            "kind": "payable_settlement",
+                                            "business_date": "2026-03-07",
+                                            "payment_date": "2026-03-07",
+                                            "counterparty": {
+                                                "id": next(iter(counterparty_ids))
+                                            },
+                                            "allocations": allocations,
+                                        }
+                                    ],
+                                    "funds": [
+                                        {
+                                            "key": "payment",
+                                            "account_code": "1002",
+                                            "direction": "payment",
+                                            "payment_date": "2026-03-07",
+                                            "amount_fen": sum(
+                                                item["amount_fen"] for item in allocations
+                                            ),
+                                            "allocations": [
+                                                {
+                                                    "component_key": "statutory",
+                                                    "amount_fen": sum(
+                                                        item["amount_fen"] for item in allocations
+                                                    ),
+                                                }
+                                            ],
+                                            "bank_transaction_references": [{"id": bank_id}],
+                                        }
+                                    ],
                                 }
                             }
 
                         social = await call(
                             "finance_record_event",
                             statutory_payment(
-                                "social_insurance_payment",
                                 "r2-stdio-social",
                                 social_bank,
                                 {"employer_social", "withheld_employee_social"},
                             ),
                         )
-                        assert_posted_event(social["event_id"], "social_insurance_payment")
+                        assert_posted_event(social["event_id"], "composite")
                         assert_bank_pointer(social_bank, social["event_id"])
                         assert_bank_history(
                             social_bank, social["event_id"], {(social["event_id"], None)}
@@ -1007,13 +1070,12 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                         housing = await call(
                             "finance_record_event",
                             statutory_payment(
-                                "housing_fund_payment",
                                 "r2-stdio-housing",
                                 housing_bank,
                                 {"employer_housing", "withheld_employee_housing"},
                             ),
                         )
-                        assert_posted_event(housing["event_id"], "housing_fund_payment")
+                        assert_posted_event(housing["event_id"], "composite")
                         assert_bank_pointer(housing_bank, housing["event_id"])
                         assert_bank_history(
                             housing_bank, housing["event_id"], {(housing["event_id"], None)}
@@ -1026,13 +1088,12 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                         income_tax = await call(
                             "finance_record_event",
                             statutory_payment(
-                                "individual_income_tax_payment",
                                 "r2-stdio-income-tax",
                                 income_tax_bank,
                                 {"individual_income_tax"},
                             ),
                         )
-                        assert_posted_event(income_tax["event_id"], "individual_income_tax_payment")
+                        assert_posted_event(income_tax["event_id"], "composite")
                         assert_bank_pointer(income_tax_bank, income_tax["event_id"])
                         assert_bank_history(
                             income_tax_bank,
@@ -1322,11 +1383,13 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                     select(OpenItem).where(OpenItem.org_id == batch.org_id)
                 ).all()
         finally:
+            authority_stack.close()
             engine.dispose()
 
 
 def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
     tmp_path: Path,
+    authenticated_stdio_bank_scope: Any,
 ) -> None:
     """The STDIO boundary must not echo malformed statement content or paths."""
 
@@ -1345,15 +1408,13 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
     malformed_xlsx = tmp_path / "r7-malformed.xlsx"
     malformed_xlsx.write_bytes(sentinels["file"].encode("utf-8"))
 
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url(driver="psycopg")
+    with isolated_postgres_url("finance_company") as database_url:
         config = Config("alembic.ini")
         config.set_main_option("sqlalchemy.url", database_url)
+        config.attributes["database_url_override"] = database_url
         command.upgrade(config, "head")
         engine = create_engine(database_url)
+        authority_stack = ExitStack()
         try:
             with Session(engine) as session:
                 organization = seed_organization(
@@ -1363,12 +1424,45 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
                     name="R7 STDIO 导入错误企业",
                 )
                 session.commit()
+                authority = authority_stack.enter_context(
+                    catalog_owner_authority(
+                        session,
+                        organization,
+                        registry_database_name=engine.url.database,
+                    )
+                )
+                with authority.attributed_call(session, tool_name="finance_register_evidence"):
+                    scope_evidence = Evidence(
+                        org_id=organization.id,
+                        sha256="7" * 64,
+                        original_name="r7-stdio-bank-scope.txt",
+                        media_type="text/plain",
+                        source="r7-stdio-test",
+                        size_bytes=1,
+                        storage_path="stdio/r7-stdio-bank-scope.txt",
+                    )
+                    session.add(scope_evidence)
+                    session.flush()
+                stdio_args = authenticated_stdio_bank_scope(
+                    session,
+                    organization,
+                    scope_evidence.id,
+                    [
+                        {
+                            "bank_account_code": "1002",
+                            "account_name": "银行存款",
+                            "start_date": "2025-09-01",
+                        }
+                    ],
+                    authority=authority,
+                )
+                session.commit()
                 org_id = str(organization.id)
 
             async def run_stdio_import_errors() -> dict[str, tuple[dict[str, Any], str]]:
                 parameters = StdioServerParameters(
                     command=sys.executable,
-                    args=["-m", "ai_accounting.mcp_server"],
+                    args=stdio_args,
                     cwd=Path(__file__).parents[1],
                     env=_stdio_environment(database_url, tmp_path / "evidence"),
                 )
@@ -1469,4 +1563,5 @@ def test_r7_005_stdio_bank_import_errors_are_structured_and_redacted(
                 assert str(tmp_path) not in response_text
                 assert "postgresql://" not in response_text
         finally:
+            authority_stack.close()
             engine.dispose()

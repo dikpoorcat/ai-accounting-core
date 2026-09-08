@@ -1,129 +1,120 @@
 <!-- @format -->
 
-# 双基线空库回放手册
+# 组合协议空库重录与终态核对
 
-本手册只适用于空的 PostgreSQL 17 目录库和空的公司业务库。它不会升级旧 revision，
-也不会覆盖已有表或已有数据库。正式源库在导出期间只读；回放包位于 Git 忽略的
-`outputs/`，不得提交到仓库。
+目录库基线为 `0001_catalog_baseline_v2`，公司业务库基线为
+`0001_business_baseline_v3`，分别使用独立 PostgreSQL 17 数据库和迁移树。
+旧业务基线及至 `0006_pass_through` 的旧场景迁移不支持原地升级。
+此次重构只交付代码、隔离测试和重录资料，不自动重录、清空或更正试用公司。
 
-当前唯一基线分别是：
+## 1. 先保全最新事实
 
-- 目录库：`0001_catalog_baseline_v2`
-- 业务库：`0001_business_baseline_v2`
+源数据库必须强制只读连接并在一致性事务中读取；不得仅凭旧回放包推断最新状态。
+逐公司保存业务事实、原始证据、银行流水、领域资料和终态快照，校验证据字节数及 SHA-256。
+不导出密码哈希、恢复码、会话令牌或数据库凭据。源 UUID 只供私有快照核验，执行清单使用
+业务稳定引用，实际重录时解析为新编号。
 
-旧业务 revision `0001`–`0022` 和旧目录 revision `0001`–`0004` 已删除，不能原地升级到
-这两个新基线。遇到旧库、未知表、非空目标或无法确认的数据库身份时立即停止。
+本次最新只读快照和交付清单位于 Git 忽略的
+`outputs/composition-reentry-20260908/`。`inventory.json` 记录源版本、数量、证据完整性和
+与 9 月 3 日包的差异；原始包保持原地不动。一次性旧格式整理脚本保存在该私有目录，
+不进入正式运行代码。旧数据的撤销、删除及冲正历史保留供核验，不机械重放已撤去的业务。
 
-## 0. 前置条件
-
-1. 停止连接目标库的 MCP、看板和其他写入进程。
-2. 配置 `.env`：`DATABASE_URL` 指向拟创建的目录库；公司运行、迁移和供应 URL 指向同一
-   本地 PostgreSQL 17 集群。不要在命令行或文档中写入真实密码。
-3. 安装仓库虚拟环境依赖，并准备经负责人确认的私有回放包目录。
-4. 记录包外目录和公司关账备份位置；它们不得位于回放包内。
-
-需要刷新包时，在源系统环境执行只读导出：
+当前运行工具只接受 `ai-accounting-composition-replay-v2`，不接受旧 v1 请求或运行时转换。
+今后从 v3 公司库刷新包使用：
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_accounting.replay_cli export-system `
-  --output .\outputs\system-replay-YYYYMMDD
+  --output .\outputs\composition-replay-YYYYMMDD
 ```
 
-只有负责人明确要求整理历史操作顺序时，才可额外传入 Git 忽略的
-`--normalizations <文件>`。规范化文件必须绑定源关账或业务事实中的逐字说明、精确员工或凭证行
-范围和对应证据；导出器不会从缺失工资批次自行推断“本月无工资”，也不会自行猜测报表明细分类。
+## 2. 审阅逐条重录清单并离线验证
 
-## 1. 离线验证回放包
+逐公司清单按依赖排序，包括公司初始化、证据及人员资料、银行流水、业务入账、报表控制和
+期间处理。每条业务注明来源、日期、整数分金额、组件键、资金分配和核对点。缺口必须单列，
+不能用零额、推断税率、猜测债权人或默认现金用途补齐。
+
+单项和组合业务均调用 `finance_record_event`，提交 `components` 与 `funds`。
+工资、劳务、资产、借款和税务的必要试算、确认继续使用其专用流程；它们正式入账共用
+内核提交器。资金项引用组件键，跨业务来源使用稳定业务引用，不能携带任意凭证行。
+组合中需要确认的税务计算先调用 `finance_preview_event`，复核并提交返回的
+`reviewed_request`。工资、劳务使用在新库重新预览的批次及哈希，不能沿用旧库编号。
+同笔正常工资和合并计税奖金采用两级工资预览：先在新库预览正常工资，再用其新批次编号
+预览奖金，奖金组件通过 `regular_payroll_component_keys` 保留对正常工资组件的稳定依赖。
+随后统一调用 `finance_preview_event` 并只正式调用一次 `finance_record_event`。回放清单按依赖
+执行预览，即使来源组件在 `components` 数组中位于奖金之后，也不得带入旧库的批次、工资行
+或计算哈希。
+同笔固定资产购置或启用与首个应计月份折旧，使用 `activation_component_key` 或
+`activation_component_keys` 保留稳定依赖。新库回放时只提交这些组件键和业务事实，由
+`finance_preview_event` 重新生成资产、启用来源证明及折旧哈希；不得沿用旧库的资产、启用
+编号或计算哈希。来源组件即使在 `components` 数组中位于折旧之后，仍须先按依赖计算。
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_accounting.replay_cli verify-package `
-  --package .\outputs\system-replay-YYYYMMDD
+  --package .\outputs\composition-replay-YYYYMMDD
 ```
 
-命令校验格式版本、总清单、每份证据的字节数和 SHA-256、所有稳定引用以及操作白名单。
-任何文件被修改、引用缺失、出现源技术 UUID 或任意凭证行时都会拒绝。
+离线验证包括格式、完整清单、所有文件哈希、证据大小、操作次序与稳定引用、当前组件请求
+结构。它只证明资料包一致，不能代替在目标库逐条执行后的余额和领域核验。清单存在未决
+事实时必须先补充，不能称为已完成业务重录。
 
-## 2. 创建目录与业务双基线
+## 3. 明确选定空目标后初始化和登录
+
+后续实际重录须由负责人另行发起。目标配置使用 `.env`，不得将真实密码写在命令行。
+`DATABASE_URL` 指向独立目标目录库，公司运行、迁移和供应配置指向同一目标集群。
+停止连接目标库的写进程，确认源库和目标身份不同。未知历史、已有表或非空目标立即停止，
+不覆盖、不清理、不自动降级。
 
 ```powershell
-$replayState = ".\outputs\.system-replay.state.json"
+$replayState = ".\outputs\.composition-replay.state.json"
 .\.venv\Scripts\python.exe -m ai_accounting.replay_cli prepare-empty `
-  --package .\outputs\system-replay-YYYYMMDD `
+  --package .\outputs\composition-replay-YYYYMMDD `
   --state-file $replayState
 ```
 
-`prepare-empty` 按“目录库 → 所有登记公司业务库”的顺序创建结构，并核对两个 Alembic
-revision。目标数据库不存在时才创建；已存在但非空、存在未知表或身份不匹配时不会继续。
-
-## 3. 设置新负责人并登录
-
-使用 `prepare-empty` 输出的 `primary_org_id` 设置一次新负责人。密码和一次性恢复码只在本地
-无回显窗口中处理：
+执行器先创建目录结构，再逐公司创建业务结构，核对独立 revision 和公司身份。使用返回的
+`primary_org_id` 在本地无回显流程设置新负责人并登录；旧身份凭据、会话及审批不回放。
 
 ```powershell
-$primaryOrgId = "粘贴 prepare-empty 输出的 primary_org_id"
+$primaryOrgId = "prepare-empty 返回的 primary_org_id"
 .\.venv\Scripts\python.exe -m ai_accounting.identity_cli setup `
   --org-id $primaryOrgId --login-name owner
-.\.venv\Scripts\python.exe -m ai_accounting.identity_cli login `
-  --login-name owner
+.\.venv\Scripts\python.exe -m ai_accounting.identity_cli login --login-name owner
 ```
 
-旧密码哈希、恢复码、会话、批准和数据库身份 UUID 不回放。
-
-## 4. 回放两家公司
+## 4. 逐条执行和期间处理
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_accounting.replay_cli replay `
-  --package .\outputs\system-replay-YYYYMMDD `
+  --package .\outputs\composition-replay-YYYYMMDD `
   --state-file $replayState
 ```
 
-执行器只调用公开的类型化业务入口，固定先回放非默认公司、最后回放默认公司；当前包因此先跑
-屋舍心声，再跑魂道，使高风险公司尽早暴露问题。业务事实、工作流确认、对账、报表前置事实和
-关账控制均按操作键写入状态，可用完全相同的命令断点续跑。
-历史月份只在关账阶段启用受控历史重建模式，并在成功或失败时关闭。拒绝动作、临时审计失败、
-任意借贷分录和 SQL 数据导入不回放。
+先非默认公司、后默认公司；状态文件逐条记录成功结果和新编号，使用同一包及状态可断点续跑。
+证据、人员、合同、卡片、应收应付来源先于引用它们的付款或核销。重复同类业务可在一笔中
+出现，明确分配到同一笔实际收付；不同公司的事实不能组合。同笔组件依赖通过稳定键表达。
 
-若包中包含经源关账说明逐字绑定的 `no_payroll_accrual` 规范化控制，员工会先按真实生效日期
-登记，再逐人确认当月无工资、奖金和个税事项，最后关账。该控制不生成零金额业务事件或凭证，
-也不能掩盖任何正数工资或不完整员工范围。
+每个期间先补齐内核实际要求的工资、折旧摊销、税务和报表事实，再对账、复核并关账。
+不能从缺少工资批次推断无工资。现有资料支持的历史控制按原依据重建，不伪造外部申报日期。
+受控历史测试关账模式只在已明确指定的可丢弃测试库使用，成功和失败后均关闭；普通现账
+关账继续使用密码复核和自动备份。任何失败保留状态和稳定错误码，不手工改库绕过。
 
-若源业务事实已经明确费用口径但旧关账早于报表分类硬门禁，包可包含
-`financial_statement_classification` 规范化控制。它必须绑定一条稳定业务事件、精确凭证行、金额、
-源说明及证据，只补充类型化报表明细，不修改凭证科目或金额。
-
-## 5. 验证终态
+## 5. 核对终态与正式启用
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_accounting.replay_cli verify `
-  --package .\outputs\system-replay-YYYYMMDD `
+  --package .\outputs\composition-replay-YYYYMMDD `
   --state-file $replayState
 ```
 
-验证报告写在状态文件旁，至少核对：
+核对科目期末余额、未结往来及债权人、银行流水和匹配、工资税务、资产借款、期间和报表，
+并确认每张正式凭证借贷平衡、公司隔离、证据哈希完整。重组后不要求复现旧凭证编号、数量
+或已冲正历史形成的累计借贷发生额。原账错误的差异必须另列原因、证据及确认结果，不能
+照抄错误余额，也不能静默从检查点删除差异。
 
-- 目录恰有包内公司，默认公司正确，业务库彼此隔离；
-- 有效事件和凭证数量、逐张借贷平衡、科目余额、开放项与检查点一致；
-- 银行流水和有效匹配、工资、社保公积金、税费、资产及报表前置条件一致；
-- 期间关闭状态和经营解读一致，指定开放月份仍保持开放；
-- 证据数量、字节数和 SHA-256 全部一致；
-- 两棵迁移树分别只有一个 revision 和一个 head。
+“资料已整理并离线验证”“隔离库测试通过”“业务已实际重录并核验”是不同状态，交付报告
+必须分别说明。报告未通过不得启动正式服务。
 
-报告不通过时不得启动正式服务，也不得手工修改目标库来绕过检查。
-
-## 6. 配置两家公司关账备份
-
-登录后分别选择每家公司，通过 `finance_configure_close_backup` 提交各自的绝对备份目录、幂等键
-和负责人确认说明，再用 `finance_get_close_backup_configuration` 复核生效版本。备份位置属于目录
-库中的公司级配置。回放包的公司 `source_projection.close_backup_directory` 只作为源配置核对参考，
-不会从源机路径自动照搬；负责人必须确认目标机实际目录后重新设置。
-
-## 7. 启动服务
-
-确认历史重建模式已关闭、`verify` 报告为 `verified`、两家公司备份位置均已生效后，再启动 MCP
-和只读看板。首次业务写入前先执行一次公司列表和负责人会话只读检查。
-
-## 私有归档
-
-旧试用文档、临时脚本和旧魂道包应移动到新回放包的 `archive/` 子目录并重新生成
-`MANIFEST.sha256`。归档只读、继续受 Git 忽略；不得作为新的回放输入，也不得直接删除原始资料。
+重录通过后逐公司确认关账备份目录，调用 `finance_configure_close_backup` 和
+`finance_get_close_backup_configuration` 核验。源机备份路径只作为参考，不自动照搬。
+初始备份逐公司生成 `<统一社会信用代码>.finance-company.zip`，通过
+`finance-backup verify-portable` 后交付。旧库、原始证据和旧包继续保留。

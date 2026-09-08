@@ -10,27 +10,22 @@ from datetime import date
 
 import pytest
 import sqlalchemy as sa
-from alembic.config import Config
+from _postgres_helpers import authenticated_business_database, confirmed_payroll
 from conftest import prepare_authenticated_bank_account
-from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
-from test_payroll_service import add_bank_row, payment_request, register_payroll_facts
-from test_round3_lineage import _preview
-from testcontainers.community.postgres import PostgresContainer
+from test_payroll_service import add_bank_row, payment_request
 
-from ai_accounting.coa import seed_organization
 from ai_accounting.models import (
     Evidence,
     OpenItem,
+    Organization,
     PayrollBatch,
     PayrollBatchEvidence,
     PayrollEventLink,
     PayrollPolicyVersion,
 )
-from ai_accounting.schemas import ConfirmPayrollRequest
 from ai_accounting.service import FinanceService
-from alembic import command
 
 pytestmark = [
     pytest.mark.postgres,
@@ -40,17 +35,8 @@ pytestmark = [
 
 @pytest.fixture
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        command.check(config)
-        engine = create_engine(url)
-        try:
-            yield engine
-        finally:
-            engine.dispose()
+    with authenticated_business_database("round3_lineage") as database:
+        yield database
 
 
 def _policy(session: Session, org_id: object, key: str) -> PayrollPolicyVersion:
@@ -124,30 +110,21 @@ def _sealed_batch(
 
 
 def _post_two_partial_salary_social_payment(
-    session: Session, organization: object
+    session: Session, organization: object, authority, evidence_id
 ) -> tuple[object, list[OpenItem]]:
     """Return a final statutory payment and the three open items it settled."""
 
-    authority = prepare_authenticated_bank_account(session, organization)
+    prepare_authenticated_bank_account(
+        session, organization, authority=authority, evidence_id=evidence_id
+    )
     service = FinanceService(session)
-    employee_id = register_payroll_facts(session, organization)
-    preview = _preview(
-        service, organization.id, employee_id, idempotency_key="r3-pg-source-preview"
+    _org, _batch, _line, _proof, source_event = confirmed_payroll(
+        session, organization.id, evidence_id, authority, key="r3-pg-source"
     )
-    assert preview.status == "calculated", preview.errors
-    confirmed = service.confirm_payroll(
-        ConfirmPayrollRequest(
-            org_id=organization.id,
-            batch_id=preview.batch_id,
-            calculation_hash=preview.calculation_hash,
-            idempotency_key="r3-pg-source-confirm",
-        )
-    )
-    assert confirmed.status == "posted", confirmed.errors
     salary_item = session.scalar(
         sa.select(OpenItem).where(
             OpenItem.org_id == organization.id,
-            OpenItem.source_event_id == confirmed.event_id,
+            OpenItem.source_event_id == source_event.id,
             OpenItem.payable_category == "salary",
         )
     )
@@ -207,17 +184,18 @@ def test_r3_007_postgresql_sealed_payroll_evidence_rejects_sql_mutations(
 ) -> None:
     """INSERT, UPDATE and DELETE against a sealed evidence set all fail in PostgreSQL."""
 
+    postgres_engine, org_id, original_id, authority = postgres_engine
     with Session(postgres_engine) as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-007 evidence freeze",
-        )
-        policy = _policy(session, organization.id, "evidence-freeze")
-        original = _evidence(session, organization.id, "r3-original-evidence")
-        replacement = _evidence(session, organization.id, "r3-replacement-evidence")
-        batch = _sealed_batch(session, organization.id, policy, original, "evidence-freeze")
+        organization = session.get(Organization, org_id)
+        with authority.attributed_call(
+            session, tool_name="finance_register_payroll_policy_version"
+        ):
+            policy = _policy(session, organization.id, "evidence-freeze")
+        original = session.get(Evidence, original_id)
+        with authority.attributed_call(session, tool_name="finance_register_evidence"):
+            replacement = _evidence(session, organization.id, "r3-replacement-evidence")
+        with authority.attributed_call(session, tool_name="finance_preview_payroll"):
+            batch = _sealed_batch(session, organization.id, policy, original, "evidence-freeze")
         organization_id = organization.id
         batch_id = batch.id
         original_id = original.id
@@ -267,14 +245,12 @@ def test_r3_006_postgresql_source_edges_are_complete_and_immutable(
 ) -> None:
     """A direct SQL attack cannot erase, retarget or append a final source edge."""
 
+    postgres_engine, org_id, evidence_id, authority = postgres_engine
     with Session(postgres_engine) as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-006 source edges",
+        organization = session.get(Organization, org_id)
+        statutory, statutory_items = _post_two_partial_salary_social_payment(
+            session, organization, authority, evidence_id
         )
-        statutory, statutory_items = _post_two_partial_salary_social_payment(session, organization)
         organization_id = organization.id
         statutory_event_id = statutory.event_id
         statutory_item_ids = {item.id for item in statutory_items}
@@ -348,66 +324,60 @@ def test_r3_007_postgresql_rejects_cross_organization_draft_evidence(
 ) -> None:
     """Draft mutability never weakens the composite organization evidence FK."""
 
-    with Session(postgres_engine) as session:
-        organization_a = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-007 evidence A",
-        )
-        organization_b = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-007 evidence B",
-        )
-        policy = _policy(session, organization_a.id, "cross-org")
-        foreign_evidence = _evidence(session, organization_b.id, "r3-foreign-evidence")
-        batch = PayrollBatch(
-            org_id=organization_a.id,
-            idempotency_key="r3-pbe-cross-org",
-            batch_kind="regular",
-            payroll_period="2026-04",
-            version=1,
-            status="draft",
-            calculation_hash="c" * 64,
-            request_payload_hash="d" * 64,
-            calculation_input={},
-            calculation_trace=[],
-            policy_snapshot={},
-            policy_version_id=policy.id,
-            posting_date=date(2026, 4, 5),
-            payment_date=date(2026, 4, 5),
-        )
-        session.add(batch)
-        session.flush()
-        with pytest.raises(IntegrityError):
-            session.execute(
-                sa.text(
-                    "INSERT INTO payroll_batch_evidence "
-                    "(org_id, payroll_batch_id, evidence_id, created_at) "
-                    "VALUES (:org_id, :batch_id, :evidence_id, CURRENT_TIMESTAMP)"
-                ),
-                {
-                    "org_id": organization_a.id,
-                    "batch_id": batch.id,
-                    "evidence_id": foreign_evidence.id,
-                },
+    postgres_engine, org_id, evidence_id, authority = postgres_engine
+    with authenticated_business_database("round3_foreign") as foreign_database:
+        _foreign_engine, foreign_org_id, foreign_evidence_id, _foreign_authority = foreign_database
+        assert foreign_org_id != org_id
+        with Session(postgres_engine) as session:
+            with authority.attributed_call(
+                session, tool_name="finance_register_payroll_policy_version"
+            ):
+                policy = _policy(session, org_id, "cross-org")
+            batch = PayrollBatch(
+                org_id=org_id,
+                idempotency_key="r3-pbe-cross-org",
+                batch_kind="regular",
+                payroll_period="2026-04",
+                version=1,
+                status="draft",
+                calculation_hash="c" * 64,
+                request_payload_hash="d" * 64,
+                calculation_input={},
+                calculation_trace=[],
+                policy_snapshot={},
+                policy_version_id=policy.id,
+                posting_date=date(2026, 4, 5),
+                payment_date=date(2026, 4, 5),
             )
-            session.flush()
-        session.rollback()
-
-        # The rollback proves that the rejected edge did not leave a partial
-        # relation; construct an independent legal draft in a fresh transaction.
-    with Session(postgres_engine) as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R3-007 evidence legal",
-        )
-        policy = _policy(session, organization.id, "legal-draft")
-        evidence = _evidence(session, organization.id, "r3-legal-evidence")
-        batch = _sealed_batch(session, organization.id, policy, evidence, "legal-draft")
-        session.commit()
-        assert batch.status == "calculated"
+            with authority.attributed_call(session, tool_name="finance_preview_payroll"):
+                session.add(batch)
+            session.commit()
+            batch_id = batch.id
+            with pytest.raises(IntegrityError, match="fk_payroll_batch_evidence_org_evidence"):
+                session.execute(
+                    sa.text(
+                        "INSERT INTO payroll_batch_evidence "
+                        "(org_id, payroll_batch_id, evidence_id, created_at) "
+                        "VALUES (:org_id, :batch_id, :evidence_id, CURRENT_TIMESTAMP)"
+                    ),
+                    {"org_id": org_id, "batch_id": batch_id, "evidence_id": foreign_evidence_id},
+                )
+                session.commit()
+            session.rollback()
+            assert not session.scalars(
+                sa.select(PayrollBatchEvidence).where(
+                    PayrollBatchEvidence.payroll_batch_id == batch_id
+                )
+            ).all()
+            # The same draft accepts its own registered evidence and can be sealed.
+            with authority.attributed_call(session, tool_name="finance_preview_payroll"):
+                batch = session.get(PayrollBatch, batch_id)
+                session.add(
+                    PayrollBatchEvidence(
+                        org_id=org_id, payroll_batch_id=batch_id, evidence_id=evidence_id
+                    )
+                )
+                session.flush()
+                batch.status = "calculated"
+            session.commit()
+            assert batch.status == "calculated"

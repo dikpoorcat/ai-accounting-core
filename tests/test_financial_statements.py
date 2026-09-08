@@ -27,7 +27,7 @@ from ai_accounting.financial_statements import (
     FinancialStatementService,
     _template_bytes,
 )
-from ai_accounting.ledger import Entry, create_voucher
+from ai_accounting.ledger import CashFlowPlan, ComponentPostingPlan, Entry, commit_posting_plan
 from ai_accounting.models import (
     Account,
     AccountingPeriod,
@@ -210,34 +210,47 @@ def _post(
     organization: Organization,
     *,
     key: str,
-    event_type: str,
+    component_kind: str,
     posting_date: date,
     entries: list[Entry],
+    cash_flow_category: str | None = None,
+    cash_flow_amount_fen: int | None = None,
 ) -> BusinessEvent:
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key=key,
         request_payload_hash=hashlib.sha256(key.encode()).hexdigest(),
-        event_type=event_type,
+        event_type="composite",
         status="draft",
         description=key,
-        facts={},
+        facts={"components": ["business"]},
         business_date=posting_date,
         posting_date=posting_date,
         rule_trace=[],
         rule_version="test",
     )
-    session.add(event)
-    session.flush()
-    create_voucher(
+    cash_flows = (
+        [CashFlowPlan("1002", cash_flow_category, cash_flow_amount_fen)]
+        if cash_flow_category is not None and cash_flow_amount_fen is not None
+        else []
+    )
+    commit_posting_plan(
         session,
         event=event,
         posting_date=posting_date,
         description=key,
-        entries=entries,
+        components=[
+            ComponentPostingPlan(
+                key="business",
+                kind=component_kind,
+                facts={"key": "business", "kind": component_kind},
+                derived={},
+                entries=entries,
+                cash_flows=cash_flows,
+                rule_version="test-components",
+            )
+        ],
     )
-    event.status = "posted"
-    session.flush()
     return event
 
 
@@ -250,45 +263,53 @@ def _prepare_calculated_q1(
         session,
         organization,
         key="capital",
-        event_type="owner_contribution_received",
+        component_kind="owner_funding",
         posting_date=date(2026, 1, 2),
         entries=[
             Entry(account_role="bank", debit_fen=100_000),
             Entry(account_role="paid_in_capital", credit_fen=100_000),
         ],
+        cash_flow_category="cash_flow_14",
+        cash_flow_amount_fen=100_000,
     )
     _post(
         session,
         organization,
         key="sale",
-        event_type="service_cash_sale",
+        component_kind="service_sale",
         posting_date=date(2026, 2, 3),
         entries=[
             Entry(account_role="bank", debit_fen=50_000),
             Entry(account_role="service_revenue", credit_fen=50_000),
         ],
+        cash_flow_category="cash_flow_1",
+        cash_flow_amount_fen=50_000,
     )
     expense = _post(
         session,
         organization,
         key="expense",
-        event_type="expense_cash",
+        component_kind="expense",
         posting_date=date(2026, 3, 4),
         entries=[
             Entry(account_role="general_expense", debit_fen=10_000),
             Entry(account_role="bank", credit_fen=10_000),
         ],
+        cash_flow_category="cash_flow_6",
+        cash_flow_amount_fen=-10_000,
     )
     _post(
         session,
         organization,
         key="fixed-asset-acquisition",
-        event_type="fixed_asset_acquisition",
+        component_kind="fixed_asset_acquisition",
         posting_date=date(2026, 3, 5),
         entries=[
             Entry(account_role="fixed_asset_cost", debit_fen=70_000),
             Entry(account_role="bank", credit_fen=70_000),
         ],
+        cash_flow_category="cash_flow_12",
+        cash_flow_amount_fen=-70_000,
     )
     expense_line = session.scalar(
         select(VoucherLine)
@@ -336,12 +357,14 @@ def test_requirements_block_unclassified_expense_and_missing_income_tax(
         session,
         organization,
         key="unclassified-expense",
-        event_type="expense_cash",
+        component_kind="expense",
         posting_date=date(2026, 1, 5),
         entries=[
             Entry(account_role="general_expense", debit_fen=1_000),
             Entry(account_role="bank", credit_fen=1_000),
         ],
+        cash_flow_category="cash_flow_6",
+        cash_flow_amount_fen=-1_000,
     )
     _close_quarter(session, organization, periods)
 
@@ -437,12 +460,14 @@ def test_month_close_blocks_unclassified_financial_statement_expense(
         session,
         organization,
         key="january-unclassified-expense",
-        event_type="expense_cash",
+        component_kind="expense",
         posting_date=date(2026, 1, 5),
         entries=[
             Entry(account_role="general_expense", debit_fen=1_000),
             Entry(account_role="bank", credit_fen=1_000),
         ],
+        cash_flow_category="cash_flow_6",
+        cash_flow_amount_fen=-1_000,
     )
 
     result = AccountingPeriodService(
@@ -459,9 +484,7 @@ def test_month_close_blocks_unclassified_financial_statement_expense(
         "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_CLASSIFICATION_REQUIRED"
         in result.data["blocker_codes"]
     )
-    readiness = result.data["assistant_review_checklist"][
-        "financial_statement_readiness"
-    ]
+    readiness = result.data["assistant_review_checklist"]["financial_statement_readiness"]
     assert readiness["completed"] is False
     assert readiness["requirement_count"] == 1
     assert readiness["requirements"][0]["data"]["amount_fen"] == 1_000
@@ -502,9 +525,10 @@ def test_partial_first_year_opening_fact_is_required_before_first_close(
         "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_OPENING_BALANCE_UNAVAILABLE"
         not in after.data["blocker_codes"]
     )
-    assert after.data["assistant_review_checklist"][
-        "financial_statement_readiness"
-    ]["completed"] is True
+    assert (
+        after.data["assistant_review_checklist"]["financial_statement_readiness"]["completed"]
+        is True
+    )
 
 
 def test_quarter_end_close_rechecks_prior_closed_month_report_requirements(
@@ -515,12 +539,14 @@ def test_quarter_end_close_rechecks_prior_closed_month_report_requirements(
         session,
         organization,
         key="legacy-january-unclassified-expense",
-        event_type="expense_cash",
+        component_kind="expense",
         posting_date=date(2026, 1, 5),
         entries=[
             Entry(account_role="general_expense", debit_fen=1_000),
             Entry(account_role="bank", credit_fen=1_000),
         ],
+        cash_flow_category="cash_flow_6",
+        cash_flow_amount_fen=-1_000,
     )
     # Simulate periods closed by an older checker that did not yet enforce
     # financial-statement classification readiness.
@@ -540,9 +566,10 @@ def test_quarter_end_close_rechecks_prior_closed_month_report_requirements(
         "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_CLASSIFICATION_REQUIRED"
         in result.data["blocker_codes"]
     )
-    assert "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED" not in result.data[
-        "blocker_codes"
-    ]
+    assert (
+        "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_PERIOD_NOT_CLOSED"
+        not in result.data["blocker_codes"]
+    )
     assert (
         "ACCOUNTING_PERIOD_FINANCIAL_STATEMENT_CLOSE_SNAPSHOT_MISSING"
         not in result.data["blocker_codes"]
@@ -557,7 +584,9 @@ def test_quarterly_statements_are_deterministic_and_balanced(
     first = service.preview_quarterly(request)
     second = service.preview_quarterly(request)
 
-    assert first.status is FinancialStatementResultStatus.CALCULATED
+    assert first.status is FinancialStatementResultStatus.CALCULATED, [
+        (item.code, item.data) for item in first.missing_information
+    ]
     assert first.calculation_hash == second.calculation_hash
     statements = first.data["statements"]
     assert statements["balance_sheet"]["30"]["ending_fen"] == 140_000
@@ -640,7 +669,7 @@ def test_balance_sheet_reclassifies_receivables_and_payables_by_counterparty(
             session,
             organization,
             key=key,
-            event_type="balance_reclassification_test",
+            component_kind="balance_reclassification_test",
             posting_date=date(2026, 1, 5),
             entries=[first_entry, second_entry],
         )
@@ -671,12 +700,14 @@ def test_cash_flow_reversal_uses_original_event_mapping(
         session,
         organization,
         key="cash-sale-to-reverse",
-        event_type="service_cash_sale",
+        component_kind="service_sale",
         posting_date=date(2026, 1, 5),
         entries=[
             Entry(account_role="bank", debit_fen=1_000),
             Entry(account_role="service_revenue", credit_fen=1_000),
         ],
+        cash_flow_category="cash_flow_1",
+        cash_flow_amount_fen=1_000,
     )
     reversal = FinanceService(session).reverse_event(
         ReverseEventRequest(
@@ -718,7 +749,7 @@ def test_cash_flow_reversal_uses_original_event_mapping(
     assert result.data["statements"]["cash_flow_statement"]["22"]["current_fen"] == 0
 
 
-def test_unmapped_nonzero_cash_event_blocks_export(
+def test_nonzero_cash_component_without_allocation_blocks_export(
     session: Session, organization: Organization
 ) -> None:
     periods = _open_quarter(session, organization)
@@ -727,7 +758,7 @@ def test_unmapped_nonzero_cash_event_blocks_export(
         session,
         organization,
         key="unmapped-cash-event",
-        event_type="future_cash_event",
+        component_kind="owner_funding",
         posting_date=date(2026, 1, 5),
         entries=[
             Entry(account_role="bank", debit_fen=500),
@@ -760,7 +791,7 @@ def test_unmapped_nonzero_cash_event_blocks_export(
 
     assert result.status is FinancialStatementResultStatus.NEEDS_INFORMATION
     assert workbook is None
-    assert "FINANCIAL_STATEMENT_UNMAPPED_CASH_EVENT" in {
+    assert "FINANCIAL_STATEMENT_CASH_ALLOCATION_MISMATCH" in {
         item.code for item in result.missing_information
     }
 
@@ -774,12 +805,14 @@ def test_classification_is_append_only_and_idempotent(
         session,
         organization,
         key="classifiable-expense",
-        event_type="expense_cash",
+        component_kind="expense",
         posting_date=date(2026, 1, 5),
         entries=[
             Entry(account_role="general_expense", debit_fen=1_000),
             Entry(account_role="bank", credit_fen=1_000),
         ],
+        cash_flow_category="cash_flow_6",
+        cash_flow_amount_fen=-1_000,
     )
     line = session.scalar(
         select(VoucherLine)
@@ -871,7 +904,7 @@ def test_income_tax_accrual_and_reduction_are_controlled_entries(
         session,
         reduction_org,
         key="opening-cit-accrual",
-        event_type="enterprise_income_tax_assessment",
+        component_kind="enterprise_income_tax_assessment",
         posting_date=date(2026, 1, 31),
         entries=[
             Entry(account_role="enterprise_income_tax_expense", debit_fen=3_000),
@@ -944,9 +977,10 @@ def test_tax_template_preserves_structure_and_cached_values(
     assert cached["利润表_月季报"]["D37"].value == 400
     assert cached["现金流量表_月季报"]["D30"].value == 700
 
-    with zipfile.ZipFile(io.BytesIO(template)) as source_zip, zipfile.ZipFile(
-        io.BytesIO(generated)
-    ) as output_zip:
+    with (
+        zipfile.ZipFile(io.BytesIO(template)) as source_zip,
+        zipfile.ZipFile(io.BytesIO(generated)) as output_zip,
+    ):
         assert source_zip.namelist() == output_zip.namelist()
         for part_name, root_name in (
             ("xl/worksheets/sheet1.xml", "worksheet"),

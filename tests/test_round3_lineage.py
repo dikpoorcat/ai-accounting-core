@@ -24,6 +24,7 @@ from test_payroll_service import (
 
 from ai_accounting.models import (
     BusinessEvent,
+    BusinessEventComponent,
     EmployeePayrollProfileVersion,
     Evidence,
     OpenItem,
@@ -251,7 +252,14 @@ def test_r3_006_one_statutory_payment_keeps_each_partial_salary_source(
 
     service = FinanceService(session)
     employee_id = register_payroll_facts(session, organization)
-    preview = _preview(service, organization.id, employee_id, idempotency_key="r3-source-preview")
+    evidence = _evidence(session, organization.id, "r3-source")
+    preview = _preview(
+        service,
+        organization.id,
+        employee_id,
+        idempotency_key="r3-source-preview",
+        evidence_references=[evidence.id],
+    )
     assert preview.status == "calculated", preview.errors
     confirmed = service.confirm_payroll(
         ConfirmPayrollRequest(
@@ -346,11 +354,16 @@ def test_r3_006_one_statutory_payment_keeps_each_partial_salary_source(
         )
         .order_by(PayrollEventLink.id)
     ).all()
-    assert {edge.source_payment_event_id for edge in source_edges} == {
+    assert {
+        session.get(OpenItem, edge.source_open_item_id).source_event_id for edge in source_edges
+    } == {
         confirmed.event_id,
         first.event_id,
         second.event_id,
     }
+    assert {
+        session.get(BusinessEventComponent, edge.component_id).kind for edge in source_edges
+    } == {"payable_settlement"}
     # R4 completes the graph: employee withholdings originate at their salary
     # payments and employer contributions originate at the payroll accrual.
     # Every settled statutory open item therefore has its own edge.

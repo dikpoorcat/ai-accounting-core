@@ -314,6 +314,7 @@ def seed_organization(
                 category=category,
                 normal_side=normal_side,
                 system_role=system_role,
+                business_class=system_role,
             )
         )
     for rule_data in TAX_RULES:
@@ -356,4 +357,39 @@ def get_account_by_code(session: Session, org_id: uuid.UUID, code: str) -> Accou
     )
     if account is None:
         raise ValueError(f"unknown or inactive account code: {code}")
+    return account
+
+
+def account_business_class(account: Account) -> str | None:
+    """Read classification independently of the default-account mapping."""
+    return account.business_class or account.system_role
+
+
+def get_business_class_template(
+    session: Session, org_id: uuid.UUID, business_class: str
+) -> Account:
+    """Classification survives deactivation of its default posting account."""
+    account = session.scalar(
+        select(Account).where(Account.org_id == org_id, Account.system_role == business_class)
+    )
+    if account is None:
+        raise ValueError("UNKNOWN_ACCOUNT_BUSINESS_CLASS")
+    return account
+
+
+def get_account_for_business_class(
+    session: Session,
+    org_id: uuid.UUID,
+    business_class: str,
+    *,
+    account_code: str | None = None,
+) -> Account:
+    """Resolve a typed capability's default or an explicitly selected detail."""
+    account = (
+        get_account_by_code(session, org_id, account_code)
+        if account_code is not None
+        else get_account_by_role(session, org_id, business_class)
+    )
+    if account_business_class(account) != business_class:
+        raise ValueError("ACCOUNT_BUSINESS_CLASS_MISMATCH")
     return account

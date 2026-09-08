@@ -134,9 +134,9 @@ Alembic revision。需要恢复已有系统时，先验证本地私有回放包�
 命令输出默认公司的 `primary_org_id`；用它设置新负责人并登录后，再执行 `finance-replay replay`
 和 `finance-replay verify`。回放固定先处理非默认公司、最后处理默认公司，以便高风险公司
 尽早失败。全新公司仍通过登录后的 `finance_create_company` 类型化入口创建，正常公司创建会把
-业务库升级到 `0001_business_baseline_v2`。
+业务库升级到 `0001_business_baseline_v3`。
 
-`0001_catalog_baseline_v2` 和 `0001_business_baseline_v2` 分别是目录库与业务库的唯一空库
+`0001_catalog_baseline_v2` 和 `0001_business_baseline_v3` 分别是目录库与业务库的唯一空库
 基线。旧业务 revision `0001`–`0022`、旧目录 revision `0001`–`0004` 已移除，均不支持原地
 升级；旧库只能按受控空库回放重建。正式库启用后的结构变化继续使用新的前向 revision 管理。
 拉取新代码后不要把迁移命令当成日常启动命令直接执行。
@@ -224,11 +224,11 @@ Set-Location ..
 ## MCP 工作流
 
 1. `finance_get_profile`：读取企业、科目和税务政策。
-2. `finance_get_event_schema`：取得业务事件 JSON Schema。
+2. `finance_get_event_schema`：不传选择器时取得组合请求 JSON Schema；传入 `component_type` 时取得单个业务组件结构和要求。
 3. 可选调用 `finance_register_evidence`；银行业务先按下述专用工作流确认实际账户范围并导入流水。`finance_import_bank_statement` 仅保留开发回归，生产模式不可用。
 4. `finance_query_context`：查询开放项；银行导入、迟到处理和对账状态使用 `finance_query_bank_statement_state`。
-5. `finance_record_event`：提交业务事实。凡涉及银行收付款，必须显式提供已确认范围内的 `bank_account_code`；内部银行转账分别提供来源和目标账户代码。
-6. `finance_get_event`：审阅事实、凭证、证据和轨迹。
+5. `finance_record_event`：只接受一个或多个类型化 `components` 及独立 `funds`，单项业务也使用同一协议。需要计算确认的组合先用 `finance_preview_event` 取得 `reviewed_request` 及组件哈希。父事件固定为 `composite`，资金项按组件键精确分配，银行流水在整笔业务中只匹配一次。
+6. `finance_get_event`：审阅父事件、全部组件（`kind`、`facts`、`derived`）、资金项、组件来源引用、带 `component_id` 的凭证行、证据和规则轨迹。
 7. 未关账月份需要修改时，先用 `finance_get_event` 读取当前事实与 `facts_hash`，再调用 `finance_amend_event`，提交 `expected_facts_hash`、修改原因、新幂等键和完整的 `replacement` 类型化事实。支持普通收支、工资及社保补缴、固定资产、无形资产、借款、劳务及发放、增值税税期和企业所得税业务；需要试算的业务在修改事务内复用专用试算与确认流程。修改保留事件、原凭证编号和业务主体编号，追加修改前后审计快照，不产生冲正凭证。入账日仍须属于原未关账月份；已关账业务继续使用 `finance_reverse_event` 在后续开放月更正。
 
    修改不会自动改写后续业务。存在核销、后续计提、税期快照或报表分类等引用时，返回 `AMENDMENT_DEPENDENT_FACTS_EXIST` 与 `blocking_records`，应先处理依赖；陈旧事实返回 `AMENDMENT_FACTS_STALE`，应重新读取。资料不全或任何重算失败都会回滚整次修改。该入口只替换仍产生正式凭证的业务，不将非零入账转换为无凭证的零额确认，也不改变企业所得税更正的原所属期和前序来源。
@@ -237,7 +237,7 @@ Set-Location ..
 
    误导入银行流水可调用 `finance_withdraw_bank_statement_import`，用 `finance_query_bank_statement_state` 返回的批次编号及 `calculation_hash` 提交撤销。只移除该批次新增的未关账、未使用流水，原本已有的重复流水不受影响。导入原记录、文件和撤销审计保留，活动查询标记为 `withdrawn`；可以使用正确映射和新幂等键重新导入。已匹配、已对账、迟到流水或被后续导入引用时拒绝撤销并返回依赖。
 
-所有金额均为整数“分”，日期均为 ISO `YYYY-MM-DD`。
+需要新增同类明细科目时使用 `finance_configure_account` 配置受控 `business_class`。`system_role` 只标识内核已有能力的默认科目；公共接口不接受任意科目、借贷方向或自由分录行。所有金额均为整数“分”，日期均为 ISO `YYYY-MM-DD`。
 
 ### 会计期间与月结专用工作流
 
@@ -280,10 +280,10 @@ Set-Location ..
 
 企业所得税季度更正和年度汇算结果通过专用接口追加记录，不改写历史季度确认或凭证：
 
-1. `finance_query_enterprise_income_tax` 查询原计提、更正链、各所属期已缴和待缴退税额。旧缴款没有归属时，凭证据调用 `finance_link_enterprise_income_tax_payment` 追加来源分配。
+1. `finance_query_enterprise_income_tax` 查询原计提、更正链、各所属期已缴和待缴退税额。缴退组件正式入账前必须具备明确所属期及来源依据。
 2. `finance_preview_enterprise_income_tax_result` 接收外部申报结果。`quarter=1..4` 为季度更正，`quarter=0` 为年度汇算；`amount_basis` 明确为本季 `quarter`、年初累计 `year_to_date`、全年 `annual` 或差额通知 `adjustment_notice`。差额通知同时要求已核对的 `previously_recognized_fen`；资料不足返回 `needs_information`。
-3. 使用同一事实与预览哈希调用 `finance_confirm_enterprise_income_tax_result`。税款所属期、申报日期与开放期入账日期分别记录；原有金额变更通过关联冲正及替代凭证原子完成。金额未变仅追加记录，年度结果扣除已确认季度税额，不重复计提。
-4. 实际补缴使用 `tax_payment`（`tax_type=enterprise_income_tax`），实际退税使用 `enterprise_income_tax_refund`；均要求 `income_tax_allocations=[{source_id, amount_fen}]`、证据及银行流水。来源由查询工具返回，支持明确分配的合并缴款与部分缴退。历史年度待退税款不抵销下一年度应缴税款。
+3. 使用同一事实与预览哈希调用 `finance_confirm_enterprise_income_tax_result`，或在组合请求中加入 `enterprise_income_tax_result`。税款所属期、申报日期与开放期入账日期分别记录；金额变更通过统一提交器记录核算差额。金额未变仅追加记录，年度结果扣除已确认季度税额，不重复计提；撤销整笔业务使用统一关联冲正。
+4. 实际缴退使用 `tax_settlement` 组件（`tax_type=enterprise_income_tax`），`settlement_kind=payment` 或 `refund`；均要求 `income_tax_allocations=[{source_id, amount_fen}]`、证据及明确资金分配。来源由查询工具返回，支持与其他组件组合及部分缴退。历史年度待退税款不抵销下一年度应缴税款。
 
 季度首次确认仍使用下述原接口；年度结果需要全年四个季度的明确确认，包括不适用季度。已有年度汇算后发现季度变化时，应录入包含该变化的年度更正结果。这里记录外部申报事实，不自动申报；滞纳金、罚款、其他税种更正不在本功能范围内。
 
@@ -312,11 +312,11 @@ Set-Location ..
 
 ### 个人代垫既有应付款
 
-员工或股东代公司清偿已经入账的供应商款、工资、社保、公积金、个人所得税或其他受支持应付款时，使用 `employee_reimbursement` 并指定 `details.reimbursement_kind=existing_payable`、`details.paid_now=false`，按开放项精确分配。该事件只把原债权人转换为代付个人，不重复确认费用。随后使用 `employee_reimbursement_payment` 清偿个人往来：`details.settlement_method=bank` 时必须指定实际银行账户；`cash` 时固定贷记库存现金并禁止提供银行账户或银行流水；`owner_managed_reserve` 用于此前转入时已经直接费用化、由负责人管理的备用金，必须用 `details.original_event_id` 引用原银行现付费用事件，内核从该事件确定冲减的费用角色和使用上限，不经过库存现金。事件名保留既有兼容性，但双方均允许员工或股东类型的个人往来方。
+员工或股东代公司清偿已经入账的供应商款、工资、社保、公积金、个人所得税或其他受支持应付款时，在 `finance_record_event` 中使用 `debt_transfer` 组件，按开放项精确分配并明确实际代付人。该组件只转移债权人，不重复确认费用。公司随后清偿个人往来时使用 `payable_settlement` 组件并配置对应 `funds`；银行支付绑定实际账户和流水，现金支付使用受控现金账户且不得提供银行流水。此前已直接费用化、由负责人管理的备用金结算使用 `expense_reserve_settlement` 并引用原来源组件，不虚构库存现金或重复确认费用。
 
 ### 工资专用工作流
 
-工资不经过 `finance_record_event` 的自由事件路径，按以下顺序调用：
+工资和劳务保留各自的预览计算；计提确认既可调用专用确认工具，也可将已预览批次及哈希放入 `payroll_accrual`、`labor_remuneration_accrual` 组件，与同笔实际发放组合。正式入账使用同一提交器，后续结算继续使用类型化组件：
 
 常规工资接收负责人最终确认的“报税工资”；账务应发工资通常与之相同。只有存在证据支持的历史账税差异时，才可另行提供“账务应发工资”和差异原因：内核以报税工资计算累计个税，以账务应发工资确认工资费用、社保公积金代扣和实发工资，并把差异原因冻结在工资明细中。底薪、绩效、提成、津贴和考勤扣款等工资形成过程不进入内核。专项附加扣除、其他法定扣除及减免税额仍作为法定算税事实单独提供。非员工个人劳务报酬继续走独立模块，不得混入工资。
 
@@ -326,7 +326,7 @@ Set-Location ..
 4. `finance_preview_payroll` 试算并取得计算哈希。
 5. 固定待办第 2 项“员工及工资变动”确认入职、离职、停薪、工资奖金、个税扣除资料、参保和缴费基数变化；确认写入追加式月度事实并绑定当前人员档案快照，不要求工资已经过账。流程同时返回 `regular_payroll_preparation`：优先复用本期已有工资草稿，其次复用已持久化的本月方案；负责人确认无变化时还可沿用最近一期正式工资，因此重开会话不会再次索要内核已经掌握的逐人工资。仅在首次建立或确有变化且内核没有可复用方案时，才请负责人确认一份完整建议。第 3 项先用 `finance_preview_payroll_contribution_assessment` 形成社保公积金核定快照供外部申报；外部实际数不同于政策数时先登记实际数。申报完成后绑定最终核定快照，再以同一快照完成常规工资和单位缴费计提；申报日期仅在现有事实已经建立时保存，不作为完成条件。第 3 项不收集缴款状态或缴款日期；后续实际缴款在发生月份由银行流水核销，且不阻断上月关账。
 6. 固定待办第 4 项“个人所得税”进入 `🔄` 时，只要当期存在纳入工资个税申报的已过账常规工资，AI 就主动调用 `finance_generate_payroll_tax_import`，不先询问是否需要生成。该工具要求幂等键，读取当月正式工资明细和逐人已确认导入事实，生成并校验税局“正常工资薪金所得”BIFF8 `.xls` 文件，同时在数据库追加保存工资及计算快照哈希、文件哈希、受控相对路径、行数和生成时间。新会话会重验并复用同哈希版本；工资、扣除或员工信息变化后旧版本失效，新版本不得覆盖不同内容的同名文件。AI 按哈希复制到当前用户桌面，只报告文件名、行数和导入核对动作，不在聊天中展示证件号码。文件生成不等于申报完成，负责人确认税务客户端提交结果并写入对应内核义务后该项完成；申报日期仅在现有事实已经建立时保存，不询问缴款状态或缴款日期，实际缴款在发生月份由银行流水核销。
-7. 常规工资按 `payroll_period` 和月末入账日计提，`finance_preview_payroll` 不要求 `payment_date`；工资及单位社保公积金开放项不在计提时虚构到期日。工资发放及社保、公积金、个税缴纳发生后，再由实际银行流水和受支持的付款事件记录支付日并核销正式开放项。只有实际支付日会决定个税所属期的年终奖批次仍要求 `payment_date`。社保银行扣款同时包含滞纳金时，`social_insurance_payment` 只接受有银行流水和证据支持的 `details.social_insurance_late_fee_fen`，社保本金必须精确核销开放项，滞纳金固定计入“营业外支出—社保滞纳金”，调用方不能自选科目。
+7. 常规工资按 `payroll_period` 和月末入账日计提，`finance_preview_payroll` 不要求 `payment_date`；工资及单位社保公积金开放项不在计提时虚构到期日。工资发放及社保、公积金、个税实际缴纳发生后，使用 `salary_settlement` 组件按正式开放项分配并配置对应 `funds`，可与同一笔银行汇总扣款中的劳务结算共同组成一个原子事件。只有实际支付日会决定个税所属期的年终奖批次仍要求 `payment_date`。任何滞纳金必须由证据支持并使用已有受控费用组件表达，调用方不能自选科目。
 
 税务客户端的实际导入、申报与提交仍由 AI 在外部协助完成，生成文件不等于已经申报。银行流水只能证明汇总税款实际支付，不能单独证明逐人申报明细；内核保存工资计算形成的个税应付款，并要求银行税款支付与指定开放项精确一致，金额不一致时不得静默核销。
 
@@ -341,16 +341,16 @@ Set-Location ..
 1. `finance_register_labor_service_person` 登记自然人劳务身份、关系有效期和证据；`finance_end_labor_service_person` 以追加证据结束关系。后续 `finance_register_employee` 可通过 `prior_labor_person_id` 显式连接同一自然人的历史劳务身份，但员工与劳务往来角色保持分离。
 2. `finance_preview_labor_remuneration_batch` 逐人保存服务期间、固定劳务费、佣金、受益费用角色、居民身份、按次或连续收入归组及外部申报状态。缺少任一会改变处理的事实时返回 `needs_information`；非居民和学生实习特殊算法在首期明确拒绝。
 3. 内核按业务日期选择有效的普通居民个人劳务报酬政策版本，用整数分和 `Decimal` 计算费用扣除、应纳税所得额、预扣率、速算扣除数、预扣个税和实付净额。`finance_confirm_labor_remuneration_batch` 复核哈希后按固定模板计提：借有限枚举费用/成本，贷个人劳务报酬应付。
-4. `finance_preview_unified_payout_run` 与 `finance_confirm_unified_payout_run` 可把一个工资批次的一个或多个工资开放项和一个或多个劳务开放项放入同一父发放批次。所有子项净额必须精确等于一笔已通过受控导入动作进入系统的银行汇总扣款；银行流水只在父事件匹配一次，任何子项失败整批回滚。
+4. 劳务付款使用 `labor_settlement` 组件；同一笔汇总扣款可以组合多个劳务组件及 `salary_settlement` 组件，并由一个 `funds` 项按组件键分配。各分配合计必须精确等于已受控导入的银行流水，流水只匹配父事件一次，任一组件失败则整笔回滚。
 5. 劳务支付首期只支持全额结算，不按比例猜测部分支付的个税分配。每个劳务子项必须显式选择 `net_after_withholding` 或 `gross_paid_without_withholding`。前者按政策税额扣缴并支付净额；后者仅表达有单独证据支持的“毛额已全部支付、实际未扣税”历史事实，仍保存理论税额和未扣差异，按毛额匹配银行且不虚构个税应付。支付模板固定，不接受调用方自组分录或自填税额。
-6. `finance_pay_labor_withholding_tax` 只能核销逐人劳务扣缴来源的 `labor_individual_income_tax` 开放项，不能冒充工资个税来源。`finance_confirm_labor_external_declaration` 以追加式记录保存外部申报日期、引用和证据，不改写计提快照；本系统不宣称完成报税。
-7. `finance_get_labor_remuneration` 查询人员、计提批次或统一发放批次；未关账业务可使用 `finance_amend_event` 修改。需冲正时使用 `finance_reverse_event`，按个税缴款、发放、计提的下游优先顺序处理。
+6. 劳务扣缴税款使用 `labor_tax_settlement` 组件，只能核销逐人劳务扣缴来源的 `labor_individual_income_tax` 开放项，不能冒充工资个税来源。`finance_confirm_labor_external_declaration` 以追加式记录保存外部申报日期、引用和证据，不改写计提快照；本系统不宣称完成报税。
+7. `finance_get_labor_remuneration` 查询人员、计提批次及其组件化结算关联；未关账业务可使用 `finance_amend_event` 修改。需冲正时使用 `finance_reverse_event`，按个税缴款、发放、计提的下游优先顺序处理。
 
 完整字段、会计模板和边界见[个人劳务报酬工作流](docs/personal-labor-remuneration-workflow.md)。
 
 ### 固定资产专用工作流
 
-固定资产同样不经过 `finance_record_event`，只接受有限业务事实：
+固定资产只接受有限业务事实。独立预览、确认仍负责需要确定性计算的动作；购置、启用、处置等领域动作也有对应组件，可与同笔业务中的其他组件和资金项原子组合：
 
 1. `finance_acquire_fixed_asset` 登记外购资产；已交付可用时同时提供 `ready_for_use`，一张凭证直接记入固定资产并建立折旧卡片。只有明确尚未达到可使用状态时才省略该字段、记入待启用资产。银行现付必须精确匹配流水，挂账会生成受控应付开放项。
 2. `finance_activate_fixed_asset` 仅用于前一步明确尚未达到可使用状态的资产；达到可使用状态后冻结直线法、使用寿命月数、预计净残值、受益区域和官方规则来源。
@@ -364,7 +364,7 @@ Set-Location ..
 
 ### 无形资产专用工作流
 
-无形资产一期只支持外购、已可供使用、可单独识别且不含土地权利的单项资产：
+无形资产一期只支持外购、已可供使用、可单独识别且不含土地权利的单项资产；对应领域动作可作为组件与同笔业务和资金项组合，需要确定性计算的摊销仍使用预览、确认：
 
 1. `finance_acquire_intangible_asset` 登记取得事实、成本组成、供应商、使用寿命、受益区域和证据；银行现付精确匹配流水，挂账生成受控应付开放项。
 2. `finance_preview_intangible_asset_amortization` 从可供使用当月开始试算下一个连续自然月，并返回计算哈希。
@@ -379,11 +379,11 @@ Set-Location ..
 
 借款一期只支持中国持牌金融机构、人民币、单次全额放款、固定利率、合同单利、到期一次还本且无需资本化的合同：
 
-1. `finance_draw_borrowing` 冻结合同、贷款人、应付息日、利率、日计数基础、支持边界事实、银行流水和证据。
+1. 借款放款通过 `borrowing_drawdown` 领域组件冻结合同、贷款人、应付息日、利率、日计数基础、支持边界事实和证据，并用独立 `funds` 绑定银行流水；它可以与同笔业务的其他受支持组件原子组合。
 2. `finance_preview_borrowing_interest` 按合同下一应付息日及 `[period_start, period_end)` 实际天数试算利息并返回计算哈希。
 3. `finance_confirm_borrowing_interest` 在锁内复算合同和有效计息链后生成财务费用与应付利息凭证。
-4. `finance_pay_borrowing_interest` 只清偿唯一关联的有效计息事件，付款日不得早于计息期末或晚于合同到期日。
-5. `finance_repay_borrowing_principal` 只在到期日、连续计息至到期且全部有效利息已支付后一次归还全部本金。
+4. 借款利息支付使用 `borrowing_interest_payment` 组件，只清偿唯一关联的有效计息事件，付款日不得早于计息期末或晚于合同到期日。
+5. 借款本金归还使用 `borrowing_principal_repayment` 组件，只在到期日、连续计息至到期且全部有效利息已支付后一次归还全部本金；利息和本金可在规则允许时与一个实际资金项组合，但各自来源仍独立可追溯。
 6. `finance_get_borrowing` 查询合同、有效余额、规范事实、凭证、证据和冲正链；更正顺序为还本、付息、最新计息、放款。
 
 循环额度、多次提款、浮动利率、复利、罚息、提前或分期还本、展期、外币、非金融企业贷款和借款费用资本化不在一期范围。
@@ -394,24 +394,36 @@ Set-Location ..
 {
   "org_id": "替换为-bootstrap-输出的-UUID",
   "idempotency_key": "bank-20260808-001",
-  "event_type": "service_cash_sale",
-  "business_dates": {
+  "posting_date": "2026-08-08",
+  "description": "已完成咨询服务并收到款项",
+  "components": [{
+    "key": "sale",
+    "kind": "service_sale",
     "business_date": "2026-08-08",
-    "fulfillment_date": "2026-08-08",
     "payment_date": "2026-08-08",
+    "description": "咨询服务收入",
+    "amount_fen": 1010000,
+    "counterparty": { "kind": "customer", "name": "示例客户" },
+    "recognition_basis": "immediate",
+    "fulfillment_date": "2026-08-08",
     "tax_obligation_date": "2026-08-08",
-    "posting_date": "2026-08-08"
-  },
-  "amounts": { "gross_amount_fen": 1010000, "currency": "CNY" },
-  "tax_facts": {
-    "taxable": true,
-    "rate_percent": "1",
-    "invoice_type": "ordinary",
-    "waive_exemption": false,
-    "tax_due_on_event": true
-  },
-  "bank_account_code": "1002",
-  "description": "已完成咨询服务并收到款项"
+    "tax_facts": {
+      "taxable": true,
+      "rate_percent": "1",
+      "invoice_type": "ordinary",
+      "waive_exemption": false,
+      "tax_due_on_event": true
+    }
+  }],
+  "funds": [{
+    "key": "bank-receipt",
+    "account_code": "1002",
+    "direction": "receipt",
+    "payment_date": "2026-08-08",
+    "amount_fen": 1010000,
+    "allocations": [{ "component_key": "sale", "amount_fen": 1010000 }],
+    "bank_transaction_references": []
+  }]
 }
 ```
 

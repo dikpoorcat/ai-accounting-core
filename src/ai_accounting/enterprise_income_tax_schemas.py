@@ -12,8 +12,15 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, m
 class IncomeTaxSourceAllocation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_id: uuid.UUID
+    source_id: uuid.UUID | None = None
+    source_component_key: str | None = Field(default=None, min_length=1, max_length=100)
     amount_fen: StrictInt = Field(gt=0)
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.source_id is None) == (self.source_component_key is None):
+            raise ValueError("provide exactly one source_id or source_component_key")
+        return self
 
 
 class PreviewEnterpriseIncomeTaxResultRequest(BaseModel):
@@ -68,14 +75,3 @@ class QueryEnterpriseIncomeTaxRequest(BaseModel):
     org_id: uuid.UUID
     year: int | None = Field(default=None, ge=2013, le=9998)
     as_of: date | None = None
-
-
-class LinkEnterpriseIncomeTaxPaymentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    org_id: uuid.UUID
-    event_id: uuid.UUID
-    allocations: list[IncomeTaxSourceAllocation] = Field(min_length=1, max_length=100)
-    evidence_references: list[uuid.UUID] = Field(min_length=1, max_length=100)
-    confirmation_note: str = Field(min_length=1, max_length=2000, pattern=r".*\S.*")
-    idempotency_key: str = Field(min_length=1, max_length=160, pattern=r".*\S.*")

@@ -8,18 +8,18 @@ from datetime import date
 from threading import Barrier
 
 import pytest
-from conftest import authenticate_and_confirm_bank_scope
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_payroll_service import (
     add_bank_row,
     payment_request,
+    payroll_evidence,
     payroll_parameters,
     register_payroll_facts,
 )
 
 from ai_accounting.coa import seed_organization
-from ai_accounting.database import make_session_factory
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.models import (
     BusinessEvent,
     Evidence,
@@ -38,7 +38,6 @@ from ai_accounting.models import (
 from ai_accounting.schemas import (
     ConfirmPayrollRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     RegisterPayrollPolicyVersionRequest,
@@ -57,6 +56,23 @@ def _preview(
     description: str = "",
     evidence_references: list[uuid.UUID] | None = None,
 ) -> object:
+    if evidence_references is None:
+        digest = uuid.uuid5(organization.id, f"payroll-evidence:{idempotency_key}").hex * 2
+        evidence = session.scalar(
+            select(Evidence).where(Evidence.org_id == organization.id, Evidence.sha256 == digest)
+        )
+        if evidence is None:
+            evidence = Evidence(
+                org_id=organization.id,
+                sha256=digest,
+                original_name=f"{idempotency_key}.txt",
+                source="test",
+                size_bytes=1,
+                storage_path=f"test/{idempotency_key}.txt",
+            )
+            session.add(evidence)
+            session.flush()
+        evidence_references = [evidence.id]
     return FinanceService(session).preview_payroll(
         PreviewPayrollRequest.model_validate(
             {
@@ -67,7 +83,7 @@ def _preview(
                 "posting_date": "2026-03-05",
                 "payment_date": "2026-03-05",
                 "description": description,
-                "evidence_references": evidence_references or [],
+                "evidence_references": evidence_references,
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -92,36 +108,40 @@ def _confirm(session: Session, organization: Organization, preview: object, key:
     )
 
 
-def _payroll_event(org_id: uuid.UUID, key: str) -> BusinessEvent:
-    return BusinessEvent(
-        org_id=org_id,
-        idempotency_key=key,
-        event_type="expense_payable",
-        status="posted",
-        facts={"amounts": {"amount_fen": 200}},
-        business_date=date(2026, 3, 5),
-        payment_date=date(2026, 3, 5),
-        posting_date=date(2026, 3, 5),
-        rule_trace=[],
-    )
-
-
 def _bank_request(
-    org_id: uuid.UUID, references: list[dict[str, object]], amount_fen: int = 200
+    org_id: uuid.UUID,
+    evidence_id: uuid.UUID,
+    references: list[dict[str, object]],
+    amount_fen: int = 200,
 ) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": org_id,
             "idempotency_key": f"bank-request-{uuid.uuid4()}",
-            "event_type": "expense_cash",
-            "bank_account_code": "1002",
-            "business_dates": {
-                "business_date": "2026-03-05",
-                "payment_date": "2026-03-05",
-                "posting_date": "2026-03-05",
-            },
-            "amounts": {"amount_fen": amount_fen},
-            "bank_transaction_references": references,
+            "posting_date": "2026-03-05",
+            "evidence_references": [evidence_id],
+            "components": [
+                {
+                    "key": "expense",
+                    "kind": "expense",
+                    "business_date": "2026-03-05",
+                    "payment_date": "2026-03-05",
+                    "amount_fen": amount_fen,
+                    "expense_class": "general_expense",
+                    "payment_basis": "immediate",
+                }
+            ],
+            "funds": [
+                {
+                    "key": "payment",
+                    "account_code": "1002",
+                    "direction": "payment",
+                    "payment_date": "2026-03-05",
+                    "amount_fen": amount_fen,
+                    "allocations": [{"component_key": "expense", "amount_fen": amount_fen}],
+                    "bank_transaction_references": references,
+                }
+            ],
         }
     )
 
@@ -130,6 +150,16 @@ def test_pay_001_bank_references_are_canonicalized_before_matching(
     session: Session, organization: Organization
 ) -> None:
     service = FinanceService(session)
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256="c" * 64,
+        original_name="bank-canonicalization.txt",
+        source="test",
+        size_bytes=1,
+        storage_path="test/bank-canonicalization.txt",
+    )
+    session.add(evidence)
+    session.flush()
     first = add_bank_row(session, organization, -100, "canonical-first")
     second = add_bank_row(session, organization, -100, "canonical-second")
 
@@ -138,37 +168,29 @@ def test_pay_001_bank_references_are_canonicalized_before_matching(
         [{"fingerprint": first.fingerprint}, {"fingerprint": first.fingerprint}],
         [{"id": first.id}, {"fingerprint": first.fingerprint}],
     ]
-    for index, references in enumerate(duplicate_cases):
-        event = _payroll_event(organization.id, f"duplicate-bank-{index}")
-        session.add(event)
-        session.flush()
-        with pytest.raises(ValueError, match="DUPLICATE_BANK_TRANSACTION_REFERENCE"):
-            service._match_bank_transactions(event, _bank_request(organization.id, references))
+    for references in duplicate_cases:
+        result = service.record_event(_bank_request(organization.id, evidence.id, references))
+        assert result.errors == ["DUPLICATE_BANK_TRANSACTION_REFERENCE"]
 
-    conflict_event = _payroll_event(organization.id, "conflicting-bank-reference")
-    session.add(conflict_event)
-    session.flush()
-    with pytest.raises(ValueError, match="BANK_TRANSACTION_REFERENCE_CONFLICT"):
-        service._match_bank_transactions(
-            conflict_event,
-            _bank_request(
-                organization.id,
-                [{"id": first.id, "fingerprint": second.fingerprint}],
-                amount_fen=100,
-            ),
-        )
-
-    normal_event = _payroll_event(organization.id, "normal-bank-reference")
-    session.add(normal_event)
-    session.flush()
-    service._match_bank_transactions(
-        normal_event,
+    conflict = service.record_event(
         _bank_request(
             organization.id,
+            evidence.id,
+            [{"id": first.id, "fingerprint": second.fingerprint}],
+            amount_fen=100,
+        )
+    )
+    assert conflict.errors == ["BANK_TRANSACTION_REFERENCE_CONFLICT"]
+
+    uncontrolled = service.record_event(
+        _bank_request(
+            organization.id,
+            evidence.id,
             [{"id": first.id}, {"fingerprint": second.fingerprint}],
         ),
     )
-    assert {first.matched_event_id, second.matched_event_id} == {normal_event.id}
+    assert uncontrolled.errors == ["BANK_TRANSACTION_REQUIRES_CONTROLLED_IMPORT_ACTION"]
+    assert first.matched_event_id is second.matched_event_id is None
 
 
 def test_pay_012_preview_idempotency_hash_and_database_version_sequence(
@@ -254,6 +276,7 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
         )["status"]
         == "registered"
     )
+    evidence = payroll_evidence(session, organization, "r2-011-payroll-source")
 
     regular = service.preview_payroll(
         PreviewPayrollRequest.model_validate(
@@ -264,6 +287,7 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
                 "payroll_period": "2028-08",
                 "posting_date": "2028-08-31",
                 "payment_date": "2028-08-31",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -296,6 +320,7 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
                 "posting_date": "2028-08-31",
                 "payment_date": "2028-08-31",
                 "tax_method": "separate",
+                "evidence_references": [evidence.id],
                 "employee_items": [{"employee_id": employee_id, "annual_bonus_fen": 100_000}],
             }
         )
@@ -313,6 +338,7 @@ def test_r2_011_uses_independent_income_and_annual_bonus_effective_periods(
                 "posting_date": "2028-08-31",
                 "payment_date": "2028-08-31",
                 "tax_method": "combined",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -465,7 +491,7 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
         )
     )
     assert first.status == "posted", first.errors
-    assert first.rule_version == "payroll-payment"
+    assert any(item["kind"] == "salary_settlement" for item in first.data["components"])
     assert all(entry.get("rule") != "vat" for entry in first.trace)
     assert salary.status == "partial"
 
@@ -545,11 +571,20 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
     ).all()
     assert len(statutory_links) == 2
     assert {link.payroll_batch_id for link in statutory_links} == {preview.batch_id}
-    assert {link.source_payment_event_id for link in statutory_links} == {
+    component_settlements = session.scalars(
+        select(Settlement).where(Settlement.payment_event_id == statutory.event_id)
+    ).all()
+    assert len(component_settlements) == 2
+    assert len({row.payment_component_id for row in component_settlements}) == 1
+    assert component_settlements[0].payment_component_id is not None
+    assert {row.open_item.source_event_id for row in component_settlements} == {
         confirmed.event_id,
         second.event_id,
     }
-    assert any(item["stage"] == "payroll_payment_evidence" for item in statutory.trace)
+    assert {item["stage"] for item in statutory.trace} >= {
+        "component_compilation",
+        "entries_created",
+    }
     line = session.scalar(
         select(PayrollLine).where(PayrollLine.payroll_batch_id == preview.batch_id)
     )
@@ -646,343 +681,157 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
 @pytest.mark.postgres
 @pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed")
 def test_pay_002_concurrent_salary_payments_lock_before_withholding_calculation() -> None:
-    """Two transactions settle one salary line without duplicate statutory debt."""
-    from alembic.config import Config
-    from sqlalchemy import create_engine
-    from testcontainers.community.postgres import PostgresContainer
+    """Two independent attributed transactions consume one salary entitlement exactly once."""
+    from _postgres_helpers import authenticated_business_database, confirmed_payroll
+    from conftest import import_test_bank_transaction, prepare_authenticated_bank_account
+    from test_repeated_payroll_components import _salary_request
 
-    from alembic import command
-
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        engine = create_engine(url)
-        factory = make_session_factory(engine)
-        try:
-            with factory() as setup:
-                organization = seed_organization(
-                    setup,
-                    taxpayer_identification_number="91330106MA1234567T",
-                    accounting_period_control_enabled=False,
-                    name="PAY-002 并发工资企业",
+    with authenticated_business_database("pay002_salary_race") as (engine, org_id, proof, owner):
+        with Session(engine) as setup:
+            org = setup.get(Organization, org_id)
+            prepare_authenticated_bank_account(
+                setup, org, authority=owner, evidence_id=proof, booking_date=date(2026, 3, 5)
+            )
+            org, _, _, evidence, event = confirmed_payroll(
+                setup, org_id, proof, owner, key="concurrent-withholding"
+            )
+            salary = setup.scalar(
+                select(OpenItem).where(
+                    OpenItem.source_event_id == event.id, OpenItem.payable_category == "salary"
                 )
-                employee_id = register_payroll_facts(setup, organization)
-                preview = _preview(
-                    setup,
-                    organization,
-                    employee_id,
-                    idempotency_key="concurrent-withholding",
+            )
+            salary_id = salary.id
+            requests = []
+            for key, cash, tax in [("first", 425_000, 0), ("second", 414_500, 10_500)]:
+                bank = import_test_bank_transaction(
+                    setup, org, amount_fen=-cash, booking_date=date(2026, 3, 5), key=key
                 )
-                confirmed = _confirm(
-                    setup,
-                    organization,
-                    preview,
-                    "confirm-concurrent-withholding",
-                )
-                assert confirmed.status == "posted", confirmed.errors
-                salary = setup.scalar(
-                    select(OpenItem).where(
-                        OpenItem.source_event_id == confirmed.event_id,
-                        OpenItem.payable_category == "salary",
+                requests.append(
+                    _salary_request(
+                        org,
+                        evidence,
+                        salary,
+                        key=key,
+                        parts=[(500_000, 40_000, 35_000, tax)],
+                        account_code="1002",
+                        bank_transaction_id=bank.id,
                     )
                 )
-                assert salary is not None
-                org_id = organization.id
-                salary_id = salary.id
-                setup.commit()
-                scope_evidence = Evidence(
-                    org_id=org_id,
-                    sha256="2" * 64,
-                    original_name="pay-002-bank-scope.txt",
-                    media_type="text/plain",
-                    source="test",
-                    size_bytes=1,
-                    storage_path="test/pay-002-bank-scope.txt",
+            setup.commit()
+        barrier = Barrier(2)
+
+        def post(request):
+            barrier.wait(timeout=10)
+            with Session(engine) as worker:
+                with owner.attributed_call(worker, tool_name="finance_record_event"):
+                    result = FinanceService(worker).record_event(request)
+                worker.commit()
+                return result
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(post, requests))
+        assert [result.status for result in results] == ["posted", "posted"], results
+        with Session(engine) as verification:
+            salary = verification.get(OpenItem, salary_id)
+            allocations = verification.execute(
+                select(PayrollWithholdingEntitlement, PayrollWithholdingPaymentAllocation)
+                .join(
+                    PayrollWithholdingPaymentAllocation,
+                    PayrollWithholdingPaymentAllocation.entitlement_id
+                    == PayrollWithholdingEntitlement.id,
                 )
-                setup.add(scope_evidence)
-                setup.flush()
-                authority = authenticate_and_confirm_bank_scope(
-                    setup,
-                    organization,
-                    evidence_id=scope_evidence.id,
-                    accounts=[
-                        {
-                            "bank_account_code": "1002",
-                            "account_name": "银行存款",
-                            "start_date": date(2026, 3, 1),
-                        }
-                    ],
+                .where(
+                    PayrollWithholdingEntitlement.org_id == org_id,
+                    PayrollWithholdingPaymentAllocation.reversed.is_(False),
                 )
-                setup.commit()
-
-            requests = [
-                RecordEventRequest.model_validate(
-                    {
-                        "org_id": org_id,
-                        "idempotency_key": "concurrent-salary-payment-1",
-                        "event_type": "salary_payment",
-                        "bank_account_code": "1002",
-                        "business_dates": {
-                            "business_date": "2026-03-05",
-                            "payment_date": "2026-03-05",
-                            "posting_date": "2026-03-05",
-                        },
-                        "amounts": {"amount_fen": 425_000},
-                        "allocations": [{"open_item_id": salary_id, "amount_fen": 500_000}],
-                        "salary_withholding_allocations": [
-                            {
-                                "open_item_id": salary_id,
-                                "employee_social_insurance_items": {"pension": 40_000},
-                                "employee_housing_fund_items": {"housing_fund": 35_000},
-                                "individual_income_tax_fen": 0,
-                            }
-                        ],
-                    }
-                ),
-                RecordEventRequest.model_validate(
-                    {
-                        "org_id": org_id,
-                        "idempotency_key": "concurrent-salary-payment-2",
-                        "event_type": "salary_payment",
-                        "bank_account_code": "1002",
-                        "business_dates": {
-                            "business_date": "2026-03-05",
-                            "payment_date": "2026-03-05",
-                            "posting_date": "2026-03-05",
-                        },
-                        "amounts": {"amount_fen": 414_500},
-                        "allocations": [{"open_item_id": salary_id, "amount_fen": 500_000}],
-                        "salary_withholding_allocations": [
-                            {
-                                "open_item_id": salary_id,
-                                "employee_social_insurance_items": {"pension": 40_000},
-                                "employee_housing_fund_items": {"housing_fund": 35_000},
-                                "individual_income_tax_fen": 10_500,
-                            }
-                        ],
-                    }
-                ),
-            ]
-            barrier = Barrier(2)
-
-            def post(request: RecordEventRequest) -> object:
-                barrier.wait(timeout=10)
-                with factory.begin() as worker:
-                    with authority.attributed_call(worker, tool_name="finance_record_event"):
-                        return FinanceService(worker).record_event(request)
-
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                results = list(executor.map(post, requests))
-
-            assert [result.status for result in results] == ["posted", "posted"]
-            with factory() as verification:
-                salary = verification.get(OpenItem, salary_id)
-                assert salary is not None
-                allocation_rows = verification.execute(
-                    select(PayrollWithholdingEntitlement, PayrollWithholdingPaymentAllocation)
-                    .join(
-                        PayrollWithholdingPaymentAllocation,
-                        PayrollWithholdingPaymentAllocation.entitlement_id
-                        == PayrollWithholdingEntitlement.id,
-                    )
-                    .where(
-                        PayrollWithholdingEntitlement.org_id == org_id,
-                        PayrollWithholdingPaymentAllocation.reversed.is_(False),
-                    )
-                ).all()
-                settlements = verification.scalars(
+            ).all()
+            assert salary.status == "settled"
+            assert salary.settled_amount_fen == salary.original_amount_fen == 1_000_000
+            assert len(allocations) == 5
+            for group, amount in [
+                ("employee_social_insurance", 80_000),
+                ("employee_housing_fund", 70_000),
+                ("individual_income_tax", 10_500),
+            ]:
+                assert (
+                    sum(a.amount_fen for e, a in allocations if e.contribution_group == group)
+                    == amount
+                )
+            settlements = list(
+                verification.scalars(
                     select(Settlement).where(
-                        Settlement.org_id == org_id,
-                        Settlement.open_item_id == salary_id,
-                        Settlement.reversed.is_(False),
+                        Settlement.open_item_id == salary_id, Settlement.reversed.is_(False)
                     )
-                ).all()
-
-                assert salary.status == "settled"
-                assert salary.settled_amount_fen == salary.original_amount_fen == 1_000_000
-                assert len(allocation_rows) == 5
-                assert (
-                    sum(
-                        allocation.amount_fen
-                        for entitlement, allocation in allocation_rows
-                        if entitlement.contribution_group == "employee_social_insurance"
-                    )
-                    == 80_000
                 )
-                assert (
-                    sum(
-                        allocation.amount_fen
-                        for entitlement, allocation in allocation_rows
-                        if entitlement.contribution_group == "employee_housing_fund"
-                    )
-                    == 70_000
-                )
-                assert (
-                    sum(
-                        allocation.amount_fen
-                        for entitlement, allocation in allocation_rows
-                        if entitlement.contribution_group == "individual_income_tax"
-                    )
-                    == 10_500
-                )
-                assert len(settlements) == 2
-                assert sum(item.amount_fen for item in settlements) == 1_000_000
-        finally:
-            engine.dispose()
+            )
+            assert len(settlements) == 2
+            assert sum(row.amount_fen for row in settlements) == 1_000_000
 
 
 @pytest.mark.postgres
 @pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed")
 def test_r2_001_postgres_slot_reservation_accepts_first_and_later_month_connections() -> None:
-    """A first regular confirmation and a later-month confirmation use RETURNING, not rowcount."""
-    from alembic.config import Config
-    from sqlalchemy import create_engine
-    from testcontainers.community.postgres import PostgresContainer
+    """First and later-month tax slots are confirmed on separate real database connections."""
+    from _postgres_helpers import authenticated_business_database, confirmed_payroll
 
-    from alembic import command
-
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        engine = create_engine(url)
-        factory = make_session_factory(engine)
-        try:
-            with factory.begin() as first_connection:
-                organization = seed_organization(
-                    first_connection,
-                    taxpayer_identification_number="91330106MA1234567T",
-                    accounting_period_control_enabled=False,
-                    name="R2-001 跨月企业",
+    with authenticated_business_database("remediation_tax_slots") as (engine, org_id, proof, owner):
+        with Session(engine) as first:
+            _, _, line, _, _ = confirmed_payroll(first, org_id, proof, owner, key="slot-first")
+            employee_id = line.employee_id
+            first.commit()
+        with Session(engine) as later:
+            with owner.attributed_call(later, tool_name="finance_preview_payroll"):
+                preview = FinanceService(later).preview_payroll(
+                    _later_pg_preview(org_id, employee_id, proof, "slot-later-preview")
                 )
-                employee_id = register_payroll_facts(first_connection, organization)
-                first_preview = _preview(
-                    first_connection,
-                    organization,
-                    employee_id,
-                    idempotency_key="r2-001-first-preview",
-                )
-                first_confirmation = _confirm(
-                    first_connection,
-                    organization,
-                    first_preview,
-                    "r2-001-first-confirm",
-                )
-                assert first_confirmation.status == "posted", first_confirmation.errors
-                org_id = organization.id
-
-            with factory.begin() as later_connection:
-                later_request = PreviewPayrollRequest.model_validate(
-                    {
-                        "org_id": org_id,
-                        "idempotency_key": "r2-001-later-preview",
-                        "batch_kind": "regular",
-                        "payroll_period": "2026-04",
-                        "posting_date": "2026-04-05",
-                        "payment_date": "2026-04-05",
-                        "employee_items": [
-                            {
-                                "employee_id": employee_id,
-                                "tax_reported_salary_fen": 1_000_000,
-                                "special_additional_deduction_fen": 0,
-                                "other_legal_deduction_fen": 0,
-                            }
-                        ],
-                    }
-                )
-                later_preview = FinanceService(later_connection).preview_payroll(later_request)
-                assert later_preview.status == "calculated", later_preview.errors
-                later_confirmation = FinanceService(later_connection).confirm_payroll(
+            assert preview.status == "calculated", preview.errors
+            with owner.attributed_call(later, tool_name="finance_confirm_payroll"):
+                confirmed = FinanceService(later).confirm_payroll(
                     ConfirmPayrollRequest(
                         org_id=org_id,
-                        batch_id=later_preview.batch_id,
-                        calculation_hash=later_preview.calculation_hash,
-                        idempotency_key="r2-001-later-confirm",
+                        batch_id=preview.batch_id,
+                        calculation_hash=preview.calculation_hash,
+                        idempotency_key="slot-later-confirm",
                     )
                 )
-                assert later_confirmation.status == "posted", later_confirmation.errors
-        finally:
-            engine.dispose()
+            assert confirmed.status == "posted", confirmed.errors
+            later.commit()
 
 
 @pytest.mark.postgres
 @pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed")
 def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> None:
-    """The database sequence, not a process-local max(version), allocates drafts."""
-    from alembic.config import Config
-    from sqlalchemy import create_engine
-    from testcontainers.community.postgres import PostgresContainer
+    """Concurrent real preview transactions reserve separate monotonic versions."""
+    from _postgres_helpers import authenticated_business_database, confirmed_payroll
 
-    from alembic import command
+    with authenticated_business_database("remediation_preview_race") as (
+        engine,
+        org_id,
+        proof,
+        owner,
+    ):
+        with Session(engine) as setup:
+            _, _, line, _, _ = confirmed_payroll(setup, org_id, proof, owner, key="preview-source")
+            employee_id = line.employee_id
+            setup.commit()
+        barrier = Barrier(2)
 
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        engine = create_engine(url)
-        factory = make_session_factory(engine)
-        try:
-            with factory.begin() as setup:
-                organization = seed_organization(
-                    setup,
-                    taxpayer_identification_number="91330106MA1234567T",
-                    accounting_period_control_enabled=False,
-                    name="PAY-012 并发试算企业",
-                )
-                employee_id = register_payroll_facts(setup, organization)
-                org_id = organization.id
-
-            def request(key: str) -> PreviewPayrollRequest:
-                return PreviewPayrollRequest.model_validate(
-                    {
-                        "org_id": org_id,
-                        "idempotency_key": key,
-                        "batch_kind": "regular",
-                        "payroll_period": "2026-04",
-                        "posting_date": "2026-04-05",
-                        "payment_date": "2026-04-05",
-                        "employee_items": [
-                            {
-                                "employee_id": employee_id,
-                                "tax_reported_salary_fen": 1_000_000,
-                                "special_additional_deduction_fen": 0,
-                                "other_legal_deduction_fen": 0,
-                            }
-                        ],
-                    }
-                )
-
-            barrier = Barrier(2)
-
-            def preview(request: PreviewPayrollRequest) -> object:
-                barrier.wait(timeout=10)
-                with factory.begin() as worker:
-                    return FinanceService(worker).preview_payroll(request)
-
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                results = list(
-                    executor.map(
-                        preview,
-                        [request("concurrent-preview-1"), request("concurrent-preview-2")],
+        def preview(key):
+            barrier.wait(timeout=10)
+            with Session(engine) as worker:
+                with owner.attributed_call(worker, tool_name="finance_preview_payroll"):
+                    result = FinanceService(worker).preview_payroll(
+                        _later_pg_preview(org_id, employee_id, proof, key)
                     )
-                )
+                worker.commit()
+                return result
 
-            assert [result.status for result in results] == ["calculated", "calculated"]
-            with factory() as verification:
-                batches = verification.scalars(
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(preview, ["preview-one", "preview-two"]))
+        assert [r.status for r in results] == ["calculated", "calculated"], results
+        with Session(engine) as verification:
+            batches = list(
+                verification.scalars(
                     select(PayrollBatch)
                     .where(
                         PayrollBatch.org_id == org_id,
@@ -990,11 +839,10 @@ def test_pay_012_concurrent_previews_receive_distinct_database_versions() -> Non
                         PayrollBatch.payroll_period == "2026-04",
                     )
                     .order_by(PayrollBatch.version)
-                ).all()
-                assert [batch.version for batch in batches] == [1, 2]
-                assert [batch.status for batch in batches] == ["superseded", "calculated"]
-        finally:
-            engine.dispose()
+                )
+            )
+            assert [b.version for b in batches] == [1, 2]
+            assert [b.status for b in batches] == ["superseded", "calculated"]
 
 
 def test_pay_013_zero_cash_salary_settlement_and_pay_009_lifecycle_query(
@@ -1017,26 +865,32 @@ def test_pay_013_zero_cash_salary_settlement_and_pay_009_lifecycle_query(
         )
     )
     assert salary is not None
+    source_event = session.get(BusinessEvent, confirmed.event_id)
+    assert source_event is not None and source_event.evidence
 
     zero_cash = FinanceService(session).record_event(
         RecordEventRequest.model_validate(
             {
                 "org_id": organization.id,
                 "idempotency_key": "zero-cash-salary-payment",
-                "event_type": "salary_payment",
-                "business_dates": {
-                    "business_date": "2026-03-05",
-                    "payment_date": "2026-03-05",
-                    "posting_date": "2026-03-05",
-                },
-                "amounts": {"amount_fen": 0},
-                "allocations": [{"open_item_id": salary.id, "amount_fen": 150_000}],
-                "salary_withholding_allocations": [
+                "posting_date": "2026-03-05",
+                "evidence_references": [source_event.evidence[0].id],
+                "components": [
                     {
-                        "open_item_id": salary.id,
-                        "employee_social_insurance_items": {"pension": 80_000},
-                        "employee_housing_fund_items": {"housing_fund": 70_000},
-                        "individual_income_tax_fen": 0,
+                        "key": "salary",
+                        "kind": "salary_settlement",
+                        "business_date": "2026-03-05",
+                        "payment_date": "2026-03-05",
+                        "amount_fen": 0,
+                        "allocations": [{"open_item_id": salary.id, "amount_fen": 150_000}],
+                        "withholding_allocations": [
+                            {
+                                "open_item_id": salary.id,
+                                "employee_social_insurance_items": {"pension": 80_000},
+                                "employee_housing_fund_items": {"housing_fund": 70_000},
+                                "individual_income_tax_fen": 0,
+                            }
+                        ],
                     }
                 ],
             }
@@ -1067,7 +921,7 @@ def test_pay_013_zero_cash_salary_settlement_and_pay_009_lifecycle_query(
     assert lifecycle["lifecycle"]["payments"] == [
         {
             "event_id": str(zero_cash.event_id),
-            "event_type": "salary_payment",
+            "event_type": "composite",
             "bank_transactions": [],
             "bank_match_history": [],
         }
@@ -1100,3 +954,24 @@ def test_pay_015_reversal_batch_is_finalized_only_after_copying_payroll_lines(
     assert session.scalars(
         select(PayrollLine).where(PayrollLine.payroll_batch_id == reversal_batch.id)
     ).all()
+
+
+def _later_pg_preview(org_id, employee_id, evidence_id, key):
+    return PreviewPayrollRequest.model_validate(
+        {
+            "org_id": org_id,
+            "idempotency_key": key,
+            "batch_kind": "regular",
+            "payroll_period": "2026-04",
+            "posting_date": "2026-04-05",
+            "evidence_references": [evidence_id],
+            "employee_items": [
+                {
+                    "employee_id": employee_id,
+                    "tax_reported_salary_fen": 1_000_000,
+                    "special_additional_deduction_fen": 0,
+                    "other_legal_deduction_fen": 0,
+                }
+            ],
+        }
+    )

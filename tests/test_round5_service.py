@@ -8,6 +8,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_payroll_service import (
+    payroll_evidence,
     payroll_parameters,
     preview_and_confirm,
     register_payroll_facts,
@@ -157,11 +158,13 @@ def test_r5_004_opening_correction_blocks_all_later_payroll_kinds(
     )
     opening = service.register_payroll_opening_state(opening_request)
     assert opening["status"] == "registered"
+    evidence = payroll_evidence(session, organization, "r5-opening-correction-payroll")
     preview = _preview(
         service,
         organization.id,
         employee_id,
         idempotency_key="r5-opening-correction-preview",
+        evidence_references=[evidence.id],
     )
     assert preview.status == "calculated", preview.errors
     confirmed = service.confirm_payroll(

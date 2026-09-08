@@ -12,8 +12,7 @@ from mcp.client.stdio import stdio_client
 SENTINEL = (
     "R4-SECRET-UNKNOWN-987654 postgresql://user:password@db.internal/payroll "
     "SELECT * FROM employees WHERE id='110101199001011234' "
-    "6222020202020202 "
-    + "X" * 4096
+    "6222020202020202 " + "X" * 4096
 )
 SQL_SENTINEL = f"SELECT * FROM payroll WHERE secret = {SENTINEL}"
 
@@ -39,7 +38,7 @@ def _stdio_environment() -> dict[str, str]:
 
 
 def _raising_stdio_program(exception_statement: str) -> str:
-    function_source = "def boom(event_type=None):\n    " + exception_statement
+    function_source = "def boom(component_type=None):\n    " + exception_statement
     # ``-c`` receives one Windows command-line argument; semicolons keep this
     # program syntactically single-line while the injected function itself is
     # still compiled with a real newline by ``exec``.
@@ -118,7 +117,7 @@ def test_r4_010_stdio_outer_tool_boundary_never_leaks_unknown_exceptions(
             async with ClientSession(read_stream, write_stream) as client:
                 await client.initialize()
                 response = await client.call_tool(
-                    "finance_get_event_schema", {"event_type": "expense_cash"}
+                    "finance_get_event_schema", {"component_type": "expense"}
                 )
                 assert response.isError is True
                 return "\\n".join(item.text for item in response.content)

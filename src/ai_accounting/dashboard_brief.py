@@ -21,6 +21,7 @@ from .models import (
     AccountingPeriodClose,
     AccountingPeriodCloseCommentary,
     BusinessEvent,
+    BusinessEventComponent,
     Counterparty,
     Employee,
     OpenItem,
@@ -45,62 +46,39 @@ ACTIVITY_GROUPS = {
     "other": "其他业务",
 }
 
-EVENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
-    "service_cash_sale": ("income_customer", "现款服务收入"),
-    "service_credit_sale": ("income_customer", "赊销服务收入"),
-    "service_fulfillment": ("income_customer", "服务履约确认"),
-    "customer_receipt": ("income_customer", "客户回款"),
-    "pass_through_payment": ("fund_movement", "代收款支付"),
+COMPONENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
+    "expense": ("expense_supplier", "费用"),
+    "service_sale": ("income_customer", "服务收入"),
     "customer_advance": ("income_customer", "客户预收款"),
+    "service_fulfillment": ("income_customer", "服务履约确认"),
     "customer_refund": ("income_customer", "客户退款"),
-    "other_income_received": ("income_customer", "营业外收入"),
-    "bank_interest_received": ("income_customer", "银行存款利息"),
-    "expense_cash": ("expense_supplier", "现付费用"),
-    "expense_recovery_received": ("expense_supplier", "费用退回"),
-    "expense_payable": ("expense_supplier", "应付费用"),
-    "supplier_payment": ("expense_supplier", "供应商付款"),
-    "bank_fee": ("expense_supplier", "银行手续费"),
-    "inventory": ("expense_supplier", "存货事项"),
-    "employee_reimbursement": ("employee_reimbursement", "报销确认"),
-    "employee_reimbursement_payment": ("employee_reimbursement", "报销付款"),
-    "payroll": ("payroll", "工资事项"),
-    "payroll_accrual": ("payroll", "工资计提"),
-    "payroll_contribution_supplement": ("payroll", "社保公积金实缴情补录"),
-    "salary_payment": ("payroll", "工资结算"),
-    "social_insurance_payment": ("payroll", "社保缴纳"),
-    "housing_fund_payment": ("payroll", "公积金缴纳"),
-    "individual_income_tax_payment": ("payroll", "工资个税缴纳"),
-    "labor_remuneration_accrual": ("labor", "个人劳务计提"),
-    "unified_payout_run": ("labor", "工资与劳务统一付款"),
-    "labor_withholding_tax_payment": ("labor", "劳务个税缴纳"),
-    "tax_payment": ("tax", "税费缴纳"),
-    "tax_relief": ("tax", "税费减免"),
-    "enterprise_income_tax_assessment": ("tax", "企业所得税季度确认"),
-    "enterprise_income_tax_result": ("tax", "企业所得税更正及汇算调整"),
-    "enterprise_income_tax_refund": ("tax", "企业所得税退税"),
-    "fixed_asset": ("assets", "固定资产事项"),
+    "receivable_settlement": ("income_customer", "应收款结算"),
+    "payable_settlement": ("expense_supplier", "应付款结算"),
+    "pass_through": ("fund_movement", "代收代付"),
+    "debt_transfer": ("fund_movement", "债务转移"),
+    "refundable_deposit": ("fund_movement", "可退保证金"),
+    "owner_funding": ("financing_owner", "股东投入或借款"),
+    "other_income": ("income_customer", "其他收入"),
+    "managed_account_return": ("expense_supplier", "备用金退回"),
+    "expense_recovery": ("expense_supplier", "费用退回"),
+    "expense_reserve_settlement": ("expense_supplier", "费用备用金结算"),
+    "funds_transfer": ("fund_movement", "资金调拨"),
+    "tax_settlement": ("tax", "税费结算"),
+    "salary_settlement": ("payroll", "工资与社保结算"),
+    "labor_settlement": ("labor", "个人劳务结算"),
+    "labor_tax_settlement": ("labor", "劳务个税结算"),
     "fixed_asset_acquisition": ("assets", "固定资产购置"),
     "fixed_asset_activation": ("assets", "固定资产启用"),
     "fixed_asset_depreciation": ("assets", "固定资产折旧"),
+    "fixed_asset_depreciation_batch": ("assets", "固定资产折旧汇总"),
     "fixed_asset_disposal": ("assets", "固定资产处置"),
-    "intangible_asset": ("assets", "无形资产事项"),
     "intangible_asset_acquisition": ("assets", "无形资产购置"),
     "intangible_asset_amortization": ("assets", "无形资产摊销"),
     "intangible_asset_retirement": ("assets", "无形资产退役"),
-    "owner_loan_received": ("financing_owner", "股东借款"),
-    "owner_contribution_received": ("financing_owner", "股东投入"),
-    "owner_repayment": ("financing_owner", "归还股东款"),
-    "loan_interest": ("financing_owner", "借款利息事项"),
     "borrowing_drawdown": ("financing_owner", "借款到账"),
     "borrowing_interest_accrual": ("financing_owner", "借款利息计提"),
     "borrowing_interest_payment": ("financing_owner", "借款利息支付"),
     "borrowing_principal_repayment": ("financing_owner", "借款本金归还"),
-    "refundable_deposit_paid": ("fund_movement", "可退保证金支付"),
-    "refundable_deposit_return_received": ("fund_movement", "可退保证金收回"),
-    "internal_transfer": ("fund_movement", "银行账户内部转账"),
-    "cash_bank_transfer": ("fund_movement", "现金与银行互转"),
-    "payment_platform_transfer": ("fund_movement", "银行与支付平台互转"),
-    "reversal": ("correction", "冲正凭证"),
 }
 
 OPEN_ITEM_CONFIGS = {
@@ -167,22 +145,8 @@ def load_brief_dashboard(
             as_of_date=period.end_date,
             counterparties=counterparties,
         )
-        period_open_items["refundable_deposit_receivables"] = _load_refundable_deposit_balances(
-            session,
-            org_id=organization.id,
-            origin_end_date=period.end_date,
-            as_of_date=period.end_date,
-            counterparties=counterparties,
-        )
         open_items = _finalize_open_items(period_open_items)
         current_items = _load_open_items(
-            session,
-            org_id=organization.id,
-            origin_end_date=period.end_date,
-            as_of_date=None,
-            counterparties=counterparties,
-        )
-        current_items["refundable_deposit_receivables"] = _load_refundable_deposit_balances(
             session,
             org_id=organization.id,
             origin_end_date=period.end_date,
@@ -305,24 +269,79 @@ def _counterparty_names(session: Session, org_id: uuid.UUID) -> dict[uuid.UUID, 
     return result
 
 
-def _event_presentation(event_type: str) -> tuple[str, str]:
-    return EVENT_PRESENTATIONS.get(event_type, ("other", "其他业务"))
+def _component_presentation(kind: str) -> tuple[str, str]:
+    return COMPONENT_PRESENTATIONS.get(kind, ("other", kind or "其他业务"))
 
 
-def _voucher_event_label(event: BusinessEvent) -> str:
-    _, label = _event_presentation(event.event_type)
-    if event.event_type != "customer_receipt":
-        return label
-    facts = event.facts if isinstance(event.facts, dict) else {}
-    derived = facts.get("derived")
-    if isinstance(derived, dict) and derived.get("pass_through_fen", 0) > 0:
-        return "客户回款及代收款" if derived.get("allocated_fen", 0) > 0 else "代收款到账"
-    transfer_fen = (
-        derived.get("deferred_output_vat_transfer_fen") if isinstance(derived, dict) else None
-    )
-    if isinstance(transfer_fen, int) and not isinstance(transfer_fen, bool) and transfer_fen > 0:
-        return "客户回款及增值税结转"
-    return label
+def _source_references(
+    facts: dict[str, Any], derived: dict[str, Any] | None = None
+) -> list[dict[str, str]]:
+    """Project normalized component dependencies without interpreting descriptions."""
+
+    references: list[dict[str, str]] = []
+
+    def add(reference_type: str, value: object) -> None:
+        if value is None or value == "":
+            return
+        item = {"type": reference_type, "value": str(value)}
+        if item not in references:
+            references.append(item)
+
+    for key in facts.get("depends_on", []):
+        add("component_key", key)
+    for evidence_id in facts.get("evidence_references", []):
+        add("evidence_id", evidence_id)
+    for transaction in facts.get("bank_transaction_references", []):
+        if isinstance(transaction, dict):
+            add("bank_transaction_id", transaction.get("id"))
+    source = facts.get("source")
+    if isinstance(source, dict):
+        add("component_id", source.get("component_id"))
+        add("component_key", source.get("component_key"))
+    add("open_item_id", facts.get("source_open_item_id"))
+    add("component_key", facts.get("source_component_key"))
+    add("component_key", facts.get("accrual_component_key"))
+    add("borrowing_id", facts.get("borrowing_id"))
+    add("accrual_event_id", facts.get("accrual_event_id"))
+    for allocation in facts.get("allocations", []):
+        if not isinstance(allocation, dict):
+            continue
+        add("allocated_component_key", allocation.get("component_key"))
+        add("open_item_id", allocation.get("open_item_id"))
+        add("component_key", allocation.get("source_component_key"))
+        for source_allocation in allocation.get("source_allocations", []):
+            if isinstance(source_allocation, dict):
+                add("open_item_id", source_allocation.get("open_item_id"))
+                add("component_key", source_allocation.get("source_component_key"))
+    for allocation in (derived or {}).get("receipt_allocations", []):
+        add("component_id", allocation.get("source_component_id"))
+        add("component_id", allocation.get("receipt_component_id"))
+    return references
+
+
+def _component_view(
+    component: BusinessEventComponent,
+    *,
+    lines: list[dict[str, Any]],
+) -> dict[str, Any]:
+    component_lines = [line for line in lines if line["component_id"] == str(component.id)]
+    debit_fen = sum(line["debit_fen"] for line in component_lines)
+    credit_fen = sum(line["credit_fen"] for line in component_lines)
+    group, label = _component_presentation(component.kind)
+    facts = component.facts if isinstance(component.facts, dict) else {}
+    return {
+        "id": str(component.id),
+        "key": component.key,
+        "kind": component.kind,
+        "group": group,
+        "label": label,
+        "description": facts.get("description", ""),
+        "amount_fen": max(debit_fen, credit_fen),
+        "parties": sorted({line["party"] for line in component_lines if line["party"]}),
+        "facts": facts,
+        "derived": component.derived if isinstance(component.derived, dict) else {},
+        "source_references": _source_references(facts, component.derived),
+    }
 
 
 def _load_vouchers(
@@ -348,6 +367,18 @@ def _load_vouchers(
             .order_by(Voucher.posting_date, Voucher.voucher_number)
         )
     )
+    components_by_event: dict[uuid.UUID, list[BusinessEventComponent]] = defaultdict(list)
+    if vouchers:
+        components = session.scalars(
+            select(BusinessEventComponent)
+            .where(
+                BusinessEventComponent.org_id == org_id,
+                BusinessEventComponent.event_id.in_([voucher.event_id for voucher in vouchers]),
+            )
+            .order_by(BusinessEventComponent.event_id, BusinessEventComponent.ordinal)
+        ).all()
+        for component in components:
+            components_by_event[component.event_id].append(component)
     records = []
     for voucher in vouchers:
         lines = [
@@ -356,6 +387,8 @@ def _load_vouchers(
                 "code": line.account.code,
                 "account": line.account.name,
                 "system_role": line.account.system_role,
+                "business_class": line.account.business_class,
+                "component_id": str(line.component_id) if line.component_id else None,
                 "debit_fen": line.debit_fen,
                 "credit_fen": line.credit_fen,
                 "party": counterparties.get(line.counterparty_id, "")
@@ -367,128 +400,35 @@ def _load_vouchers(
         debit_fen = sum(line["debit_fen"] for line in lines)
         credit_fen = sum(line["credit_fen"] for line in lines)
         parties = sorted({line["party"] for line in lines if line["party"]})
+        components = [
+            _component_view(component, lines=lines)
+            for component in components_by_event.get(voucher.event_id, [])
+        ]
+        business_components = [item for item in components if item["kind"] != "funds"]
+        component_labels = list(dict.fromkeys(item["label"] for item in business_components))
         item = {
             "number": voucher.voucher_number,
             "date": voucher.posting_date.isoformat(),
-            "event_type": voucher.event.event_type,
-            "type": _voucher_event_label(voucher.event),
-            "status": voucher.status,
+            "type": "、".join(component_labels) or "其他业务",
+            "status": "reversed" if voucher.event.status == "reversed" else voucher.status,
             "state": "冲正入账"
             if voucher.reversal_of_voucher_id is not None
             else "已在后续期间冲正"
-            if voucher.status == "reversed"
+            if voucher.event.status == "reversed"
             else "已入账",
             "is_reversal": voucher.reversal_of_voucher_id is not None,
             "summary": voucher.description,
-            "list_summary": _compact_voucher_summary(
-                event=voucher.event,
-                description=voucher.description,
-                parties=parties,
-            ),
+            "list_summary": _first_summary_clause(voucher.description),
             "amount_fen": debit_fen,
             "parties": parties,
             "evidence": sorted(item.original_name for item in voucher.event.evidence),
+            "components": business_components,
+            "funds": [item for item in components if item["kind"] == "funds"],
             "lines": lines,
             "balanced": debit_fen == credit_fen,
         }
         records.append((voucher, item))
     return records
-
-
-def _compact_voucher_summary(
-    *,
-    event: BusinessEvent,
-    description: str,
-    parties: list[str],
-) -> str:
-    facts = event.facts if isinstance(event.facts, dict) else {}
-    counterparty = facts.get("counterparty")
-    party = (counterparty.get("name", "") if isinstance(counterparty, dict) else "") or (
-        parties[0] if parties else ""
-    )
-    period_label = f"{event.business_date.year}年{event.business_date.month}月"
-    if event.event_type == "owner_contribution_received":
-        return f"{party or '股东'}投入实收资本"
-    if event.event_type == "fixed_asset_acquisition":
-        asset_name = facts.get("asset_name")
-        if isinstance(asset_name, str) and asset_name.strip():
-            return asset_name.strip()
-    if event.event_type == "employee_reimbursement_payment":
-        derived = facts.get("derived")
-        if isinstance(derived, dict) and derived.get("settlement_method") == "cash":
-            return f"{party or '个人'}备用金报销"
-        if (
-            isinstance(derived, dict)
-            and derived.get("settlement_method") == "owner_managed_reserve"
-        ):
-            return f"{party or '个人'}老板备用金报销"
-        return f"{party or '个人'}垫付款清偿"
-    if event.event_type == "other_income_received":
-        details = facts.get("details")
-        if (
-            isinstance(details, dict)
-            and details.get("other_income_kind") == "retained_verification_payment"
-        ):
-            return "商户小额验证款转营业外收入"
-        return "营业外收入确认"
-    if event.event_type == "expense_recovery_received":
-        return "运营备用金退回银行"
-    if event.event_type == "bank_interest_received":
-        return f"{period_label}银行存款利息"
-    if event.event_type == "refundable_deposit_paid":
-        return f"{party or '往来方'}保证金"
-    if event.event_type == "refundable_deposit_return_received":
-        return f"{party or '往来方'}保证金"
-    if event.event_type == "employee_reimbursement":
-        derived = facts.get("derived")
-        if isinstance(derived, dict) and derived.get("reimbursement_kind") == "existing_payable":
-            return f"{party or '个人'}代偿既有应付款"
-        compact = description.strip().rstrip("。")
-        for prefix in (
-            f"登记{party}垫付的",
-            f"登记{party}垫付",
-            f"确认报销{party}垫付的",
-            f"确认报销{party}垫付",
-            f"报销{party}垫付的",
-            f"报销{party}垫付",
-        ):
-            if party and compact.startswith(prefix):
-                compact = compact[len(prefix) :]
-                break
-        subject = _first_summary_clause(compact).replace("中的费用部分", "（费用部分）")
-        return f"{party} · {subject}" if party else subject
-
-    if event.event_type == "payroll_accrual":
-        first_clause = _first_summary_clause(description)
-        return first_clause if len(first_clause) <= 20 else f"{period_label}工资与社保"
-    if event.event_type == "labor_remuneration_accrual":
-        return f"{period_label}个人劳务"
-    if event.event_type == "fixed_asset_depreciation":
-        return f"{period_label}月度汇总"
-    if event.event_type == "intangible_asset_amortization":
-        return f"{period_label}月度汇总"
-
-    if event.event_type in {"service_cash_sale", "service_credit_sale", "service_fulfillment"}:
-        return f"{party or '客户'}服务收入"
-
-    party_subjects = {
-        "customer_receipt": ("收到", "回款"),
-        "customer_advance": ("收到", "预付款"),
-        "customer_refund": ("退还", "款项"),
-        "expense_cash": ("支付", "费用"),
-        "expense_recovery_received": ("收回", "费用款"),
-        "expense_payable": ("确认", "应付费用"),
-        "supplier_payment": ("支付", "供应商款"),
-        "pass_through_payment": ("支付", "代收款"),
-        "owner_loan_received": ("收到", "借款"),
-        "owner_repayment": ("归还", "款项"),
-    }
-    if event.event_type in party_subjects:
-        action, subject = party_subjects[event.event_type]
-        return f"{action}{party or '往来方'}{subject}"
-    if event.event_type == "bank_fee":
-        return "支付银行手续费"
-    return _first_summary_clause(description)
 
 
 def _first_summary_clause(description: str) -> str:
@@ -502,41 +442,51 @@ def _build_activity_groups(
     voucher_records: list[tuple[Voucher, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
-    for voucher, item in voucher_records:
-        group_key, _label = _event_presentation(item["event_type"])
-        event_label = item["type"]
-        if item["is_reversal"]:
-            group_key = "correction"
-            event_label = f"{event_label}冲正"
-        elif _is_refundable_deposit_event(voucher.event):
-            group_key = "fund_movement"
-            if item["event_type"] == "employee_reimbursement":
-                event_label = "员工垫付可退保证金"
-        group = grouped.setdefault(
-            group_key,
-            {
-                "key": group_key,
-                "label": ACTIVITY_GROUPS[group_key],
-                "event_count": 0,
-                "type_counts": Counter(),
-                "rows": [],
-            },
-        )
-        group["event_count"] += 1
-        group["type_counts"][event_label] += 1
-        group["rows"].append(
-            {
-                "date": item["date"],
-                "reference": item["number"],
-                "title": event_label,
-                "subject": item["list_summary"],
-                "description": item["summary"],
-                "amount_fen": item["amount_fen"],
-                "state": item["state"],
-                "party": "、".join(item["parties"]),
-                "evidence": item["evidence"],
-            }
-        )
+    for _voucher, item in voucher_records:
+        by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for component in item["components"]:
+            by_group[component["group"]].append(component)
+        if not by_group:
+            by_group["other"] = []
+        for component_group, components in by_group.items():
+            group_key = "correction" if item["is_reversal"] else component_group
+            labels = list(dict.fromkeys(component["label"] for component in components))
+            event_label = "、".join(labels) or "其他业务"
+            if item["is_reversal"]:
+                event_label = f"{event_label}冲正"
+            group = grouped.setdefault(
+                group_key,
+                {
+                    "key": group_key,
+                    "label": ACTIVITY_GROUPS[group_key],
+                    "event_count": 0,
+                    "type_counts": Counter(),
+                    "rows": [],
+                },
+            )
+            group["event_count"] += 1
+            for label in labels or [event_label]:
+                group["type_counts"][label] += 1
+            group["rows"].append(
+                {
+                    "date": item["date"],
+                    "reference": item["number"],
+                    "title": event_label,
+                    "subject": item["list_summary"],
+                    "description": item["summary"],
+                    "amount_fen": sum(component["amount_fen"] for component in components)
+                    or item["amount_fen"],
+                    "state": item["state"],
+                    "party": "、".join(
+                        sorted(
+                            {party for component in components for party in component["parties"]}
+                        )
+                    ),
+                    "evidence": item["evidence"],
+                    "components": components,
+                    "funds": item["funds"],
+                }
+            )
     result = []
     for key in ACTIVITY_GROUPS:
         group = grouped.get(key)
@@ -566,6 +516,7 @@ def _load_account_balances(
             Account.category,
             Account.normal_side,
             Account.system_role,
+            Account.business_class,
             Account.requires_bank_reconciliation,
             debit.label("debit_fen"),
             credit.label("credit_fen"),
@@ -583,6 +534,7 @@ def _load_account_balances(
             Account.category,
             Account.normal_side,
             Account.system_role,
+            Account.business_class,
             Account.requires_bank_reconciliation,
         )
     )
@@ -603,7 +555,10 @@ def _load_account_balances(
             {
                 "category": row.category,
                 "system_role": row.system_role,
-                "bank": bool(row.requires_bank_reconciliation) or row.system_role == "bank",
+                "business_class": row.business_class,
+                "classification": row.business_class or row.system_role,
+                "bank": bool(row.requires_bank_reconciliation)
+                or (row.business_class or row.system_role) == "bank",
                 "category_fen": debit_fen - credit_fen
                 if category_side == "debit"
                 else credit_fen - debit_fen,
@@ -618,7 +573,7 @@ def _position_metrics(balances: list[dict[str, Any]]) -> dict[str, int]:
             item["category_fen"]
             for item in balances
             if (category is None or item["category"] == category)
-            and (role is None or item["system_role"] == role)
+            and (role is None or item["classification"] == role)
         )
 
     bank_fen = sum(item["category_fen"] for item in balances if item["bank"])
@@ -663,7 +618,7 @@ def _load_open_items(
         select(
             OpenItem,
             BusinessEvent.description,
-            BusinessEvent.event_type,
+            BusinessEventComponent.kind,
             Voucher.voucher_number,
             Counterparty.name,
             Counterparty.kind,
@@ -674,6 +629,13 @@ def _load_open_items(
             and_(
                 BusinessEvent.org_id == OpenItem.org_id,
                 BusinessEvent.id == OpenItem.source_event_id,
+            ),
+        )
+        .outerjoin(
+            BusinessEventComponent,
+            and_(
+                BusinessEventComponent.org_id == OpenItem.org_id,
+                BusinessEventComponent.id == OpenItem.source_component_id,
             ),
         )
         .join(
@@ -726,7 +688,7 @@ def _load_open_items(
     for (
         open_item,
         description,
-        event_type,
+        component_kind,
         voucher_number,
         party,
         party_kind,
@@ -741,7 +703,7 @@ def _load_open_items(
         if open_item.item_type == "receivable":
             category = (
                 "refundable_deposit_receivables"
-                if event_type == "refundable_deposit_paid"
+                if component_kind == "refundable_deposit"
                 else "customer_receivables"
                 if party_kind == "customer"
                 else "other_receivables"
@@ -750,7 +712,7 @@ def _load_open_items(
             category = "labor_payables"
         elif open_item.payable_category is not None:
             category = "payroll_payables"
-        elif event_type == "employee_reimbursement" or party_kind == "employee":
+        elif party_kind == "employee":
             category = "employee_payables"
         elif party_kind == "supplier":
             category = "supplier_payables"
@@ -766,121 +728,6 @@ def _load_open_items(
             }
         )
     return {key: _summarize_open_items(items) for key, items in buckets.items()}
-
-
-def _load_refundable_deposit_balances(
-    session: Session,
-    *,
-    org_id: uuid.UUID,
-    origin_end_date: Any,
-    as_of_date: Any | None,
-    counterparties: dict[uuid.UUID, str],
-) -> dict[str, Any]:
-    query = (
-        select(Voucher)
-        .where(
-            Voucher.org_id == org_id,
-            Voucher.status.in_(FINAL_VOUCHER_STATUSES),
-        )
-        .options(
-            selectinload(Voucher.lines).joinedload(VoucherLine.account),
-            joinedload(Voucher.event),
-        )
-        .order_by(Voucher.posting_date, Voucher.voucher_number)
-    )
-    if as_of_date is not None:
-        query = query.where(Voucher.posting_date <= as_of_date)
-    vouchers = list(session.scalars(query))
-    source_voucher_ids = {
-        voucher.id
-        for voucher in vouchers
-        if voucher.posting_date <= origin_end_date
-        and _is_refundable_deposit_source_event(voucher.event)
-    }
-    return_voucher_ids = {
-        voucher.id
-        for voucher in vouchers
-        if voucher.event.event_type == "refundable_deposit_return_received"
-    }
-    related_voucher_ids = source_voucher_ids | return_voucher_ids
-    source_party_ids = {
-        line.counterparty_id
-        for voucher in vouchers
-        if voucher.id in source_voucher_ids
-        for line in voucher.lines
-        if line.account.system_role == "employee_receivable"
-        and line.counterparty_id is not None
-        and line.debit_fen > 0
-    }
-    balance_by_party: dict[str, int] = defaultdict(int)
-    source_references: dict[str, set[str]] = defaultdict(set)
-    for voucher in vouchers:
-        if (
-            voucher.id not in related_voucher_ids
-            and voucher.reversal_of_voucher_id not in related_voucher_ids
-        ):
-            continue
-        for line in voucher.lines:
-            if (
-                line.account.system_role != "employee_receivable"
-                or line.counterparty_id not in source_party_ids
-            ):
-                continue
-            party = counterparties.get(line.counterparty_id, "未命名保证金对方")
-            balance_by_party[party] += line.debit_fen - line.credit_fen
-            if voucher.id in source_voucher_ids and line.debit_fen > 0:
-                source_references[party].add(voucher.voucher_number)
-    groups = []
-    items = []
-    for party, outstanding_fen in balance_by_party.items():
-        if outstanding_fen <= 0:
-            continue
-        references = sorted(source_references[party])
-        groups.append(
-            {
-                "party": party,
-                "count": len(references) or 1,
-                "outstanding_fen": outstanding_fen,
-                "open_count": len(references) or 1,
-                "partial_count": 0,
-            }
-        )
-        items.append(
-            {
-                "voucher": "、".join(references) if references else "账面余额",
-                "party": party,
-                "description": "可退保证金账面余额",
-                "status": "open",
-                "outstanding_fen": outstanding_fen,
-            }
-        )
-    groups.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
-    items.sort(key=lambda item: (-item["outstanding_fen"], item["party"]))
-    return {
-        "count": len(items),
-        "outstanding_fen": sum(item["outstanding_fen"] for item in items),
-        "groups": groups,
-        "items": items,
-    }
-
-
-def _is_refundable_deposit_event(event: BusinessEvent) -> bool:
-    return event.event_type == "refundable_deposit_return_received" or (
-        _is_refundable_deposit_source_event(event)
-    )
-
-
-def _is_refundable_deposit_source_event(event: BusinessEvent) -> bool:
-    if event.event_type == "refundable_deposit_paid":
-        return True
-    if event.event_type != "employee_reimbursement":
-        return False
-    facts = event.facts if isinstance(event.facts, dict) else {}
-    derived = facts.get("derived")
-    details = facts.get("details")
-    return (
-        isinstance(derived, dict) and derived.get("reimbursement_kind") == "refundable_deposit"
-    ) or (isinstance(details, dict) and details.get("reimbursement_kind") == "refundable_deposit")
 
 
 def _summarize_open_items(items: list[dict[str, Any]]) -> dict[str, Any]:

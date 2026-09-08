@@ -14,38 +14,33 @@ from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from .component_schemas import RecordEventRequest
 from .labor_remuneration_schemas import (
     ConfirmLaborExternalDeclarationRequest,
     ConfirmLaborRemunerationBatchRequest,
-    ConfirmUnifiedPayoutRunRequest,
     EndLaborServicePersonRequest,
     GetLaborRemunerationRequest,
     LaborInformationRequirement,
     LaborResult,
     LaborResultStatus,
-    PayLaborWithholdingTaxRequest,
     PreviewLaborRemunerationBatchRequest,
-    PreviewUnifiedPayoutRunRequest,
     RegisterLaborServicePersonRequest,
 )
 from .ledger import (
     AccountingPeriodError,
+    ComponentPostingPlan,
     Entry,
     OpenItemPlan,
     assert_period_open,
-    build_business_event,
-    create_open_items,
-    create_voucher,
 )
 from .models import (
     AuditLog,
-    BankTransaction,
-    BankTransactionMatch,
     BusinessEvent,
+    BusinessEventComponent,
     Counterparty,
     Employee,
     Evidence,
@@ -61,21 +56,10 @@ from .models import (
     LaborServicePersonEndActionEvidence,
     LaborServicePersonEvidence,
     LaborWithholdingEntitlement,
-    LaborWithholdingOpenItemSource,
-    LaborWithholdingTaxPaymentAllocation,
-    OpenItem,
     Organization,
-    PayrollEventLink,
-    PayrollSalaryActualDeductionAllocation,
-    PayrollWithholdingPaymentAllocation,
-    Settlement,
-    UnifiedPayoutRun,
-    UnifiedPayoutRunBankTransaction,
-    UnifiedPayoutRunEvidence,
-    UnifiedPayoutRunItem,
     Voucher,
 )
-from .schemas import RecordEventRequest, ResultStatus, ReverseEventRequest
+from .schemas import ResultStatus, ReverseEventRequest
 from .service import FinanceService
 
 POLICY_CODE = "cn_resident_labor_remuneration_withholding"
@@ -701,721 +685,220 @@ class LaborRemunerationService:
             },
         )
 
-    def confirm_batch(self, request: ConfirmLaborRemunerationBatchRequest) -> LaborResult:
-        request_hash = self._hash(request.model_dump(mode="json"))
-        try:
-            with self.session.begin_nested():
-                existing_event = self.session.scalar(
-                    select(BusinessEvent).where(
-                        BusinessEvent.org_id == request.org_id,
-                        BusinessEvent.idempotency_key == request.idempotency_key,
-                    )
+    def compile_accrual_component(self, component) -> tuple[ComponentPostingPlan, list[uuid.UUID]]:
+        from .component_service import MissingFacts
+
+        request = self._active_component_request
+        batch = self.session.scalar(
+            select(LaborRemunerationBatch)
+            .where(
+                LaborRemunerationBatch.org_id == request.org_id,
+                LaborRemunerationBatch.id == component.batch_id,
+            )
+            .with_for_update()
+        )
+        if batch is None:
+            raise ValueError("LABOR_BATCH_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
+        if batch.status != "calculated" or batch.business_event_id is not None:
+            raise ValueError("LABOR_BATCH_IS_NOT_CONFIRMABLE")
+        if component.calculation_hash != batch.calculation_hash:
+            raise ValueError("LABOR_CALCULATION_HASH_MISMATCH")
+        if self._hash(batch.calculation_input) != batch.calculation_hash:
+            raise ValueError("LABOR_CALCULATION_SNAPSHOT_TAMPERED")
+        if request.posting_date != batch.posting_date:
+            raise ValueError("LABOR_COMPONENT_POSTING_DATE_MISMATCH")
+        if component.business_date != batch.business_date:
+            raise ValueError("LABOR_COMPONENT_BUSINESS_DATE_MISMATCH")
+        lines = list(
+            self.session.scalars(
+                select(LaborRemunerationLine)
+                .where(
+                    LaborRemunerationLine.org_id == batch.org_id,
+                    LaborRemunerationLine.batch_id == batch.id,
                 )
-                if existing_event is not None:
-                    if existing_event.request_payload_hash != request_hash:
-                        return self._rejected("LABOR_CONFIRM_IDEMPOTENCY_PAYLOAD_MISMATCH")
-                    batch = self.session.scalar(
-                        select(LaborRemunerationBatch).where(
-                            LaborRemunerationBatch.business_event_id == existing_event.id
-                        )
-                    )
-                    if batch is None:
-                        return self._rejected("LABOR_CONFIRM_IDEMPOTENCY_SCOPE_CONFLICT")
-                    return self._batch_result(batch, replay=True)
-                batch = self.session.scalar(
-                    select(LaborRemunerationBatch)
-                    .where(
-                        LaborRemunerationBatch.org_id == request.org_id,
-                        LaborRemunerationBatch.id == request.batch_id,
-                    )
-                    .with_for_update()
+                .order_by(LaborRemunerationLine.id)
+                .with_for_update()
+            )
+        )
+        if not lines:
+            raise ValueError("LABOR_CALCULATION_SNAPSHOT_TAMPERED")
+        evidence_ids = list(
+            self.session.scalars(
+                select(LaborRemunerationBatchEvidence.evidence_id)
+                .where(
+                    LaborRemunerationBatchEvidence.org_id == batch.org_id,
+                    LaborRemunerationBatchEvidence.batch_id == batch.id,
                 )
-                if batch is None:
-                    return self._rejected("LABOR_BATCH_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-                if batch.status != "calculated" or batch.business_event_id is not None:
-                    winning_event = (
-                        self.session.get(BusinessEvent, batch.business_event_id)
-                        if batch.business_event_id is not None
-                        else None
-                    )
-                    if (
-                        winning_event is not None
-                        and winning_event.idempotency_key == request.idempotency_key
-                        and winning_event.request_payload_hash == request_hash
-                    ):
-                        return self._batch_result(batch, replay=True)
-                    return self._rejected("LABOR_BATCH_IS_NOT_CONFIRMABLE")
-                if request.calculation_hash != batch.calculation_hash:
-                    return self._rejected("LABOR_CALCULATION_HASH_MISMATCH")
-                if self._hash(batch.calculation_input) != batch.calculation_hash:
-                    return self._rejected("LABOR_CALCULATION_SNAPSHOT_TAMPERED")
-                assert_period_open(self.session, batch.org_id, batch.posting_date)
-                lines = self.session.scalars(
-                    select(LaborRemunerationLine)
-                    .where(
-                        LaborRemunerationLine.org_id == batch.org_id,
-                        LaborRemunerationLine.batch_id == batch.id,
-                    )
-                    .order_by(LaborRemunerationLine.id)
-                    .with_for_update()
-                ).all()
-                evidence_ids = self.session.scalars(
-                    select(LaborRemunerationBatchEvidence.evidence_id).where(
-                        LaborRemunerationBatchEvidence.org_id == batch.org_id,
-                        LaborRemunerationBatchEvidence.batch_id == batch.id,
-                    )
-                ).all()
-                event = build_business_event(
-                    self.session,
+                .order_by(LaborRemunerationBatchEvidence.evidence_id)
+            )
+        )
+        requested_ids = sorted(
+            uuid.UUID(value)
+            for value in batch.calculation_input["request"].get("evidence_references", [])
+        )
+        if sorted(evidence_ids) != requested_ids:
+            raise ValueError("LABOR_CALCULATION_SNAPSHOT_TAMPERED")
+        if not evidence_ids:
+            raise MissingFacts([f"components.{component.key}.evidence_references"])
+        entries: list[Entry] = []
+        open_items: list[OpenItemPlan] = []
+        entitlements: list[LaborWithholdingEntitlement] = []
+        for line in lines:
+            entries.extend(
+                [
+                    Entry(
+                        account_role=line.expense_role,
+                        debit_fen=line.gross_remuneration_fen,
+                        counterparty_id=line.counterparty_id,
+                    ),
+                    Entry(
+                        account_role="labor_remuneration_payable",
+                        credit_fen=line.gross_remuneration_fen,
+                        counterparty_id=line.counterparty_id,
+                    ),
+                ]
+            )
+            open_items.append(
+                OpenItemPlan(
+                    counterparty_id=line.counterparty_id,
+                    item_type="payable",
+                    original_amount_fen=line.gross_remuneration_fen,
+                    due_date=batch.planned_payment_date,
+                    payable_category="labor_remuneration",
+                    key=str(line.id),
+                    account_role="labor_remuneration_payable",
+                )
+            )
+            entitlement = LaborWithholdingEntitlement(
+                id=uuid.uuid4(),
+                org_id=batch.org_id,
+                labor_line_id=line.id,
+                amount_fen=line.withholding_tax_fen,
+            )
+            self.session.add(entitlement)
+            entitlements.append(entitlement)
+        derived = {
+            "batch_id": str(batch.id),
+            "calculation_hash": batch.calculation_hash,
+            "labor_sources": [
+                {
+                    "open_item_key": str(line.id),
+                    "labor_line_id": str(line.id),
+                    "counterparty_id": str(line.counterparty_id),
+                    "gross_remuneration_fen": line.gross_remuneration_fen,
+                    "withholding_entitlement_id": str(entitlement.id),
+                    "withholding_tax_fen": entitlement.amount_fen,
+                }
+                for line, entitlement in zip(lines, entitlements, strict=True)
+            ],
+        }
+
+        def apply(session, event, persisted):
+            session.add(
+                LaborRemunerationEventLink(
                     org_id=batch.org_id,
-                    idempotency_key=request.idempotency_key,
-                    request_payload_hash=request_hash,
-                    event_type="labor_remuneration_accrual",
-                    status="draft",
-                    description=batch.calculation_input["request"]["description"],
-                    facts={
+                    event_id=event.id,
+                    component_id=persisted.id,
+                    batch_id=batch.id,
+                    link_kind="accrual",
+                )
+            )
+            batch.status = "posted"
+            batch.business_event_id = event.id
+            batch.confirmation_note = component.confirmation_note
+            batch.confirmed_at = datetime.now(UTC)
+            session.add(
+                AuditLog(
+                    org_id=batch.org_id,
+                    event_id=event.id,
+                    action="labor_remuneration_confirmed",
+                    details={
                         "batch_id": str(batch.id),
                         "calculation_hash": batch.calculation_hash,
-                        "remuneration_period": batch.remuneration_period,
                     },
-                    business_date=batch.business_date,
-                    posting_date=batch.posting_date,
-                    rule_trace=batch.calculation_trace,
-                    rule_version=f"{RULE_VERSION_PREFIX}{batch.policy_snapshot['version']}",
                 )
-                self.session.add(event)
-                self.session.flush()
-                self.session.add(
-                    LaborRemunerationEventLink(
-                        org_id=batch.org_id,
-                        event_id=event.id,
-                        batch_id=batch.id,
-                        link_kind="accrual",
-                    )
+            )
+
+        return (
+            ComponentPostingPlan(
+                key=component.key,
+                kind=component.kind,
+                facts=component.model_dump(mode="json"),
+                derived=derived,
+                rule_version=f"{RULE_VERSION_PREFIX}{batch.policy_snapshot['version']}",
+                entries=entries,
+                open_items=open_items,
+                effects=[apply],
+            ),
+            evidence_ids,
+        )
+
+    def confirm_batch(self, request: ConfirmLaborRemunerationBatchRequest) -> LaborResult:
+        from .component_service import ComponentService
+
+        batch = self.session.scalar(
+            select(LaborRemunerationBatch).where(
+                LaborRemunerationBatch.org_id == request.org_id,
+                LaborRemunerationBatch.id == request.batch_id,
+            )
+        )
+        if batch is None:
+            return self._rejected("LABOR_BATCH_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
+        evidence_ids = list(
+            self.session.scalars(
+                select(LaborRemunerationBatchEvidence.evidence_id)
+                .where(
+                    LaborRemunerationBatchEvidence.org_id == batch.org_id,
+                    LaborRemunerationBatchEvidence.batch_id == batch.id,
                 )
-                self.finance._attach_evidence(event, list(evidence_ids))
-                entries: list[Entry] = []
-                plans: list[OpenItemPlan] = []
-                for line in lines:
-                    entries.extend(
-                        [
-                            Entry(
-                                account_role=line.expense_role,
-                                debit_fen=line.gross_remuneration_fen,
-                                counterparty_id=line.counterparty_id,
-                            ),
-                            Entry(
-                                account_role="labor_remuneration_payable",
-                                credit_fen=line.gross_remuneration_fen,
-                                counterparty_id=line.counterparty_id,
-                            ),
-                        ]
+                .order_by(LaborRemunerationBatchEvidence.evidence_id)
+            )
+        )
+        component_request = RecordEventRequest.model_validate(
+            {
+                "org_id": request.org_id,
+                "idempotency_key": request.idempotency_key,
+                "posting_date": batch.posting_date,
+                "description": batch.calculation_input["request"]["description"],
+                "components": [
+                    {
+                        "key": "labor_remuneration_accrual",
+                        "kind": "labor_remuneration_accrual",
+                        "business_date": batch.business_date,
+                        "batch_id": batch.id,
+                        "calculation_hash": request.calculation_hash,
+                        "confirmation_note": request.confirmation_note,
+                        "evidence_references": evidence_ids,
+                    }
+                ],
+            }
+        )
+        try:
+            with self.session.begin_nested():
+                result = ComponentService(self.session).record(component_request)
+                if result.status == ResultStatus.NEEDS_INFORMATION:
+                    return LaborResult(
+                        status=LaborResultStatus.NEEDS_INFORMATION,
+                        missing_information=result.missing_information,
                     )
-                    plans.append(
-                        OpenItemPlan(
-                            counterparty_id=line.counterparty_id,
-                            item_type="payable",
-                            original_amount_fen=line.gross_remuneration_fen,
-                            due_date=batch.planned_payment_date,
-                            payable_category="labor_remuneration",
-                        )
-                    )
-                    self.session.add(
-                        LaborWithholdingEntitlement(
-                            org_id=batch.org_id,
-                            labor_line_id=line.id,
-                            amount_fen=line.withholding_tax_fen,
-                        )
-                    )
-                voucher = create_voucher(
-                    self.session,
-                    event=event,
-                    posting_date=batch.posting_date,
-                    description=event.description,
-                    entries=entries,
+                if result.status != ResultStatus.POSTED:
+                    errors = [
+                        "LABOR_CONFIRM_IDEMPOTENCY_PAYLOAD_MISMATCH"
+                        if code == "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH"
+                        else code
+                        for code in result.errors
+                    ]
+                    return self._rejected(*errors)
+                self.session.refresh(batch)
+                return self._batch_result(
+                    batch, replay=bool(result.data.get("idempotent_replay"))
                 )
-                create_open_items(self.session, event=event, plans=plans)
-                batch.status = "posted"
-                batch.business_event_id = event.id
-                batch.confirmation_note = request.confirmation_note
-                batch.confirmed_at = datetime.now(UTC)
-                event.status = "posted"
-                self.session.add(
-                    AuditLog(
-                        org_id=batch.org_id,
-                        event_id=event.id,
-                        action="labor_remuneration_confirmed",
-                        details={
-                            "batch_id": str(batch.id),
-                            "calculation_hash": batch.calculation_hash,
-                        },
-                    )
-                )
-                self.session.flush()
-                result = self._batch_result(batch)
-                result.voucher_id = voucher.id
-                result.voucher_number = voucher.voucher_number
-                return result
         except AccountingPeriodError as exc:
             return self._rejected(exc.code)
         except (IntegrityError, OperationalError):
-            winning_event = self.session.scalar(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == request.org_id,
-                    BusinessEvent.idempotency_key == request.idempotency_key,
-                )
-            )
-            if winning_event is not None and winning_event.request_payload_hash == request_hash:
-                winning_batch = self.session.scalar(
-                    select(LaborRemunerationBatch).where(
-                        LaborRemunerationBatch.business_event_id == winning_event.id
-                    )
-                )
-                if winning_batch is not None:
-                    return self._batch_result(winning_batch, replay=True)
             return self._rejected("LABOR_CONFIRM_CONCURRENT_WRITE_CONFLICT")
         except ValueError as exc:
             return self._rejected(str(exc))
-
-    def _validated_bank(
-        self,
-        org_id: uuid.UUID,
-        account_code: str,
-        transaction_id: uuid.UUID,
-        payment_date: date,
-        amount_fen: int,
-    ) -> BankTransaction:
-        return self._validated_banks(
-            org_id,
-            account_code,
-            [transaction_id],
-            payment_date,
-            amount_fen,
-        )[0]
-
-    def _validated_banks(
-        self,
-        org_id: uuid.UUID,
-        account_code: str,
-        transaction_ids: list[uuid.UUID],
-        payment_date: date,
-        amount_fen: int,
-    ) -> list[BankTransaction]:
-        if not transaction_ids or len(transaction_ids) != len(set(transaction_ids)):
-            raise ValueError("BANK_TRANSACTION_IDS_MUST_BE_UNIQUE_AND_NONEMPTY")
-        self.finance._validate_bank_account(org_id, account_code, payment_date)
-        banks = self.session.scalars(
-            select(BankTransaction)
-            .where(
-                BankTransaction.org_id == org_id,
-                BankTransaction.id.in_(transaction_ids),
-            )
-            .order_by(BankTransaction.id)
-            .with_for_update()
-        ).all()
-        if len(banks) != len(transaction_ids):
-            raise ValueError("BANK_TRANSACTION_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-        if sum(bank.amount_fen for bank in banks) != -amount_fen:
-            raise ValueError("BANK_TRANSACTION_AMOUNT_MISMATCH")
-        active_matches = self.session.scalars(
-            select(BankTransactionMatch)
-            .where(
-                BankTransactionMatch.org_id == org_id,
-                BankTransactionMatch.bank_transaction_id.in_(transaction_ids),
-                BankTransactionMatch.invalidated_by_event_id.is_(None),
-            )
-            .order_by(BankTransactionMatch.bank_transaction_id)
-            .with_for_update()
-        ).all()
-        if active_matches:
-            raise ValueError("BANK_TRANSACTION_ALREADY_MATCHED")
-        by_id = {bank.id: bank for bank in banks}
-        ordered = [by_id[transaction_id] for transaction_id in transaction_ids]
-        for bank in ordered:
-            if bank.import_action_id is None:
-                raise ValueError("BANK_TRANSACTION_REQUIRES_CONTROLLED_IMPORT_ACTION")
-            if bank.bank_account_code != account_code:
-                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-            if bank.booking_date != payment_date:
-                raise ValueError("BANK_TRANSACTION_PAYMENT_DATE_MISMATCH")
-            if bank.matched_event_id is not None:
-                raise ValueError("BANK_TRANSACTION_ALREADY_MATCHED")
-        return ordered
-
-    def _salary_request(
-        self, request: PreviewUnifiedPayoutRunRequest, net_amount_fen: int
-    ) -> RecordEventRequest:
-        return RecordEventRequest.model_validate(
-            {
-                "org_id": str(request.org_id),
-                "idempotency_key": f"{request.idempotency_key}:salary-derivation",
-                "event_type": "salary_payment",
-                "business_dates": {
-                    "business_date": request.business_date,
-                    "payment_date": request.payment_date,
-                    "posting_date": request.posting_date,
-                },
-                "amounts": {"amount_fen": net_amount_fen},
-                "bank_account_code": request.bank_account_code,
-                "allocations": [
-                    item.model_dump(mode="json") for item in request.salary_allocations
-                ],
-                "salary_withholding_allocations": [
-                    item.model_dump(mode="json") for item in request.salary_withholding_allocations
-                ],
-                "salary_actual_deduction_allocations": [
-                    item.model_dump(mode="json")
-                    for item in request.salary_actual_deduction_allocations
-                ],
-                "description": request.description,
-            }
-        )
-
-    def _derive_payout(self, request: PreviewUnifiedPayoutRunRequest) -> dict[str, Any]:
-        self._evidence(request.org_id, request.evidence_references)
-        derived_items: list[dict[str, Any]] = []
-        salary_gross = sum(item.amount_fen for item in request.salary_allocations)
-        salary_derived: dict[str, Any] | None = None
-        if request.salary_allocations:
-            supplied_by_item = {
-                item.open_item_id: item for item in request.salary_withholding_allocations
-            }
-            actual_deduction_by_item = {
-                item.open_item_id: item.amount_fen
-                for item in request.salary_actual_deduction_allocations
-            }
-            petty_recovery_by_item = {
-                item.open_item_id: item.amount_fen
-                for item in request.salary_petty_cash_recovery_allocations
-            }
-            if len(petty_recovery_by_item) != len(
-                request.salary_petty_cash_recovery_allocations
-            ):
-                raise ValueError(
-                    "salary petty-cash recovery cannot be stated twice for one open item"
-                )
-            salary_open_item_ids = {
-                allocation.open_item_id for allocation in request.salary_allocations
-            }
-            if not set(petty_recovery_by_item).issubset(salary_open_item_ids):
-                raise ValueError(
-                    "salary petty-cash recovery must belong to a salary allocation"
-                )
-            salary_net = sum(
-                allocation.amount_fen
-                - sum(
-                    supplied_by_item[
-                        allocation.open_item_id
-                    ].employee_social_insurance_items.values()
-                )
-                - sum(
-                    supplied_by_item[allocation.open_item_id].employee_housing_fund_items.values()
-                )
-                - supplied_by_item[allocation.open_item_id].individual_income_tax_fen
-                - actual_deduction_by_item.get(allocation.open_item_id, 0)
-                for allocation in request.salary_allocations
-            )
-            salary_request = self._salary_request(request, salary_net)
-            salary_derived = self.finance._salary_payment_facts(salary_request)
-            allocation_by_item = {
-                item.open_item_id: item.amount_fen for item in request.salary_allocations
-            }
-            for allocation in salary_derived["allocations"]:
-                source_id = uuid.UUID(allocation["open_item_id"])
-                gross = allocation_by_item[source_id]
-                social = sum(allocation["employee_social_insurance_items"].values())
-                housing = sum(allocation["employee_housing_fund_items"].values())
-                tax = int(allocation["individual_income_tax_fen"])
-                actual_deduction = int(allocation["actual_salary_deduction_fen"])
-                petty_recovery = int(petty_recovery_by_item.get(source_id, 0))
-                statutory_withholding = social + housing + tax
-                if petty_recovery:
-                    if actual_deduction:
-                        raise ValueError(
-                            "salary petty-cash recovery cannot be combined with an "
-                            "actual salary deduction"
-                        )
-                    if petty_recovery != statutory_withholding:
-                        raise ValueError(
-                            "salary petty-cash recovery must equal the full statutory "
-                            "withholding for the salary item"
-                        )
-                open_item = self.session.get(OpenItem, source_id)
-                if open_item is None:
-                    raise ValueError("SALARY_OPEN_ITEM_NOT_FOUND")
-                derived_items.append(
-                    {
-                        "item_kind": "salary",
-                        "settlement_mode": "not_applicable",
-                        "source_open_item_id": str(source_id),
-                        "payroll_line_id": allocation["payroll_line_id"],
-                        "labor_line_id": None,
-                        "counterparty_id": str(open_item.counterparty_id),
-                        "gross_amount_fen": gross,
-                        "employee_social_insurance_fen": social,
-                        "employee_housing_fund_fen": housing,
-                        "individual_income_tax_fen": tax,
-                        "actual_salary_deduction_fen": actual_deduction,
-                        "salary_petty_cash_recovery_fen": petty_recovery,
-                        "salary_expense_role": allocation["expense_role"],
-                        "theoretical_individual_income_tax_fen": tax,
-                        "unwithheld_individual_income_tax_fen": 0,
-                        "net_amount_fen": (
-                            gross
-                            - social
-                            - housing
-                            - tax
-                            - actual_deduction
-                            + petty_recovery
-                        ),
-                        "withholding_components": allocation,
-                    }
-                )
-        for labor_item in request.labor_items:
-            assert labor_item.source_open_item_id is not None
-            source = self.session.scalar(
-                select(OpenItem)
-                .where(
-                    OpenItem.org_id == request.org_id,
-                    OpenItem.id == labor_item.source_open_item_id,
-                )
-                .with_for_update()
-            )
-            if source is None or source.payable_category != "labor_remuneration":
-                raise ValueError("LABOR_PAYOUT_SOURCE_OPEN_ITEM_NOT_FOUND")
-            available = source.original_amount_fen - source.settled_amount_fen
-            if source.status not in {"open", "partial"} or available != source.original_amount_fen:
-                raise ValueError("LABOR_PAYOUT_ONLY_SUPPORTS_FULL_UNPAID_SETTLEMENT")
-            accrual_link = self.session.scalar(
-                select(LaborRemunerationEventLink).where(
-                    LaborRemunerationEventLink.org_id == request.org_id,
-                    LaborRemunerationEventLink.event_id == source.source_event_id,
-                    LaborRemunerationEventLink.link_kind == "accrual",
-                )
-            )
-            if accrual_link is None:
-                raise ValueError("LABOR_PAYOUT_SOURCE_LACKS_CONTROLLED_ACCRUAL")
-            line = self.session.scalar(
-                select(LaborRemunerationLine).where(
-                    LaborRemunerationLine.org_id == request.org_id,
-                    LaborRemunerationLine.batch_id == accrual_link.batch_id,
-                    LaborRemunerationLine.counterparty_id == source.counterparty_id,
-                )
-            )
-            if line is None or line.gross_remuneration_fen != source.original_amount_fen:
-                raise ValueError("LABOR_PAYOUT_SOURCE_LINE_MISMATCH")
-            entitlement = self.session.scalar(
-                select(LaborWithholdingEntitlement).where(
-                    LaborWithholdingEntitlement.org_id == request.org_id,
-                    LaborWithholdingEntitlement.labor_line_id == line.id,
-                )
-            )
-            if entitlement is None or entitlement.amount_fen != line.withholding_tax_fen:
-                raise ValueError("LABOR_WITHHOLDING_ENTITLEMENT_MISMATCH")
-            assert labor_item.settlement_mode is not None
-            actual_withholding_fen = (
-                entitlement.amount_fen
-                if labor_item.settlement_mode == "net_after_withholding"
-                else 0
-            )
-            unwithheld_fen = entitlement.amount_fen - actual_withholding_fen
-            derived_items.append(
-                {
-                    "item_kind": "labor",
-                    "settlement_mode": labor_item.settlement_mode,
-                    "source_open_item_id": str(source.id),
-                    "payroll_line_id": None,
-                    "labor_line_id": str(line.id),
-                    "counterparty_id": str(source.counterparty_id),
-                    "gross_amount_fen": source.original_amount_fen,
-                    "employee_social_insurance_fen": 0,
-                    "employee_housing_fund_fen": 0,
-                    "individual_income_tax_fen": actual_withholding_fen,
-                    "actual_salary_deduction_fen": 0,
-                    "salary_petty_cash_recovery_fen": 0,
-                    "salary_expense_role": None,
-                    "theoretical_individual_income_tax_fen": entitlement.amount_fen,
-                    "unwithheld_individual_income_tax_fen": unwithheld_fen,
-                    "net_amount_fen": source.original_amount_fen - actual_withholding_fen,
-                    "withholding_components": {
-                        "entitlement_id": str(entitlement.id),
-                        "batch_id": str(line.batch_id),
-                        "settlement_mode": labor_item.settlement_mode,
-                        "theoretical_withholding_tax_fen": entitlement.amount_fen,
-                        "actual_withholding_tax_fen": actual_withholding_fen,
-                        "unwithheld_tax_fen": unwithheld_fen,
-                    },
-                }
-            )
-        if len({item["source_open_item_id"] for item in derived_items}) != len(derived_items):
-            raise ValueError("DUPLICATE_PAYOUT_SOURCE_OPEN_ITEM")
-        gross_total = sum(item["gross_amount_fen"] for item in derived_items)
-        net_total = sum(item["net_amount_fen"] for item in derived_items)
-        withholding_total = sum(
-            item["employee_social_insurance_fen"]
-            + item["employee_housing_fund_fen"]
-            + item["individual_income_tax_fen"]
-            + item["actual_salary_deduction_fen"]
-            for item in derived_items
-        )
-        salary_petty_cash_recovery_total = sum(
-            item["salary_petty_cash_recovery_fen"] for item in derived_items
-        )
-        if (
-            net_total
-            != gross_total - withholding_total + salary_petty_cash_recovery_total
-        ):
-            raise ValueError("UNIFIED_PAYOUT_RECOVERY_TOTAL_MISMATCH")
-        theoretical_income_tax_total = sum(
-            item["theoretical_individual_income_tax_fen"] for item in derived_items
-        )
-        unwithheld_income_tax_total = sum(
-            item["unwithheld_individual_income_tax_fen"] for item in derived_items
-        )
-        if salary_derived is not None and salary_derived["gross_salary_fen"] != salary_gross:
-            raise ValueError("SALARY_DERIVATION_GROSS_MISMATCH")
-        return {
-            "items": derived_items,
-            "salary_derived": salary_derived,
-            "gross_total_fen": gross_total,
-            "withholding_total_fen": withholding_total,
-            "salary_petty_cash_recovery_total_fen": (
-                salary_petty_cash_recovery_total
-            ),
-            "theoretical_individual_income_tax_total_fen": theoretical_income_tax_total,
-            "unwithheld_individual_income_tax_total_fen": unwithheld_income_tax_total,
-            "net_total_fen": net_total,
-        }
-
-    def preview_payout(self, request: PreviewUnifiedPayoutRunRequest) -> LaborResult:
-        missing = request.missing_fields()
-        if missing:
-            return self._requirement(missing)
-        payload_hash = self._hash(request.model_dump(mode="json"))
-        try:
-            with self.session.begin_nested():
-                self._organization(request.org_id)
-                assert request.posting_date is not None
-                assert request.payment_date is not None
-                assert request.bank_account_code is not None
-                bank_transaction_ids = request.selected_bank_transaction_ids()
-                assert_period_open(self.session, request.org_id, request.posting_date)
-                existing = self.session.scalar(
-                    select(UnifiedPayoutRun).where(
-                        UnifiedPayoutRun.org_id == request.org_id,
-                        UnifiedPayoutRun.idempotency_key == request.idempotency_key,
-                    )
-                )
-                if existing is not None:
-                    if existing.request_payload_hash != payload_hash:
-                        return self._rejected("PAYOUT_RUN_IDEMPOTENCY_PAYLOAD_MISMATCH")
-                    return self._payout_result(existing, replay=True)
-                derived = self._derive_payout(request)
-                self._validated_banks(
-                    request.org_id,
-                    request.bank_account_code,
-                    bank_transaction_ids,
-                    request.payment_date,
-                    derived["net_total_fen"],
-                )
-                calculation_input = {
-                    "request": request.model_dump(mode="json"),
-                    "derived": derived,
-                }
-                calculation_hash = self._hash(calculation_input)
-                run = UnifiedPayoutRun(
-                    org_id=request.org_id,
-                    idempotency_key=request.idempotency_key,
-                    request_payload_hash=payload_hash,
-                    status="calculated",
-                    calculation_hash=calculation_hash,
-                    calculation_input=calculation_input,
-                    calculation_trace=[
-                        {
-                            "stage": "unified_payout_exact_reconciliation",
-                            "salary_item_count": sum(
-                                item["item_kind"] == "salary" for item in derived["items"]
-                            ),
-                            "labor_item_count": sum(
-                                item["item_kind"] == "labor" for item in derived["items"]
-                            ),
-                            "gross_total_fen": derived["gross_total_fen"],
-                            "withholding_total_fen": derived["withholding_total_fen"],
-                            "actual_salary_deduction_fen": sum(
-                                item["actual_salary_deduction_fen"]
-                                for item in derived["items"]
-                            ),
-                            "salary_petty_cash_recovery_total_fen": derived[
-                                "salary_petty_cash_recovery_total_fen"
-                            ],
-                            "theoretical_individual_income_tax_total_fen": derived[
-                                "theoretical_individual_income_tax_total_fen"
-                            ],
-                            "unwithheld_individual_income_tax_total_fen": derived[
-                                "unwithheld_individual_income_tax_total_fen"
-                            ],
-                            "net_total_fen": derived["net_total_fen"],
-                            "compliance_exception": (
-                                "labor_gross_paid_without_withholding"
-                                if derived["unwithheld_individual_income_tax_total_fen"]
-                                else None
-                            ),
-                        }
-                    ],
-                    bank_account_code=request.bank_account_code,
-                    bank_transaction_id=bank_transaction_ids[0],
-                    business_date=request.business_date,
-                    payment_date=request.payment_date,
-                    posting_date=request.posting_date,
-                    gross_total_fen=derived["gross_total_fen"],
-                    withholding_total_fen=derived["withholding_total_fen"],
-                    salary_petty_cash_recovery_total_fen=derived[
-                        "salary_petty_cash_recovery_total_fen"
-                    ],
-                    net_total_fen=derived["net_total_fen"],
-                )
-                self.session.add(run)
-                self.session.flush()
-                for bank_transaction_id in bank_transaction_ids:
-                    self.session.add(
-                        UnifiedPayoutRunBankTransaction(
-                            org_id=request.org_id,
-                            payout_run_id=run.id,
-                            bank_transaction_id=bank_transaction_id,
-                        )
-                    )
-                for values in derived["items"]:
-                    self.session.add(
-                        UnifiedPayoutRunItem(
-                            org_id=request.org_id,
-                            payout_run_id=run.id,
-                            item_kind=values["item_kind"],
-                            source_open_item_id=uuid.UUID(values["source_open_item_id"]),
-                            payroll_line_id=(
-                                uuid.UUID(values["payroll_line_id"])
-                                if values["payroll_line_id"]
-                                else None
-                            ),
-                            labor_line_id=(
-                                uuid.UUID(values["labor_line_id"])
-                                if values["labor_line_id"]
-                                else None
-                            ),
-                            counterparty_id=uuid.UUID(values["counterparty_id"]),
-                            settlement_mode=values["settlement_mode"],
-                            gross_amount_fen=values["gross_amount_fen"],
-                            employee_social_insurance_fen=values["employee_social_insurance_fen"],
-                            employee_housing_fund_fen=values["employee_housing_fund_fen"],
-                            individual_income_tax_fen=values["individual_income_tax_fen"],
-                            actual_salary_deduction_fen=values[
-                                "actual_salary_deduction_fen"
-                            ],
-                            salary_petty_cash_recovery_fen=values[
-                                "salary_petty_cash_recovery_fen"
-                            ],
-                            theoretical_individual_income_tax_fen=values[
-                                "theoretical_individual_income_tax_fen"
-                            ],
-                            unwithheld_individual_income_tax_fen=values[
-                                "unwithheld_individual_income_tax_fen"
-                            ],
-                            net_amount_fen=values["net_amount_fen"],
-                            withholding_components=values["withholding_components"],
-                        )
-                    )
-                for evidence_id in request.evidence_references:
-                    self.session.add(
-                        UnifiedPayoutRunEvidence(
-                            org_id=request.org_id,
-                            payout_run_id=run.id,
-                            evidence_id=evidence_id,
-                        )
-                    )
-                self.session.flush()
-                return self._payout_result(run)
-        except AccountingPeriodError as exc:
-            return self._rejected(exc.code)
-        except (IntegrityError, OperationalError):
-            return self._rejected("PAYOUT_RUN_CONCURRENT_WRITE_CONFLICT")
-        except ValueError as exc:
-            return self._rejected(str(exc))
-
-    def _payout_result(self, run: UnifiedPayoutRun, *, replay: bool = False) -> LaborResult:
-        voucher = self.session.scalar(
-            select(Voucher).where(Voucher.event_id == run.business_event_id)
-        )
-        items = self.session.scalars(
-            select(UnifiedPayoutRunItem)
-            .where(
-                UnifiedPayoutRunItem.org_id == run.org_id,
-                UnifiedPayoutRunItem.payout_run_id == run.id,
-            )
-            .order_by(UnifiedPayoutRunItem.id)
-        ).all()
-        bank_transaction_ids = self.session.scalars(
-            select(UnifiedPayoutRunBankTransaction.bank_transaction_id)
-            .where(
-                UnifiedPayoutRunBankTransaction.org_id == run.org_id,
-                UnifiedPayoutRunBankTransaction.payout_run_id == run.id,
-            )
-            .order_by(UnifiedPayoutRunBankTransaction.bank_transaction_id)
-        ).all()
-        if not bank_transaction_ids:
-            bank_transaction_ids = [run.bank_transaction_id]
-        return LaborResult(
-            status=LaborResultStatus(run.status),
-            payout_run_id=run.id,
-            event_id=run.business_event_id,
-            voucher_id=voucher.id if voucher else None,
-            voucher_number=voucher.voucher_number if voucher else None,
-            calculation_hash=run.calculation_hash,
-            trace=run.calculation_trace,
-            data={
-                "idempotent_replay": replay,
-                "bank_transaction_id": str(run.bank_transaction_id),
-                "bank_transaction_ids": [str(item) for item in bank_transaction_ids],
-                "gross_total_fen": run.gross_total_fen,
-                "withholding_total_fen": run.withholding_total_fen,
-                "theoretical_individual_income_tax_total_fen": sum(
-                    item.theoretical_individual_income_tax_fen for item in items
-                ),
-                "unwithheld_individual_income_tax_total_fen": sum(
-                    item.unwithheld_individual_income_tax_fen for item in items
-                ),
-                "salary_petty_cash_recovery_total_fen": (
-                    run.salary_petty_cash_recovery_total_fen
-                ),
-                "net_total_fen": run.net_total_fen,
-                "items": [
-                    {
-                        "id": str(item.id),
-                        "item_kind": item.item_kind,
-                        "settlement_mode": item.settlement_mode,
-                        "source_open_item_id": str(item.source_open_item_id),
-                        "payroll_line_id": (
-                            str(item.payroll_line_id) if item.payroll_line_id else None
-                        ),
-                        "labor_line_id": (str(item.labor_line_id) if item.labor_line_id else None),
-                        "gross_amount_fen": item.gross_amount_fen,
-                        "employee_social_insurance_fen": (item.employee_social_insurance_fen),
-                        "employee_housing_fund_fen": item.employee_housing_fund_fen,
-                        "individual_income_tax_fen": item.individual_income_tax_fen,
-                        "actual_salary_deduction_fen": item.actual_salary_deduction_fen,
-                        "salary_petty_cash_recovery_fen": (
-                            item.salary_petty_cash_recovery_fen
-                        ),
-                        "theoretical_individual_income_tax_fen": (
-                            item.theoretical_individual_income_tax_fen
-                        ),
-                        "unwithheld_individual_income_tax_fen": (
-                            item.unwithheld_individual_income_tax_fen
-                        ),
-                        "net_amount_fen": item.net_amount_fen,
-                    }
-                    for item in items
-                ],
-            },
-        )
 
     @staticmethod
     def _following_month_day_15(payment_date: date) -> date:
@@ -1424,625 +907,7 @@ class LaborRemunerationService:
         return date(payment_date.year, payment_date.month + 1, 15)
 
     def _agency(self, org_id: uuid.UUID, code: str, name: str) -> Counterparty:
-        agency = self.session.scalar(
-            select(Counterparty).where(
-                Counterparty.org_id == org_id,
-                Counterparty.kind == "other",
-                Counterparty.external_ref == code,
-            )
-        )
-        display_name = f"法定缴费机构 {name}"
-        if agency is not None:
-            if agency.name != display_name:
-                raise ValueError("LABOR_WITHHOLDING_AGENCY_IDENTITY_CONFLICT")
-            return agency
-        agency = Counterparty(
-            org_id=org_id,
-            kind="other",
-            name=display_name,
-            external_ref=code,
-        )
-        self.session.add(agency)
-        self.session.flush()
-        return agency
-
-    def _settle(self, event: BusinessEvent, item: OpenItem, amount_fen: int) -> None:
-        available = item.original_amount_fen - item.settled_amount_fen
-        if item.status not in {"open", "partial"} or amount_fen > available:
-            raise ValueError("PAYOUT_SOURCE_IS_NOT_AN_ACTIVE_OPEN_ITEM")
-        item.settled_amount_fen += amount_fen
-        item.status = (
-            "settled" if item.settled_amount_fen == item.original_amount_fen else "partial"
-        )
-        self.session.add(
-            Settlement(
-                org_id=event.org_id,
-                open_item_id=item.id,
-                payment_event_id=event.id,
-                amount_fen=amount_fen,
-            )
-        )
-
-    def confirm_payout(self, request: ConfirmUnifiedPayoutRunRequest) -> LaborResult:
-        request_hash = self._hash(request.model_dump(mode="json"))
-        try:
-            with self.session.begin_nested():
-                existing_event = self.session.scalar(
-                    select(BusinessEvent).where(
-                        BusinessEvent.org_id == request.org_id,
-                        BusinessEvent.idempotency_key == request.idempotency_key,
-                    )
-                )
-                if existing_event is not None:
-                    if existing_event.request_payload_hash != request_hash:
-                        return self._rejected("PAYOUT_CONFIRM_IDEMPOTENCY_PAYLOAD_MISMATCH")
-                    run = self.session.scalar(
-                        select(UnifiedPayoutRun).where(
-                            UnifiedPayoutRun.business_event_id == existing_event.id
-                        )
-                    )
-                    if run is None:
-                        return self._rejected("PAYOUT_CONFIRM_IDEMPOTENCY_SCOPE_CONFLICT")
-                    return self._payout_result(run, replay=True)
-                run = self.session.scalar(
-                    select(UnifiedPayoutRun)
-                    .where(
-                        UnifiedPayoutRun.org_id == request.org_id,
-                        UnifiedPayoutRun.id == request.payout_run_id,
-                    )
-                    .with_for_update()
-                )
-                if run is None:
-                    return self._rejected("PAYOUT_RUN_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-                if run.status != "calculated" or run.business_event_id is not None:
-                    winning_event = (
-                        self.session.get(BusinessEvent, run.business_event_id)
-                        if run.business_event_id is not None
-                        else None
-                    )
-                    if (
-                        winning_event is not None
-                        and winning_event.idempotency_key == request.idempotency_key
-                        and winning_event.request_payload_hash == request_hash
-                    ):
-                        return self._payout_result(run, replay=True)
-                    return self._rejected("PAYOUT_RUN_IS_NOT_CONFIRMABLE")
-                if request.calculation_hash != run.calculation_hash:
-                    return self._rejected("PAYOUT_CALCULATION_HASH_MISMATCH")
-                preview_request = PreviewUnifiedPayoutRunRequest.model_validate(
-                    run.calculation_input["request"]
-                )
-                derived = self._derive_payout(preview_request)
-                current_input = {
-                    "request": preview_request.model_dump(mode="json"),
-                    "derived": derived,
-                }
-                if self._hash(current_input) != run.calculation_hash:
-                    return self._rejected("PAYOUT_SOURCE_STATE_OR_CALCULATION_CHANGED")
-                assert_period_open(self.session, run.org_id, run.posting_date)
-                bank_transaction_ids = self.session.scalars(
-                    select(UnifiedPayoutRunBankTransaction.bank_transaction_id)
-                    .where(
-                        UnifiedPayoutRunBankTransaction.org_id == run.org_id,
-                        UnifiedPayoutRunBankTransaction.payout_run_id == run.id,
-                    )
-                    .order_by(UnifiedPayoutRunBankTransaction.bank_transaction_id)
-                ).all()
-                if not bank_transaction_ids:
-                    bank_transaction_ids = [run.bank_transaction_id]
-                banks = self._validated_banks(
-                    run.org_id,
-                    run.bank_account_code,
-                    list(bank_transaction_ids),
-                    run.payment_date,
-                    run.net_total_fen,
-                )
-                items = self.session.scalars(
-                    select(UnifiedPayoutRunItem)
-                    .where(
-                        UnifiedPayoutRunItem.org_id == run.org_id,
-                        UnifiedPayoutRunItem.payout_run_id == run.id,
-                    )
-                    .order_by(UnifiedPayoutRunItem.source_open_item_id)
-                    .with_for_update()
-                ).all()
-                source_items = self.session.scalars(
-                    select(OpenItem)
-                    .where(
-                        OpenItem.org_id == run.org_id,
-                        OpenItem.id.in_([item.source_open_item_id for item in items]),
-                    )
-                    .order_by(OpenItem.id)
-                    .with_for_update()
-                ).all()
-                source_by_id = {item.id: item for item in source_items}
-                event = build_business_event(
-                    self.session,
-                    org_id=run.org_id,
-                    idempotency_key=request.idempotency_key,
-                    request_payload_hash=request_hash,
-                    event_type="unified_payout_run",
-                    status="draft",
-                    description=run.calculation_input["request"]["description"],
-                    facts={
-                        "payout_run_id": str(run.id),
-                        "calculation_hash": run.calculation_hash,
-                        "salary_item_count": sum(item.item_kind == "salary" for item in items),
-                        "labor_item_count": sum(item.item_kind == "labor" for item in items),
-                        "theoretical_labor_withholding_fen": sum(
-                            item.theoretical_individual_income_tax_fen
-                            for item in items
-                            if item.item_kind == "labor"
-                        ),
-                        "actual_labor_withholding_fen": sum(
-                            item.individual_income_tax_fen
-                            for item in items
-                            if item.item_kind == "labor"
-                        ),
-                        "unwithheld_labor_tax_fen": sum(
-                            item.unwithheld_individual_income_tax_fen
-                            for item in items
-                            if item.item_kind == "labor"
-                        ),
-                        "labor_settlement_modes": sorted(
-                            {item.settlement_mode for item in items if item.item_kind == "labor"}
-                        ),
-                        "actual_salary_deduction_fen": sum(
-                            item.actual_salary_deduction_fen
-                            for item in items
-                            if item.item_kind == "salary"
-                        ),
-                        "salary_petty_cash_recovery_total_fen": sum(
-                            item.salary_petty_cash_recovery_fen
-                            for item in items
-                            if item.item_kind == "salary"
-                        ),
-                        "salary_petty_cash_recovery_treatment": run.calculation_input[
-                            "request"
-                        ].get("salary_petty_cash_recovery_treatment"),
-                        "bank_transaction_ids": [str(item.id) for item in banks],
-                    },
-                    business_date=run.business_date,
-                    payment_date=run.payment_date,
-                    posting_date=run.posting_date,
-                    rule_trace=run.calculation_trace,
-                    rule_version="unified-payout/3",
-                )
-                self.session.add(event)
-                self.session.flush()
-                evidence_ids = self.session.scalars(
-                    select(UnifiedPayoutRunEvidence.evidence_id).where(
-                        UnifiedPayoutRunEvidence.org_id == run.org_id,
-                        UnifiedPayoutRunEvidence.payout_run_id == run.id,
-                    )
-                ).all()
-                self.finance._attach_evidence(event, list(evidence_ids))
-                entries: list[Entry] = []
-                salary_gross = sum(
-                    item.gross_amount_fen for item in items if item.item_kind == "salary"
-                )
-                if salary_gross:
-                    entries.append(
-                        Entry(account_role="employee_salary_payable", debit_fen=salary_gross)
-                    )
-                for item in items:
-                    if item.item_kind == "labor":
-                        entries.append(
-                            Entry(
-                                account_role="labor_remuneration_payable",
-                                debit_fen=item.gross_amount_fen,
-                                counterparty_id=item.counterparty_id,
-                            )
-                        )
-                entries.append(
-                    Entry(account_code=run.bank_account_code, credit_fen=run.net_total_fen)
-                )
-                for role, amount in (
-                    (
-                        "withheld_employee_social_payable",
-                        sum(item.employee_social_insurance_fen for item in items),
-                    ),
-                    (
-                        "withheld_employee_housing_fund_payable",
-                        sum(item.employee_housing_fund_fen for item in items),
-                    ),
-                    (
-                        "individual_income_tax_payable",
-                        sum(item.individual_income_tax_fen for item in items),
-                    ),
-                ):
-                    if amount:
-                        entries.append(Entry(account_role=role, credit_fen=amount))
-                salary_deductions_by_role: dict[str, int] = {}
-                for item in items:
-                    if item.item_kind != "salary" or not item.actual_salary_deduction_fen:
-                        continue
-                    expense_role = item.withholding_components.get("expense_role")
-                    if expense_role not in {
-                        "payroll_management_expense",
-                        "payroll_sales_expense",
-                        "payroll_service_cost",
-                    }:
-                        raise ValueError("SALARY_ACTUAL_DEDUCTION_EXPENSE_ROLE_INVALID")
-                    salary_deductions_by_role[expense_role] = (
-                        salary_deductions_by_role.get(expense_role, 0)
-                        + item.actual_salary_deduction_fen
-                    )
-                for expense_role, amount in sorted(salary_deductions_by_role.items()):
-                    entries.append(Entry(account_role=expense_role, credit_fen=amount))
-                petty_cash_recovery_total = sum(
-                    item.salary_petty_cash_recovery_fen
-                    for item in items
-                    if item.item_kind == "salary"
-                )
-                if petty_cash_recovery_total:
-                    if (
-                        run.calculation_input["request"].get(
-                            "salary_petty_cash_recovery_treatment"
-                        )
-                        != "offbook_petty_cash_expense"
-                    ):
-                        raise ValueError("SALARY_PETTY_CASH_RECOVERY_TREATMENT_INVALID")
-                    entries.append(
-                        Entry(
-                            account_role="general_expense",
-                            debit_fen=petty_cash_recovery_total,
-                        )
-                    )
-                for item in items:
-                    source = source_by_id.get(item.source_open_item_id)
-                    if source is None:
-                        raise ValueError("PAYOUT_SOURCE_OPEN_ITEM_NOT_FOUND")
-                    self._settle(event, source, item.gross_amount_fen)
-
-                salary_derived = derived["salary_derived"]
-                if salary_derived is not None:
-                    self.finance._record_payroll_withholding_allocations(event, salary_derived)
-                    batch_id = uuid.UUID(salary_derived["payroll_batch_id"])
-                    for item in items:
-                        if item.item_kind == "salary":
-                            self.session.add(
-                                PayrollEventLink(
-                                    org_id=run.org_id,
-                                    event_id=event.id,
-                                    payroll_batch_id=batch_id,
-                                    source_open_item_id=item.source_open_item_id,
-                                    link_kind="salary_payment",
-                                )
-                            )
-                    salary_for_plans = {
-                        **salary_derived,
-                        "salary_withholding_allocations": salary_derived["allocations"],
-                    }
-                    create_open_items(
-                        self.session,
-                        event=event,
-                        plans=self.finance._salary_withholding_open_item_plans(
-                            event, salary_for_plans
-                        ),
-                    )
-
-                agency: Counterparty | None = None
-                labor_tax_plans: list[OpenItemPlan] = []
-                labor_tax_sources: list[tuple[UnifiedPayoutRunItem, LaborRemunerationLine]] = []
-                if any(
-                    item.item_kind == "labor" and item.individual_income_tax_fen for item in items
-                ):
-                    agency = self._agency(
-                        run.org_id,
-                        run.calculation_input["request"]["withholding_agency_code"],
-                        run.calculation_input["request"]["withholding_agency_name"],
-                    )
-                for item in items:
-                    if item.item_kind != "labor":
-                        continue
-                    assert item.labor_line_id is not None
-                    line = self.session.get(LaborRemunerationLine, item.labor_line_id)
-                    if line is None:
-                        raise ValueError("LABOR_PAYOUT_LINE_NOT_FOUND")
-                    self.session.add(
-                        LaborRemunerationEventLink(
-                            org_id=run.org_id,
-                            event_id=event.id,
-                            batch_id=line.batch_id,
-                            labor_line_id=line.id,
-                            source_open_item_id=item.source_open_item_id,
-                            link_kind="payment",
-                        )
-                    )
-                    if item.individual_income_tax_fen:
-                        assert agency is not None
-                        labor_tax_plans.append(
-                            OpenItemPlan(
-                                counterparty_id=agency.id,
-                                item_type="payable",
-                                original_amount_fen=item.individual_income_tax_fen,
-                                due_date=self._following_month_day_15(run.payment_date),
-                                payable_category="labor_individual_income_tax",
-                                payable_agency_code=run.calculation_input["request"][
-                                    "withholding_agency_code"
-                                ],
-                            )
-                        )
-                        labor_tax_sources.append((item, line))
-                labor_tax_open_items = create_open_items(
-                    self.session, event=event, plans=labor_tax_plans
-                )
-                for tax_open_item, (run_item, line) in zip(
-                    labor_tax_open_items, labor_tax_sources, strict=True
-                ):
-                    entitlement = self.session.scalar(
-                        select(LaborWithholdingEntitlement).where(
-                            LaborWithholdingEntitlement.org_id == run.org_id,
-                            LaborWithholdingEntitlement.labor_line_id == line.id,
-                        )
-                    )
-                    if entitlement is None:
-                        raise ValueError("LABOR_WITHHOLDING_ENTITLEMENT_NOT_FOUND")
-                    self.session.add(
-                        LaborWithholdingOpenItemSource(
-                            org_id=run.org_id,
-                            open_item_id=tax_open_item.id,
-                            entitlement_id=entitlement.id,
-                            labor_line_id=line.id,
-                            payment_event_id=event.id,
-                            amount_fen=run_item.individual_income_tax_fen,
-                        )
-                    )
-                for bank in banks:
-                    self.session.add(
-                        BankTransactionMatch(
-                            org_id=run.org_id,
-                            bank_transaction_id=bank.id,
-                            event_id=event.id,
-                        )
-                    )
-                    bank.matched_event_id = event.id
-                voucher = create_voucher(
-                    self.session,
-                    event=event,
-                    posting_date=run.posting_date,
-                    description=event.description,
-                    entries=entries,
-                )
-                run.status = "posted"
-                run.business_event_id = event.id
-                run.confirmed_at = datetime.now(UTC)
-                run.confirmation_note = request.confirmation_note
-                event.status = "posted"
-                self.session.add(
-                    AuditLog(
-                        org_id=run.org_id,
-                        event_id=event.id,
-                        action="unified_payout_confirmed",
-                        details={
-                            "payout_run_id": str(run.id),
-                            "bank_transaction_ids": [str(bank.id) for bank in banks],
-                            "calculation_hash": run.calculation_hash,
-                            "unwithheld_labor_tax_fen": sum(
-                                item.unwithheld_individual_income_tax_fen
-                                for item in items
-                                if item.item_kind == "labor"
-                            ),
-                            "salary_petty_cash_recovery_total_fen": (
-                                petty_cash_recovery_total
-                            ),
-                        },
-                    )
-                )
-                self.session.flush()
-                result = self._payout_result(run)
-                result.voucher_id = voucher.id
-                result.voucher_number = voucher.voucher_number
-                return result
-        except AccountingPeriodError as exc:
-            return self._rejected(exc.code)
-        except (IntegrityError, OperationalError):
-            winning_event = self.session.scalar(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == request.org_id,
-                    BusinessEvent.idempotency_key == request.idempotency_key,
-                )
-            )
-            if winning_event is not None and winning_event.request_payload_hash == request_hash:
-                winning_run = self.session.scalar(
-                    select(UnifiedPayoutRun).where(
-                        UnifiedPayoutRun.business_event_id == winning_event.id
-                    )
-                )
-                if winning_run is not None:
-                    return self._payout_result(winning_run, replay=True)
-            return self._rejected("PAYOUT_CONFIRM_CONCURRENT_WRITE_CONFLICT")
-        except ValueError as exc:
-            return self._rejected(str(exc))
-
-    def pay_withholding_tax(self, request: PayLaborWithholdingTaxRequest) -> LaborResult:
-        missing = request.missing_fields()
-        if missing:
-            return self._requirement(missing)
-        request_hash = self._hash(request.model_dump(mode="json"))
-        try:
-            with self.session.begin_nested():
-                self._organization(request.org_id)
-                existing = self.session.scalar(
-                    select(BusinessEvent).where(
-                        BusinessEvent.org_id == request.org_id,
-                        BusinessEvent.idempotency_key == request.idempotency_key,
-                    )
-                )
-                if existing is not None:
-                    if existing.request_payload_hash != request_hash:
-                        return self._rejected("LABOR_TAX_PAYMENT_IDEMPOTENCY_PAYLOAD_MISMATCH")
-                    voucher = self.session.scalar(
-                        select(Voucher).where(Voucher.event_id == existing.id)
-                    )
-                    return LaborResult(
-                        status=LaborResultStatus.POSTED,
-                        event_id=existing.id,
-                        voucher_id=voucher.id if voucher else None,
-                        voucher_number=voucher.voucher_number if voucher else None,
-                        data={"idempotent_replay": True},
-                    )
-                assert request.posting_date is not None
-                assert request.payment_date is not None
-                assert request.business_date is not None
-                assert request.amount_fen is not None
-                assert request.bank_account_code is not None
-                assert request.bank_transaction_id is not None
-                assert_period_open(self.session, request.org_id, request.posting_date)
-                self._evidence(request.org_id, request.evidence_references)
-                if sum(item.amount_fen for item in request.allocations) != request.amount_fen:
-                    return self._rejected("LABOR_TAX_PAYMENT_ALLOCATIONS_MUST_EQUAL_AMOUNT")
-                bank = self._validated_bank(
-                    request.org_id,
-                    request.bank_account_code,
-                    request.bank_transaction_id,
-                    request.payment_date,
-                    request.amount_fen,
-                )
-                open_items = self.session.scalars(
-                    select(OpenItem)
-                    .where(
-                        OpenItem.org_id == request.org_id,
-                        OpenItem.id.in_([item.open_item_id for item in request.allocations]),
-                    )
-                    .order_by(OpenItem.id)
-                    .with_for_update()
-                ).all()
-                by_id = {item.id: item for item in open_items}
-                event = build_business_event(
-                    self.session,
-                    org_id=request.org_id,
-                    idempotency_key=request.idempotency_key,
-                    request_payload_hash=request_hash,
-                    event_type="labor_withholding_tax_payment",
-                    status="draft",
-                    description=request.description,
-                    facts=request.model_dump(mode="json"),
-                    business_date=request.business_date,
-                    payment_date=request.payment_date,
-                    posting_date=request.posting_date,
-                    rule_trace=[
-                        {
-                            "stage": "labor_withholding_tax_sources_validated",
-                            "allocation_count": len(request.allocations),
-                            "amount_fen": request.amount_fen,
-                        }
-                    ],
-                    rule_version="labor-withholding-payment/1",
-                )
-                self.session.add(event)
-                self.session.flush()
-                self.finance._attach_evidence(event, request.evidence_references)
-                for allocation in request.allocations:
-                    item = by_id.get(allocation.open_item_id)
-                    if (
-                        item is None
-                        or item.payable_category != "labor_individual_income_tax"
-                        or item.status not in {"open", "partial"}
-                    ):
-                        raise ValueError("LABOR_TAX_PAYMENT_SOURCE_IS_NOT_ACTIVE_LABOR_TAX")
-                    tax_source = self.session.scalar(
-                        select(LaborWithholdingOpenItemSource).where(
-                            LaborWithholdingOpenItemSource.org_id == request.org_id,
-                            LaborWithholdingOpenItemSource.open_item_id == item.id,
-                        )
-                    )
-                    if tax_source is None:
-                        raise ValueError("LABOR_TAX_PAYMENT_SOURCE_LACKS_PAYMENT_LINEAGE")
-                    entitlement = self.session.scalar(
-                        select(LaborWithholdingEntitlement).where(
-                            LaborWithholdingEntitlement.org_id == request.org_id,
-                            LaborWithholdingEntitlement.id == tax_source.entitlement_id,
-                            LaborWithholdingEntitlement.labor_line_id == tax_source.labor_line_id,
-                        )
-                    )
-                    if entitlement is None:
-                        raise ValueError("LABOR_TAX_PAYMENT_ENTITLEMENT_NOT_FOUND")
-                    tax_line = self.session.get(LaborRemunerationLine, tax_source.labor_line_id)
-                    if tax_line is None or tax_line.org_id != request.org_id:
-                        raise ValueError("LABOR_TAX_PAYMENT_SOURCE_LINE_NOT_FOUND")
-                    paid = self.session.scalar(
-                        select(
-                            func.coalesce(
-                                func.sum(LaborWithholdingTaxPaymentAllocation.amount_fen), 0
-                            )
-                        ).where(
-                            LaborWithholdingTaxPaymentAllocation.org_id == request.org_id,
-                            LaborWithholdingTaxPaymentAllocation.entitlement_id == entitlement.id,
-                            LaborWithholdingTaxPaymentAllocation.reversed.is_(False),
-                        )
-                    )
-                    if int(paid or 0) + allocation.amount_fen > entitlement.amount_fen:
-                        raise ValueError("LABOR_TAX_PAYMENT_EXCEEDS_WITHHOLDING_ENTITLEMENT")
-                    self._settle(event, item, allocation.amount_fen)
-                    self.session.add(
-                        LaborWithholdingTaxPaymentAllocation(
-                            org_id=request.org_id,
-                            entitlement_id=entitlement.id,
-                            open_item_id=item.id,
-                            payment_event_id=event.id,
-                            amount_fen=allocation.amount_fen,
-                        )
-                    )
-                    self.session.add(
-                        LaborRemunerationEventLink(
-                            org_id=request.org_id,
-                            event_id=event.id,
-                            batch_id=tax_line.batch_id,
-                            labor_line_id=tax_source.labor_line_id,
-                            source_open_item_id=item.id,
-                            source_payment_event_id=tax_source.payment_event_id,
-                            link_kind="tax_payment",
-                        )
-                    )
-                self.session.add(
-                    BankTransactionMatch(
-                        org_id=request.org_id,
-                        bank_transaction_id=bank.id,
-                        event_id=event.id,
-                    )
-                )
-                bank.matched_event_id = event.id
-                voucher = create_voucher(
-                    self.session,
-                    event=event,
-                    posting_date=request.posting_date,
-                    description=request.description,
-                    entries=[
-                        Entry(
-                            account_role="individual_income_tax_payable",
-                            debit_fen=request.amount_fen,
-                        ),
-                        Entry(
-                            account_code=request.bank_account_code,
-                            credit_fen=request.amount_fen,
-                        ),
-                    ],
-                )
-                event.status = "posted"
-                self.session.add(
-                    AuditLog(
-                        org_id=request.org_id,
-                        event_id=event.id,
-                        action="labor_withholding_tax_paid",
-                        details={"amount_fen": request.amount_fen},
-                    )
-                )
-                self.session.flush()
-                return LaborResult(
-                    status=LaborResultStatus.POSTED,
-                    event_id=event.id,
-                    voucher_id=voucher.id,
-                    voucher_number=voucher.voucher_number,
-                    trace=event.rule_trace,
-                )
-        except AccountingPeriodError as exc:
-            return self._rejected(exc.code)
-        except (IntegrityError, OperationalError):
-            return self._rejected("LABOR_TAX_PAYMENT_CONCURRENT_WRITE_CONFLICT")
-        except ValueError as exc:
-            return self._rejected(str(exc))
+        return self.finance._agency_counterparty(org_id, {"agency_code": code, "agency_name": name})
 
     def confirm_external_declaration(
         self, request: ConfirmLaborExternalDeclarationRequest
@@ -2085,22 +950,28 @@ class LaborRemunerationService:
                 batch = self.session.get(LaborRemunerationBatch, line.batch_id)
                 if batch is None or batch.status != "posted":
                     return self._rejected("LABOR_DECLARATION_REQUIRES_POSTED_BATCH")
-                payout = self.session.scalar(
-                    select(UnifiedPayoutRun)
+                payment_components = self.session.scalars(
+                    select(BusinessEventComponent)
                     .join(
-                        UnifiedPayoutRunItem,
-                        (UnifiedPayoutRunItem.org_id == UnifiedPayoutRun.org_id)
-                        & (UnifiedPayoutRunItem.payout_run_id == UnifiedPayoutRun.id),
+                        LaborRemunerationEventLink,
+                        LaborRemunerationEventLink.component_id == BusinessEventComponent.id,
                     )
+                    .join(BusinessEvent, BusinessEvent.id == BusinessEventComponent.event_id)
                     .where(
-                        UnifiedPayoutRun.org_id == request.org_id,
-                        UnifiedPayoutRunItem.labor_line_id == line.id,
-                        UnifiedPayoutRun.status == "posted",
+                        BusinessEvent.org_id == request.org_id,
+                        BusinessEvent.status == "posted",
+                        LaborRemunerationEventLink.org_id == request.org_id,
+                        LaborRemunerationEventLink.labor_line_id == line.id,
+                        LaborRemunerationEventLink.link_kind == "payment",
                     )
+                ).all()
+                if not payment_components:
+                    return self._rejected("LABOR_DECLARATION_REQUIRES_POSTED_PAYMENT")
+                payment_date = max(
+                    date.fromisoformat(component.derived["payment_date"])
+                    for component in payment_components
                 )
-                if payout is None:
-                    return self._rejected("LABOR_DECLARATION_REQUIRES_POSTED_PAYOUT")
-                if request.declaration_date < payout.payment_date:
+                if request.declaration_date < payment_date:
                     return self._rejected("LABOR_DECLARATION_PRECEDES_PAYMENT")
                 already_confirmed = self.session.scalar(
                     select(LaborExternalDeclarationConfirmation.id).where(
@@ -2166,108 +1037,7 @@ class LaborRemunerationService:
             if batch is None:
                 return self._rejected("LABOR_BATCH_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
             return self._batch_result(batch)
-        run = self.session.scalar(
-            select(UnifiedPayoutRun).where(
-                UnifiedPayoutRun.org_id == request.org_id,
-                UnifiedPayoutRun.id == request.payout_run_id,
-            )
-        )
-        if run is None:
-            return self._rejected("PAYOUT_RUN_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-        return self._payout_result(run)
+        raise ValueError("labor identity is required")
 
     def reverse_event(self, request: ReverseEventRequest):
-        """Use the common reversal engine, then close module-specific audit state."""
-
-        original = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.id == request.event_id,
-            )
-        )
-        if original is None:
-            return self.finance.reverse_event(request)
-        original_type = original.event_type
-        result = self.finance._reverse_event_write(request)
-        if result.status is not ResultStatus.POSTED or result.event_id is None:
-            return result
-        reversal_id = result.event_id
-        if original_type == "labor_remuneration_accrual":
-            batch = self.session.scalar(
-                select(LaborRemunerationBatch).where(
-                    LaborRemunerationBatch.org_id == request.org_id,
-                    LaborRemunerationBatch.business_event_id == original.id,
-                )
-            )
-            if batch is not None:
-                batch.status = "reversed"
-        elif original_type == "unified_payout_run":
-            run = self.session.scalar(
-                select(UnifiedPayoutRun).where(
-                    UnifiedPayoutRun.org_id == request.org_id,
-                    UnifiedPayoutRun.business_event_id == original.id,
-                )
-            )
-            if run is not None:
-                run.status = "reversed"
-            allocations = self.session.scalars(
-                select(PayrollWithholdingPaymentAllocation).where(
-                    PayrollWithholdingPaymentAllocation.org_id == request.org_id,
-                    PayrollWithholdingPaymentAllocation.payment_event_id == original.id,
-                    PayrollWithholdingPaymentAllocation.reversed.is_(False),
-                )
-            ).all()
-            for allocation in allocations:
-                allocation.reversed = True
-                allocation.reversed_by_event_id = reversal_id
-            actual_deductions = self.session.scalars(
-                select(PayrollSalaryActualDeductionAllocation).where(
-                    PayrollSalaryActualDeductionAllocation.org_id == request.org_id,
-                    PayrollSalaryActualDeductionAllocation.payment_event_id == original.id,
-                    PayrollSalaryActualDeductionAllocation.reversed.is_(False),
-                )
-            ).all()
-            for deduction in actual_deductions:
-                deduction.reversed = True
-                deduction.reversed_by_event_id = reversal_id
-        elif original_type == "labor_withholding_tax_payment":
-            allocations = self.session.scalars(
-                select(LaborWithholdingTaxPaymentAllocation).where(
-                    LaborWithholdingTaxPaymentAllocation.org_id == request.org_id,
-                    LaborWithholdingTaxPaymentAllocation.payment_event_id == original.id,
-                    LaborWithholdingTaxPaymentAllocation.reversed.is_(False),
-                )
-            ).all()
-            for allocation in allocations:
-                allocation.reversed = True
-                allocation.reversed_by_event_id = reversal_id
-        original_links = self.session.scalars(
-            select(LaborRemunerationEventLink).where(
-                LaborRemunerationEventLink.org_id == request.org_id,
-                LaborRemunerationEventLink.event_id == original.id,
-                LaborRemunerationEventLink.link_kind != "reversal",
-            )
-        ).all()
-        for link in original_links:
-            exists = self.session.scalar(
-                select(LaborRemunerationEventLink.id).where(
-                    LaborRemunerationEventLink.org_id == request.org_id,
-                    LaborRemunerationEventLink.event_id == reversal_id,
-                    LaborRemunerationEventLink.batch_id == link.batch_id,
-                    LaborRemunerationEventLink.labor_line_id == link.labor_line_id,
-                    LaborRemunerationEventLink.link_kind == "reversal",
-                )
-            )
-            if exists is None:
-                self.session.add(
-                    LaborRemunerationEventLink(
-                        org_id=request.org_id,
-                        event_id=reversal_id,
-                        batch_id=link.batch_id,
-                        labor_line_id=link.labor_line_id,
-                        source_payment_event_id=original.id,
-                        link_kind="reversal",
-                    )
-                )
-        self.session.flush()
-        return result
+        return FinanceService.reverse_event(self.finance, request)

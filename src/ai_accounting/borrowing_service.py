@@ -11,15 +11,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
+from .bank_matching import BankMatchingError
 from .borrowing_schemas import (
     BorrowingInformationRequirement,
     BorrowingResult,
     BorrowingResultStatus,
     ConfirmBorrowingInterestRequest,
     DrawBorrowingRequest,
-    PayBorrowingInterestRequest,
     PreviewBorrowingInterestRequest,
-    RepayBorrowingPrincipalRequest,
 )
 from .borrowings import (
     SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
@@ -27,10 +26,17 @@ from .borrowings import (
     borrowing_calculation_hash,
     calculate_simple_interest,
 )
-from .ledger import AccountingPeriodError, Entry, build_business_event, create_voucher
+from .ledger import (
+    AccountingPeriodError,
+    CashFlowPlan,
+    ComponentPostingPlan,
+    Entry,
+    build_business_event,
+    commit_posting_plan,
+    funds_posting_plan,
+)
 from .models import (
     AuditLog,
-    BankTransactionMatch,
     Borrowing,
     BorrowingInterestAccrual,
     BorrowingPayment,
@@ -41,7 +47,7 @@ from .models import (
     Voucher,
     event_evidence,
 )
-from .schemas import FinanceResult, ResultStatus, ReverseEventRequest
+from .schemas import ReverseEventRequest
 from .service import FinanceService
 
 ACCOUNTING_RULE_SOURCE_URL = "https://kjs.mof.gov.cn/zhengcefabu/201111/P020111118325852319878.pdf"
@@ -100,18 +106,6 @@ class BorrowingService(FinanceService):
             "finance_confirm_borrowing_interest",
             request,
             lambda: self._confirm_interest_write(request),
-        )
-
-    def pay_borrowing_interest(self, request: PayBorrowingInterestRequest) -> BorrowingResult:
-        return self._run_write(
-            "finance_pay_borrowing_interest", request, lambda: self._pay_interest_write(request)
-        )
-
-    def repay_borrowing_principal(self, request: RepayBorrowingPrincipalRequest) -> BorrowingResult:
-        return self._run_write(
-            "finance_repay_borrowing_principal",
-            request,
-            lambda: self._repay_principal_write(request),
         )
 
     def get_borrowing(self, org_id: uuid.UUID, borrowing_id: uuid.UUID) -> BorrowingResult:
@@ -216,81 +210,8 @@ class BorrowingService(FinanceService):
             },
         )
 
-    def reverse_event(self, request: ReverseEventRequest) -> FinanceResult:
-        original = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id, BusinessEvent.id == request.event_id
-            )
-        )
-        if original is None or original.event_type not in BORROWING_EVENT_TYPES:
-            return super().reverse_event(request)
-        existing = self._idempotent_event(request.org_id, request.idempotency_key)
-        payload_hash = self._request_payload_hash(request)
-        if existing is not None:
-            if existing.request_payload_hash != payload_hash:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED, errors=["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
-                )
-            return self._result_for_existing(existing)
-        return super().reverse_event(request)
-
-    def _reverse_event_write(self, request: ReverseEventRequest) -> FinanceResult:
-        original = self.session.scalar(
-            select(BusinessEvent)
-            .where(BusinessEvent.org_id == request.org_id, BusinessEvent.id == request.event_id)
-            .with_for_update()
-        )
-        if original is None or original.event_type not in BORROWING_EVENT_TYPES:
-            return super()._reverse_event_write(request)
-        borrowing = self._borrowing_for_event(original)
-        if borrowing is None:
-            return FinanceResult(status=ResultStatus.REJECTED, errors=["BORROWING_NOT_FOUND"])
-        borrowing = self._get_borrowing(request.org_id, borrowing.id, lock=True)
-        if borrowing is None or self.borrowing_reversal_dependency_error(original, borrowing):
-            return FinanceResult(
-                status=ResultStatus.REJECTED, errors=["BORROWING_OPEN_DEPENDENCIES_EXIST"]
-            )
-        return super()._reverse_event_write(request)
-
-    def borrowing_reversal_dependency_error(
-        self, original: BusinessEvent, borrowing: Borrowing
-    ) -> str | None:
-        """Shared reversal hook: enforce payment → accrual → drawdown ordering."""
-        if original.status != "posted" or original.reversed_by_event_id is not None:
-            return None
-        accruals = self._active_accruals(borrowing.id, lock=True)
-        payments = self._active_payments(borrowing.id, lock=True)
-        if original.event_type == "borrowing_principal_repayment":
-            return None
-        if original.event_type == "borrowing_interest_payment":
-            payment = self.session.scalar(
-                select(BorrowingPayment).where(
-                    BorrowingPayment.org_id == original.org_id,
-                    BorrowingPayment.event_id == original.id,
-                )
-            )
-            if payment is None:
-                return "BORROWING_OPEN_DEPENDENCIES_EXIST"
-            if any(p.payment_kind == "principal" for p in payments):
-                return "BORROWING_OPEN_DEPENDENCIES_EXIST"
-            return None
-        if original.event_type == "borrowing_interest_accrual":
-            accrual = self.session.scalar(
-                select(BorrowingInterestAccrual).where(
-                    BorrowingInterestAccrual.org_id == original.org_id,
-                    BorrowingInterestAccrual.event_id == original.id,
-                )
-            )
-            if accrual is None:
-                return "BORROWING_OPEN_DEPENDENCIES_EXIST"
-            if any(p.accrual_id == accrual.id for p in payments) or any(
-                a.period_end > accrual.period_end for a in accruals
-            ):
-                return "BORROWING_OPEN_DEPENDENCIES_EXIST"
-            return None
-        if original.event_type == "borrowing_drawdown" and (accruals or payments):
-            return "BORROWING_OPEN_DEPENDENCIES_EXIST"
-        return None
+    def reverse_event(self, request: ReverseEventRequest):
+        return FinanceService.reverse_event(self, request)
 
     def _run_write(
         self, command: str, request: Any, writer: Callable[[], BorrowingResult]
@@ -303,8 +224,6 @@ class BorrowingService(FinanceService):
             return self._existing_result(existing, payload_hash)
         bank_settlement_commands = {
             "finance_draw_borrowing",
-            "finance_pay_borrowing_interest",
-            "finance_repay_borrowing_principal",
         }
         if command in bank_settlement_commands and not self._bank_reconciliation_scope_is_confirmed(
             self.session.get(Organization, request.org_id)
@@ -350,6 +269,8 @@ class BorrowingService(FinanceService):
                 BorrowingResultStatus.REJECTED,
                 errors=[exc.code],
             )
+        except BankMatchingError as exc:
+            return BorrowingResult(status=BorrowingResultStatus.REJECTED, errors=[str(exc)])
         except AccountingPeriodError as exc:
             return self._result(BorrowingResultStatus.REJECTED, errors=[exc.code])
         except IntegrityError:
@@ -370,7 +291,8 @@ class BorrowingService(FinanceService):
                 )
             raise
 
-    def _draw_write(self, request: DrawBorrowingRequest) -> BorrowingResult:
+    def compile_draw(self, request: DrawBorrowingRequest, *, key: str) -> ComponentPostingPlan:
+        """Compile the borrowing facts once, independent of the receipt allocation."""
         if request.lender_is_licensed_financial_institution is not True:
             self._reject("BORROWING_UNSUPPORTED_TERMS")
         if request.currency != "CNY" or request.term_facts.is_phase_one_supported() is not True:
@@ -387,99 +309,100 @@ class BorrowingService(FinanceService):
         ):
             self._reject("BORROWING_CODE_ALREADY_EXISTS")
         lender = self._resolve_lender(request.org_id, request.lender)
+        self._validate_evidence(request.org_id, request.evidence_references)
+        borrowing_id = uuid.uuid4()
+        role = self._borrowing_role(request.drawdown_date, request.due_date)
+
+        def persist(session, event, component):
+            borrowing = Borrowing(
+                component_id=component.id,
+                id=borrowing_id,
+                org_id=request.org_id,
+                borrowing_code=request.borrowing_code,
+                contract_name=request.contract_name,
+                lender_id=lender.id,
+                lender_is_licensed_financial_institution=True,
+                currency="CNY",
+                principal_fen=request.principal_fen,
+                drawdown_date=request.drawdown_date,
+                due_date=request.due_date,
+                posting_date=request.posting_date,
+                annual_rate_percent=request.annual_rate_percent,
+                day_count_basis=request.day_count_basis.value,
+                interest_due_dates=[d.isoformat() for d in request.interest_due_dates],
+                capitalization_applicable=False,
+                purpose_description=request.purpose_description,
+                single_drawdown=request.term_facts.single_drawdown,
+                fixed_rate=request.term_facts.fixed_rate,
+                simple_interest=request.term_facts.simple_interest,
+                bullet_principal_at_maturity=request.term_facts.bullet_principal_at_maturity,
+                allows_prepayment=request.term_facts.allows_prepayment,
+                allows_extension=request.term_facts.allows_extension,
+                has_penalty_interest=request.term_facts.has_penalty_interest,
+                has_financing_fees=request.term_facts.has_financing_fees,
+                drawdown_event_id=event.id,
+                accounting_rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(borrowing)
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="borrowing_drawdown",
+            facts=request.model_dump(mode="json"),
+            rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
+            derived={
+                "borrowing_id": str(borrowing_id),
+                "cash_inflow_fen": request.principal_fen,
+                "cash_flow_category": "cash_flow_14",
+                "accounting_rule_source_url": ACCOUNTING_RULE_SOURCE_URL,
+            },
+            entries=[Entry(account_role=role, credit_fen=request.principal_fen)],
+            effects=[persist],
+        )
+
+    def _draw_write(self, request: DrawBorrowingRequest) -> BorrowingResult:
+        plan = self.compile_draw(request, key="domain")
         self._validate_bank_account(
             request.org_id, request.bank_account_code, request.drawdown_date
         )
-        self._validate_evidence(request.org_id, request.evidence_references)
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_draw_borrowing",
-                "borrowing_code": request.borrowing_code,
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-                "interest_due_dates": [d.isoformat() for d in request.interest_due_dates],
-                "bank_account_code": request.bank_account_code,
-            },
-            self._accounting_rule_trace(),
-        ]
         event = self._new_event(
             request,
             "finance_draw_borrowing",
             "borrowing_drawdown",
             request.drawdown_date,
             request.posting_date,
-            trace,
+            [self._accounting_rule_trace()],
             payment_date=request.drawdown_date,
         )
+        event.facts = {**event.facts, **plan.derived}
         self.session.add(event)
         self.session.flush()
         self._attach_evidence(event, request.evidence_references)
-        self._match_bank_transactions(
-            event,
-            request.bank_transaction_references,
-            bank_account_code=request.bank_account_code,
-            expected_inflow_fen=request.principal_fen,
-            expected_outflow_fen=0,
-            expected_date=request.drawdown_date,
+        funds = funds_posting_plan(
+            {
+                "key": "receipt",
+                "account_code": request.bank_account_code,
+                "bank_transaction_references": [
+                    r.model_dump(mode="json") for r in request.bank_transaction_references
+                ],
+                "direction": "receipt",
+                "payment_date": request.drawdown_date,
+                "amount_fen": request.principal_fen,
+                "allocations": [{"component_key": plan.key, "amount_fen": request.principal_fen}],
+            }
         )
-        role = self._borrowing_role(request.drawdown_date, request.due_date)
-        borrowing = Borrowing(
-            org_id=request.org_id,
-            borrowing_code=request.borrowing_code,
-            contract_name=request.contract_name,
-            lender_id=lender.id,
-            lender_is_licensed_financial_institution=True,
-            currency="CNY",
-            principal_fen=request.principal_fen,
-            drawdown_date=request.drawdown_date,
-            due_date=request.due_date,
-            posting_date=request.posting_date,
-            annual_rate_percent=request.annual_rate_percent,
-            day_count_basis=request.day_count_basis.value,
-            interest_due_dates=[d.isoformat() for d in request.interest_due_dates],
-            capitalization_applicable=False,
-            purpose_description=request.purpose_description,
-            single_drawdown=request.term_facts.single_drawdown,
-            fixed_rate=request.term_facts.fixed_rate,
-            simple_interest=request.term_facts.simple_interest,
-            bullet_principal_at_maturity=request.term_facts.bullet_principal_at_maturity,
-            allows_prepayment=request.term_facts.allows_prepayment,
-            allows_extension=request.term_facts.allows_extension,
-            has_penalty_interest=request.term_facts.has_penalty_interest,
-            has_financing_fees=request.term_facts.has_financing_fees,
-            drawdown_event_id=event.id,
-            accounting_rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+        plan.cash_flows.append(
+            CashFlowPlan(request.bank_account_code, "cash_flow_14", request.principal_fen)
         )
-        self.session.add(borrowing)
-        self.session.flush()
-        entries = [
-            Entry(account_code=request.bank_account_code, debit_fen=request.principal_fen),
-            Entry(account_role=role, credit_fen=request.principal_fen),
-        ]
-        voucher = create_voucher(
+        voucher = commit_posting_plan(
             self.session,
             event=event,
+            components=[plan, funds],
             posting_date=request.posting_date,
             description=request.description or f"借款放款 {request.borrowing_code}",
-            entries=entries,
         )
-        trace += [
-            self._entries_trace(entries),
-            {
-                "stage": "normalized_fact_created",
-                "borrowing_id": str(borrowing.id),
-                "borrowing_account_role": role,
-            },
-        ]
-        event.facts = {
-            **event.facts,
-            "borrowing_id": str(borrowing.id),
-            "interest_due_dates": [d.isoformat() for d in request.interest_due_dates],
-        }
-        event.rule_trace = trace
-        self._finalize(event, voucher, borrowing.id, {})
-        return self._posted(borrowing.id, event, voucher)
+        return self._posted(uuid.UUID(plan.derived["borrowing_id"]), event, voucher)
 
     def _interest_snapshot(
         self,
@@ -571,279 +494,92 @@ class BorrowingService(FinanceService):
             "trace": trace,
         }
 
-    def _confirm_interest_write(self, request: ConfirmBorrowingInterestRequest) -> BorrowingResult:
+    def compile_interest_accrual(
+        self, request: ConfirmBorrowingInterestRequest, *, key: str
+    ) -> ComponentPostingPlan:
         snapshot = self._interest_snapshot(request, lock=True)
         if request.calculation_hash != snapshot["calculation_hash"]:
             self._reject("BORROWING_CALCULATION_STALE")
-        borrowing, calculation, trace = (
-            snapshot["borrowing"],
-            snapshot["calculation"],
-            list(snapshot["trace"]),
-        )
-        trace[0] = {**trace[0], "command": "finance_confirm_borrowing_interest"}
-        event = self._new_event(
-            request,
-            "finance_confirm_borrowing_interest",
-            "borrowing_interest_accrual",
-            request.period_start,
-            request.period_end,
-            trace,
-        )
-        event.facts = {
-            **event.facts,
-            "borrowing_id": str(borrowing.id),
-            "calculation": snapshot["data"],
-        }
-        self.session.add(event)
-        self.session.flush()
+        borrowing, calculation = snapshot["borrowing"], snapshot["calculation"]
         inherited = self.session.scalars(
             select(event_evidence.c.evidence_id).where(
                 event_evidence.c.org_id == request.org_id,
                 event_evidence.c.event_id == borrowing.drawdown_event_id,
             )
         ).all()
-        self._attach_evidence(event, inherited, relation_kind="inherited")
-        accrual = BorrowingInterestAccrual(
-            org_id=request.org_id,
-            borrowing_id=borrowing.id,
-            event_id=event.id,
-            period_start=request.period_start,
-            period_end=request.period_end,
-            posting_date=request.period_end,
-            sequence_no=len(snapshot["accruals"]) + 1,
-            principal_fen=borrowing.principal_fen,
-            annual_rate_percent=borrowing.annual_rate_percent,
-            day_count_basis=borrowing.day_count_basis,
-            actual_days=calculation.actual_days,
-            amount_fen=calculation.interest_fen,
-            calculation_hash=snapshot["calculation_hash"],
-            accounting_rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(accrual)
-        self.session.flush()
-        entries = [
-            Entry(account_role="borrowing_interest_expense", debit_fen=calculation.interest_fen),
-            Entry(account_role="interest_payable", credit_fen=calculation.interest_fen),
-        ]
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.period_end,
-            description=f"计提借款利息 {borrowing.borrowing_code}",
-            entries=entries,
-        )
-        trace += [
-            self._entries_trace(entries),
-            {"stage": "normalized_fact_created", "accrual_id": str(accrual.id)},
-        ]
-        event.rule_trace = trace
-        data = {**snapshot["data"], "calculation_hash": snapshot["calculation_hash"]}
-        self._finalize(event, voucher, borrowing.id, data)
-        return self._posted(borrowing.id, event, voucher, data)
 
-    def _pay_interest_write(self, request: PayBorrowingInterestRequest) -> BorrowingResult:
-        borrowing = self._get_borrowing(request.org_id, request.borrowing_id, lock=True)
-        if borrowing is None:
-            self._reject("BORROWING_NOT_FOUND")
-        accrual = self.session.scalar(
-            select(BorrowingInterestAccrual)
-            .join(BusinessEvent, BusinessEvent.id == BorrowingInterestAccrual.event_id)
-            .where(
-                BorrowingInterestAccrual.org_id == request.org_id,
-                BorrowingInterestAccrual.borrowing_id == borrowing.id,
-                BorrowingInterestAccrual.event_id == request.accrual_event_id,
-                BusinessEvent.status == "posted",
+        accrual_id = uuid.uuid4()
+
+        def persist(session, event, component):
+            self._attach_evidence(event, inherited, relation_kind="inherited")
+            accrual = BorrowingInterestAccrual(
+                id=accrual_id,
+                component_id=component.id,
+                org_id=request.org_id,
+                borrowing_id=borrowing.id,
+                event_id=event.id,
+                period_start=request.period_start,
+                period_end=request.period_end,
+                posting_date=request.period_end,
+                sequence_no=len(snapshot["accruals"]) + 1,
+                principal_fen=borrowing.principal_fen,
+                annual_rate_percent=borrowing.annual_rate_percent,
+                day_count_basis=borrowing.day_count_basis,
+                actual_days=calculation.actual_days,
+                amount_fen=calculation.interest_fen,
+                calculation_hash=snapshot["calculation_hash"],
+                accounting_rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
             )
-            .with_for_update()
-        )
-        if accrual is None:
-            self._reject("BORROWING_INTEREST_OUT_OF_SEQUENCE")
-        if request.payment_date < accrual.period_end:
-            self._reject("BORROWING_INTEREST_PAYMENT_BEFORE_DUE_DATE")
-        if request.payment_date > borrowing.due_date:
-            self._reject("BORROWING_INTEREST_PAYMENT_DATE_INVALID")
-        if self.session.scalar(
-            select(BorrowingPayment.id)
-            .join(BusinessEvent, BusinessEvent.id == BorrowingPayment.event_id)
-            .where(
-                BorrowingPayment.org_id == request.org_id,
-                BorrowingPayment.accrual_id == accrual.id,
-                BorrowingPayment.payment_kind == "interest",
-                BusinessEvent.status == "posted",
-            )
-        ):
-            self._reject("BORROWING_INTEREST_ALREADY_PAID")
-        self._validate_bank_account(request.org_id, request.bank_account_code, request.payment_date)
-        self._validate_evidence(request.org_id, request.evidence_references)
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_pay_borrowing_interest",
+            session.add(accrual)
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="borrowing_interest_accrual",
+            facts=request.model_dump(mode="json"),
+            derived={
+                **snapshot["data"],
+                "calculation_hash": snapshot["calculation_hash"],
                 "borrowing_id": str(borrowing.id),
-                "accrual_event_id": str(accrual.event_id),
-                "amount_fen": accrual.amount_fen,
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-                "bank_account_code": request.bank_account_code,
+                "accrual_id": str(accrual_id),
+                "source_event_ids": [str(borrowing.drawdown_event_id)],
             },
-            self._accounting_rule_trace(),
-        ]
-        event = self._new_event(
-            request,
-            "finance_pay_borrowing_interest",
-            "borrowing_interest_payment",
-            request.payment_date,
-            request.posting_date,
-            trace,
-            payment_date=request.payment_date,
-        )
-        self.session.add(event)
-        self.session.flush()
-        self._attach_evidence(event, request.evidence_references)
-        self._match_bank_transactions(
-            event,
-            request.bank_transaction_references,
-            bank_account_code=request.bank_account_code,
-            expected_inflow_fen=0,
-            expected_outflow_fen=accrual.amount_fen,
-            expected_date=request.payment_date,
-        )
-        payment = BorrowingPayment(
-            org_id=request.org_id,
-            borrowing_id=borrowing.id,
-            accrual_id=accrual.id,
-            event_id=event.id,
-            payment_kind="interest",
-            payment_date=request.payment_date,
-            posting_date=request.posting_date,
-            amount_fen=accrual.amount_fen,
-            accounting_rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(payment)
-        self.session.flush()
-        entries = [
-            Entry(account_role="interest_payable", debit_fen=accrual.amount_fen),
-            Entry(account_code=request.bank_account_code, credit_fen=accrual.amount_fen),
-        ]
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.posting_date,
-            description=request.description or f"支付借款利息 {borrowing.borrowing_code}",
-            entries=entries,
-        )
-        trace += [
-            self._entries_trace(entries),
-            {"stage": "normalized_fact_created", "payment_id": str(payment.id)},
-        ]
-        event.rule_trace = trace
-        self._finalize(
-            event,
-            voucher,
-            borrowing.id,
-            {"amount_fen": accrual.amount_fen, "accrual_event_id": str(accrual.event_id)},
-        )
-        return self._posted(
-            borrowing.id,
-            event,
-            voucher,
-            {"amount_fen": accrual.amount_fen, "accrual_event_id": str(accrual.event_id)},
+            rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
+            entries=[
+                Entry(
+                    account_role="borrowing_interest_expense", debit_fen=calculation.interest_fen
+                ),
+                Entry(account_role="interest_payable", credit_fen=calculation.interest_fen),
+            ],
+            effects=[persist],
         )
 
-    def _repay_principal_write(self, request: RepayBorrowingPrincipalRequest) -> BorrowingResult:
-        borrowing = self._get_borrowing(request.org_id, request.borrowing_id, lock=True)
-        if borrowing is None:
-            self._reject("BORROWING_NOT_FOUND")
-        if request.repayment_date != borrowing.due_date:
-            self._reject("BORROWING_PRINCIPAL_NOT_REPAYABLE")
-        accruals = self._active_accruals(borrowing.id, lock=True)
-        payments = self._active_payments(borrowing.id, lock=True)
-        if (
-            any(p.payment_kind == "principal" for p in payments)
-            or not accruals
-            or accruals[-1].period_end != borrowing.due_date
-        ):
-            self._reject("BORROWING_PRINCIPAL_NOT_REPAYABLE")
-        paid = {p.accrual_id for p in payments if p.payment_kind == "interest"}
-        if {a.id for a in accruals} != paid or any(
-            payment.payment_kind == "interest" and payment.payment_date > request.repayment_date
-            for payment in payments
-        ):
-            self._reject("BORROWING_PRINCIPAL_NOT_REPAYABLE")
-        self._validate_evidence(request.org_id, request.evidence_references)
-        self._validate_bank_account(
-            request.org_id, request.bank_account_code, request.repayment_date
-        )
-        role = self._borrowing_role(borrowing.drawdown_date, borrowing.due_date)
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_repay_borrowing_principal",
-                "borrowing_id": str(borrowing.id),
-                "principal_fen": borrowing.principal_fen,
-                "paid_accrual_event_ids": [str(a.event_id) for a in accruals],
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-                "bank_account_code": request.bank_account_code,
-            },
-            self._accounting_rule_trace(),
-        ]
+    def _confirm_interest_write(self, request: ConfirmBorrowingInterestRequest) -> BorrowingResult:
+        plan = self.compile_interest_accrual(request, key="domain")
         event = self._new_event(
             request,
-            "finance_repay_borrowing_principal",
-            "borrowing_principal_repayment",
-            request.repayment_date,
-            request.posting_date,
-            trace,
-            payment_date=request.repayment_date,
+            "finance_confirm_borrowing_interest",
+            "borrowing_interest_accrual",
+            request.period_start,
+            request.period_end,
+            [self._accounting_rule_trace()],
         )
+        event.facts = {
+            **event.facts,
+            "borrowing_id": str(request.borrowing_id),
+            "calculation": plan.derived,
+            "_result_data": plan.derived,
+        }
         self.session.add(event)
         self.session.flush()
-        self._attach_evidence(event, request.evidence_references)
-        self._match_bank_transactions(
-            event,
-            request.bank_transaction_references,
-            bank_account_code=request.bank_account_code,
-            expected_inflow_fen=0,
-            expected_outflow_fen=borrowing.principal_fen,
-            expected_date=request.repayment_date,
-        )
-        payment = BorrowingPayment(
-            org_id=request.org_id,
-            borrowing_id=borrowing.id,
-            accrual_id=None,
-            event_id=event.id,
-            payment_kind="principal",
-            payment_date=request.repayment_date,
-            posting_date=request.posting_date,
-            amount_fen=borrowing.principal_fen,
-            accounting_rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(payment)
-        self.session.flush()
-        entries = [
-            Entry(account_role=role, debit_fen=borrowing.principal_fen),
-            Entry(account_code=request.bank_account_code, credit_fen=borrowing.principal_fen),
-        ]
-        voucher = create_voucher(
+        voucher = commit_posting_plan(
             self.session,
             event=event,
-            posting_date=request.posting_date,
-            description=request.description or f"归还借款本金 {borrowing.borrowing_code}",
-            entries=entries,
+            components=[plan],
+            posting_date=request.period_end,
+            description=f"计提借款利息 {request.borrowing_id}",
         )
-        trace += [
-            self._entries_trace(entries),
-            {
-                "stage": "normalized_fact_created",
-                "payment_id": str(payment.id),
-                "borrowing_account_role": role,
-            },
-        ]
-        event.rule_trace = trace
-        self._finalize(event, voucher, borrowing.id, {"amount_fen": borrowing.principal_fen})
-        return self._posted(borrowing.id, event, voucher, {"amount_fen": borrowing.principal_fen})
+        return self._posted(request.borrowing_id, event, voucher, plan.derived)
 
     def _new_event(
         self,
@@ -923,8 +659,6 @@ class BorrowingService(FinanceService):
         event_type = {
             "finance_draw_borrowing": "borrowing_drawdown",
             "finance_confirm_borrowing_interest": "borrowing_interest_accrual",
-            "finance_pay_borrowing_interest": "borrowing_interest_payment",
-            "finance_repay_borrowing_principal": "borrowing_principal_repayment",
         }[command]
         posting_date = getattr(request, "posting_date", None) or date(1970, 1, 1)
         business_date = (
@@ -1048,53 +782,6 @@ class BorrowingService(FinanceService):
         ) != len(evidence_ids):
             self._reject("BORROWING_EVIDENCE_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
 
-    def _match_bank_transactions(
-        self,
-        event: BusinessEvent,
-        references: list[Any],
-        *,
-        bank_account_code: str,
-        expected_inflow_fen: int,
-        expected_outflow_fen: int,
-        expected_date: date,
-    ) -> None:
-        if not references:
-            return
-        try:
-            rows = self._resolve_bank_transaction_references(event.org_id, references)
-        except ValueError as exc:
-            self._reject(str(exc))
-        ids = [row.id for row in rows]
-        if any(row.bank_account_code != bank_account_code for row in rows):
-            self._reject("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-        if any(row.booking_date != expected_date for row in rows):
-            self._reject("BORROWING_BANK_TRANSACTION_DATE_MISMATCH")
-        if any(row.currency != "CNY" for row in rows):
-            self._reject("BORROWING_BANK_CURRENCY_MISMATCH")
-        if (
-            sum(row.amount_fen for row in rows if row.amount_fen > 0) != expected_inflow_fen
-            or -sum(row.amount_fen for row in rows if row.amount_fen < 0) != expected_outflow_fen
-        ):
-            self._reject("BORROWING_BANK_TRANSACTION_AMOUNT_MISMATCH")
-        matches = self.session.scalars(
-            select(BankTransactionMatch)
-            .where(
-                BankTransactionMatch.org_id == event.org_id,
-                BankTransactionMatch.bank_transaction_id.in_(ids),
-                BankTransactionMatch.invalidated_by_event_id.is_(None),
-            )
-            .with_for_update()
-        ).all()
-        if matches or any(row.matched_event_id is not None for row in rows):
-            self._reject("BANK_TRANSACTION_ALREADY_MATCHED")
-        for row in rows:
-            self.session.add(
-                BankTransactionMatch(
-                    org_id=event.org_id, bank_transaction_id=row.id, event_id=event.id
-                )
-            )
-            row.matched_event_id = event.id
-
     def _get_borrowing(
         self, org_id: uuid.UUID, borrowing_id: uuid.UUID | None, *, lock: bool = False
     ) -> Borrowing | None:
@@ -1176,47 +863,6 @@ class BorrowingService(FinanceService):
             "effective_from": "2013-01-01",
             "source_url": ACCOUNTING_RULE_SOURCE_URL,
         }
-
-    @staticmethod
-    def _entries_trace(entries: list[Entry]) -> dict[str, Any]:
-        return {
-            "stage": "entries_created",
-            "template_lines": [
-                {
-                    "account_role": item.account_role,
-                    "account_code": item.account_code,
-                    "debit_fen": item.debit_fen,
-                    "credit_fen": item.credit_fen,
-                }
-                for item in entries
-            ],
-            "debit_fen": sum(item.debit_fen for item in entries),
-            "credit_fen": sum(item.credit_fen for item in entries),
-        }
-
-    def _finalize(
-        self, event: BusinessEvent, voucher: Voucher, borrowing_id: uuid.UUID, data: dict[str, Any]
-    ) -> None:
-        event.facts = {
-            **event.facts,
-            "_result_data": data,
-            "_result_calculation_hash": data.get("calculation_hash"),
-        }
-        self.session.flush()
-        event.status = "posted"
-        self.session.add(
-            AuditLog(
-                org_id=event.org_id,
-                event_id=event.id,
-                action="borrowing_event_posted",
-                details={
-                    "borrowing_id": str(borrowing_id),
-                    "voucher_id": str(voucher.id),
-                    "voucher_number": voucher.voucher_number,
-                },
-            )
-        )
-        self.session.flush()
 
     @staticmethod
     def _result(

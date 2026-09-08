@@ -6,7 +6,7 @@ from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from test_payroll_service import payroll_parameters
+from test_payroll_service import payroll_evidence, payroll_parameters
 
 from ai_accounting.models import Organization, PayrollBatch, PayrollPolicyVersion
 from ai_accounting.schemas import (
@@ -85,6 +85,7 @@ def _register_cross_year_facts(session: Session, organization: Organization) -> 
 def _cross_year_preview(
     session: Session, organization: Organization, employee_id: uuid.UUID
 ) -> object:
+    evidence = payroll_evidence(session, organization, "r3-cross-year-payroll")
     return FinanceService(session).preview_payroll(
         PreviewPayrollRequest.model_validate(
             {
@@ -94,6 +95,7 @@ def _cross_year_preview(
                 "payroll_period": "2026-12",
                 "posting_date": "2026-12-31",
                 "payment_date": "2027-01-05",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,

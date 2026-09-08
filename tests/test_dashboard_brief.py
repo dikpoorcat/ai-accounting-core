@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -13,8 +11,9 @@ from sqlalchemy.orm import Session
 from ai_accounting.accounting_period_schemas import GenerateAccountingPeriodRequest
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
-from ai_accounting.dashboard_brief import _compact_voucher_summary, load_brief_dashboard
+from ai_accounting.dashboard_brief import load_brief_dashboard
 from ai_accounting.database import Base, make_engine
+from ai_accounting.ledger import CashFlowPlan, ComponentPostingPlan, Entry, commit_posting_plan
 from ai_accounting.models import (
     Account,
     AccountingPeriod,
@@ -25,8 +24,6 @@ from ai_accounting.models import (
     Counterparty,
     Evidence,
     Organization,
-    Voucher,
-    VoucherLine,
 )
 
 
@@ -83,51 +80,6 @@ def _generate_period(
     assert result.period_id is not None
 
 
-@pytest.mark.parametrize(
-    ("event_type", "description", "parties", "expected"),
-    [
-        ("payroll_accrual", "一段很长的工资计提原始说明", [], "一段很长的工资计提原始说明"),
-        ("labor_remuneration_accrual", "一段很长的劳务原始说明", [], "2026年3月个人劳务"),
-        (
-            "fixed_asset_depreciation",
-            "计提固定资产折旧 2026-03（月度汇总）",
-            [],
-            "2026年3月月度汇总",
-        ),
-        (
-            "service_credit_sale",
-            "确认当月服务收入并形成应收；次月到账。",
-            ["测试客户"],
-            "测试客户服务收入",
-        ),
-        (
-            "refundable_deposit_paid",
-            "支付可退保证金并等待后续收回。",
-            ["测试供应商"],
-            "测试供应商保证金",
-        ),
-        (
-            "inventory",
-            "这是无法按类型提炼但必须完整保留的第一段摘要；第二段说明。",
-            [],
-            "这是无法按类型提炼但必须完整保留的第一段摘要",
-        ),
-    ],
-)
-def test_compact_voucher_summary_is_short_and_never_hard_truncated(
-    event_type: str,
-    description: str,
-    parties: list[str],
-    expected: str,
-) -> None:
-    event = BusinessEvent(event_type=event_type, business_date=date(2026, 3, 31), facts={})
-
-    result = _compact_voucher_summary(event=event, description=description, parties=parties)
-
-    assert result == expected
-    assert "…" not in result
-
-
 def _add_owner_contribution(
     session: Session,
     *,
@@ -153,50 +105,54 @@ def _add_owner_contribution(
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key="dashboard-brief-owner-contribution",
-        event_type="owner_contribution_received",
-        status="posted",
+        event_type="composite",
+        status="draft",
         description="测试负责人投入启动资金",
-        facts={},
+        facts={"components": ["capital", "funds.receipt"]},
         business_date=date(2026, 2, 9),
         posting_date=date(2026, 2, 9),
         rule_trace=[],
         evidence=[evidence],
     )
-    session.add(event)
-    session.flush()
-    voucher = Voucher(
-        org_id=organization.id,
-        event_id=event.id,
-        voucher_number="202602-0001",
+    commit_posting_plan(
+        session,
+        event=event,
         posting_date=date(2026, 2, 9),
         description=event.description,
-        status="posted",
-    )
-    session.add(voucher)
-    session.flush()
-    session.add_all(
-        [
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=1,
-                account_id=bank.id,
-                counterparty_id=owner.id,
-                debit_fen=10_000,
-                credit_fen=0,
-                memo=event.description,
+        components=[
+            ComponentPostingPlan(
+                key="capital",
+                kind="owner_funding",
+                facts={
+                    "key": "capital",
+                    "kind": "owner_funding",
+                    "amount_fen": 10_000,
+                    "funding_kind": "capital",
+                    "counterparty": {"kind": "owner", "name": owner.name},
+                },
+                derived={},
+                entries=[
+                    Entry(account_code=capital.code, counterparty_id=owner.id, credit_fen=10_000),
+                ],
+                cash_flows=[CashFlowPlan(bank.code, "cash_flow_19", 10_000)],
+                rule_version="test-components",
             ),
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=2,
-                account_id=capital.id,
-                counterparty_id=owner.id,
-                debit_fen=0,
-                credit_fen=10_000,
-                memo=event.description,
+            ComponentPostingPlan(
+                key="funds.receipt",
+                kind="funds",
+                facts={
+                    "key": "funds.receipt",
+                    "kind": "funds",
+                    "allocations": [{"component_key": "capital", "amount_fen": 10_000}],
+                },
+                derived={},
+                entries=[
+                    Entry(account_code=bank.code, counterparty_id=owner.id, debit_fen=10_000),
+                ],
+                cash_flows=[],
+                rule_version="test-components",
             ),
-        ]
+        ],
     )
     session.flush()
 
@@ -251,18 +207,26 @@ def test_brief_projects_balanced_month_and_owner_activity(brief_engine: Engine) 
 
     voucher = month["vouchers"][0]
     assert voucher["summary"] == "测试负责人投入启动资金"
-    assert voucher["list_summary"] == "测试负责人投入实收资本"
+    assert voucher["list_summary"] == "测试负责人投入启动资金"
     assert voucher["evidence"] == ["股东投入确认.txt"]
     assert voucher["balanced"] is True
-    assert [line["debit_fen"] for line in voucher["lines"]] == [10_000, 0]
-    assert [line["credit_fen"] for line in voucher["lines"]] == [0, 10_000]
+    assert [(item["key"], item["kind"]) for item in voucher["components"]] == [
+        ("capital", "owner_funding")
+    ]
+    assert [(item["key"], item["kind"]) for item in voucher["funds"]] == [
+        ("funds.receipt", "funds")
+    ]
+    assert sorted((line["debit_fen"], line["credit_fen"]) for line in voucher["lines"]) == [
+        (0, 10_000),
+        (10_000, 0),
+    ]
 
     assert len(month["activity_groups"]) == 1
     activity = month["activity_groups"][0]
     assert activity["key"] == "financing_owner"
     assert activity["event_count"] == 1
-    assert activity["type_counts"] == [{"label": "股东投入", "count": 1}]
-    assert activity["rows"][0]["subject"] == "测试负责人投入实收资本"
+    assert activity["type_counts"] == [{"label": "股东投入或借款", "count": 1}]
+    assert activity["rows"][0]["subject"] == "测试负责人投入启动资金"
     assert activity["rows"][0]["description"] == "测试负责人投入启动资金"
 
     validation = month["validation"]
@@ -274,12 +238,6 @@ def test_brief_projects_balanced_month_and_owner_activity(brief_engine: Engine) 
     assert validation_items["accounting_equation"]["state"] == "pass"
     assert validation_items["bank_match"]["state"] == "neutral"
     assert validation_items["period_status"]["state"] == "pending"
-
-    serialized = json.dumps(result, ensure_ascii=False)
-    assert re.search(
-        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-        serialized,
-    ) is None
 
 
 def test_brief_returns_stored_close_management_commentary(brief_engine: Engine) -> None:

@@ -4,6 +4,7 @@ import hashlib
 import json
 import uuid
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -16,16 +17,16 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session, aliased
 
+from .component_schemas import RecordEventRequest
 from .enterprise_income_tax import EnterpriseIncomeTaxService, lock_income_tax
 from .ledger import (
     AccountingPeriodError,
+    ComponentPostingPlan,
     Entry,
     OpenItemPlan,
-    account_balance_fen,
     assert_period_open,
     build_business_event,
-    create_open_items,
-    create_voucher,
+    commit_posting_plan,
     posting_period_error_code,
 )
 from .models import (
@@ -35,13 +36,14 @@ from .models import (
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
+    BusinessEventComponent,
     BusinessEventDependency,
     Counterparty,
-    DeferredOutputVatTransfer,
     Employee,
     EmployeePayrollProfileVersion,
     Evidence,
-    Invoice,
+    LaborRemunerationBatch,
+    LaborRemunerationEventLink,
     LaborServicePerson,
     OpenItem,
     Organization,
@@ -53,7 +55,6 @@ from .models import (
     PayrollContributionActualSet,
     PayrollContributionActualUse,
     PayrollContributionSupplement,
-    PayrollContributionSupplementItem,
     PayrollEventLink,
     PayrollFirstWageTaxTreatment,
     PayrollFirstWageTaxTreatmentEvidence,
@@ -105,11 +106,8 @@ from .payroll.annual_bonus import AnnualBonusBracket
 from .payroll.annual_bonus import AnnualBonusUsage as CalculatorAnnualBonusUsage
 from .payroll.income_tax import TaxBracket
 from .schemas import (
-    DISABLED_EVENT_TYPES,
-    INTERNAL_EVENT_TYPES,
     AnnualBonusTaxMethod,
     ConfirmPayrollRequest,
-    EventType,
     FinanceResult,
     PayrollBatchKind,
     PayrollPolicyParameters,
@@ -117,7 +115,6 @@ from .schemas import (
     PayrollResultStatus,
     PayrollWageTaxDeclarationState,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RecordPayrollContributionSupplementRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
@@ -130,7 +127,8 @@ from .schemas import (
     TaxPeriodConfirmRequest,
     TaxPeriodPreviewRequest,
 )
-from .tax import active_tax_rule, calculate_tax_period, split_tax_inclusive
+from .tax import calculate_tax_period
+from .tax_accounts import vat_relief_entries
 
 
 class FinanceService:
@@ -163,75 +161,7 @@ class FinanceService:
     def _request_payload_hash(request: Any) -> str:
         """Hash only caller-supplied business facts, before service derivation."""
         payload = request.model_dump(mode="json")
-        if payload.get("income_tax_allocations") == []:
-            payload.pop("income_tax_allocations")
-        if payload.get("pass_through_items") == []:
-            payload.pop("pass_through_items")
         return FinanceService._canonical_payload_hash(payload)
-
-    @staticmethod
-    def _is_income_tax_settlement(request: RecordEventRequest) -> bool:
-        return request.event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND or (
-            request.event_type == EventType.TAX_PAYMENT
-            and request.details.tax_type == "enterprise_income_tax"
-        )
-
-    @staticmethod
-    def _uses_bank_settlement(request: RecordEventRequest) -> bool:
-        if request.event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND:
-            return True
-        if request.event_type is EventType.INTERNAL_TRANSFER:
-            return True
-        if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT:
-            return request.details.paid_now is True
-        if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
-            return request.details.settlement_method not in {
-                "cash",
-                "owner_managed_reserve",
-            }
-        if request.event_type is EventType.SALARY_PAYMENT:
-            return request.amounts.amount_fen != 0
-        return request.event_type in {
-            EventType.PASS_THROUGH_PAYMENT,
-            EventType.SERVICE_CASH_SALE,
-            EventType.CUSTOMER_RECEIPT,
-            EventType.CUSTOMER_ADVANCE,
-            EventType.CUSTOMER_REFUND,
-            EventType.EXPENSE_CASH,
-            EventType.EXPENSE_RECOVERY_RECEIVED,
-            EventType.SUPPLIER_PAYMENT,
-            EventType.OWNER_LOAN_RECEIVED,
-            EventType.OWNER_CONTRIBUTION_RECEIVED,
-            EventType.OWNER_REPAYMENT,
-            EventType.OTHER_INCOME_RECEIVED,
-            EventType.BANK_INTEREST_RECEIVED,
-            EventType.REFUNDABLE_DEPOSIT_PAID,
-            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
-            EventType.BANK_FEE,
-            EventType.TAX_PAYMENT,
-            EventType.SOCIAL_INSURANCE_PAYMENT,
-            EventType.HOUSING_FUND_PAYMENT,
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-            EventType.CASH_BANK_TRANSFER,
-            EventType.PAYMENT_PLATFORM_TRANSFER,
-        }
-
-    @classmethod
-    def _bank_account_selections(cls, request: RecordEventRequest) -> list[tuple[str, str | None]]:
-        if request.event_type is EventType.INTERNAL_TRANSFER:
-            return [
-                ("source", request.source_bank_account_code),
-                ("destination", request.destination_bank_account_code),
-            ]
-        if cls._uses_bank_settlement(request):
-            return [("settlement", request.bank_account_code)]
-        return []
-
-    @staticmethod
-    def _bank_settlement_date(request: RecordEventRequest) -> date:
-        if request.event_type is EventType.INTERNAL_TRANSFER:
-            return request.business_dates.business_date
-        return request.business_dates.payment_date or request.business_dates.business_date
 
     def _validate_bank_account(
         self, org_id: uuid.UUID, account_code: str, settlement_date: date
@@ -597,171 +527,19 @@ class FinanceService:
         return int(next_version) - 1
 
     def record_event(self, request: RecordEventRequest) -> FinanceResult:
-        if self._is_income_tax_settlement(request):
-            lock_income_tax(self.session, request.org_id)
-        organization = self.session.get(Organization, request.org_id)
-        if organization is None:
-            return FinanceResult(status=ResultStatus.REJECTED, errors=["ORGANIZATION_NOT_FOUND"])
+        from .component_service import ComponentService
 
-        request_payload_hash = self._request_payload_hash(request)
-        payroll_payment = self._payroll_payment_categories(request.event_type) is not None
-        existing = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.idempotency_key == request.idempotency_key,
-            )
-        )
-        if existing is not None:
-            if error := self._idempotency_error(
-                existing, request_payload_hash, payroll_envelope=payroll_payment
-            ):
-                return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
-            return self._result_for_existing(existing)
+        return ComponentService(self.session).record(request)
 
-        if self._uses_bank_settlement(request) and not self._bank_reconciliation_scope_is_confirmed(
-            organization
-        ):
-            return FinanceResult(
-                status=ResultStatus.NEEDS_INFORMATION,
-                missing_information=["bank_reconciliation_scope_confirmation"],
-                trace=[
-                    {
-                        "stage": "validation",
-                        "status": "needs_information",
-                        "code": "BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
-                    }
-                ],
-            )
+    def preview_event(self, request: RecordEventRequest) -> FinanceResult:
+        from .component_service import ComponentService
 
-        if request.event_type in DISABLED_EVENT_TYPES:
-            return self._store_nonposted(
-                request,
-                status=ResultStatus.REJECTED,
-                errors=[f"MODULE_NOT_ENABLED:{request.event_type.value}"],
-            )
-
-        if request.event_type in INTERNAL_EVENT_TYPES:
-            return self._store_nonposted(
-                request,
-                status=ResultStatus.REJECTED,
-                errors=[f"INTERNAL_EVENT_TYPE:{request.event_type.value}"],
-            )
-
-        missing = self._missing_information(request)
-        if missing:
-            return self._store_nonposted(
-                request,
-                status=ResultStatus.NEEDS_INFORMATION,
-                missing=missing,
-            )
-
-        if self._tax_period_source_is_locked(request):
-            return self._store_nonposted(
-                request,
-                status=ResultStatus.REJECTED,
-                errors=["TAX_PERIOD_SOURCE_LOCKED"],
-            )
-
-        try:
-            with self.session.begin_nested():
-                return self._post_event(organization, request)
-        except (ValueError, LookupError) as exc:
-            # A concurrent payroll writer may win only after this request has
-            # taken its open-item locks.  The failed savepoint is clean, so
-            # read the idempotency row again before treating this as a local
-            # validation failure.  This gives salary and statutory payments
-            # the same replay/mismatch semantics as every other payroll write.
-            if payroll_payment:
-                existing = self.session.scalar(
-                    select(BusinessEvent).where(
-                        BusinessEvent.org_id == request.org_id,
-                        BusinessEvent.idempotency_key == request.idempotency_key,
-                    )
-                )
-                if existing is not None:
-                    if error := self._idempotency_error(
-                        existing, request_payload_hash, payroll_envelope=True
-                    ):
-                        return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
-                    return self._result_for_existing(existing)
-            return self._store_nonposted(
-                request,
-                status=ResultStatus.REJECTED,
-                errors=[str(exc)],
-            )
-        except IntegrityError as exc:
-            if self._is_tax_period_source_lock_error(exc):
-                return self._store_nonposted(
-                    request,
-                    status=ResultStatus.REJECTED,
-                    errors=["TAX_PERIOD_SOURCE_LOCKED"],
-                )
-            existing = self.session.scalar(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == request.org_id,
-                    BusinessEvent.idempotency_key == request.idempotency_key,
-                )
-            )
-            if existing is not None:
-                if error := self._idempotency_error(
-                    existing, request_payload_hash, payroll_envelope=payroll_payment
-                ):
-                    return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
-                return self._result_for_existing(existing)
-            if payroll_payment:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-                )
-            return self._store_nonposted(
-                request,
-                status=ResultStatus.REJECTED,
-                errors=["DATABASE_CONSTRAINT_VIOLATION"],
-            )
-        except OperationalError:
-            if payroll_payment:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-                )
-            return self._store_nonposted(
-                request,
-                status=ResultStatus.REJECTED,
-                errors=["DATABASE_CONCURRENCY_CONFLICT"],
-            )
-        except DBAPIError as exc:
-            if self._is_tax_period_source_lock_error(exc):
-                return self._store_nonposted(
-                    request,
-                    status=ResultStatus.REJECTED,
-                    errors=["TAX_PERIOD_SOURCE_LOCKED"],
-                )
-            raise
-
-    def _tax_period_source_is_locked(self, request: RecordEventRequest) -> bool:
-        """Reject a new taxable source inside an active confirmed snapshot."""
-
-        tax = request.tax_facts
-        if tax is None or tax.taxable is not True or tax.tax_due_on_event is not True:
-            return False
-        taxable_source = request.event_type in {
-            EventType.SERVICE_CASH_SALE,
-            EventType.SERVICE_CREDIT_SALE,
-            EventType.CUSTOMER_ADVANCE,
-        }
-        if request.event_type == EventType.SERVICE_FULFILLMENT:
-            taxable_source = request.details.get("tax_previously_accrued") is False
-        if request.event_type == EventType.CUSTOMER_REFUND:
-            taxable_source = request.details.get("refund_kind") == "sale_return"
-        obligation_date = request.business_dates.tax_obligation_date
-        if not taxable_source or obligation_date is None:
-            return False
-        return self._tax_obligation_date_is_locked(request.org_id, obligation_date)
+        return ComponentService(self.session).preview(request)
 
     def _tax_obligation_date_is_locked(self, org_id: uuid.UUID, obligation_date: date) -> bool:
         """Return whether an active immutable tax snapshot owns this tax date."""
 
-        return (
+        if (
             self.session.scalar(
                 select(
                     exists().where(
@@ -773,1234 +551,47 @@ class FinanceService:
                 )
             )
             is True
-        )
-
-    def _store_nonposted(
-        self,
-        request: RecordEventRequest,
-        *,
-        status: ResultStatus,
-        missing: list[str] | None = None,
-        errors: list[str] | None = None,
-    ) -> FinanceResult:
-        trace = [{"stage": "validation", "status": status.value}]
-        facts = request.model_dump(mode="json")
-        facts["_decision"] = {"missing": missing or [], "errors": errors or []}
-        event = self._new_event(request, status.value, trace, facts=facts)
-        self.session.add(event)
-        self.session.flush()
-        self.session.add(
-            AuditLog(
-                org_id=request.org_id,
-                event_id=event.id,
-                action=f"event_{status.value}",
-                details={"missing": missing or [], "errors": errors or []},
-            )
-        )
-        return FinanceResult(
-            status=status,
-            event_id=event.id,
-            missing_information=missing or [],
-            errors=errors or [],
-            trace=trace,
-        )
-
-    def _post_event(self, organization: Organization, request: RecordEventRequest) -> FinanceResult:
-        payroll_payment = self._payroll_payment_categories(request.event_type) is not None
-        if payroll_payment:
-            self._lock_payroll_open_items(request)
-        counterparty = self._resolve_counterparty(request)
-        deposit_holder = self._resolve_counterparty_reference(
-            request.org_id, request.deposit_holder
-        )
-        if request.event_type in {
-            EventType.EMPLOYEE_REIMBURSEMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
-        } and (counterparty is None or counterparty.kind not in {"employee", "owner"}):
-            raise ValueError("person reimbursement requires an employee or owner counterparty")
-        if request.event_type is EventType.OTHER_INCOME_RECEIVED and (
-            counterparty is None or counterparty.kind != "other"
         ):
-            raise ValueError("other income requires an other counterparty")
-        if request.event_type in {
-            EventType.REFUNDABLE_DEPOSIT_PAID,
-            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
-        } and (counterparty is None or counterparty.kind not in {"supplier", "other"}):
-            raise ValueError("refundable deposit requires a supplier or other counterparty")
-        if deposit_holder is not None and deposit_holder.kind not in {"supplier", "other"}:
-            raise ValueError("a refundable deposit holder must be a supplier or other counterparty")
-        facts = request.model_dump(mode="json")
-        linked_original = self._validate_business_links(request)
-        entries, derived, open_item_type = self._derive_entries(
-            request, counterparty, deposit_holder
-        )
-        facts["derived"] = derived
-
-        trace = [{"stage": "facts_validated", "event_type": request.event_type.value}]
-        bank_accounts = [
-            {"side": side, "account_code": code}
-            for side, code in self._bank_account_selections(request)
-        ]
-        if bank_accounts:
-            trace.append(
-                {
-                    "stage": "bank_accounts_validated",
-                    "settlement_date": self._bank_settlement_date(request).isoformat(),
-                    "accounts": bank_accounts,
-                }
+            return True
+        active_confirmation_payments = self.session.scalars(
+            select(BusinessEventComponent)
+            .join(
+                BusinessEvent,
+                (BusinessEvent.org_id == BusinessEventComponent.org_id)
+                & (BusinessEvent.id == BusinessEventComponent.event_id),
             )
-        if linked_original is not None:
-            trace.append(
-                {
-                    "stage": "business_dependency_validated",
-                    "parent_event_id": str(linked_original.id),
-                    "dependency_kind": self._business_dependency_kind(request),
-                    "amount_fen": self._amount(request),
-                }
-            )
-        rule_version: str | None
-        if payroll_payment:
-            trace.extend(self._payroll_payment_trace(request, derived))
-            rule_version = "payroll-payment"
-        else:
-            rule_date = (
-                request.business_dates.tax_obligation_date or request.business_dates.posting_date
-            )
-            rule = active_tax_rule(self.session, organization, rule_date)
-            trace.append(
-                {
-                    "stage": "rule_selected",
-                    "rule": rule.code,
-                    "version": rule.version,
-                    "source_url": rule.source_url,
-                }
-            )
-            rule_version = rule.version
-        trace.append(
-            {
-                "stage": "entries_derived",
-                "debit_fen": sum(line.debit_fen for line in entries),
-                "credit_fen": sum(line.credit_fen for line in entries),
-            }
-        )
-        event = self._new_event(
-            request,
-            # Every final event follows the same lifecycle.  The PostgreSQL
-            # guard verifies its voucher, evidence and normalized links only
-            # when this draft is promoted at the end of the transaction.
-            "draft",
-            trace,
-            facts=facts,
-            rule_version=rule_version,
-        )
-        self.session.add(event)
-        self.session.flush()
-        self._persist_deferred_output_vat_transfers(event, request, derived)
-        if linked_original is not None:
-            self.session.add(
-                BusinessEventDependency(
-                    org_id=request.org_id,
-                    parent_event_id=linked_original.id,
-                    child_event_id=event.id,
-                    dependency_kind=self._business_dependency_kind(request),
-                    amount_fen=self._amount(request),
-                )
-            )
-            # The dependency is part of the child's canonical fact graph and
-            # must exist before its draft -> posted transition is flushed.
-            self.session.flush()
-        self._attach_evidence(event, request.evidence_references)
-        if self._is_income_tax_settlement(request):
-            EnterpriseIncomeTaxService(self.session).attach_payment(
-                event,
-                request.income_tax_allocations,
-                request.model_dump(mode="json"),
-                request.idempotency_key,
-            )
-        self._create_invoices(event, request)
-        if request.event_type == EventType.SALARY_PAYMENT:
-            self._record_payroll_withholding_allocations(event, derived)
-        self._match_bank_transactions(event, request)
-        self._apply_settlements(event, request, counterparty)
-        if payroll_payment:
-            # The normalized edge validates against the real settlement row,
-            # so it is deliberately written after the payment allocation.
-            self._persist_payroll_event_link(event, request, derived)
-            # PostgreSQL freezes a link as soon as its parent reaches a final
-            # state.  Force the new edges out while ``event`` is still draft;
-            # ORM unit-of-work ordering must not decide that transition.
-            self.session.flush()
-
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.business_dates.posting_date,
-            description=request.description or request.event_type.value,
-            entries=entries,
-        )
-        # A refund settles the economic relationship; it never changes the
-        # original sale or advance into a technical ``reversed`` event.  Only
-        # finance_reverse_event may apply the explicit posted -> reversed
-        # state transition with a linked reversal voucher.
-        created_open_item: OpenItem | None = None
-        if open_item_type:
-            if counterparty is None:
-                raise ValueError("counterparty is required for an open item")
-            created_open_item = OpenItem(
-                org_id=request.org_id,
-                counterparty_id=counterparty.id,
-                source_event_id=event.id,
-                item_type=open_item_type,
-                original_amount_fen=self._amount(request),
-                due_date=self._optional_date(request.details.get("due_date")),
-            )
-            self.session.add(created_open_item)
-        if request.event_type == EventType.SALARY_PAYMENT:
-            create_open_items(
-                self.session,
-                event=event,
-                plans=self._salary_withholding_open_item_plans(event, derived),
-            )
-        pass_through_open_items = []
-        for split in derived.get("pass_through_items", []):
-            item = OpenItem(
-                org_id=event.org_id,
-                source_event_id=event.id,
-                counterparty_id=uuid.UUID(split["creditor_id"]),
-                item_type="payable",
-                payable_category="pass_through",
-                original_amount_fen=split["amount_fen"],
-                pass_through_key=split["key"],
-                pass_through_beneficiary_id=uuid.UUID(split["beneficiary_id"]),
-            )
-            self.session.add(item)
-            pass_through_open_items.append(item)
-        event.status = "posted"
-        self.session.add(
-            AuditLog(
-                org_id=request.org_id,
-                event_id=event.id,
-                action="event_posted",
-                details={"voucher_id": str(voucher.id), "voucher_number": voucher.voucher_number},
+            .where(
+                BusinessEventComponent.org_id == org_id,
+                BusinessEventComponent.kind == "tax_settlement",
+                BusinessEvent.status == "posted",
             )
         )
-        self.session.flush()
-        result_data: dict[str, Any] = {"derived": derived}
-        if created_open_item is not None:
-            result_data["created_open_items"] = [self._open_item_result(created_open_item)]
-        if pass_through_open_items:
-            result_data["created_open_items"] = [
-                self._open_item_result(item) for item in pass_through_open_items
-            ]
-        return FinanceResult(
-            status=ResultStatus.POSTED,
-            event_id=event.id,
-            voucher_id=voucher.id,
-            voucher_number=voucher.voucher_number,
-            rule_version=rule_version,
-            trace=trace,
-            data=result_data,
-        )
-
-    def _lock_payroll_open_items(self, request: RecordEventRequest) -> None:
-        """Lock all payroll open items in stable order before reading balances."""
-        open_item_ids = [allocation.open_item_id for allocation in request.allocations]
-        if len(open_item_ids) != len(set(open_item_ids)):
-            raise ValueError("DUPLICATE_PAYROLL_OPEN_ITEM_ALLOCATION")
-        if not open_item_ids:
-            return
-        locked = self.session.scalars(
-            select(OpenItem)
-            .where(OpenItem.org_id == request.org_id, OpenItem.id.in_(open_item_ids))
-            .order_by(OpenItem.id)
-            .with_for_update()
-        ).all()
-        if len(locked) != len(open_item_ids):
-            if request.event_type in {
-                EventType.SOCIAL_INSURANCE_PAYMENT,
-                EventType.HOUSING_FUND_PAYMENT,
-                EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-            }:
-                raise ValueError("STATUTORY_PAYMENT_SOURCE_OPEN_ITEM_NOT_FOUND")
-            raise ValueError("PAYROLL_OPEN_ITEM_NOT_FOUND")
-
-    def _derive_entries(
-        self,
-        request: RecordEventRequest,
-        counterparty: Counterparty | None,
-        deposit_holder: Counterparty | None = None,
-    ) -> tuple[list[Entry], dict[str, Any], str | None]:
-        event_type = request.event_type
-        amount = self._amount(request)
-        cp_id = counterparty.id if counterparty else None
-        derived: dict[str, Any] = {}
-        open_item_type: str | None = None
-
-        if event_type in {
-            EventType.SERVICE_CASH_SALE,
-            EventType.SERVICE_CREDIT_SALE,
-        }:
-            net, vat, taxable = self._sales_split(request, amount)
-            entries = [
-                Entry(
-                    account_code=request.bank_account_code,
-                    debit_fen=amount,
-                    counterparty_id=cp_id,
-                )
-                if event_type == EventType.SERVICE_CASH_SALE
-                else Entry(
-                    account_role="accounts_receivable",
-                    debit_fen=amount,
-                    counterparty_id=cp_id,
-                )
-            ]
-            entries.append(
-                Entry(account_role="service_revenue", credit_fen=net, counterparty_id=cp_id)
-            )
-            if vat:
-                entries.append(
-                    Entry(
-                        account_role=(
-                            "deferred_output_vat"
-                            if self._should_defer_output_vat(request)
-                            else "vat_payable"
-                        ),
-                        credit_fen=vat,
-                    )
-                )
-            if event_type == EventType.SERVICE_CREDIT_SALE:
-                open_item_type = "receivable"
-            derived = self._sales_derived(request, amount, net, vat, taxable)
-            if vat:
-                derived["vat_recognition"] = (
-                    "deferred" if self._should_defer_output_vat(request) else "payable"
-                )
-
-        elif event_type == EventType.SERVICE_FULFILLMENT:
-            tax_previously_accrued = bool(request.details["tax_previously_accrued"])
-            if tax_previously_accrued:
-                tax = request.tax_facts
-                if tax and tax.taxable:
-                    net, _prior_vat = split_tax_inclusive(amount, tax.rate_percent)
-                else:
-                    net = amount
-                entries = [
-                    Entry(account_role="contract_liability", debit_fen=net, counterparty_id=cp_id),
-                    Entry(account_role="service_revenue", credit_fen=net, counterparty_id=cp_id),
-                ]
-                derived = self._sales_derived(request, 0, 0, 0, False)
-            else:
-                net, vat, taxable = self._sales_split(request, amount)
-                entries = [
-                    Entry(
-                        account_role="contract_liability", debit_fen=amount, counterparty_id=cp_id
-                    ),
-                    Entry(account_role="service_revenue", credit_fen=net, counterparty_id=cp_id),
-                ]
-                if vat:
-                    entries.append(Entry(account_role="vat_payable", credit_fen=vat))
-                derived = self._sales_derived(request, amount, net, vat, taxable)
-
-        elif event_type == EventType.CUSTOMER_ADVANCE:
-            tax_due = bool(request.tax_facts and request.tax_facts.tax_due_on_event)
-            if tax_due:
-                net, vat, taxable = self._sales_split(request, amount)
-                entries = [
-                    Entry(
-                        account_code=request.bank_account_code,
-                        debit_fen=amount,
-                        counterparty_id=cp_id,
-                    ),
-                    Entry(account_role="contract_liability", credit_fen=net, counterparty_id=cp_id),
-                ]
-                if vat:
-                    entries.append(Entry(account_role="vat_payable", credit_fen=vat))
-                derived = self._sales_derived(request, amount, net, vat, taxable)
-            else:
-                entries = [
-                    Entry(
-                        account_code=request.bank_account_code,
-                        debit_fen=amount,
-                        counterparty_id=cp_id,
-                    ),
-                    Entry(
-                        account_role="contract_liability", credit_fen=amount, counterparty_id=cp_id
-                    ),
-                ]
-
-        elif event_type == EventType.CUSTOMER_RECEIPT:
-            allocated = sum(item.amount_fen for item in request.allocations)
-            splits = self._pass_through_receipt_items(request)
-            pass_through_total = sum(item["amount_fen"] for item in splits)
-            excess = amount - allocated - pass_through_total
-            vat_transfer_plans = self._deferred_output_vat_transfer_plans(request)
-            vat_transfer_total = sum(plan["amount_fen"] for plan in vat_transfer_plans)
-            entries = [
-                Entry(
-                    account_code=request.bank_account_code, debit_fen=amount, counterparty_id=cp_id
-                )
-            ]
-            if allocated:
-                entries.append(
-                    Entry(
-                        account_role="accounts_receivable",
-                        credit_fen=allocated,
-                        counterparty_id=cp_id,
-                    )
-                )
-            if excess:
-                entries.append(
-                    Entry(
-                        account_role="contract_liability", credit_fen=excess, counterparty_id=cp_id
-                    )
-                )
-            entries.extend(
-                Entry(
-                    account_role="pass_through_payable",
-                    credit_fen=item["amount_fen"],
-                    counterparty_id=uuid.UUID(item["creditor_id"]),
-                    memo=item["purpose"],
-                )
-                for item in splits
-            )
-            if vat_transfer_total:
-                entries.extend(
-                    [
-                        Entry(account_role="deferred_output_vat", debit_fen=vat_transfer_total),
-                        Entry(account_role="vat_payable", credit_fen=vat_transfer_total),
-                    ]
-                )
-            derived = {
-                "allocated_fen": allocated,
-                "advance_fen": excess,
-                "pass_through_fen": pass_through_total,
-                "pass_through_items": splits,
-                "deferred_output_vat_transfer_fen": vat_transfer_total,
-                "deferred_output_vat_transfers": vat_transfer_plans,
-            }
-
-        elif event_type == EventType.CUSTOMER_REFUND:
-            refund_kind = request.details["refund_kind"]
-            if refund_kind == "advance":
-                entries = [
-                    Entry(
-                        account_role="contract_liability", debit_fen=amount, counterparty_id=cp_id
-                    ),
-                    Entry(
-                        account_code=request.bank_account_code,
-                        credit_fen=amount,
-                        counterparty_id=cp_id,
-                    ),
-                ]
-            else:
-                net, vat, _ = self._sales_split(request, amount)
-                entries = [
-                    Entry(account_role="service_revenue", debit_fen=net, counterparty_id=cp_id),
-                    Entry(
-                        account_code=request.bank_account_code,
-                        credit_fen=amount,
-                        counterparty_id=cp_id,
-                    ),
-                ]
-                if vat:
-                    entries.insert(1, Entry(account_role="vat_payable", debit_fen=vat))
-                derived = {
-                    "taxable_gross_fen": -amount,
-                    "net_sales_fen": -net,
-                    "vat_fen": -vat,
-                    "exemption_eligible": bool(
-                        request.tax_facts
-                        and request.tax_facts.invoice_type != "special"
-                        and not request.tax_facts.waive_exemption
-                    ),
-                }
-
-        elif event_type in {EventType.EXPENSE_CASH, EventType.EXPENSE_PAYABLE}:
-            expense_role = request.amounts.expense_account_role
-            expense_entries = (
-                [
-                    Entry(
-                        account_role=expense_role,
-                        debit_fen=item.amount_fen,
-                        counterparty_id=cp_id,
-                        memo=item.label,
-                    )
-                    for item in request.expense_components
-                ]
-                if request.expense_components
-                else [
-                    Entry(
-                        account_role=expense_role,
-                        debit_fen=amount,
-                        counterparty_id=cp_id,
-                    )
-                ]
-            )
-            entries = [
-                *expense_entries,
-                Entry(
-                    account_code=request.bank_account_code,
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                )
-                if event_type == EventType.EXPENSE_CASH
-                else Entry(
-                    account_role="accounts_payable",
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-            ]
-            if event_type == EventType.EXPENSE_PAYABLE:
-                open_item_type = "payable"
-            derived = {
-                "purchase_tax_treatment": "gross_to_expense",
-                "expense_fen": amount,
-                "expense_components": [
-                    item.model_dump(mode="json") for item in request.expense_components
-                ],
-            }
-
-        elif event_type == EventType.EXPENSE_RECOVERY_RECEIVED:
-            entries = [
-                Entry(account_code=request.bank_account_code, debit_fen=amount),
-                Entry(account_role=request.amounts.expense_account_role, credit_fen=amount),
-            ]
-            derived = {
-                "expense_recovery_kind": request.details.expense_recovery_kind,
-                "expense_recovery_fen": amount,
-            }
-
-        elif event_type == EventType.PASS_THROUGH_PAYMENT:
-            entries = [
-                Entry(account_role="pass_through_payable", debit_fen=amount, counterparty_id=cp_id),
-                Entry(
-                    account_code=request.bank_account_code, credit_fen=amount, counterparty_id=cp_id
-                ),
-            ]
-            derived = {"allocated_fen": sum(item.amount_fen for item in request.allocations)}
-
-        elif event_type == EventType.SUPPLIER_PAYMENT:
-            entries = [
-                Entry(account_role="accounts_payable", debit_fen=amount, counterparty_id=cp_id),
-                Entry(
-                    account_code=request.bank_account_code, credit_fen=amount, counterparty_id=cp_id
-                ),
-            ]
-            derived = {"allocated_fen": sum(item.amount_fen for item in request.allocations)}
-
-        elif event_type == EventType.EMPLOYEE_REIMBURSEMENT:
-            paid_now = bool(request.details["paid_now"])
-            reimbursement_kind = request.details.reimbursement_kind or "expense"
-            if reimbursement_kind == "existing_payable":
-                if counterparty is None:
-                    raise ValueError("person counterparty is required")
-                entries, derived = self._existing_payable_reimbursement_entries(
-                    request, counterparty
-                )
-                open_item_type = "payable"
-            elif reimbursement_kind == "refundable_deposit":
-                if deposit_holder is None:
-                    raise ValueError("deposit_holder is required for a refundable deposit")
-                debit_entry = Entry(
-                    account_role="employee_receivable",
-                    debit_fen=amount,
-                    counterparty_id=deposit_holder.id,
-                )
-                derived = {
-                    "reimbursement_kind": reimbursement_kind,
-                    "refundable_deposit_fen": amount,
-                    "deposit_holder_id": str(deposit_holder.id),
-                }
-            else:
-                debit_entry = Entry(
-                    account_role=request.amounts.expense_account_role,
-                    debit_fen=amount,
-                    counterparty_id=cp_id,
-                )
-                derived = {
-                    "reimbursement_kind": reimbursement_kind,
-                    "purchase_tax_treatment": "gross_to_expense",
-                    "expense_fen": amount,
-                }
-            if reimbursement_kind != "existing_payable":
-                entries = [
-                    debit_entry,
-                    Entry(
-                        account_code=request.bank_account_code if paid_now else None,
-                        account_role=(
-                            None if paid_now else self._person_payable_role(counterparty)
-                        ),
-                        credit_fen=amount,
-                        counterparty_id=cp_id,
-                    ),
-                ]
-                if not paid_now:
-                    open_item_type = "payable"
-
-        elif event_type == EventType.OWNER_LOAN_RECEIVED:
-            entries = [
-                Entry(
-                    account_code=request.bank_account_code, debit_fen=amount, counterparty_id=cp_id
-                ),
-                Entry(account_role="owner_payable", credit_fen=amount, counterparty_id=cp_id),
-            ]
-
-        elif event_type == EventType.OWNER_CONTRIBUTION_RECEIVED:
-            entries = [
-                Entry(
-                    account_code=request.bank_account_code, debit_fen=amount, counterparty_id=cp_id
-                ),
-                Entry(account_role="paid_in_capital", credit_fen=amount, counterparty_id=cp_id),
-            ]
-
-        elif event_type == EventType.OWNER_REPAYMENT:
-            fee_fen = int(request.details.owner_repayment_fee_fen or 0)
-            principal_fen = amount - fee_fen
-            entries = [
-                Entry(
-                    account_role="owner_payable",
-                    debit_fen=principal_fen,
-                    counterparty_id=cp_id,
-                ),
-            ]
-            if fee_fen:
-                entries.append(Entry(account_role="general_expense", debit_fen=fee_fen))
-            entries.append(
-                Entry(
-                    account_code=request.bank_account_code,
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                )
-            )
-            derived = {
-                "owner_repayment_principal_fen": principal_fen,
-                "owner_repayment_fee_fen": fee_fen,
-            }
-
-        elif event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
-            allocated = sum(item.amount_fen for item in request.allocations)
-            settlement_method = request.details.settlement_method or "bank"
-            reserve_derived: dict[str, Any] = {}
-            if settlement_method == "owner_managed_reserve":
-                reserve_role, reserve_derived = self._owner_managed_reserve_source(request)
-                settlement_entry = Entry(
-                    account_role=reserve_role,
-                    credit_fen=amount,
-                )
-            elif settlement_method == "cash":
-                settlement_entry = Entry(
-                    account_role="cash",
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                )
-            else:
-                settlement_entry = Entry(
-                    account_code=request.bank_account_code,
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                )
-            entries = [
-                Entry(
-                    account_role=self._person_payable_role(counterparty),
-                    debit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-                settlement_entry,
-            ]
-            derived = {
-                "allocated_fen": allocated,
-                "settlement_method": settlement_method,
-                **reserve_derived,
-            }
-
-        elif event_type == EventType.OTHER_INCOME_RECEIVED:
-            entries = [
-                Entry(
-                    account_code=request.bank_account_code,
-                    debit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-                # The baseline role predates this public event and maps to the
-                # organization's fixed general non-operating-income account.
-                Entry(
-                    account_role="tax_relief_income",
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-            ]
-            derived = {
-                "other_income_kind": request.details["other_income_kind"],
-                "non_operating_income_fen": amount,
-            }
-
-        elif event_type == EventType.BANK_INTEREST_RECEIVED:
-            entries = [
-                Entry(account_code=request.bank_account_code, debit_fen=amount),
-                Entry(account_role="finance_expense", credit_fen=amount),
-            ]
-            derived = {"bank_interest_income_fen": amount}
-
-        elif event_type == EventType.REFUNDABLE_DEPOSIT_PAID:
-            entries = [
-                Entry(
-                    account_role="employee_receivable",
-                    debit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-                Entry(
-                    account_code=request.bank_account_code,
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-            ]
-            open_item_type = "receivable"
-            derived = {"refundable_deposit_paid_fen": amount}
-
-        elif event_type == EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED:
-            entries = [
-                Entry(
-                    account_code=request.bank_account_code,
-                    debit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-                Entry(
-                    account_role="employee_receivable",
-                    credit_fen=amount,
-                    counterparty_id=cp_id,
-                ),
-            ]
-            derived = {
-                "refundable_deposit_return_fen": amount,
-                "allocated_fen": sum(item.amount_fen for item in request.allocations),
-            }
-
-        elif event_type == EventType.BANK_FEE:
-            entries = [
-                Entry(account_role="finance_expense", debit_fen=amount),
-                Entry(account_code=request.bank_account_code, credit_fen=amount),
-            ]
-
-        elif event_type == EventType.INTERNAL_TRANSFER:
-            entries = [
-                Entry(account_code=request.destination_bank_account_code, debit_fen=amount),
-                Entry(account_code=request.source_bank_account_code, credit_fen=amount),
-            ]
-
-        elif event_type == EventType.CASH_BANK_TRANSFER:
-            if request.direction == "cash_deposit":
-                entries = [
-                    Entry(account_code=request.bank_account_code, debit_fen=amount),
-                    Entry(account_role="cash", credit_fen=amount),
-                ]
-            else:
-                entries = [
-                    Entry(account_role="cash", debit_fen=amount),
-                    Entry(account_code=request.bank_account_code, credit_fen=amount),
-                ]
-
-        elif event_type == EventType.PAYMENT_PLATFORM_TRANSFER:
-            if request.direction == "to_platform":
-                entries = [
-                    Entry(account_role="payment_platform_funds", debit_fen=amount),
-                    Entry(account_code=request.bank_account_code, credit_fen=amount),
-                ]
-            else:
-                entries = [
-                    Entry(account_code=request.bank_account_code, debit_fen=amount),
-                    Entry(account_role="payment_platform_funds", credit_fen=amount),
-                ]
-
-        elif event_type == EventType.ENTERPRISE_INCOME_TAX_REFUND:
-            entries = [
-                Entry(account_code=request.bank_account_code, debit_fen=amount),
-                Entry(account_role="enterprise_income_tax_payable", credit_fen=amount),
-            ]
-
-        elif event_type == EventType.TAX_PAYMENT:
-            tax_role = {
-                "vat": "vat_payable",
-                "surtax": "surtax_payable",
-                "enterprise_income_tax": "enterprise_income_tax_payable",
-            }[request.details["tax_type"]]
-            entries = [
-                Entry(account_role=tax_role, debit_fen=amount),
-                Entry(account_code=request.bank_account_code, credit_fen=amount),
-            ]
-
-        elif event_type == EventType.SALARY_PAYMENT:
-            withholding = self._salary_payment_facts(request)
-            entries = [
-                Entry(
-                    account_role="employee_salary_payable",
-                    debit_fen=withholding["gross_salary_fen"],
-                ),
-            ]
-            if amount:
-                entries.append(Entry(account_code=request.bank_account_code, credit_fen=amount))
-            for role, field_name in (
-                ("withheld_employee_social_payable", "employee_social_insurance_fen"),
-                ("withheld_employee_housing_fund_payable", "employee_housing_fund_fen"),
-                ("individual_income_tax_payable", "individual_income_tax_fen"),
+        for component in active_confirmation_payments:
+            if (
+                component.facts.get("tax_type") != "vat"
+                or component.facts.get("settlement_kind") != "payment"
             ):
-                if withholding[field_name]:
-                    entries.append(Entry(account_role=role, credit_fen=withholding[field_name]))
-            for expense_role, deduction_fen in sorted(
-                withholding["actual_salary_deduction_by_expense_role"].items()
-            ):
-                if deduction_fen:
-                    entries.append(Entry(account_role=expense_role, credit_fen=deduction_fen))
-            derived = {
-                "payable_categories": ["salary"],
-                "allocated_gross_salary_fen": withholding["gross_salary_fen"],
-                "salary_withholding_allocations": withholding["allocations"],
-                "employee_social_insurance_fen": withholding["employee_social_insurance_fen"],
-                "employee_housing_fund_fen": withholding["employee_housing_fund_fen"],
-                "individual_income_tax_fen": withholding["individual_income_tax_fen"],
-                "actual_salary_deduction_fen": withholding["actual_salary_deduction_fen"],
-                "actual_salary_deduction_allocations": withholding[
-                    "actual_salary_deduction_allocations"
-                ],
-                "actual_salary_deduction_by_expense_role": withholding[
-                    "actual_salary_deduction_by_expense_role"
-                ],
-                "payroll_batch_id": withholding["payroll_batch_id"],
-                "payroll_line_ids": withholding["payroll_line_ids"],
-                "withholding_payment_allocations": withholding["withholding_payment_allocations"],
-            }
-
-        elif event_type == EventType.SOCIAL_INSURANCE_PAYMENT:
-            category_amounts = self._payroll_payment_allocations(
-                request, {"employer_social", "withheld_employee_social"}
-            )
-            late_fee_fen = int(request.details.social_insurance_late_fee_fen or 0)
-            entries = [
-                Entry(
-                    account_role="employer_social_payable",
-                    debit_fen=category_amounts["employer_social"],
-                )
-                for _ in range(category_amounts["employer_social"] > 0)
-            ]
-            entries.extend(
-                Entry(
-                    account_role="withheld_employee_social_payable",
-                    debit_fen=category_amounts["withheld_employee_social"],
-                )
-                for _ in range(category_amounts["withheld_employee_social"] > 0)
-            )
-            if late_fee_fen:
-                entries.append(
-                    Entry(
-                        account_role="social_insurance_late_fee_expense",
-                        debit_fen=late_fee_fen,
-                    )
-                )
-            entries.append(Entry(account_code=request.bank_account_code, credit_fen=amount))
-            derived = {
-                "payable_categories": sorted(category_amounts),
-                "allocated_fen": amount - late_fee_fen,
-                "social_insurance_late_fee_fen": late_fee_fen,
-            }
-
-        elif event_type == EventType.HOUSING_FUND_PAYMENT:
-            category_amounts = self._payroll_payment_allocations(
-                request, {"employer_housing", "withheld_employee_housing"}
-            )
-            entries = [
-                Entry(
-                    account_role="employer_housing_fund_payable",
-                    debit_fen=category_amounts["employer_housing"],
-                )
-                for _ in range(category_amounts["employer_housing"] > 0)
-            ]
-            entries.extend(
-                Entry(
-                    account_role="withheld_employee_housing_fund_payable",
-                    debit_fen=category_amounts["withheld_employee_housing"],
-                )
-                for _ in range(category_amounts["withheld_employee_housing"] > 0)
-            )
-            entries.append(Entry(account_code=request.bank_account_code, credit_fen=amount))
-            derived = {"payable_categories": sorted(category_amounts), "allocated_fen": amount}
-
-        elif event_type == EventType.INDIVIDUAL_INCOME_TAX_PAYMENT:
-            self._payroll_payment_allocations(request, {"individual_income_tax"})
-            entries = [
-                Entry(account_role="individual_income_tax_payable", debit_fen=amount),
-                Entry(account_code=request.bank_account_code, credit_fen=amount),
-            ]
-            derived = {"payable_categories": ["individual_income_tax"], "allocated_fen": amount}
-
-        else:
-            raise ValueError(f"unsupported public event type: {event_type.value}")
-
-        return entries, derived, open_item_type
-
-    def _sales_split(self, request: RecordEventRequest, gross_fen: int) -> tuple[int, int, bool]:
-        tax = request.tax_facts
-        if tax is None or not tax.taxable or not tax.tax_due_on_event:
-            return gross_fen, 0, False
-        net, vat = split_tax_inclusive(gross_fen, tax.rate_percent)
-        return net, vat, True
-
-    @staticmethod
-    def _should_defer_output_vat(request: RecordEventRequest) -> bool:
-        """Recognize output VAT later when accounting income precedes the tax date."""
-
-        return bool(
-            request.event_type is EventType.SERVICE_CREDIT_SALE
-            and request.tax_facts
-            and request.tax_facts.taxable
-            and request.tax_facts.tax_due_on_event
-            and request.business_dates.tax_obligation_date
-            and request.business_dates.tax_obligation_date > request.business_dates.posting_date
-        )
-
-    def _deferred_output_vat_transfer_plans(
-        self, request: RecordEventRequest
-    ) -> list[dict[str, Any]]:
-        """Derive receipt-side VAT transfers solely from normalized receivable sources."""
-
-        if request.event_type is not EventType.CUSTOMER_RECEIPT:
-            return []
-        payment_date = request.business_dates.payment_date
-        if payment_date is None:
-            return []
-
-        transfer_event = aliased(BusinessEvent)
-        plans: list[dict[str, Any]] = []
-        for allocation in request.allocations:
-            item = self.session.scalar(
-                select(OpenItem)
-                .where(
-                    OpenItem.org_id == request.org_id,
-                    OpenItem.id == allocation.open_item_id,
-                )
-                .with_for_update()
-            )
-            if item is None:
                 continue
-            source = self.session.scalar(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == request.org_id,
-                    BusinessEvent.id == item.source_event_id,
-                    BusinessEvent.status == "posted",
-                )
+            confirmation_id = component.derived.get("tax_confirmation_id")
+            if not confirmation_id:
+                continue
+            confirmation = self.session.get(
+                ZeroTaxPeriodConfirmation, uuid.UUID(str(confirmation_id))
             )
             if (
-                source is None
-                or source.event_type != EventType.SERVICE_CREDIT_SALE.value
-                or source.tax_obligation_date != payment_date
-                or source.tax_obligation_date <= source.posting_date
-                or source.facts.get("derived", {}).get("vat_recognition") != "deferred"
+                confirmation is not None
+                and confirmation.org_id == org_id
+                and component.derived.get("tax_confirmation_hash") == confirmation.calculation_hash
+                and confirmation.start_date <= obligation_date <= confirmation.end_date
             ):
-                continue
-            if request.business_dates.posting_date != source.tax_obligation_date:
-                raise ValueError(
-                    "DEFERRED_OUTPUT_VAT_TRANSFER_POSTING_DATE_MUST_EQUAL_TAX_OBLIGATION_DATE"
-                )
-            vat_fen = int(source.facts.get("derived", {}).get("vat_fen", 0))
-            if vat_fen <= 0:
-                continue
-            already_transferred = self.session.scalar(
-                select(
-                    exists().where(
-                        DeferredOutputVatTransfer.org_id == request.org_id,
-                        DeferredOutputVatTransfer.source_event_id == source.id,
-                        DeferredOutputVatTransfer.transfer_event_id == transfer_event.id,
-                        transfer_event.status == "posted",
-                    )
-                )
-            )
-            if already_transferred:
-                continue
-            plans.append(
-                {
-                    "source_event_id": str(source.id),
-                    "source_open_item_id": str(item.id),
-                    "amount_fen": vat_fen,
-                    "tax_obligation_date": source.tax_obligation_date.isoformat(),
-                    "accounting_rule_version": self.DEFERRED_OUTPUT_VAT_RULE_VERSION,
-                    "accounting_rule_source_url": self.DEFERRED_OUTPUT_VAT_RULE_SOURCE_URL,
-                }
-            )
-        return plans
-
-    def _persist_deferred_output_vat_transfers(
-        self,
-        event: BusinessEvent,
-        request: RecordEventRequest,
-        derived: dict[str, Any],
-    ) -> None:
-        if request.event_type is not EventType.CUSTOMER_RECEIPT:
-            return
-        for plan in derived.get("deferred_output_vat_transfers", []):
-            self.session.add(
-                DeferredOutputVatTransfer(
-                    org_id=request.org_id,
-                    source_event_id=uuid.UUID(plan["source_event_id"]),
-                    source_open_item_id=uuid.UUID(plan["source_open_item_id"]),
-                    transfer_event_id=event.id,
-                    amount_fen=plan["amount_fen"],
-                    tax_obligation_date=date.fromisoformat(plan["tax_obligation_date"]),
-                    accounting_rule_version=plan["accounting_rule_version"],
-                    accounting_rule_source_url=plan["accounting_rule_source_url"],
-                )
-            )
-        if derived.get("deferred_output_vat_transfers"):
-            self.session.flush()
-
-    @staticmethod
-    def _sales_derived(
-        request: RecordEventRequest,
-        gross_fen: int,
-        net_fen: int,
-        vat_fen: int,
-        taxable: bool,
-    ) -> dict[str, Any]:
-        tax = request.tax_facts
-        eligible = bool(
-            taxable and tax and tax.invoice_type != "special" and not tax.waive_exemption
-        )
-        return {
-            "taxable_gross_fen": gross_fen if taxable else 0,
-            "net_sales_fen": net_fen if taxable else 0,
-            "vat_fen": vat_fen if taxable else 0,
-            "exemption_eligible": eligible,
-        }
-
-    def _pass_through_receipt_items(self, request: RecordEventRequest) -> list[dict[str, Any]]:
-        result = []
-        for split in request.pass_through_items:
-            beneficiary = self._resolve_counterparty_reference(request.org_id, split.beneficiary)
-            creditor = self._resolve_counterparty_reference(request.org_id, split.creditor)
-            if beneficiary is None or creditor is None:
-                raise ValueError("PASS_THROUGH_PARTIES_REQUIRED")
-            if split.creditor_basis == "beneficiary":
-                if (
-                    creditor.id != beneficiary.id
-                    or split.advance_payment_date
-                    or split.advance_evidence_ids
-                ):
-                    raise ValueError("PASS_THROUGH_BENEFICIARY_CREDITOR_MISMATCH")
-            elif split.creditor_basis == "advance_reimbursement":
-                if creditor.id == beneficiary.id or creditor.kind not in {
-                    "employee",
-                    "owner",
-                    "other",
-                }:
-                    raise ValueError("PASS_THROUGH_ADVANCING_PERSON_INVALID")
-                if (
-                    split.advance_payment_date is None
-                    or split.advance_payment_date > request.business_dates.payment_date
-                ):
-                    raise ValueError("PASS_THROUGH_ADVANCE_MUST_PRECEDE_RECEIPT")
-                if not set(split.advance_evidence_ids).issubset(request.evidence_references):
-                    raise ValueError("PASS_THROUGH_ADVANCE_EVIDENCE_MUST_BE_ATTACHED")
-            else:
-                raise ValueError("PASS_THROUGH_CREDITOR_BASIS_REQUIRED")
-            result.append(
-                {
-                    "key": split.key,
-                    "amount_fen": split.amount_fen,
-                    "beneficiary_id": str(beneficiary.id),
-                    "creditor_id": str(creditor.id),
-                    "creditor_basis": split.creditor_basis,
-                    "purpose": split.purpose,
-                }
-            )
-        return result
-
-    def _apply_settlements(
-        self,
-        event: BusinessEvent,
-        request: RecordEventRequest,
-        counterparty: Counterparty | None,
-    ) -> None:
-        if not request.allocations:
-            return
-        allocation_ids = [item.open_item_id for item in request.allocations]
-        if len(allocation_ids) != len(set(allocation_ids)):
-            raise ValueError("duplicate open item allocation")
-        expected_type = (
-            "receivable"
-            if request.event_type
-            in {
-                EventType.CUSTOMER_RECEIPT,
-                EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
-            }
-            else "payable"
-        )
-        payroll_categories = self._payroll_payment_categories(request.event_type)
-        for allocation in request.allocations:
-            item = self.session.scalar(
-                select(OpenItem)
-                .where(
-                    OpenItem.id == allocation.open_item_id,
-                    OpenItem.org_id == request.org_id,
-                )
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-            if item is None:
-                if request.event_type in {
-                    EventType.SOCIAL_INSURANCE_PAYMENT,
-                    EventType.HOUSING_FUND_PAYMENT,
-                    EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-                }:
-                    raise ValueError("STATUTORY_PAYMENT_SOURCE_OPEN_ITEM_NOT_FOUND")
-                raise ValueError(f"open item not found: {allocation.open_item_id}")
-            if item.item_type != expected_type or item.status not in {"open", "partial"}:
-                raise ValueError(f"open item is not an active {expected_type}: {item.id}")
-            is_pass_through_payment = request.event_type == EventType.PASS_THROUGH_PAYMENT
-            paid_on_behalf = (
-                request.event_type == EventType.EMPLOYEE_REIMBURSEMENT
-                and request.details.reimbursement_kind == "existing_payable"
-            )
-            if is_pass_through_payment and item.payable_category != "pass_through":
-                raise ValueError("PASS_THROUGH_PAYMENT_SOURCE_REQUIRED")
-            if item.payable_category == "pass_through":
-                if not is_pass_through_payment and not paid_on_behalf:
-                    raise ValueError("PASS_THROUGH_REQUIRES_TYPED_SETTLEMENT")
-                source = self.session.get(BusinessEvent, item.source_event_id)
-                if (
-                    source.status != "posted"
-                    or source.posting_date > request.business_dates.posting_date
-                    or source.payment_date > request.business_dates.payment_date
-                ):
-                    raise ValueError("PASS_THROUGH_SOURCE_NOT_ACTIVE_OR_FUTURE")
-            if payroll_categories is not None and item.payable_category not in payroll_categories:
-                if request.event_type in {
-                    EventType.SOCIAL_INSURANCE_PAYMENT,
-                    EventType.HOUSING_FUND_PAYMENT,
-                    EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-                }:
-                    raise ValueError("STATUTORY_PAYMENT_INCOMPATIBLE_SOURCES")
-                raise ValueError(
-                    f"open item category {item.payable_category!r} is not allowed for "
-                    f"{request.event_type.value}"
-                )
-            person_paid_existing_payable = (
-                request.event_type is EventType.EMPLOYEE_REIMBURSEMENT
-                and request.details.reimbursement_kind == "existing_payable"
-            )
-            if (
-                payroll_categories is None
-                and not person_paid_existing_payable
-                and (counterparty is None or item.counterparty_id != counterparty.id)
-            ):
-                raise ValueError(f"open item belongs to a different counterparty: {item.id}")
-            if request.event_type is EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT:
-                source_type = self.session.scalar(
-                    select(BusinessEvent.event_type).where(
-                        BusinessEvent.org_id == request.org_id,
-                        BusinessEvent.id == item.source_event_id,
-                    )
-                )
-                if source_type not in {
-                    EventType.EMPLOYEE_REIMBURSEMENT.value,
-                    EventType.FIXED_ASSET_ACQUISITION.value,
-                }:
-                    raise ValueError(
-                        f"open item is not an employee reimbursement payable: {item.id}"
-                    )
-            if request.event_type is EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED:
-                source_type = self.session.scalar(
-                    select(BusinessEvent.event_type).where(
-                        BusinessEvent.org_id == request.org_id,
-                        BusinessEvent.id == item.source_event_id,
-                    )
-                )
-                if source_type != EventType.REFUNDABLE_DEPOSIT_PAID.value:
-                    raise ValueError(f"open item is not a refundable deposit receivable: {item.id}")
-            available = item.original_amount_fen - item.settled_amount_fen
-            if allocation.amount_fen > available:
-                raise ValueError(
-                    f"allocation exceeds open amount for {item.id}: "
-                    f"available={available}, requested={allocation.amount_fen}"
-                )
-            item.settled_amount_fen += allocation.amount_fen
-            if item.settled_amount_fen == item.original_amount_fen:
-                item.status = "settled"
-            else:
-                item.status = "partial"
-            self.session.add(
-                Settlement(
-                    org_id=request.org_id,
-                    open_item_id=item.id,
-                    payment_event_id=event.id,
-                    amount_fen=allocation.amount_fen,
-                )
-            )
+                return True
+        return False
 
     @staticmethod
     def _person_payable_role(counterparty: Counterparty | None) -> str:
         if counterparty is None or counterparty.kind not in {"employee", "owner"}:
             raise ValueError("person counterparty must be an employee or owner")
         return "owner_payable" if counterparty.kind == "owner" else "employee_payable"
-
-    def _owner_managed_reserve_source(
-        self,
-        request: RecordEventRequest,
-    ) -> tuple[str, dict[str, Any]]:
-        """Derive a non-cash settlement credit from one earlier expensed reserve source."""
-
-        source_id = request.details.original_event_id
-        if source_id is None:
-            raise ValueError("owner-managed-reserve settlement requires original_event_id")
-        source = self.session.scalar(
-            select(BusinessEvent)
-            .where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.id == source_id,
-            )
-            .with_for_update()
-        )
-        if (
-            source is None
-            or source.event_type != EventType.EXPENSE_CASH.value
-            or source.status != "posted"
-            or source.reversed_by_event_id is not None
-        ):
-            raise ValueError(
-                "owner-managed-reserve source must be an active bank-paid expense event"
-            )
-        payment_date = request.business_dates.payment_date
-        if payment_date is None:
-            raise ValueError("owner-managed-reserve settlement requires payment_date")
-        if source.posting_date > payment_date:
-            raise ValueError("owner-managed-reserve source must not post after the reimbursement")
-        source_amount = self._event_amount(source)
-        source_role = source.facts.get("amounts", {}).get("expense_account_role")
-        if not isinstance(source_role, str) or not source_role:
-            raise ValueError("owner-managed-reserve source must contain one derived expense role")
-
-        used_before = 0
-        candidates = self.session.scalars(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT.value,
-                BusinessEvent.status == "posted",
-                BusinessEvent.reversed_by_event_id.is_(None),
-            )
-        ).all()
-        for candidate in candidates:
-            details = candidate.facts.get("details", {})
-            if details.get("settlement_method") == "owner_managed_reserve" and str(
-                details.get("original_event_id")
-            ) == str(source.id):
-                used_before += self._event_amount(candidate)
-        amount = self._amount(request)
-        if used_before + amount > source_amount:
-            raise ValueError(
-                "owner-managed-reserve settlement exceeds the referenced source amount"
-            )
-        return source_role, {
-            "reserve_source_event_id": str(source.id),
-            "reserve_source_expense_role": source_role,
-            "reserve_source_amount_fen": source_amount,
-            "reserve_used_before_fen": used_before,
-            "reserve_remaining_after_fen": source_amount - used_before - amount,
-        }
 
     @staticmethod
     def _open_payable_account_role(item: OpenItem, counterparty: Counterparty) -> str:
@@ -2034,149 +625,7 @@ class FinanceService:
                 "an uncategorized payable must belong to a supplier, employee, or owner"
             ) from exc
 
-    def _existing_payable_reimbursement_entries(
-        self,
-        request: RecordEventRequest,
-        payer: Counterparty,
-    ) -> tuple[list[Entry], dict[str, Any]]:
-        """Transfer exact existing liabilities to the employee or owner who paid them."""
-
-        if not request.allocations:
-            raise ValueError("existing-payable reimbursement requires allocations")
-        allocation_ids = [allocation.open_item_id for allocation in request.allocations]
-        if len(allocation_ids) != len(set(allocation_ids)):
-            raise ValueError("duplicate open item allocation")
-        if sum(allocation.amount_fen for allocation in request.allocations) != self._amount(
-            request
-        ):
-            raise ValueError("existing-payable reimbursement allocations must equal amount")
-
-        items = self.session.scalars(
-            select(OpenItem)
-            .where(
-                OpenItem.org_id == request.org_id,
-                OpenItem.id.in_(allocation_ids),
-            )
-            .order_by(OpenItem.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        ).all()
-        by_id = {item.id: item for item in items}
-        if len(by_id) != len(allocation_ids):
-            raise ValueError("existing-payable reimbursement source open item not found")
-
-        item_counterparties = {
-            counterparty.id: counterparty
-            for counterparty in self.session.scalars(
-                select(Counterparty).where(
-                    Counterparty.org_id == request.org_id,
-                    Counterparty.id.in_({item.counterparty_id for item in items}),
-                )
-            ).all()
-        }
-        entries: list[Entry] = []
-        sources: list[dict[str, Any]] = []
-        for allocation in request.allocations:
-            item = by_id[allocation.open_item_id]
-            if item.item_type != "payable" or item.status not in {"open", "partial"}:
-                raise ValueError(f"open item is not an active payable: {item.id}")
-            available = item.original_amount_fen - item.settled_amount_fen
-            if allocation.amount_fen > available:
-                raise ValueError(
-                    f"allocation exceeds open amount for {item.id}: "
-                    f"available={available}, requested={allocation.amount_fen}"
-                )
-            item_counterparty = item_counterparties.get(item.counterparty_id)
-            if item_counterparty is None:
-                raise ValueError("payable counterparty is not available in this organization")
-            account_role = self._open_payable_account_role(item, item_counterparty)
-            entries.append(
-                Entry(
-                    account_role=account_role,
-                    debit_fen=allocation.amount_fen,
-                    counterparty_id=(
-                        item.counterparty_id
-                        if item.payable_category
-                        in {None, "salary", "labor_remuneration", "pass_through"}
-                        else None
-                    ),
-                )
-            )
-            sources.append(
-                {
-                    "open_item_id": str(item.id),
-                    "amount_fen": allocation.amount_fen,
-                    "payable_category": item.payable_category,
-                    "account_role": account_role,
-                }
-            )
-        entries.append(
-            Entry(
-                account_role=self._person_payable_role(payer),
-                credit_fen=self._amount(request),
-                counterparty_id=payer.id,
-            )
-        )
-        return entries, {
-            "reimbursement_kind": "existing_payable",
-            "allocated_fen": self._amount(request),
-            "person_payable_role": self._person_payable_role(payer),
-            "source_payables": sources,
-        }
-
-    def _payroll_payment_allocations(
-        self, request: RecordEventRequest, allowed_categories: set[str]
-    ) -> dict[str, int]:
-        """Validate category-bound payroll payment allocations before deriving entries."""
-
-        if not request.allocations:
-            raise ValueError("payroll payment requires allocations")
-        expected_allocation_fen = self._amount(request)
-        if request.event_type is EventType.SOCIAL_INSURANCE_PAYMENT:
-            expected_allocation_fen -= int(request.details.social_insurance_late_fee_fen or 0)
-        if expected_allocation_fen <= 0:
-            raise ValueError("social insurance late fee must be less than amount_fen")
-        if sum(item.amount_fen for item in request.allocations) != expected_allocation_fen:
-            raise ValueError("payroll payment allocations must equal amount_fen")
-        totals = {category: 0 for category in allowed_categories}
-        for allocation in request.allocations:
-            item = self.session.scalar(
-                select(OpenItem).where(
-                    OpenItem.id == allocation.open_item_id,
-                    OpenItem.org_id == request.org_id,
-                )
-            )
-            if item is None:
-                if request.event_type in {
-                    EventType.SOCIAL_INSURANCE_PAYMENT,
-                    EventType.HOUSING_FUND_PAYMENT,
-                    EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-                }:
-                    raise ValueError("STATUTORY_PAYMENT_SOURCE_OPEN_ITEM_NOT_FOUND")
-                raise ValueError(f"open item not found: {allocation.open_item_id}")
-            if item.item_type != "payable" or item.status not in {"open", "partial"}:
-                raise ValueError(f"open item is not an active payable: {item.id}")
-            if item.payable_category not in allowed_categories:
-                if request.event_type in {
-                    EventType.SOCIAL_INSURANCE_PAYMENT,
-                    EventType.HOUSING_FUND_PAYMENT,
-                    EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-                }:
-                    raise ValueError("STATUTORY_PAYMENT_INCOMPATIBLE_SOURCES")
-                raise ValueError(
-                    f"open item category {item.payable_category!r} is not allowed for "
-                    f"{request.event_type.value}"
-                )
-            available = item.original_amount_fen - item.settled_amount_fen
-            if allocation.amount_fen > available:
-                raise ValueError(
-                    f"allocation exceeds open amount for {item.id}: "
-                    f"available={available}, requested={allocation.amount_fen}"
-                )
-            totals[item.payable_category] += allocation.amount_fen
-        return totals
-
-    def _salary_payment_facts(self, request: RecordEventRequest) -> dict[str, Any]:
+    def derive_salary_settlement(self, org_id: uuid.UUID, request) -> dict[str, Any]:
         """Validate per-kind deductions against normalized payroll entitlements."""
 
         if not request.allocations:
@@ -2184,20 +633,17 @@ class FinanceService:
         allocation_by_item = {item.open_item_id: item.amount_fen for item in request.allocations}
         if len(allocation_by_item) != len(request.allocations):
             raise ValueError("salary payment cannot allocate an open item more than once")
-        withholding_by_item = {
-            item.open_item_id: item for item in request.salary_withholding_allocations
-        }
-        if len(withholding_by_item) != len(request.salary_withholding_allocations):
+        withholding_by_item = {item.open_item_id: item for item in request.withholding_allocations}
+        if len(withholding_by_item) != len(request.withholding_allocations):
             raise ValueError("salary payment cannot state withholdings twice for one open item")
         if set(allocation_by_item) != set(withholding_by_item):
             raise ValueError(
                 "salary payment needs explicit withholdings for every salary allocation"
             )
         actual_deduction_by_item = {
-            item.open_item_id: item.amount_fen
-            for item in request.salary_actual_deduction_allocations
+            item.open_item_id: item.amount_fen for item in request.actual_deduction_allocations
         }
-        if len(actual_deduction_by_item) != len(request.salary_actual_deduction_allocations):
+        if len(actual_deduction_by_item) != len(request.actual_deduction_allocations):
             raise ValueError(
                 "salary payment cannot state actual deductions twice for one open item"
             )
@@ -2218,7 +664,7 @@ class FinanceService:
             open_item = self.session.scalar(
                 select(OpenItem).where(
                     OpenItem.id == open_item_id,
-                    OpenItem.org_id == request.org_id,
+                    OpenItem.org_id == org_id,
                 )
             )
             if open_item is None:
@@ -2237,7 +683,7 @@ class FinanceService:
                 )
             source_link = self.session.scalar(
                 select(PayrollEventLink).where(
-                    PayrollEventLink.org_id == request.org_id,
+                    PayrollEventLink.org_id == org_id,
                     PayrollEventLink.event_id == open_item.source_event_id,
                     PayrollEventLink.link_kind == "payroll_accrual",
                 )
@@ -2246,7 +692,7 @@ class FinanceService:
                 raise ValueError("salary open item does not originate from a payroll accrual")
             source_batch = self.session.scalar(
                 select(PayrollBatch).where(
-                    PayrollBatch.org_id == request.org_id,
+                    PayrollBatch.org_id == org_id,
                     PayrollBatch.id == source_link.payroll_batch_id,
                 )
             )
@@ -2259,9 +705,9 @@ class FinanceService:
                 select(PayrollLine)
                 .join(Employee, Employee.id == PayrollLine.employee_id)
                 .where(
-                    PayrollLine.org_id == request.org_id,
+                    PayrollLine.org_id == org_id,
                     PayrollLine.payroll_batch_id == source_batch.id,
-                    Employee.org_id == request.org_id,
+                    Employee.org_id == org_id,
                     Employee.counterparty_id == open_item.counterparty_id,
                 )
             )
@@ -2269,7 +715,7 @@ class FinanceService:
                 raise ValueError("salary open item has no matching payroll line")
             profile = self.session.scalar(
                 select(EmployeePayrollProfileVersion).where(
-                    EmployeePayrollProfileVersion.org_id == request.org_id,
+                    EmployeePayrollProfileVersion.org_id == org_id,
                     EmployeePayrollProfileVersion.id == line.employee_payroll_profile_version_id,
                     EmployeePayrollProfileVersion.employee_id == line.employee_id,
                 )
@@ -2280,7 +726,7 @@ class FinanceService:
             entitlements = self.session.scalars(
                 select(PayrollWithholdingEntitlement)
                 .where(
-                    PayrollWithholdingEntitlement.org_id == request.org_id,
+                    PayrollWithholdingEntitlement.org_id == org_id,
                     PayrollWithholdingEntitlement.payroll_line_id == line.id,
                 )
                 .order_by(
@@ -2348,9 +794,7 @@ class FinanceService:
             withholding_allocations.extend(
                 [*social_allocations, *housing_allocations, *tax_allocations]
             )
-        if self._amount(request) == 0 and request.bank_transaction_references:
-            raise ValueError("ZERO_CASH_SALARY_PAYMENT_FORBIDS_BANK_TRANSACTIONS")
-        if batch is None or cash_total != self._amount(request):
+        if batch is None or cash_total != request.amount_fen:
             raise ValueError(
                 "salary cash payment must equal gross allocations less explicit "
                 "withholdings and actual salary deductions"
@@ -2442,7 +886,7 @@ class FinanceService:
         return supplied_amounts, persisted
 
     def _salary_withholding_open_item_plans(
-        self, event: BusinessEvent, derived: dict[str, Any]
+        self, org_id: uuid.UUID, payment_date: date, derived: dict[str, Any]
     ) -> list[OpenItemPlan]:
         batch = self.session.get(PayrollBatch, uuid.UUID(derived["payroll_batch_id"]))
         if batch is None:
@@ -2462,7 +906,7 @@ class FinanceService:
             target = targets.get(target_key)
             if target is None:
                 raise ValueError(f"missing statutory payment target for {target_key}")
-            agency = self._agency_counterparty(event.org_id, target)
+            agency = self._agency_counterparty(org_id, target)
             for insurance_kind, amount in components.items():
                 if amount:
                     plans.append(
@@ -2470,7 +914,7 @@ class FinanceService:
                             counterparty_id=agency.id,
                             item_type="payable",
                             original_amount_fen=amount,
-                            due_date=event.payment_date,
+                            due_date=payment_date,
                             payable_category=category,
                             payable_agency_code=target["agency_code"],
                             insurance_kind=insurance_kind,
@@ -2481,13 +925,13 @@ class FinanceService:
             target = targets.get("individual_income_tax")
             if target is None:
                 raise ValueError("missing statutory payment target for individual_income_tax")
-            agency = self._agency_counterparty(event.org_id, target)
+            agency = self._agency_counterparty(org_id, target)
             plans.append(
                 OpenItemPlan(
                     counterparty_id=agency.id,
                     item_type="payable",
                     original_amount_fen=tax_amount,
-                    due_date=event.payment_date,
+                    due_date=payment_date,
                     payable_category="individual_income_tax",
                     payable_agency_code=target["agency_code"],
                 )
@@ -2495,7 +939,7 @@ class FinanceService:
         return plans
 
     def _record_payroll_withholding_allocations(
-        self, event: BusinessEvent, derived: dict[str, Any]
+        self, event: BusinessEvent, derived: dict[str, Any], *, component_id: uuid.UUID
     ) -> None:
         """Persist statutory and actual salary deductions against their payroll lines."""
         for allocation in derived.get("withholding_payment_allocations", []):
@@ -2504,6 +948,7 @@ class FinanceService:
                     org_id=event.org_id,
                     entitlement_id=uuid.UUID(allocation["entitlement_id"]),
                     payment_event_id=event.id,
+                    payment_component_id=component_id,
                     amount_fen=int(allocation["amount_fen"]),
                 )
             )
@@ -2513,316 +958,11 @@ class FinanceService:
                     org_id=event.org_id,
                     payroll_line_id=uuid.UUID(allocation["payroll_line_id"]),
                     payment_event_id=event.id,
+                    payment_component_id=component_id,
                     amount_fen=int(allocation["amount_fen"]),
                     expense_role=allocation["expense_role"],
                 )
             )
-
-    def _persist_payroll_event_link(
-        self, event: BusinessEvent, request: RecordEventRequest, derived: dict[str, Any]
-    ) -> None:
-        """Persist normalized payroll payment provenance.
-
-        A statutory payment may settle several batches, but every source edge
-        retains its own source batch and open item.  Compatibility is proven
-        from frozen relations before the edges are written; it is never
-        inferred from an event facts JSON snapshot.
-        """
-        if request.event_type == EventType.SALARY_PAYMENT:
-            batch_id = uuid.UUID(derived["payroll_batch_id"])
-            for allocation in request.allocations:
-                self.session.add(
-                    PayrollEventLink(
-                        org_id=event.org_id,
-                        event_id=event.id,
-                        payroll_batch_id=batch_id,
-                        source_open_item_id=allocation.open_item_id,
-                        link_kind="salary_payment",
-                    )
-                )
-            return
-        if request.event_type not in {
-            EventType.SOCIAL_INSURANCE_PAYMENT,
-            EventType.HOUSING_FUND_PAYMENT,
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-        }:
-            return
-        source_items = self.session.scalars(
-            select(OpenItem).where(
-                OpenItem.org_id == event.org_id,
-                OpenItem.id.in_([allocation.open_item_id for allocation in request.allocations]),
-            )
-        ).all()
-        requested_source_item_ids = {allocation.open_item_id for allocation in request.allocations}
-        if len(source_items) != len(requested_source_item_ids):
-            raise ValueError("STATUTORY_PAYMENT_SOURCE_OPEN_ITEM_NOT_FOUND")
-        source_event_ids = {item.source_event_id for item in source_items}
-        links = self.session.scalars(
-            select(PayrollEventLink).where(
-                PayrollEventLink.org_id == event.org_id,
-                PayrollEventLink.event_id.in_(source_event_ids),
-                PayrollEventLink.link_kind.in_(
-                    ("payroll_accrual", "salary_payment", "contribution_supplement")
-                ),
-            )
-        ).all()
-        links_by_event: dict[uuid.UUID, list[PayrollEventLink]] = {}
-        for link in links:
-            links_by_event.setdefault(link.event_id, []).append(link)
-        supplement_event_ids = {
-            link.event_id for link in links if link.link_kind == "contribution_supplement"
-        }
-        source_link_kinds = {
-            item.id: (
-                "contribution_supplement"
-                if item.source_event_id in supplement_event_ids
-                else (
-                    "payroll_accrual"
-                    if item.payable_category in {"employer_social", "employer_housing"}
-                    else "salary_payment"
-                )
-            )
-            for item in source_items
-        }
-
-        source_links: dict[uuid.UUID, PayrollEventLink] = {}
-        for item in source_items:
-            expected_kind = source_link_kinds[item.id]
-            candidates = [
-                link
-                for link in links_by_event.get(item.source_event_id, [])
-                if link.link_kind == expected_kind
-            ]
-            if not candidates:
-                raise ValueError("STATUTORY_PAYMENT_SOURCE_IS_NOT_A_LINKED_PAYROLL_EVENT")
-            batch_ids_for_item = {link.payroll_batch_id for link in candidates}
-            if len(batch_ids_for_item) != 1:
-                raise ValueError("STATUTORY_PAYMENT_MIXES_INCOMPATIBLE_PAYROLL_BATCHES")
-            if expected_kind == "salary_payment":
-                # The source must be a genuine salary payment rather than an
-                # arbitrary event labelled as one.  Its own canonical edge
-                # must name an open salary item it actually settled.
-                salary_source_item_ids = [
-                    link.source_open_item_id
-                    for link in candidates
-                    if link.source_open_item_id is not None
-                ]
-                if not salary_source_item_ids or not self.session.scalar(
-                    select(
-                        exists().where(
-                            Settlement.org_id == event.org_id,
-                            Settlement.payment_event_id == item.source_event_id,
-                            Settlement.open_item_id.in_(salary_source_item_ids),
-                            Settlement.reversed.is_(False),
-                        )
-                    )
-                ):
-                    raise ValueError("STATUTORY_PAYMENT_SOURCE_SALARY_SETTLEMENT_MISSING")
-            source_links[item.id] = candidates[0]
-
-        batches_by_id = {
-            batch.id: batch
-            for batch in self.session.scalars(
-                select(PayrollBatch).where(
-                    PayrollBatch.org_id == event.org_id,
-                    PayrollBatch.id.in_({link.payroll_batch_id for link in source_links.values()}),
-                )
-            ).all()
-        }
-        agencies_by_id = {
-            agency.id: agency
-            for agency in self.session.scalars(
-                select(Counterparty).where(
-                    Counterparty.org_id == event.org_id,
-                    Counterparty.id.in_({item.counterparty_id for item in source_items}),
-                )
-            ).all()
-        }
-        compatibility_keys = {
-            self._statutory_payment_compatibility_key(
-                event=event,
-                request=request,
-                source_item=item,
-                source_link=source_links[item.id],
-                source_batch=batches_by_id.get(source_links[item.id].payroll_batch_id),
-                source_agency=agencies_by_id.get(item.counterparty_id),
-            )
-            for item in source_items
-        }
-        if len(compatibility_keys) != 1:
-            raise ValueError("STATUTORY_PAYMENT_INCOMPATIBLE_SOURCES")
-        for item in source_items:
-            self.session.add(
-                PayrollEventLink(
-                    org_id=event.org_id,
-                    event_id=event.id,
-                    payroll_batch_id=source_links[item.id].payroll_batch_id,
-                    source_payment_event_id=item.source_event_id,
-                    source_open_item_id=item.id,
-                    link_kind="statutory_payment",
-                )
-            )
-
-    @staticmethod
-    def _statutory_payment_compatibility_category(event_type: EventType) -> str:
-        return {
-            EventType.SOCIAL_INSURANCE_PAYMENT: "social_insurance",
-            EventType.HOUSING_FUND_PAYMENT: "housing_fund",
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT: "individual_income_tax",
-        }[event_type]
-
-    def _statutory_payment_compatibility_key(
-        self,
-        *,
-        event: BusinessEvent,
-        request: RecordEventRequest,
-        source_item: OpenItem,
-        source_link: PayrollEventLink,
-        source_batch: PayrollBatch | None,
-        source_agency: Counterparty | None,
-    ) -> tuple[object, ...]:
-        """Return the statutory compatibility key for one canonical source edge.
-
-        The statutory category is the payment family rather than the raw
-        employer/employee payable subtype: both social liabilities may be
-        settled together, while a social and a housing/tax source cannot.
-        """
-
-        if source_batch is None or source_batch.status != "posted":
-            raise ValueError("STATUTORY_PAYMENT_SOURCE_BATCH_NOT_FINAL")
-        if source_agency is None:
-            raise ValueError("STATUTORY_PAYMENT_SOURCE_AGENCY_NOT_FOUND")
-        if (
-            not source_item.payable_agency_code
-            or not source_agency.external_ref
-            or source_item.payable_agency_code != source_agency.external_ref
-        ):
-            raise ValueError("STATUTORY_PAYMENT_SOURCE_AGENCY_MISMATCH")
-        category = self._statutory_payment_compatibility_category(request.event_type)
-        targets = self._payment_targets(
-            source_batch.policy_snapshot.get("parameters", {})
-            if isinstance(source_batch.policy_snapshot, dict)
-            else {}
-        )
-        target = targets[category]
-        if source_item.payable_agency_code != target["agency_code"]:
-            raise ValueError("STATUTORY_PAYMENT_SOURCE_AGENCY_MISMATCH")
-        if category == "individual_income_tax":
-            # Individual income tax is controlled by the tax-policy FK on
-            # the final batch and belongs to its payment tax month.  The
-            # JSON income-tax snapshot is explanatory evidence, not the
-            # relational identity used to merge formal payments.
-            controlling_policy_id = str(source_batch.policy_version_id)
-            if source_batch.batch_kind == PayrollBatchKind.REGULAR.value:
-                statutory_period = source_batch.payroll_period
-            else:
-                if source_batch.payment_date is None:
-                    raise ValueError("STATUTORY_PAYMENT_SOURCE_PAYMENT_DATE_MISSING")
-                statutory_period = source_batch.payment_date.strftime("%Y-%m")
-        else:
-            # Social insurance and housing fund retain their period-end
-            # contribution rule and payroll-period contribution month.
-            policy_snapshot = source_batch.policy_snapshot.get("contribution_policy")
-            if not isinstance(policy_snapshot, dict) or not policy_snapshot.get("id"):
-                raise ValueError("STATUTORY_PAYMENT_SOURCE_POLICY_SNAPSHOT_MISSING")
-            controlling_policy_id = str(policy_snapshot["id"])
-            statutory_period = source_batch.payroll_period
-        return (
-            event.org_id,
-            category,
-            source_agency.id,
-            source_item.payable_agency_code,
-            source_agency.external_ref,
-            controlling_policy_id,
-            statutory_period,
-            request.amounts.currency,
-        )
-
-    def _payroll_payment_trace(
-        self, request: RecordEventRequest, derived: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Read provenance from normalized links; facts JSON is only an audit snapshot."""
-        open_item_ids = [allocation.open_item_id for allocation in request.allocations]
-        open_items = self.session.scalars(
-            select(OpenItem)
-            .where(OpenItem.org_id == request.org_id, OpenItem.id.in_(open_item_ids))
-            .order_by(OpenItem.id)
-        ).all()
-        source_event_ids = {item.source_event_id for item in open_items}
-        source_links = self.session.scalars(
-            select(PayrollEventLink).where(
-                PayrollEventLink.org_id == request.org_id,
-                PayrollEventLink.event_id.in_(source_event_ids),
-                PayrollEventLink.link_kind.in_(
-                    ("payroll_accrual", "salary_payment", "contribution_supplement")
-                ),
-            )
-        ).all()
-        batch_ids = {link.payroll_batch_id for link in source_links}
-        source_batches = self.session.scalars(
-            select(PayrollBatch).where(
-                PayrollBatch.org_id == request.org_id,
-                PayrollBatch.id.in_(batch_ids),
-            )
-        ).all()
-        payroll_line_ids = [uuid.UUID(item) for item in derived.get("payroll_line_ids", [])]
-        if not payroll_line_ids and source_event_ids:
-            payroll_line_ids = self.session.scalars(
-                select(PayrollWithholdingEntitlement.payroll_line_id)
-                .join(
-                    PayrollWithholdingPaymentAllocation,
-                    PayrollWithholdingPaymentAllocation.entitlement_id
-                    == PayrollWithholdingEntitlement.id,
-                )
-                .where(
-                    PayrollWithholdingEntitlement.org_id == request.org_id,
-                    PayrollWithholdingPaymentAllocation.org_id == request.org_id,
-                    PayrollWithholdingPaymentAllocation.payment_event_id.in_(source_event_ids),
-                    PayrollWithholdingPaymentAllocation.reversed.is_(False),
-                )
-                .distinct()
-            ).all()
-        profiles = self.session.scalars(
-            select(PayrollLine.employee_payroll_profile_version_id).where(
-                PayrollLine.org_id == request.org_id,
-                PayrollLine.id.in_(payroll_line_ids),
-            )
-        ).all()
-        return [
-            {
-                "stage": "payroll_payment_evidence",
-                "payroll_batch_ids": [str(batch.id) for batch in source_batches],
-                "payroll_policy_version_ids": [
-                    str(batch.policy_version_id) for batch in source_batches
-                ],
-                "employee_profile_version_ids": [str(profile_id) for profile_id in profiles],
-                "open_item_categories": sorted(
-                    {item.payable_category for item in open_items if item.payable_category}
-                ),
-                "payment_agency_codes": sorted(
-                    {item.payable_agency_code for item in open_items if item.payable_agency_code}
-                ),
-                "insurance_kinds": sorted(
-                    {item.insurance_kind for item in open_items if item.insurance_kind}
-                ),
-                "source_event_ids": [str(item.source_event_id) for item in open_items],
-            }
-        ]
-
-    @staticmethod
-    def _payroll_payment_categories(event_type: EventType) -> set[str] | None:
-        return {
-            EventType.SALARY_PAYMENT: {"salary"},
-            EventType.SOCIAL_INSURANCE_PAYMENT: {
-                "employer_social",
-                "withheld_employee_social",
-            },
-            EventType.HOUSING_FUND_PAYMENT: {
-                "employer_housing",
-                "withheld_employee_housing",
-            },
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT: {"individual_income_tax"},
-        }.get(event_type)
 
     def _attach_evidence(
         self,
@@ -2848,6 +988,17 @@ class FinanceService:
         ).all()
         if len(evidence) != len(set(evidence_ids)):
             raise ValueError("one or more evidence references do not exist in this organization")
+        existing_ids = set(
+            self.session.scalars(
+                select(event_evidence.c.evidence_id).where(
+                    event_evidence.c.org_id == event.org_id,
+                    event_evidence.c.event_id == event.id,
+                )
+            )
+        )
+        evidence_ids = [identity for identity in evidence_ids if identity not in existing_ids]
+        if not evidence_ids:
+            return
         self.session.execute(
             event_evidence.insert(),
             [
@@ -2860,173 +1011,7 @@ class FinanceService:
                 for evidence_id in evidence_ids
             ],
         )
-
-    def _create_invoices(self, event: BusinessEvent, request: RecordEventRequest) -> None:
-        if not request.invoice_references:
-            return
-        output_events = {
-            EventType.SERVICE_CASH_SALE,
-            EventType.SERVICE_CREDIT_SALE,
-            EventType.SERVICE_FULFILLMENT,
-            EventType.CUSTOMER_ADVANCE,
-        }
-        expected_direction = "output" if request.event_type in output_events else "input"
-        if request.event_type not in output_events | {
-            EventType.EXPENSE_CASH,
-            EventType.EXPENSE_PAYABLE,
-            EventType.EMPLOYEE_REIMBURSEMENT,
-        }:
-            raise ValueError("this event type does not support invoice references")
-        gross_total = sum(reference.gross_amount_fen for reference in request.invoice_references)
-        if gross_total > self._amount(request):
-            raise ValueError("invoice gross total exceeds event amount")
-        for reference in request.invoice_references:
-            if reference.direction != expected_direction:
-                raise ValueError(f"this event requires {expected_direction} invoice references")
-            if reference.issue_date != request.business_dates.invoice_date:
-                raise ValueError("invoice issue date does not match business_dates.invoice_date")
-            if expected_direction == "output" and request.tax_facts:
-                if request.tax_facts.invoice_type != reference.invoice_type:
-                    raise ValueError("invoice type does not match tax_facts.invoice_type")
-            self.session.add(
-                Invoice(
-                    org_id=request.org_id,
-                    event_id=event.id,
-                    **reference.model_dump(),
-                )
-            )
-
-    def _match_bank_transactions(self, event: BusinessEvent, request: RecordEventRequest) -> None:
-        matched = self._resolve_bank_transaction_references(
-            request.org_id, request.bank_transaction_references
-        )
-        for transaction in matched:
-            active_match = self.session.scalar(
-                select(BankTransactionMatch)
-                .where(
-                    BankTransactionMatch.org_id == request.org_id,
-                    BankTransactionMatch.bank_transaction_id == transaction.id,
-                    BankTransactionMatch.invalidated_by_event_id.is_(None),
-                )
-                .with_for_update()
-            )
-            if active_match is not None and active_match.event_id != event.id:
-                raise ValueError("BANK_TRANSACTION_ALREADY_MATCHED")
-            # The legacy pointer remains a fast current-state projection.  It
-            # must never override an existing immutable match edge, but retain
-            # the same stable rejection for pre-0004 rows in SQLite tests.
-            if (
-                active_match is None
-                and transaction.matched_event_id is not None
-                and transaction.matched_event_id != event.id
-            ):
-                raise ValueError("BANK_TRANSACTION_ALREADY_MATCHED")
-        if not matched:
-            return
-
-        inflows = {
-            EventType.ENTERPRISE_INCOME_TAX_REFUND,
-            EventType.SERVICE_CASH_SALE,
-            EventType.CUSTOMER_RECEIPT,
-            EventType.CUSTOMER_ADVANCE,
-            EventType.OWNER_LOAN_RECEIVED,
-            EventType.OWNER_CONTRIBUTION_RECEIVED,
-            EventType.OTHER_INCOME_RECEIVED,
-            EventType.BANK_INTEREST_RECEIVED,
-            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
-            EventType.EXPENSE_RECOVERY_RECEIVED,
-        }
-        outflows = {
-            EventType.PASS_THROUGH_PAYMENT,
-            EventType.CUSTOMER_REFUND,
-            EventType.EXPENSE_CASH,
-            EventType.SUPPLIER_PAYMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
-            EventType.OWNER_REPAYMENT,
-            EventType.BANK_FEE,
-            EventType.REFUNDABLE_DEPOSIT_PAID,
-            EventType.TAX_PAYMENT,
-            EventType.SALARY_PAYMENT,
-            EventType.SOCIAL_INSURANCE_PAYMENT,
-            EventType.HOUSING_FUND_PAYMENT,
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT,
-        }
-        amount = self._amount(request)
-        if request.event_type == EventType.INTERNAL_TRANSFER:
-            source_code = request.source_bank_account_code
-            destination_code = request.destination_bank_account_code
-            if any(
-                transaction.bank_account_code not in {source_code, destination_code}
-                for transaction in matched
-            ):
-                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-            source_total = sum(
-                transaction.amount_fen
-                for transaction in matched
-                if transaction.bank_account_code == source_code
-            )
-            destination_total = sum(
-                transaction.amount_fen
-                for transaction in matched
-                if transaction.bank_account_code == destination_code
-            )
-            if source_total != -amount or destination_total != amount:
-                raise ValueError("INTERNAL_TRANSFER_BANK_TRANSACTION_AMOUNT_MISMATCH")
-        elif request.event_type == EventType.CASH_BANK_TRANSFER:
-            if any(
-                transaction.bank_account_code != request.bank_account_code
-                for transaction in matched
-            ):
-                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-            bank_total = sum(transaction.amount_fen for transaction in matched)
-            expected = amount if request.direction == "cash_deposit" else -amount
-            if bank_total != expected:
-                raise ValueError("CASH_BANK_TRANSFER_BANK_TRANSACTION_AMOUNT_MISMATCH")
-        elif request.event_type == EventType.PAYMENT_PLATFORM_TRANSFER:
-            if any(
-                transaction.bank_account_code != request.bank_account_code
-                for transaction in matched
-            ):
-                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-            bank_total = sum(transaction.amount_fen for transaction in matched)
-            expected = amount if request.direction == "from_platform" else -amount
-            if bank_total != expected:
-                raise ValueError("PAYMENT_PLATFORM_TRANSFER_BANK_TRANSACTION_AMOUNT_MISMATCH")
-        else:
-            if any(
-                transaction.bank_account_code != request.bank_account_code
-                for transaction in matched
-            ):
-                raise ValueError("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-            bank_total = sum(transaction.amount_fen for transaction in matched)
-        if request.event_type in inflows and bank_total != amount:
-            raise ValueError(
-                f"bank inflow total does not match event amount: bank={bank_total}, event={amount}"
-            )
-        if request.event_type in outflows and bank_total != -amount:
-            raise ValueError(
-                f"bank outflow total does not match event amount: bank={bank_total}, event={amount}"
-            )
-        if (
-            request.event_type
-            not in {
-                EventType.INTERNAL_TRANSFER,
-                EventType.CASH_BANK_TRANSFER,
-                EventType.PAYMENT_PLATFORM_TRANSFER,
-            }
-            and request.event_type not in inflows | outflows
-        ):
-            raise ValueError("this event type must not match bank transactions")
-        for transaction in matched:
-            self.session.add(
-                BankTransactionMatch(
-                    org_id=event.org_id,
-                    bank_transaction_id=transaction.id,
-                    event_id=event.id,
-                )
-            )
-            transaction.matched_event_id = event.id
+        self.session.expire(event, ["evidence"])
 
     def _resolve_counterparty_reference(
         self, org_id: uuid.UUID, reference: Any | None
@@ -3060,546 +1045,11 @@ class FinanceService:
             self.session.flush()
         return counterparty
 
-    def _resolve_counterparty(self, request: RecordEventRequest) -> Counterparty | None:
-        return self._resolve_counterparty_reference(request.org_id, request.counterparty)
-
-    def _validate_business_links(self, request: RecordEventRequest) -> BusinessEvent | None:
-        settlement_date = self._bank_settlement_date(request)
-        for _side, account_code in self._bank_account_selections(request):
-            if account_code is not None:
-                self._validate_bank_account(request.org_id, account_code, settlement_date)
-
-        if request.event_type == EventType.INTERNAL_TRANSFER:
-            return None
-
-        if self._is_income_tax_settlement(request):
-            EnterpriseIncomeTaxService(self.session).validate_payment(request)
-            return None
-
-        if request.event_type == EventType.TAX_PAYMENT:
-            role = {
-                "vat": "vat_payable",
-                "surtax": "surtax_payable",
-                "enterprise_income_tax": "enterprise_income_tax_payable",
-            }[request.details["tax_type"]]
-            payable = max(0, -account_balance_fen(self.session, request.org_id, role))
-            if self._amount(request) > payable:
-                raise ValueError(
-                    f"tax payment exceeds payable balance: available={payable}, "
-                    f"requested={self._amount(request)}"
-                )
-            return None
-
-        if request.event_type == EventType.OWNER_REPAYMENT:
-            if request.counterparty is None:
-                return None
-            counterparty = self._resolve_counterparty(request)
-            payable = max(
-                0,
-                -account_balance_fen(
-                    self.session,
-                    request.org_id,
-                    "owner_payable",
-                    counterparty_id=counterparty.id,
-                ),
-            )
-            principal_fen = self._amount(request) - int(
-                request.details.owner_repayment_fee_fen or 0
-            )
-            if principal_fen > payable:
-                raise ValueError(
-                    f"owner repayment exceeds payable balance: available={payable}, "
-                    f"requested={principal_fen}"
-                )
-            return None
-
-        if request.event_type == EventType.SERVICE_FULFILLMENT:
-            original = self._linked_original(request)
-            if original.status != "posted" or original.reversed_by_event_id:
-                raise ValueError("customer advance event is not active")
-            self._assert_same_counterparty(request, original)
-            advance_amount = self._event_advance_amount(original)
-            used_amount = self._linked_usage_fen(request.org_id, original.id)
-            if used_amount + self._amount(request) > advance_amount:
-                raise ValueError("fulfillment exceeds the unused customer advance")
-            return original
-
-        if request.event_type != EventType.CUSTOMER_REFUND:
-            return None
-        original = self._linked_original(request)
-        expected_type = (
-            {EventType.CUSTOMER_ADVANCE.value, EventType.CUSTOMER_RECEIPT.value}
-            if request.details["refund_kind"] == "advance"
-            else {EventType.SERVICE_CASH_SALE.value}
-        )
-        if original.event_type not in expected_type:
-            raise ValueError(f"refund_kind requires original event type in {sorted(expected_type)}")
-        if original.status != "posted" or original.reversed_by_event_id:
-            raise ValueError("refund original event is not active")
-        self._assert_same_counterparty(request, original)
-        original_available = (
-            self._event_advance_amount(original)
-            if request.details["refund_kind"] == "advance"
-            else self._event_amount(original)
-        )
-        used_fen = self._linked_usage_fen(request.org_id, original.id)
-        if used_fen + self._amount(request) > original_available:
-            raise ValueError("refund exceeds the unrefunded amount of the original event")
-        return original
-
-    @staticmethod
-    def _assert_same_counterparty(request: RecordEventRequest, original: BusinessEvent) -> None:
-        current = request.counterparty.model_dump(mode="json") if request.counterparty else None
-        previous = original.facts.get("counterparty")
-        if not current or not previous:
-            raise ValueError("both linked events must identify the counterparty")
-        same_id = current.get("id") and current.get("id") == previous.get("id")
-        same_name = current.get("kind") == previous.get("kind") and current.get(
-            "name"
-        ) == previous.get("name")
-        if not same_id and not same_name:
-            raise ValueError("linked event belongs to a different counterparty")
-
-    def _linked_original(self, request: RecordEventRequest) -> BusinessEvent:
-        try:
-            original_id = uuid.UUID(str(request.details["original_event_id"]))
-        except (KeyError, ValueError) as exc:
-            raise ValueError("details.original_event_id must be a valid UUID") from exc
-        original = self.session.scalar(
-            select(BusinessEvent)
-            .where(
-                BusinessEvent.id == original_id,
-                BusinessEvent.org_id == request.org_id,
-            )
-            .with_for_update()
-        )
-        if original is None:
-            raise ValueError("linked original event was not found")
-        return original
-
-    def _linked_usage_fen(self, org_id: uuid.UUID, original_id: uuid.UUID) -> int:
-        return int(
-            self.session.scalar(
-                select(func.coalesce(func.sum(BusinessEventDependency.amount_fen), 0))
-                .join(
-                    BusinessEvent,
-                    (BusinessEvent.org_id == BusinessEventDependency.org_id)
-                    & (BusinessEvent.id == BusinessEventDependency.child_event_id),
-                )
-                .where(
-                    BusinessEventDependency.org_id == org_id,
-                    BusinessEventDependency.parent_event_id == original_id,
-                    BusinessEvent.status == "posted",
-                )
-            )
-            or 0
-        )
-
-    @staticmethod
-    def _business_dependency_kind(request: RecordEventRequest) -> str:
-        if request.event_type == EventType.SERVICE_FULFILLMENT:
-            return "advance_fulfillment"
-        if request.event_type == EventType.CUSTOMER_REFUND:
-            return (
-                "advance_refund"
-                if request.details.get("refund_kind") == "advance"
-                else "sale_return"
-            )
-        raise ValueError("BUSINESS_EVENT_DEPENDENCY_INVALID")
-
-    @staticmethod
-    def _event_advance_amount(event: BusinessEvent) -> int:
-        if event.event_type == EventType.CUSTOMER_ADVANCE.value:
-            return FinanceService._event_amount(event)
-        if event.event_type == EventType.CUSTOMER_RECEIPT.value:
-            return int(event.facts.get("derived", {}).get("advance_fen", 0))
-        raise ValueError("linked event does not contain a customer advance")
-
-    @staticmethod
-    def _event_amount(event: BusinessEvent) -> int:
-        amounts = event.facts.get("amounts", {})
-        value = amounts.get("gross_amount_fen")
-        if value is None:
-            value = amounts.get("amount_fen")
-        if value is None:
-            raise ValueError(f"event {event.id} has no amount")
-        return int(value)
-
-    def _missing_information(self, request: RecordEventRequest) -> list[str]:
-        missing: list[str] = []
-        event_type = request.event_type
-        amount = request.amounts.amount_fen
-        if amount is None:
-            amount = request.amounts.gross_amount_fen
-        if amount is None:
-            missing.append("amounts.amount_fen or amounts.gross_amount_fen")
-
-        if request.event_type is EventType.INTERNAL_TRANSFER:
-            if request.source_bank_account_code is None:
-                missing.append("source_bank_account_code")
-            if request.destination_bank_account_code is None:
-                missing.append("destination_bank_account_code")
-            if (
-                request.source_bank_account_code is not None
-                and request.source_bank_account_code == request.destination_bank_account_code
-            ):
-                missing.append("different source and destination bank accounts")
-        elif self._uses_bank_settlement(request) and request.bank_account_code is None:
-            missing.append("bank_account_code")
-        if (
-            request.event_type
-            in {
-                EventType.CASH_BANK_TRANSFER,
-                EventType.PAYMENT_PLATFORM_TRANSFER,
-            }
-            and request.direction is None
-        ):
-            missing.append("direction")
-
-        counterparty_events = {
-            EventType.PASS_THROUGH_PAYMENT,
-            EventType.SERVICE_CREDIT_SALE,
-            EventType.SERVICE_FULFILLMENT,
-            EventType.CUSTOMER_RECEIPT,
-            EventType.CUSTOMER_ADVANCE,
-            EventType.CUSTOMER_REFUND,
-            EventType.EXPENSE_PAYABLE,
-            EventType.SUPPLIER_PAYMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
-            EventType.OWNER_LOAN_RECEIVED,
-            EventType.OWNER_CONTRIBUTION_RECEIVED,
-            EventType.OWNER_REPAYMENT,
-            EventType.OTHER_INCOME_RECEIVED,
-            EventType.REFUNDABLE_DEPOSIT_PAID,
-            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
-        }
-        if event_type in counterparty_events and request.counterparty is None:
-            missing.append("counterparty")
-        if (
-            event_type == EventType.EMPLOYEE_REIMBURSEMENT
-            and request.details.reimbursement_kind == "refundable_deposit"
-            and request.deposit_holder is None
-        ):
-            missing.append("deposit_holder")
-        if (
-            event_type == EventType.EMPLOYEE_REIMBURSEMENT
-            and request.details.reimbursement_kind == "existing_payable"
-        ):
-            allocated = sum(item.amount_fen for item in request.allocations)
-            if request.business_dates.payment_date is None:
-                missing.append("business_dates.payment_date")
-            if not request.allocations:
-                missing.append("allocations")
-            elif amount and allocated != amount:
-                missing.append("allocations whose total equals the reimbursed payable")
-        if (
-            event_type == EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT
-            and request.details.settlement_method == "owner_managed_reserve"
-            and request.details.original_event_id is None
-        ):
-            missing.append("details.original_event_id")
-
-        if event_type == EventType.OTHER_INCOME_RECEIVED:
-            if request.details.other_income_kind != "retained_verification_payment":
-                missing.append("details.other_income_kind='retained_verification_payment'")
-            if not request.bank_transaction_references:
-                missing.append("bank_transaction_references")
-            if not request.evidence_references:
-                missing.append("evidence_references")
-            if not request.description.strip():
-                missing.append("description")
-
-        if event_type == EventType.BANK_INTEREST_RECEIVED:
-            if not request.bank_transaction_references:
-                missing.append("bank_transaction_references")
-            if not request.evidence_references:
-                missing.append("evidence_references")
-            if not request.description.strip():
-                missing.append("description")
-
-        if event_type == EventType.EXPENSE_RECOVERY_RECEIVED:
-            if request.details.expense_recovery_kind != "owner_managed_payment_account_return":
-                missing.append(
-                    "details.expense_recovery_kind='owner_managed_payment_account_return'"
-                )
-            if not request.bank_transaction_references:
-                missing.append("bank_transaction_references")
-            if not request.evidence_references:
-                missing.append("evidence_references")
-            if not request.description.strip():
-                missing.append("description")
-
-        if event_type == EventType.PAYMENT_PLATFORM_TRANSFER:
-            if not request.bank_transaction_references:
-                missing.append("bank_transaction_references")
-            if not request.evidence_references:
-                missing.append("evidence_references")
-            if not request.description.strip():
-                missing.append("description")
-
-        if event_type in {
-            EventType.REFUNDABLE_DEPOSIT_PAID,
-            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
-        }:
-            if not request.bank_transaction_references:
-                missing.append("bank_transaction_references")
-            if not request.evidence_references:
-                missing.append("evidence_references")
-            if not request.description.strip():
-                missing.append("description")
-
-        sales_events = {
-            EventType.SERVICE_CASH_SALE,
-            EventType.SERVICE_CREDIT_SALE,
-            EventType.SERVICE_FULFILLMENT,
-            EventType.CUSTOMER_ADVANCE,
-        }
-        if event_type in sales_events and request.tax_facts is None:
-            missing.append("tax_facts")
-        tax_facts_required = event_type in sales_events or (
-            event_type == EventType.CUSTOMER_REFUND
-            and request.details.get("refund_kind") == "sale_return"
-        )
-        if tax_facts_required and request.tax_facts is not None:
-            for field_name in (
-                "taxable",
-                "rate_percent",
-                "invoice_type",
-                "waive_exemption",
-                "tax_due_on_event",
-            ):
-                if getattr(request.tax_facts, field_name) is None:
-                    missing.append(f"tax_facts.{field_name}")
-        if (
-            request.tax_facts
-            and request.tax_facts.taxable
-            and request.tax_facts.tax_due_on_event
-            and event_type in sales_events
-            and request.business_dates.tax_obligation_date is None
-        ):
-            missing.append("business_dates.tax_obligation_date")
-
-        if (
-            event_type == EventType.CUSTOMER_REFUND
-            and request.details.get("refund_kind") == "sale_return"
-            and request.tax_facts
-            and request.tax_facts.taxable
-            and request.business_dates.tax_obligation_date is None
-        ):
-            missing.append("business_dates.tax_obligation_date")
-
-        if event_type == EventType.CUSTOMER_RECEIPT:
-            allocated = sum(item.amount_fen for item in request.allocations) + sum(
-                item.amount_fen for item in request.pass_through_items
-            )
-            if (
-                not request.allocations
-                and not request.pass_through_items
-                and request.details.get("unallocated_treatment") != "advance"
-            ):
-                missing.append("allocations or details.unallocated_treatment='advance'")
-            if (
-                amount
-                and allocated < amount
-                and request.details.get("unallocated_treatment") != "advance"
-            ):
-                missing.append("details.unallocated_treatment for the unallocated receipt")
-            if amount and allocated > amount:
-                missing.append("allocations whose total does not exceed the receipt")
-
-        if event_type in {
-            EventType.PASS_THROUGH_PAYMENT,
-            EventType.SUPPLIER_PAYMENT,
-            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT,
-            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED,
-        }:
-            allocated = sum(item.amount_fen for item in request.allocations)
-            if not request.allocations:
-                missing.append("allocations")
-            elif amount and allocated != amount:
-                missing.append("allocations whose total equals the payment")
-
-        if request.pass_through_items or event_type == EventType.PASS_THROUGH_PAYMENT:
-            if not request.evidence_references:
-                missing.append("evidence_references")
-            if not request.description.strip():
-                missing.append("description")
-        for index, split in enumerate(request.pass_through_items):
-            for field in ("beneficiary", "creditor", "creditor_basis", "purpose"):
-                if not getattr(split, field):
-                    missing.append(f"pass_through_items.{index}.{field}")
-            if split.creditor_basis == "advance_reimbursement":
-                if split.advance_payment_date is None:
-                    missing.append(f"pass_through_items.{index}.advance_payment_date")
-                if not split.advance_evidence_ids:
-                    missing.append(f"pass_through_items.{index}.advance_evidence_ids")
-
-        if self._payroll_payment_categories(event_type) is not None:
-            allocated = sum(item.amount_fen for item in request.allocations)
-            statutory_late_fee_fen = (
-                int(request.details.social_insurance_late_fee_fen or 0)
-                if event_type is EventType.SOCIAL_INSURANCE_PAYMENT
-                else 0
-            )
-            if not request.allocations:
-                missing.append("allocations")
-            elif (
-                event_type != EventType.SALARY_PAYMENT
-                and amount
-                and allocated + statutory_late_fee_fen != amount
-            ):
-                missing.append("allocations whose total equals the payment")
-            if statutory_late_fee_fen:
-                if not request.bank_transaction_references:
-                    missing.append("bank_transaction_references")
-                if not request.evidence_references:
-                    missing.append("evidence_references")
-                if not request.description:
-                    missing.append("description")
-            if event_type == EventType.SALARY_PAYMENT:
-                withholding_ids = {
-                    item.open_item_id for item in request.salary_withholding_allocations
-                }
-                allocation_ids = {item.open_item_id for item in request.allocations}
-                if not request.salary_withholding_allocations:
-                    missing.append("salary_withholding_allocations")
-                elif withholding_ids != allocation_ids:
-                    missing.append(
-                        "salary_withholding_allocations for each allocated salary open item"
-                    )
-                elif amount and allocated < amount:
-                    missing.append("salary allocations exceed cash payment after withholdings")
-
-        if event_type == EventType.SERVICE_FULFILLMENT:
-            if request.details.get("recognition_source") != "contract_liability":
-                missing.append("details.recognition_source='contract_liability'")
-            if "tax_previously_accrued" not in request.details:
-                missing.append("details.tax_previously_accrued")
-            if "original_event_id" not in request.details:
-                missing.append("details.original_event_id")
-
-        if event_type == EventType.CUSTOMER_REFUND:
-            if request.details.get("refund_kind") not in {"advance", "sale_return"}:
-                missing.append("details.refund_kind ('advance' or 'sale_return')")
-            if request.details.get("refund_kind") == "sale_return" and request.tax_facts is None:
-                missing.append("tax_facts")
-            if "original_event_id" not in request.details:
-                missing.append("details.original_event_id")
-
-        if event_type == EventType.EMPLOYEE_REIMBURSEMENT and "paid_now" not in request.details:
-            missing.append("details.paid_now")
-        if event_type == EventType.TAX_PAYMENT and request.details.get("tax_type") not in {
-            "vat",
-            "surtax",
-            "enterprise_income_tax",
-        }:
-            missing.append("details.tax_type ('vat', 'surtax', or 'enterprise_income_tax')")
-        if self._is_income_tax_settlement(request):
-            if not request.income_tax_allocations:
-                missing.append("income_tax_allocations")
-            if not request.evidence_references:
-                missing.append("evidence_references")
-            if not request.bank_transaction_references:
-                missing.append("bank_transaction_references")
-        expense_events = {
-            EventType.EXPENSE_CASH,
-            EventType.EXPENSE_RECOVERY_RECEIVED,
-            EventType.EXPENSE_PAYABLE,
-        }
-        if (
-            event_type == EventType.EMPLOYEE_REIMBURSEMENT
-            and request.details.reimbursement_kind in {None, "expense"}
-        ):
-            expense_events.add(EventType.EMPLOYEE_REIMBURSEMENT)
-        if event_type in expense_events:
-            if request.amounts.expense_account_role is None:
-                missing.append("amounts.expense_account_role")
-            elif request.amounts.expense_account_role not in {
-                "service_cost",
-                "sales_expense",
-                "general_expense",
-                "finance_expense",
-                "labor_service_cost",
-            }:
-                missing.append("a supported amounts.expense_account_role")
-
-        required_dates: dict[EventType, tuple[str, ...]] = {
-            EventType.SERVICE_CASH_SALE: ("fulfillment_date", "payment_date"),
-            EventType.SERVICE_CREDIT_SALE: ("fulfillment_date",),
-            EventType.SERVICE_FULFILLMENT: ("fulfillment_date",),
-            EventType.CUSTOMER_RECEIPT: ("payment_date",),
-            EventType.PASS_THROUGH_PAYMENT: ("payment_date",),
-            EventType.CUSTOMER_ADVANCE: ("payment_date",),
-            EventType.CUSTOMER_REFUND: ("payment_date",),
-            EventType.EXPENSE_CASH: ("payment_date",),
-            EventType.EXPENSE_RECOVERY_RECEIVED: ("payment_date",),
-            EventType.SUPPLIER_PAYMENT: ("payment_date",),
-            EventType.EMPLOYEE_REIMBURSEMENT_PAYMENT: ("payment_date",),
-            EventType.OWNER_LOAN_RECEIVED: ("payment_date",),
-            EventType.OWNER_CONTRIBUTION_RECEIVED: ("payment_date",),
-            EventType.OWNER_REPAYMENT: ("payment_date",),
-            EventType.OTHER_INCOME_RECEIVED: ("payment_date",),
-            EventType.BANK_INTEREST_RECEIVED: ("payment_date",),
-            EventType.REFUNDABLE_DEPOSIT_PAID: ("payment_date",),
-            EventType.REFUNDABLE_DEPOSIT_RETURN_RECEIVED: ("payment_date",),
-            EventType.BANK_FEE: ("payment_date",),
-            EventType.TAX_PAYMENT: ("payment_date",),
-            EventType.ENTERPRISE_INCOME_TAX_REFUND: ("payment_date",),
-            EventType.SALARY_PAYMENT: ("payment_date",),
-            EventType.SOCIAL_INSURANCE_PAYMENT: ("payment_date",),
-            EventType.HOUSING_FUND_PAYMENT: ("payment_date",),
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT: ("payment_date",),
-        }
-        dates = request.business_dates
-        for field_name in required_dates.get(event_type, ()):
-            if getattr(dates, field_name) is None:
-                missing.append(f"business_dates.{field_name}")
-        if request.invoice_references and dates.invoice_date is None:
-            missing.append("business_dates.invoice_date")
-        return list(dict.fromkeys(missing))
-
-    @staticmethod
-    def _amount(request: RecordEventRequest) -> int:
-        value = request.amounts.gross_amount_fen or request.amounts.amount_fen
-        if value is None:
-            raise ValueError("amount is required")
-        return value
-
     @staticmethod
     def _optional_date(value: Any) -> date | None:
         if value is None or isinstance(value, date):
             return value
         return date.fromisoformat(str(value))
-
-    def _new_event(
-        self,
-        request: RecordEventRequest,
-        status: str,
-        trace: list[dict[str, Any]],
-        *,
-        facts: dict[str, Any] | None = None,
-        rule_version: str | None = None,
-    ) -> BusinessEvent:
-        dates = request.business_dates
-        return build_business_event(
-            self.session,
-            org_id=request.org_id,
-            idempotency_key=request.idempotency_key,
-            request_payload_hash=FinanceService._request_payload_hash(request),
-            event_type=request.event_type.value,
-            status=status,
-            description=request.description,
-            facts=facts or request.model_dump(mode="json"),
-            business_date=dates.business_date,
-            fulfillment_date=dates.fulfillment_date,
-            invoice_date=dates.invoice_date,
-            payment_date=dates.payment_date,
-            tax_obligation_date=dates.tax_obligation_date,
-            posting_date=dates.posting_date,
-            rule_trace=trace,
-            rule_version=rule_version,
-        )
 
     def _result_for_existing(self, event: BusinessEvent) -> FinanceResult:
         voucher = event.vouchers[0] if event.vouchers else None
@@ -4652,297 +2102,41 @@ class FinanceService:
     def record_payroll_contribution_supplement(
         self, request: RecordPayrollContributionSupplementRequest
     ) -> FinanceResult:
-        """Post a historical assessment in the current open period using a fixed template."""
+        """Compile one historical assessment through the component protocol."""
+        from .component_schemas import RecordEventRequest
+        from .component_service import ComponentService
 
-        payload_hash = self._request_payload_hash(request)
-        existing = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.idempotency_key == request.idempotency_key,
-            )
+        facts = request.model_dump(
+            mode="json",
+            exclude={"org_id", "idempotency_key", "posting_date", "evidence_references"},
         )
-        if existing is not None:
-            if error := self._idempotency_error(existing, payload_hash, payroll_envelope=True):
-                return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
-            return self._result_for_existing(existing)
-        employee = self._employee_for_org(request.org_id, request.employee_id)
-        if employee is None:
-            return FinanceResult(status=ResultStatus.REJECTED, errors=["EMPLOYEE_NOT_FOUND"])
-        try:
-            evidence_ids = self._validate_payroll_batch_evidence(
-                request.org_id, request.evidence_references
-            )
-            assert_period_open(self.session, request.org_id, request.posting_date)
-        except CalculationValidationError as exc:
-            return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
-        except AccountingPeriodError as exc:
-            return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
-        period = YearMonth(
-            int(request.contribution_period[:4]), int(request.contribution_period[5:])
-        )
-        policy_record = self._effective_payroll_policy(request.org_id, period.end_date)
-        if policy_record is None:
-            return FinanceResult(
-                status=ResultStatus.NEEDS_INFORMATION,
-                missing_information=["contribution_policy_version"],
-            )
-        contribution_policy, _, _ = self._calculator_policies(policy_record)
-        policy_keys = {(str(rule.base_kind), rule.code) for rule in contribution_policy.rules}
-        item_keys = {(item.contribution_group.value, item.insurance_kind) for item in request.items}
-        if invalid := sorted(item_keys.difference(policy_keys)):
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=[
-                    "CONTRIBUTION_SUPPLEMENT_KIND_NOT_IN_POLICY:"
-                    + ",".join(f"{group}:{kind}" for group, kind in invalid)
-                ],
-            )
-        profile = self._effective_profile(employee.id, period.end_date)
-        if profile is None:
-            return FinanceResult(
-                status=ResultStatus.NEEDS_INFORMATION,
-                missing_information=["employee_payroll_profile_version"],
-            )
-        source_batches = self.session.scalars(
-            select(PayrollBatch)
-            .join(
-                PayrollLine,
-                (PayrollLine.org_id == PayrollBatch.org_id)
-                & (PayrollLine.payroll_batch_id == PayrollBatch.id),
-            )
-            .where(
-                PayrollBatch.org_id == request.org_id,
-                PayrollBatch.batch_kind == PayrollBatchKind.REGULAR.value,
-                PayrollBatch.payroll_period == request.contribution_period,
-                PayrollBatch.status == "posted",
-                PayrollLine.employee_id == request.employee_id,
-            )
-            .order_by(PayrollBatch.id)
-        ).all()
-        if len(source_batches) != 1:
-            return FinanceResult(
-                status=ResultStatus.NEEDS_INFORMATION,
-                missing_information=["unique_posted_source_payroll_batch"],
-            )
-        source_batch = source_batches[0]
-        duplicate_assessment = self.session.scalar(
-            select(PayrollContributionSupplement.id).where(
-                PayrollContributionSupplement.org_id == request.org_id,
-                PayrollContributionSupplement.employee_id == request.employee_id,
-                PayrollContributionSupplement.assessment_reference == request.assessment_reference,
-            )
-        )
-        if duplicate_assessment is not None:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["CONTRIBUTION_SUPPLEMENT_ASSESSMENT_ALREADY_RECORDED"],
-            )
-        targets = self._payment_targets(policy_record.parameters)
-        entries: list[Entry] = []
-        plans: list[OpenItemPlan] = []
-        item_trace: list[dict[str, Any]] = []
-        for item in request.items:
-            is_social = item.contribution_group.value == "social_insurance"
-            employer_role = (
-                "employer_social_payable" if is_social else "employer_housing_fund_payable"
-            )
-            withheld_role = (
-                "withheld_employee_social_payable"
-                if is_social
-                else "withheld_employee_housing_fund_payable"
-            )
-            employer_category = "employer_social" if is_social else "employer_housing"
-            withheld_category = (
-                "withheld_employee_social" if is_social else "withheld_employee_housing"
-            )
-            target = targets["social_insurance" if is_social else "housing_fund"]
-            agency = self._agency_counterparty(request.org_id, target)
-            employer_borne_employee = (
-                item.employee_amount_fen
-                if item.employee_amount_treatment == "employer_borne"
-                else 0
-            )
-            employer_payable = item.employer_amount_fen + employer_borne_employee
-            if employer_payable:
-                entries.extend(
-                    [
-                        Entry(
-                            account_role=profile.expense_role,
-                            debit_fen=employer_payable,
-                            counterparty_id=employee.counterparty_id,
-                        ),
-                        Entry(account_role=employer_role, credit_fen=employer_payable),
-                    ]
-                )
-                plans.append(
-                    OpenItemPlan(
-                        counterparty_id=agency.id,
-                        item_type="payable",
-                        original_amount_fen=employer_payable,
-                        due_date=request.due_date,
-                        payable_category=employer_category,
-                        payable_agency_code=target["agency_code"],
-                        insurance_kind=item.insurance_kind,
-                    )
-                )
-            employee_receivable = (
-                item.employee_amount_fen
-                if item.employee_amount_treatment == "employee_receivable"
-                else 0
-            )
-            if employee_receivable:
-                entries.extend(
-                    [
-                        Entry(
-                            account_role="employee_receivable",
-                            debit_fen=employee_receivable,
-                            counterparty_id=employee.counterparty_id,
-                        ),
-                        Entry(account_role=withheld_role, credit_fen=employee_receivable),
-                    ]
-                )
-                plans.extend(
-                    [
-                        OpenItemPlan(
-                            counterparty_id=employee.counterparty_id,
-                            item_type="receivable",
-                            original_amount_fen=employee_receivable,
-                            due_date=request.due_date,
-                        ),
-                        OpenItemPlan(
-                            counterparty_id=agency.id,
-                            item_type="payable",
-                            original_amount_fen=employee_receivable,
-                            due_date=request.due_date,
-                            payable_category=withheld_category,
-                            payable_agency_code=target["agency_code"],
-                            insurance_kind=item.insurance_kind,
-                        ),
-                    ]
-                )
-            item_trace.append(
+        result = ComponentService(self.session).record(
+            RecordEventRequest.model_validate(
                 {
-                    "contribution_group": item.contribution_group.value,
-                    "insurance_kind": item.insurance_kind,
-                    "employee_amount_fen": item.employee_amount_fen,
-                    "employer_amount_fen": item.employer_amount_fen,
-                    "employee_amount_treatment": item.employee_amount_treatment,
+                    "org_id": request.org_id,
+                    "idempotency_key": request.idempotency_key,
+                    "posting_date": request.posting_date,
+                    "description": f"{request.contribution_period} 社保公积金历史补缴确认："
+                    f"{request.reason_description}",
+                    "evidence_references": request.evidence_references,
+                    "components": [
+                        {
+                            "key": "supplement",
+                            "kind": "payroll_contribution_supplement",
+                            "business_date": request.posting_date,
+                            **facts,
+                        }
+                    ],
                 }
             )
-        event = build_business_event(
-            self.session,
-            org_id=request.org_id,
-            idempotency_key=request.idempotency_key,
-            request_payload_hash=payload_hash,
-            event_type="payroll_contribution_supplement",
-            status="draft",
-            description=(
-                f"{request.contribution_period} 社保公积金历史补缴确认："
-                f"{request.reason_description}"
-            ),
-            facts={
-                "employee_id": str(employee.id),
-                "contribution_period": request.contribution_period,
-                "assessment_reference": request.assessment_reference,
-                "reason_code": request.reason_code,
-                "items": item_trace,
-            },
-            business_date=request.posting_date,
-            posting_date=request.posting_date,
-            rule_trace=[
-                {
-                    "stage": "payroll_contribution_supplement_template",
-                    "policy_version_id": str(policy_record.id),
-                    "contribution_period": request.contribution_period,
-                    "posting_date": request.posting_date.isoformat(),
-                    "items": item_trace,
-                }
-            ],
-            rule_version=policy_record.version,
         )
-        try:
-            with self.session.begin_nested():
-                self.session.add(event)
-                self.session.flush()
-                self._attach_evidence(event, evidence_ids)
-                voucher = create_voucher(
-                    self.session,
-                    event=event,
-                    posting_date=request.posting_date,
-                    description=event.description,
-                    entries=entries,
-                )
-                create_open_items(self.session, event=event, plans=plans)
-                supplement = PayrollContributionSupplement(
-                    org_id=request.org_id,
-                    event_id=event.id,
-                    employee_id=employee.id,
-                    source_payroll_batch_id=source_batch.id,
-                    contribution_period=request.contribution_period,
-                    assessment_reference=request.assessment_reference,
-                    reason_code=request.reason_code,
-                    reason_description=request.reason_description,
-                )
-                self.session.add(supplement)
-                self.session.add(
-                    PayrollEventLink(
-                        org_id=request.org_id,
-                        event_id=event.id,
-                        payroll_batch_id=source_batch.id,
-                        link_kind="contribution_supplement",
-                    )
-                )
-                self.session.flush()
-                for item in request.items:
-                    self.session.add(
-                        PayrollContributionSupplementItem(
-                            org_id=request.org_id,
-                            supplement_id=supplement.id,
-                            contribution_group=item.contribution_group.value,
-                            insurance_kind=item.insurance_kind,
-                            employee_amount_fen=item.employee_amount_fen,
-                            employer_amount_fen=item.employer_amount_fen,
-                            employee_amount_treatment=item.employee_amount_treatment,
-                        )
-                    )
-                # PostgreSQL treats the final event transition as the seal for
-                # the complete normalized supplement and evidence graph.
-                self.session.flush()
-                event.status = "posted"
-                self.session.add(
-                    AuditLog(
-                        org_id=request.org_id,
-                        event_id=event.id,
-                        action="payroll_contribution_supplement_posted",
-                        details={
-                            "supplement_id": str(supplement.id),
-                            "employee_id": str(employee.id),
-                            "contribution_period": request.contribution_period,
-                        },
-                    )
-                )
-                self.session.flush()
-        except IntegrityError:
-            concurrent = self.session.scalar(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == request.org_id,
-                    BusinessEvent.idempotency_key == request.idempotency_key,
-                )
+        if result.status == ResultStatus.POSTED:
+            result.data["supplement_id"] = next(
+                row["derived"]["supplement_id"]
+                for row in result.data["components"]
+                if row["kind"] == "payroll_contribution_supplement"
             )
-            if concurrent is not None and concurrent.request_payload_hash == payload_hash:
-                return self._result_for_existing(concurrent)
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["CONTRIBUTION_SUPPLEMENT_CONCURRENT_WRITE_CONFLICT"],
-            )
-        return FinanceResult(
-            status=ResultStatus.POSTED,
-            event_id=event.id,
-            voucher_id=voucher.id,
-            voucher_number=voucher.voucher_number,
-            trace=event.rule_trace,
-            data={"supplement_id": str(supplement.id)},
-        )
+        return result
 
     def preview_payroll(self, request: PreviewPayrollRequest) -> PayrollResult:
         if self.session.get(Organization, request.org_id) is None:
@@ -4973,7 +2167,13 @@ class FinanceService:
         except CalculationValidationError as exc:
             return PayrollResult(status=PayrollResultStatus.REJECTED, errors=[exc.code])
         try:
-            calculation = self._calculate_payroll(request)
+            calculation = self._calculate_payroll(
+                request,
+                allow_calculated_regular=(
+                    request.batch_kind == PayrollBatchKind.ANNUAL_BONUS
+                    and request.tax_method == AnnualBonusTaxMethod.COMBINED
+                ),
+            )
         except NeedsInformationError as exc:
             return PayrollResult(
                 status=PayrollResultStatus.NEEDS_INFORMATION,
@@ -5006,14 +2206,25 @@ class FinanceService:
                     request.batch_kind.value,
                     request.payroll_period,
                 )
-                self.session.execute(
-                    update(PayrollBatch)
+                employee_ids = [item.employee_id for item in request.employee_items]
+                overlapping_batch_ids = (
+                    select(PayrollBatch.id)
+                    .join(
+                        PayrollLine,
+                        (PayrollLine.org_id == PayrollBatch.org_id)
+                        & (PayrollLine.payroll_batch_id == PayrollBatch.id),
+                    )
                     .where(
                         PayrollBatch.org_id == request.org_id,
                         PayrollBatch.batch_kind == request.batch_kind.value,
                         PayrollBatch.payroll_period == request.payroll_period,
                         PayrollBatch.status == "calculated",
+                        PayrollLine.employee_id.in_(employee_ids),
                     )
+                )
+                self.session.execute(
+                    update(PayrollBatch)
+                    .where(PayrollBatch.id.in_(overlapping_batch_ids))
                     .values(status="superseded"),
                     execution_options={"synchronize_session": "fetch"},
                 )
@@ -5105,6 +2316,8 @@ class FinanceService:
                 status=PayrollResultStatus.REJECTED,
                 errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
             )
+        except ValueError as exc:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[str(exc)])
         except OperationalError:
             return PayrollResult(
                 status=PayrollResultStatus.REJECTED,
@@ -5120,49 +2333,95 @@ class FinanceService:
         return self._payroll_result_for_batch(batch)
 
     def confirm_payroll(self, request: ConfirmPayrollRequest) -> PayrollResult:
-        """Confirm through the common payroll idempotency/savepoint envelope."""
+        """Confirm a calculated batch through the common component protocol."""
 
-        payload_hash = self._request_payload_hash(request)
+        from .component_service import ComponentService
+
+        batch = self.session.scalar(
+            select(PayrollBatch).where(
+                PayrollBatch.id == request.batch_id,
+                PayrollBatch.org_id == request.org_id,
+            )
+        )
+        if batch is None:
+            return PayrollResult(
+                status=PayrollResultStatus.REJECTED, errors=["PAYROLL_BATCH_NOT_FOUND"]
+            )
+        evidence_ids = list(
+            self.session.scalars(
+                select(PayrollBatchEvidence.evidence_id)
+                .where(
+                    PayrollBatchEvidence.org_id == batch.org_id,
+                    PayrollBatchEvidence.payroll_batch_id == batch.id,
+                )
+                .order_by(PayrollBatchEvidence.evidence_id)
+            )
+        )
+        component_request = RecordEventRequest.model_validate(
+            {
+                "org_id": request.org_id,
+                "idempotency_key": request.idempotency_key,
+                "posting_date": batch.posting_date,
+                "description": (
+                    batch.calculation_input.get("request", {}).get("description") or "工资计提"
+                ),
+                "components": [
+                    {
+                        "key": "payroll_accrual",
+                        "kind": "payroll_accrual",
+                        "business_date": batch.posting_date,
+                        "batch_id": batch.id,
+                        "calculation_hash": request.calculation_hash,
+                        "confirmation_note": request.confirmation_note,
+                        "evidence_references": evidence_ids,
+                    }
+                ],
+            }
+        )
         try:
             with self.session.begin_nested():
-                result = self._confirm_payroll_write(request)
-                if result.status == PayrollResultStatus.POSTED:
+                result = ComponentService(self.session).record(component_request)
+                if result.status == ResultStatus.POSTED:
                     self._assert_round6_final_dependency_constraints_now()
-                return result
+                if result.status == ResultStatus.NEEDS_INFORMATION:
+                    missing = result.missing_information
+                    if missing == ["evidence_references"]:
+                        missing = [
+                            {
+                                "field": "evidence_references",
+                                "reason": "正式工资或年终奖入账需要预览时登记的原始依据",
+                            }
+                        ]
+                    return PayrollResult(
+                        status=PayrollResultStatus.NEEDS_INFORMATION,
+                        batch_id=batch.id,
+                        calculation_hash=batch.calculation_hash,
+                        missing_information=missing,
+                    )
+                if result.status != ResultStatus.POSTED:
+                    errors = [
+                        "PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"
+                        if code == "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH"
+                        else code
+                        for code in result.errors
+                    ]
+                    return PayrollResult(status=PayrollResultStatus.REJECTED, errors=errors)
+                self.session.refresh(batch)
+                return self._payroll_result_for_batch(
+                    batch,
+                    idempotent_replay=bool(result.data.get("idempotent_replay")),
+                )
         except AccountingPeriodError as exc:
             return PayrollResult(
                 status=PayrollResultStatus.REJECTED,
                 errors=[exc.code],
             )
         except IntegrityError:
-            existing = self.session.scalar(
-                select(BusinessEvent).where(
-                    BusinessEvent.org_id == request.org_id,
-                    BusinessEvent.idempotency_key == request.idempotency_key,
-                )
-            )
-            if existing is not None:
-                if error := self._idempotency_error(existing, payload_hash, payroll_envelope=True):
-                    return PayrollResult(status=PayrollResultStatus.REJECTED, errors=[error])
-                if existing.event_type == "payroll_accrual":
-                    linked_batch_id = self.session.scalar(
-                        select(PayrollEventLink.payroll_batch_id).where(
-                            PayrollEventLink.org_id == request.org_id,
-                            PayrollEventLink.event_id == existing.id,
-                            PayrollEventLink.link_kind == "payroll_accrual",
-                        )
-                    )
-                    batch = self.session.get(PayrollBatch, request.batch_id)
-                    if batch is not None and linked_batch_id == batch.id:
-                        return self._payroll_result_for_batch(batch, idempotent_replay=True)
-                return PayrollResult(
-                    status=PayrollResultStatus.REJECTED,
-                    errors=["PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"],
-                )
             return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
+                status=PayrollResultStatus.REJECTED, errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"]
             )
+        except ValueError as exc:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[str(exc)])
         except OperationalError:
             return PayrollResult(
                 status=PayrollResultStatus.REJECTED,
@@ -5176,74 +2435,89 @@ class FinanceService:
                 )
             raise
 
-    def _confirm_payroll_write(self, request: ConfirmPayrollRequest) -> PayrollResult:
+    def compile_payroll_accrual_component(
+        self,
+        component,
+        *,
+        planned_regular_plans: dict[str, ComponentPostingPlan | None] | None = None,
+    ) -> tuple[ComponentPostingPlan, list[uuid.UUID]]:
+        """Validate one calculated payroll snapshot and return its formal component plan."""
+
+        from .component_service import MissingFacts
+
         batch = self.session.scalar(
             select(PayrollBatch)
-            .where(PayrollBatch.id == request.batch_id, PayrollBatch.org_id == request.org_id)
+            .where(
+                PayrollBatch.id == component.batch_id,
+                PayrollBatch.org_id == self._component_org_id,
+            )
             .with_for_update()
         )
         if batch is None:
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED, errors=["PAYROLL_BATCH_NOT_FOUND"]
-            )
-        confirm_payload_hash = self._request_payload_hash(request)
-        existing_event = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.idempotency_key == request.idempotency_key,
-            )
-        )
-        if existing_event is not None:
-            if error := self._idempotency_error(
-                existing_event, confirm_payload_hash, payroll_envelope=True
+            raise ValueError("PAYROLL_BATCH_NOT_FOUND")
+        if batch.status != "calculated" or batch.business_event_id is not None:
+            raise ValueError("PAYROLL_BATCH_IS_NOT_CONFIRMABLE")
+        planned_regular_plans = planned_regular_plans or {}
+        local_regular_batches: dict[uuid.UUID, tuple[str, PayrollBatch, ComponentPostingPlan]] = {}
+        if planned_regular_plans:
+            if (
+                batch.batch_kind != PayrollBatchKind.ANNUAL_BONUS.value
+                or batch.tax_method != AnnualBonusTaxMethod.COMBINED.value
             ):
-                return PayrollResult(status=PayrollResultStatus.REJECTED, errors=[error])
-            if existing_event.event_type == "payroll_accrual":
-                linked_batch = self.session.scalar(
-                    select(PayrollEventLink.payroll_batch_id).where(
-                        PayrollEventLink.org_id == request.org_id,
-                        PayrollEventLink.event_id == existing_event.id,
-                        PayrollEventLink.link_kind == "payroll_accrual",
+                raise ValueError("PAYROLL_LOCAL_REGULAR_PARENT_REQUIRES_COMBINED_BONUS")
+            for local_regular_key, planned_regular_plan in planned_regular_plans.items():
+                if planned_regular_plan is None or planned_regular_plan.kind != "payroll_accrual":
+                    raise ValueError("PAYROLL_LOCAL_REGULAR_PARENT_INVALID")
+                planned_batch_id = planned_regular_plan.derived.get("payroll_batch_id")
+                planned_hash = planned_regular_plan.derived.get("calculation_hash")
+                if planned_batch_id is None or planned_hash is None:
+                    raise ValueError("PAYROLL_LOCAL_REGULAR_PARENT_INVALID")
+                local_regular_batch = self.session.scalar(
+                    select(PayrollBatch).where(
+                        PayrollBatch.org_id == batch.org_id,
+                        PayrollBatch.id == uuid.UUID(str(planned_batch_id)),
                     )
                 )
-                if linked_batch == batch.id:
-                    return self._payroll_result_for_batch(batch, idempotent_replay=True)
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"],
-            )
-        if batch.status != "calculated":
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["PAYROLL_BATCH_IS_NOT_CONFIRMABLE"],
-            )
-        if batch.calculation_hash != request.calculation_hash:
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["STALE_PAYROLL_CALCULATION"],
-            )
+                if (
+                    local_regular_batch is None
+                    or local_regular_batch.batch_kind != PayrollBatchKind.REGULAR.value
+                    or local_regular_batch.status != "calculated"
+                    or local_regular_batch.business_event_id is not None
+                    or local_regular_batch.calculation_hash != planned_hash
+                    or local_regular_batch.id in local_regular_batches
+                ):
+                    raise ValueError("PAYROLL_LOCAL_REGULAR_PARENT_INVALID")
+                local_regular_batches[local_regular_batch.id] = (
+                    local_regular_key,
+                    local_regular_batch,
+                    planned_regular_plan,
+                )
+        if batch.posting_date != self._component_posting_date:
+            raise ValueError("PAYROLL_COMPONENT_POSTING_DATE_MISMATCH")
+        if component.business_date != batch.posting_date:
+            raise ValueError("PAYROLL_COMPONENT_BUSINESS_DATE_MISMATCH")
+        if batch.calculation_hash != component.calculation_hash:
+            raise ValueError("STALE_PAYROLL_CALCULATION")
         if batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value and batch.tax_method is None:
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["ANNUAL_BONUS_TAX_METHOD_REQUIRED"],
+            raise ValueError("ANNUAL_BONUS_TAX_METHOD_REQUIRED")
+        evidence_ids = list(
+            self.session.scalars(
+                select(PayrollBatchEvidence.evidence_id)
+                .where(
+                    PayrollBatchEvidence.org_id == batch.org_id,
+                    PayrollBatchEvidence.payroll_batch_id == batch.id,
+                )
+                .order_by(PayrollBatchEvidence.evidence_id)
             )
-        evidence_ids = self.session.scalars(
-            select(PayrollBatchEvidence.evidence_id)
-            .where(
-                PayrollBatchEvidence.org_id == batch.org_id,
-                PayrollBatchEvidence.payroll_batch_id == batch.id,
-            )
-            .order_by(PayrollBatchEvidence.evidence_id)
-        ).all()
+        )
         requested_evidence_ids = [
             uuid.UUID(value)
             for value in batch.calculation_input.get("request", {}).get("evidence_references", [])
         ]
         if sorted(evidence_ids) != sorted(requested_evidence_ids):
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["STALE_PAYROLL_CALCULATION"],
-            )
+            raise ValueError("STALE_PAYROLL_CALCULATION")
+        if not evidence_ids:
+            raise MissingFacts([f"components.{component.key}.evidence_references"])
         stored_actual_item_ids = set(
             self.session.scalars(
                 select(PayrollContributionActualUse.actual_item_id).where(
@@ -5260,19 +2534,68 @@ class FinanceService:
                 )
             )
         )
-        lines = self.session.scalars(
-            select(PayrollLine)
-            .where(PayrollLine.payroll_batch_id == batch.id)
-            .order_by(PayrollLine.id)
-        ).all()
-        if not lines:
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["STALE_PAYROLL_CALCULATION"],
+        lines = list(
+            self.session.scalars(
+                select(PayrollLine)
+                .where(PayrollLine.payroll_batch_id == batch.id)
+                .order_by(PayrollLine.id)
             )
-        # Lock the persistent annual domain *before* re-reading cumulative
-        # state.  Otherwise a January and March batch both calculated from an
-        # empty slot range can independently confirm.
+        )
+        if not lines:
+            raise ValueError("STALE_PAYROLL_CALCULATION")
+        local_regular_proofs = []
+        if local_regular_batches:
+            snapshots = batch.calculation_input.get("employee_snapshots", [])
+            snapshot_by_employee = {
+                uuid.UUID(snapshot["employee_id"]): snapshot
+                for snapshot in snapshots
+                if snapshot.get("employee_id")
+            }
+            parent_lines_by_batch: dict[uuid.UUID, dict[uuid.UUID, PayrollLine]] = {}
+            used_lines_by_batch: dict[uuid.UUID, list[str]] = {
+                batch_id: [] for batch_id in local_regular_batches
+            }
+            for batch_id in local_regular_batches:
+                parent_lines = list(
+                    self.session.scalars(
+                        select(PayrollLine)
+                        .where(PayrollLine.payroll_batch_id == batch_id)
+                        .order_by(PayrollLine.id)
+                    )
+                )
+                by_employee = {line.employee_id: line for line in parent_lines}
+                if len(by_employee) != len(parent_lines):
+                    raise ValueError("PAYROLL_LOCAL_REGULAR_PARENT_INVALID")
+                parent_lines_by_batch[batch_id] = by_employee
+            for line in lines:
+                source_batch_id = line.regular_payroll_batch_id
+                if source_batch_id not in local_regular_batches:
+                    continue
+                _, local_regular_batch, _ = local_regular_batches[source_batch_id]
+                parent_line = parent_lines_by_batch[source_batch_id].get(line.employee_id)
+                snapshot = snapshot_by_employee.get(line.employee_id)
+                if (
+                    parent_line is None
+                    or snapshot is None
+                    or snapshot.get("regular_payroll_batch_id") != str(source_batch_id)
+                    or snapshot.get("regular_payroll_line_id") != str(parent_line.id)
+                    or snapshot.get("regular_payroll_calculation_hash")
+                    != local_regular_batch.calculation_hash
+                ):
+                    raise ValueError("PAYROLL_LOCAL_REGULAR_PARENT_INVALID")
+                used_lines_by_batch[source_batch_id].append(str(parent_line.id))
+            if any(not line_ids for line_ids in used_lines_by_batch.values()):
+                raise ValueError("PAYROLL_LOCAL_REGULAR_PARENT_UNUSED")
+            local_regular_proofs = [
+                {
+                    "component_key": local_regular_batches[batch_id][0],
+                    "batch_id": str(batch_id),
+                    "calculation_hash": local_regular_batches[batch_id][1].calculation_hash,
+                    "employee_line_ids": sorted(line_ids),
+                }
+                for batch_id, line_ids in used_lines_by_batch.items()
+            ]
+            local_regular_proofs.sort(key=lambda value: value["component_key"])
         tax_state_lines = [
             line for line in lines if self._line_uses_cumulative_tax_state(batch, line)
         ]
@@ -5285,125 +2608,166 @@ class FinanceService:
                     batch_tax_period.year,
                 )
             except CalculationValidationError as exc:
-                return PayrollResult(status=PayrollResultStatus.REJECTED, errors=[exc.code])
-        try:
-            stored_request = PreviewPayrollRequest.model_validate(
-                batch.calculation_input["request"]
-            )
-            recalculated = self._calculate_payroll(stored_request)
-        except (KeyError, NeedsInformationError, CalculationValidationError, ValueError):
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["STALE_PAYROLL_CALCULATION"],
-            )
-        if (
-            recalculated["missing"]
-            or recalculated["calculation_hash"] != batch.calculation_hash
-            or recalculated["policy_snapshot"] != batch.policy_snapshot
-            or set(recalculated["actual_item_ids"]) != stored_actual_item_ids
-            or set(recalculated["first_wage_treatment_ids"]) != stored_first_wage_treatment_ids
-        ):
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["STALE_PAYROLL_CALCULATION"],
-            )
-        tax_state_savepoint = self.session.begin_nested()
+                raise ValueError(exc.code) from exc
+        if not self.session.info.get("event_amendment"):
+            try:
+                stored_request = PreviewPayrollRequest.model_validate(
+                    batch.calculation_input["request"]
+                )
+                recalculated = self._calculate_payroll(
+                    stored_request,
+                    allowed_calculated_regular_batch_ids=set(local_regular_batches),
+                    require_calculated_regular_slot=bool(local_regular_batches),
+                )
+            except (KeyError, NeedsInformationError, CalculationValidationError, ValueError) as exc:
+                raise ValueError("STALE_PAYROLL_CALCULATION") from exc
+            if (
+                recalculated["missing"]
+                or recalculated["calculation_hash"] != batch.calculation_hash
+                or recalculated["policy_snapshot"] != batch.policy_snapshot
+                or set(recalculated["actual_item_ids"]) != stored_actual_item_ids
+                or set(recalculated["first_wage_treatment_ids"]) != stored_first_wage_treatment_ids
+            ):
+                raise ValueError("STALE_PAYROLL_CALCULATION")
         try:
             self._reserve_payroll_tax_state_slots(batch, lines)
         except CalculationValidationError as exc:
-            tax_state_savepoint.rollback()
-            return PayrollResult(status=PayrollResultStatus.REJECTED, errors=[exc.code])
-        else:
-            tax_state_savepoint.commit()
+            raise ValueError(exc.code) from exc
         self._create_payroll_withholding_entitlements(batch, lines)
-        entries, open_item_plans = self._payroll_accrual_template(batch, lines)
-        event = build_business_event(
-            self.session,
-            org_id=batch.org_id,
-            idempotency_key=request.idempotency_key,
-            request_payload_hash=confirm_payload_hash,
-            event_type="payroll_accrual",
-            # R3 final-event guards require a complete voucher, evidence and
-            # normalized source edge before an event becomes final.
-            status="draft",
-            description=batch.calculation_input["request"].get("description") or "工资计提",
-            facts={
-                "payroll_batch_id": str(batch.id),
-                "calculation_hash": batch.calculation_hash,
-                "cash_settlement_tracking": "later_bank_statement_and_payment_event",
-                **(
-                    {"annual_bonus_payment_date": batch.payment_date.isoformat()}
-                    if batch.payment_date is not None
-                    and batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
-                    else {}
-                ),
-            },
-            business_date=batch.posting_date,
-            posting_date=batch.posting_date,
-            rule_trace=[
-                *batch.calculation_trace,
-                {
-                    "stage": "payroll_accrual_template",
-                    "debit_fen": sum(entry.debit_fen for entry in entries),
-                    "credit_fen": sum(entry.credit_fen for entry in entries),
-                    "open_item_count": len(open_item_plans),
-                },
-            ],
-            rule_version=batch.policy_snapshot.get("version"),
-        )
-        self.session.add(event)
         self.session.flush()
-        self.session.add(
-            PayrollEventLink(
-                org_id=batch.org_id,
-                event_id=event.id,
-                payroll_batch_id=batch.id,
-                link_kind="payroll_accrual",
+        entries, raw_open_items = self._payroll_accrual_template(batch, lines)
+        open_items = self._name_payroll_obligations(raw_open_items)
+        entitlements = list(
+            self.session.scalars(
+                select(PayrollWithholdingEntitlement)
+                .where(
+                    PayrollWithholdingEntitlement.org_id == batch.org_id,
+                    PayrollWithholdingEntitlement.payroll_line_id.in_([line.id for line in lines]),
+                )
+                .order_by(
+                    PayrollWithholdingEntitlement.payroll_line_id,
+                    PayrollWithholdingEntitlement.contribution_group,
+                    PayrollWithholdingEntitlement.insurance_kind,
+                )
             )
         )
-        self._attach_evidence(event, evidence_ids)
-        # Final source and evidence edges must be physically present before
-        # the one-way draft -> posted transition below.
-        self.session.flush()
-        create_voucher(
-            self.session,
-            event=event,
-            posting_date=batch.posting_date,
-            description=event.description,
-            entries=entries,
-        )
-        create_open_items(self.session, event=event, plans=open_item_plans)
-        event.status = "posted"
-        batch.status = "posted"
-        batch.business_event_id = event.id
-        batch.confirmed_by = None
-        batch.confirmation_note = request.confirmation_note
-        batch.confirmed_at = datetime.now(UTC)
-        if (
-            batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
-            and batch.tax_method == "separate"
-        ):
-            for line in lines:
-                self.session.add(
-                    AnnualBonusUsage(
-                        org_id=batch.org_id,
-                        employee_id=line.employee_id,
-                        tax_year=self._batch_tax_period(batch).year,
-                        payroll_batch_id=batch.id,
-                        payroll_line_id=line.id,
+        entitlement_by_line: dict[uuid.UUID, list[PayrollWithholdingEntitlement]] = {}
+        for entitlement in entitlements:
+            entitlement_by_line.setdefault(entitlement.payroll_line_id, []).append(entitlement)
+        employee_by_id = {
+            employee.id: employee
+            for employee in self.session.scalars(
+                select(Employee).where(Employee.id.in_([line.employee_id for line in lines]))
+            )
+        }
+        profile_by_id = {
+            profile.id: profile
+            for profile in self.session.scalars(
+                select(EmployeePayrollProfileVersion).where(
+                    EmployeePayrollProfileVersion.id.in_(
+                        [line.employee_payroll_profile_version_id for line in lines]
                     )
                 )
-        self.session.add(
-            AuditLog(
-                org_id=batch.org_id,
-                event_id=event.id,
-                action="payroll_confirmed",
-                actor="ai_agent:ai-accounting-core",
-                details={"batch_id": str(batch.id), "calculation_hash": batch.calculation_hash},
             )
+        }
+        derived = {
+            "payroll_batch_id": str(batch.id),
+            "calculation_hash": batch.calculation_hash,
+            "salary_sources": [
+                {
+                    "open_item_key": f"salary:{line.id}",
+                    "payroll_line_id": str(line.id),
+                    "employee_id": str(line.employee_id),
+                    "counterparty_id": str(employee_by_id[line.employee_id].counterparty_id),
+                    "gross_salary_fen": line.gross_salary_fen,
+                    "expense_role": profile_by_id[
+                        line.employee_payroll_profile_version_id
+                    ].expense_role,
+                    "entitlements": [
+                        {
+                            "id": str(item.id),
+                            "contribution_group": item.contribution_group,
+                            "insurance_kind": item.insurance_kind,
+                            "amount_fen": item.amount_fen,
+                        }
+                        for item in entitlement_by_line.get(line.id, [])
+                    ],
+                }
+                for line in lines
+                if line.gross_salary_fen
+            ],
+        }
+        if local_regular_proofs:
+            derived["local_regular_payroll_proofs"] = local_regular_proofs
+
+        def apply(session, event, persisted):
+            session.add(
+                PayrollEventLink(
+                    org_id=batch.org_id,
+                    event_id=event.id,
+                    component_id=persisted.id,
+                    payroll_batch_id=batch.id,
+                    link_kind="payroll_accrual",
+                )
+            )
+            batch.status = "posted"
+            batch.business_event_id = event.id
+            batch.confirmed_by = None
+            batch.confirmation_note = component.confirmation_note
+            batch.confirmed_at = datetime.now(UTC)
+            if (
+                batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
+                and batch.tax_method == "separate"
+            ):
+                for line in lines:
+                    session.add(
+                        AnnualBonusUsage(
+                            org_id=batch.org_id,
+                            employee_id=line.employee_id,
+                            tax_year=self._batch_tax_period(batch).year,
+                            payroll_batch_id=batch.id,
+                            payroll_line_id=line.id,
+                        )
+                    )
+            session.add(
+                AuditLog(
+                    org_id=batch.org_id,
+                    event_id=event.id,
+                    action="payroll_confirmed",
+                    actor="ai_agent:ai-accounting-core",
+                    details={
+                        "batch_id": str(batch.id),
+                        "calculation_hash": batch.calculation_hash,
+                    },
+                )
+            )
+
+        return (
+            ComponentPostingPlan(
+                key=component.key,
+                kind=component.kind,
+                facts=component.model_dump(mode="json"),
+                derived=derived,
+                entries=entries,
+                open_items=open_items,
+                rule_version=batch.policy_snapshot.get("version"),
+                effects=[apply],
+            ),
+            evidence_ids,
         )
-        self.session.flush()
-        return self._payroll_result_for_batch(batch)
+
+    @property
+    def _component_org_id(self) -> uuid.UUID:
+        return self._active_component_request.org_id
+
+    @property
+    def _component_posting_date(self) -> date:
+        return self._active_component_request.posting_date
+
+    def _confirm_payroll_write(self, request: ConfirmPayrollRequest) -> PayrollResult:
+        """Compatibility shim for internal callers; all formal writes use components."""
+
+        return self.confirm_payroll(request)
 
     def get_payroll_batch(self, org_id: uuid.UUID, batch_id: uuid.UUID) -> dict[str, Any]:
         batch = self.session.scalar(
@@ -5561,13 +2925,16 @@ class FinanceService:
             if evidence_ids
             else []
         )
-        payment_event_types = {
-            EventType.SALARY_PAYMENT.value,
-            EventType.SOCIAL_INSURANCE_PAYMENT.value,
-            EventType.HOUSING_FUND_PAYMENT.value,
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT.value,
-        }
-        payment_events = [event for event in events if event.event_type in payment_event_types]
+        payment_ids = set(
+            self.session.scalars(
+                select(PayrollEventLink.event_id).where(
+                    PayrollEventLink.org_id == org_id,
+                    PayrollEventLink.payroll_batch_id == batch.id,
+                    PayrollEventLink.link_kind.in_(("salary_payment", "statutory_payment")),
+                )
+            )
+        )
+        payment_events = [event for event in events if event.id in payment_ids]
         payroll_event_links = (
             self.session.scalars(
                 select(PayrollEventLink)
@@ -6086,6 +3453,22 @@ class FinanceService:
                     .returning(PayrollTaxStateSlot.id)
                 )
                 if inserted_slot_id is None:
+                    existing_slot = self.session.scalar(
+                        select(PayrollTaxStateSlot).where(
+                            PayrollTaxStateSlot.org_id == batch.org_id,
+                            PayrollTaxStateSlot.employee_id == line.employee_id,
+                            PayrollTaxStateSlot.tax_year == year,
+                            PayrollTaxStateSlot.tax_month == month,
+                        )
+                    )
+                    preserved = self.session.info.get("preserve_accrual_batch_ids", {})
+                    if (
+                        batch.id in preserved.get("payroll", set())
+                        and existing_slot is not None
+                        and existing_slot.regular_batch_id == batch.id
+                        and existing_slot.final_batch_id == batch.id
+                    ):
+                        continue
                     raise CalculationValidationError(
                         "PAYROLL_TAX_STATE_SLOT_ALREADY_EXISTS", "regular tax slot already exists"
                     )
@@ -6112,7 +3495,14 @@ class FinanceService:
                     "PAYROLL_TAX_STATE_SLOT_NOT_REGULAR_FINAL", "combined bonus slot is unavailable"
                 )
 
-    def _calculate_payroll(self, request: PreviewPayrollRequest) -> dict[str, Any]:
+    def _calculate_payroll(
+        self,
+        request: PreviewPayrollRequest,
+        *,
+        allow_calculated_regular: bool = False,
+        allowed_calculated_regular_batch_ids: set[uuid.UUID] | None = None,
+        require_calculated_regular_slot: bool = False,
+    ) -> dict[str, Any]:
         period = YearMonth(int(request.payroll_period[:4]), int(request.payroll_period[5:]))
         payment_date = request.payment_date
         if request.batch_kind == PayrollBatchKind.ANNUAL_BONUS and payment_date is None:
@@ -6569,6 +3959,12 @@ class FinanceService:
                     employee,
                     item.regular_payroll_batch_id,
                     tax_period,
+                    allow_calculated=(
+                        allow_calculated_regular
+                        or item.regular_payroll_batch_id
+                        in (allowed_calculated_regular_batch_ids or set())
+                    ),
+                    require_calculated_slot=require_calculated_regular_slot,
                 )
                 regular_tax_input = self._regular_tax_input_from_posted_line(
                     employee, regular_batch, regular_line
@@ -6709,6 +4105,7 @@ class FinanceService:
                         "profile": profile_snapshot,
                         "prior_tax_state": self._tax_state_dict(prior_state),
                         "regular_payroll_batch_id": str(regular_batch.id),
+                        "regular_payroll_calculation_hash": regular_batch.calculation_hash,
                         "regular_payroll_line_id": str(regular_line.id),
                         "regular_tax_input": self._tax_input_dict(regular_tax_input),
                     }
@@ -7140,6 +4537,9 @@ class FinanceService:
         employee: Employee,
         regular_batch_id: uuid.UUID,
         tax_period: YearMonth,
+        *,
+        allow_calculated: bool = False,
+        require_calculated_slot: bool = False,
     ) -> tuple[PayrollBatch, PayrollLine, CumulativeTaxState]:
         """Load the only legal source of same-month combined-tax wage facts."""
 
@@ -7154,10 +4554,22 @@ class FinanceService:
                 "REGULAR_PAYROLL_DEPENDENCY_NOT_FOUND",
                 "regular_payroll_batch_id does not identify a batch in this organization",
             )
-        if batch.batch_kind != PayrollBatchKind.REGULAR.value or batch.status != "posted":
+        if batch.batch_kind != PayrollBatchKind.REGULAR.value:
             raise CalculationValidationError(
                 "INVALID_REGULAR_PAYROLL_DEPENDENCY",
-                "combined annual bonus requires a posted regular payroll batch",
+                "combined annual bonus requires a regular payroll batch",
+            )
+        calculated_source = batch.status == "calculated" and allow_calculated
+        if batch.status != "posted" and not calculated_source:
+            raise CalculationValidationError(
+                "INVALID_REGULAR_PAYROLL_DEPENDENCY",
+                "combined annual bonus requires a posted regular payroll batch or its explicit "
+                "local planned parent",
+            )
+        if calculated_source and batch.business_event_id is not None:
+            raise CalculationValidationError(
+                "INVALID_REGULAR_PAYROLL_DEPENDENCY",
+                "calculated regular payroll cannot already belong to a formal event",
             )
         if self._batch_tax_period(batch) != tax_period:
             raise CalculationValidationError(
@@ -7188,12 +4600,12 @@ class FinanceService:
                 PayrollTaxStateSlot.regular_batch_id == batch.id,
             )
         )
-        if slot is None:
+        if slot is None and (not calculated_source or require_calculated_slot):
             raise CalculationValidationError(
                 "INVALID_REGULAR_PAYROLL_DEPENDENCY",
                 "referenced regular payroll has no formal tax-state slot",
             )
-        if slot.final_batch_id != batch.id:
+        if slot is not None and slot.final_batch_id != batch.id:
             raise CalculationValidationError(
                 "DUPLICATE_COMBINED_BONUS_TAX_STATE",
                 "a combined annual bonus already owns the final state for this regular payroll",
@@ -7768,6 +5180,7 @@ class FinanceService:
                             else None
                         ),
                         payable_category="salary",
+                        key=f"salary:{line.id}",
                     )
                 )
             totals["gross_salary"] += line.gross_salary_fen
@@ -7807,6 +5220,34 @@ class FinanceService:
                 )
             )
         return entries, plans
+
+    @staticmethod
+    def _name_payroll_obligations(plans: list[OpenItemPlan]) -> list[OpenItemPlan]:
+        roles = {
+            "salary": "employee_salary_payable",
+            "employer_social": "employer_social_payable",
+            "employer_housing": "employer_housing_fund_payable",
+            "withheld_employee_social": "withheld_employee_social_payable",
+            "withheld_employee_housing": "withheld_employee_housing_fund_payable",
+            "individual_income_tax": "individual_income_tax_payable",
+        }
+        return [
+            replace(
+                plan,
+                key=(
+                    plan.key
+                    if plan.key != "primary"
+                    else (
+                        f"{plan.payable_category or plan.item_type}:{plan.counterparty_id}:"
+                        f"{plan.insurance_kind or 'total'}"
+                    )
+                ),
+                account_role=roles[plan.payable_category]
+                if plan.item_type == "payable"
+                else "employee_receivable",
+            )
+            for plan in plans
+        ]
 
     def _create_payroll_withholding_entitlements(
         self, batch: PayrollBatch, lines: list[PayrollLine]
@@ -8127,7 +5568,7 @@ class FinanceService:
             )
         )
         if existing is not None:
-            if existing.request_payload_hash != request_payload_hash:
+            if not self._tax_period_event_matches_request(existing, request):
                 return FinanceResult(
                     status=ResultStatus.REJECTED,
                     errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
@@ -8170,7 +5611,7 @@ class FinanceService:
                 )
                 if existing is None:
                     raise
-                if existing.request_payload_hash != request_payload_hash:
+                if not self._tax_period_event_matches_request(existing, request):
                     return FinanceResult(
                         status=ResultStatus.REJECTED,
                         errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
@@ -8216,7 +5657,7 @@ class FinanceService:
             )
         )
         if existing_event is not None:
-            if existing_event.request_payload_hash != request_payload_hash:
+            if not self._tax_period_event_matches_request(existing_event, request):
                 return FinanceResult(
                     status=ResultStatus.REJECTED,
                     errors=["TAX_PERIOD_IDEMPOTENCY_PAYLOAD_MISMATCH"],
@@ -8268,11 +5709,15 @@ class FinanceService:
 
         entries: list[Entry] = []
         if tax_result.vat_relief_fen:
-            entries.extend(
-                [
-                    Entry(account_role="vat_payable", debit_fen=tax_result.vat_relief_fen),
-                    Entry(account_role="tax_relief_income", credit_fen=tax_result.vat_relief_fen),
-                ]
+            try:
+                entries.extend(vat_relief_entries(self.session, request.org_id, tax_result))
+            except ValueError as exc:
+                code = str(exc)
+                if code.startswith("TAX_"):
+                    return FinanceResult(status=ResultStatus.REJECTED, errors=[code])
+                raise
+            entries.append(
+                Entry(account_role="tax_relief_income", credit_fen=tax_result.vat_relief_fen)
             )
         if tax_result.surtax_total_fen:
             entries.extend(
@@ -8310,93 +5755,75 @@ class FinanceService:
                 confirmation,
                 idempotent_replay=False,
             )
-        event = build_business_event(
-            self.session,
-            org_id=request.org_id,
-            idempotency_key=request.idempotency_key,
-            request_payload_hash=request_payload_hash,
-            event_type=EventType.TAX_RELIEF.value,
-            status="draft",
-            description=f"税务期间结算 {request.start_date} 至 {request.end_date}",
-            facts={"tax_period": tax_result.to_dict()},
-            business_date=request.end_date,
-            tax_obligation_date=request.end_date,
-            posting_date=request.adjustment_posting_date,
-            rule_trace=tax_result.trace,
-            rule_version=tax_result.rule_version,
-        )
-        self.session.add(event)
-        self.session.flush()
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.adjustment_posting_date,
-            description=event.description,
-            entries=entries,
-        )
-        period_record = TaxPeriod(
-            org_id=request.org_id,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            adjustment_posting_date=request.adjustment_posting_date,
-            rule_version=tax_result.rule_version,
-            calculation=tax_result.to_dict(),
-            calculation_hash=tax_result.calculation_hash,
-            calculation_hash_payload=tax_result.calculation_hash_payload,
-            filing_cycle_snapshot=tax_profile.filing_cycle,
-            jurisdiction_snapshot=tax_profile.jurisdiction,
-            urban_maintenance_rate_snapshot=Decimal(
-                format(tax_profile.urban_maintenance_rate, ".5f")
-            ),
-            vat_rule_id=uuid.UUID(tax_result.vat_rule_id),
-            surtax_rule_id=uuid.UUID(tax_result.surtax_rule_id),
-            adjustment_event_id=event.id,
-        )
-        self.session.add(period_record)
-        self.session.flush()
-        for source in tax_result.source_events:
-            self.session.add(
-                TaxPeriodSource(
-                    org_id=request.org_id,
-                    tax_period_id=period_record.id,
-                    source_event_id=uuid.UUID(source["event_id"]),
-                    gross_fen=source["gross_fen"],
-                    net_fen=source["net_fen"],
-                    vat_fen=source["vat_fen"],
-                    exemption_eligible=source["exemption_eligible"],
+        source_event_ids = [uuid.UUID(source["event_id"]) for source in tax_result.source_events]
+        source_evidence = list(
+            self.session.scalars(
+                select(event_evidence.c.evidence_id)
+                .where(
+                    event_evidence.c.org_id == request.org_id,
+                    event_evidence.c.event_id.in_(source_event_ids),
                 )
-            )
-        # Materialize the complete source snapshot while the adjustment event
-        # is still draft. PostgreSQL seals this set when the event is posted.
-        self.session.flush()
-        event.status = "posted"
-        self.session.add(
-            AuditLog(
-                org_id=request.org_id,
-                event_id=event.id,
-                action="tax_adjustment_posted",
-                details={
-                    "voucher_id": str(voucher.id),
-                    "tax_period_id": str(period_record.id),
-                    "calculation_hash": tax_result.calculation_hash,
-                    "adjustment_posting_date": request.adjustment_posting_date.isoformat(),
-                },
+                .distinct()
             )
         )
-        self.session.flush()
+        from .component_service import ComponentService
+
+        result = ComponentService(self.session).record(
+            RecordEventRequest.model_validate(
+                {
+                    "org_id": request.org_id,
+                    "idempotency_key": request.idempotency_key,
+                    "posting_date": request.adjustment_posting_date,
+                    "description": (f"税务期间结算 {request.start_date} 至 {request.end_date}"),
+                    "evidence_references": source_evidence,
+                    "components": [
+                        {
+                            "key": "tax_period",
+                            "kind": "tax_relief",
+                            "business_date": request.end_date,
+                            "start_date": request.start_date,
+                            "end_date": request.end_date,
+                            "calculation_hash": request.calculation_hash,
+                        }
+                    ],
+                }
+            )
+        )
+        if result.status != ResultStatus.POSTED:
+            return result
+        period_record = self.session.scalar(
+            select(TaxPeriod).where(
+                TaxPeriod.org_id == request.org_id,
+                TaxPeriod.adjustment_event_id == result.event_id,
+            )
+        )
+        if period_record is None:
+            raise ValueError("TAX_PERIOD_COMPONENT_RESULT_MISSING")
         self._assert_tax_period_range_constraint_now()
-        return FinanceResult(
-            status=ResultStatus.POSTED,
-            event_id=event.id,
-            voucher_id=voucher.id,
-            voucher_number=voucher.voucher_number,
-            rule_version=tax_result.rule_version,
-            trace=tax_result.trace,
-            data={
-                "tax_period_id": str(period_record.id),
-                "calculation_hash": tax_result.calculation_hash,
-                "idempotent_replay": False,
-            },
+        result.rule_version = tax_result.rule_version
+        result.trace = tax_result.trace
+        result.data = {
+            "tax_period_id": str(period_record.id),
+            "calculation_hash": tax_result.calculation_hash,
+            "idempotent_replay": False,
+        }
+        return result
+
+    def _tax_period_event_matches_request(
+        self, event: BusinessEvent, request: TaxPeriodConfirmRequest
+    ) -> bool:
+        component = self.session.scalar(
+            select(BusinessEventComponent).where(
+                BusinessEventComponent.event_id == event.id,
+                BusinessEventComponent.kind == "tax_relief",
+            )
+        )
+        return bool(
+            component is not None
+            and event.posting_date == request.adjustment_posting_date
+            and component.facts.get("start_date") == request.start_date.isoformat()
+            and component.facts.get("end_date") == request.end_date.isoformat()
+            and component.facts.get("calculation_hash") == request.calculation_hash
         )
 
     def _create_payroll_reversal_batch(
@@ -8551,66 +5978,10 @@ class FinanceService:
     def reverse_event(self, request: ReverseEventRequest) -> FinanceResult:
         """Reverse through the common payroll idempotency/savepoint envelope."""
 
-        # The public Python service is itself an API boundary. Route specialized
-        # lifecycles here as well as in MCP so a caller cannot bypass their
-        # downstream-first reversal dependency checks by instantiating the base
-        # service directly. Subclasses call back into this method after their
-        # own idempotency handling, so dispatch only for the concrete base type.
-        if type(self) is FinanceService:
-            event_type = self.session.scalar(
-                select(BusinessEvent.event_type).where(
-                    BusinessEvent.org_id == request.org_id,
-                    BusinessEvent.id == request.event_id,
-                )
-            )
-            if event_type in {
-                "intangible_asset_acquisition",
-                "intangible_asset_amortization",
-                "intangible_asset_retirement",
-            }:
-                from .intangible_asset_service import IntangibleAssetService
-
-                return IntangibleAssetService(self.session).reverse_event(request)
-            if event_type in {
-                "borrowing_drawdown",
-                "borrowing_interest_accrual",
-                "borrowing_interest_payment",
-                "borrowing_principal_repayment",
-            }:
-                from .borrowing_service import BorrowingService
-
-                return BorrowingService(self.session).reverse_event(request)
-            if event_type in {
-                "fixed_asset_acquisition",
-                "fixed_asset_activation",
-                "fixed_asset_depreciation",
-                "fixed_asset_disposal",
-            }:
-                from .fixed_asset_service import FixedAssetService
-
-                return FixedAssetService(self.session).reverse_event(request)
-            if event_type in {
-                "labor_remuneration_accrual",
-                "unified_payout_run",
-                "labor_withholding_tax_payment",
-            }:
-                from .labor_remuneration_service import LaborRemunerationService
-
-                try:
-                    with self.session.begin_nested():
-                        return LaborRemunerationService(self.session).reverse_event(request)
-                except AccountingPeriodError as exc:
-                    return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
-                except IntegrityError:
-                    return FinanceResult(
-                        status=ResultStatus.REJECTED,
-                        errors=["LABOR_REVERSAL_CONCURRENT_WRITE_CONFLICT"],
-                    )
-
         request_payload_hash = self._request_payload_hash(request)
         try:
             with self.session.begin_nested():
-                return self._reverse_event_write(request)
+                return FinanceService._reverse_event_write(self, request)
         except AccountingPeriodError as exc:
             return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
         except IntegrityError:
@@ -8630,11 +6001,51 @@ class FinanceService:
                 status=ResultStatus.REJECTED,
                 errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
             )
+        except ValueError as exc:
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[str(exc)])
         except OperationalError:
             return FinanceResult(
                 status=ResultStatus.REJECTED,
                 errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
             )
+
+    def _payroll_tax_dependent_batch_ids(
+        self,
+        batch: PayrollBatch,
+        lines: list[PayrollLine],
+        *,
+        excluded_batch_ids: set[uuid.UUID],
+    ) -> set[uuid.UUID]:
+        """Find actual external cumulative-tax consumers for any whole-event correction."""
+        employee_ids = {
+            line.employee_id for line in lines if self._line_uses_cumulative_tax_state(batch, line)
+        }
+        if not employee_ids:
+            return set()
+        period = self._batch_tax_period(batch)
+        candidates = self.session.execute(
+            select(PayrollBatch, PayrollLine)
+            .join(PayrollLine, PayrollLine.payroll_batch_id == PayrollBatch.id)
+            .where(
+                PayrollBatch.org_id == batch.org_id,
+                PayrollBatch.status == "posted",
+                PayrollBatch.reversal_of_batch_id.is_(None),
+                PayrollBatch.id.not_in(excluded_batch_ids),
+                PayrollLine.employee_id.in_(employee_ids),
+            )
+        ).all()
+        return {
+            candidate.id
+            for candidate, line in candidates
+            if self._line_uses_cumulative_tax_state(candidate, line)
+            and (
+                (
+                    self._batch_tax_period(candidate).year == period.year
+                    and self._batch_tax_period(candidate) > period
+                )
+                or line.regular_payroll_batch_id == batch.id
+            )
+        }
 
     def _reverse_event_write(self, request: ReverseEventRequest) -> FinanceResult:
         lock_income_tax(self.session, request.org_id)
@@ -8687,6 +6098,7 @@ class FinanceService:
             .where(
                 BusinessEventDependency.org_id == request.org_id,
                 BusinessEventDependency.parent_event_id == original.id,
+                BusinessEvent.id != original.id,
                 BusinessEvent.status == "posted",
             )
             .order_by(BusinessEvent.id)
@@ -8708,6 +6120,7 @@ class FinanceService:
                 TaxPeriodSource.org_id == request.org_id,
                 TaxPeriodSource.source_event_id == original.id,
                 TaxPeriod.status == "posted",
+                TaxPeriod.adjustment_event_id != original.id,
             )
         )
         if locked_tax_source is not None:
@@ -8715,6 +6128,14 @@ class FinanceService:
                 status=ResultStatus.REJECTED,
                 errors=["TAX_PERIOD_SOURCE_LOCKED"],
             )
+        from .component_lifecycle import (
+            domain_dependency_error,
+            reversal_plans,
+            reverse_domain_allocations,
+        )
+
+        if error := domain_dependency_error(self.session, original):
+            return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
         original_voucher = self.session.scalar(
             select(Voucher).where(Voucher.event_id == original.id)
         )
@@ -8733,23 +6154,55 @@ class FinanceService:
         source_items = self.session.scalars(
             select(OpenItem).where(OpenItem.source_event_id == original.id).with_for_update()
         ).all()
-        if any(item.settled_amount_fen > 0 for item in source_items):
+        external_settlement = self.session.scalar(
+            select(Settlement.id)
+            .where(
+                Settlement.open_item_id.in_([item.id for item in source_items]),
+                Settlement.payment_event_id != original.id,
+                Settlement.reversed.is_(False),
+            )
+            .limit(1)
+        )
+        if external_settlement is not None:
             return FinanceResult(
                 status=ResultStatus.REJECTED,
                 errors=["REVERSE_SETTLEMENT_EVENTS_BEFORE_SOURCE_EVENT"],
             )
-        payroll_batch = None
-        if original.event_type == "payroll_accrual":
-            payroll_batch = self.session.scalar(
+        payroll_batches = list(
+            self.session.scalars(
                 select(PayrollBatch)
-                .where(PayrollBatch.business_event_id == original.id)
+                .join(
+                    PayrollEventLink,
+                    (PayrollEventLink.org_id == PayrollBatch.org_id)
+                    & (PayrollEventLink.payroll_batch_id == PayrollBatch.id),
+                )
+                .where(
+                    PayrollEventLink.org_id == request.org_id,
+                    PayrollEventLink.event_id == original.id,
+                    PayrollEventLink.link_kind == "payroll_accrual",
+                )
+                .order_by(PayrollBatch.id)
                 .with_for_update()
             )
-            if payroll_batch is None:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["PAYROLL_BATCH_NOT_FOUND_FOR_ACCRUAL"],
+        )
+        owned_payroll_batch_ids = {batch.id for batch in payroll_batches}
+        labor_batches = list(
+            self.session.scalars(
+                select(LaborRemunerationBatch)
+                .join(
+                    LaborRemunerationEventLink,
+                    (LaborRemunerationEventLink.org_id == LaborRemunerationBatch.org_id)
+                    & (LaborRemunerationEventLink.batch_id == LaborRemunerationBatch.id),
                 )
+                .where(
+                    LaborRemunerationEventLink.org_id == request.org_id,
+                    LaborRemunerationEventLink.event_id == original.id,
+                    LaborRemunerationEventLink.link_kind == "accrual",
+                )
+                .with_for_update()
+            )
+        )
+        for payroll_batch in payroll_batches:
             active_supplement = self.session.scalar(
                 select(PayrollContributionSupplement.id)
                 .join(
@@ -8760,6 +6213,7 @@ class FinanceService:
                 .where(
                     PayrollContributionSupplement.org_id == request.org_id,
                     PayrollContributionSupplement.source_payroll_batch_id == payroll_batch.id,
+                    PayrollContributionSupplement.event_id != original.id,
                     BusinessEvent.status == "posted",
                 )
             )
@@ -8790,24 +6244,12 @@ class FinanceService:
             dependent = False
             slots: list[PayrollTaxStateSlot] = []
             if tax_employee_ids:
-                dependent_rows = self.session.execute(
-                    select(PayrollBatch, PayrollLine)
-                    .join(PayrollLine, PayrollLine.payroll_batch_id == PayrollBatch.id)
-                    .where(
-                        PayrollBatch.org_id == original.org_id,
-                        PayrollBatch.status == "posted",
-                        PayrollBatch.reversal_of_batch_id.is_(None),
-                        PayrollLine.employee_id.in_(tax_employee_ids),
+                dependent = bool(
+                    self._payroll_tax_dependent_batch_ids(
+                        payroll_batch,
+                        payroll_lines,
+                        excluded_batch_ids=owned_payroll_batch_ids,
                     )
-                ).all()
-                dependent = any(
-                    candidate_batch.id != payroll_batch.id
-                    and self._line_uses_cumulative_tax_state(candidate_batch, candidate_line)
-                    and (
-                        self._batch_tax_period(candidate_batch) > original_tax_period
-                        or candidate_line.regular_payroll_batch_id == payroll_batch.id
-                    )
-                    for candidate_batch, candidate_line in dependent_rows
                 )
                 slots = self.session.scalars(
                     select(PayrollTaxStateSlot)
@@ -8826,7 +6268,7 @@ class FinanceService:
                 )
             if payroll_batch.batch_kind == PayrollBatchKind.REGULAR.value and any(
                 slot.regular_batch_id == payroll_batch.id
-                and slot.final_batch_id != payroll_batch.id
+                and slot.final_batch_id not in owned_payroll_batch_ids
                 for slot in slots
             ):
                 return FinanceResult(
@@ -8839,14 +6281,14 @@ class FinanceService:
             org_id=request.org_id,
             idempotency_key=request.idempotency_key,
             request_payload_hash=request_payload_hash,
-            event_type="payroll_accrual" if payroll_batch is not None else "reversal",
+            event_type="payroll_accrual" if payroll_batches else "reversal",
             status="draft",
             description=f"冲正 {original.id}: {request.reason}",
             facts={
                 "original_event_id": str(original.id),
                 "reason": request.reason,
                 "reversal": True,
-                "payroll_batch_id": str(payroll_batch.id) if payroll_batch else None,
+                "payroll_batch_ids": [str(batch.id) for batch in payroll_batches],
             },
             business_date=request.posting_date,
             posting_date=request.posting_date,
@@ -8883,30 +6325,21 @@ class FinanceService:
         # distinct Evidence object and the ``reversal_reason`` role.
         self._attach_evidence(reversal, original_evidence_ids, relation_kind="inherited")
 
-        entries = [
-            Entry(
-                account_code=line.account.code,
-                debit_fen=line.credit_fen,
-                credit_fen=line.debit_fen,
-                counterparty_id=line.counterparty_id,
-                memo=f"冲正: {line.memo}",
-            )
-            for line in original_voucher.lines
-        ]
-        voucher = create_voucher(
-            self.session,
-            event=reversal,
-            posting_date=request.posting_date,
-            description=reversal.description,
-            entries=entries,
-            reversal_of=original_voucher,
-        )
-        reversal_payroll_batch = None
-        if payroll_batch is not None:
+        plans = reversal_plans(self.session, original, original_voucher)
+        reversal_payroll_batches = []
+        # Release dependent bonus slots before removing their regular source;
+        # the original row-lock acquisition above remains in stable UUID order.
+        for payroll_batch in sorted(
+            payroll_batches,
+            key=lambda batch: (
+                batch.batch_kind == PayrollBatchKind.REGULAR.value,
+                batch.id,
+            ),
+        ):
             reversal_payroll_batch = self._create_payroll_reversal_batch(
                 payroll_batch, reversal, request
             )
-            reversal.facts["payroll_reversal_batch_id"] = str(reversal_payroll_batch.id)
+            reversal_payroll_batches.append(reversal_payroll_batch)
             if (
                 payroll_batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
                 and payroll_batch.tax_method == AnnualBonusTaxMethod.COMBINED.value
@@ -8937,67 +6370,13 @@ class FinanceService:
         # source open-item edge (a payment may have multiple allocations).
         # Do not collapse that relation to one batch: the final-event
         # invariant deliberately rejects a partial or JSON-derived chain.
-        if original.event_type == "payroll_accrual":
-            if reversal_payroll_batch is None:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["PAYROLL_REVERSAL_BATCH_NOT_FOUND"],
-                )
-            self.session.add(
-                PayrollEventLink(
-                    org_id=request.org_id,
-                    event_id=reversal.id,
-                    payroll_batch_id=reversal_payroll_batch.id,
-                    source_payment_event_id=original.id,
-                    link_kind="reversal",
-                )
-            )
-        elif original.event_type in {
-            EventType.SALARY_PAYMENT.value,
-            EventType.SOCIAL_INSURANCE_PAYMENT.value,
-            EventType.HOUSING_FUND_PAYMENT.value,
-            EventType.INDIVIDUAL_INCOME_TAX_PAYMENT.value,
-        }:
-            expected_link_kind = (
-                "salary_payment"
-                if original.event_type == EventType.SALARY_PAYMENT.value
-                else "statutory_payment"
-            )
-            original_payment_links = self.session.scalars(
-                select(PayrollEventLink)
-                .where(
-                    PayrollEventLink.org_id == request.org_id,
-                    PayrollEventLink.event_id == original.id,
-                    PayrollEventLink.link_kind == expected_link_kind,
-                )
-                .order_by(
-                    PayrollEventLink.payroll_batch_id,
-                    PayrollEventLink.source_open_item_id,
-                    PayrollEventLink.id,
-                )
-            ).all()
-            if not original_payment_links:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["PAYROLL_REVERSAL_SOURCE_LINK_NOT_FOUND"],
-                )
-            for original_link in original_payment_links:
-                self.session.add(
-                    PayrollEventLink(
-                        org_id=request.org_id,
-                        event_id=reversal.id,
-                        payroll_batch_id=original_link.payroll_batch_id,
-                        source_payment_event_id=original.id,
-                        source_open_item_id=original_link.source_open_item_id,
-                        link_kind="reversal",
-                    )
-                )
+        reversal.facts["payroll_reversal_batch_ids"] = [
+            str(batch.id) for batch in reversal_payroll_batches
+        ]
         # The reversal edge belongs to the still-draft reversal event.  Flush
         # it before promoting that event (and its payroll reversal batch) to
         # their immutable final states.
         self.session.flush()
-        for item in source_items:
-            item.status = "reversed"
         payment_settlements = self.session.scalars(
             select(Settlement)
             .where(Settlement.payment_event_id == original.id, Settlement.reversed.is_(False))
@@ -9034,40 +6413,20 @@ class FinanceService:
                 match.invalidated_by_event_id = reversal.id
                 match.invalidated_at = datetime.now(UTC)
                 bank_by_id[match.bank_transaction_id].matched_event_id = None
-        if original.event_type == EventType.SALARY_PAYMENT.value:
-            withholding_allocations = self.session.scalars(
-                select(PayrollWithholdingPaymentAllocation)
-                .where(
-                    PayrollWithholdingPaymentAllocation.org_id == request.org_id,
-                    PayrollWithholdingPaymentAllocation.payment_event_id == original.id,
-                    PayrollWithholdingPaymentAllocation.reversed.is_(False),
-                )
-                .with_for_update()
-            ).all()
-            for allocation in withholding_allocations:
-                allocation.reversed = True
-                allocation.reversed_by_event_id = reversal.id
-            actual_deductions = self.session.scalars(
-                select(PayrollSalaryActualDeductionAllocation)
-                .where(
-                    PayrollSalaryActualDeductionAllocation.org_id == request.org_id,
-                    PayrollSalaryActualDeductionAllocation.payment_event_id == original.id,
-                    PayrollSalaryActualDeductionAllocation.reversed.is_(False),
-                )
-                .with_for_update()
-            ).all()
-            for deduction in actual_deductions:
-                deduction.reversed = True
-                deduction.reversed_by_event_id = reversal.id
+        for item in source_items:
+            item.status = "reversed"
+        reverse_domain_allocations(self.session, original, reversal)
 
-        tax_period = self.session.scalar(
+        tax_periods = self.session.scalars(
             select(TaxPeriod).where(TaxPeriod.adjustment_event_id == original.id)
-        )
-        if tax_period:
+        ).all()
+        for tax_period in tax_periods:
             tax_period.status = "reversed"
+        if tax_periods:
+            self.session.flush(tax_periods)
         original.status = "reversed"
         original.reversed_by_event_id = reversal.id
-        if payroll_batch is not None:
+        for payroll_batch in payroll_batches:
             payroll_batch.status = "reversed"
             if payroll_batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value:
                 usages = self.session.scalars(
@@ -9077,9 +6436,18 @@ class FinanceService:
                 ).all()
                 for usage in usages:
                     self.session.delete(usage)
-        if reversal_payroll_batch is not None:
+        for labor_batch in labor_batches:
+            labor_batch.status = "reversed"
+        for reversal_payroll_batch in reversal_payroll_batches:
             reversal_payroll_batch.status = "posted"
-        reversal.status = "posted"
+        voucher = commit_posting_plan(
+            self.session,
+            event=reversal,
+            components=plans,
+            posting_date=request.posting_date,
+            description=reversal.description,
+            reversal_of=original_voucher,
+        )
         self.session.add(
             AuditLog(
                 org_id=request.org_id,
@@ -9088,9 +6456,9 @@ class FinanceService:
                 details={
                     "original_event_id": str(original.id),
                     "reason": request.reason,
-                    "payroll_reversal_batch_id": (
-                        str(reversal_payroll_batch.id) if reversal_payroll_batch else None
-                    ),
+                    "payroll_reversal_batch_ids": [
+                        str(batch.id) for batch in reversal_payroll_batches
+                    ],
                 },
             )
         )

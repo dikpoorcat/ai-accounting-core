@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import func, select
 from test_fixed_asset_service import _acquisition_request, _evidence
 from test_intangible_asset_service import _request as intangible_request
-from test_payroll_service import preview_and_confirm
+from test_payroll_service import payroll_evidence, preview_and_confirm
 from test_service import sale_request, voucher_totals
 
 from ai_accounting.accounting_periods import canonical_sha256
@@ -29,6 +29,16 @@ from ai_accounting.schemas import PreviewPayrollRequest
 from ai_accounting.service import FinanceService
 
 
+@pytest.fixture
+def session(committable_session):
+    return committable_session
+
+
+@pytest.fixture(autouse=True)
+def composition_evidence(session, organization):
+    return _evidence(session, organization, "amendment")
+
+
 def amendment(session, original, replacement, *, key="edit"):
     source = session.get(BusinessEvent, original.event_id)
     return AmendEventRequest(
@@ -45,10 +55,11 @@ def test_sale_replaces_voucher_and_open_item_with_audit_and_replay(session, orga
     service = FinanceService(session)
     source_request = sale_request(organization, event_type="service_credit_sale")
     source = service.record_event(source_request)
-    item_id = session.scalar(select(OpenItem.id).where(OpenItem.source_event_id == source.event_id))
     replacement = source_request.model_copy(
         update={
-            "amounts": source_request.amounts.model_copy(update={"gross_amount_fen": 2_020_000})
+            "components": [
+                source_request.components[0].model_copy(update={"amount_fen": 2_020_000})
+            ]
         }
     )
     old_facts = session.get(BusinessEvent, source.event_id).facts
@@ -58,7 +69,10 @@ def test_sale_replaces_voucher_and_open_item_with_audit_and_replay(session, orga
     assert result["event_id"] == str(source.event_id)
     assert result["voucher_number"] == source.voucher_number
     assert voucher_totals(session, source.voucher_id) == (2_020_000, 2_020_000)
-    assert session.get(OpenItem, item_id).original_amount_fen == 2_020_000
+    current_item = session.scalar(
+        select(OpenItem).where(OpenItem.source_event_id == source.event_id)
+    )
+    assert current_item is not None and current_item.original_amount_fen == 2_020_000
     assert session.scalar(select(func.count()).select_from(Voucher)) == 1
     assert session.scalar(select(func.count()).select_from(BusinessEvent)) == 1
     history = session.scalar(select(BusinessEventAmendment))
@@ -80,18 +94,24 @@ def test_failed_amendment_leaves_original_intact(session, organization, failure,
     request = sale_request(organization, event_type="service_credit_sale")
     source = FinanceService(session).record_event(request)
     if failure == "missing":
-        replacement = request.model_copy(update={"tax_facts": None})
-    elif failure == "other_month":
         replacement = request.model_copy(
-            update={
-                "business_dates": request.business_dates.model_copy(
-                    update={"posting_date": date(2026, 7, 8)}
-                )
-            }
+            update={"components": [request.components[0].model_copy(update={"tax_facts": None})]}
         )
+    elif failure == "other_month":
+        replacement = request.model_copy(update={"posting_date": date(2026, 7, 8)})
     elif failure == "derivation":
         replacement = request.model_copy(
-            update={"counterparty": request.counterparty.model_copy(update={"id": uuid.uuid4()})}
+            update={
+                "components": [
+                    request.components[0].model_copy(
+                        update={
+                            "counterparty": request.components[0].counterparty.model_copy(
+                                update={"id": uuid.uuid4()}
+                            )
+                        }
+                    )
+                ]
+            }
         )
     else:
         monkeypatch.setattr(
@@ -107,7 +127,7 @@ def test_failed_amendment_leaves_original_intact(session, organization, failure,
 
 
 @pytest.mark.parametrize("kind", ["fixed", "intangible"])
-def test_asset_acquisition_amendment_keeps_card_identity_and_recalculates_cost(
+def test_asset_acquisition_amendment_replaces_projection_and_recalculates_cost(
     session, organization, kind
 ):
     evidence = _evidence(session, organization, "a")
@@ -120,7 +140,6 @@ def test_asset_acquisition_amendment_keeps_card_identity_and_recalculates_cost(
         source = IntangibleAssetService(session).acquire_intangible_asset(request)
         model = IntangibleAsset
     assert source.status == "posted", source
-    asset_id = session.scalar(select(model.id))
     replacement = request.model_copy(
         update={
             "asset_name": "核对后的名称",
@@ -131,7 +150,10 @@ def test_asset_acquisition_amendment_keeps_card_identity_and_recalculates_cost(
     )
     result = EventAmendmentService(session).amend(amendment(session, source, replacement))
     assert result["status"] == "posted", result
-    assert session.get(model, asset_id).name == "核对后的名称"
+    current_asset = session.scalar(
+        select(model).where(model.acquisition_event_id == source.event_id)
+    )
+    assert current_asset is not None and current_asset.name == "核对后的名称"
     assert result["voucher_id"] == str(source.voucher_id)
     assert session.scalar(select(func.count()).select_from(Voucher)) == 1
 
@@ -172,10 +194,14 @@ def test_borrowing_contract_and_interest_amendments(session, organization):
     replacement = request.model_copy(update={"contract_name": "Corrected contract"})
     result = EventAmendmentService(session).amend(amendment(session, source, replacement))
     assert result["status"] == "posted", result
-    assert session.get(Borrowing, source.borrowing_id).contract_name == "Corrected contract"
+    current_borrowing = session.scalar(
+        select(Borrowing).where(Borrowing.drawdown_event_id == source.event_id)
+    )
+    assert current_borrowing is not None
+    assert current_borrowing.contract_name == "Corrected contract"
     preview_request = PreviewBorrowingInterestRequest(
         org_id=organization.id,
-        borrowing_id=source.borrowing_id,
+        borrowing_id=current_borrowing.id,
         period_start=date(2026, 1, 1),
         period_end=date(2026, 7, 1),
     )
@@ -256,16 +282,17 @@ def test_tax_snapshot_amendment_and_locked_source(session, organization):
     from ai_accounting.schemas import TaxPeriodConfirmRequest, TaxPeriodPreviewRequest
 
     sale = sale_request(organization, event_type="service_credit_sale")
+    sale_component = sale.components[0].model_copy(
+        update={
+            "business_date": date(2026, 3, 8),
+            "fulfillment_date": date(2026, 3, 8),
+            "tax_obligation_date": date(2026, 3, 8),
+        }
+    )
     sale = sale.model_copy(
         update={
-            "business_dates": sale.business_dates.model_copy(
-                update={
-                    "business_date": date(2026, 3, 8),
-                    "fulfillment_date": date(2026, 3, 8),
-                    "tax_obligation_date": date(2026, 3, 8),
-                    "posting_date": date(2026, 3, 8),
-                }
-            )
+            "posting_date": date(2026, 3, 8),
+            "components": [sale_component],
         }
     )
     assert FinanceService(session).record_event(sale).status == "posted"
@@ -316,7 +343,7 @@ def test_enterprise_income_tax_confirmation_amendment(session, organization):
     assert voucher_totals(session, source.voucher_id) == (20_000, 20_000)
 
 
-def test_income_tax_result_amendment_reuses_prior_reversal(session, organization):
+def test_income_tax_result_amendment_recalculates_delta_in_same_voucher(session, organization):
     from types import SimpleNamespace
 
     from test_enterprise_income_tax import change, confirm, root
@@ -333,7 +360,9 @@ def test_income_tax_result_amendment_reuses_prior_reversal(session, organization
     result = EventAmendmentService(session).amend(amendment(session, source, request))
     assert result["status"] == "posted", result
     assert session.scalar(select(func.count()).select_from(Voucher)) == voucher_count
-    assert voucher_totals(session, uuid.UUID(result["voucher_id"])) == (20_000, 20_000)
+    # The original confirmation already accrued 10,000.  The amended result
+    # changes the declared total to 20,000 and owns only that 10,000 difference.
+    assert voucher_totals(session, uuid.UUID(result["voucher_id"])) == (10_000, 10_000)
 
 
 def test_discovery_and_query_expose_typed_amendments_and_history(
@@ -391,6 +420,7 @@ def test_annual_bonus_amendment_preserves_tax_state(session, organization, metho
 
     service, regular = preview_and_confirm(session, organization)
     employee_id = session.scalar(select(PayrollLine.employee_id))
+    evidence = payroll_evidence(session, organization, f"bonus-amendment-{method}")
     request = PreviewPayrollRequest.model_validate(
         {
             "org_id": organization.id,
@@ -400,6 +430,7 @@ def test_annual_bonus_amendment_preserves_tax_state(session, organization, metho
             "posting_date": "2026-03-05",
             "payment_date": "2026-03-05",
             "tax_method": method,
+            "evidence_references": [evidence.id],
             "employee_items": [
                 {
                     "employee_id": employee_id,

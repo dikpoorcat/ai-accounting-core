@@ -1,140 +1,101 @@
-from __future__ import annotations
-
-import shutil
 from datetime import date
 
 import pytest
-from alembic.config import Config
+from _postgres_helpers import authenticated_business_database
+from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import get_account_by_role, seed_organization
-from ai_accounting.models import BusinessEvent, Voucher, VoucherLine
-from alembic import command
+from ai_accounting.coa import get_account_by_role
+from ai_accounting.component_schemas import RecordEventRequest
+from ai_accounting.models import BusinessEvent, BusinessEventComponent, Voucher, VoucherLine
+from ai_accounting.service import FinanceService
 
-pytestmark = [
-    pytest.mark.postgres,
-    pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
-]
+pytestmark = [pytest.mark.postgres]
 
 
-def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        monkeypatch.setenv("DATABASE_URL", url)
-        alembic_config = Config("alembic.ini")
-        alembic_config.attributes["database_url_override"] = url
-        command.upgrade(alembic_config, "head")
-        from sqlalchemy import create_engine
-
-        engine = create_engine(url)
-        try:
-            with Session(engine) as session:
-                organization = seed_organization(
-                    session,
-                    taxpayer_identification_number="91330106MA1234567T",
-                    accounting_period_control_enabled=False,
-                    name="PostgreSQL 约束测试",
-                )
-                event = BusinessEvent(
-                    org_id=organization.id,
-                    idempotency_key="unbalanced-direct-write",
-                    event_type="expense_payable",
-                    status="draft",
-                    description="应在提交时失败",
-                    facts={},
-                    business_date=date(2026, 8, 8),
-                    posting_date=date(2026, 8, 8),
-                    rule_trace=[],
-                )
-                session.add(event)
-                session.flush()
-                voucher = Voucher(
-                    org_id=organization.id,
-                    event_id=event.id,
-                    voucher_number="202608-9998",
-                    posting_date=date(2026, 8, 8),
-                    description="不平凭证",
-                    status="draft",
-                )
-                session.add(voucher)
-                session.flush()
-                bank = get_account_by_role(session, organization.id, "bank")
-                session.add(
-                    VoucherLine(
-                        org_id=organization.id,
-                        voucher_id=voucher.id,
-                        line_number=1,
-                        account_id=bank.id,
-                        debit_fen=100,
-                        credit_fen=0,
+def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers():
+    with authenticated_business_database("voucher_guards") as (engine, org_id, proof, authority):
+        with Session(engine) as session:
+            with pytest.raises(DBAPIError, match="balanced nonzero lines"):
+                with authority.attributed_call(session, tool_name="finance_direct_forgery_test"):
+                    event = BusinessEvent(
+                        org_id=org_id,
+                        idempotency_key="unbalanced-direct-write",
+                        event_type="composite",
+                        status="draft",
+                        facts={},
+                        business_date=date(2026, 3, 5),
+                        posting_date=date(2026, 3, 5),
+                        rule_trace=[],
                     )
-                )
-                voucher.status = "posted"
-                with pytest.raises(DBAPIError):
-                    session.commit()
-
-            with Session(engine) as session:
-                organization = seed_organization(
-                    session,
-                    taxpayer_identification_number="91330106MA1234567T",
-                    accounting_period_control_enabled=False,
-                    name="不可变约束测试",
-                )
-                event = BusinessEvent(
-                    org_id=organization.id,
-                    idempotency_key="balanced-direct-write",
-                    event_type="expense_payable",
-                    status="draft",
-                    description="合法凭证",
-                    facts={},
-                    business_date=date(2026, 8, 8),
-                    posting_date=date(2026, 8, 8),
-                    rule_trace=[],
-                )
-                session.add(event)
-                session.flush()
-                voucher = Voucher(
-                    org_id=organization.id,
-                    event_id=event.id,
-                    voucher_number="202608-9999",
-                    posting_date=date(2026, 8, 8),
-                    description="合法凭证",
-                    status="draft",
-                )
-                session.add(voucher)
-                session.flush()
-                bank = get_account_by_role(session, organization.id, "bank")
-                revenue = get_account_by_role(session, organization.id, "service_revenue")
-                session.add_all(
-                    [
-                        VoucherLine(
-                            org_id=organization.id,
-                            voucher_id=voucher.id,
-                            line_number=1,
-                            account_id=bank.id,
-                            debit_fen=100,
-                            credit_fen=0,
-                        ),
-                        VoucherLine(
-                            org_id=organization.id,
-                            voucher_id=voucher.id,
-                            line_number=2,
-                            account_id=revenue.id,
-                            debit_fen=0,
-                            credit_fen=100,
-                        ),
-                    ]
-                )
-                session.flush()
-                voucher.status = "posted"
-                event.status = "posted"
+                    session.add(event)
+                    session.flush()
+                    component = BusinessEventComponent(
+                        org_id=org_id,
+                        event_id=event.id,
+                        key="expense",
+                        ordinal=1,
+                        kind="expense",
+                        facts={},
+                        derived={},
+                    )
+                    voucher = Voucher(
+                        org_id=org_id,
+                        event_id=event.id,
+                        voucher_number="202603-9999",
+                        posting_date=event.posting_date,
+                        description="unbalanced",
+                        status="draft",
+                    )
+                    session.add_all([component, voucher])
+                    session.flush()
+                    for number, (role, debit, credit) in enumerate(
+                        [("general_expense", 100, 0), ("accounts_payable", 0, 99)], 1
+                    ):
+                        session.add(
+                            VoucherLine(
+                                org_id=org_id,
+                                voucher_id=voucher.id,
+                                component_id=component.id,
+                                line_number=number,
+                                account_id=get_account_by_role(session, org_id, role).id,
+                                debit_fen=debit,
+                                credit_fen=credit,
+                            )
+                        )
+                    session.flush()
+                    voucher.status = "posted"
                 session.commit()
-                voucher.description = "禁止修改"
-                with pytest.raises(DBAPIError):
-                    session.commit()
-        finally:
-            engine.dispose()
+            session.rollback()
+            assert session.scalar(select(func.count()).select_from(Voucher)) == 0
+
+            request = RecordEventRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "idempotency_key": "balanced-typed-write",
+                    "posting_date": "2026-03-05",
+                    "evidence_references": [proof],
+                    "components": [
+                        {
+                            "key": "expense",
+                            "kind": "expense",
+                            "business_date": "2026-03-05",
+                            "amount_fen": 100,
+                            "expense_class": "general_expense",
+                            "payment_basis": "supplier_credit",
+                            "counterparty": {"kind": "supplier", "name": "Supplier"},
+                        }
+                    ],
+                }
+            )
+            with authority.attributed_call(session, tool_name="finance_record_event"):
+                posted = FinanceService(session).record_event(request)
+            assert posted.status == "posted", posted
+            session.commit()
+            voucher = session.get(Voucher, posted.voucher_id)
+            voucher.description = "forbidden direct edit"
+            with pytest.raises(DBAPIError):
+                session.commit()
+            session.rollback()
+            assert session.get(Voucher, posted.voucher_id).description != "forbidden direct edit"

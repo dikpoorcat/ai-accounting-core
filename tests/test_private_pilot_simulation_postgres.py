@@ -17,10 +17,11 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from _postgres_helpers import catalog_owner_authority, isolated_postgres_url
 from alembic.config import Config
+from conftest import prepare_authenticated_bank_account
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.accounting_period_schemas import (
     AccountingPeriodReviewFacts,
@@ -43,6 +44,7 @@ from ai_accounting.borrowing_schemas import (
 )
 from ai_accounting.borrowing_service import BorrowingService
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.config import Settings
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.intangible_asset_schemas import (
@@ -53,6 +55,7 @@ from ai_accounting.intangible_asset_schemas import (
 from ai_accounting.intangible_asset_service import IntangibleAssetService
 from ai_accounting.models import (
     EXECUTION_ATTRIBUTION_SESSION_KEY,
+    AccountingPeriod,
     AccountingPeriodClose,
     AccountingPeriodCloseApproval,
     BankTransaction,
@@ -69,7 +72,6 @@ from ai_accounting.schemas import (
     ConfirmPayrollRequest,
     PreviewFixedAssetDepreciationRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     RegisterPayrollPolicyVersionRequest,
@@ -89,6 +91,7 @@ pytestmark = [
 def _config(database_url: str) -> Config:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
+    config.attributes["database_url_override"] = database_url
     return config
 
 
@@ -154,7 +157,7 @@ def _import_bank_row(
             }
         )
     )
-    assert result.status == "posted", result.errors
+    assert result.status == "posted", result.model_dump(mode="json")
     assert result.action_id is not None
     row = session.scalar(
         select(BankTransaction).where(
@@ -330,6 +333,7 @@ def _close(
         owner_account_id=attribution.owner_account_id,
         owner_session_id=attribution.owner_session_id,
         owner_credential_version=attribution.owner_credential_version,
+        catalog_instance_id=attribution.catalog_instance_id,
         calculation_hash=preview.calculation_hash,
         confirmation_method="local_password_reauthentication",
         confirmed_at=now,
@@ -341,9 +345,9 @@ def _close(
         ConfirmAccountingPeriodCloseRequest(
             **preview_request.model_dump(),
             calculation_hash=preview.calculation_hash,
-            management_commentary_context_hash=preview.data[
-                "assistant_review_checklist"
-            ]["management_commentary"]["context_hash"],
+            management_commentary_context_hash=preview.data["assistant_review_checklist"][
+                "management_commentary"
+            ]["context_hash"],
             management_commentary=f"2026 年 {month} 月经营情况已基于关账上下文完成分析。",
             owner_approval_id=approval.id,
             idempotency_key=f"pilot-close-2026-{month:02d}",
@@ -352,7 +356,7 @@ def _close(
             evidence_references=[evidence_id],
         )
     )
-    assert result.status == "posted", result.errors
+    assert result.status == "posted", result.model_dump(mode="json")
     assert result.close_id is not None
     return result.close_id
 
@@ -424,16 +428,11 @@ def _confirm_intangible_amortization(
 
 
 def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
-    authenticated_bank_scope: object,
     tmp_path: Path,
 ) -> None:
     """Exercise the private-pilot path without real data or a Compose database."""
 
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url()
+    with isolated_postgres_url("finance_company") as database_url:
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         try:
@@ -444,59 +443,79 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                     name="虚构五个月私有试用组织",
                     filing_cycle="monthly",
                 )
-                evidence = _evidence(session, organization, "pilot-evidence")
                 session.commit()
-                org_id, evidence_id = organization.id, evidence.id
-
-            with Session(engine) as session:
-                organization = session.get(Organization, org_id)
-                assert organization is not None
-                authority = authenticated_bank_scope(
+                org_id = organization.id
+                with catalog_owner_authority(
                     session,
                     organization,
-                    evidence_id=evidence_id,
-                    accounts=[
-                        {
-                            "bank_account_code": "1002",
-                            "account_name": "银行存款",
-                            "start_date": date(2026, 1, 1),
-                        }
-                    ],
-                    executor_name="private-pilot-simulation",
-                )
-                write_call = authority.attributed_call(
-                    session, tool_name="finance_private_pilot_rehearsal"
-                )
-                write_call.__enter__()
+                    registry_database_name=engine.url.database,
+                ) as authority:
+                    with authority.attributed_call(
+                        session, tool_name="finance_register_evidence"
+                    ):
+                        evidence = _evidence(session, organization, "pilot-evidence")
+                    session.commit()
+                    evidence_id = evidence.id
+                    prepare_authenticated_bank_account(
+                        session,
+                        organization,
+                        booking_date=date(2026, 3, 1),
+                        authority=authority,
+                        evidence_id=evidence_id,
+                        accounts=[
+                            {
+                                "bank_account_code": "1002",
+                                "account_name": "银行存款",
+                                "start_date": date(2026, 1, 1),
+                            }
+                        ],
+                    )
+                    write_call = authority.attributed_call(
+                        session, tool_name="finance_private_pilot_rehearsal"
+                    )
+                    write_call.__enter__()
                 period_service = AccountingPeriodService(session, current_date=date(2026, 8, 11))
                 finance = FinanceService(session)
                 fixed_assets = FixedAssetService(session)
                 intangibles = IntangibleAssetService(session)
                 borrowings = BorrowingService(session)
-                march_period_id = _generate(period_service, org_id, evidence_id, 3)
+                march_period_id = session.scalar(
+                    select(AccountingPeriod.id).where(
+                        AccountingPeriod.org_id == org_id,
+                        AccountingPeriod.start_date == date(2026, 3, 1),
+                    )
+                )
+                assert march_period_id is not None
 
                 sale = finance.record_event(
                     RecordEventRequest.model_validate(
                         {
                             "org_id": org_id,
                             "idempotency_key": "pilot-fictional-march-sale",
-                            "event_type": "service_credit_sale",
-                            "business_dates": {
-                                "business_date": "2026-03-05",
-                                "posting_date": "2026-03-05",
-                                "fulfillment_date": "2026-03-05",
-                                "payment_date": "2026-03-05",
-                                "tax_obligation_date": "2026-03-05",
-                            },
-                            "amounts": {"gross_amount_fen": 101_000},
-                            "counterparty": {"kind": "customer", "name": "虚构试用客户"},
-                            "tax_facts": {
-                                "taxable": True,
-                                "rate_percent": "1",
-                                "invoice_type": "ordinary",
-                                "waive_exemption": False,
-                                "tax_due_on_event": True,
-                            },
+                            "posting_date": "2026-03-05",
+                            "evidence_references": [evidence_id],
+                            "components": [
+                                {
+                                    "key": "sale",
+                                    "kind": "service_sale",
+                                    "business_date": "2026-03-05",
+                                    "fulfillment_date": "2026-03-05",
+                                    "tax_obligation_date": "2026-03-05",
+                                    "amount_fen": 101_000,
+                                    "counterparty": {
+                                        "kind": "customer",
+                                        "name": "虚构试用客户",
+                                    },
+                                    "recognition_basis": "credit",
+                                    "tax_facts": {
+                                        "taxable": True,
+                                        "rate_percent": "1",
+                                        "invoice_type": "ordinary",
+                                        "waive_exemption": False,
+                                        "tax_due_on_event": True,
+                                    },
+                                }
+                            ],
                         }
                     )
                 )
@@ -508,9 +527,10 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                         org_id=org_id,
                         employee_code="FICTIONAL-E-001",
                         name="虚构试用员工",
-                        employment_start_date=date(2026, 3, 1),
-                        tax_withholding_start_date=date(2026, 3, 1),
-                        status="active",
+                            employment_start_date=date(2026, 3, 1),
+                            employment_end_date=date(2026, 3, 31),
+                            tax_withholding_start_date=date(2026, 3, 1),
+                            status="active",
                     )
                 )
                 employee_id = uuid.UUID(employee["employee_id"])
@@ -551,6 +571,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                             "payroll_period": "2026-03",
                             "posting_date": "2026-03-20",
                             "payment_date": "2026-03-20",
+                            "evidence_references": [evidence_id],
                             "employee_items": [
                                 {
                                     "employee_id": employee_id,
@@ -784,7 +805,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                     )
                 )
                 assert locked_sale_reversal.status == "rejected"
-                assert locked_sale_reversal.errors == ["TAX_PERIOD_SOURCE_LOCKED"]
+                assert locked_sale_reversal.errors == ["REVERSE_DEPENDENT_EVENTS_FIRST"]
                 tax_reversal = finance.reverse_event(
                     ReverseEventRequest(
                         org_id=org_id,

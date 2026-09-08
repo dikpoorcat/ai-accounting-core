@@ -15,6 +15,7 @@ from ai_accounting.dashboard_funds import (
     load_funds_dashboard,
 )
 from ai_accounting.database import Base, make_engine
+from ai_accounting.ledger import ComponentPostingPlan, Entry, commit_posting_plan
 from ai_accounting.models import (
     Account,
     AccountingPeriod,
@@ -25,7 +26,6 @@ from ai_accounting.models import (
     Evidence,
     Organization,
     Voucher,
-    VoucherLine,
 )
 
 
@@ -82,7 +82,7 @@ def _seed_funds_month(session: Session) -> tuple[Organization, AccountingPeriod]
         session,
         organization=organization,
         number="202602-0001",
-        event_type="owner_contribution_received",
+        component_kind="owner_funding",
         description="测试负责人投入启动资金",
         lines=[(bank, owner, 10_000, 0), (capital, owner, 0, 10_000)],
         posting_date=date(2026, 2, 9),
@@ -95,53 +95,75 @@ def _add_test_voucher(
     *,
     organization: Organization,
     number: str,
-    event_type: str,
+    component_kind: str,
     description: str,
     lines: list[tuple[Account, Counterparty | None, int, int]],
     posting_date: date,
 ) -> tuple[BusinessEvent, Voucher]:
+    kind = component_kind
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key="dashboard-funds-" + number,
-        event_type=event_type,
-        status="posted",
+        event_type="composite",
+        status="draft",
         description=description,
-        facts={},
+        facts={"components": ["business", "funds.settlement"]},
         business_date=posting_date,
         posting_date=posting_date,
         rule_trace=[],
     )
-    session.add(event)
-    session.flush()
-    voucher = Voucher(
-        org_id=organization.id,
-        event_id=event.id,
-        voucher_number=number,
-        posting_date=posting_date,
-        description=description,
-        status="posted",
-    )
-    session.add(voucher)
-    session.flush()
-    session.add_all(
-        [
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=index,
-                account_id=account.id,
+    fund_lines = [
+        line
+        for line in lines
+        if (line[0].business_class or line[0].system_role)
+        in {"bank", "cash", "payment_platform_funds"}
+        or line[0].requires_bank_reconciliation
+    ]
+    business_lines = [line for line in lines if line not in fund_lines]
+    amount_fen = max(sum(line[2] for line in lines), sum(line[3] for line in lines))
+
+    def entries(source):
+        return [
+            Entry(
+                account_code=account.code,
                 counterparty_id=counterparty.id if counterparty else None,
                 debit_fen=debit_fen,
                 credit_fen=credit_fen,
                 memo=description,
             )
-            for index, (account, counterparty, debit_fen, credit_fen) in enumerate(
-                lines,
-                start=1,
-            )
+            for account, counterparty, debit_fen, credit_fen in source
         ]
+
+    voucher = commit_posting_plan(
+        session,
+        event=event,
+        posting_date=posting_date,
+        description=description,
+        components=[
+            ComponentPostingPlan(
+                key="business",
+                kind=kind,
+                facts={"key": "business", "kind": kind, "amount_fen": amount_fen},
+                derived={},
+                entries=entries(business_lines),
+                cash_flows=[],
+                rule_version="test-components",
+            ),
+            ComponentPostingPlan(
+                key="funds.settlement",
+                kind="funds",
+                facts={
+                    "key": "funds.settlement",
+                    "kind": "funds",
+                    "allocations": [{"component_key": "business", "amount_fen": amount_fen}],
+                },
+                derived={},
+                entries=entries(fund_lines),
+                cash_flows=[],
+                rule_version="test-components",
+            ),
+        ],
     )
-    session.flush()
     return event, voucher
 
 
@@ -202,7 +224,7 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
         session,
         organization=organization,
         number="202602-0002",
-        event_type="owner_contribution_received",
+        component_kind="owner_funding",
         description="投入工商银行基本户",
         lines=[(second_bank, owner, 50_000, 0), (capital, owner, 0, 50_000)],
         posting_date=date(2026, 2, 10),
@@ -211,7 +233,7 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
         session,
         organization=organization,
         number="202602-0003",
-        event_type="cash_bank_transfer",
+        component_kind="funds_transfer",
         description="从工商银行提取备用金",
         lines=[(cash, None, 10_000, 0), (second_bank, None, 0, 10_000)],
         posting_date=date(2026, 2, 11),
@@ -220,7 +242,7 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
         session,
         organization=organization,
         number="202602-0005",
-        event_type="payment_platform_transfer",
+        component_kind="funds_transfer",
         description="从工商银行转入公司支付宝",
         lines=[
             (payment_platform, None, 5_000, 0),
@@ -232,7 +254,7 @@ def test_build_funds_data_separates_accounts_cash_and_internal_transfers(
         session,
         organization=organization,
         number="202602-0004",
-        event_type="expense_cash",
+        component_kind="expense",
         description="现金支付办公用品",
         lines=[(expense, None, 3_000, 0), (cash, None, 0, 3_000)],
         posting_date=date(2026, 2, 12),
@@ -270,7 +292,7 @@ def test_build_bank_activity_uses_only_current_valid_matches(session: Session) -
     event = session.scalar(
         select(BusinessEvent).where(
             BusinessEvent.org_id == organization.id,
-            BusinessEvent.event_type == "owner_contribution_received",
+            BusinessEvent.idempotency_key == "dashboard-funds-202602-0001",
         )
     )
     assert event is not None
@@ -339,15 +361,15 @@ def test_build_bank_activity_uses_only_current_valid_matches(session: Session) -
 
 
 @pytest.mark.parametrize(
-    ("event_type", "description", "offset_role"),
+    ("component_kind", "description", "offset_role"),
     [
         (
-            "payment_platform_transfer",
+            "funds_transfer",
             "企业支付宝余额转入网商银行",
             "payment_platform_funds",
         ),
         (
-            "owner_contribution_received",
+            "owner_funding",
             "股东杜颖成通过企业支付宝投入的投资资金转入浙江网商银行",
             "paid_in_capital",
         ),
@@ -355,7 +377,7 @@ def test_build_bank_activity_uses_only_current_valid_matches(session: Session) -
 )
 def test_bank_activity_identifies_alipay_balance_transfer_without_changing_raw_memo(
     session: Session,
-    event_type: str,
+    component_kind: str,
     description: str,
     offset_role: str,
 ) -> None:
@@ -377,7 +399,7 @@ def test_bank_activity_identifies_alipay_balance_transfer_without_changing_raw_m
         session,
         organization=organization,
         number="202602-0002",
-        event_type=event_type,
+        component_kind=component_kind,
         description=description,
         lines=[(bank, None, 600_000, 0), (offset_account, None, 0, 600_000)],
         posting_date=date(2026, 2, 13),
@@ -408,7 +430,7 @@ def test_bank_activity_identifies_alipay_balance_transfer_without_changing_raw_m
     activity = build_bank_activity(session, org_id=organization.id, period=period)
     row = next(item for item in activity["rows"] if item["amount_fen"] == 600_000)
 
-    assert row["party"] == ("企业支付宝余额转入（资金看板测试公司）")
+    assert row["party"] == organization.name
     assert row["memo"] == "网商银行转入；（转入）网商银行转入"
 
 

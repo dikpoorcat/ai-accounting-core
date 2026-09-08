@@ -20,6 +20,7 @@ from ai_accounting.accounting_period_schemas import (
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.config import Settings
 from ai_accounting.financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
@@ -31,6 +32,7 @@ from ai_accounting.models import (
     AccountingPeriod,
     AuditLog,
     BankTransaction,
+    BusinessEvent,
     Employee,
     EmployeePayrollProfileVersion,
     Evidence,
@@ -58,7 +60,6 @@ from ai_accounting.schemas import (
     ConfirmPayrollRequest,
     GeneratePayrollTaxImportRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     RegisterPayrollPolicyVersionRequest,
@@ -222,10 +223,29 @@ def register_payroll_facts(session: Session, organization: Organization) -> uuid
     return employee_id
 
 
+def payroll_evidence(
+    session: Session, organization: Organization, key: str
+) -> Evidence:
+    evidence = Evidence(
+        org_id=organization.id,
+        sha256=hashlib.sha256(f"{organization.id}:{key}".encode()).hexdigest(),
+        original_name=f"{key}.txt",
+        media_type="text/plain",
+        source="test",
+        size_bytes=1,
+        storage_path=f"tests/{organization.id}/{key}.txt",
+        metadata_json={},
+    )
+    session.add(evidence)
+    session.flush()
+    return evidence
+
+
 def preview_and_confirm(
     session: Session, organization: Organization
 ) -> tuple[FinanceService, object]:
     employee_id = register_payroll_facts(session, organization)
+    evidence = payroll_evidence(session, organization, "payroll-preview")
     service = FinanceService(session)
     preview = service.preview_payroll(
         PreviewPayrollRequest.model_validate(
@@ -236,6 +256,7 @@ def preview_and_confirm(
                 "payroll_period": "2026-03",
                 "posting_date": "2026-03-05",
                 "payment_date": "2026-03-05",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -256,7 +277,7 @@ def preview_and_confirm(
             idempotency_key="payroll-confirm-1",
         )
     )
-    assert confirmed.status == "posted"
+    assert confirmed.status == "posted", confirmed
     return service, confirmed
 
 
@@ -388,6 +409,7 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
                 "batch_kind": "regular",
                 "payroll_period": "2026-08",
                 "posting_date": "2026-08-31",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -495,9 +517,7 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
     )
     iit_confirmed = OwnerWorkflowService(
         session, current_date=date(2026, 9, 10)
-    ).confirm_external_obligation(
-        iit_confirmation_request
-    )
+    ).confirm_external_obligation(iit_confirmation_request)
     assert iit_confirmed["status"] == "confirmed"
     assert iit_confirmed["completion_date_status"] == "not_established"
     assert iit_confirmed["completion_date"] is None
@@ -511,9 +531,9 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
     assert iit_replay["timeliness"] == "not_established"
     session.flush()
     session.expire_all()
-    completed_workflow = OwnerWorkflowService(
-        session, current_date=date(2026, 9, 10)
-    ).get(GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id))
+    completed_workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 10)).get(
+        GetOwnerWorkflowRequest(org_id=organization.id, period_id=period.id)
+    )
     completed_iit_step = next(
         item
         for item in completed_workflow["steps"]
@@ -724,6 +744,7 @@ def test_generate_payroll_tax_import_writes_explicit_nonzero_tax_columns(
     tmp_path: Path,
 ) -> None:
     employee_id = register_payroll_facts(session, organization)
+    evidence = payroll_evidence(session, organization, "payroll-tax-import-nonzero")
     service = FinanceService(session)
     preview = service.preview_payroll(
         PreviewPayrollRequest.model_validate(
@@ -734,6 +755,7 @@ def test_generate_payroll_tax_import_writes_explicit_nonzero_tax_columns(
                 "payroll_period": "2026-03",
                 "posting_date": "2026-03-05",
                 "payment_date": "2026-03-05",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -1046,28 +1068,54 @@ def payment_request(
     salary_withholdings: list[dict[str, object]] | None = None,
     key: str,
 ) -> RecordEventRequest:
+    test_session = organization._sa_instance_state.session
+    source = test_session.get(OpenItem, allocations[0]["open_item_id"])
+    assert source is not None
+    source_event = test_session.get(BusinessEvent, source.source_event_id)
+    assert source_event is not None and source_event.evidence
+    if event_type == "salary_payment":
+        component = {
+            "key": "salary",
+            "kind": "salary_settlement",
+            "business_date": "2026-03-05",
+            "payment_date": "2026-03-05",
+            "amount_fen": amount_fen,
+            "allocations": allocations,
+            "withholding_allocations": salary_withholdings or [],
+        }
+        component_key = "salary"
+    else:
+        component_key = "statutory"
+        component = {
+            "key": component_key,
+            "kind": "payable_settlement",
+            "business_date": "2026-03-05",
+            "payment_date": "2026-03-05",
+            "counterparty": {"id": source.counterparty_id},
+            "allocations": allocations,
+        }
     return RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
             "idempotency_key": key,
-            "event_type": event_type,
-            "bank_account_code": "1002",
-            "business_dates": {
-                "business_date": "2026-03-05",
-                "payment_date": "2026-03-05",
-                "posting_date": "2026-03-05",
-            },
-            "amounts": {
-                "amount_fen": amount_fen,
-                **(
-                    {"expense_account_role": "general_expense"}
-                    if event_type in {"expense_cash", "expense_payable"}
-                    else {}
-                ),
-            },
-            "allocations": allocations,
-            "salary_withholding_allocations": salary_withholdings or [],
-            **({"bank_transaction_references": [{"id": bank.id}]} if bank is not None else {}),
+            "posting_date": "2026-03-05",
+            "evidence_references": [source_event.evidence[0].id],
+            "components": [component],
+            "funds": [
+                {
+                    "key": "bank",
+                    "account_code": "1002",
+                    "direction": "payment",
+                    "payment_date": "2026-03-05",
+                    "amount_fen": amount_fen,
+                    "allocations": [{"component_key": component_key, "amount_fen": amount_fen}],
+                    **(
+                        {"bank_transaction_references": [{"id": bank.id}]}
+                        if bank is not None and test_session.get_bind().dialect.name == "postgresql"
+                        else {}
+                    ),
+                }
+            ],
         }
     )
 
@@ -1081,6 +1129,7 @@ def test_zero_tax_reported_salary_posts_company_borne_social_in_payroll_period(
     session: Session, organization: Organization
 ) -> None:
     service = FinanceService(session)
+    evidence = payroll_evidence(session, organization, "final-wage-march")
     employee_result = service.register_employee(
         RegisterEmployeeRequest(
             org_id=organization.id,
@@ -1150,6 +1199,7 @@ def test_zero_tax_reported_salary_posts_company_borne_social_in_payroll_period(
                 "payroll_period": "2026-03",
                 "posting_date": "2026-03-31",
                 "payment_date": "2026-04-15",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -1304,6 +1354,7 @@ def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
     session: Session, organization: Organization
 ) -> None:
     service = FinanceService(session)
+    evidence = payroll_evidence(session, organization, "contribution-only-july")
     employee_result = service.register_employee(
         RegisterEmployeeRequest(
             org_id=organization.id,
@@ -1375,6 +1426,7 @@ def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
                 "payroll_period": "2026-07",
                 "posting_date": "2026-07-31",
                 "payment_date": "2026-08-15",
+                "evidence_references": [evidence.id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -1509,7 +1561,7 @@ def test_payroll_accrual_is_gross_salary_and_payment_events_are_category_bound(
     )
     assert salary_payment.status == "posted"
     assert_balanced(session, salary_payment.voucher_id)
-    assert salary_payment.trace[-1]["stage"] == "entries_derived"
+    assert salary_payment.trace[-1]["stage"] == "entries_created"
     replay = service.record_event(
         payment_request(
             organization,
@@ -1528,7 +1580,8 @@ def test_payroll_accrual_is_gross_salary_and_payment_events_are_category_bound(
             key="salary-payment-1",
         )
     )
-    assert replay.data["idempotent_replay"] is True
+    assert replay.event_id == salary_payment.event_id
+    assert replay.voucher_id == salary_payment.voucher_id
 
     payment_items = session.scalars(
         select(OpenItem).where(OpenItem.source_event_id == salary_payment.event_id)
@@ -1623,6 +1676,7 @@ def test_payroll_accruals_can_be_reversed_repeatedly_from_latest_to_earliest(
     service = FinanceService(session)
     confirmed = []
     for month in (3, 4):
+        evidence = payroll_evidence(session, organization, f"payroll-chain-{month}")
         preview = service.preview_payroll(
             PreviewPayrollRequest.model_validate(
                 {
@@ -1632,6 +1686,7 @@ def test_payroll_accruals_can_be_reversed_repeatedly_from_latest_to_earliest(
                     "payroll_period": f"2026-{month:02d}",
                     "posting_date": f"2026-{month:02d}-05",
                     "payment_date": f"2026-{month:02d}-05",
+                    "evidence_references": [evidence.id],
                     "employee_items": [
                         {
                             "employee_id": employee_id,
@@ -1695,24 +1750,46 @@ def test_social_insurance_payment_can_separate_evidenced_late_fee(
     )
     session.add(evidence)
     session.flush()
-    bank = add_bank_row(session, organization, -160_500, "social-with-late-fee")
+    counterparty_id = social_items[0].counterparty_id
     common = {
         "org_id": organization.id,
-        "event_type": "social_insurance_payment",
-        "business_dates": {
-            "business_date": "2026-03-05",
-            "payment_date": "2026-03-05",
-            "posting_date": "2026-03-05",
-        },
-        "amounts": {"amount_fen": 160_500},
-        "bank_account_code": "1002",
-        "bank_transaction_references": [{"id": bank.id}],
-        "allocations": [
-            {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
-            for item in social_items
-        ],
-        "details": {"social_insurance_late_fee_fen": 500},
+        "posting_date": "2026-03-05",
         "description": "社保本金1600元及滞纳金5元合并扣款",
+        "components": [
+            {
+                "key": "social",
+                "kind": "payable_settlement",
+                "business_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "counterparty": {"id": counterparty_id},
+                "allocations": [
+                    {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
+                    for item in social_items
+                ],
+            },
+            {
+                "key": "late-fee",
+                "kind": "expense",
+                "business_date": "2026-03-05",
+                "payment_date": "2026-03-05",
+                "amount_fen": 500,
+                "expense_class": "social_insurance_late_fee_expense",
+                "payment_basis": "immediate",
+            },
+        ],
+        "funds": [
+            {
+                "key": "payment",
+                "account_code": "1002",
+                "direction": "payment",
+                "payment_date": "2026-03-05",
+                "amount_fen": 160_500,
+                "allocations": [
+                    {"component_key": "social", "amount_fen": 160_000},
+                    {"component_key": "late-fee", "amount_fen": 500},
+                ],
+            }
+        ],
     }
     missing = service.record_event(
         RecordEventRequest.model_validate(
@@ -1732,11 +1809,9 @@ def test_social_insurance_payment_can_separate_evidenced_late_fee(
         )
     )
     assert payment.status == "posted", payment.errors
-    assert payment.data["derived"] == {
-        "payable_categories": ["employer_social", "withheld_employee_social"],
-        "allocated_fen": 160_000,
-        "social_insurance_late_fee_fen": 500,
-    }
+    by_component = {item["key"]: item["derived"] for item in payment.data["components"]}
+    assert by_component["late-fee"]["amount_fen"] == 500
+    assert by_component["late-fee"]["expense_class"] == "social_insurance_late_fee_expense"
     voucher = session.get(Voucher, payment.voucher_id)
     assert voucher is not None
     by_role = {
@@ -1746,16 +1821,3 @@ def test_social_insurance_payment_can_separate_evidenced_late_fee(
     assert by_role["social_insurance_late_fee_expense"] == (500, 0)
     assert by_role["bank"] == (0, 160_500)
     assert all(item.status == "settled" for item in social_items)
-    assert bank.matched_event_id == payment.event_id
-
-    with pytest.raises(
-        ValueError,
-        match="social_insurance_late_fee_fen is only accepted for social insurance payment",
-    ):
-        RecordEventRequest.model_validate(
-            common
-            | {
-                "idempotency_key": "housing-with-social-late-fee",
-                "event_type": "housing_fund_payment",
-            }
-        )

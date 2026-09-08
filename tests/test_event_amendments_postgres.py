@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from contextlib import ExitStack
 from datetime import date
 from decimal import Decimal
 
 import pytest
 import test_event_amendments as cases
+from _postgres_helpers import catalog_owner_authority
 from alembic.config import Config
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import DBAPIError
@@ -21,14 +22,11 @@ from ai_accounting.accounting_period_schemas import GenerateAccountingPeriodRequ
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.event_amendments import EventAmendmentService, _graph, _json
-from ai_accounting.execution_attribution import persist_execution_attribution
-from ai_accounting.identity import ExecutionContext, ExecutorKind
 from ai_accounting.models import (
     BusinessEvent,
     BusinessEventAmendment,
     Evidence,
     Organization,
-    OrganizationDatabaseMetadata,
 )
 from ai_accounting.service import FinanceService
 from alembic import command
@@ -37,7 +35,137 @@ pytestmark = [pytest.mark.postgres, pytest.mark.postgres_current]
 IMAGE = "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"
 
 
-def banked_checks(engine, context, evidence_id, tmp_path):
+def annual_bonus_amendment_with_evidence(session, organization, method, evidence_id):
+    """Exercise the annual-bonus amendment with a complete final evidence graph."""
+    from test_payroll_service import preview_and_confirm
+
+    from ai_accounting.models import PayrollLine, PayrollTaxStateSlot
+    from ai_accounting.schemas import ConfirmPayrollRequest, PreviewPayrollRequest
+
+    service, regular = preview_and_confirm(session, organization)
+    employee_id = session.scalar(select(PayrollLine.employee_id))
+    request = PreviewPayrollRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "idempotency_key": "bonus-preview",
+            "batch_kind": "annual_bonus",
+            "payroll_period": "2026-03",
+            "posting_date": "2026-03-05",
+            "payment_date": "2026-03-05",
+            "tax_method": method,
+            "evidence_references": [evidence_id],
+            "employee_items": [
+                {
+                    "employee_id": employee_id,
+                    "annual_bonus_fen": 100_000,
+                    **(
+                        {"regular_payroll_batch_id": regular.batch_id}
+                        if method == "combined"
+                        else {}
+                    ),
+                }
+            ],
+        }
+    )
+    missing_request = request.model_copy(
+        update={
+            "idempotency_key": f"bonus-missing-preview-{method}",
+            "evidence_references": [],
+        }
+    )
+    missing_preview = service.preview_payroll(missing_request)
+    missing = service.confirm_payroll(
+        ConfirmPayrollRequest(
+            org_id=organization.id,
+            batch_id=missing_preview.batch_id,
+            calculation_hash=missing_preview.calculation_hash,
+            idempotency_key=f"bonus-missing-confirm-{method}",
+        )
+    )
+    assert missing.status == "needs_information", missing
+    assert missing.missing_information == [
+        {
+            "field": "evidence_references",
+            "reason": "正式工资或年终奖入账需要预览时登记的原始依据",
+        }
+    ]
+    preview = service.preview_payroll(request)
+    assert preview.status == "calculated", preview
+    source = service.confirm_payroll(
+        ConfirmPayrollRequest(
+            org_id=organization.id,
+            batch_id=preview.batch_id,
+            calculation_hash=preview.calculation_hash,
+            idempotency_key="bonus-confirm",
+        )
+    )
+    assert source.status == "posted", source
+    request.employee_items[0].annual_bonus_fen = 200_000
+    result = EventAmendmentService(session).amend(cases.amendment(session, source, request))
+    assert result["status"] == "posted", result
+    slot = session.scalar(select(PayrollTaxStateSlot))
+    assert slot.final_batch_id == (source.batch_id if method == "combined" else regular.batch_id)
+
+
+def fixed_asset_batch_amendment_with_two_components(session, organization, evidence_id):
+    """A batch component must own depreciation projections for at least two assets."""
+    from test_fixed_asset_service import _acquisition_request
+
+    from ai_accounting.fixed_asset_service import FixedAssetService
+    from ai_accounting.models import FixedAssetDepreciation
+    from ai_accounting.schemas import (
+        ActivateFixedAssetRequest,
+        ConfirmFixedAssetDepreciationBatchRequest,
+        PreviewFixedAssetDepreciationBatchRequest,
+    )
+
+    evidence = session.get(Evidence, evidence_id)
+    service = FixedAssetService(session)
+    for index in range(2):
+        acquisition = _acquisition_request(
+            organization, evidence, key=f"batch-asset-{index}"
+        ).model_copy(
+            update={"asset_code": f"FA-BATCH-{index}", "asset_name": f"Batch asset {index}"}
+        )
+        acquired = service.acquire_fixed_asset(acquisition)
+        activated = service.activate_fixed_asset(
+            ActivateFixedAssetRequest(
+                org_id=organization.id,
+                asset_id=acquired.asset_id,
+                idempotency_key=f"batch-activate-{index}",
+                activation_date=date(2026, 1, 10),
+                posting_date=date(2026, 1, 10),
+                useful_life_months=13,
+                residual_value_fen=10_000,
+                benefit_area="management",
+                evidence_references=[evidence.id],
+            )
+        )
+        assert acquired.status == activated.status == "posted"
+    request = PreviewFixedAssetDepreciationBatchRequest(
+        org_id=organization.id,
+        depreciation_period="2026-02",
+        posting_date=date(2026, 2, 28),
+    )
+    preview = service.preview_fixed_asset_depreciation_batch(request)
+    source = service.confirm_fixed_asset_depreciation_batch(
+        ConfirmFixedAssetDepreciationBatchRequest(
+            **request.model_dump(),
+            calculation_hash=preview.calculation_hash,
+            idempotency_key="batch-depreciate",
+        )
+    )
+    assert source.status == "posted", source
+    result = EventAmendmentService(session).amend(cases.amendment(session, source, request))
+    assert result["status"] == "posted", result
+    projections = session.scalars(
+        select(FixedAssetDepreciation).where(FixedAssetDepreciation.event_id == source.event_id)
+    ).all()
+    assert len(projections) == 2
+    assert len({row.component_id for row in projections}) == 1
+
+
+def banked_checks(engine, authority, evidence_id, tmp_path):
     from test_borrowing_service import _draw_request
     from test_payroll_service import payment_request, preview_and_confirm
 
@@ -49,20 +177,14 @@ def banked_checks(engine, context, evidence_id, tmp_path):
     )
     from ai_accounting.bank_statement_service import BankStatementService
     from ai_accounting.borrowing_service import BorrowingService
+    from ai_accounting.component_schemas import RecordEventRequest
     from ai_accounting.config import Settings
-    from ai_accounting.labor_remuneration_schemas import (
-        ConfirmUnifiedPayoutRunRequest,
-        PreviewUnifiedPayoutRunRequest,
-    )
-    from ai_accounting.labor_remuneration_service import LaborRemunerationService
     from ai_accounting.models import Account, BankTransaction, OpenItem
 
+    context = authority.context
+
     def attributed(session, tool):
-        return persist_execution_attribution(
-            session,
-            context=replace(context, request_correlation_id=uuid.uuid4()),
-            tool_name=tool,
-        )
+        return authority.attributed_call(session, tool_name=tool)
 
     with (
         Session(engine) as session,
@@ -175,38 +297,44 @@ def banked_checks(engine, context, evidence_id, tmp_path):
                     item = session.scalar(
                         select(OpenItem).where(OpenItem.payable_category == "labor_remuneration")
                     )
-                    request = PreviewUnifiedPayoutRunRequest.model_validate(
+                    request = RecordEventRequest.model_validate(
                         {
                             "org_id": org.id,
-                            "idempotency_key": "payout-preview",
-                            "business_date": day,
-                            "payment_date": day,
+                            "idempotency_key": "labor-payment",
                             "posting_date": day,
-                            "bank_account_code": "1002",
-                            "bank_transaction_id": bank.id,
-                            "labor_items": [
+                            "evidence_references": [evidence_id],
+                            "components": [
                                 {
+                                    "key": "labor",
+                                    "kind": "labor_settlement",
+                                    "business_date": day,
+                                    "payment_date": day,
                                     "source_open_item_id": item.id,
+                                    "amount_fen": 500_000,
                                     "settlement_mode": "net_after_withholding",
+                                    "withholding_agency_code": "tax-office",
+                                    "withholding_agency_name": "Tax office",
                                 }
                             ],
-                            "withholding_agency_code": "tax-office",
-                            "withholding_agency_name": "Tax office",
-                            "evidence_references": [evidence_id],
+                            "funds": [
+                                {
+                                    "key": "bank",
+                                    "account_code": "1002",
+                                    "direction": "payment",
+                                    "payment_date": day,
+                                    "amount_fen": 420_000,
+                                    "allocations": [
+                                        {
+                                            "component_key": "labor",
+                                            "amount_fen": 420_000,
+                                        }
+                                    ],
+                                    "bank_transaction_references": [{"id": bank.id}],
+                                }
+                            ],
                         }
                     )
-                    service = LaborRemunerationService(session)
-                    preview = service.preview_payout(request)
-                    assert preview.status == "calculated", preview
-                    source = service.confirm_payout(
-                        ConfirmUnifiedPayoutRunRequest(
-                            org_id=org.id,
-                            payout_run_id=preview.payout_run_id,
-                            idempotency_key="payout-confirm",
-                            calculation_hash=preview.calculation_hash,
-                            confirmation_note="Confirm payout",
-                        )
-                    )
+                    source = FinanceService(session).record_event(request)
                     replacement = request.model_copy(update={"description": "Corrected payout"})
                 assert source.status == "posted", source
                 result = EventAmendmentService(session).amend(
@@ -338,15 +466,19 @@ def banked_checks(engine, context, evidence_id, tmp_path):
         transaction.rollback()
 
 
-def test_forward_migration_and_all_posting_families(tmp_path):
-    with PostgresContainer(IMAGE, driver="psycopg") as postgres:
+def test_v3_baseline_and_all_posting_families(tmp_path):
+    with PostgresContainer(IMAGE, driver="psycopg") as postgres, ExitStack() as authority_stack:
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.attributes["database_url_override"] = url
         command.upgrade(config, "head")
         command.check(config)
         engine = create_engine(url)
-        with Session(engine) as session, session.begin():
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0001_business_baseline_v3"
+            )
+        with Session(engine) as session:
             org = seed_organization(
                 session,
                 name="Amendments",
@@ -354,33 +486,13 @@ def test_forward_migration_and_all_posting_families(tmp_path):
                 accounting_period_control_enabled=False,
             )
             org_id = org.id
-            catalog_id = uuid.uuid4()
-            session.add(
-                OrganizationDatabaseMetadata(
-                    singleton_key=1,
-                    org_id=org_id,
-                    database_identity=uuid.uuid4(),
-                    current_catalog_instance_id=catalog_id,
-                    owner_approval_required=True,
-                )
-            )
-        context = ExecutionContext(
-            org_id=org_id,
-            owner_account_id=uuid.uuid4(),
-            owner_session_id=uuid.uuid4(),
-            owner_credential_version=1,
-            executor_kind=ExecutorKind.AI_AGENT,
-            executor_name="amend-test",
-            executor_version="1",
-            request_correlation_id=uuid.uuid4(),
-            catalog_instance_id=catalog_id,
-        )
+            session.commit()
+            authority = authority_stack.enter_context(catalog_owner_authority(session, org))
         with (
             Session(engine) as session,
             session.begin(),
-            persist_execution_attribution(
+            authority.attributed_call(
                 session,
-                context=context,
                 tool_name="finance_generate_accounting_period",
             ),
         ):
@@ -411,23 +523,21 @@ def test_forward_migration_and_all_posting_families(tmp_path):
         checks = [
             (cases.test_sale_replaces_voucher_and_open_item_with_audit_and_replay, ()),
             (
-                cases.test_asset_acquisition_amendment_keeps_card_identity_and_recalculates_cost,
+                cases.test_asset_acquisition_amendment_replaces_projection_and_recalculates_cost,
                 ("fixed",),
             ),
             (
-                cases.test_asset_acquisition_amendment_keeps_card_identity_and_recalculates_cost,
+                cases.test_asset_acquisition_amendment_replaces_projection_and_recalculates_cost,
                 ("intangible",),
             ),
             (cases.test_payroll_amendment_recalculates_same_batch_and_liabilities, ()),
         ]
         checks += [
-            (cases.test_labor_batch_recalculates_tax_and_preserves_batch, ()),
-            (cases.test_tax_snapshot_amendment_and_locked_source, ()),
             (cases.test_enterprise_income_tax_confirmation_amendment, ()),
         ]
-        checks += [(cases.test_income_tax_result_amendment_reuses_prior_reversal, ())]
+        checks += [(cases.test_income_tax_result_amendment_recalculates_delta_in_same_voucher, ())]
         checks += [
-            (cases.test_annual_bonus_amendment_preserves_tax_state, (method,))
+            (annual_bonus_amendment_with_evidence, (method, evidence_id))
             for method in ("combined", "separate")
         ]
         checks += [
@@ -435,50 +545,42 @@ def test_forward_migration_and_all_posting_families(tmp_path):
             for kind in (
                 "activation",
                 "depreciation",
-                "batch",
                 "disposal",
                 "amortization",
-                "retirement",
             )
         ]
+        checks += [(fixed_asset_batch_amendment_with_two_components, (evidence_id,))]
         for check, args in checks:
             with Session(engine) as session:
                 transaction = session.begin()
-                with persist_execution_attribution(
-                    session,
-                    context=replace(context, request_correlation_id=uuid.uuid4()),
-                    tool_name="finance_amend_event",
-                ):
+                with authority.attributed_call(session, tool_name="finance_amend_event"):
                     check(session, session.get(Organization, org_id), *args)
-                    session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
-                if check != cases.test_income_tax_result_amendment_reuses_prior_reversal:
-                    session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
-                    latest = session.scalar(
-                        select(BusinessEventAmendment).order_by(
-                            BusinessEventAmendment.created_at.desc()
-                        )
-                    )
-                    with persist_execution_attribution(
-                        session,
-                        context=replace(context, request_correlation_id=uuid.uuid4()),
-                        tool_name="finance_delete_event",
-                    ):
-                        delete_event(session, session.get(BusinessEvent, latest.event_id))
+                    try:
                         session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
-                        with pytest.raises(DBAPIError, match="DELETED_EVENT_IMMUTABLE"):
-                            with session.begin_nested():
-                                session.execute(
-                                    text("UPDATE business_events SET status='posted' WHERE id=:id"),
-                                    {"id": latest.event_id},
-                                )
+                    except DBAPIError as exc:
+                        exc.add_note(f"amendment case: {check.__name__}{args!r}")
+                        raise
+                session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+                latest = session.scalar(
+                    select(BusinessEventAmendment).order_by(
+                        BusinessEventAmendment.created_at.desc()
+                    )
+                )
+                with authority.attributed_call(session, tool_name="finance_delete_event"):
+                    delete_event(session, session.get(BusinessEvent, latest.event_id))
+                    session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                    with pytest.raises(DBAPIError, match="DELETED_EVENT_IMMUTABLE"):
+                        with session.begin_nested():
+                            session.execute(
+                                text("UPDATE business_events SET status='posted' WHERE id=:id"),
+                                {"id": latest.event_id},
+                            )
                 transaction.rollback()
-        banked_checks(engine, context, evidence_id, tmp_path)
         with (
             Session(engine) as session,
             session.begin(),
-            persist_execution_attribution(
+            authority.attributed_call(
                 session,
-                context=replace(context, request_correlation_id=uuid.uuid4()),
                 tool_name="finance_record_event",
             ),
         ):
@@ -497,9 +599,8 @@ def test_forward_migration_and_all_posting_families(tmp_path):
             with (
                 Session(engine) as session,
                 session.begin(),
-                persist_execution_attribution(
+                authority.attributed_call(
                     session,
-                    context=replace(context, request_correlation_id=uuid.uuid4()),
                     tool_name="finance_amend_event",
                 ),
             ):
@@ -547,9 +648,8 @@ def test_forward_migration_and_all_posting_families(tmp_path):
             with pytest.raises(DBAPIError, match="AMENDMENT_INCOMPLETE"):
                 with (
                     session.begin(),
-                    persist_execution_attribution(
+                    authority.attributed_call(
                         session,
-                        context=replace(context, request_correlation_id=uuid.uuid4()),
                         tool_name="finance_amend_event",
                     ),
                 ):
@@ -569,4 +669,47 @@ def test_forward_migration_and_all_posting_families(tmp_path):
                     source_event.status = "draft"
                     session.flush()
                     session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        for additional_check, additional_args in (
+            (cases.test_asset_lifecycle_amendment, ("retirement",)),
+            (cases.test_tax_snapshot_amendment_and_locked_source, ()),
+            (cases.test_labor_batch_recalculates_tax_and_preserves_batch, ()),
+        ):
+            with Session(engine) as session:
+                transaction = session.begin()
+                with authority.attributed_call(session, tool_name="finance_amend_event"):
+                    additional_check(session, session.get(Organization, org_id), *additional_args)
+                    labor_diagnostics = None
+                    if (
+                        additional_check
+                        == cases.test_labor_batch_recalculates_tax_and_preserves_batch
+                    ):
+                        labor_diagnostics = session.execute(
+                            text(
+                                "SELECT b.id, b.status, b.business_event_id, "
+                                "(SELECT count(*) FROM event_evidence ee "
+                                " WHERE ee.event_id=b.business_event_id) AS event_evidence_count, "
+                                "(SELECT count(*) FROM labor_remuneration_batch_evidence be "
+                                " WHERE be.batch_id=b.id) AS batch_evidence_count, "
+                                "c.kind, a.business_class, a.system_role "
+                                "FROM labor_remuneration_batches b "
+                                "JOIN business_event_components c "
+                                "ON c.event_id=b.business_event_id "
+                                "JOIN voucher_lines l ON l.component_id=c.id "
+                                "JOIN accounts a ON a.id=l.account_id "
+                                "ORDER BY b.id, c.key, a.code"
+                            )
+                        ).all()
+                        assert all(row.event_evidence_count > 0 for row in labor_diagnostics)
+                        assert all(row.batch_evidence_count > 0 for row in labor_diagnostics)
+                    try:
+                        session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                    except DBAPIError as exc:
+                        exc.add_note(
+                            f"amendment case: {additional_check.__name__}{additional_args!r}"
+                        )
+                        if labor_diagnostics is not None:
+                            exc.add_note(f"labor graph before constraints: {labor_diagnostics!r}")
+                        raise
+                transaction.rollback()
+        banked_checks(engine, authority, evidence_id, tmp_path)
         engine.dispose()

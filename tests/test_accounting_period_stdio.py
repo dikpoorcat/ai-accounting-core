@@ -289,23 +289,30 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                     {
                         "org_id": org_id,
                         "idempotency_key": "stdio-period-before-control-start",
-                        "event_type": "service_credit_sale",
-                        "counterparty": {"kind": "customer", "name": "期间测试客户"},
-                        "business_dates": {
-                            "business_date": "2026-06-30",
-                            "posting_date": "2026-06-30",
-                            "fulfillment_date": "2026-06-30",
-                            "payment_date": "2026-06-30",
-                            "tax_obligation_date": "2026-06-30",
-                        },
-                        "amounts": {"gross_amount_fen": 101_000},
-                        "tax_facts": {
-                            "taxable": True,
-                            "rate_percent": "1",
-                            "invoice_type": "ordinary",
-                            "waive_exemption": False,
-                            "tax_due_on_event": True,
-                        },
+                        "posting_date": "2026-06-30",
+                        "evidence_references": [evidence_id],
+                        "components": [
+                            {
+                                "key": "sale",
+                                "kind": "service_sale",
+                                "business_date": "2026-06-30",
+                                "fulfillment_date": "2026-06-30",
+                                "tax_obligation_date": "2026-06-30",
+                                "amount_fen": 101_000,
+                                "counterparty": {
+                                    "kind": "customer",
+                                    "name": "期间测试客户",
+                                },
+                                "recognition_basis": "credit",
+                                "tax_facts": {
+                                    "taxable": True,
+                                    "rate_percent": "1",
+                                    "invoice_type": "ordinary",
+                                    "waive_exemption": False,
+                                    "tax_due_on_event": True,
+                                },
+                            }
+                        ],
                     },
                 )
                 assert before_control_start["errors"] == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
@@ -313,23 +320,27 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                 sale_request = {
                     "org_id": org_id,
                     "idempotency_key": "stdio-period-july-sale",
-                    "event_type": "service_credit_sale",
-                    "counterparty": {"kind": "customer", "name": "期间测试客户"},
-                    "business_dates": {
-                        "business_date": "2026-07-15",
-                        "posting_date": "2026-07-15",
-                        "fulfillment_date": "2026-07-15",
-                        "payment_date": "2026-07-15",
-                        "tax_obligation_date": "2026-07-15",
-                    },
-                    "amounts": {"gross_amount_fen": 101_000},
-                    "tax_facts": {
-                        "taxable": True,
-                        "rate_percent": "1",
-                        "invoice_type": "ordinary",
-                        "waive_exemption": False,
-                        "tax_due_on_event": True,
-                    },
+                    "posting_date": "2026-07-15",
+                    "evidence_references": [evidence_id],
+                    "components": [
+                        {
+                            "key": "sale",
+                            "kind": "service_sale",
+                            "business_date": "2026-07-15",
+                            "fulfillment_date": "2026-07-15",
+                            "tax_obligation_date": "2026-07-15",
+                            "amount_fen": 101_000,
+                            "counterparty": {"kind": "customer", "name": "期间测试客户"},
+                            "recognition_basis": "credit",
+                            "tax_facts": {
+                                "taxable": True,
+                                "rate_percent": "1",
+                                "invoice_type": "ordinary",
+                                "waive_exemption": False,
+                                "tax_due_on_event": True,
+                            },
+                        }
+                    ],
                 }
                 sale = await _call(client, "finance_record_event", sale_request)
                 assert sale["status"] == "posted", sale
@@ -407,14 +418,15 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                     {
                         **sale_request,
                         "idempotency_key": "stdio-period-after-close",
-                        "business_dates": {
-                            **sale_request["business_dates"],
-                            "business_date": "2026-07-20",
-                            "posting_date": "2026-07-20",
-                            "fulfillment_date": "2026-07-20",
-                            "payment_date": "2026-07-20",
-                            "tax_obligation_date": "2026-07-20",
-                        },
+                        "posting_date": "2026-07-20",
+                        "components": [
+                            {
+                                **sale_request["components"][0],
+                                "business_date": "2026-07-20",
+                                "fulfillment_date": "2026-07-20",
+                                "tax_obligation_date": "2026-07-20",
+                            }
+                        ],
                     },
                 )
                 assert same_month["errors"] == ["ACCOUNTING_PERIOD_CLOSED"]
@@ -753,23 +765,27 @@ def test_real_stdio_uses_china_current_date_for_posting_boundary(tmp_path: Path)
                     return {
                         "org_id": org_id,
                         "idempotency_key": key,
-                        "event_type": "service_credit_sale",
-                        "counterparty": {"kind": "customer", "name": "日期边界客户"},
-                        "business_dates": {
-                            "business_date": posting_date,
-                            "posting_date": posting_date,
-                            "fulfillment_date": posting_date,
-                            "payment_date": posting_date,
-                            "tax_obligation_date": posting_date,
-                        },
-                        "amounts": {"gross_amount_fen": 101_000},
-                        "tax_facts": {
-                            "taxable": True,
-                            "rate_percent": "1",
-                            "invoice_type": "ordinary",
-                            "waive_exemption": False,
-                            "tax_due_on_event": True,
-                        },
+                        "posting_date": posting_date,
+                        "evidence_references": [evidence_id],
+                        "components": [
+                            {
+                                "key": "sale",
+                                "kind": "service_sale",
+                                "business_date": posting_date,
+                                "fulfillment_date": posting_date,
+                                "tax_obligation_date": posting_date,
+                                "amount_fen": 101_000,
+                                "counterparty": {"kind": "customer", "name": "日期边界客户"},
+                                "recognition_basis": "credit",
+                                "tax_facts": {
+                                    "taxable": True,
+                                    "rate_percent": "1",
+                                    "invoice_type": "ordinary",
+                                    "waive_exemption": False,
+                                    "tax_due_on_event": True,
+                                },
+                            }
+                        ],
                     }
 
                 current = await _call(
@@ -862,9 +878,9 @@ def test_real_stdio_payroll_preview_rejects_closed_and_not_generated_without_bat
             ConfirmAccountingPeriodCloseRequest(
                 **close_facts.model_dump(),
                 calculation_hash=close_preview.calculation_hash,
-                management_commentary_context_hash=close_preview.data[
-                    "assistant_review_checklist"
-                ]["management_commentary"]["context_hash"],
+                management_commentary_context_hash=close_preview.data["assistant_review_checklist"][
+                    "management_commentary"
+                ]["context_hash"],
                 management_commentary="七月经营情况已基于关账上下文完成分析。",
                 idempotency_key="payroll-stdio-close-july",
                 review_facts=AccountingPeriodReviewFacts(

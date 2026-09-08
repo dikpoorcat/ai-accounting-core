@@ -3,21 +3,25 @@ from __future__ import annotations
 import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from datetime import date
 from hashlib import sha256
 from threading import Barrier
 
 import pytest
 import sqlalchemy as sa
+from _postgres_helpers import authenticated_business_database, catalog_owner_authority
 from alembic.config import Config
-from conftest import authenticate_and_confirm_bank_scope
+from component_posting_helpers import create_component_voucher as create_voucher
+from conftest import AuthenticatedOwnerAuthority
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import get_account_by_role, seed_organization
+from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.fixed_asset_service import FixedAssetService
-from ai_accounting.ledger import Entry, create_voucher
+from ai_accounting.ledger import Entry
 from ai_accounting.models import (
     Account,
     BusinessEvent,
@@ -29,7 +33,6 @@ from ai_accounting.models import (
     FixedAssetDepreciationBatch,
     FixedAssetDisposal,
     OpenItem,
-    Organization,
     TaxRule,
     VoucherLine,
     event_evidence,
@@ -41,7 +44,6 @@ from ai_accounting.schemas import (
     DisposeFixedAssetRequest,
     PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
-    RecordEventRequest,
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
@@ -68,18 +70,18 @@ def _evidence(session: Session, org_id: uuid.UUID, seed: str) -> Evidence:
     return row
 
 
-def _acquire_payable(session: Session, key: str) -> tuple[FixedAsset, BusinessEvent]:
-    organization = seed_organization(
-        session,
-        taxpayer_identification_number="91330106MA1234567T",
-        accounting_period_control_enabled=False,
-        name=f"PG 固定资产 {key}",
-    )
-    evidence = _evidence(session, organization.id, key[0])
-    result = FixedAssetService(session).acquire_fixed_asset(
-        AcquireFixedAssetRequest.model_validate(
+def _acquire_payable(
+    session: Session,
+    org_id: uuid.UUID,
+    evidence_id: uuid.UUID,
+    authority: AuthenticatedOwnerAuthority,
+    key: str,
+) -> tuple[FixedAsset, BusinessEvent]:
+    with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
+        result = FixedAssetService(session).acquire_fixed_asset(
+            AcquireFixedAssetRequest.model_validate(
             {
-                "org_id": organization.id,
+                "org_id": org_id,
                 "idempotency_key": f"{key}-acquire",
                 "asset_code": f"FA-{key}",
                 "asset_name": "生产设备",
@@ -96,20 +98,26 @@ def _acquire_payable(session: Session, key: str) -> tuple[FixedAsset, BusinessEv
                 "supplier": {"kind": "supplier", "name": f"供应商-{key}"},
                 "settlement_method": "payable",
                 "due_date": "2026-02-02",
-                "evidence_references": [evidence.id],
+                "evidence_references": [evidence_id],
                 "claims_creditable_input_vat": False,
             }
+            )
         )
-    )
     assert result.status == "posted", result.errors
     session.commit()
     return session.get(FixedAsset, result.asset_id), session.get(BusinessEvent, result.event_id)
 
 
-def _activate(session: Session, asset: FixedAsset, key: str) -> FixedAssetActivation:
-    evidence = _evidence(session, asset.org_id, f"{key}-activation")
-    result = FixedAssetService(session).activate_fixed_asset(
-        ActivateFixedAssetRequest.model_validate(
+def _activate(
+    session: Session,
+    asset: FixedAsset,
+    evidence_id: uuid.UUID,
+    authority: AuthenticatedOwnerAuthority,
+    key: str,
+) -> FixedAssetActivation:
+    with authority.attributed_call(session, tool_name="finance_activate_fixed_asset"):
+        result = FixedAssetService(session).activate_fixed_asset(
+            ActivateFixedAssetRequest.model_validate(
             {
                 "org_id": asset.org_id,
                 "asset_id": asset.id,
@@ -119,10 +127,10 @@ def _activate(session: Session, asset: FixedAsset, key: str) -> FixedAssetActiva
                 "useful_life_months": 13,
                 "residual_value_fen": 10_000,
                 "benefit_area": "management",
-                "evidence_references": [evidence.id],
+                "evidence_references": [evidence_id],
             }
+            )
         )
-    )
     assert result.status == "posted", result.errors
     session.commit()
     return session.scalar(
@@ -337,15 +345,33 @@ def test_postgres_monthly_depreciation_batch_is_one_final_voucher(
     ) as postgres:  # noqa: E501
         url = postgres.get_connection_url(driver="psycopg")
         monkeypatch.setenv("DATABASE_URL", url)
-        command.upgrade(Config("alembic.ini"), "head")
+        config = Config("alembic.ini")
+        config.attributes["database_url_override"] = url
+        command.upgrade(config, "head")
         engine = sa.create_engine(url)
+        authority_stack = ExitStack()
         try:
             with Session(engine) as session:
-                first, _ = _acquire_payable(session, "batch-pg")
-                _activate(session, first, "batch-pg")
-                evidence = _evidence(session, first.org_id, "batch-pg-second")
-                second = FixedAssetService(session).acquire_fixed_asset(
-                    AcquireFixedAssetRequest.model_validate(
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="PG 固定资产批量折旧",
+                )
+                session.commit()
+                authority = authority_stack.enter_context(
+                    catalog_owner_authority(session, organization)
+                )
+                with authority.attributed_call(session, tool_name="finance_register_evidence"):
+                    evidence = _evidence(session, organization.id, "batch-pg")
+                session.commit()
+                first, _ = _acquire_payable(
+                    session, organization.id, evidence.id, authority, "batch-pg"
+                )
+                _activate(session, first, evidence.id, authority, "batch-pg")
+                with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
+                    second = FixedAssetService(session).acquire_fixed_asset(
+                        AcquireFixedAssetRequest.model_validate(
                         {
                             "org_id": first.org_id,
                             "idempotency_key": "batch-pg-second-acquire",
@@ -372,9 +398,9 @@ def test_postgres_monthly_depreciation_batch_is_one_final_voucher(
                                 "residual_value_fen": 0,
                                 "benefit_area": "management",
                             },
-                        }
+                            }
+                        )
                     )
-                )
                 assert second.status == "posted", second.errors
                 preview_request = PreviewFixedAssetDepreciationBatchRequest(
                     org_id=first.org_id,
@@ -384,13 +410,16 @@ def test_postgres_monthly_depreciation_batch_is_one_final_voucher(
                 service = FixedAssetService(session)
                 preview = service.preview_fixed_asset_depreciation_batch(preview_request)
                 assert preview.data["total_amount_fen"] == 87_693
-                confirmed = service.confirm_fixed_asset_depreciation_batch(
-                    ConfirmFixedAssetDepreciationBatchRequest(
-                        **preview_request.model_dump(),
-                        idempotency_key="batch-pg-2026-02",
-                        calculation_hash=preview.calculation_hash,
+                with authority.attributed_call(
+                    session, tool_name="finance_confirm_fixed_asset_depreciation_batch"
+                ):
+                    confirmed = service.confirm_fixed_asset_depreciation_batch(
+                        ConfirmFixedAssetDepreciationBatchRequest(
+                            **preview_request.model_dump(),
+                            idempotency_key="batch-pg-2026-02",
+                            calculation_hash=preview.calculation_hash,
+                        )
                     )
-                )
                 assert confirmed.status == "posted", confirmed.errors
                 session.commit()
 
@@ -416,10 +445,11 @@ def test_postgres_monthly_depreciation_batch_is_one_final_voucher(
                     )
                     == 2
                 )
-                with pytest.raises(DBAPIError, match="final fixed-asset facts"):
+                with pytest.raises(DBAPIError, match="final fixed-asset facts are immutable"):
                     batch.total_amount_fen += 1
                     session.commit()
         finally:
+            authority_stack.close()
             engine.dispose()
 
 
@@ -433,14 +463,31 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
         url = postgres.get_connection_url(driver="psycopg")
         monkeypatch.setenv("DATABASE_URL", url)
         config = Config("alembic.ini")
+        config.attributes["database_url_override"] = url
         command.upgrade(config, "head")
         engine = sa.create_engine(url)
+        authority_stack = ExitStack()
         try:
             with Session(engine) as session:
-                asset, event = _acquire_payable(session, "reverse-edges")
-                direct_evidence = _evidence(session, asset.org_id, "direct-ready")
-                direct = FixedAssetService(session).acquire_fixed_asset(
-                    AcquireFixedAssetRequest.model_validate(
+                organization = seed_organization(
+                    session,
+                    taxpayer_identification_number="91330106MA1234567T",
+                    accounting_period_control_enabled=False,
+                    name="PG 固定资产冲正与结算",
+                )
+                session.commit()
+                authority = authority_stack.enter_context(
+                    catalog_owner_authority(session, organization)
+                )
+                with authority.attributed_call(session, tool_name="finance_register_evidence"):
+                    evidence = _evidence(session, organization.id, "reverse-edges")
+                session.commit()
+                asset, event = _acquire_payable(
+                    session, organization.id, evidence.id, authority, "reverse-edges"
+                )
+                with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
+                    direct = FixedAssetService(session).acquire_fixed_asset(
+                        AcquireFixedAssetRequest.model_validate(
                         {
                             "org_id": asset.org_id,
                             "idempotency_key": "direct-ready-acquisition",
@@ -448,8 +495,8 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                             "asset_name": "已交付设备",
                             "category": "electronic",
                             "expected_use_over_one_year": True,
-                            "purchase_date": "2026-01-31",
-                            "posting_date": "2026-01-31",
+                            "purchase_date": "2026-01-02",
+                            "posting_date": "2026-01-02",
                             "cost_components": {
                                 "purchase_price_fen": 120_000,
                                 "noncreditable_tax_fen": 0,
@@ -459,19 +506,20 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                             "supplier": {"kind": "supplier", "name": "直接交付供应商"},
                             "settlement_method": "payable",
                             "due_date": "2026-02-28",
-                            "evidence_references": [direct_evidence.id],
+                            "evidence_references": [evidence.id],
                             "claims_creditable_input_vat": False,
                             "ready_for_use": {
-                                "in_service_date": "2026-01-31",
-                                "useful_life_months": 60,
-                                "residual_value_fen": 0,
+                                "in_service_date": "2026-01-02",
+                                "useful_life_months": 13,
+                                "residual_value_fen": 10_000,
                                 "benefit_area": "management",
                             },
-                        }
+                            }
+                        )
                     )
-                )
                 assert direct.status == "posted", direct.errors
                 session.commit()
+                direct_asset = session.get(FixedAsset, direct.asset_id)
                 direct_activation = session.scalar(
                     sa.select(FixedAssetActivation).where(
                         FixedAssetActivation.asset_id == direct.asset_id
@@ -498,20 +546,7 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                     )
                 )
                 assert direct_preview.status == "calculated"
-                assert direct_preview.data["amount_fen"] == 2_000
-                scope_evidence = _evidence(session, asset.org_id, "reverse-edges-scope")
-                authority = authenticate_and_confirm_bank_scope(
-                    session,
-                    session.get(Organization, asset.org_id),
-                    evidence_id=scope_evidence.id,
-                    accounts=[
-                        {
-                            "bank_account_code": "1002",
-                            "account_name": "银行存款",
-                            "start_date": date(2026, 1, 1),
-                        }
-                    ],
-                )
+                assert direct_preview.data["amount_fen"] == 8_462
                 with authority.attributed_call(session, tool_name="finance_reverse_event"):
                     reversed_direct = FixedAssetService(session).reverse_event(
                         ReverseEventRequest(
@@ -534,20 +569,37 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                             {
                                 "org_id": asset.org_id,
                                 "idempotency_key": "asset-payable-settlement",
-                                "event_type": "supplier_payment",
-                                "business_dates": {
-                                    "business_date": "2026-02-02",
-                                    "posting_date": "2026-02-02",
-                                    "payment_date": "2026-02-02",
-                                },
-                                "counterparty": {
-                                    "kind": "supplier",
-                                    "name": "供应商-reverse-edges",
-                                },
-                                "amounts": {"amount_fen": asset.cost_fen},
-                                "bank_account_code": "1002",
-                                "allocations": [
-                                    {"open_item_id": item.id, "amount_fen": asset.cost_fen}
+                                "posting_date": "2026-02-02",
+                                "evidence_references": [event.evidence[0].id],
+                                "components": [
+                                    {
+                                        "key": "settlement",
+                                        "kind": "payable_settlement",
+                                        "business_date": "2026-02-02",
+                                        "payment_date": "2026-02-02",
+                                        "counterparty": {"id": item.counterparty_id},
+                                        "allocations": [
+                                            {
+                                                "open_item_id": item.id,
+                                                "amount_fen": asset.cost_fen,
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "funds": [
+                                    {
+                                        "key": "payment",
+                                        "account_code": "1001",
+                                        "direction": "payment",
+                                        "payment_date": "2026-02-02",
+                                        "amount_fen": asset.cost_fen,
+                                        "allocations": [
+                                            {
+                                                "component_key": "settlement",
+                                                "amount_fen": asset.cost_fen,
+                                            }
+                                        ],
+                                    }
                                 ],
                             }
                         )
@@ -601,17 +653,38 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                             {
                                 "org_id": asset.org_id,
                                 "idempotency_key": "employee-advanced-payment",
-                                "event_type": "employee_reimbursement_payment",
-                                "business_dates": {
-                                    "business_date": "2026-02-03",
-                                    "posting_date": "2026-02-03",
-                                    "payment_date": "2026-02-03",
-                                },
-                                "counterparty": {"id": employee_counterparty.id},
-                                "amounts": {"amount_fen": 50_000},
-                                "bank_account_code": "1002",
-                                "allocations": [
-                                    {"open_item_id": employee_item.id, "amount_fen": 50_000}
+                                "posting_date": "2026-02-03",
+                                "evidence_references": [
+                                    session.get(BusinessEvent, employee_asset.event_id)
+                                    .evidence[0]
+                                    .id
+                                ],
+                                "components": [
+                                    {
+                                        "key": "settlement",
+                                        "kind": "payable_settlement",
+                                        "business_date": "2026-02-03",
+                                        "payment_date": "2026-02-03",
+                                        "counterparty": {"id": employee_counterparty.id},
+                                        "allocations": [
+                                            {"open_item_id": employee_item.id, "amount_fen": 50_000}
+                                        ],
+                                    }
+                                ],
+                                "funds": [
+                                    {
+                                        "key": "payment",
+                                        "account_code": "1001",
+                                        "direction": "payment",
+                                        "payment_date": "2026-02-03",
+                                        "amount_fen": 50_000,
+                                        "allocations": [
+                                            {
+                                                "component_key": "settlement",
+                                                "amount_fen": 50_000,
+                                            }
+                                        ],
+                                    }
                                 ],
                             }
                         )
@@ -630,174 +703,140 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                 )
                 source = session.get(BusinessEvent, asset.acquisition_event_id)
                 supplier = session.get(Counterparty, asset.supplier_id)
-                session.add(
-                    OpenItem(
-                        org_id=asset.org_id,
-                        counterparty_id=supplier.id,
-                        source_event_id=source.id,
-                        item_type="payable",
-                        original_amount_fen=1,
-                        settled_amount_fen=0,
-                        status="open",
-                        due_date=asset.due_date,
-                    )
+                original_item = session.scalar(
+                    sa.select(OpenItem).where(OpenItem.source_event_id == source.id)
                 )
-                with pytest.raises(DBAPIError, match="FIXED_ASSET_ACQUISITION_SETTLEMENT"):
-                    session.commit()
+                with authority.attributed_call(session, tool_name="finance_negative_tamper"):
+                    session.add(
+                        OpenItem(
+                            org_id=asset.org_id,
+                            counterparty_id=supplier.id,
+                            source_event_id=source.id,
+                            source_component_id=original_item.source_component_id,
+                            component_key=original_item.component_key,
+                            account_id=original_item.account_id,
+                            item_type="payable",
+                            original_amount_fen=1,
+                            settled_amount_fen=0,
+                            status="open",
+                            due_date=asset.due_date,
+                            payable_category=original_item.payable_category,
+                        )
+                    )
+                    with pytest.raises(DBAPIError, match="uq_open_item_component_key"):
+                        session.commit()
 
             with Session(engine) as session:
-                asset = session.scalar(
-                    sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-reverse-edges")
+                direct_asset = session.scalar(
+                    sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-direct-ready")
                 )
-                pending = get_account_by_role(session, asset.org_id, "fixed_asset_pending")
-                pending.system_role = "tampered_fixed_asset_pending"
-                with pytest.raises(DBAPIError, match="FIXED_ASSET_ACQUISITION_VOUCHER"):
-                    session.commit()
+                with authority.attributed_call(session, tool_name="finance_negative_tamper"):
+                    direct_asset.cost_fen += 1
+                    with pytest.raises(
+                        DBAPIError, match="final fixed-asset facts are immutable"
+                    ):
+                        session.commit()
 
         finally:
+            authority_stack.close()
             engine.dispose()
 
 
 def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        monkeypatch.setenv("DATABASE_URL", url)
-        config = Config("alembic.ini")
-        command.upgrade(config, "head")
-        engine = sa.create_engine(url)
-        try:
-            with Session(engine) as session:
-                asset, _ = _acquire_payable(session, "skip")
-                activation = _activate(session, asset, "skip")
-                _add_duplicate_activation_attempt(session, asset=asset, key="duplicate-activation")
-                with pytest.raises(DBAPIError, match="FIXED_ASSET_ALREADY_ACTIVATED"):
-                    session.commit()
-
-            with Session(engine) as session:
-                asset = session.scalar(
-                    sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-skip")
-                )
-                activation = session.scalar(
-                    sa.select(FixedAssetActivation).where(FixedAssetActivation.asset_id == asset.id)
-                )
-                _add_depreciation_attempt(
-                    session,
-                    asset=asset,
-                    activation=activation,
-                    key="skip-march",
-                    period_start=date(2026, 3, 1),
-                    posting_date=date(2026, 3, 31),
-                    sequence_no=2,
-                    amount_fen=80_000,
-                    accumulated_after_fen=80_000,
-                )
-                with pytest.raises(DBAPIError, match="FIXED_ASSET_DEPRECIATION_OUT_OF_SEQUENCE"):
-                    session.commit()
-
-            with Session(engine) as session:
-                asset = session.scalar(
-                    sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-skip")
-                )
-                activation = session.scalar(
-                    sa.select(FixedAssetActivation).where(FixedAssetActivation.asset_id == asset.id)
-                )
-                _add_depreciation_attempt(
-                    session,
-                    asset=asset,
-                    activation=activation,
-                    key="over-depreciation",
-                    period_start=date(2026, 2, 1),
-                    posting_date=date(2026, 2, 28),
-                    sequence_no=1,
-                    amount_fen=80_001,
-                    accumulated_after_fen=80_001,
-                )
-                with pytest.raises(DBAPIError, match="FIXED_ASSET_DEPRECIATION_AMOUNT_INVALID"):
-                    session.commit()
-
-            with Session(engine) as session:
-                asset = session.scalar(
-                    sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-skip")
-                )
-                activation = session.scalar(
-                    sa.select(FixedAssetActivation).where(FixedAssetActivation.asset_id == asset.id)
-                )
-                with pytest.raises(DBAPIError):
-                    _add_depreciation_attempt(
-                        session,
-                        asset=asset,
-                        activation=activation,
-                        key="wrong-posting-month",
-                        period_start=date(2026, 2, 1),
-                        posting_date=date(2026, 3, 1),
-                        sequence_no=1,
-                        amount_fen=80_000,
-                        accumulated_after_fen=80_000,
-                    )
-
-            with Session(engine) as session:
-                asset, _ = _acquire_payable(session, "duplicate-disposal")
-                activation = _activate(session, asset, "duplicate-disposal")
-                evidence = _evidence(session, asset.org_id, "first-disposal")
-                disposed = FixedAssetService(session).dispose_fixed_asset(
-                    DisposeFixedAssetRequest.model_validate(
+    del monkeypatch
+    with authenticated_business_database(
+        "fixed_asset_lifecycle", name="PG 固定资产生命周期"
+    ) as (engine, org_id, evidence_id, authority):
+        with Session(engine) as session:
+            asset, _ = _acquire_payable(session, org_id, evidence_id, authority, "skip")
+            _activate(session, asset, evidence_id, authority, "skip")
+            with authority.attributed_call(session, tool_name="finance_activate_fixed_asset"):
+                duplicate_activation = FixedAssetService(session).activate_fixed_asset(
+                    ActivateFixedAssetRequest.model_validate(
                         {
-                            "org_id": asset.org_id,
+                            "org_id": org_id,
                             "asset_id": asset.id,
-                            "idempotency_key": "first-disposal",
-                            "disposal_date": "2026-01-20",
-                            "posting_date": "2026-01-20",
-                            "disposal_kind": "retirement",
-                            "settlement_method": "none",
-                            "clearance_cost_fen": 0,
-                            "evidence_references": [evidence.id],
+                            "idempotency_key": "duplicate-activation",
+                            "activation_date": "2026-01-11",
+                            "posting_date": "2026-01-11",
+                            "useful_life_months": 13,
+                            "residual_value_fen": 10_000,
+                            "benefit_area": "management",
+                            "evidence_references": [evidence_id],
                         }
                     )
                 )
-                assert disposed.status == "posted", disposed.errors
-                session.commit()
+            assert duplicate_activation.errors == ["FIXED_ASSET_ALREADY_ACTIVATED"]
 
+            service = FixedAssetService(session)
+            wrong_month = service.preview_fixed_asset_depreciation(
+                PreviewFixedAssetDepreciationRequest(
+                    org_id=org_id,
+                    asset_id=asset.id,
+                    depreciation_period="2026-02",
+                    posting_date=date(2026, 3, 1),
+                )
+            )
+            assert wrong_month.errors == ["FIXED_ASSET_DEPRECIATION_PERIOD_INVALID"]
+            skipped = service.preview_fixed_asset_depreciation(
+                PreviewFixedAssetDepreciationRequest(
+                    org_id=org_id,
+                    asset_id=asset.id,
+                    depreciation_period="2026-03",
+                    posting_date=date(2026, 3, 31),
+                )
+            )
+            assert skipped.errors == ["FIXED_ASSET_DEPRECIATION_OUT_OF_SEQUENCE"]
+
+            disposal_asset, _ = _acquire_payable(
+                session, org_id, evidence_id, authority, "duplicate-disposal"
+            )
+            _activate(session, disposal_asset, evidence_id, authority, "duplicate-disposal")
+            disposal_request = DisposeFixedAssetRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "asset_id": disposal_asset.id,
+                    "idempotency_key": "first-disposal",
+                    "disposal_date": "2026-01-20",
+                    "posting_date": "2026-01-20",
+                    "disposal_kind": "retirement",
+                    "settlement_method": "none",
+                    "clearance_cost_fen": 0,
+                    "evidence_references": [evidence_id],
+                }
+            )
+            with authority.attributed_call(session, tool_name="finance_dispose_fixed_asset"):
+                disposed = service.dispose_fixed_asset(disposal_request)
+            assert disposed.status == "posted", disposed.errors
+            session.commit()
+            with authority.attributed_call(session, tool_name="finance_dispose_fixed_asset"):
+                duplicate_disposal = service.dispose_fixed_asset(
+                    disposal_request.model_copy(
+                        update={"idempotency_key": "duplicate-disposal-second"}
+                    )
+                )
+            assert duplicate_disposal.errors == ["FIXED_ASSET_ALREADY_DISPOSED"]
+
+            concurrent_asset, _ = _acquire_payable(
+                session, org_id, evidence_id, authority, "concurrent-disposal"
+            )
+            _activate(session, concurrent_asset, evidence_id, authority, "concurrent-disposal")
+            concurrent_asset_id = concurrent_asset.id
+
+        barrier = Barrier(2)
+
+        def dispose_concurrently(index: int) -> tuple[str, list[str]]:
             with Session(engine) as session:
-                asset = session.scalar(
-                    sa.select(FixedAsset).where(FixedAsset.asset_code == "FA-duplicate-disposal")
-                )
-                activation = session.scalar(
-                    sa.select(FixedAssetActivation).where(FixedAssetActivation.asset_id == asset.id)
-                )
-                _add_duplicate_disposal_attempt(
-                    session,
-                    asset=asset,
-                    activation=activation,
-                    key="duplicate-disposal-direct",
-                )
-                with pytest.raises(DBAPIError, match="FIXED_ASSET_ALREADY_DISPOSED"):
-                    session.commit()
-
-            with Session(engine) as session:
-                concurrent_asset, _ = _acquire_payable(session, "concurrent-disposal")
-                _activate(session, concurrent_asset, "concurrent-disposal")
-                concurrent_evidence = _evidence(
-                    session, concurrent_asset.org_id, "concurrent-disposal"
-                )
-                concurrent_evidence_id = concurrent_evidence.id
-                concurrent_asset_id = concurrent_asset.id
-                concurrent_org_id = concurrent_asset.org_id
-                session.commit()
-
-            barrier = Barrier(2)
-
-            def dispose_concurrently(index: int) -> tuple[str, list[str]]:
-                with Session(engine) as session:
-                    barrier.wait(timeout=5)
+                barrier.wait(timeout=5)
+                with authority.attributed_call(
+                    session, tool_name="finance_dispose_fixed_asset"
+                ):
                     result = FixedAssetService(session).dispose_fixed_asset(
                         DisposeFixedAssetRequest.model_validate(
                             {
-                                "org_id": concurrent_org_id,
+                                "org_id": org_id,
                                 "asset_id": concurrent_asset_id,
                                 "idempotency_key": f"concurrent-disposal-{index}",
                                 "disposal_date": "2026-01-20",
@@ -805,39 +844,39 @@ def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
                                 "disposal_kind": "retirement",
                                 "settlement_method": "none",
                                 "clearance_cost_fen": 0,
-                                "evidence_references": [concurrent_evidence_id],
+                                "evidence_references": [evidence_id],
                             }
                         )
                     )
-                    session.commit()
-                    return str(result.status), result.errors
+                session.commit()
+                return str(result.status), result.errors
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                concurrent_results = list(executor.map(dispose_concurrently, (1, 2)))
-            assert [status for status, _ in concurrent_results].count("posted") == 1
-            assert [errors for _, errors in concurrent_results].count(
-                ["FIXED_ASSET_ALREADY_DISPOSED"]
-            ) == 1
-            with Session(engine) as session:
-                active_disposals = session.scalar(
-                    sa.select(sa.func.count())
-                    .select_from(FixedAssetDisposal)
-                    .join(BusinessEvent, BusinessEvent.id == FixedAssetDisposal.event_id)
-                    .where(
-                        FixedAssetDisposal.asset_id == concurrent_asset_id,
-                        BusinessEvent.status == "posted",
-                    )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            concurrent_results = list(executor.map(dispose_concurrently, (1, 2)))
+        assert [status for status, _ in concurrent_results].count("posted") == 1
+        assert [errors for _, errors in concurrent_results].count(
+            ["FIXED_ASSET_ALREADY_DISPOSED"]
+        ) == 1
+        with Session(engine) as session:
+            assert session.scalar(
+                sa.select(sa.func.count())
+                .select_from(FixedAssetDisposal)
+                .join(BusinessEvent, BusinessEvent.id == FixedAssetDisposal.event_id)
+                .where(
+                    FixedAssetDisposal.asset_id == concurrent_asset_id,
+                    BusinessEvent.status == "posted",
                 )
-                assert active_disposals == 1
+            ) == 1
 
-            with Session(engine) as session:
-                tax_asset, _ = _acquire_payable(session, "tax-rule")
-                _activate(session, tax_asset, "tax-rule")
-                tax_evidence = _evidence(session, tax_asset.org_id, "tax-disposal")
+            tax_asset, _ = _acquire_payable(
+                session, org_id, evidence_id, authority, "tax-rule"
+            )
+            _activate(session, tax_asset, evidence_id, authority, "tax-rule")
+            with authority.attributed_call(session, tool_name="finance_dispose_fixed_asset"):
                 before_effective = FixedAssetService(session).dispose_fixed_asset(
                     DisposeFixedAssetRequest.model_validate(
                         {
-                            "org_id": tax_asset.org_id,
+                            "org_id": org_id,
                             "asset_id": tax_asset.id,
                             "idempotency_key": "tax-before-effective",
                             "disposal_date": "2026-01-20",
@@ -850,15 +889,16 @@ def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
                             "customer": {"kind": "customer", "name": "税则客户"},
                             "tax_obligation_date": "2025-12-31",
                             "clearance_cost_fen": 0,
-                            "evidence_references": [tax_evidence.id],
+                            "evidence_references": [evidence_id],
                         }
                     )
                 )
-                assert before_effective.errors == ["MODULE_NOT_ENABLED:used_fixed_asset_vat_rule"]
+            assert before_effective.errors == ["MODULE_NOT_ENABLED:used_fixed_asset_vat_rule"]
+            with authority.attributed_call(session, tool_name="finance_dispose_fixed_asset"):
                 sold = FixedAssetService(session).dispose_fixed_asset(
                     DisposeFixedAssetRequest.model_validate(
                         {
-                            "org_id": tax_asset.org_id,
+                            "org_id": org_id,
                             "asset_id": tax_asset.id,
                             "idempotency_key": "tax-on-effective-date",
                             "disposal_date": "2026-01-20",
@@ -871,23 +911,20 @@ def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
                             "customer": {"kind": "customer", "name": "税则客户"},
                             "tax_obligation_date": "2026-01-01",
                             "clearance_cost_fen": 0,
-                            "evidence_references": [tax_evidence.id],
+                            "evidence_references": [evidence_id],
                         }
                     )
                 )
-                assert sold.status == "posted", sold.errors
-                session.commit()
-                disposal = session.scalar(
-                    sa.select(FixedAssetDisposal).where(
-                        FixedAssetDisposal.event_id == sold.event_id
-                    )
-                )
-                tax_rule = session.get(TaxRule, disposal.tax_rule_id)
+            assert sold.status == "posted", sold.errors
+            session.commit()
+            disposal = session.scalar(
+                sa.select(FixedAssetDisposal).where(FixedAssetDisposal.event_id == sold.event_id)
+            )
+            tax_rule = session.get(TaxRule, disposal.tax_rule_id)
+            with authority.attributed_call(session, tool_name="finance_negative_tamper"):
                 tax_rule.parameters = {
                     **tax_rule.parameters,
                     "effective_levy_rate_percent": "1",
                 }
                 with pytest.raises(DBAPIError, match="FIXED_ASSET_DISPOSAL_TAX_RULE_INVALID"):
                     session.commit()
-        finally:
-            engine.dispose()

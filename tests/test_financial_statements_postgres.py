@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 
 import pytest
+from _postgres_helpers import catalog_owner_authority, isolated_postgres_url
 from alembic.config import Config
-from sqlalchemy import func, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.accounting_period_schemas import (
     AccountingPeriodReviewFacts,
@@ -19,7 +19,14 @@ from ai_accounting.accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
+from ai_accounting.bank_statement_schemas import (
+    ConfirmBankReconciliationScopeRequest,
+    PreviewBankReconciliationScopeRequest,
+)
+from ai_accounting.bank_statement_service import BankStatementService
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
+from ai_accounting.component_service import ComponentService
 from ai_accounting.financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
     ConfirmFinancialStatementClassificationRequest,
@@ -28,12 +35,10 @@ from ai_accounting.financial_statement_schemas import (
     PreviewQuarterlyFinancialStatementsRequest,
 )
 from ai_accounting.financial_statements import FinancialStatementService
-from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
     AccountingPeriod,
     AccountingPeriodCloseApproval,
     AuditLog,
-    BusinessEvent,
     EnterpriseIncomeTaxQuarterConfirmation,
     Evidence,
     FinancialStatementClassification,
@@ -46,33 +51,48 @@ pytestmark = [
     pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
 ]
 
-_POSTGRES_IMAGE = (
-    "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"
-)
+
+@contextmanager
+def _isolated_postgres_url():
+    with isolated_postgres_url("financial_statements") as url:
+        yield url
+
+
+@contextmanager
+def _isolated_business_engine():
+    with _isolated_postgres_url() as url:
+        config = Config("alembic.ini")
+        config.attributes["database_url_override"] = url
+        command.upgrade(config, "head")
+        engine = create_engine(url)
+        try:
+            yield engine
+        finally:
+            engine.dispose()
 
 
 def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_only(
     monkeypatch: pytest.MonkeyPatch,
-    authenticated_zero_bank_scope: Any,
 ) -> None:
-    with PostgresContainer(_POSTGRES_IMAGE, driver="psycopg") as postgres:
-        url = postgres.get_connection_url(driver="psycopg")
+    with _isolated_postgres_url() as url:
         monkeypatch.setenv("FINANCE_ENVIRONMENT", "development")
         monkeypatch.setenv("DATABASE_URL", url)
         migration_config = Config("alembic.ini")
         migration_config.attributes["database_url_override"] = url
         command.upgrade(migration_config, "head")
 
-        from sqlalchemy import create_engine
-
         engine = create_engine(url)
         try:
-            with Session(engine) as session:
+            with Session(engine) as session, ExitStack() as authority_stack:
                 organization = seed_organization(
                     session,
                     taxpayer_identification_number="91330106MA1234567T",
                     name="季度财务报表 PostgreSQL 企业",
                     accounting_period_control_enabled=False,
+                )
+                session.commit()
+                authority = authority_stack.enter_context(
+                    catalog_owner_authority(session, organization)
                 )
                 evidence = Evidence(
                     org_id=organization.id,
@@ -84,38 +104,48 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                     storage_path="tests/financial-statement-postgres.txt",
                     metadata_json={},
                 )
-                session.add(evidence)
-                session.flush()
-                event = BusinessEvent(
-                    org_id=organization.id,
-                    idempotency_key="financial-statement-postgres-expense",
-                    request_payload_hash=hashlib.sha256(b"postgres-expense").hexdigest(),
-                    event_type="expense_payable",
-                    status="draft",
-                    description="PostgreSQL 报表分类测试费用",
-                    facts={},
-                    business_date=date(2026, 1, 5),
-                    posting_date=date(2026, 1, 5),
-                    rule_trace=[],
-                    rule_version="test",
-                )
-                session.add(event)
-                session.flush()
-                voucher = create_voucher(
-                    session,
-                    event=event,
-                    posting_date=date(2026, 1, 5),
-                    description=event.description,
-                    entries=[
-                        Entry(account_role="general_expense", debit_fen=1_000),
-                        Entry(account_role="accounts_payable", credit_fen=1_000),
-                    ],
-                )
-                event.status = "posted"
-                session.flush()
+                with authority.attributed_call(
+                    session, tool_name="finance_financial_statement_test_evidence"
+                ):
+                    session.add(evidence)
+                    session.flush()
+                with authority.attributed_call(session, tool_name="finance_record_event"):
+                    recorded = ComponentService(session).record(
+                        RecordEventRequest(
+                            org_id=organization.id,
+                            idempotency_key="financial-statement-postgres-expense",
+                            posting_date=date(2026, 1, 5),
+                            description="PostgreSQL 报表分类测试费用",
+                            evidence_references=[evidence.id],
+                            components=[
+                                {
+                                    "key": "expense",
+                                    "kind": "expense",
+                                    "business_date": "2026-01-05",
+                                    "payment_date": "2026-01-05",
+                                    "amount_fen": 1_000,
+                                    "expense_class": "general_expense",
+                                    "payment_basis": "immediate",
+                                }
+                            ],
+                            funds=[
+                                {
+                                    "key": "cash",
+                                    "account_code": "1001",
+                                    "direction": "payment",
+                                    "payment_date": "2026-01-05",
+                                    "amount_fen": 1_000,
+                                    "allocations": [
+                                        {"component_key": "expense", "amount_fen": 1_000}
+                                    ],
+                                }
+                            ],
+                        )
+                    )
+                assert recorded.status == "posted", recorded
                 expense_line = session.scalar(
                     select(VoucherLine).where(
-                        VoucherLine.voucher_id == voucher.id,
+                        VoucherLine.voucher_id == recorded.voucher_id,
                         VoucherLine.debit_fen == 1_000,
                     )
                 )
@@ -129,7 +159,10 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                     confirmation_note="明确分类为其他管理费用",
                     evidence_references=[evidence.id],
                 )
-                classification = service.confirm_classification(classification_request)
+                with authority.attributed_call(
+                    session, tool_name="finance_confirm_financial_statement_classification"
+                ):
+                    classification = service.confirm_classification(classification_request)
                 assert classification.status is FinancialStatementResultStatus.POSTED
                 income_tax_request = ConfirmEnterpriseIncomeTaxQuarterRequest(
                     org_id=organization.id,
@@ -141,7 +174,10 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                     confirmation_note="明确确认第一季度企业所得税费用为零",
                     evidence_references=[evidence.id],
                 )
-                income_tax = service.confirm_enterprise_income_tax(income_tax_request)
+                with authority.attributed_call(
+                    session, tool_name="finance_confirm_enterprise_income_tax_quarter"
+                ):
+                    income_tax = service.confirm_enterprise_income_tax(income_tax_request)
                 assert income_tax.status is FinancialStatementResultStatus.POSTED
                 session.commit()
 
@@ -206,11 +242,19 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                 }
                 assert counts_after == counts_before
 
-            with Session(engine) as session:
+            with (
+                _isolated_business_engine() as closing_engine,
+                Session(closing_engine) as session,
+                ExitStack() as authority_stack,
+            ):
                 closing_org = seed_organization(
                     session,
                     taxpayer_identification_number="91330106MA1234567T",
                     name="季度所得税关账 PostgreSQL 企业",
+                )
+                session.commit()
+                authority = authority_stack.enter_context(
+                    catalog_owner_authority(session, closing_org)
                 )
                 close_evidence = Evidence(
                     org_id=closing_org.id,
@@ -222,14 +266,35 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                     storage_path="tests/quarter-close-postgres.txt",
                     metadata_json={},
                 )
-                session.add(close_evidence)
-                session.flush()
-                authority = authenticated_zero_bank_scope(
-                    session,
-                    closing_org,
-                    evidence_id=close_evidence.id,
-                    executor_name="quarterly-financial-statement-test",
+                with authority.attributed_call(
+                    session, tool_name="finance_financial_statement_close_evidence"
+                ):
+                    session.add(close_evidence)
+                    session.flush()
+                scope_request = PreviewBankReconciliationScopeRequest(
+                    org_id=closing_org.id,
+                    action_type="initial_confirmation",
+                    accounts=[],
+                    confirm_zero_accounts=True,
+                    explanation="PostgreSQL 财务报表测试确认无银行账户",
+                    evidence_references=[close_evidence.id],
                 )
+                with authority.attributed_call(
+                    session, tool_name="finance_confirm_bank_reconciliation_scope"
+                ):
+                    bank_service = BankStatementService(session)
+                    scope_preview = bank_service.preview_bank_reconciliation_scope(scope_request)
+                    assert scope_preview.calculation_hash is not None
+                    scope_result = bank_service.confirm_bank_reconciliation_scope(
+                        ConfirmBankReconciliationScopeRequest.model_validate(
+                            scope_request.model_dump()
+                            | {
+                                "calculation_hash": scope_preview.calculation_hash,
+                                "idempotency_key": "financial-statement-zero-bank-scope",
+                            }
+                        )
+                    )
+                assert scope_result.status == "posted", scope_result
                 session.commit()
                 closing_org_id = closing_org.id
                 close_evidence_id = close_evidence.id
@@ -299,6 +364,7 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                             owner_account_id=attribution.owner_account_id,
                             owner_session_id=attribution.owner_session_id,
                             owner_credential_version=attribution.owner_credential_version,
+                            catalog_instance_id=attribution.catalog_instance_id,
                             calculation_hash=close_preview.calculation_hash,
                             confirmation_method="local_password_reauthentication",
                             confirmed_at=now,

@@ -10,18 +10,19 @@ import uuid
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import date
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from .bank_matching import BankMatchingError
 from .fixed_assets import (
     LEGACY_FLOOR_DEPRECIATION_POLICY,
     ROUND_HALF_UP_CARD_DEPRECIATION_POLICY,
     ROUND_HALF_UP_GROUP_DEPRECIATION_POLICY,
     SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-    SMALL_SCALE_USED_FIXED_ASSET_VAT_RULE_VERSION,
     DepreciationGroupMember,
     FixedAssetCalculationError,
     calculate_acquisition_cost,
@@ -30,10 +31,18 @@ from .fixed_assets import (
     calculate_used_fixed_asset_vat,
     fixed_asset_calculation_hash,
 )
-from .ledger import AccountingPeriodError, Entry, build_business_event, create_voucher
+from .ledger import (
+    AccountingPeriodError,
+    CashFlowPlan,
+    ComponentPostingPlan,
+    Entry,
+    OpenItemPlan,
+    build_business_event,
+    commit_posting_plan,
+    funds_posting_plan,
+)
 from .models import (
     AuditLog,
-    BankTransactionMatch,
     BusinessEvent,
     Counterparty,
     Evidence,
@@ -56,13 +65,11 @@ from .schemas import (
     ConfirmFixedAssetDepreciationBatchRequest,
     ConfirmFixedAssetDepreciationRequest,
     DisposeFixedAssetRequest,
-    FinanceResult,
     FixedAssetInformationRequirement,
     FixedAssetResult,
     FixedAssetResultStatus,
     PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
-    ResultStatus,
     ReverseEventRequest,
 )
 from .service import FinanceService
@@ -73,6 +80,7 @@ FIXED_ASSET_EVENT_TYPES = {
     "fixed_asset_acquisition",
     "fixed_asset_activation",
     "fixed_asset_depreciation",
+    "fixed_asset_depreciation_batch",
     "fixed_asset_disposal",
 }
 
@@ -97,88 +105,8 @@ class FixedAssetService(FinanceService):
     def __init__(self, session: Session):
         super().__init__(session)
 
-    def reverse_event(self, request: ReverseEventRequest) -> FinanceResult:
-        """Preserve fixed-asset idempotency codes around the common reversal writer."""
-
-        original = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.id == request.event_id,
-            )
-        )
-        if original is None or original.event_type not in FIXED_ASSET_EVENT_TYPES:
-            return super().reverse_event(request)
-        request_payload_hash = self._request_payload_hash(request)
-        existing = self._fixed_asset_idempotent_event(request.org_id, request.idempotency_key)
-        if existing is not None:
-            if existing.request_payload_hash != request_payload_hash:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["FIXED_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"],
-                )
-            return self._result_for_existing(existing)
-        return super().reverse_event(request)
-
-    def _reverse_event_write(self, request: ReverseEventRequest) -> FinanceResult:
-        """Enter the asset lock domain and enforce strict downstream-first reversal."""
-
-        original = self.session.scalar(
-            select(BusinessEvent)
-            .where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.id == request.event_id,
-            )
-            .with_for_update()
-        )
-        if original is None or original.event_type not in FIXED_ASSET_EVENT_TYPES:
-            return super()._reverse_event_write(request)
-        if original.event_type == "fixed_asset_depreciation":
-            asset_ids = list(
-                self.session.scalars(
-                    select(FixedAssetDepreciation.asset_id)
-                    .where(
-                        FixedAssetDepreciation.org_id == request.org_id,
-                        FixedAssetDepreciation.event_id == original.id,
-                    )
-                    .order_by(FixedAssetDepreciation.asset_id)
-                )
-            )
-            if not asset_ids:
-                return FinanceResult(
-                    status=ResultStatus.REJECTED,
-                    errors=["FIXED_ASSET_NORMALIZED_FACT_NOT_FOUND"],
-                )
-            for asset_id in asset_ids:
-                asset = self._get_asset(request.org_id, asset_id, lock=True)
-                if asset is None:
-                    return FinanceResult(
-                        status=ResultStatus.REJECTED,
-                        errors=["FIXED_ASSET_NOT_FOUND"],
-                    )
-                if self.fixed_asset_reversal_dependency_error(original, asset) is not None:
-                    return FinanceResult(
-                        status=ResultStatus.REJECTED,
-                        errors=["FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"],
-                    )
-            return super()._reverse_event_write(request)
-        asset = self._asset_for_fixed_asset_event(original)
-        if asset is None:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["FIXED_ASSET_NORMALIZED_FACT_NOT_FOUND"],
-            )
-        asset = self._get_asset(request.org_id, asset.id, lock=True)
-        if asset is None:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["FIXED_ASSET_NOT_FOUND"],
-            )
-        if self.fixed_asset_reversal_dependency_error(original, asset) is not None:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"],
-            )
-        return super()._reverse_event_write(request)
+    def reverse_event(self, request: ReverseEventRequest):
+        return FinanceService.reverse_event(self, request)
 
     def acquire_fixed_asset(self, request: AcquireFixedAssetRequest) -> FixedAssetResult:
         return self._run_write(
@@ -543,6 +471,8 @@ class FixedAssetService(FinanceService):
                 status=FixedAssetResultStatus.REJECTED,
                 errors=[exc.code],
             )
+        except BankMatchingError as exc:
+            return FixedAssetResult(status=FixedAssetResultStatus.REJECTED, errors=[str(exc)])
         except AccountingPeriodError as exc:
             return FixedAssetResult(
                 status=FixedAssetResultStatus.REJECTED,
@@ -574,7 +504,27 @@ class FixedAssetService(FinanceService):
                 )
             raise
 
-    def _acquire_fixed_asset_write(self, request: AcquireFixedAssetRequest) -> FixedAssetResult:
+    @staticmethod
+    def _local_activation_projection(
+        *, asset: dict[str, Any], activation: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "asset": asset,
+            "activation": activation,
+        }
+
+    @staticmethod
+    def _local_activation_projection_hash(projection: dict[str, Any]) -> str:
+        return fixed_asset_calculation_hash(
+            command="finance_project_fixed_asset_activation",
+            request={},
+            calculation=projection,
+        )
+
+    def compile_acquisition(
+        self, request: AcquireFixedAssetRequest, *, key: str
+    ) -> ComponentPostingPlan:
+        """Compile asset recognition independently of its funding composition."""
         if request.expected_use_over_one_year is not True:
             self._reject("MODULE_NOT_ENABLED:fixed_asset_short_term_item")
         if request.claims_creditable_input_vat is not False:
@@ -616,12 +566,12 @@ class FixedAssetService(FinanceService):
                 )
                 for source in request.employee_cost_sources
             ]
-        if settlement_method == "bank":
-            self._validate_bank_account(
-                request.org_id, request.bank_account_code, request.payment_date
-            )
         if request.ready_for_use is not None:
             ready = request.ready_for_use
+            if ready.residual_value_fen >= cost.cost_fen:
+                self._reject("FIXED_ASSET_INVALID_RESIDUAL_VALUE")
+            if cost.cost_fen - ready.residual_value_fen < ready.useful_life_months:
+                self._reject("FIXED_ASSET_INVALID_DEPRECIATION_POLICY")
             self._validate_depreciation_group_activation(
                 org_id=request.org_id,
                 group_code=ready.depreciation_group_code,
@@ -630,193 +580,159 @@ class FixedAssetService(FinanceService):
                 useful_life_months=ready.useful_life_months,
                 benefit_area=ready.benefit_area.value,
             )
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_acquire_fixed_asset",
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-                "cost_components": {
+        self._validate_fixed_asset_evidence(request.org_id, request.evidence_references)
+        from .event_amendments import component_fact_identity
+
+        asset_id = component_fact_identity(self.session, "fixed_assets", key)
+        activation_id = (
+            component_fact_identity(self.session, "fixed_asset_activations", key)
+            if request.ready_for_use is not None
+            else None
+        )
+        activation_projection = None
+        activation_projection_hash = None
+        if request.ready_for_use is not None:
+            activation_projection = self._local_activation_projection(
+                asset={
+                    "asset_code": request.asset_code,
+                    "asset_name": request.asset_name,
+                    "category": request.category.value,
+                    "acquisition_date": request.purchase_date.isoformat(),
+                    "posting_date": request.posting_date.isoformat(),
                     "purchase_price_fen": cost.purchase_price_fen,
                     "noncreditable_tax_fen": cost.noncreditable_tax_fen,
                     "transport_and_handling_fen": cost.transport_and_handling_fen,
                     "installation_and_direct_cost_fen": cost.installation_and_direct_cost_fen,
                     "cost_fen": cost.cost_fen,
                 },
-                "bank_account_code": request.bank_account_code,
-                "depreciation_group_code": (
-                    request.ready_for_use.depreciation_group_code
-                    if request.ready_for_use is not None
-                    else None
-                ),
-                "depreciation_rounding_policy": (
-                    request.ready_for_use.depreciation_rounding_policy.value
-                    if request.ready_for_use is not None
-                    else None
-                ),
-            },
-            self._accounting_rule_trace(),
-        ]
-        self._validate_fixed_asset_evidence(request.org_id, request.evidence_references)
-        event = self._new_fixed_asset_event(
-            request,
-            command="finance_acquire_fixed_asset",
-            event_type="fixed_asset_acquisition",
-            business_date=request.purchase_date,
-            posting_date=request.posting_date,
-            payment_date=request.payment_date,
-            trace=trace,
-        )
-        self.session.add(event)
-        self.session.flush()
-        self._attach_evidence(event, request.evidence_references)
-        if settlement_method == "bank" and request.bank_transaction_references:
-            self._match_fixed_asset_bank_transactions(
-                event,
-                request.bank_transaction_references,
-                bank_account_code=request.bank_account_code,
-                expected_inflow_fen=0,
-                expected_outflow_fen=cost.cost_fen,
-                expected_date=request.payment_date,
+                activation={
+                    "in_service_date": request.ready_for_use.in_service_date.isoformat(),
+                    "posting_date": request.posting_date.isoformat(),
+                    "depreciation_method": request.ready_for_use.depreciation_method.value,
+                    "useful_life_months": request.ready_for_use.useful_life_months,
+                    "residual_value_fen": request.ready_for_use.residual_value_fen,
+                    "benefit_area": request.ready_for_use.benefit_area.value,
+                    "depreciation_group_code": request.ready_for_use.depreciation_group_code,
+                    "depreciation_rounding_policy": (
+                        request.ready_for_use.depreciation_rounding_policy.value
+                    ),
+                    "accounting_rule_version": SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                    "accounting_rule_source_url": ACCOUNTING_RULE_SOURCE_URL,
+                },
             )
-        elif request.bank_transaction_references:
-            self._reject("FIXED_ASSET_PAYABLE_FORBIDS_BANK_TRANSACTIONS")
-
-        asset = FixedAsset(
-            org_id=request.org_id,
-            asset_code=request.asset_code,
-            name=request.asset_name,
-            category=request.category.value,
-            expected_use_over_one_year=True,
-            acquisition_date=request.purchase_date,
-            posting_date=request.posting_date,
-            purchase_price_fen=cost.purchase_price_fen,
-            noncreditable_tax_fen=cost.noncreditable_tax_fen,
-            transport_and_handling_fen=cost.transport_and_handling_fen,
-            installation_and_direct_cost_fen=cost.installation_and_direct_cost_fen,
-            cost_fen=cost.cost_fen,
-            supplier_id=supplier.id,
-            reimbursing_employee_id=(
-                reimbursing_employee.id if reimbursing_employee is not None else None
-            ),
-            settlement_method=settlement_method,
-            payment_date=request.payment_date if settlement_method == "bank" else None,
-            due_date=(
-                request.due_date if settlement_method in {"payable", "employee_payable"} else None
-            ),
-            acquisition_event_id=event.id,
-            accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(asset)
-        self.session.flush()
-        activation = None
-        if request.ready_for_use is not None:
-            ready = request.ready_for_use
-            if ready.residual_value_fen >= cost.cost_fen:
-                self._reject("FIXED_ASSET_INVALID_RESIDUAL_VALUE")
-            if cost.cost_fen - ready.residual_value_fen < ready.useful_life_months:
-                self._reject("FIXED_ASSET_INVALID_DEPRECIATION_POLICY")
-            activation = FixedAssetActivation(
-                org_id=request.org_id,
-                asset_id=asset.id,
-                event_id=event.id,
-                in_service_date=ready.in_service_date,
-                posting_date=request.posting_date,
-                depreciation_method=ready.depreciation_method.value,
-                useful_life_months=ready.useful_life_months,
-                residual_value_fen=ready.residual_value_fen,
-                benefit_area=ready.benefit_area.value,
-                depreciation_group_code=ready.depreciation_group_code,
-                depreciation_rounding_policy=ready.depreciation_rounding_policy.value,
-                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            activation_projection_hash = self._local_activation_projection_hash(
+                activation_projection
             )
-            self.session.add(activation)
-            self.session.flush()
         entries = [
             Entry(
-                account_role=(
-                    "fixed_asset_cost" if activation is not None else "fixed_asset_pending"
-                ),
+                account_role="fixed_asset_cost" if activation_id else "fixed_asset_pending",
                 debit_fen=cost.cost_fen,
-            ),
+            )
         ]
-        if settlement_method == "allocated_employee_payables":
-            entries.extend(
-                Entry(
-                    account_role="employee_payable",
-                    credit_fen=source.amount_fen,
-                    counterparty_id=employee.id,
-                )
-                for source, employee in employee_cost_sources
-            )
-        else:
-            entries.append(
-                Entry(
-                    account_code=(
-                        request.bank_account_code if settlement_method == "bank" else None
-                    ),
-                    account_role=(
-                        None
-                        if settlement_method == "bank"
-                        else (
-                            "employee_payable"
-                            if settlement_method == "employee_payable"
-                            else "accounts_payable"
-                        )
-                    ),
-                    credit_fen=cost.cost_fen,
-                    counterparty_id=(
-                        reimbursing_employee.id
-                        if reimbursing_employee is not None
-                        else (supplier.id if settlement_method == "payable" else None)
-                    ),
-                )
-            )
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.posting_date,
-            description=request.description
-            or (
-                f"购置并启用固定资产 {request.asset_code}"
-                if activation is not None
-                else f"购置待启用固定资产 {request.asset_code}"
-            ),
-            entries=entries,
-        )
+        open_items = []
         if settlement_method in {"payable", "employee_payable"}:
-            payable_counterparty = (
-                reimbursing_employee if reimbursing_employee is not None else supplier
+            party = reimbursing_employee if reimbursing_employee is not None else supplier
+            role = "employee_payable" if reimbursing_employee is not None else "accounts_payable"
+            entries.append(
+                Entry(account_role=role, credit_fen=cost.cost_fen, counterparty_id=party.id)
             )
-            self.session.add(
-                OpenItem(
-                    org_id=request.org_id,
-                    counterparty_id=payable_counterparty.id,
-                    source_event_id=event.id,
+            open_items.append(
+                OpenItemPlan(
+                    counterparty_id=party.id,
                     item_type="payable",
                     original_amount_fen=cost.cost_fen,
                     due_date=request.due_date,
+                    account_role=role,
                 )
             )
         elif settlement_method == "allocated_employee_payables":
             for source, employee in employee_cost_sources:
-                open_item = OpenItem(
-                    org_id=request.org_id,
-                    counterparty_id=employee.id,
-                    source_event_id=event.id,
-                    item_type="payable",
-                    original_amount_fen=source.amount_fen,
-                    due_date=source.due_date,
+                entries.append(
+                    Entry(
+                        account_role="employee_payable",
+                        credit_fen=source.amount_fen,
+                        counterparty_id=employee.id,
+                    )
                 )
-                self.session.add(open_item)
-                self.session.flush()
-                self.session.add(
+                open_items.append(
+                    OpenItemPlan(
+                        key=source.source_key,
+                        counterparty_id=employee.id,
+                        item_type="payable",
+                        original_amount_fen=source.amount_fen,
+                        due_date=source.due_date,
+                        account_role="employee_payable",
+                    )
+                )
+
+        def persist(session, event, component):
+            asset = FixedAsset(
+                id=asset_id,
+                component_id=component.id,
+                org_id=request.org_id,
+                asset_code=request.asset_code,
+                name=request.asset_name,
+                category=request.category.value,
+                expected_use_over_one_year=True,
+                acquisition_date=request.purchase_date,
+                posting_date=request.posting_date,
+                purchase_price_fen=cost.purchase_price_fen,
+                noncreditable_tax_fen=cost.noncreditable_tax_fen,
+                transport_and_handling_fen=cost.transport_and_handling_fen,
+                installation_and_direct_cost_fen=cost.installation_and_direct_cost_fen,
+                cost_fen=cost.cost_fen,
+                supplier_id=supplier.id,
+                reimbursing_employee_id=(
+                    reimbursing_employee.id if reimbursing_employee is not None else None
+                ),
+                settlement_method=settlement_method,
+                payment_date=request.payment_date if settlement_method == "bank" else None,
+                due_date=(
+                    request.due_date
+                    if settlement_method in {"payable", "employee_payable"}
+                    else None
+                ),
+                acquisition_event_id=event.id,
+                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(asset)
+            session.flush()
+            activation = None
+            if request.ready_for_use is not None:
+                ready = request.ready_for_use
+                activation = FixedAssetActivation(
+                    id=activation_id,
+                    component_id=component.id,
+                    org_id=request.org_id,
+                    asset_id=asset.id,
+                    event_id=event.id,
+                    in_service_date=ready.in_service_date,
+                    posting_date=request.posting_date,
+                    depreciation_method=ready.depreciation_method.value,
+                    useful_life_months=ready.useful_life_months,
+                    residual_value_fen=ready.residual_value_fen,
+                    benefit_area=ready.benefit_area.value,
+                    depreciation_group_code=ready.depreciation_group_code,
+                    depreciation_rounding_policy=ready.depreciation_rounding_policy.value,
+                    accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                    accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+                )
+                session.add(activation)
+                session.flush()
+            for source, employee in employee_cost_sources:
+                item = session.scalar(
+                    select(OpenItem).where(
+                        OpenItem.source_component_id == component.id,
+                        OpenItem.component_key == source.source_key,
+                    )
+                )
+                session.add(
                     FixedAssetCostSource(
                         org_id=request.org_id,
-                        asset_id=asset.id,
+                        asset_id=asset_id,
                         event_id=event.id,
-                        open_item_id=open_item.id,
+                        open_item_id=item.id,
                         source_key=source.source_key,
                         employee_id=employee.id,
                         amount_fen=source.amount_fen,
@@ -824,27 +740,88 @@ class FixedAssetService(FinanceService):
                         description=source.description,
                     )
                 )
-        trace.append(self._entries_trace(entries))
-        trace.append({"stage": "normalized_fact_created", "asset_id": str(asset.id)})
-        if activation is not None:
-            trace.append(
-                {
-                    "stage": "normalized_fact_created",
-                    "activation_id": str(activation.id),
-                    "combined_with_acquisition": True,
-                }
-            )
-        event.facts = {**event.facts, "asset_id": str(asset.id)}
-        event.rule_trace = [dict(item) for item in trace]
-        result_data = {
-            "cost_fen": cost.cost_fen,
-            "state": "active" if activation is not None else "acquired",
-            "activation_id": str(activation.id) if activation is not None else None,
-        }
-        self._finalize_fixed_asset_event(event, voucher, asset.id, result_data)
-        return self._posted_result(asset.id, event, voucher, data=result_data)
 
-    def _activate_fixed_asset_write(self, request: ActivateFixedAssetRequest) -> FixedAssetResult:
+        return ComponentPostingPlan(
+            key=key,
+            kind="fixed_asset_acquisition",
+            facts=request.model_dump(mode="json"),
+            rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+            derived={
+                "asset_id": str(asset_id),
+                "cost_fen": cost.cost_fen,
+                "state": "active" if activation_id else "acquired",
+                "activation_id": str(activation_id) if activation_id else None,
+                "activation_projection": activation_projection,
+                "activation_projection_hash": activation_projection_hash,
+                "cash_outflow_fen": cost.cost_fen if settlement_method == "bank" else 0,
+                "cash_flow_category": "cash_flow_12",
+            },
+            entries=entries,
+            open_items=open_items,
+            effects=[persist],
+        )
+
+    def _acquire_fixed_asset_write(self, request: AcquireFixedAssetRequest) -> FixedAssetResult:
+        plan = self.compile_acquisition(request, key="domain")
+        event = self._new_fixed_asset_event(
+            request,
+            command="finance_acquire_fixed_asset",
+            event_type="fixed_asset_acquisition",
+            business_date=request.purchase_date,
+            posting_date=request.posting_date,
+            payment_date=request.payment_date,
+            trace=[self._accounting_rule_trace()],
+        )
+        event.facts = {**event.facts, **plan.derived, "_result_data": plan.derived}
+        self.session.add(event)
+        self.session.flush()
+        self._attach_evidence(event, request.evidence_references)
+        components = [plan]
+        if request.settlement_method.value == "bank":
+            self._validate_bank_account(
+                request.org_id, request.bank_account_code, request.payment_date
+            )
+            components.append(
+                funds_posting_plan(
+                    {
+                        "key": "payment",
+                        "account_code": request.bank_account_code,
+                        "bank_transaction_references": [
+                            r.model_dump(mode="json") for r in request.bank_transaction_references
+                        ],
+                        "direction": "payment",
+                        "payment_date": request.payment_date,
+                        "amount_fen": plan.derived["cash_outflow_fen"],
+                        "allocations": [
+                            {
+                                "component_key": plan.key,
+                                "amount_fen": plan.derived["cash_outflow_fen"],
+                            }
+                        ],
+                    }
+                )
+            )
+            plan.cash_flows.append(
+                CashFlowPlan(
+                    request.bank_account_code, "cash_flow_12", -plan.derived["cash_outflow_fen"]
+                )
+            )
+        elif request.bank_transaction_references:
+            self._reject("FIXED_ASSET_PAYABLE_FORBIDS_BANK_TRANSACTIONS")
+        voucher = commit_posting_plan(
+            self.session,
+            event=event,
+            components=components,
+            posting_date=request.posting_date,
+            description=request.description or f"购置固定资产 {request.asset_code}",
+        )
+        return self._posted_result(
+            uuid.UUID(plan.derived["asset_id"]), event, voucher, data=plan.derived
+        )
+
+    def compile_activation(
+        self, request: ActivateFixedAssetRequest, *, key: str
+    ) -> ComponentPostingPlan:
         asset = self._get_asset(request.org_id, request.asset_id, lock=True)
         if asset is None:
             self._reject("FIXED_ASSET_NOT_FOUND")
@@ -872,68 +849,125 @@ class FixedAssetService(FinanceService):
             benefit_area=request.benefit_area.value,
         )
 
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_activate_fixed_asset",
-                "asset_id": str(asset.id),
-                "cost_fen": asset.cost_fen,
-                "residual_value_fen": request.residual_value_fen,
-                "useful_life_months": request.useful_life_months,
-                "benefit_area": request.benefit_area.value,
-                "depreciation_group_code": request.depreciation_group_code,
-                "depreciation_rounding_policy": request.depreciation_rounding_policy.value,
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-                "dependency_event_ids": [str(asset.acquisition_event_id)],
-            },
-            self._accounting_rule_trace(),
-        ]
-        self._validate_fixed_asset_evidence(request.org_id, request.evidence_references)
-        event = self._new_fixed_asset_event(
-            request,
-            command="finance_activate_fixed_asset",
-            event_type="fixed_asset_activation",
-            business_date=request.activation_date,
-            posting_date=request.posting_date,
-            trace=trace,
-        )
-        self.session.add(event)
-        self.session.flush()
-        self._attach_evidence(event, request.evidence_references)
-        activation = FixedAssetActivation(
-            org_id=request.org_id,
-            asset_id=asset.id,
-            event_id=event.id,
-            in_service_date=request.activation_date,
-            posting_date=request.posting_date,
-            depreciation_method=request.depreciation_method.value,
-            useful_life_months=request.useful_life_months,
-            residual_value_fen=request.residual_value_fen,
-            benefit_area=request.benefit_area.value,
-            depreciation_group_code=request.depreciation_group_code,
-            depreciation_rounding_policy=request.depreciation_rounding_policy.value,
-            accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(activation)
-        self.session.flush()
         entries = [
             Entry(account_role="fixed_asset_cost", debit_fen=asset.cost_fen),
             Entry(account_role="fixed_asset_pending", credit_fen=asset.cost_fen),
         ]
-        voucher = create_voucher(
+        from .event_amendments import component_fact_identity
+
+        activation_id = component_fact_identity(self.session, "fixed_asset_activations", key)
+        activation_projection = self._local_activation_projection(
+            asset={
+                "asset_code": asset.asset_code,
+                "asset_name": asset.name,
+                "category": asset.category,
+                "acquisition_date": asset.acquisition_date.isoformat(),
+                "posting_date": asset.posting_date.isoformat(),
+                "purchase_price_fen": asset.purchase_price_fen,
+                "noncreditable_tax_fen": asset.noncreditable_tax_fen,
+                "transport_and_handling_fen": asset.transport_and_handling_fen,
+                "installation_and_direct_cost_fen": asset.installation_and_direct_cost_fen,
+                "cost_fen": asset.cost_fen,
+            },
+            activation={
+                "in_service_date": request.activation_date.isoformat(),
+                "posting_date": request.posting_date.isoformat(),
+                "depreciation_method": request.depreciation_method.value,
+                "useful_life_months": request.useful_life_months,
+                "residual_value_fen": request.residual_value_fen,
+                "benefit_area": request.benefit_area.value,
+                "depreciation_group_code": request.depreciation_group_code,
+                "depreciation_rounding_policy": request.depreciation_rounding_policy.value,
+                "accounting_rule_version": SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                "accounting_rule_source_url": ACCOUNTING_RULE_SOURCE_URL,
+            },
+        )
+        activation_projection_hash = self._local_activation_projection_hash(activation_projection)
+
+        def persist(session, event, component):
+            activation = FixedAssetActivation(
+                id=activation_id,
+                component_id=component.id,
+                org_id=request.org_id,
+                asset_id=asset.id,
+                event_id=event.id,
+                in_service_date=request.activation_date,
+                posting_date=request.posting_date,
+                depreciation_method=request.depreciation_method.value,
+                useful_life_months=request.useful_life_months,
+                residual_value_fen=request.residual_value_fen,
+                benefit_area=request.benefit_area.value,
+                depreciation_group_code=request.depreciation_group_code,
+                depreciation_rounding_policy=request.depreciation_rounding_policy.value,
+                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(activation)
+            session.flush()
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="fixed_asset_activation",
+            facts=request.model_dump(mode="json"),
+            derived={
+                "asset_id": str(asset.id),
+                "activation_id": str(activation_id),
+                "activation_projection": activation_projection,
+                "activation_projection_hash": activation_projection_hash,
+                "source_event_ids": [str(asset.acquisition_event_id)],
+            },
+            rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+            entries=entries,
+            effects=[persist],
+        )
+
+    def _activate_fixed_asset_write(self, request: ActivateFixedAssetRequest) -> FixedAssetResult:
+        plan = self.compile_activation(request, key="domain")
+        return self._post_noncash_component(
+            request,
+            plan,
+            "finance_activate_fixed_asset",
+            request.activation_date,
+            request.description or "启用固定资产",
+        )
+
+    def _post_noncash_component(
+        self, request, plan, command: str, business_date: date, description: str
+    ):
+        event = self._new_fixed_asset_event(
+            request,
+            command=command,
+            event_type=plan.kind,
+            business_date=business_date,
+            posting_date=request.posting_date,
+            trace=[self._accounting_rule_trace()],
+        )
+        event.facts = {
+            **event.facts,
+            "asset_id": plan.derived.get("asset_id"),
+            "_result_data": plan.derived,
+            "_result_calculation_hash": plan.derived.get("calculation_hash"),
+        }
+        self.session.add(event)
+        self.session.flush()
+        self._attach_evidence(event, getattr(request, "evidence_references", []))
+        voucher = commit_posting_plan(
             self.session,
             event=event,
+            components=[plan],
             posting_date=request.posting_date,
-            description=request.description or f"启用固定资产 {asset.asset_code}",
-            entries=entries,
+            description=description,
         )
-        trace.append(self._entries_trace(entries))
-        trace.append({"stage": "normalized_fact_created", "activation_id": str(activation.id)})
-        event.facts = {**event.facts, "asset_id": str(asset.id)}
-        event.rule_trace = [dict(item) for item in trace]
-        self._finalize_fixed_asset_event(event, voucher, asset.id, {})
-        return self._posted_result(asset.id, event, voucher)
+        return FixedAssetResult(
+            status=FixedAssetResultStatus.POSTED,
+            asset_id=uuid.UUID(plan.derived["asset_id"]) if plan.derived.get("asset_id") else None,
+            event_id=event.id,
+            voucher_id=voucher.id,
+            voucher_number=voucher.voucher_number,
+            calculation_hash=plan.derived.get("calculation_hash"),
+            trace=event.rule_trace,
+            data=plan.derived,
+        )
 
     def _validate_depreciation_group_activation(
         self,
@@ -983,11 +1017,94 @@ class FixedAssetService(FinanceService):
         ):
             self._reject("FIXED_ASSET_DEPRECIATION_GROUP_LOCKED")
 
+    def _local_activation_source(
+        self,
+        *,
+        component_key: str,
+        plan: ComponentPostingPlan,
+        org_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        if plan.kind not in {"fixed_asset_acquisition", "fixed_asset_activation"}:
+            self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID")
+        projection = plan.derived.get("activation_projection")
+        projection_hash = plan.derived.get("activation_projection_hash")
+        asset_id = plan.derived.get("asset_id")
+        activation_id = plan.derived.get("activation_id")
+        if (
+            not isinstance(projection, dict)
+            or not isinstance(projection_hash, str)
+            or not asset_id
+            or not activation_id
+            or self._local_activation_projection_hash(projection) != projection_hash
+        ):
+            self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID")
+        if plan.kind == "fixed_asset_acquisition" and plan.derived.get("state") != "active":
+            self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID")
+        asset_values = projection.get("asset")
+        activation_values = projection.get("activation")
+        if not isinstance(asset_values, dict) or not isinstance(activation_values, dict):
+            self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID")
+        try:
+            asset_uuid = uuid.UUID(str(asset_id))
+            activation_uuid = uuid.UUID(str(activation_id))
+            asset = SimpleNamespace(
+                id=asset_uuid,
+                org_id=org_id,
+                asset_code=asset_values["asset_code"],
+                name=asset_values["asset_name"],
+                category=asset_values["category"],
+                acquisition_date=date.fromisoformat(asset_values["acquisition_date"]),
+                posting_date=date.fromisoformat(asset_values["posting_date"]),
+                purchase_price_fen=asset_values["purchase_price_fen"],
+                noncreditable_tax_fen=asset_values["noncreditable_tax_fen"],
+                transport_and_handling_fen=asset_values["transport_and_handling_fen"],
+                installation_and_direct_cost_fen=asset_values["installation_and_direct_cost_fen"],
+                cost_fen=asset_values["cost_fen"],
+                acquisition_event_id=None,
+            )
+            activation = SimpleNamespace(
+                id=activation_uuid,
+                org_id=org_id,
+                asset_id=asset_uuid,
+                event_id=None,
+                in_service_date=date.fromisoformat(activation_values["in_service_date"]),
+                posting_date=date.fromisoformat(activation_values["posting_date"]),
+                depreciation_method=activation_values["depreciation_method"],
+                useful_life_months=activation_values["useful_life_months"],
+                residual_value_fen=activation_values["residual_value_fen"],
+                benefit_area=activation_values["benefit_area"],
+                depreciation_group_code=activation_values["depreciation_group_code"],
+                depreciation_rounding_policy=activation_values["depreciation_rounding_policy"],
+                accounting_rule_version=activation_values["accounting_rule_version"],
+                accounting_rule_source_url=activation_values["accounting_rule_source_url"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise _FixedAssetDecision(
+                FixedAssetResultStatus.REJECTED,
+                "FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID",
+            ) from exc
+        stable_source = {
+            "component_key": component_key,
+            "source_kind": plan.kind,
+            "activation_projection_hash": projection_hash,
+        }
+        return {
+            "asset": asset,
+            "activation": activation,
+            "stable_source": stable_source,
+            "proof": {
+                **stable_source,
+                "asset_id": str(asset_uuid),
+                "activation_id": str(activation_uuid),
+            },
+        }
+
     def _depreciation_group_members(
         self,
         *,
         asset: FixedAsset,
         activation: FixedAssetActivation,
+        projected_members: list[tuple[Any, Any]] | None = None,
     ) -> list[tuple[FixedAsset, FixedAssetActivation]]:
         policy = activation.depreciation_rounding_policy
         if policy == LEGACY_FLOOR_DEPRECIATION_POLICY:
@@ -1019,6 +1136,13 @@ class FixedAssetService(FinanceService):
                 .order_by(FixedAsset.asset_code, FixedAsset.id)
             )
         )
+        rows.extend(projected_members or [])
+        unique_rows = {}
+        for member_asset, member_activation in rows:
+            if member_asset.id in unique_rows:
+                self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_DUPLICATE")
+            unique_rows[member_asset.id] = (member_asset, member_activation)
+        rows = sorted(unique_rows.values(), key=lambda item: (item[0].asset_code, item[0].id))
         if not rows or all(row_asset.id != asset.id for row_asset, _ in rows):
             self._reject("FIXED_ASSET_DEPRECIATION_GROUP_INVALID")
         if any(
@@ -1037,15 +1161,21 @@ class FixedAssetService(FinanceService):
         request: PreviewFixedAssetDepreciationRequest | ConfirmFixedAssetDepreciationRequest,
         *,
         lock: bool,
+        local_activation_source: dict[str, Any] | None = None,
+        projected_group_members: list[tuple[Any, Any]] | None = None,
     ) -> dict[str, Any]:
-        asset = self._get_asset(request.org_id, request.asset_id, lock=lock)
-        if asset is None:
-            self._reject("FIXED_ASSET_NOT_FOUND")
+        if local_activation_source is None:
+            asset = self._get_asset(request.org_id, request.asset_id, lock=lock)
+            if asset is None:
+                self._reject("FIXED_ASSET_NOT_FOUND")
+            activation = self._active_activation(asset.id)
+            if activation is None:
+                self._reject("FIXED_ASSET_NOT_ACTIVATABLE")
+        else:
+            asset = local_activation_source["asset"]
+            activation = local_activation_source["activation"]
         if self._active_disposal(asset.id) is not None:
             self._reject("FIXED_ASSET_ALREADY_DISPOSED")
-        activation = self._active_activation(asset.id)
-        if activation is None:
-            self._reject("FIXED_ASSET_NOT_ACTIVATABLE")
         period_start = self._parse_period(request.depreciation_period)
         if request.posting_date.replace(day=1) != period_start:
             self._reject("FIXED_ASSET_DEPRECIATION_PERIOD_INVALID")
@@ -1064,6 +1194,7 @@ class FixedAssetService(FinanceService):
         group_members = self._depreciation_group_members(
             asset=asset,
             activation=activation,
+            projected_members=projected_group_members,
         )
         group_data: dict[str, Any]
         if activation.depreciation_rounding_policy == LEGACY_FLOOR_DEPRECIATION_POLICY:
@@ -1106,6 +1237,11 @@ class FixedAssetService(FinanceService):
                 "member_remainder_rank": grouped.member_remainder_rank,
                 "member_receives_rounding_fen": grouped.member_receives_rounding_fen,
             }
+        stable_local_sources = (
+            [local_activation_source["stable_source"]]
+            if local_activation_source is not None
+            else []
+        )
         calculation_data = {
             **asdict(calculation),
             "amount_fen": calculation.depreciation_fen,
@@ -1121,7 +1257,19 @@ class FixedAssetService(FinanceService):
             "accounting_rule_version": activation.accounting_rule_version,
             "accounting_rule_source_url": activation.accounting_rule_source_url,
         }
-        hash_request = self._depreciation_hash_request(request)
+        if local_activation_source is not None:
+            calculation_data.update(
+                {
+                    "asset_id": None,
+                    "activation_id": None,
+                    "activation_event_id": None,
+                    "local_activation_sources": stable_local_sources,
+                }
+            )
+        hash_request = self._depreciation_hash_request(
+            request,
+            local_activation_sources=stable_local_sources,
+        )
         calculation_hash = fixed_asset_calculation_hash(
             command="finance_preview_fixed_asset_depreciation",
             request=hash_request,
@@ -1155,13 +1303,38 @@ class FixedAssetService(FinanceService):
             "calculation_hash": calculation_hash,
             "trace": trace,
             "data": calculation_data,
+            "local_activation_source": local_activation_source,
         }
 
-    def _confirm_fixed_asset_depreciation_write(
-        self, request: ConfirmFixedAssetDepreciationRequest
-    ) -> FixedAssetResult:
-        snapshot = self._depreciation_snapshot(request, lock=True)
-        if request.calculation_hash != snapshot["calculation_hash"]:
+    def compile_depreciation(
+        self,
+        request: ConfirmFixedAssetDepreciationRequest,
+        *,
+        key: str,
+        activation_component_key: str | None = None,
+        activation_plan: ComponentPostingPlan | None = None,
+        require_confirmation: bool = True,
+    ) -> ComponentPostingPlan:
+        local_source = None
+        if activation_component_key is not None:
+            if activation_plan is None:
+                self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID")
+            local_source = self._local_activation_source(
+                component_key=activation_component_key,
+                plan=activation_plan,
+                org_id=request.org_id,
+            )
+        snapshot = self._depreciation_snapshot(
+            request,
+            lock=True,
+            local_activation_source=local_source,
+            projected_group_members=(
+                [(local_source["asset"], local_source["activation"])]
+                if local_source is not None
+                else None
+            ),
+        )
+        if require_confirmation and request.calculation_hash != snapshot["calculation_hash"]:
             self._reject("FIXED_ASSET_CALCULATION_STALE")
         asset: FixedAsset = snapshot["asset"]
         activation: FixedAssetActivation = snapshot["activation"]
@@ -1171,47 +1344,6 @@ class FixedAssetService(FinanceService):
             **trace[0],
             "command": "finance_confirm_fixed_asset_depreciation",
         }
-        event = self._new_fixed_asset_event(
-            request,
-            command="finance_confirm_fixed_asset_depreciation",
-            event_type="fixed_asset_depreciation",
-            business_date=snapshot["period_start"],
-            posting_date=request.posting_date,
-            trace=trace,
-        )
-        event.facts = {
-            **event.facts,
-            "asset_id": str(asset.id),
-            "activation_id": str(activation.id),
-            "calculation": snapshot["data"],
-        }
-        self.session.add(event)
-        self.session.flush()
-        inherited_evidence = self.session.scalars(
-            select(event_evidence.c.evidence_id)
-            .where(
-                event_evidence.c.org_id == request.org_id,
-                event_evidence.c.event_id == activation.event_id,
-            )
-            .order_by(event_evidence.c.evidence_id)
-        ).all()
-        self._attach_evidence(event, inherited_evidence, relation_kind="inherited")
-        depreciation = FixedAssetDepreciation(
-            org_id=request.org_id,
-            asset_id=asset.id,
-            activation_id=activation.id,
-            event_id=event.id,
-            period_start=snapshot["period_start"],
-            posting_date=request.posting_date,
-            sequence_no=len(snapshot["depreciations"]) + 1,
-            amount_fen=calculation.depreciation_fen,
-            accumulated_after_fen=calculation.closing_accumulated_depreciation_fen,
-            calculation_hash=snapshot["calculation_hash"],
-            accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(depreciation)
-        self.session.flush()
         expense_role = {
             "management": "management_depreciation_expense",
             "sales": "sales_depreciation_expense",
@@ -1224,26 +1356,63 @@ class FixedAssetService(FinanceService):
                 credit_fen=calculation.depreciation_fen,
             ),
         ]
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.posting_date,
-            description=f"计提固定资产折旧 {asset.asset_code} {request.depreciation_period}",
+
+        def persist(session, event, component):
+            if local_source is None:
+                inherited = session.scalars(
+                    select(event_evidence.c.evidence_id).where(
+                        event_evidence.c.org_id == request.org_id,
+                        event_evidence.c.event_id == activation.event_id,
+                    )
+                ).all()
+                self._attach_evidence(event, inherited, relation_kind="inherited")
+            depreciation = FixedAssetDepreciation(
+                component_id=component.id,
+                org_id=request.org_id,
+                asset_id=asset.id,
+                activation_id=activation.id,
+                event_id=event.id,
+                period_start=snapshot["period_start"],
+                posting_date=request.posting_date,
+                sequence_no=len(snapshot["depreciations"]) + 1,
+                amount_fen=calculation.depreciation_fen,
+                accumulated_after_fen=calculation.closing_accumulated_depreciation_fen,
+                calculation_hash=snapshot["calculation_hash"],
+                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(depreciation)
+            session.flush()
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="fixed_asset_depreciation",
+            facts=request.model_dump(mode="json"),
+            derived={
+                **snapshot["data"],
+                "asset_id": str(asset.id),
+                "activation_id": str(activation.id),
+                "calculation_hash": snapshot["calculation_hash"],
+                "source_event_ids": ([str(activation.event_id)] if local_source is None else []),
+                "local_activation_proofs": (
+                    [local_source["proof"]] if local_source is not None else []
+                ),
+            },
+            rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
             entries=entries,
+            effects=[persist],
         )
-        trace.append(self._entries_trace(entries))
-        trace.append({"stage": "normalized_fact_created", "depreciation_id": str(depreciation.id)})
-        event.rule_trace = [dict(item) for item in trace]
-        result_data = {
-            **snapshot["data"],
-            "calculation_hash": snapshot["calculation_hash"],
-        }
-        self._finalize_fixed_asset_event(event, voucher, asset.id, result_data)
-        return self._posted_result(
-            asset.id,
-            event,
-            voucher,
-            data=result_data,
+
+    def _confirm_fixed_asset_depreciation_write(
+        self, request: ConfirmFixedAssetDepreciationRequest
+    ) -> FixedAssetResult:
+        plan = self.compile_depreciation(request, key="domain")
+        return self._post_noncash_component(
+            request,
+            plan,
+            "finance_confirm_fixed_asset_depreciation",
+            date.fromisoformat(request.depreciation_period + "-01"),
+            "计提固定资产折旧",
         )
 
     def _depreciation_batch_snapshot(
@@ -1253,6 +1422,7 @@ class FixedAssetService(FinanceService):
         ),
         *,
         lock: bool,
+        local_activation_sources: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if request.depreciation_period is None or request.posting_date is None:
             self._reject("FIXED_ASSET_DEPRECIATION_BATCH_FACTS_REQUIRED")
@@ -1275,6 +1445,16 @@ class FixedAssetService(FinanceService):
         if lock:
             asset_query = asset_query.with_for_update()
         assets = list(self.session.scalars(asset_query))
+        local_activation_sources = sorted(
+            local_activation_sources or [],
+            key=lambda value: value["stable_source"]["component_key"],
+        )
+        projected_members = [
+            (source["asset"], source["activation"]) for source in local_activation_sources
+        ]
+        projected_asset_ids = [source["asset"].id for source in local_activation_sources]
+        if len(projected_asset_ids) != len(set(projected_asset_ids)):
+            self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_DUPLICATE")
         snapshots: list[dict[str, Any]] = []
         for asset in assets:
             activation = self._active_activation(asset.id)
@@ -1299,10 +1479,35 @@ class FixedAssetService(FinanceService):
                         posting_date=request.posting_date,
                     ),
                     lock=lock,
+                    projected_group_members=projected_members,
+                )
+            )
+        for local_source in local_activation_sources:
+            snapshots.append(
+                self._depreciation_snapshot(
+                    PreviewFixedAssetDepreciationRequest(
+                        org_id=request.org_id,
+                        asset_id=None,
+                        depreciation_period=request.depreciation_period,
+                        posting_date=request.posting_date,
+                    ),
+                    lock=lock,
+                    local_activation_source=local_source,
+                    projected_group_members=projected_members,
                 )
             )
         if not snapshots:
             self._reject("FIXED_ASSET_DEPRECIATION_BATCH_EMPTY")
+        snapshots.sort(
+            key=lambda value: (
+                value["asset"].asset_code,
+                (
+                    value["local_activation_source"]["stable_source"]["component_key"]
+                    if value["local_activation_source"] is not None
+                    else str(value["asset"].id)
+                ),
+            )
+        )
 
         expense_totals = {
             "management": 0,
@@ -1315,32 +1520,37 @@ class FixedAssetService(FinanceService):
             activation = snapshot["activation"]
             calculation = snapshot["calculation"]
             expense_totals[activation.benefit_area] += calculation.depreciation_fen
-            items.append(
-                {
-                    "asset_id": str(asset.id),
-                    "asset_code": asset.asset_code,
-                    "asset_name": asset.name,
-                    "category": asset.category,
-                    "cost_fen": asset.cost_fen,
-                    "residual_value_fen": activation.residual_value_fen,
-                    "useful_life_months": activation.useful_life_months,
-                    "benefit_area": activation.benefit_area,
-                    "depreciation_rounding_policy": (activation.depreciation_rounding_policy),
-                    "sequence_no": snapshot["data"]["sequence_no"],
-                    "opening_accumulated_depreciation_fen": (
-                        calculation.opening_accumulated_depreciation_fen
-                    ),
-                    "current_depreciation_fen": calculation.depreciation_fen,
-                    "accumulated_depreciation_after_fen": (
-                        calculation.closing_accumulated_depreciation_fen
-                    ),
-                    "book_value_after_fen": (
-                        asset.cost_fen - calculation.closing_accumulated_depreciation_fen
-                    ),
-                    "is_final_month": calculation.is_final_month,
-                    "asset_calculation_hash": snapshot["calculation_hash"],
-                }
-            )
+            item = {
+                "asset_id": str(asset.id),
+                "asset_code": asset.asset_code,
+                "asset_name": asset.name,
+                "category": asset.category,
+                "cost_fen": asset.cost_fen,
+                "residual_value_fen": activation.residual_value_fen,
+                "useful_life_months": activation.useful_life_months,
+                "benefit_area": activation.benefit_area,
+                "depreciation_rounding_policy": (activation.depreciation_rounding_policy),
+                "sequence_no": snapshot["data"]["sequence_no"],
+                "opening_accumulated_depreciation_fen": (
+                    calculation.opening_accumulated_depreciation_fen
+                ),
+                "current_depreciation_fen": calculation.depreciation_fen,
+                "accumulated_depreciation_after_fen": (
+                    calculation.closing_accumulated_depreciation_fen
+                ),
+                "book_value_after_fen": (
+                    asset.cost_fen - calculation.closing_accumulated_depreciation_fen
+                ),
+                "is_final_month": calculation.is_final_month,
+                "asset_calculation_hash": snapshot["calculation_hash"],
+            }
+            if snapshot["local_activation_source"] is not None:
+                item["asset_id"] = None
+                item["activation_id"] = None
+                item["local_activation_sources"] = [
+                    snapshot["local_activation_source"]["stable_source"]
+                ]
+            items.append(item)
         total_amount = sum(expense_totals.values())
         data = {
             "period": request.depreciation_period,
@@ -1353,9 +1563,15 @@ class FixedAssetService(FinanceService):
             "rounding_policy": "each canonical asset card rounds half-up",
             "voucher_policy": "one monthly summary voucher",
         }
+        stable_local_sources = [source["stable_source"] for source in local_activation_sources]
+        if stable_local_sources:
+            data["local_activation_sources"] = stable_local_sources
         calculation_hash = fixed_asset_calculation_hash(
             command="finance_preview_fixed_asset_depreciation_batch",
-            request=self._depreciation_batch_hash_request(request),
+            request=self._depreciation_batch_hash_request(
+                request,
+                local_activation_sources=stable_local_sources,
+            ),
             calculation=data,
         )
         trace = [
@@ -1384,86 +1600,38 @@ class FixedAssetService(FinanceService):
             "calculation_hash": calculation_hash,
             "trace": trace,
             "data": data,
+            "local_activation_sources": local_activation_sources,
         }
 
-    def _confirm_fixed_asset_depreciation_batch_write(
-        self, request: ConfirmFixedAssetDepreciationBatchRequest
-    ) -> FixedAssetResult:
-        snapshot = self._depreciation_batch_snapshot(request, lock=True)
-        if request.calculation_hash != snapshot["calculation_hash"]:
-            self._reject("FIXED_ASSET_CALCULATION_STALE")
-        trace = list(snapshot["trace"])
-        trace[0] = {
-            **trace[0],
-            "command": "finance_confirm_fixed_asset_depreciation_batch",
-        }
-        event = self._new_fixed_asset_event(
-            request,
-            command="finance_confirm_fixed_asset_depreciation_batch",
-            event_type="fixed_asset_depreciation",
-            business_date=snapshot["period_start"],
-            posting_date=request.posting_date,
-            trace=trace,
-        )
-        event.facts = {
-            **event.facts,
-            "asset_ids": [item["asset_id"] for item in snapshot["data"]["items"]],
-            "calculation": snapshot["data"],
-        }
-        self.session.add(event)
-        self.session.flush()
-        batch = FixedAssetDepreciationBatch(
-            org_id=request.org_id,
-            event_id=event.id,
-            period_start=snapshot["period_start"],
-            posting_date=request.posting_date,
-            asset_count=snapshot["data"]["asset_count"],
-            total_amount_fen=snapshot["data"]["total_amount_fen"],
-            calculation_hash=snapshot["calculation_hash"],
-            accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(batch)
-        self.session.flush()
-
-        inherited_evidence: set[uuid.UUID] = set()
-        depreciations: list[FixedAssetDepreciation] = []
-        for item_snapshot in snapshot["snapshots"]:
-            asset = item_snapshot["asset"]
-            activation = item_snapshot["activation"]
-            calculation = item_snapshot["calculation"]
-            inherited_evidence.update(
-                self.session.scalars(
-                    select(event_evidence.c.evidence_id).where(
-                        event_evidence.c.org_id == request.org_id,
-                        event_evidence.c.event_id == activation.event_id,
-                    )
+    def compile_depreciation_batch(
+        self,
+        request: ConfirmFixedAssetDepreciationBatchRequest,
+        *,
+        key: str,
+        activation_plans: dict[str, ComponentPostingPlan | None] | None = None,
+        require_confirmation: bool = True,
+    ) -> ComponentPostingPlan:
+        local_sources = []
+        for component_key, plan in (activation_plans or {}).items():
+            if plan is None:
+                self._reject("FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID")
+            local_sources.append(
+                self._local_activation_source(
+                    component_key=component_key,
+                    plan=plan,
+                    org_id=request.org_id,
                 )
             )
-            depreciation = FixedAssetDepreciation(
-                org_id=request.org_id,
-                asset_id=asset.id,
-                activation_id=activation.id,
-                event_id=event.id,
-                batch_id=batch.id,
-                period_start=snapshot["period_start"],
-                posting_date=request.posting_date,
-                sequence_no=len(item_snapshot["depreciations"]) + 1,
-                amount_fen=calculation.depreciation_fen,
-                accumulated_after_fen=(calculation.closing_accumulated_depreciation_fen),
-                calculation_hash=item_snapshot["calculation_hash"],
-                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-            )
-            self.session.add(depreciation)
-            depreciations.append(depreciation)
-        self._attach_evidence(
-            event,
-            sorted(inherited_evidence),
-            relation_kind="inherited",
+        snapshot = self._depreciation_batch_snapshot(
+            request,
+            lock=True,
+            local_activation_sources=local_sources,
         )
-        self.session.flush()
+        if require_confirmation and request.calculation_hash != snapshot["calculation_hash"]:
+            self._reject("FIXED_ASSET_CALCULATION_STALE")
+        from .event_amendments import component_fact_identity
 
+        batch_id = component_fact_identity(self.session, "fixed_asset_depreciation_batches", key)
         role_by_area = {
             "management": "management_depreciation_expense",
             "sales": "sales_depreciation_expense",
@@ -1480,58 +1648,98 @@ class FixedAssetService(FinanceService):
                 credit_fen=snapshot["data"]["total_amount_fen"],
             )
         )
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.posting_date,
-            description=f"计提固定资产折旧 {request.depreciation_period}（月度汇总）",
-            entries=entries,
-        )
-        trace.append(self._entries_trace(entries))
-        trace.append(
-            {
-                "stage": "normalized_batch_created",
-                "batch_id": str(batch.id),
-                "depreciation_ids": [str(item.id) for item in depreciations],
-            }
-        )
-        event.rule_trace = [dict(item) for item in trace]
-        result_data = {
-            **snapshot["data"],
-            "batch_id": str(batch.id),
-            "calculation_hash": snapshot["calculation_hash"],
-        }
-        event.facts = {
-            **event.facts,
-            "batch_id": str(batch.id),
-            "_result_data": result_data,
-            "_result_calculation_hash": snapshot["calculation_hash"],
-        }
-        self.session.flush()
-        event.status = "posted"
-        self.session.add(
-            AuditLog(
+
+        def persist(session, event, component):
+            batch = FixedAssetDepreciationBatch(
+                id=batch_id,
+                component_id=component.id,
                 org_id=request.org_id,
                 event_id=event.id,
-                action="fixed_asset_depreciation_batch_posted",
-                details={
-                    "batch_id": str(batch.id),
-                    "asset_ids": [item["asset_id"] for item in snapshot["data"]["items"]],
-                    "voucher_id": str(voucher.id),
-                    "voucher_number": voucher.voucher_number,
-                    "total_amount_fen": snapshot["data"]["total_amount_fen"],
-                },
+                period_start=snapshot["period_start"],
+                posting_date=request.posting_date,
+                asset_count=snapshot["data"]["asset_count"],
+                total_amount_fen=snapshot["data"]["total_amount_fen"],
+                calculation_hash=snapshot["calculation_hash"],
+                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
             )
+            session.add(batch)
+            session.flush()
+
+            inherited_evidence: set[uuid.UUID] = set()
+            depreciations: list[FixedAssetDepreciation] = []
+            for item_snapshot in snapshot["snapshots"]:
+                asset = item_snapshot["asset"]
+                activation = item_snapshot["activation"]
+                calculation = item_snapshot["calculation"]
+                if item_snapshot["local_activation_source"] is None:
+                    inherited_evidence.update(
+                        self.session.scalars(
+                            select(event_evidence.c.evidence_id).where(
+                                event_evidence.c.org_id == request.org_id,
+                                event_evidence.c.event_id == activation.event_id,
+                            )
+                        )
+                    )
+                depreciation = FixedAssetDepreciation(
+                    component_id=component.id,
+                    org_id=request.org_id,
+                    asset_id=asset.id,
+                    activation_id=activation.id,
+                    event_id=event.id,
+                    batch_id=batch.id,
+                    period_start=snapshot["period_start"],
+                    posting_date=request.posting_date,
+                    sequence_no=len(item_snapshot["depreciations"]) + 1,
+                    amount_fen=calculation.depreciation_fen,
+                    accumulated_after_fen=(calculation.closing_accumulated_depreciation_fen),
+                    calculation_hash=item_snapshot["calculation_hash"],
+                    accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                    accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+                )
+                session.add(depreciation)
+                depreciations.append(depreciation)
+            self._attach_evidence(
+                event,
+                sorted(inherited_evidence),
+                relation_kind="inherited",
+            )
+            session.flush()
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="fixed_asset_depreciation_batch",
+            facts=request.model_dump(mode="json"),
+            derived={
+                **snapshot["data"],
+                "batch_id": str(batch_id),
+                "calculation_hash": snapshot["calculation_hash"],
+                "source_event_ids": sorted(
+                    {
+                        str(item["activation"].event_id)
+                        for item in snapshot["snapshots"]
+                        if item["local_activation_source"] is None
+                    }
+                ),
+                "local_activation_proofs": [
+                    source["proof"] for source in snapshot["local_activation_sources"]
+                ],
+            },
+            rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+            entries=entries,
+            effects=[persist],
         )
-        self.session.flush()
-        return FixedAssetResult(
-            status=FixedAssetResultStatus.POSTED,
-            event_id=event.id,
-            voucher_id=voucher.id,
-            voucher_number=voucher.voucher_number,
-            calculation_hash=snapshot["calculation_hash"],
-            trace=event.rule_trace,
-            data=result_data,
+
+    def _confirm_fixed_asset_depreciation_batch_write(
+        self, request: ConfirmFixedAssetDepreciationBatchRequest
+    ) -> FixedAssetResult:
+        plan = self.compile_depreciation_batch(request, key="domain")
+        return self._post_noncash_component(
+            request,
+            plan,
+            "finance_confirm_fixed_asset_depreciation_batch",
+            date.fromisoformat(request.depreciation_period + "-01"),
+            "计提固定资产折旧（月度汇总）",
         )
 
     @staticmethod
@@ -1539,23 +1747,34 @@ class FixedAssetService(FinanceService):
         request: (
             PreviewFixedAssetDepreciationBatchRequest | ConfirmFixedAssetDepreciationBatchRequest
         ),
+        *,
+        local_activation_sources: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "org_id": str(request.org_id),
             "depreciation_period": request.depreciation_period,
             "posting_date": (request.posting_date.isoformat() if request.posting_date else None),
         }
+        if local_activation_sources:
+            payload["local_activation_sources"] = local_activation_sources
+        return payload
 
     @staticmethod
     def _depreciation_hash_request(
         request: PreviewFixedAssetDepreciationRequest | ConfirmFixedAssetDepreciationRequest,
+        *,
+        local_activation_sources: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "org_id": str(request.org_id),
             "asset_id": str(request.asset_id),
             "depreciation_period": request.depreciation_period,
             "posting_date": request.posting_date.isoformat(),
         }
+        if local_activation_sources:
+            payload["asset_id"] = None
+            payload["local_activation_sources"] = local_activation_sources
+        return payload
 
     @staticmethod
     def _parse_period(value: str) -> date:
@@ -1583,7 +1802,9 @@ class FixedAssetService(FinanceService):
             query = query.with_for_update()
         return list(self.session.scalars(query).all())
 
-    def _dispose_fixed_asset_write(self, request: DisposeFixedAssetRequest) -> FixedAssetResult:
+    def compile_disposal(
+        self, request: DisposeFixedAssetRequest, *, key: str
+    ) -> ComponentPostingPlan:
         asset = self._get_asset(request.org_id, request.asset_id, lock=True)
         if asset is None:
             self._reject("FIXED_ASSET_NOT_FOUND")
@@ -1631,120 +1852,11 @@ class FixedAssetService(FinanceService):
 
         clearance_cost_fen = request.clearance_cost_fen or 0
         expected_inflow = gross_proceeds_fen if request.settlement_method.value == "bank" else 0
-        if expected_inflow or clearance_cost_fen:
-            self._validate_bank_account(
-                request.org_id, request.bank_account_code, request.disposal_date
-            )
         book_value = asset.cost_fen - accumulated
         net_proceeds = gross_proceeds_fen - vat_fen
         clearance_debit = book_value + clearance_cost_fen
         gain_fen = max(0, net_proceeds - clearance_debit)
         loss_fen = max(0, clearance_debit - net_proceeds)
-        trace = [
-            {
-                "stage": "facts_validated",
-                "command": "finance_dispose_fixed_asset",
-                "asset_id": str(asset.id),
-                "activation_event_id": str(activation.event_id),
-                "activation_id": str(activation.id),
-                "depreciation_event_ids": [str(item.event_id) for item in depreciations],
-                "cost_fen": asset.cost_fen,
-                "accumulated_depreciation_fen": accumulated,
-                "book_value_fen": book_value,
-                "clearance_cost_fen": clearance_cost_fen,
-                "gross_proceeds_fen": gross_proceeds_fen,
-                "vat_tax_sales_fen": vat_tax_sales_fen,
-                "vat_fen": vat_fen,
-                "gain_fen": gain_fen,
-                "loss_fen": loss_fen,
-                "bank_account_code": request.bank_account_code,
-                "evidence_ids": sorted(map(str, request.evidence_references)),
-            },
-            self._accounting_rule_trace(),
-        ]
-        if tax_rule is not None:
-            trace.append(
-                {
-                    "stage": "tax_rule_selected",
-                    "rule": tax_rule.code,
-                    "version": SMALL_SCALE_USED_FIXED_ASSET_VAT_RULE_VERSION,
-                    "effective_from": tax_rule.effective_from.isoformat(),
-                    "effective_to": (
-                        tax_rule.effective_to.isoformat() if tax_rule.effective_to else None
-                    ),
-                    "source_url": tax_rule.source_url,
-                    "calculation": (
-                        "tax_sales_fen=ROUND_HALF_UP(gross/(1+3%)); "
-                        "vat_fen=ROUND_HALF_UP(tax_sales_fen*2%)"
-                    ),
-                }
-            )
-        event = self._new_fixed_asset_event(
-            request,
-            command="finance_dispose_fixed_asset",
-            event_type="fixed_asset_disposal",
-            business_date=request.disposal_date,
-            posting_date=request.posting_date,
-            tax_obligation_date=request.tax_obligation_date,
-            trace=trace,
-        )
-        event.facts = {
-            **event.facts,
-            "asset_id": str(asset.id),
-            "derived": {
-                "accumulated_depreciation_fen": accumulated,
-                "book_value_fen": book_value,
-                "vat_tax_sales_fen": vat_tax_sales_fen,
-                "taxable_gross_fen": gross_proceeds_fen,
-                "net_sales_fen": vat_tax_sales_fen,
-                "vat_fen": vat_fen,
-                "exemption_eligible": bool(
-                    request.disposal_kind.value == "sale"
-                    and request.invoice_type != "special"
-                    and not request.waive_exemption
-                ),
-                "gain_fen": gain_fen,
-                "loss_fen": loss_fen,
-            },
-        }
-        self.session.add(event)
-        self.session.flush()
-        self._attach_evidence(event, request.evidence_references)
-        if request.bank_transaction_references:
-            self._match_fixed_asset_bank_transactions(
-                event,
-                request.bank_transaction_references,
-                bank_account_code=request.bank_account_code,
-                expected_inflow_fen=expected_inflow,
-                expected_outflow_fen=clearance_cost_fen,
-                expected_date=request.disposal_date,
-            )
-        disposal = FixedAssetDisposal(
-            org_id=request.org_id,
-            asset_id=asset.id,
-            activation_id=activation.id,
-            event_id=event.id,
-            disposal_date=request.disposal_date,
-            posting_date=request.posting_date,
-            disposal_kind=request.disposal_kind.value,
-            settlement_method=request.settlement_method.value,
-            customer_id=customer.id if customer else None,
-            gross_proceeds_fen=gross_proceeds_fen,
-            invoice_type=request.invoice_type or "none",
-            waive_threshold_exemption=request.waive_exemption or False,
-            vat_tax_sales_fen=vat_tax_sales_fen,
-            vat_fen=vat_fen,
-            clearance_cost_fen=clearance_cost_fen,
-            accumulated_depreciation_fen=accumulated,
-            book_value_fen=book_value,
-            gain_fen=gain_fen,
-            loss_fen=loss_fen,
-            tax_rule_id=tax_rule.id if tax_rule else None,
-            accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
-            accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
-        )
-        self.session.add(disposal)
-        self.session.flush()
         entries = self._disposal_entries(
             asset=asset,
             accumulated_depreciation_fen=accumulated,
@@ -1758,41 +1870,169 @@ class FixedAssetService(FinanceService):
             bank_account_code=request.bank_account_code,
             customer_id=customer.id if customer else None,
         )
-        voucher = create_voucher(
-            self.session,
-            event=event,
-            posting_date=request.posting_date,
-            description=request.description or f"处置固定资产 {asset.asset_code}",
-            entries=entries,
-        )
+        entries = [entry for entry in entries if entry.account_role is not None]
+        open_items = []
         if request.settlement_method.value == "receivable":
-            self.session.add(
-                OpenItem(
-                    org_id=request.org_id,
+            open_items.append(
+                OpenItemPlan(
                     counterparty_id=customer.id,
-                    source_event_id=event.id,
                     item_type="receivable",
                     original_amount_fen=gross_proceeds_fen,
+                    account_role="accounts_receivable",
                 )
             )
-        trace.append(self._entries_trace(entries))
-        trace.append({"stage": "normalized_fact_created", "disposal_id": str(disposal.id)})
-        event.rule_trace = [dict(item) for item in trace]
-        result_data = {
-            "accumulated_depreciation_fen": accumulated,
-            "book_value_fen": book_value,
-            "vat_tax_sales_fen": vat_tax_sales_fen,
-            "vat_fen": vat_fen,
-            "gain_fen": gain_fen,
-            "loss_fen": loss_fen,
-        }
-        self._finalize_fixed_asset_event(event, voucher, asset.id, result_data)
-        return self._posted_result(
-            asset.id,
-            event,
-            voucher,
-            data=result_data,
+
+        def persist(session, event, component):
+            disposal = FixedAssetDisposal(
+                component_id=component.id,
+                org_id=request.org_id,
+                asset_id=asset.id,
+                activation_id=activation.id,
+                event_id=event.id,
+                disposal_date=request.disposal_date,
+                posting_date=request.posting_date,
+                disposal_kind=request.disposal_kind.value,
+                settlement_method=request.settlement_method.value,
+                customer_id=customer.id if customer else None,
+                gross_proceeds_fen=gross_proceeds_fen,
+                invoice_type=request.invoice_type or "none",
+                waive_threshold_exemption=request.waive_exemption or False,
+                vat_tax_sales_fen=vat_tax_sales_fen,
+                vat_fen=vat_fen,
+                clearance_cost_fen=clearance_cost_fen,
+                accumulated_depreciation_fen=accumulated,
+                book_value_fen=book_value,
+                gain_fen=gain_fen,
+                loss_fen=loss_fen,
+                tax_rule_id=tax_rule.id if tax_rule else None,
+                accounting_rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+                accounting_rule_source_url=ACCOUNTING_RULE_SOURCE_URL,
+            )
+            session.add(disposal)
+            session.flush()
+
+        return ComponentPostingPlan(
+            key=key,
+            kind="fixed_asset_disposal",
+            facts=request.model_dump(mode="json"),
+            derived={
+                "asset_id": str(asset.id),
+                "accumulated_depreciation_fen": accumulated,
+                "book_value_fen": book_value,
+                "vat_tax_sales_fen": vat_tax_sales_fen,
+                "taxable_gross_fen": gross_proceeds_fen,
+                "tax_obligation_date": request.tax_obligation_date.isoformat()
+                if request.tax_obligation_date
+                else None,
+                "tax_rule_id": str(tax_rule.id) if tax_rule else None,
+                "tax_rule_version": tax_rule.version if tax_rule else None,
+                "tax_rule_source_url": tax_rule.source_url if tax_rule else None,
+                "net_sales_fen": vat_tax_sales_fen,
+                "vat_fen": vat_fen,
+                "gain_fen": gain_fen,
+                "loss_fen": loss_fen,
+                "exemption_eligible": bool(
+                    request.disposal_kind.value == "sale"
+                    and request.invoice_type != "special"
+                    and not request.waive_exemption
+                ),
+                "cash_inflow_fen": expected_inflow,
+                "cash_outflow_fen": clearance_cost_fen,
+                "cash_flow_category": "cash_flow_10",
+                "source_event_ids": [
+                    str(activation.event_id),
+                    *[str(item.event_id) for item in depreciations],
+                ],
+            },
+            rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
+            entries=entries,
+            open_items=open_items,
+            effects=[persist],
         )
+
+    def _dispose_fixed_asset_write(self, request: DisposeFixedAssetRequest) -> FixedAssetResult:
+        plan = self.compile_disposal(request, key="domain")
+        event = self._new_fixed_asset_event(
+            request,
+            command="finance_dispose_fixed_asset",
+            event_type=plan.kind,
+            business_date=request.disposal_date,
+            posting_date=request.posting_date,
+            tax_obligation_date=request.tax_obligation_date,
+            trace=[self._accounting_rule_trace()],
+        )
+        event.facts = {
+            **event.facts,
+            "asset_id": str(request.asset_id),
+            "derived": plan.derived,
+            "_result_data": plan.derived,
+        }
+        self.session.add(event)
+        self.session.flush()
+        self._attach_evidence(event, request.evidence_references)
+        incoming, outgoing = plan.derived["cash_inflow_fen"], plan.derived["cash_outflow_fen"]
+        if incoming or outgoing:
+            self._validate_bank_account(
+                request.org_id, request.bank_account_code, request.disposal_date
+            )
+        try:
+            bank_rows = self._resolve_bank_transaction_references(
+                request.org_id, request.bank_transaction_references
+            )
+        except ValueError as exc:
+            raise BankMatchingError(str(exc)) from exc
+        if any(
+            (row.amount_fen > 0 and not incoming) or (row.amount_fen < 0 and not outgoing)
+            for row in bank_rows
+        ):
+            raise BankMatchingError("FUNDS_BANK_AMOUNT_MISMATCH")
+        components = [plan]
+        if incoming:
+            components.append(
+                funds_posting_plan(
+                    {
+                        "key": "receipt",
+                        "account_code": request.bank_account_code,
+                        "direction": "receipt",
+                        "payment_date": request.disposal_date,
+                        "bank_transaction_references": [
+                            {"id": row.id} for row in bank_rows if row.amount_fen > 0
+                        ],
+                        "amount_fen": incoming,
+                        "allocations": [{"component_key": plan.key, "amount_fen": incoming}],
+                    }
+                )
+            )
+            plan.cash_flows.append(
+                CashFlowPlan(request.bank_account_code, "cash_flow_10", incoming)
+            )
+        if outgoing:
+            components.append(
+                funds_posting_plan(
+                    {
+                        "key": "payment",
+                        "account_code": request.bank_account_code,
+                        "direction": "payment",
+                        "payment_date": request.disposal_date,
+                        "bank_transaction_references": [
+                            {"id": row.id} for row in bank_rows if row.amount_fen < 0
+                        ],
+                        "amount_fen": outgoing,
+                        "allocations": [{"component_key": plan.key, "amount_fen": outgoing}],
+                    }
+                )
+            )
+            plan.cash_flows.append(
+                CashFlowPlan(request.bank_account_code, "cash_flow_10", -outgoing)
+            )
+        voucher = commit_posting_plan(
+            self.session,
+            event=event,
+            components=components,
+            posting_date=request.posting_date,
+            description=request.description or "处置固定资产",
+        )
+        return self._posted_result(request.asset_id, event, voucher, data=plan.derived)
 
     def _fixed_asset_request_hash(self, command: str, request: Any) -> str:
         return self._canonical_payload_hash(
@@ -1857,7 +2097,7 @@ class FixedAssetService(FinanceService):
             "finance_acquire_fixed_asset": "fixed_asset_acquisition",
             "finance_activate_fixed_asset": "fixed_asset_activation",
             "finance_confirm_fixed_asset_depreciation": "fixed_asset_depreciation",
-            "finance_confirm_fixed_asset_depreciation_batch": "fixed_asset_depreciation",
+            "finance_confirm_fixed_asset_depreciation_batch": "fixed_asset_depreciation_batch",
             "finance_dispose_fixed_asset": "fixed_asset_disposal",
         }[command]
         business_date, posting_date = self._request_business_and_posting_dates(request)
@@ -1989,51 +2229,6 @@ class FixedAssetService(FinanceService):
         if len(found) != len(evidence_ids):
             self._reject("FIXED_ASSET_EVIDENCE_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
 
-    def _match_fixed_asset_bank_transactions(
-        self,
-        event: BusinessEvent,
-        references: list[Any],
-        *,
-        bank_account_code: str,
-        expected_inflow_fen: int,
-        expected_outflow_fen: int,
-        expected_date: date | None,
-    ) -> None:
-        try:
-            rows = self._resolve_bank_transaction_references(event.org_id, references)
-        except ValueError as exc:
-            self._reject(str(exc))
-        resolved_ids = [row.id for row in rows]
-        if any(row.bank_account_code != bank_account_code for row in rows):
-            self._reject("BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH")
-        if expected_date is not None and any(row.booking_date != expected_date for row in rows):
-            self._reject("FIXED_ASSET_BANK_TRANSACTION_DATE_MISMATCH")
-        inflow = sum(row.amount_fen for row in rows if row.amount_fen > 0)
-        outflow = -sum(row.amount_fen for row in rows if row.amount_fen < 0)
-        if inflow != expected_inflow_fen or outflow != expected_outflow_fen:
-            self._reject("FIXED_ASSET_BANK_TRANSACTION_AMOUNT_MISMATCH")
-        matches = self.session.scalars(
-            select(BankTransactionMatch)
-            .where(
-                BankTransactionMatch.org_id == event.org_id,
-                BankTransactionMatch.bank_transaction_id.in_(resolved_ids),
-                BankTransactionMatch.invalidated_by_event_id.is_(None),
-            )
-            .order_by(BankTransactionMatch.bank_transaction_id)
-            .with_for_update()
-        ).all()
-        if matches or any(row.matched_event_id is not None for row in rows):
-            self._reject("BANK_TRANSACTION_ALREADY_MATCHED")
-        for row in rows:
-            self.session.add(
-                BankTransactionMatch(
-                    org_id=event.org_id,
-                    bank_transaction_id=row.id,
-                    event_id=event.id,
-                )
-            )
-            row.matched_event_id = event.id
-
     def _get_asset(
         self, org_id: uuid.UUID, asset_id: uuid.UUID | None, *, lock: bool = False
     ) -> FixedAsset | None:
@@ -2096,6 +2291,7 @@ class FixedAssetService(FinanceService):
         model = {
             "fixed_asset_activation": FixedAssetActivation,
             "fixed_asset_depreciation": FixedAssetDepreciation,
+            "fixed_asset_depreciation_batch": FixedAssetDepreciation,
             "fixed_asset_disposal": FixedAssetDisposal,
         }.get(event.event_type)
         if model is None:
@@ -2104,50 +2300,6 @@ class FixedAssetService(FinanceService):
             select(model.asset_id).where(model.org_id == event.org_id, model.event_id == event.id)
         )
         return self._get_asset(event.org_id, asset_id)
-
-    def fixed_asset_reversal_dependency_error(
-        self, original: BusinessEvent, asset: FixedAsset
-    ) -> str | None:
-        """Return the stable dependency error for a locked fixed-asset source event.
-
-        This helper is intentionally public to the service layer so the common
-        reversal entry point can integrate it without duplicating the dependency
-        graph when the base service is refactored.
-        """
-
-        if original.status != "posted" or original.reversed_by_event_id is not None:
-            return None
-        active_disposal = self._active_disposal(asset.id)
-        active_activation = self._active_activation(asset.id)
-        active_depreciations = self._active_depreciations(asset.id, lock=True)
-        if original.event_type == "fixed_asset_disposal":
-            return None
-        if original.event_type == "fixed_asset_depreciation":
-            source = self.session.scalar(
-                select(FixedAssetDepreciation).where(
-                    FixedAssetDepreciation.org_id == original.org_id,
-                    FixedAssetDepreciation.asset_id == asset.id,
-                    FixedAssetDepreciation.event_id == original.id,
-                )
-            )
-            if source is None:
-                return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
-            if active_disposal is not None or any(
-                item.period_start > source.period_start for item in active_depreciations
-            ):
-                return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
-            return None
-        if original.event_type == "fixed_asset_activation":
-            if active_disposal is not None or active_depreciations:
-                return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
-            return None
-        if original.event_type == "fixed_asset_acquisition":
-            has_separate_activation = (
-                active_activation is not None and active_activation.event_id != original.id
-            )
-            if has_separate_activation or active_disposal is not None or active_depreciations:
-                return "FIXED_ASSET_OPEN_DEPENDENCIES_EXIST"
-        return None
 
     @staticmethod
     def _disposal_entries(
@@ -2300,56 +2452,6 @@ class FixedAssetService(FinanceService):
             "effective_from": "2013-01-01",
             "source_url": ACCOUNTING_RULE_SOURCE_URL,
         }
-
-    @staticmethod
-    def _entries_trace(entries: list[Entry]) -> dict[str, Any]:
-        return {
-            "stage": "entries_created",
-            "template_lines": [
-                {
-                    "account_role": line.account_role,
-                    "account_code": line.account_code,
-                    "debit_fen": line.debit_fen,
-                    "credit_fen": line.credit_fen,
-                }
-                for line in entries
-            ],
-            "debit_fen": sum(line.debit_fen for line in entries),
-            "credit_fen": sum(line.credit_fen for line in entries),
-        }
-
-    def _audit_posted(self, event: BusinessEvent, voucher: Voucher, asset_id: uuid.UUID) -> None:
-        self.session.add(
-            AuditLog(
-                org_id=event.org_id,
-                event_id=event.id,
-                action="fixed_asset_event_posted",
-                details={
-                    "asset_id": str(asset_id),
-                    "voucher_id": str(voucher.id),
-                    "voucher_number": voucher.voucher_number,
-                },
-            )
-        )
-
-    def _finalize_fixed_asset_event(
-        self,
-        event: BusinessEvent,
-        voucher: Voucher,
-        asset_id: uuid.UUID,
-        result_data: dict[str, Any],
-    ) -> None:
-        """Flush complete draft facts before the one-way final status transition."""
-
-        event.facts = {
-            **event.facts,
-            "_result_data": result_data,
-            "_result_calculation_hash": result_data.get("calculation_hash"),
-        }
-        self.session.flush()
-        event.status = "posted"
-        self._audit_posted(event, voucher, asset_id)
-        self.session.flush()
 
     @staticmethod
     def _posted_result(

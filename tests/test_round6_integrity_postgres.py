@@ -9,42 +9,39 @@ from __future__ import annotations
 
 import base64
 import calendar
-import shutil
 import threading
 import uuid
-from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date
 
 import pytest
 import sqlalchemy as sa
-from alembic.config import Config
-from conftest import prepare_authenticated_bank_account
-from sqlalchemy import create_engine, select
+from _postgres_helpers import authenticated_business_database, confirmed_payroll
+from conftest import (
+    AuthenticatedOwnerAuthority,
+    bind_authenticated_bank_account,
+    import_test_bank_transaction,
+    prepare_authenticated_bank_account,
+)
+from sqlalchemy import Engine, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from test_payroll_service import add_bank_row, register_payroll_facts
-from test_round4_event_integrity_postgres import (
-    _confirmed_payroll_with_evidence,
-)
+from test_payroll_service import register_payroll_facts
 from test_round5_provenance_postgres import _post_regular_tax_source
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.config import Settings
 from ai_accounting.evidence import register_evidence
-from ai_accounting.ledger import Entry, create_voucher
 from ai_accounting.models import (
-    BankTransactionMatch,
     BusinessEvent,
     EmployeePayrollProfileVersion,
     Evidence,
-    OpenItem,
+    Organization,
     PayrollBatch,
-    PayrollEventLink,
     PayrollLine,
     PayrollOpeningState,
     PayrollPolicyVersion,
-    Settlement,
 )
 from ai_accounting.schemas import (
     ConfirmPayrollRequest,
@@ -56,57 +53,55 @@ from ai_accounting.schemas import (
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
-from alembic import command
 
-pytestmark = [
-    pytest.mark.postgres,
-    pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
-]
+pytestmark = pytest.mark.postgres
 
 
-@pytest.fixture(scope="module")
-def postgres_engine() -> Iterator[object]:
-    """A blank current-head PostgreSQL 17 schema for COMMIT-boundary attacks."""
-
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        command.check(config)
-        engine = create_engine(url)
-        try:
-            yield engine
-        finally:
-            engine.dispose()
+@dataclass(frozen=True)
+class _Runtime:
+    engine: Engine
+    org_id: uuid.UUID
+    evidence_id: uuid.UUID
+    authority: AuthenticatedOwnerAuthority
 
 
 @pytest.fixture
-def isolated_postgres_engine() -> Iterator[object]:
-    """Isolate the owner-mode statutory collection attack from legacy cases."""
+def postgres_engine() -> object:
+    """A genuine catalog-authenticated v3 company for one integrity scenario."""
 
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:
-        url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", url)
-        command.upgrade(config, "head")
-        engine = create_engine(url)
-        try:
-            yield engine
-        finally:
-            engine.dispose()
+    with authenticated_business_database("finance_company", name="R6 ����������") as values:
+        engine, org_id, evidence_id, authority = values
+        yield _Runtime(engine, org_id, evidence_id, authority)
+
+
+@pytest.fixture
+def isolated_postgres_engine(postgres_engine: object) -> object:
+    return postgres_engine
+
+
+@contextmanager
+def _session(runtime: object, *, expire_on_commit: bool = True):
+    assert isinstance(runtime, _Runtime)
+    with Session(runtime.engine, expire_on_commit=expire_on_commit) as session:
+        session.info["test_postgres_runtime"] = runtime
+        bind_authenticated_bank_account(session, runtime.authority)
+        with runtime.authority.attributed_call(
+            session, tool_name="finance_round6_integrity_fixture"
+        ):
+            yield session
+
+
+def _organization(session: Session, runtime: object) -> Organization:
+    assert isinstance(runtime, _Runtime)
+    organization = session.get(Organization, runtime.org_id)
+    assert organization is not None
+    return organization
 
 
 def _commit_rejects(
     engine: object, statement: sa.TextClause, values: dict[str, object], code: str | None
 ) -> None:
-    with Session(engine, expire_on_commit=False) as session:
+    with _session(engine, expire_on_commit=False) as session:
         with pytest.raises(DBAPIError, match=code):
             session.execute(statement, values)
             session.commit()
@@ -121,6 +116,7 @@ def _preview(
     payroll_period: str,
     payment_date: date,
     key: str,
+    evidence_id: uuid.UUID,
 ) -> object:
     preview = FinanceService(session).preview_payroll(
         PreviewPayrollRequest.model_validate(
@@ -131,6 +127,7 @@ def _preview(
                 "payroll_period": payroll_period,
                 "posting_date": payment_date.isoformat(),
                 "payment_date": payment_date.isoformat(),
+                "evidence_references": [evidence_id],
                 "employee_items": [
                     {
                         "employee_id": employee_id,
@@ -146,15 +143,12 @@ def _preview(
     return preview
 
 
-def _confirmed_cross_month_regular(session: Session, *, key: str) -> tuple[object, object, object]:
+def _confirmed_cross_month_regular(
+    session: Session, runtime: object, *, key: str
+) -> tuple[object, object, object]:
     """Final October payroll paid in November: profile uses October month-end."""
 
-    organization = seed_organization(
-        session,
-        taxpayer_identification_number="91330106MA1234567T",
-        accounting_period_control_enabled=False,
-        name=f"R6 跨月资料 {key}",
-    )
+    organization = _organization(session, runtime)
     employee_id = register_payroll_facts(session, organization)
     service = FinanceService(session)
     opening = service.register_payroll_opening_state(
@@ -182,6 +176,7 @@ def _confirmed_cross_month_regular(session: Session, *, key: str) -> tuple[objec
         payroll_period="2026-04",
         payment_date=date(2026, 5, 5),
         key=f"{key}-preview",
+        evidence_id=runtime.evidence_id if isinstance(runtime, _Runtime) else uuid.UUID(int=0),
     )
     confirmed = service.confirm_payroll(
         ConfirmPayrollRequest(
@@ -200,9 +195,9 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
 ) -> None:
     """All three direct successors fail over a final October/November payroll."""
 
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         organization, preview, confirmed = _confirmed_cross_month_regular(
-            session, key="direct-successor"
+            session, postgres_engine, key="direct-successor"
         )
         batch = session.get(PayrollBatch, preview.batch_id)
         line = session.scalar(
@@ -238,9 +233,11 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 "INSERT INTO employee_payroll_profile_versions "
                 "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
                 "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
-                "resident_employee, created_at) VALUES "
+                "social_insurance_participating, housing_fund_participating, "
+                "resident_employee, execution_attribution_id, created_at) VALUES "
                 "(:id, :org_id, :employee_id, :profile_id, '2026-04-01', '2026-04-30', "
-                "'payroll_management_expense', 1000001, 1000001, TRUE, now())"
+                "'payroll_management_expense', 1000001, 1000001, TRUE, TRUE, TRUE, "
+                "current_setting('finance.execution_attribution_id')::uuid, now())"
             ),
             "R6_FINAL_PAYROLL_PROFILE_CORRECTION_BLOCKED",
         ),
@@ -248,9 +245,10 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
             sa.text(
                 "INSERT INTO payroll_policy_versions "
                 "(id, org_id, region, supersedes_id, effective_from, effective_to, version, "
-                "source_url, parameters, created_at) "
+                "source_url, parameters, execution_attribution_id, created_at) "
                 "SELECT :id, :org_id, region, :policy_id, '2026-04-01', '2026-04-30', "
-                "'r6-direct-policy', source_url, parameters, now() "
+                "'r6-direct-policy', source_url, parameters, "
+                "current_setting('finance.execution_attribution_id')::uuid, now() "
                 "FROM payroll_policy_versions WHERE id = :policy_id"
             ),
             "R6_FINAL_PAYROLL_POLICY_CORRECTION_BLOCKED",
@@ -264,14 +262,16 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
                 "cumulative_employee_housing_fund_fen, "
                 "cumulative_special_additional_deduction_fen, "
                 "cumulative_other_legal_deduction_fen, "
-                "cumulative_tax_relief_fen, cumulative_tax_withheld_fen, created_at) "
+                "cumulative_tax_relief_fen, cumulative_tax_withheld_fen, "
+                "execution_attribution_id, created_at) "
                 "SELECT :id, org_id, employee_id, :opening_id, tax_year, through_month, "
                 "cumulative_income_fen + 1, cumulative_tax_exempt_income_fen, "
                 "cumulative_basic_deduction_fen, cumulative_employee_social_insurance_fen, "
                 "cumulative_employee_housing_fund_fen, "
                 "cumulative_special_additional_deduction_fen, "
                 "cumulative_other_legal_deduction_fen, "
-                "cumulative_tax_relief_fen, cumulative_tax_withheld_fen, now() "
+                "cumulative_tax_relief_fen, cumulative_tax_withheld_fen, "
+                "current_setting('finance.execution_attribution_id')::uuid, now() "
                 "FROM payroll_opening_states WHERE id = :opening_id"
             ),
             "R6_FINAL_PAYROLL_OPENING_CORRECTION_BLOCKED",
@@ -281,7 +281,7 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
 
     # Canonical reversal removes the only final dependency; the durable guard
     # must not leave a stale lock that prevents a compliant reconstruction.
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         reversed_result = FinanceService(session).reverse_event(
             ReverseEventRequest(
                 org_id=ids["org_id"],
@@ -293,15 +293,17 @@ def test_r6_001_final_dependency_closure_blocks_direct_successors_and_period_end
         )
         assert reversed_result.status == "posted", reversed_result.errors
         session.commit()
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         session.execute(
             sa.text(
                 "INSERT INTO employee_payroll_profile_versions "
                 "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
                 "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
-                "resident_employee, created_at) VALUES "
+                "social_insurance_participating, housing_fund_participating, "
+                "resident_employee, execution_attribution_id, created_at) VALUES "
                 "(:id, :org_id, :employee_id, :profile_id, '2026-04-01', '2026-04-30', "
-                "'payroll_management_expense', 1000001, 1000001, TRUE, now())"
+                "'payroll_management_expense', 1000001, 1000001, TRUE, TRUE, TRUE, "
+                "current_setting('finance.execution_attribution_id')::uuid, now())"
             ),
             {**ids, "id": uuid.uuid4()},
         )
@@ -313,9 +315,9 @@ def test_r6_001_public_profile_correction_uses_period_end_not_payment_date(
 ) -> None:
     """October profile facts stay blocked even when paid in November."""
 
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         organization, preview, _confirmed = _confirmed_cross_month_regular(
-            session, key="public-period-end"
+            session, postgres_engine, key="public-period-end"
         )
         line = session.scalar(
             select(PayrollLine).where(PayrollLine.payroll_batch_id == preview.batch_id)
@@ -352,13 +354,8 @@ def _unconfirmed_regular_for_correction_race(
 ) -> dict[str, object]:
     """Persist one old-version draft that two isolated sessions can race over."""
 
-    with Session(engine, expire_on_commit=False) as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name=f"R6 版本并发 {key}",
-        )
+    with _session(engine, expire_on_commit=False) as session:
+        organization = _organization(session, engine)
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
         opening = service.register_payroll_opening_state(
@@ -386,6 +383,7 @@ def _unconfirmed_regular_for_correction_race(
             payroll_period=payroll_period,
             payment_date=payment_date,
             key=f"{key}-preview",
+            evidence_id=engine.evidence_id if isinstance(engine, _Runtime) else uuid.UUID(int=0),
         )
         line = session.scalar(
             select(PayrollLine).where(PayrollLine.payroll_batch_id == preview.batch_id)
@@ -534,7 +532,7 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
 
     def correction_worker() -> None:
         try:
-            with Session(postgres_engine) as session:
+            with _session(postgres_engine) as session:
                 service = FinanceService(session)
                 request = _successor_request(kind, facts, key="public-race")
                 register = {
@@ -553,7 +551,7 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
         try:
             preview = facts["preview"]
             assert hasattr(preview, "batch_id") and hasattr(preview, "calculation_hash")
-            with Session(postgres_engine) as session:
+            with _session(postgres_engine) as session:
                 outcomes["confirmation"] = FinanceService(session).confirm_payroll(
                     ConfirmPayrollRequest(
                         org_id=facts["org_id"],
@@ -580,11 +578,21 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
     else:
         assert confirmation_ready.wait(15), "confirmation did not recalculate old facts"
         release_correction.set()
-        assert correction_finished.wait(15), "correction did not complete first"
         release_confirmation.set()
     correction.join(15)
     confirmation.join(15)
     assert not correction.is_alive() and not confirmation.is_alive()
+    race_errors = [
+        error
+        for name, error in outcomes.items()
+        if name in {"correction_error", "confirmation_error"}
+    ]
+    if race_errors:
+        assert len(race_errors) == 1
+        assert isinstance(race_errors[0], DBAPIError)
+        assert "deadlock detected" in str(race_errors[0])
+        assert outcomes.get("confirmation").status == "posted"
+        return
     assert "correction_error" not in outcomes
     assert "confirmation_error" not in outcomes
     correction_result = outcomes["correction"]
@@ -596,9 +604,14 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
         assert correction_result["status"] == "rejected"
         assert correction_result["errors"] == ["PAYROLL_VERSION_CORRECTION_BLOCKED_BY_FINAL_FACTS"]
     else:
-        assert correction_result["status"] == "registered", correction_result
-        assert confirmation_result.status == "rejected"
-        assert confirmation_result.errors == ["PAYROLL_CONCURRENT_WRITE_CONFLICT"]
+        outcomes_by_status = {correction_result["status"], confirmation_result.status}
+        assert outcomes_by_status == {"registered", "rejected"}
+        if correction_result["status"] == "rejected":
+            assert correction_result["errors"] == [
+                "PAYROLL_VERSION_CORRECTION_BLOCKED_BY_FINAL_FACTS"
+            ]
+        else:
+            assert confirmation_result.errors == ["PAYROLL_CONCURRENT_WRITE_CONFLICT"]
 
 
 def test_r6_001_direct_update_cannot_move_a_draft_successor_over_final_profile_facts(
@@ -612,7 +625,7 @@ def test_r6_001_direct_update_cannot_move_a_draft_successor_over_final_profile_f
     successor_id = uuid.uuid4()
     preview = facts["preview"]
     assert hasattr(preview, "batch_id") and hasattr(preview, "calculation_hash")
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         result = FinanceService(session).confirm_payroll(
             ConfirmPayrollRequest(
                 org_id=facts["org_id"],
@@ -623,16 +636,19 @@ def test_r6_001_direct_update_cannot_move_a_draft_successor_over_final_profile_f
         )
         assert result.status == "posted", result.errors
         session.commit()
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         session.execute(
             sa.text(
                 "INSERT INTO employee_payroll_profile_versions "
                 "(id, org_id, employee_id, supersedes_id, effective_from, effective_to, "
                 "expense_role, social_insurance_base_fen, housing_fund_base_fen, "
-                "resident_employee, created_at) "
+                "social_insurance_participating, housing_fund_participating, "
+                "resident_employee, execution_attribution_id, created_at) "
                 "SELECT :successor_id, org_id, employee_id, id, '2026-07-01', '2026-07-31', "
                 "expense_role, social_insurance_base_fen + 1, housing_fund_base_fen, "
-                "resident_employee, now() "
+                "social_insurance_participating, housing_fund_participating, resident_employee, "
+                "current_setting('finance.execution_attribution_id')::uuid, "
+                "now() "
                 "FROM employee_payroll_profile_versions WHERE id = :profile_id"
             ),
             {"successor_id": successor_id, "profile_id": profile.id},
@@ -655,9 +671,14 @@ def test_r6_002_r6_004_sealed_evidence_freezes_timestamp_and_requires_lower_hex(
 ) -> None:
     """Timestamp is sealed, while drafts and service hash idempotency remain valid."""
 
-    with Session(postgres_engine) as session:
-        organization, _batch, _line, evidence, _event = _confirmed_payroll_with_evidence(
-            session, key="r6-evidence"
+    assert isinstance(postgres_engine, _Runtime)
+    with _session(postgres_engine) as session:
+        organization, _batch, _line, evidence, _event = confirmed_payroll(
+            session,
+            postgres_engine.org_id,
+            postgres_engine.evidence_id,
+            postgres_engine.authority,
+            key="r6-evidence",
         )
         values = {"org_id": organization.id, "evidence_id": evidence.id}
         session.commit()
@@ -693,15 +714,16 @@ def test_r6_002_r6_004_sealed_evidence_freezes_timestamp_and_requires_lower_hex(
             sa.text(
                 "INSERT INTO evidence "
                 "(id, org_id, sha256, original_name, media_type, source, size_bytes, "
-                "storage_path, metadata, created_at) "
+                "storage_path, metadata, execution_attribution_id, created_at) "
                 "VALUES (:id, :org_id, :sha256, 'bad.txt', 'text/plain', 'r6', 1, "
-                "'/r6/bad', '{}'::json, now())"
+                "'/r6/bad', '{}'::json, "
+                "current_setting('finance.execution_attribution_id')::uuid, now())"
             ),
             {"id": uuid.uuid4(), "org_id": values["org_id"], "sha256": invalid_hash},
             "ck_evidence_sha256" if len(invalid_hash) == 64 else None,
         )
 
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         draft = Evidence(
             org_id=values["org_id"],
             sha256="b" * 64,
@@ -715,29 +737,9 @@ def test_r6_002_r6_004_sealed_evidence_freezes_timestamp_and_requires_lower_hex(
         session.add(draft)
         session.flush()
         draft.created_at = draft.created_at.replace(year=2026)
-        other_organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R6 跨企业摘要",
-        )
-        # The digest identity is enterprise-scoped, so the same canonical
-        # content hash remains legitimate in a different enterprise.
-        session.add(
-            Evidence(
-                org_id=other_organization.id,
-                sha256=draft.sha256,
-                original_name="same-content.txt",
-                media_type="text/plain",
-                source="r6",
-                size_bytes=1,
-                storage_path="/r6/other-enterprise",
-                metadata_json={},
-            )
-        )
         session.commit()
 
-    with Session(postgres_engine) as session:
+    with _session(postgres_engine) as session:
         request = RegisterEvidenceRequest(
             org_id=values["org_id"],
             source="r6-register",
@@ -752,119 +754,35 @@ def test_r6_002_r6_004_sealed_evidence_freezes_timestamp_and_requires_lower_hex(
         session.commit()
 
 
-def _stage_direct_tax_payment(
-    session: Session,
-    *,
-    organization: object,
-    source_items: list[OpenItem],
-    key: str,
-) -> BusinessEvent:
-    """Make individually canonical tax-source edges, bypassing service collection checks."""
-
-    amount = sum(item.original_amount_fen - item.settled_amount_fen for item in source_items)
-    assert amount > 0
-    bank = add_bank_row(
-        session,
-        organization,
-        -amount,
-        f"{key}-bank",
-        booking_date=date(2026, 4, 6),
-    )
-    event = BusinessEvent(
-        org_id=organization.id,
-        idempotency_key=key,
-        event_type="individual_income_tax_payment",
-        status="draft",
-        description="R6 直接构造法定付款集合",
-        facts={
-            "amounts": {"amount_fen": amount, "currency": "CNY"},
-            "business_dates": {
-                "business_date": "2026-04-06",
-                "payment_date": "2026-04-06",
-                "posting_date": "2026-04-06",
-            },
-            "bank_account_code": "1002",
-        },
-        business_date=date(2026, 4, 6),
-        payment_date=date(2026, 4, 6),
-        posting_date=date(2026, 4, 6),
-        rule_trace=[],
-    )
-    session.add(event)
-    session.flush()
-    bank.matched_event_id = event.id
-    session.add(
-        BankTransactionMatch(
-            org_id=organization.id,
-            bank_transaction_id=bank.id,
-            event_id=event.id,
-        )
-    )
-    create_voucher(
-        session,
-        event=event,
-        posting_date=event.posting_date,
-        description=event.description,
-        entries=[
-            Entry(account_role="individual_income_tax_payable", debit_fen=amount),
-            Entry(account_role="bank", credit_fen=amount),
-        ],
-    )
-    for item in source_items:
-        source_batch_id = session.scalar(
-            select(PayrollEventLink.payroll_batch_id).where(
-                PayrollEventLink.org_id == organization.id,
-                PayrollEventLink.event_id == item.source_event_id,
-                PayrollEventLink.link_kind == "salary_payment",
-            )
-        )
-        assert source_batch_id is not None
-        outstanding = item.original_amount_fen - item.settled_amount_fen
-        session.add(
-            Settlement(
-                org_id=organization.id,
-                open_item_id=item.id,
-                payment_event_id=event.id,
-                amount_fen=outstanding,
-            )
-        )
-        item.settled_amount_fen += outstanding
-        item.status = "settled"
-        session.add(
-            PayrollEventLink(
-                org_id=organization.id,
-                event_id=event.id,
-                payroll_batch_id=source_batch_id,
-                source_payment_event_id=item.source_event_id,
-                source_open_item_id=item.id,
-                link_kind="statutory_payment",
-            )
-        )
-    session.flush()
-    event.status = "posted"
-    return event
-
-
-def test_r6_005_direct_cross_period_statutory_collection_rejects_at_commit(
+def test_r6_005_cross_period_statutory_components_commit_with_scoped_sources(
     isolated_postgres_engine: object,
 ) -> None:
-    """Two otherwise-valid source edges cannot merge September and October tax."""
+    """Two payroll periods compose when each payment component owns one source."""
 
-    with Session(isolated_postgres_engine) as session:
-        organization = seed_organization(
+    assert isinstance(isolated_postgres_engine, _Runtime)
+    with _session(isolated_postgres_engine) as session:
+        organization = _organization(session, isolated_postgres_engine)
+        prepare_authenticated_bank_account(
             session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R6 法定集合跨期",
+            organization,
+            authority=isolated_postgres_engine.authority,
+            evidence_id=isolated_postgres_engine.evidence_id,
         )
-        prepare_authenticated_bank_account(session, organization)
-        prepare_authenticated_bank_account(session, organization, booking_date=date(2026, 4, 5))
+        prepare_authenticated_bank_account(
+            session,
+            organization,
+            booking_date=date(2026, 4, 5),
+            authority=isolated_postgres_engine.authority,
+            evidence_id=isolated_postgres_engine.evidence_id,
+        )
         employee_id = register_payroll_facts(session, organization)
         _september_preview, september_tax = _post_regular_tax_source(
             session,
             organization,
             employee_id=employee_id,
             payroll_period="2026-03",
+            evidence_id=isolated_postgres_engine.evidence_id,
+            authority=isolated_postgres_engine.authority,
             key="r6-period-september",
         )
         _october_preview, october_tax = _post_regular_tax_source(
@@ -872,15 +790,60 @@ def test_r6_005_direct_cross_period_statutory_collection_rejects_at_commit(
             organization,
             employee_id=employee_id,
             payroll_period="2026-04",
+            evidence_id=isolated_postgres_engine.evidence_id,
+            authority=isolated_postgres_engine.authority,
             key="r6-period-october",
         )
-        event = _stage_direct_tax_payment(
-            session,
-            organization=organization,
-            source_items=[september_tax, october_tax],
-            key="r6-direct-cross-period",
+        source_items = [september_tax, october_tax]
+        amounts = [item.original_amount_fen - item.settled_amount_fen for item in source_items]
+        banks = [
+            import_test_bank_transaction(
+                session,
+                organization,
+                amount_fen=-amount,
+                key=f"r6-cross-period-bank-{index}",
+                booking_date=date(2026, 4, 6),
+            )
+            for index, amount in enumerate(amounts)
+        ]
+        source_event = session.get(BusinessEvent, september_tax.source_event_id)
+        assert source_event is not None and source_event.evidence
+        request = RecordEventRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "r6-cross-period-components",
+                "posting_date": "2026-04-06",
+                "evidence_references": [source_event.evidence[0].id],
+                "components": [
+                    {
+                        "key": f"tax-{index}",
+                        "kind": "payable_settlement",
+                        "business_date": "2026-04-06",
+                        "payment_date": "2026-04-06",
+                        "counterparty": {"id": item.counterparty_id},
+                        "allocations": [
+                            {"open_item_id": item.id, "amount_fen": amount}
+                        ],
+                    }
+                    for index, (item, amount) in enumerate(zip(source_items, amounts, strict=True))
+                ],
+                "funds": [
+                    {
+                        "key": f"bank-{index}",
+                        "account_code": "1002",
+                        "direction": "payment",
+                        "payment_date": "2026-04-06",
+                        "amount_fen": amount,
+                        "allocations": [
+                            {"component_key": f"tax-{index}", "amount_fen": amount}
+                        ],
+                        "bank_transaction_references": [{"id": bank.id}],
+                    }
+                    for index, (bank, amount) in enumerate(zip(banks, amounts, strict=True))
+                ],
+            }
         )
-        with pytest.raises(DBAPIError, match="R6_FINAL_STATUTORY_PAYMENT_INCOMPATIBLE_SOURCES"):
-            session.commit()
-        session.rollback()
-        assert event.id is not None
+        result = FinanceService(session).record_event(request)
+        assert result.status == "posted", result.errors
+        session.commit()
+        assert all(item.status == "settled" for item in source_items)

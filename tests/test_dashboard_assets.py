@@ -11,6 +11,7 @@ from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.dashboard_assets import build_assets_data, load_assets_dashboard
 from ai_accounting.database import Base, make_engine, make_session_factory
+from ai_accounting.ledger import ComponentPostingPlan, Entry, commit_posting_plan
 from ai_accounting.models import (
     Account,
     AccountingPeriod,
@@ -24,7 +25,6 @@ from ai_accounting.models import (
     IntangibleAssetAmortization,
     Organization,
     Voucher,
-    VoucherLine,
 )
 
 
@@ -77,51 +77,47 @@ def _add_voucher(
     *,
     organization: Organization,
     number: str,
-    event_type: str,
+    component_kind: str,
     posting_date: date,
     lines: list[tuple[Account, Counterparty | None, int, int]],
 ) -> tuple[BusinessEvent, Voucher]:
     business_event = BusinessEvent(
         org_id=organization.id,
         idempotency_key=f"dashboard-assets-{number}",
-        event_type=event_type,
-        status="posted",
+        event_type="composite",
+        status="draft",
         description=f"资产看板测试 {number}",
-        facts={},
+        facts={"components": ["asset"]},
         business_date=posting_date,
         posting_date=posting_date,
         rule_trace=[],
     )
-    session.add(business_event)
-    session.flush()
-    voucher = Voucher(
-        org_id=organization.id,
-        event_id=business_event.id,
-        voucher_number=number,
+    voucher = commit_posting_plan(
+        session,
+        event=business_event,
         posting_date=posting_date,
         description=business_event.description,
-        status="posted",
-    )
-    session.add(voucher)
-    session.flush()
-    session.add_all(
-        [
-            VoucherLine(
-                org_id=organization.id,
-                voucher_id=voucher.id,
-                line_number=index,
-                account_id=account.id,
-                counterparty_id=counterparty.id if counterparty else None,
-                debit_fen=debit_fen,
-                credit_fen=credit_fen,
-                memo=business_event.description,
+        components=[
+            ComponentPostingPlan(
+                key="asset",
+                kind=component_kind,
+                facts={"key": "asset", "kind": component_kind},
+                derived={},
+                entries=[
+                    Entry(
+                        account_code=account.code,
+                        counterparty_id=counterparty.id if counterparty else None,
+                        debit_fen=debit_fen,
+                        credit_fen=credit_fen,
+                        memo=business_event.description,
+                    )
+                    for account, counterparty, debit_fen, credit_fen in lines
+                ],
+                cash_flows=[],
+                rule_version="test-components",
             )
-            for index, (account, counterparty, debit_fen, credit_fen) in enumerate(
-                lines, start=1
-            )
-        ]
+        ],
     )
-    session.flush()
     return business_event, voucher
 
 
@@ -139,25 +135,17 @@ def _seed_asset_portfolio(
     capital = _account(session, organization, "paid_in_capital")
     fixed_cost = _account(session, organization, "fixed_asset_cost")
     fixed_pending = _account(session, organization, "fixed_asset_pending")
-    depreciation_expense = _account(
-        session, organization, "management_depreciation_expense"
-    )
-    accumulated_depreciation = _account(
-        session, organization, "accumulated_depreciation"
-    )
+    depreciation_expense = _account(session, organization, "management_depreciation_expense")
+    accumulated_depreciation = _account(session, organization, "accumulated_depreciation")
     intangible_cost = _account(session, organization, "intangible_asset_cost")
-    amortization_expense = _account(
-        session, organization, "management_amortization_expense"
-    )
-    accumulated_amortization = _account(
-        session, organization, "accumulated_amortization"
-    )
+    amortization_expense = _account(session, organization, "management_amortization_expense")
+    accumulated_amortization = _account(session, organization, "accumulated_amortization")
 
     fixed_event, _ = _add_voucher(
         session,
         organization=organization,
         number="202602-0001",
-        event_type="fixed_asset_acquisition",
+        component_kind="fixed_asset_acquisition",
         posting_date=date(2026, 2, 2),
         lines=[
             (fixed_cost, supplier, 1_200_000, 0),
@@ -204,7 +192,7 @@ def _seed_asset_portfolio(
         session,
         organization=organization,
         number="202602-0002",
-        event_type="fixed_asset_depreciation",
+        component_kind="fixed_asset_depreciation",
         posting_date=date(2026, 2, 28),
         lines=[
             (depreciation_expense, None, 100_000, 0),
@@ -232,7 +220,7 @@ def _seed_asset_portfolio(
         session,
         organization=organization,
         number="202602-0003",
-        event_type="intangible_asset_acquisition",
+        component_kind="intangible_asset_acquisition",
         posting_date=date(2026, 2, 3),
         lines=[
             (intangible_cost, supplier, 600_000, 0),
@@ -271,7 +259,7 @@ def _seed_asset_portfolio(
         session,
         organization=organization,
         number="202602-0004",
-        event_type="intangible_asset_amortization",
+        component_kind="intangible_asset_amortization",
         posting_date=date(2026, 2, 28),
         lines=[
             (amortization_expense, None, 50_000, 0),
@@ -298,7 +286,7 @@ def _seed_asset_portfolio(
         session,
         organization=organization,
         number="202602-0005",
-        event_type="fixed_asset_acquisition",
+        component_kind="fixed_asset_acquisition",
         posting_date=date(2026, 2, 20),
         lines=[
             (fixed_pending, supplier, 300_000, 0),
@@ -368,9 +356,7 @@ def test_assets_data_builds_reconciled_fixed_and_intangible_portfolio(
     session.flush()
     fixed_event.status = "reversed"
     fixed_event.reversed_by_event_id = later_reversal.id
-    fixed_voucher = session.scalar(
-        select(Voucher).where(Voucher.event_id == fixed_event.id)
-    )
+    fixed_voucher = session.scalar(select(Voucher).where(Voucher.event_id == fixed_event.id))
     assert fixed_voucher is not None
     fixed_voucher.status = "reversed"
     session.flush()
@@ -436,7 +422,7 @@ def test_assets_data_excludes_acquisition_reversed_within_selected_period(
         session,
         organization=organization,
         number="202602-0006",
-        event_type="fixed_asset_acquisition",
+        component_kind="fixed_asset_acquisition",
         posting_date=date(2026, 2, 21),
         lines=[(pending, supplier, 90_000, 0), (capital, None, 0, 90_000)],
     )

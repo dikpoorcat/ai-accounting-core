@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from ai_accounting.coa import seed_organization
 from ai_accounting.database import Base, make_engine, make_session_factory
-from ai_accounting.models import BusinessEvent, TaxPeriod, Voucher, VoucherLine
+from ai_accounting.models import BusinessEvent, Evidence, TaxPeriod, Voucher, VoucherLine
 
 TAX_TOOLS = {"finance_calculate_tax_period", "finance_confirm_tax_period"}
 
@@ -85,8 +85,18 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
             name="税务 STDIO 验收企业",
         )
         organization.accounting_period_control_enabled = False
+        evidence = Evidence(
+            org_id=organization.id,
+            sha256="a" * 64,
+            original_name="tax-determinism-stdio.txt",
+            source="test",
+            size_bytes=1,
+            storage_path="test/tax-determinism-stdio.txt",
+        )
+        database_session.add(evidence)
         database_session.flush()
         org_id = str(organization.id)
+        evidence_id = str(evidence.id)
     setup_engine.dispose()
 
     parameters = StdioServerParameters(
@@ -140,23 +150,30 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
                         "request": {
                             "org_id": org_id,
                             "idempotency_key": "stdio-tax-source",
-                            "event_type": "service_credit_sale",
-                            "counterparty": {"kind": "customer", "name": "税务 STDIO 客户"},
-                            "business_dates": {
-                                "business_date": "2026-01-15",
-                                "fulfillment_date": "2026-01-15",
-                                "payment_date": "2026-01-15",
-                                "tax_obligation_date": "2026-01-15",
-                                "posting_date": "2026-01-15",
-                            },
-                            "amounts": {"gross_amount_fen": 10100},
-                            "tax_facts": {
-                                "taxable": True,
-                                "rate_percent": "1",
-                                "invoice_type": "special",
-                                "waive_exemption": False,
-                                "tax_due_on_event": True,
-                            },
+                            "posting_date": "2026-01-15",
+                            "evidence_references": [evidence_id],
+                            "components": [
+                                {
+                                    "key": "sale",
+                                    "kind": "service_sale",
+                                    "business_date": "2026-01-15",
+                                    "fulfillment_date": "2026-01-15",
+                                    "tax_obligation_date": "2026-01-15",
+                                    "amount_fen": 10100,
+                                    "counterparty": {
+                                        "kind": "customer",
+                                        "name": "税务 STDIO 客户",
+                                    },
+                                    "recognition_basis": "credit",
+                                    "tax_facts": {
+                                        "taxable": True,
+                                        "rate_percent": "1",
+                                        "invoice_type": "special",
+                                        "waive_exemption": False,
+                                        "tax_due_on_event": True,
+                                    },
+                                }
+                            ],
                         }
                     },
                 )

@@ -7,18 +7,17 @@ fails the executor outright instead of being hidden by a shared test session.
 
 from __future__ import annotations
 
-import shutil
 import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
-from threading import Barrier, Lock
+from threading import Barrier
 from typing import Any
 
 import pytest
-from alembic.config import Config
-from conftest import prepare_authenticated_bank_account
-from sqlalchemy import event, select
+from _postgres_helpers import authenticated_business_database
+from conftest import AuthenticatedOwnerAuthority, prepare_authenticated_bank_account
+from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from test_payroll_service import (
@@ -27,14 +26,14 @@ from test_payroll_service import (
     payroll_parameters,
     register_payroll_facts,
 )
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.database import make_session_factory
 from ai_accounting.models import (
     Counterparty,
     EmployeePayrollProfileVersion,
     OpenItem,
+    Organization,
     PayrollBatch,
     PayrollLine,
     PayrollPolicyVersion,
@@ -43,7 +42,6 @@ from ai_accounting.models import (
 from ai_accounting.schemas import (
     ConfirmPayrollRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     RegisterPayrollOpeningStateRequest,
@@ -51,34 +49,43 @@ from ai_accounting.schemas import (
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
-from alembic import command
 
-pytestmark = [
-    pytest.mark.postgres,
-    pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
-]
+pytestmark = pytest.mark.postgres
+
+
+class R5Database:
+    def __init__(
+        self,
+        engine: Engine,
+        org_id: uuid.UUID,
+        evidence_id: uuid.UUID,
+        authority: AuthenticatedOwnerAuthority,
+    ) -> None:
+        self.engine = engine
+        self.org_id = org_id
+        self.evidence_id = evidence_id
+        self.authority = authority
 
 
 @pytest.fixture
-def postgres_engine() -> Iterator[Engine]:
-    """Use one empty PostgreSQL 17 database for the R5 service concurrency matrix."""
+def postgres_database() -> Iterator[R5Database]:
+    """Use a genuine isolated business-v3/catalog-v2 pair for each R5 case."""
 
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", database_url)
-        command.upgrade(config, "head")
-        command.check(config)
-        from sqlalchemy import create_engine
+    with authenticated_business_database("round5_transactions", name="R5 PostgreSQL") as data:
+        engine, org_id, evidence_id, authority = data
+        yield R5Database(engine, org_id, evidence_id, authority)
 
-        engine = create_engine(database_url)
-        try:
-            yield engine
-        finally:
-            engine.dispose()
+
+def _prepared_organization(session: Session, database: R5Database) -> Organization:
+    organization = session.get(Organization, database.org_id)
+    assert organization is not None
+    prepare_authenticated_bank_account(
+        session,
+        organization,
+        authority=database.authority,
+        evidence_id=database.evidence_id,
+    )
+    return organization
 
 
 def _preview_request(
@@ -86,6 +93,7 @@ def _preview_request(
     employee_id: uuid.UUID,
     *,
     idempotency_key: str,
+    evidence_id: uuid.UUID,
     period: str = "2026-03",
     tax_reported_salary_fen: int = 1_000_000,
 ) -> PreviewPayrollRequest:
@@ -99,6 +107,7 @@ def _preview_request(
             "payroll_period": period,
             "posting_date": payment_date.isoformat(),
             "payment_date": payment_date.isoformat(),
+            "evidence_references": [evidence_id],
             "employee_items": [
                 {
                     "employee_id": employee_id,
@@ -143,10 +152,13 @@ def _assert_replay(results: list[Any]) -> None:
     assert len({result.event_id for result in results}) == 1
 
 
-def _assert_mismatch(results: list[Any]) -> None:
+def _assert_mismatch(
+    results: list[Any],
+    expected_error: str = "PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH",
+) -> None:
     assert {result.status for result in results} == {"posted", "rejected"}
     rejected = next(result for result in results if result.status == "rejected")
-    assert rejected.errors == ["PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert rejected.errors == [expected_error]
 
 
 def _assert_correction_blocked(result: dict[str, object], batch_id: uuid.UUID) -> None:
@@ -189,6 +201,7 @@ def _register_second_employee(session: Session, org_id: uuid.UUID) -> uuid.UUID:
 
 def _prepare_payment_requests(
     factory: Any,
+    database: R5Database,
     *,
     organization_name: str,
     event_type: str,
@@ -196,17 +209,17 @@ def _prepare_payment_requests(
     """Make two different banks for one still-open canonical payroll payable."""
 
     with factory() as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name=organization_name,
-        )
-        authority = prepare_authenticated_bank_account(session, organization)
+        organization = _prepared_organization(session, database)
+        authority = database.authority
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
         preview = service.preview_payroll(
-            _preview_request(organization.id, employee_id, idempotency_key="r5-payment-preview")
+            _preview_request(
+                organization.id,
+                employee_id,
+                idempotency_key="r5-payment-preview",
+                evidence_id=database.evidence_id,
+            )
         )
         assert preview.status == "calculated", preview.errors
         confirmed = service.confirm_payroll(
@@ -301,7 +314,9 @@ def _prepare_payment_requests(
             key=f"{organization_name}-same-key",
         )
         changed_data = request.model_dump(mode="json")
-        changed_data["bank_transaction_references"] = [{"id": str(second_bank.id)}]
+        changed_data["funds"][0]["bank_transaction_references"] = [
+            {"id": str(second_bank.id)}
+        ]
         changed_data["description"] = "different request payload"
         changed = RecordEventRequest.model_validate(changed_data)
         session.commit()
@@ -309,18 +324,13 @@ def _prepare_payment_requests(
 
 
 def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_after_reverse(
-    postgres_engine: Engine,
+    postgres_database: R5Database,
 ) -> None:
     """All version facts share one final-payroll correction barrier on PostgreSQL."""
 
-    factory = make_session_factory(postgres_engine)
+    factory = make_session_factory(postgres_database.engine)
     with factory.begin() as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R5 PG correction barrier",
-        )
+        organization = _prepared_organization(session, postgres_database)
         employee_id = register_payroll_facts(session, organization)
         service = FinanceService(session)
         opening_request = RegisterPayrollOpeningStateRequest(
@@ -341,7 +351,12 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
         opening = service.register_payroll_opening_state(opening_request)
         assert opening["status"] == "registered", opening
         preview = service.preview_payroll(
-            _preview_request(organization.id, employee_id, idempotency_key="r5-pg-correction")
+            _preview_request(
+                organization.id,
+                employee_id,
+                idempotency_key="r5-pg-correction",
+                evidence_id=postgres_database.evidence_id,
+            )
         )
         assert preview.status == "calculated", preview.errors
         confirmed = service.confirm_payroll(
@@ -418,24 +433,33 @@ def test_r5_004_postgres_correction_barrier_reports_final_batch_and_unblocks_aft
 
 
 def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
-    postgres_engine: Engine,
+    postgres_database: R5Database,
 ) -> None:
-    factory = make_session_factory(postgres_engine)
+    factory = make_session_factory(postgres_database.engine)
     with factory.begin() as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R5 preview and confirm envelope",
-        )
+        organization = _prepared_organization(session, postgres_database)
         employee_id = register_payroll_facts(session, organization)
+        prepare_authenticated_bank_account(
+            session,
+            organization,
+            booking_date=date(2026, 4, 5),
+            authority=postgres_database.authority,
+            evidence_id=postgres_database.evidence_id,
+        )
         org_id = organization.id
 
-    same_preview = _preview_request(org_id, employee_id, idempotency_key="r5-preview-same")
+    same_preview = _preview_request(
+        org_id,
+        employee_id,
+        idempotency_key="r5-preview-same",
+        evidence_id=postgres_database.evidence_id,
+    )
     preview_results = _run_two_connections(
         factory,
         [same_preview, same_preview],
         lambda service, request: service.preview_payroll(request),
+        authority=postgres_database.authority,
+        tool_name="finance_preview_payroll",
     )
     assert [result.status for result in preview_results] == ["calculated", "calculated"]
     assert len({result.batch_id for result in preview_results}) == 1
@@ -451,6 +475,8 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
         factory,
         [same_confirm, same_confirm],
         lambda service, request: service.confirm_payroll(request),
+        authority=postgres_database.authority,
+        tool_name="finance_confirm_payroll",
     )
     assert [result.status for result in confirmation_results] == ["posted", "posted"]
     assert len({result.event_id for result in confirmation_results}) == 1
@@ -458,14 +484,18 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
     # Build a fresh draft so the two workers reach a business-event unique
     # conflict through the confirmation path, not a stale-batch shortcut.
     with factory.begin() as session:
-        next_preview = FinanceService(session).preview_payroll(
-            _preview_request(
-                org_id,
-                employee_id,
-                idempotency_key="r5-confirm-different",
-                period="2026-04",
+        with postgres_database.authority.attributed_call(
+            session, tool_name="finance_preview_payroll"
+        ):
+            next_preview = FinanceService(session).preview_payroll(
+                _preview_request(
+                    org_id,
+                    employee_id,
+                    idempotency_key="r5-confirm-different",
+                    evidence_id=postgres_database.evidence_id,
+                    period="2026-04",
+                )
             )
-        )
         assert next_preview.status == "calculated", next_preview.errors
     different_confirm = ConfirmPayrollRequest(
         org_id=org_id,
@@ -488,6 +518,8 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
         ],
         lambda service, request: service.confirm_payroll(request),
         reverse_submission_order=True,
+        authority=postgres_database.authority,
+        tool_name="finance_confirm_payroll",
     )
     _assert_mismatch(confirmation_mismatch)
 
@@ -502,11 +534,12 @@ def test_r5_006_preview_and_confirmation_use_the_same_idempotency_envelope(
     ],
 )
 def test_r5_006_every_payroll_payment_entry_replays_and_rejects_payload_mismatch(
-    postgres_engine: Engine, event_type: str
+    postgres_database: R5Database, event_type: str
 ) -> None:
-    factory = make_session_factory(postgres_engine)
+    factory = make_session_factory(postgres_database.engine)
     original, changed, authority = _prepare_payment_requests(
         factory,
+        postgres_database,
         organization_name=f"R5 {event_type}",
         event_type=event_type,
     )
@@ -528,30 +561,35 @@ def test_r5_006_every_payroll_payment_entry_replays_and_rejects_payload_mismatch
             reverse_submission_order=True,
             authority=authority,
             tool_name="finance_record_event",
-        )
+        ),
+        "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
     )
 
 
 def test_r5_006_first_shared_agency_is_safe_across_connections(
-    postgres_engine: Engine,
+    postgres_database: R5Database,
 ) -> None:
     """Force two confirmations past the same empty-agency read, then reverse twice."""
 
+    postgres_engine = postgres_database.engine
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R5 shared agency construction",
-        )
+        organization = _prepared_organization(session, postgres_database)
         first_employee_id = register_payroll_facts(session, organization)
+        prepare_authenticated_bank_account(
+            session,
+            organization,
+            booking_date=date(2026, 4, 5),
+            authority=postgres_database.authority,
+            evidence_id=postgres_database.evidence_id,
+        )
         second_employee_id = _register_second_employee(session, organization.id)
         first_preview = FinanceService(session).preview_payroll(
             _preview_request(
                 organization.id,
                 first_employee_id,
                 idempotency_key="r5-agency-preview-one",
+                evidence_id=postgres_database.evidence_id,
                 period="2026-03",
             )
         )
@@ -560,61 +598,37 @@ def test_r5_006_first_shared_agency_is_safe_across_connections(
                 organization.id,
                 second_employee_id,
                 idempotency_key="r5-agency-preview-two",
+                evidence_id=postgres_database.evidence_id,
                 period="2026-04",
             )
         )
         assert first_preview.status == second_preview.status == "calculated"
         org_id = organization.id
 
-    # The hook fires after both workers queried the exact social-agency row
-    # and before either can insert it.  It deterministically exercises the
-    # nested savepoint/readback branch in _agency_counterparty.
-    agency_read_barrier = Barrier(2)
-    counter = 0
-    counter_lock = Lock()
-
-    def gate_empty_agency_reads(
-        _conn: Any,
-        _cursor: Any,
-        statement: str,
-        _parameters: Any,
-        _context: Any,
-        _executemany: bool,
-    ) -> None:
-        nonlocal counter
-        if "FROM counterparties" not in statement or "counterparties.name" not in statement:
-            return
-        with counter_lock:
-            if counter >= 2:
-                return
-            counter += 1
-        agency_read_barrier.wait(timeout=15)
-
-    event.listen(postgres_engine, "after_cursor_execute", gate_empty_agency_reads)
-    try:
-        confirmations = _run_two_connections(
-            factory,
-            [
-                ConfirmPayrollRequest(
-                    org_id=org_id,
-                    batch_id=first_preview.batch_id,
-                    calculation_hash=first_preview.calculation_hash,
-                    idempotency_key="r5-agency-confirm-one",
-                ),
-                ConfirmPayrollRequest(
-                    org_id=org_id,
-                    batch_id=second_preview.batch_id,
-                    calculation_hash=second_preview.calculation_hash,
-                    idempotency_key="r5-agency-confirm-two",
-                ),
-            ],
-            lambda service, request: service.confirm_payroll(request),
-            reverse_submission_order=True,
-        )
-    finally:
-        event.remove(postgres_engine, "after_cursor_execute", gate_empty_agency_reads)
+    # The common organization lock now serializes the two first-confirmation
+    # plans before either can construct shared counterparties.
+    confirmations = _run_two_connections(
+        factory,
+        [
+            ConfirmPayrollRequest(
+                org_id=org_id,
+                batch_id=first_preview.batch_id,
+                calculation_hash=first_preview.calculation_hash,
+                idempotency_key="r5-agency-confirm-one",
+            ),
+            ConfirmPayrollRequest(
+                org_id=org_id,
+                batch_id=second_preview.batch_id,
+                calculation_hash=second_preview.calculation_hash,
+                idempotency_key="r5-agency-confirm-two",
+            ),
+        ],
+        lambda service, request: service.confirm_payroll(request),
+        reverse_submission_order=True,
+        authority=postgres_database.authority,
+        tool_name="finance_confirm_payroll",
+    )
     assert [result.status for result in confirmations] == ["posted", "posted"]
-    assert counter == 2
     with Session(postgres_engine) as session:
         agencies = session.scalars(
             select(Counterparty).where(
@@ -627,11 +641,13 @@ def test_r5_006_first_shared_agency_is_safe_across_connections(
 
 
 def test_r5_006_reverse_replays_and_rejects_payload_mismatch_across_connections(
-    postgres_engine: Engine,
+    postgres_database: R5Database,
 ) -> None:
+    postgres_engine = postgres_database.engine
     factory = make_session_factory(postgres_engine)
     same, _changed, authority = _prepare_payment_requests(
         factory,
+        postgres_database,
         organization_name="R5 reverse same",
         event_type="salary_payment",
     )

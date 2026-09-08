@@ -11,8 +11,10 @@ from hypothesis import strategies as st
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.models import (
     BusinessEvent,
+    Evidence,
     Organization,
     TaxPeriod,
     TaxPeriodSource,
@@ -40,9 +42,7 @@ def test_historical_tax_rule_versions_are_selected_by_effective_date(
     session: Session, organization: Organization
 ) -> None:
     assert active_tax_rule(session, organization, date(2022, 9, 20)).version == "2022.15"
-    assert active_surtax_rule(session, organization, date(2022, 9, 20)).version == (
-        "2022.10-ZJ.4"
-    )
+    assert active_surtax_rule(session, organization, date(2022, 9, 20)).version == ("2022.10-ZJ.4")
     assert active_tax_rule(session, organization, date(2025, 6, 30)).version == "2023.19"
     assert active_tax_rule(session, organization, date(2026, 6, 30)).version == "2026.1"
 
@@ -62,28 +62,58 @@ def add_taxable_event(
     vat_fen: int,
     exemption_eligible: bool = True,
 ) -> None:
-    session.add(
-        BusinessEvent(
+    proof = Evidence(
+        org_id=organization.id,
+        original_name="tax-source.txt",
+        storage_path="test/tax-source.txt",
+        source="test",
+        sha256=uuid.uuid4().hex * 2,
+        size_bytes=1,
+    )
+    session.add(proof)
+    session.flush()
+    gross = net_fen + vat_fen
+    result = FinanceService(session).record_event(
+        RecordEventRequest(
             org_id=organization.id,
             idempotency_key=f"tax-{uuid.uuid4()}",
-            event_type="service_cash_sale",
-            status="posted",
-            description="threshold fixture",
-            facts={
-                "derived": {
-                    "taxable_gross_fen": net_fen + vat_fen,
-                    "net_sales_fen": net_fen,
-                    "vat_fen": vat_fen,
-                    "exemption_eligible": exemption_eligible,
-                }
-            },
-            business_date=date(2026, 3, 31),
-            tax_obligation_date=date(2026, 3, 31),
             posting_date=date(2026, 3, 31),
-            rule_trace=[],
+            evidence_references=[proof.id],
+            components=[
+                {
+                    "key": "sale",
+                    "kind": "service_sale",
+                    "amount_fen": gross,
+                    "business_date": "2026-03-31",
+                    "payment_date": "2026-03-31",
+                    "fulfillment_date": "2026-03-31",
+                    "tax_obligation_date": "2026-03-31",
+                    "recognition_basis": "immediate",
+                    "counterparty": {"kind": "customer", "name": "Threshold customer"},
+                    "tax_facts": {
+                        "taxable": True,
+                        "rate_percent": "1",
+                        "invoice_type": "ordinary" if exemption_eligible else "special",
+                        "waive_exemption": False,
+                        "tax_due_on_event": True,
+                    },
+                }
+            ],
+            funds=[
+                {
+                    "key": "cash",
+                    "account_code": "1001",
+                    "direction": "receipt",
+                    "payment_date": "2026-03-31",
+                    "amount_fen": gross,
+                    "allocations": [{"component_key": "sale", "amount_fen": gross}],
+                }
+            ],
         )
     )
-    session.flush()
+    assert result.status == "posted", result
+    derived = result.data["components"][0]["derived"]
+    assert (derived["net_sales_fen"], derived["vat_fen"]) == (net_fen, vat_fen)
 
 
 def test_quarterly_threshold_is_strictly_below(

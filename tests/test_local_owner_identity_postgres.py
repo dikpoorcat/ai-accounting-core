@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from threading import Barrier
 
 import pytest
 import sqlalchemy as sa
+from _postgres_helpers import isolated_postgres_url
 from alembic.config import Config
 from pydantic import SecretStr
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
 from ai_accounting.identity import IdentityError
 from ai_accounting.identity_schemas import (
     OwnerLoginRequest,
@@ -22,13 +21,15 @@ from ai_accounting.identity_schemas import (
     OwnerProvisionRequest,
 )
 from ai_accounting.identity_service import IdentityService
-from ai_accounting.models import OwnerAccount, OwnerRecoveryCode, OwnerSession
+from ai_accounting.models import (
+    CompanyRegistry,
+    OwnerAccount,
+    OwnerRecoveryCode,
+    OwnerSession,
+)
 from alembic import command
 
-pytestmark = [
-    pytest.mark.postgres,
-    pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
-]
+pytestmark = pytest.mark.postgres
 
 PASSWORD_HASH = (
     "$argon2id$v=19$m=65536,t=3,p=4$AAAAAAAAAAAAAAAAAAAAAA$"
@@ -37,26 +38,41 @@ PASSWORD_HASH = (
 
 
 def _config(database_url: str) -> Config:
-    config = Config("alembic.ini")
+    config = Config("catalog_alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
+    config.attributes["database_url_override"] = database_url
     return config
 
 
-def _insert_org(connection: sa.Connection, org_id: uuid.UUID, name: str) -> None:
+def _insert_org(
+    connection: sa.Connection,
+    org_id: uuid.UUID,
+    name: str,
+    *,
+    database_name: str,
+    taxpayer_id: str,
+) -> None:
     connection.execute(
         sa.text(
             """
-            INSERT INTO organizations (
-                id, name, taxpayer_identification_number, taxpayer_type,
-                filing_cycle, jurisdiction,
-                urban_maintenance_rate, accounting_standard, created_at
+            INSERT INTO company_registry (
+                org_id, database_name, database_identity, status, display_name,
+                taxpayer_identification_number, profile_effective_from,
+                filing_cycle, urban_maintenance_rate, is_primary, created_at, updated_at
             ) VALUES (
-                :id, :name, '91330106MA1234567T', 'small_scale', 'quarterly', 'CN',
-                0.07, 'small_enterprise', CURRENT_TIMESTAMP
+                :id, :database_name, :database_identity, 'active', :name,
+                :taxpayer_id, DATE '2026-01-01', 'quarterly', 0.07, false,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             """
         ),
-        {"id": org_id, "name": name},
+        {
+            "id": org_id,
+            "name": name,
+            "database_name": database_name,
+            "database_identity": uuid.uuid4(),
+            "taxpayer_id": taxpayer_id,
+        },
     )
 
 
@@ -71,8 +87,15 @@ def _insert_owner(
         sa.text(
             """
             INSERT INTO owner_accounts (
-                id, org_id, login_name, login_name_normalized, password_hash
-            ) VALUES (:id, :org_id, :login_name, :normalized, :password_hash)
+                id, org_id, singleton_key, login_name, login_name_normalized,
+                status, password_hash, credential_version,
+                password_failed_attempts, recovery_failed_attempts,
+                password_changed_at, created_at, updated_at
+            ) VALUES (
+                :id, :org_id, 1, :login_name, :normalized, 'active',
+                :password_hash, 1, 0, 0,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
             """
         ),
         {
@@ -86,19 +109,27 @@ def _insert_owner(
 
 
 def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> None:
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url()
+    with isolated_postgres_url("local_owner_identity") as database_url:
         config = _config(database_url)
         command.upgrade(config, "head")
         engine = sa.create_engine(database_url)
         org_ids = [uuid.uuid4(), uuid.uuid4()]
         owner_ids = [uuid.uuid4(), uuid.uuid4()]
         with engine.begin() as connection:
-            _insert_org(connection, org_ids[0], "并发负责人甲")
-            _insert_org(connection, org_ids[1], "并发负责人乙")
+            _insert_org(
+                connection,
+                org_ids[0],
+                "并发负责人甲",
+                database_name=f"finance_company_{uuid.uuid4().hex}",
+                taxpayer_id="91330106MA1234567T",
+            )
+            _insert_org(
+                connection,
+                org_ids[1],
+                "并发负责人乙",
+                database_name=f"finance_company_{uuid.uuid4().hex}",
+                taxpayer_id="91330106MA7654321P",
+            )
 
         barrier = Barrier(2)
 
@@ -135,9 +166,11 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                             """
                             INSERT INTO owner_sessions (
                                 id, org_id, owner_account_id, secret_sha256,
-                                credential_version, idle_expires_at, absolute_expires_at
+                                credential_version, created_at, last_seen_at,
+                                idle_expires_at, absolute_expires_at
                             ) VALUES (
                                 :id, :org_id, :owner_id, :secret, 1,
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                                 CURRENT_TIMESTAMP + INTERVAL '30 minutes',
                                 CURRENT_TIMESTAMP + INTERVAL '8 hours'
                             )
@@ -158,7 +191,8 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                             """
                             INSERT INTO owner_recovery_codes (
                                 id, org_id, owner_account_id, code_sha256, credential_version
-                            ) VALUES (:id, :org_id, :owner_id, :code_hash, 1)
+                                , created_at
+                            ) VALUES (:id, :org_id, :owner_id, :code_hash, 1, CURRENT_TIMESTAMP)
                             """
                         ),
                         {
@@ -176,10 +210,10 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                             """
                             INSERT INTO identity_audit_events (
                                 id, org_id, owner_account_id, event_type, outcome,
-                                reason_code, request_correlation_id
+                                reason_code, request_correlation_id, occurred_at
                             ) VALUES (
                                 :id, :org_id, :owner_id, 'login_failed', 'rejected',
-                                'INVALID_CREDENTIALS', :correlation_id
+                                'INVALID_CREDENTIALS', :correlation_id, CURRENT_TIMESTAMP
                             )
                             """
                         ),
@@ -200,9 +234,11 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                         """
                         INSERT INTO owner_sessions (
                             id, org_id, owner_account_id, secret_sha256,
-                            credential_version, idle_expires_at, absolute_expires_at
+                            credential_version, created_at, last_seen_at,
+                            idle_expires_at, absolute_expires_at
                         ) VALUES (
                             :id, :org_id, :owner_id, :secret, 1,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                             CURRENT_TIMESTAMP + INTERVAL '30 minutes',
                             CURRENT_TIMESTAMP + INTERVAL '8 hours'
                         )
@@ -220,7 +256,8 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                         """
                         INSERT INTO owner_recovery_codes (
                             id, org_id, owner_account_id, code_sha256, credential_version
-                        ) VALUES (:id, :org_id, :owner_id, :code_hash, 1)
+                            , created_at
+                        ) VALUES (:id, :org_id, :owner_id, :code_hash, 1, CURRENT_TIMESTAMP)
                         """
                     ),
                     {
@@ -235,10 +272,10 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                         """
                         INSERT INTO identity_audit_events (
                             id, org_id, owner_account_id, session_id, event_type,
-                            outcome, request_correlation_id
+                            outcome, request_correlation_id, occurred_at
                         ) VALUES (
                             :id, :org_id, :owner_id, :session_id, 'login_succeeded',
-                            'succeeded', :correlation_id
+                            'succeeded', :correlation_id, CURRENT_TIMESTAMP
                         )
                         """
                     ),
@@ -265,8 +302,8 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                     "IDENTITY_OWNER_IMMUTABLE_FIELD",
                 ),
                 (
-                    "DELETE FROM owner_accounts WHERE id = :id",
-                    "IDENTITY_SUBJECT_DELETE_FORBIDDEN",
+                        "DELETE FROM owner_accounts WHERE id = :id",
+                        "IDENTITY_OWNER_DELETE_FORBIDDEN",
                 ),
                 (
                     "UPDATE owner_sessions SET secret_sha256 = :secret WHERE id = :id",
@@ -324,9 +361,11 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                             """
                             INSERT INTO owner_sessions (
                                 id, org_id, owner_account_id, secret_sha256,
-                                credential_version, idle_expires_at, absolute_expires_at
+                                credential_version, created_at, last_seen_at,
+                                idle_expires_at, absolute_expires_at
                             ) VALUES (
                                 :id, :org_id, :owner_id, :secret, 1,
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                                 CURRENT_TIMESTAMP + INTERVAL '30 minutes',
                                 CURRENT_TIMESTAMP + INTERVAL '8 hours'
                             )
@@ -378,7 +417,8 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                         """
                         INSERT INTO owner_recovery_codes (
                             id, org_id, owner_account_id, code_sha256, credential_version
-                        ) VALUES (:id, :org_id, :owner_id, :code_hash, 1)
+                            , created_at
+                        ) VALUES (:id, :org_id, :owner_id, :code_hash, 1, CURRENT_TIMESTAMP)
                         """
                     ),
                     {
@@ -396,7 +436,8 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
                             """
                             INSERT INTO owner_recovery_codes (
                                 id, org_id, owner_account_id, code_sha256, credential_version
-                            ) VALUES (:id, :org_id, :owner_id, :code_hash, 1)
+                                , created_at
+                            ) VALUES (:id, :org_id, :owner_id, :code_hash, 1, CURRENT_TIMESTAMP)
                             """
                         ),
                         {
@@ -410,7 +451,7 @@ def test_postgres_singleton_cross_org_concurrency_and_immutable_history() -> Non
             with pytest.raises(DBAPIError):
                 with engine.begin() as connection:
                     connection.execute(
-                        sa.text("DELETE FROM organizations WHERE id = :id"),
+                        sa.text("DELETE FROM company_registry WHERE org_id = :id"),
                         {"id": owner_org_id},
                     )
 
@@ -452,26 +493,30 @@ def test_postgres_identity_service_commits_password_rotation_atomically() -> Non
             self.value += 1
             return bytes([self.value]) * size
 
-    with PostgresContainer(
-        "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
-        driver="psycopg",
-    ) as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url()
+    with isolated_postgres_url("identity_rotation") as database_url:
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
         random = SequenceRandom()
         try:
-            with Session(engine) as session:
-                organization = seed_organization(
-                    session,
+            with Session(engine, info={"catalog_mode": True}) as session:
+                organization = CompanyRegistry(
+                    org_id=uuid.uuid4(),
+                    database_name=f"finance_company_{uuid.uuid4().hex}",
+                    database_identity=uuid.uuid4(),
+                    status="active",
+                    display_name="PG身份服务提交点",
                     taxpayer_identification_number="91330106MA1234567T",
-                    name="PG身份服务提交点",
+                    profile_effective_from=date(2026, 1, 1),
+                    filing_cycle="quarterly",
+                    urban_maintenance_rate=Decimal("0.07"),
+                    is_primary=True,
                 )
+                session.add(organization)
                 session.flush()
                 service = IdentityService(session, randbytes=random.bytes)
                 provisioned = service.provision_owner(
                     OwnerProvisionRequest(
-                        org_id=organization.id,
+                        org_id=organization.org_id,
                         login_name="owner",
                         password=SecretStr("Correct-Horse-Battery-2026!"),
                     )

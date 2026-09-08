@@ -38,6 +38,7 @@ config.set_main_option(
 target_metadata = Base.metadata
 
 _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
+    "ck_fs_opening_confirmation_hash_lower_hex",
     "ck_company_registry_database_name",
     "ck_owner_account_password_hash_shape",
     "ck_owner_account_login_ascii",
@@ -131,6 +132,11 @@ def run_migrations_online() -> None:
     )
     with connectable.connect() as connection:
         inspector = inspect(connection)
+        existing_tables = set(inspector.get_table_names())
+        if existing_tables - {"alembic_version"} and "alembic_version" not in existing_tables:
+            # Reject unknown populated schemas before Alembic creates even its
+            # own version table. Existing databases are read-only replay sources.
+            raise RuntimeError("BUSINESS_V3_REQUIRES_EMPTY_DATABASE")
         identity_split = inspector.has_table(
             "organization_database_metadata"
         ) and not inspector.has_table("owner_accounts")

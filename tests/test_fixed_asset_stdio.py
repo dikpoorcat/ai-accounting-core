@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from conftest import import_test_bank_transaction, prepare_authenticated_bank_account
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from sqlalchemy import select
@@ -19,6 +20,7 @@ from ai_accounting.models import (
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
+    BusinessEventComponent,
     Evidence,
     FixedAsset,
     FixedAssetActivation,
@@ -50,25 +52,6 @@ def _evidence(organization_id: uuid.UUID, seed: str) -> Evidence:
         source="stdio-test",
         size_bytes=1,
         storage_path=f"stdio/{seed}",
-    )
-
-
-def _bank_transaction(
-    organization_id: uuid.UUID,
-    *,
-    amount_fen: int,
-    booking_date: date,
-    seed: str,
-) -> BankTransaction:
-    return BankTransaction(
-        org_id=organization_id,
-        bank_account_code="1002",
-        fingerprint=(seed * 64)[:64],
-        booking_date=booking_date,
-        amount_fen=amount_fen,
-        currency="CNY",
-        memo=f"stdio-{seed}",
-        source_sha256=(("s" + seed) * 64)[:64],
     )
 
 
@@ -110,25 +93,11 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(
         acquisition_evidence = _evidence(org_id, "a")
         activation_evidence = _evidence(org_id, "b")
         disposal_evidence = _evidence(org_id, "c")
-        acquisition_bank = _bank_transaction(
-            org_id,
-            amount_fen=-1_050_000,
-            booking_date=date(2026, 1, 2),
-            seed="acquire",
-        )
-        disposal_bank = _bank_transaction(
-            org_id,
-            amount_fen=500_000,
-            booking_date=date(2026, 2, 28),
-            seed="dispose",
-        )
         database_session.add_all(
             [
                 acquisition_evidence,
                 activation_evidence,
                 disposal_evidence,
-                acquisition_bank,
-                disposal_bank,
             ]
         )
         database_session.flush()
@@ -143,6 +112,25 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(
                     "start_date": "2026-01-01",
                 }
             ],
+        )
+        acquisition_bank = import_test_bank_transaction(
+            database_session,
+            organization,
+            amount_fen=-1_050_000,
+            booking_date=date(2026, 1, 2),
+            key="stdio-fixed-asset-acquire",
+        )
+        disposal_bank = import_test_bank_transaction(
+            database_session,
+            organization,
+            amount_fen=500_000,
+            booking_date=date(2026, 2, 28),
+            key="stdio-fixed-asset-dispose",
+        )
+        prepare_authenticated_bank_account(
+            database_session,
+            organization,
+            booking_date=date(2026, 3, 1),
         )
         acquisition_evidence_id = acquisition_evidence.id
         activation_evidence_id = activation_evidence.id
@@ -451,32 +439,26 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(
                 == voucher_by_event[event_ids["disposed"]].id
             )
 
-            trace_stages = {
-                name: {item["stage"] for item in events[event_id].rule_trace}
-                for name, event_id in event_ids.items()
-            }
-            assert {"facts_validated", "entries_created", "normalized_fact_created"} <= (
-                trace_stages["acquired"]
-            )
-            assert {"facts_validated", "entries_created", "normalized_fact_created"} <= (
-                trace_stages["activated"]
-            )
-            assert {"depreciation_calculated", "entries_created"} <= (trace_stages["confirmed"])
-            assert {"tax_rule_selected", "entries_created", "normalized_fact_created"} <= (
-                trace_stages["disposed"]
-            )
-            depreciation_trace = next(
-                item
-                for item in events[event_ids["confirmed"]].rule_trace
-                if item["stage"] == "depreciation_calculated"
-            )
-            assert depreciation_trace["calculation_hash"] == result["preview"]["calculation_hash"]
-            tax_trace = next(
-                item
-                for item in events[event_ids["disposed"]].rule_trace
-                if item["stage"] == "tax_rule_selected"
-            )
-            assert tax_trace["source_url"].startswith("https://")
+            components = database_session.scalars(
+                select(BusinessEventComponent).where(
+                    BusinessEventComponent.event_id.in_(
+                        [
+                            event_ids["acquired"],
+                            event_ids["activated"],
+                            event_ids["confirmed"],
+                            event_ids["disposed"],
+                        ]
+                    ),
+                    BusinessEventComponent.kind != "funds",
+                )
+            ).all()
+            assert {
+                "fixed_asset_acquisition",
+                "fixed_asset_activation",
+                "fixed_asset_depreciation",
+                "fixed_asset_disposal",
+            } <= {component.kind for component in components}
+            assert all(component.rule_version for component in components)
 
             evidence_edges = {
                 (row.event_id, row.evidence_id, row.relation_kind)
@@ -539,7 +521,13 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(
 
             projection = result["event_projection"]
             assert projection["event"]["event_type"] == "fixed_asset_disposal"
-            assert projection["event"]["trace"]
+            disposal_component = next(
+                component
+                for component in projection["components"]
+                if component["kind"] == "fixed_asset_disposal"
+            )
+            assert disposal_component["rule_version"]
+            assert disposal_component["derived"]
             assert projection["vouchers"][0]["lines"]
             assert projection["evidence"][0]["id"] == str(disposal_evidence_id)
             assert (

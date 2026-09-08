@@ -81,7 +81,7 @@ def test_bank_match_validation_accepts_multiple_rows_for_one_aggregate_voucher(
     event = BusinessEvent(
         org_id=organization.id,
         idempotency_key="aggregate-bank-match-event",
-        event_type="unified_payout_run",
+        event_type="composite",
         status="posted",
         facts={},
         business_date=date(2026, 8, 10),

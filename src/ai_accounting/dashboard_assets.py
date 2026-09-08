@@ -160,7 +160,7 @@ def _load_asset_ledger_position(
     credit = func.coalesce(func.sum(VoucherLine.credit_fen), 0)
     rows = session.execute(
         select(
-            Account.system_role,
+            func.coalesce(Account.business_class, Account.system_role).label("classification"),
             debit.label("debit_fen"),
             credit.label("credit_fen"),
         )
@@ -168,7 +168,7 @@ def _load_asset_ledger_position(
         .join(Voucher, Voucher.id == VoucherLine.voucher_id)
         .where(
             Account.org_id == org_id,
-            Account.system_role.in_(
+            func.coalesce(Account.business_class, Account.system_role).in_(
                 (
                     "fixed_asset_cost",
                     "accumulated_depreciation",
@@ -180,10 +180,10 @@ def _load_asset_ledger_position(
             Voucher.posting_date <= end_date,
             Voucher.status.in_(FINAL_VOUCHER_STATUSES),
         )
-        .group_by(Account.system_role)
+        .group_by(func.coalesce(Account.business_class, Account.system_role))
     ).all()
     balances = {
-        row.system_role: int(row.debit_fen) - int(row.credit_fen) for row in rows
+        row.classification: int(row.debit_fen) - int(row.credit_fen) for row in rows
     }
     fixed_cost = balances.get("fixed_asset_cost", 0)
     accumulated_depreciation = -balances.get("accumulated_depreciation", 0)

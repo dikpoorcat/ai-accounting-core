@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy import select
 from test_financial_statements import _evidence
 
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.enterprise_income_tax import EnterpriseIncomeTaxService, confirmation_effective
 from ai_accounting.enterprise_income_tax_schemas import (
     ConfirmEnterpriseIncomeTaxResultRequest,
-    LinkEnterpriseIncomeTaxPaymentRequest,
     PreviewEnterpriseIncomeTaxResultRequest,
     QueryEnterpriseIncomeTaxRequest,
 )
@@ -26,7 +26,7 @@ from ai_accounting.models import (
     Voucher,
     VoucherLine,
 )
-from ai_accounting.schemas import RecordEventRequest, ReverseEventRequest
+from ai_accounting.schemas import ReverseEventRequest
 from ai_accounting.service import FinanceService
 
 
@@ -115,19 +115,37 @@ def payment(
         {
             "org_id": org.id,
             "idempotency_key": key,
-            "event_type": "enterprise_income_tax_refund" if refund else "tax_payment",
-            "business_dates": {
-                "business_date": posting_date,
-                "posting_date": posting_date,
-                "payment_date": posting_date,
-            },
-            "bank_account_code": "1002",
-            "amounts": {"amount_fen": amount},
-            "details": {"tax_type": "enterprise_income_tax"},
-            "income_tax_allocations": allocations
-            or [{"source_id": source_id, "amount_fen": amount}],
+            "posting_date": posting_date,
             "evidence_references": [evidence.id],
-            "bank_transaction_references": [{"id": bank.id}],
+            "components": [
+                {
+                    "key": "income-tax-settlement",
+                    "kind": "tax_settlement",
+                    "business_date": posting_date,
+                    "payment_date": posting_date,
+                    "amount_fen": amount,
+                    "tax_type": "enterprise_income_tax",
+                    "settlement_kind": "refund" if refund else "payment",
+                    "income_tax_allocations": allocations
+                    or [{"source_id": source_id, "amount_fen": amount}],
+                }
+            ],
+            "funds": [
+                {
+                    "key": "income-tax-funds",
+                    "account_code": "1002",
+                    "direction": "receipt" if refund else "payment",
+                    "payment_date": posting_date,
+                    "amount_fen": amount,
+                    "allocations": [
+                        {
+                            "component_key": "income-tax-settlement",
+                            "amount_fen": amount,
+                        }
+                    ],
+                    "bank_transaction_references": [],
+                }
+            ],
         }
     )
     if session.get_bind().dialect.name == "postgresql":
@@ -147,19 +165,19 @@ def test_q2_paid_then_august_correction_and_payment(session, organization):
         session, organization, evidence, root_id, 10000, posting_date=date(2026, 7, 10)
     )
     assert first.status == "posted", first
-    assert bank.matched_event_id == first.event_id
+    assert bank.matched_event_id is None
     service = EnterpriseIncomeTaxService(session)
     corrected, request = confirm(service, change(organization, evidence, root_id))
     assert corrected["data"]["expense_adjustment_fen"] == 5000
     assert corrected["data"]["payable_fen"] == 5000
-    assert corrected["reversal_event_id"]
+    assert corrected["event_id"]
     assert service.confirm(request)["data"]["idempotent_replay"]
     second, bank, req = payment(
         session, organization, evidence, corrected["result_id"], 5000, key="supplement"
     )
     assert second.status == "posted", second
     assert FinanceService(session).record_event(req).event_id == second.event_id
-    assert bank.matched_event_id == second.event_id
+    assert bank.matched_event_id is None
     assert account_balance_fen(session, organization.id, "enterprise_income_tax_payable") == 0
     assert account_balance_fen(session, organization.id, "enterprise_income_tax_expense") == 15000
     original = session.get(EnterpriseIncomeTaxQuarterConfirmation, root_id)
@@ -231,13 +249,162 @@ def test_paid_reduction_refund_partial_and_repeated_correction(session, organiza
     assert "CIT_SETTLEMENT_USED_BY_LATER_RESULT" in blocked.errors
 
 
+def test_latest_result_generic_reversal_restores_active_ancestor(session, organization):
+    evidence = _evidence(session, organization, "result-reversal.txt")
+    root_id = root(session, organization, evidence)
+    paid, _, _ = payment(
+        session,
+        organization,
+        evidence,
+        root_id,
+        3000,
+        key="paid-before-result-reversal",
+        posting_date=date(2026, 7, 10),
+    )
+    assert paid.status == "posted", paid
+    service = EnterpriseIncomeTaxService(session)
+    revised, _ = confirm(service, change(organization, evidence, root_id))
+    original = session.get(EnterpriseIncomeTaxQuarterConfirmation, root_id)
+
+    blocked = FinanceService(session).reverse_event(
+        ReverseEventRequest(
+            org_id=organization.id,
+            event_id=original.business_event_id,
+            posting_date=date(2026, 8, 6),
+            reason="仍有生效的后续结果",
+            idempotency_key="reverse-result-ancestor-first",
+        )
+    )
+    assert blocked.status == "rejected"
+
+    reversed_result = FinanceService(session).reverse_event(
+        ReverseEventRequest(
+            org_id=organization.id,
+            event_id=uuid.UUID(revised["event_id"]),
+            posting_date=date(2026, 8, 6),
+            reason="撤销最新申报结果",
+            idempotency_key="reverse-latest-result",
+        )
+    )
+    assert reversed_result.status == "posted", reversed_result
+    current = service.query(QueryEnterpriseIncomeTaxRequest(org_id=organization.id))["data"][
+        "sources"
+    ]
+    assert len(current) == 1
+    assert current[0]["source_id"] == str(root_id)
+    assert current[0]["recognized_tax_fen"] == 10000
+    assert current[0]["net_paid_fen"] == 3000
+    assert current[0]["payable_fen"] == 7000
+    assert account_balance_fen(session, organization.id, "enterprise_income_tax_expense") == 10000
+
+    replacement, _ = confirm(
+        service,
+        change(organization, evidence, root_id, declared_tax_fen=12000),
+        key="result-after-reversal",
+    )
+    replacement_row = session.get(
+        EnterpriseIncomeTaxResult,
+        uuid.UUID(replacement["result_id"]),
+    )
+    assert replacement_row.revision == 2
+    assert replacement["data"]["expense_adjustment_fen"] == 2000
+    assert replacement["data"]["net_paid_fen"] == 3000
+    assert replacement["data"]["payable_fen"] == 9000
+    assert account_balance_fen(session, organization.id, "enterprise_income_tax_expense") == 12000
+
+
+def test_local_result_can_be_settled_by_two_later_siblings(session, organization):
+    evidence = _evidence(session, organization, "local-result-payment.txt")
+    root_id = root(session, organization, evidence, amount=0)
+    service = EnterpriseIncomeTaxService(session)
+    result_facts = change(
+        organization,
+        evidence,
+        root_id,
+        declared_tax_fen=1000,
+    )
+    preview = service.preview(result_facts)
+    assert preview["status"] == "calculated", preview
+    result_component = result_facts.model_dump(
+        exclude={"org_id", "posting_date", "evidence_references"}
+    ) | {
+        "key": "result",
+        "kind": "enterprise_income_tax_result",
+        "business_date": result_facts.declaration_date,
+        "calculation_hash": preview["calculation_hash"],
+    }
+    request = RecordEventRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "idempotency_key": "local-result-two-payments",
+            "posting_date": result_facts.posting_date,
+            "description": "确认申报结果并分两项支付",
+            "evidence_references": [evidence.id],
+            "components": [
+                result_component,
+                {
+                    "key": "payment-a",
+                    "kind": "tax_settlement",
+                    "business_date": result_facts.posting_date,
+                    "payment_date": result_facts.posting_date,
+                    "amount_fen": 400,
+                    "tax_type": "enterprise_income_tax",
+                    "settlement_kind": "payment",
+                    "income_tax_allocations": [
+                        {
+                            "source_component_key": "result",
+                            "amount_fen": 400,
+                        }
+                    ],
+                },
+                {
+                    "key": "payment-b",
+                    "kind": "tax_settlement",
+                    "business_date": result_facts.posting_date,
+                    "payment_date": result_facts.posting_date,
+                    "amount_fen": 600,
+                    "tax_type": "enterprise_income_tax",
+                    "settlement_kind": "payment",
+                    "income_tax_allocations": [
+                        {
+                            "source_component_key": "result",
+                            "amount_fen": 600,
+                        }
+                    ],
+                },
+            ],
+            "funds": [
+                {
+                    "key": "bank",
+                    "account_code": "1002",
+                    "direction": "payment",
+                    "payment_date": result_facts.posting_date,
+                    "amount_fen": 1000,
+                    "allocations": [
+                        {"component_key": "payment-a", "amount_fen": 400},
+                        {"component_key": "payment-b", "amount_fen": 600},
+                    ],
+                    "bank_transaction_references": [],
+                }
+            ],
+        }
+    )
+    posted = FinanceService(session).record_event(request)
+    assert posted.status == "posted", posted
+    state = service.query(QueryEnterpriseIncomeTaxRequest(org_id=organization.id))["data"]
+    assert state["sources"][0]["result_id"] is not None
+    assert state["sources"][0]["net_paid_fen"] == 1000
+    assert state["sources"][0]["balance_fen"] == 0
+    assert account_balance_fen(session, organization.id, "enterprise_income_tax_payable") == 0
+    assert account_balance_fen(session, organization.id, "enterprise_income_tax_expense") == 1000
+
+
 def test_zero_noop_notice_and_stale_hash(session, organization):
     evidence = _evidence(session, organization, "zero.txt")
     root_id = root(session, organization, evidence, amount=0)
     service = EnterpriseIncomeTaxService(session)
     first, _ = confirm(service, change(organization, evidence, root_id, declared_tax_fen=0))
     assert first["event_id"] is None
-    assert first["reversal_event_id"] is None
     request = change(
         organization,
         evidence,
@@ -250,7 +417,7 @@ def test_zero_noop_notice_and_stale_hash(session, organization):
     )
     second, _ = confirm(service, request, key="notice")
     assert second["data"]["expense_adjustment_fen"] == 1000
-    assert second["reversal_event_id"] is None
+    assert second["event_id"]
     req = change(organization, evidence, root_id, previous_result_id=second["result_id"])
     preview = service.preview(req)
     paid, _, _ = payment(session, organization, evidence, second["result_id"], 500, key="partial")
@@ -355,7 +522,7 @@ def test_annual_repeated_correction_only_adjusts_annual_difference(session, orga
         key="annual-second",
     )
     assert second["data"]["expense_adjustment_fen"] == -1000
-    assert second["reversal_event_id"]
+    assert second["event_id"] != first["event_id"]
     assert account_balance_fen(session, organization.id, "enterprise_income_tax_payable") == -5000
     assert account_balance_fen(session, organization.id, "enterprise_income_tax_expense") == 5000
     history = service.query(QueryEnterpriseIncomeTaxRequest(org_id=organization.id))["data"][
@@ -365,65 +532,10 @@ def test_annual_repeated_correction_only_adjusts_annual_difference(session, orga
     assert history[-1]["evidence_references"] == [str(evidence.id)]
 
 
-def test_late_legacy_attribution_and_generic_reversal_guard(session, organization):
-    from ai_accounting.ledger import Entry, create_voucher
-
-    evidence = _evidence(session, organization, "legacy.txt")
-    root_id = root(session, organization, evidence)
-    event = BusinessEvent(
-        org_id=organization.id,
-        idempotency_key="old-tax",
-        event_type="tax_payment",
-        status="draft",
-        facts={"amounts": {"amount_fen": 10000}, "details": {"tax_type": "enterprise_income_tax"}},
-        business_date=date(2026, 7, 10),
-        posting_date=date(2026, 7, 10),
-        description="历史缴税",
-    )
-    session.add(event)
-    session.flush()
-    create_voucher(
-        session,
-        event=event,
-        posting_date=event.posting_date,
-        description="历史",
-        entries=[
-            Entry(account_role="enterprise_income_tax_payable", debit_fen=10000),
-            Entry(account_code="1002", credit_fen=10000),
-        ],
-    )
-    event.status = "posted"
-    session.flush()
-    service = EnterpriseIncomeTaxService(session)
-    assert service.preview(change(organization, evidence, root_id))["status"] == "needs_information"
-    linked = service.link_payment(
-        LinkEnterpriseIncomeTaxPaymentRequest(
-            org_id=organization.id,
-            event_id=event.id,
-            allocations=[{"source_id": root_id, "amount_fen": 10000}],
-            evidence_references=[evidence.id],
-            confirmation_note="历史缴税归属二季度",
-            idempotency_key="link",
-        )
-    )
-    assert linked["status"] == "posted", linked
-    result, _ = confirm(service, change(organization, evidence, root_id))
-    blocked = FinanceService(session).reverse_event(
-        ReverseEventRequest(
-            org_id=organization.id,
-            event_id=result["event_id"],
-            posting_date=date(2026, 8, 9),
-            reason="测试",
-            idempotency_key="bypass",
-        )
-    )
-    assert blocked.errors == ["CIT_RESULT_REQUIRES_SPECIALIZED_CORRECTION"]
-
-
 def test_closed_q2_current_posting_and_atomic_rollback(session, organization, monkeypatch):
     from test_financial_statements import _close_quarter
 
-    from ai_accounting import enterprise_income_tax
+    from ai_accounting import component_service
     from ai_accounting.models import (
         AccountingPeriod,
         AccountingPeriodAction,
@@ -492,7 +604,7 @@ def test_closed_q2_current_posting_and_atomic_rollback(session, organization, mo
         raise ValueError("simulated replacement failure")
 
     with monkeypatch.context() as scoped:
-        scoped.setattr(enterprise_income_tax, "create_voucher", fail)
+        scoped.setattr(component_service, "commit_posting_plan", fail)
         assert service.confirm(command)["status"] == "rejected"
     assert session.get(BusinessEvent, original.business_event_id).status == "posted"
     assert len(list(session.scalars(select(Voucher.id)))) == prior_count
@@ -590,7 +702,7 @@ def test_combined_payment_and_unchanged_declared_amount(session, organization):
         ],
     )
     assert paid.status == "posted", paid
-    assert bank.matched_event_id == paid.event_id
+    assert bank.matched_event_id is None
     sources = service.query(QueryEnterpriseIncomeTaxRequest(org_id=organization.id))["data"][
         "sources"
     ]
@@ -668,7 +780,7 @@ def test_closed_quarter_report_hash_unchanged_after_replacement(session, organiz
         ),
         key="after-close",
     )
-    assert after_result["reversal_event_id"]
+    assert after_result["event_id"] != first["event_id"]
     after = statements.preview_quarterly(report_request)
     assert after.status == "calculated", after
     assert after.calculation_hash == before.calculation_hash

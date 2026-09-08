@@ -8,10 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .borrowing_schemas import (
     DrawBorrowingRequest,
-    PayBorrowingInterestRequest,
     PreviewBorrowingInterestRequest,
-    RepayBorrowingPrincipalRequest,
 )
+from .component_schemas import RecordEventRequest
 from .enterprise_income_tax_schemas import PreviewEnterpriseIncomeTaxResultRequest
 from .financial_statement_schemas import ConfirmEnterpriseIncomeTaxQuarterRequest
 from .intangible_asset_schemas import (
@@ -20,9 +19,7 @@ from .intangible_asset_schemas import (
     RetireIntangibleAssetRequest,
 )
 from .labor_remuneration_schemas import (
-    PayLaborWithholdingTaxRequest,
     PreviewLaborRemunerationBatchRequest,
-    PreviewUnifiedPayoutRunRequest,
 )
 from .schemas import (
     AcquireFixedAssetRequest,
@@ -31,7 +28,6 @@ from .schemas import (
     PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
     PreviewPayrollRequest,
-    RecordEventRequest,
     RecordPayrollContributionSupplementRequest,
     TaxPeriodPreviewRequest,
 )
@@ -50,11 +46,7 @@ ReplacementFacts = (
     | RetireIntangibleAssetRequest
     | DrawBorrowingRequest
     | PreviewBorrowingInterestRequest
-    | PayBorrowingInterestRequest
-    | RepayBorrowingPrincipalRequest
     | PreviewLaborRemunerationBatchRequest
-    | PreviewUnifiedPayoutRunRequest
-    | PayLaborWithholdingTaxRequest
     | TaxPeriodPreviewRequest
     | ConfirmEnterpriseIncomeTaxQuarterRequest
     | PreviewEnterpriseIncomeTaxResultRequest

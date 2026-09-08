@@ -8,8 +8,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.models import (
     BusinessEvent,
+    Evidence,
     OpenItem,
     Organization,
     TaxPeriod,
@@ -17,7 +19,6 @@ from ai_accounting.models import (
     VoucherLine,
 )
 from ai_accounting.schemas import (
-    RecordEventRequest,
     ReverseEventRequest,
     TaxPeriodConfirmRequest,
     TaxPeriodPreviewRequest,
@@ -44,17 +45,31 @@ def _sale_payload(
     return {
         "org_id": organization.id,
         "idempotency_key": key,
-        "event_type": "service_cash_sale",
-        "bank_account_code": "1002",
-        "business_dates": {
-            "business_date": business_date,
-            "fulfillment_date": business_date,
-            "payment_date": business_date,
-            "tax_obligation_date": business_date,
-            "posting_date": business_date,
-        },
-        "amounts": {"gross_amount_fen": gross_fen},
-        "tax_facts": tax_facts,
+        "posting_date": business_date,
+        "components": [
+            {
+                "key": "sale",
+                "kind": "service_sale",
+                "business_date": business_date,
+                "fulfillment_date": business_date,
+                "payment_date": business_date,
+                "tax_obligation_date": business_date,
+                "amount_fen": gross_fen,
+                "counterparty": {"kind": "customer", "name": "税务验收客户"},
+                "recognition_basis": "immediate",
+                "tax_facts": tax_facts,
+            }
+        ],
+        "funds": [
+            {
+                "key": "receipt",
+                "account_code": "1002",
+                "direction": "receipt",
+                "payment_date": business_date,
+                "amount_fen": gross_fen,
+                "allocations": [{"component_key": "sale", "amount_fen": gross_fen}],
+            }
+        ],
     }
 
 
@@ -69,6 +84,20 @@ def _explicit_tax_facts(*, invoice_type: str = "ordinary") -> dict[str, object]:
 
 
 def _record(service: FinanceService, payload: dict[str, object]):
+    if not payload.get("evidence_references"):
+        key = str(payload["idempotency_key"])
+        evidence = Evidence(
+            org_id=payload["org_id"],
+            sha256=uuid.uuid5(uuid.NAMESPACE_URL, key).hex * 2,
+            original_name=f"{key}.txt",
+            media_type="text/plain",
+            source="test",
+            size_bytes=1,
+            storage_path=f"test/{key}.txt",
+        )
+        service.session.add(evidence)
+        service.session.flush()
+        payload = {**payload, "evidence_references": [evidence.id]}
     return service.record_event(RecordEventRequest.model_validate(payload))
 
 
@@ -117,7 +146,7 @@ def test_tax_fact_each_required_field_is_needs_information_without_formal_side_e
 
     facts = _explicit_tax_facts()
     del facts[missing_field]
-    before = (_count(session, Voucher), _count(session, OpenItem))
+    before = (_count(session, BusinessEvent), _count(session, Voucher), _count(session, OpenItem))
 
     result = _record(
         FinanceService(session),
@@ -125,18 +154,19 @@ def test_tax_fact_each_required_field_is_needs_information_without_formal_side_e
     )
 
     assert result.status.value == "needs_information"
-    assert result.missing_information == [f"tax_facts.{missing_field}"]
-    assert (_count(session, Voucher), _count(session, OpenItem)) == before
-    rejected = session.get(BusinessEvent, result.event_id)
-    assert rejected is not None
-    assert rejected.status == "needs_information"
-    assert rejected.facts.get("derived") is None
+    assert result.missing_information == [f"components.sale.tax_facts.{missing_field}"]
+    assert result.event_id is None
+    assert (
+        _count(session, BusinessEvent),
+        _count(session, Voucher),
+        _count(session, OpenItem),
+    ) == before
 
 
 def test_empty_tax_facts_lists_all_five_fields_and_does_not_formally_post(
     session: Session, organization: Organization
 ) -> None:
-    before = (_count(session, Voucher), _count(session, OpenItem))
+    before = (_count(session, BusinessEvent), _count(session, Voucher), _count(session, OpenItem))
 
     result = _record(
         FinanceService(session),
@@ -144,58 +174,73 @@ def test_empty_tax_facts_lists_all_five_fields_and_does_not_formally_post(
     )
 
     assert result.status.value == "needs_information"
-    assert result.missing_information == [f"tax_facts.{field}" for field in TAX_FACT_FIELDS]
-    assert (_count(session, Voucher), _count(session, OpenItem)) == before
-    decision = session.get(BusinessEvent, result.event_id)
-    assert decision is not None
-    assert decision.status == "needs_information"
-    assert not decision.vouchers
+    assert result.missing_information == [
+        "components.sale.tax_facts.taxable",
+        "components.sale.tax_facts.invoice_type",
+        "components.sale.tax_facts.waive_exemption",
+        "components.sale.tax_facts.tax_due_on_event",
+    ]
+    assert result.event_id is None
+    assert (
+        _count(session, BusinessEvent),
+        _count(session, Voucher),
+        _count(session, OpenItem),
+    ) == before
 
 
 @pytest.mark.parametrize(
-    ("event_type", "extra"),
+    ("case", "payment_basis", "counterparty"),
     [
-        ("expense_cash", {}),
-        ("expense_payable", {"counterparty": {"kind": "supplier", "name": "费用供应商"}}),
-        (
-            "employee_reimbursement",
-            {
-                "counterparty": {"kind": "employee", "name": "报销员工"},
-                "details": {"paid_now": True},
-            },
-        ),
+        ("cash", "immediate", None),
+        ("supplier-credit", "supplier_credit", {"kind": "supplier", "name": "费用供应商"}),
+        ("employee-advance", "person_advance", {"kind": "employee", "name": "报销员工"}),
     ],
 )
 def test_expense_account_role_is_required_only_for_expense_events(
     session: Session,
     organization: Organization,
-    event_type: str,
-    extra: dict[str, object],
+    case: str,
+    payment_basis: str,
+    counterparty: dict[str, object] | None,
 ) -> None:
     payload: dict[str, object] = {
         "org_id": organization.id,
-        "idempotency_key": f"missing-expense-role-{event_type}",
-        "event_type": event_type,
-        "business_dates": {
-            "business_date": date(2026, 1, 15),
-            "payment_date": date(2026, 1, 15),
-            "posting_date": date(2026, 1, 15),
-        },
-        "amounts": {"amount_fen": 1_000},
-        **extra,
+        "idempotency_key": f"missing-expense-role-{case}",
+        "posting_date": date(2026, 1, 15),
+        "components": [
+            {
+                "key": "expense",
+                "kind": "expense",
+                "business_date": date(2026, 1, 15),
+                "payment_date": date(2026, 1, 15),
+                "amount_fen": 1_000,
+                "expense_class": None,
+                "payment_basis": payment_basis,
+                "counterparty": counterparty,
+            }
+        ],
     }
-    if event_type in {"expense_cash", "employee_reimbursement"}:
-        payload["bank_account_code"] = "1002"
+    if payment_basis == "immediate":
+        payload["funds"] = [
+            {
+                "key": "payment",
+                "account_code": "1002",
+                "direction": "payment",
+                "payment_date": date(2026, 1, 15),
+                "amount_fen": 1_000,
+                "allocations": [{"component_key": "expense", "amount_fen": 1_000}],
+            }
+        ]
     result = _record(FinanceService(session), payload)
     assert result.status.value == "needs_information"
-    assert result.missing_information == ["amounts.expense_account_role"]
+    assert result.missing_information == ["components.expense.expense_class"]
     assert _count(session, Voucher) == 0
 
     non_expense = _record(
         FinanceService(session),
         _sale_payload(
             organization,
-            key=f"role-is-irrelevant-{event_type}",
+            key=f"role-is-irrelevant-{case}",
             tax_facts=_explicit_tax_facts(),
         ),
     )
@@ -216,19 +261,25 @@ def test_explicit_tax_facts_keep_balanced_voucher_and_tax_derivation(
     assert result.status.value == "posted"
     event = session.get(BusinessEvent, result.event_id)
     assert event is not None
-    assert event.facts["derived"] == {
+    expected_tax_derivation = {
         "taxable_gross_fen": 10_100,
         "net_sales_fen": 10_000,
         "vat_fen": 100,
         "exemption_eligible": False,
         "vat_recognition": "payable",
     }
+    assert {
+        key: result.data["components"][0]["derived"][key] for key in expected_tax_derivation
+    } == expected_tax_derivation
     voucher = session.get(Voucher, result.voucher_id)
     assert voucher is not None
     lines = session.scalars(select(VoucherLine).where(VoucherLine.voucher_id == voucher.id)).all()
     assert sum(line.debit_fen for line in lines) == sum(line.credit_fen for line in lines)
     assert sum(line.debit_fen for line in lines) == 10_100
-    assert {item["stage"] for item in event.rule_trace} >= {"facts_validated", "entries_derived"}
+    assert {item["stage"] for item in event.rule_trace} >= {
+        "component_compilation",
+        "entries_created",
+    }
 
 
 @pytest.mark.parametrize(
@@ -423,7 +474,7 @@ def test_source_correction_requires_reversing_tax_period_first(
     assert blocked_new_source.status.value == "rejected"
     assert blocked_new_source.errors == ["TAX_PERIOD_SOURCE_LOCKED"]
     assert blocked_reversal.status.value == "rejected"
-    assert blocked_reversal.errors == ["TAX_PERIOD_SOURCE_LOCKED"]
+    assert blocked_reversal.errors == ["REVERSE_DEPENDENT_EVENTS_FIRST"]
 
     period_reversal = service.reverse_event(
         ReverseEventRequest(

@@ -3,29 +3,34 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+import pytest
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.models import OpenItem, Organization
-from ai_accounting.schemas import RecordEventRequest
-from ai_accounting.service import FinanceService
 
 
-def test_disabled_module_is_explicitly_rejected(
+def test_component_schema_rejects_untyped_payroll_event(
     session: Session, organization: Organization
 ) -> None:
-    request = RecordEventRequest.model_validate(
-        {
-            "org_id": organization.id,
-            "idempotency_key": "payroll-not-enabled",
-            "event_type": "payroll",
-            "business_dates": {"business_date": "2026-08-08", "posting_date": "2026-08-08"},
-            "amounts": {"amount_fen": 100_000},
-        }
-    )
-    result = FinanceService(session).record_event(request)
-    assert result.status == "rejected"
-    assert result.errors == ["MODULE_NOT_ENABLED:payroll"]
+    with pytest.raises(ValidationError):
+        RecordEventRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "payroll-not-enabled",
+                "posting_date": "2026-08-08",
+                "components": [
+                    {
+                        "key": "payroll",
+                        "kind": "payroll",
+                        "business_date": "2026-08-08",
+                        "amount_fen": 100_000,
+                    }
+                ],
+            }
+        )
 
 
 def test_database_rejects_negative_or_oversettled_open_item(

@@ -7,17 +7,17 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
+from _postgres_helpers import catalog_owner_authority
 from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
 from ai_accounting.backup_integration import (
@@ -29,6 +29,7 @@ from ai_accounting.backup_integration import (
     postgres_backup_snapshot,
     run_isolated_restore_drill,
 )
+from ai_accounting.models import Evidence, Organization
 from alembic import command
 
 pytestmark = [
@@ -318,6 +319,7 @@ def test_alembic_checker_safe_diagnostic(
         )
         config = Config(str(repository_root / "alembic.ini"))
         config.set_main_option("sqlalchemy.url", target_url)
+        config.attributes["database_url_override"] = target_url
         command.upgrade(config, "head")
         target_parts = make_url(target_url)
         assert target_parts.password is not None
@@ -370,46 +372,38 @@ def test_pg17_dump_restore_alembic_head_and_evidence_cross_validation(
         )
         config = Config(str(repository_root / "alembic.ini"))
         config.set_main_option("sqlalchemy.url", source_admin_url)
+        config.attributes["database_url_override"] = source_admin_url
         command.upgrade(config, "head")
 
         source_engine = create_engine(source_admin_url)
         try:
-            evidence_id = uuid.uuid4()
-            organization_id = uuid.uuid4()
+            with Session(source_engine) as session:
+                organization = Organization(
+                    name="Backup restore integration",
+                    taxpayer_identification_number="91330106MA1234567T",
+                )
+                session.add(organization)
+                session.commit()
+                with catalog_owner_authority(session, organization) as authority:
+                    with authority.attributed_call(
+                        session, tool_name="finance_register_evidence"
+                    ):
+                        evidence = Evidence(
+                            org_id=organization.id,
+                            sha256=(
+                                "4656152a3e214ccb39b39c0542121a0e45ac693bd997faa6fe891795331a331a"
+                            ),
+                            original_name="invoice.bin",
+                            media_type="application/octet-stream",
+                            source="restore_test",
+                            size_bytes=evidence_path.stat().st_size,
+                            storage_path=str(evidence_path),
+                            metadata_json={},
+                        )
+                        session.add(evidence)
+                        session.flush()
+                    session.commit()
             with source_engine.begin() as connection:
-                connection.exec_driver_sql(
-                    """
-                    INSERT INTO organizations (
-                        id, name, taxpayer_identification_number, taxpayer_type,
-                        filing_cycle, jurisdiction,
-                        urban_maintenance_rate, accounting_standard,
-                        accounting_period_control_enabled, created_at
-                    ) VALUES (
-                        %s, %s, '91330106MA1234567T', 'small_scale', 'quarterly', 'CN', 0.07,
-                        'small_enterprise', true, %s
-                    )
-                    """,
-                    (organization_id, "Backup restore integration", datetime.now(UTC)),
-                )
-                connection.exec_driver_sql(
-                    """
-                    INSERT INTO evidence (
-                        id, org_id, sha256, original_name, media_type, source,
-                        size_bytes, storage_path, metadata, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '{}'::json, %s)
-                    """,
-                    (
-                        evidence_id,
-                        organization_id,
-                        "4656152a3e214ccb39b39c0542121a0e45ac693bd997faa6fe891795331a331a",
-                        "invoice.bin",
-                        "application/octet-stream",
-                        "restore_test",
-                        evidence_path.stat().st_size,
-                        str(evidence_path),
-                        datetime.now(UTC),
-                    ),
-                )
                 connection.exec_driver_sql(
                     "CREATE ROLE finance_backup LOGIN INHERIT NOSUPERUSER NOCREATEDB "
                     "NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD "

@@ -75,6 +75,7 @@ export interface FundMovement {
   summary: string;
   party: string;
   internal_transfer: boolean;
+  component_kinds: string[];
 }
 
 export interface BankStatementRow {

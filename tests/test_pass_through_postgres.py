@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
 import pytest
+from _postgres_helpers import catalog_owner_authority
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -22,13 +22,12 @@ from ai_accounting.bank_statement_schemas import (
 )
 from ai_accounting.bank_statement_service import BankStatementService
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.config import Settings
-from ai_accounting.execution_attribution import persist_execution_attribution
-from ai_accounting.identity import ExecutionContext, ExecutorKind
 from ai_accounting.models import (
     BusinessEvent,
     Evidence,
-    OrganizationDatabaseMetadata,
+    Organization,
     Voucher,
 )
 from ai_accounting.schemas import BankTransactionReference
@@ -37,8 +36,9 @@ from ai_accounting.service import FinanceService
 pytestmark = [pytest.mark.postgres, pytest.mark.postgres_current]
 
 
-@pytest.fixture
-def accounting(postgres_engine, tmp_path):
+@pytest.fixture(scope="module")
+def accounting_base(postgres_engine, tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("pass-through-base")
     with Session(postgres_engine) as session:
         org = seed_organization(
             session,
@@ -46,83 +46,71 @@ def accounting(postgres_engine, tmp_path):
             taxpayer_identification_number="91330106MA1234567T",
             accounting_period_control_enabled=False,
         )
-        catalog_id = uuid.uuid4()
-        session.add(
-            OrganizationDatabaseMetadata(
-                singleton_key=1,
-                org_id=org.id,
-                database_identity=uuid.uuid4(),
-                current_catalog_instance_id=catalog_id,
-                owner_approval_required=True,
-            )
-        )
-        session.flush()
-        context = ExecutionContext(
-            org_id=org.id,
-            owner_account_id=uuid.uuid4(),
-            owner_session_id=uuid.uuid4(),
-            owner_credential_version=1,
-            executor_kind=ExecutorKind.AI_AGENT,
-            executor_name="refund-regression",
-            executor_version="1",
-            request_correlation_id=uuid.uuid4(),
-            catalog_instance_id=catalog_id,
-        )
-
-        def attributed(tool_name):
-            return persist_execution_attribution(
-                session,
-                context=replace(context, request_correlation_id=uuid.uuid4()),
-                tool_name=tool_name,
-            )
-
-        with attributed("finance_generate_accounting_period"):
-            path = tmp_path / "scope.txt"
-            path.write_bytes(b"scope")
-            evidence = Evidence(
-                org_id=org.id,
-                sha256=hashlib.sha256(b"scope").hexdigest(),
-                original_name="scope.txt",
-                source="test",
-                size_bytes=5,
-                storage_path=str(path),
-            )
-            session.add(evidence)
-            session.flush()
-            generated = AccountingPeriodService(session).generate_accounting_period(
-                GenerateAccountingPeriodRequest(
+        session.commit()
+        with catalog_owner_authority(session, org) as authority:
+            with authority.attributed_call(session, tool_name="finance_generate_accounting_period"):
+                path = tmp_path / "scope.txt"
+                path.write_bytes(b"scope")
+                evidence = Evidence(
                     org_id=org.id,
-                    period_month="2026-08",
-                    idempotency_key="august",
-                    confirmation_note="Test month",
+                    sha256=hashlib.sha256(b"scope").hexdigest(),
+                    original_name="scope.txt",
+                    source="test",
+                    size_bytes=5,
+                    storage_path=str(path),
+                )
+                session.add(evidence)
+                session.flush()
+                generated = AccountingPeriodService(session).generate_accounting_period(
+                    GenerateAccountingPeriodRequest(
+                        org_id=org.id,
+                        period_month="2026-08",
+                        idempotency_key="august",
+                        confirmation_note="Test month",
+                        evidence_references=[evidence.id],
+                    )
+                )
+                assert generated.status == "posted", generated
+            with authority.attributed_call(
+                session, tool_name="finance_confirm_bank_reconciliation_scope"
+            ):
+                service = BankStatementService(session)
+                scope = PreviewBankReconciliationScopeRequest(
+                    org_id=org.id,
+                    action_type="initial_confirmation",
+                    accounts=[
+                        {
+                            "bank_account_code": "1002",
+                            "account_name": "银行存款",
+                            "start_date": date(2026, 8, 1),
+                        }
+                    ],
+                    explanation="Test scope",
                     evidence_references=[evidence.id],
                 )
-            )
-            assert generated.status == "posted", generated
-        with attributed("finance_confirm_bank_reconciliation_scope"):
-            service = BankStatementService(session)
-            scope = PreviewBankReconciliationScopeRequest(
-                org_id=org.id,
-                action_type="initial_confirmation",
-                accounts=[
-                    {
-                        "bank_account_code": "1002",
-                        "account_name": "银行存款",
-                        "start_date": date(2026, 8, 1),
-                    }
-                ],
-                explanation="Test scope",
-                evidence_references=[evidence.id],
-            )
-            preview = service.preview_bank_reconciliation_scope(scope)
-            assert preview.status == "calculated", preview
-            confirmed = service.confirm_bank_reconciliation_scope(
-                ConfirmBankReconciliationScopeRequest.model_validate(
-                    scope.model_dump()
-                    | {"calculation_hash": preview.calculation_hash, "idempotency_key": "scope"}
+                preview = service.preview_bank_reconciliation_scope(scope)
+                assert preview.status == "calculated", preview
+                confirmed = service.confirm_bank_reconciliation_scope(
+                    ConfirmBankReconciliationScopeRequest.model_validate(
+                        scope.model_dump()
+                        | {"calculation_hash": preview.calculation_hash, "idempotency_key": "scope"}
+                    )
                 )
-            )
-            assert confirmed.status == "posted", confirmed
+                assert confirmed.status == "posted", confirmed
+            session.commit()
+            yield postgres_engine, org.id, evidence.id, authority
+
+
+@pytest.fixture
+def accounting(accounting_base, tmp_path):
+    engine, org_id, evidence_id, authority = accounting_base
+    with Session(engine) as session:
+        org = session.get(Organization, org_id)
+        evidence = session.get(Evidence, evidence_id)
+
+        def attributed(tool_name):
+            return authority.attributed_call(session, tool_name=tool_name)
+
         bank_service = BankStatementService(
             session,
             settings=Settings(
@@ -159,29 +147,82 @@ def accounting(postgres_engine, tmp_path):
                 assert result.status == "posted", result
                 return BankTransactionReference(id=result.data["imported_transaction_ids"][0])
 
-        session.info["test_context"] = context
+        session.info["test_authority"] = authority
         yield session, org, evidence, attributed, bank
 
 
 def receipt(org, evidence, *, amount=12_000_000, **changes):
-    from ai_accounting.schemas import RecordEventRequest
+    allocations = changes.pop("allocations", [])
+    pass_through_items = changes.pop("pass_through_items", [])
+    bank_references = changes.pop("bank_transaction_references", [])
+    details = changes.pop("details", {})
+    org_id = changes.pop("org_id", org.id)
+    assert not changes, changes
 
-    return RecordEventRequest.model_validate(
-        {
-            "org_id": org.id,
-            "idempotency_key": "receipt",
-            "event_type": "customer_receipt",
-            "business_dates": {
+    components = []
+    funds_allocations = []
+    allocated_fen = 0
+    if allocations:
+        settled_fen = sum(row["amount_fen"] for row in allocations)
+        components.append(
+            {
+                "key": "receivable",
+                "kind": "receivable_settlement",
                 "business_date": "2026-08-09",
                 "payment_date": "2026-08-09",
-                "posting_date": "2026-08-09",
-            },
-            "counterparty": {"kind": "customer", "name": "Commission customer"},
-            "amounts": {"amount_fen": amount},
-            "bank_account_code": "1002",
+                "counterparty": {"kind": "customer", "name": "Commission customer"},
+                "allocations": allocations,
+            }
+        )
+        funds_allocations.append({"component_key": "receivable", "amount_fen": settled_fen})
+        allocated_fen += settled_fen
+    for item in pass_through_items:
+        component = {
+            "kind": "pass_through",
+            "business_date": "2026-08-09",
+            "payment_date": "2026-08-09",
+            **item,
+        }
+        components.append(component)
+        funds_allocations.append(
+            {"component_key": component["key"], "amount_fen": component["amount_fen"]}
+        )
+        allocated_fen += component["amount_fen"]
+    if details.get("unallocated_treatment") == "advance":
+        advance_fen = amount - allocated_fen
+        components.append(
+            {
+                "key": "advance",
+                "kind": "customer_advance",
+                "business_date": "2026-08-09",
+                "payment_date": "2026-08-09",
+                "amount_fen": advance_fen,
+                "counterparty": {"kind": "customer", "name": "Commission customer"},
+                "tax_facts": {"tax_due_on_event": False},
+            }
+        )
+        funds_allocations.append({"component_key": "advance", "amount_fen": advance_fen})
+        allocated_fen += advance_fen
+    assert allocated_fen == amount
+    return RecordEventRequest.model_validate(
+        {
+            "org_id": org_id,
+            "idempotency_key": "receipt",
+            "posting_date": "2026-08-09",
             "evidence_references": [evidence.id],
             "description": "Commission and entrusted funds",
-            **changes,
+            "components": components,
+            "funds": [
+                {
+                    "key": "receipt",
+                    "account_code": "1002",
+                    "direction": "receipt",
+                    "payment_date": "2026-08-09",
+                    "amount_fen": amount,
+                    "allocations": funds_allocations,
+                    "bank_transaction_references": bank_references,
+                }
+            ],
         }
     )
 
@@ -189,7 +230,7 @@ def receipt(org, evidence, *, amount=12_000_000, **changes):
 def split(key, amount, *, advance=False, evidence=None):
     party = {"kind": "other", "name": key}
     return {
-        "key": key,
+        "key": "pass-" + key.lower().replace(" ", "-"),
         "amount_fen": amount,
         "beneficiary": party,
         "creditor": {"kind": "employee", "name": "Advancing person"} if advance else party,
@@ -204,25 +245,42 @@ def split(key, amount, *, advance=False, evidence=None):
 
 
 def payment(org, evidence, item, amount, **changes):
-    from ai_accounting.schemas import RecordEventRequest
-
+    bank_references = changes.pop("bank_transaction_references", [])
+    counterparty = changes.pop("counterparty", {"id": item.counterparty_id})
+    component_kind = changes.pop("component_kind", "payable_settlement")
+    org_id = changes.pop("org_id", org.id)
+    funds_amount_fen = changes.pop("funds_amount_fen", amount)
+    assert not changes, changes
     return RecordEventRequest.model_validate(
         {
-            "org_id": org.id,
+            "org_id": org_id,
             "idempotency_key": str(uuid.uuid4()),
-            "event_type": "pass_through_payment",
-            "business_dates": {
-                "business_date": "2026-08-10",
-                "payment_date": "2026-08-10",
-                "posting_date": "2026-08-10",
-            },
-            "counterparty": {"id": item.counterparty_id},
-            "amounts": {"amount_fen": amount},
-            "bank_account_code": "1002",
+            "posting_date": "2026-08-10",
             "evidence_references": [evidence.id],
             "description": "Settle entrusted funds",
-            "allocations": [{"open_item_id": item.id, "amount_fen": amount}],
-            **changes,
+            "components": [
+                {
+                    "key": "settlement",
+                    "kind": component_kind,
+                    "business_date": "2026-08-10",
+                    "payment_date": "2026-08-10",
+                    "counterparty": counterparty,
+                    "allocations": [{"open_item_id": item.id, "amount_fen": amount}],
+                }
+            ],
+            "funds": [
+                {
+                    "key": "payment",
+                    "account_code": "1002",
+                    "direction": "payment",
+                    "payment_date": "2026-08-10",
+                    "amount_fen": funds_amount_fen,
+                    "allocations": [
+                        {"component_key": "settlement", "amount_fen": funds_amount_fen}
+                    ],
+                    "bank_transaction_references": bank_references,
+                }
+            ],
         }
     )
 
@@ -268,30 +326,34 @@ def test_mixed_receipt_amend_pay_delete_reverse_and_bank_conservation(accounting
         OpenItem,
         VoucherLine,
     )
-    from ai_accounting.schemas import RecordEventRequest, ReverseEventRequest
+    from ai_accounting.schemas import ReverseEventRequest
 
     session, org, evidence, attributed, bank = accounting
     credit = RecordEventRequest.model_validate(
         {
             "org_id": org.id,
             "idempotency_key": "commission",
-            "event_type": "service_credit_sale",
-            "business_dates": {
-                "business_date": "2026-08-01",
-                "fulfillment_date": "2026-08-01",
-                "tax_obligation_date": "2026-08-01",
-                "posting_date": "2026-08-01",
-            },
-            "counterparty": {"kind": "customer", "name": "Commission customer"},
-            "amounts": {"gross_amount_fen": 9_657_350},
-            "tax_facts": {
-                "taxable": False,
-                "rate_percent": "0",
-                "invoice_type": "none",
-                "waive_exemption": False,
-                "tax_due_on_event": False,
-            },
+            "posting_date": "2026-08-01",
             "evidence_references": [evidence.id],
+            "components": [
+                {
+                    "key": "commission",
+                    "kind": "service_sale",
+                    "business_date": "2026-08-01",
+                    "fulfillment_date": "2026-08-01",
+                    "tax_obligation_date": "2026-08-01",
+                    "counterparty": {"kind": "customer", "name": "Commission customer"},
+                    "recognition_basis": "credit",
+                    "amount_fen": 9_657_350,
+                    "tax_facts": {
+                        "taxable": False,
+                        "rate_percent": "0",
+                        "invoice_type": "none",
+                        "waive_exemption": False,
+                        "tax_due_on_event": False,
+                    },
+                }
+            ],
         }
     )
     commission = record(session, attributed, credit)
@@ -307,16 +369,18 @@ def test_mixed_receipt_amend_pay_delete_reverse_and_bank_conservation(accounting
         bank_transaction_references=[incoming],
     )
     old = record(session, attributed, req)
-    replacement = req.model_dump() | {
-        "details": {},
-        "pass_through_items": [
+    replacement = receipt(
+        org,
+        evidence,
+        amount=12_000_000,
+        allocations=[{"open_item_id": receivable.id, "amount_fen": 9_657_350}],
+        pass_through_items=[
             split("Beneficiary A", 1_789_965),
             split("Beneficiary B", 552_685, advance=True, evidence=evidence),
         ],
-    }
-    amended = edit(
-        session, attributed, old.event_id, RecordEventRequest.model_validate(replacement)
+        bank_transaction_references=[incoming],
     )
+    amended = edit(session, attributed, old.event_id, replacement)
     assert amended["status"] == "posted", amended
     assert str(old.voucher_id) == amended["voucher_id"]
     assert old.voucher_number == amended["voucher_number"]
@@ -392,7 +456,13 @@ def test_mixed_receipt_amend_pay_delete_reverse_and_bank_conservation(accounting
 
 @pytest.mark.parametrize(
     "case",
-    ["overpayment", "wrong_creditor", "wrong_category", "foreign_company", "wrong_bank_total"],
+    [
+        "overpayment",
+        "wrong_creditor",
+        "wrong_obligation_kind",
+        "foreign_company",
+        "wrong_bank_total",
+    ],
 )
 def test_invalid_payment_rolls_back_settlements_and_bank_match(accounting, case):
     from ai_accounting.models import BankTransaction, OpenItem, Settlement
@@ -412,12 +482,12 @@ def test_invalid_payment_rolls_back_settlements_and_bank_match(accounting, case)
         changes = {}
     elif case == "wrong_creditor":
         changes["counterparty"] = {"kind": "other", "name": "Wrong person"}
-    elif case == "wrong_category":
-        changes["event_type"] = "supplier_payment"
+    elif case == "wrong_obligation_kind":
+        changes["component_kind"] = "receivable_settlement"
     elif case == "foreign_company":
         changes["org_id"] = uuid.uuid4()
     elif case == "wrong_bank_total":
-        amount = 499
+        changes["funds_amount_fen"] = 499
     record(session, attributed, payment(org, evidence, item, amount, **changes), "rejected")
     assert item.settled_amount_fen == 0
     assert (
@@ -439,7 +509,7 @@ def test_missing_advance_relationship_needs_information_and_no_posting(accountin
         receipt(org, evidence, amount=1000, pass_through_items=[data]),
         "needs_information",
     )
-    assert "pass_through_items.0.creditor_basis" in result.missing_information
+    assert "components.pass-beneficiary.creditor_basis" in result.missing_information
     assert (
         session.scalar(
             select(func.count()).select_from(Voucher).where(Voucher.event_id == result.event_id)
@@ -450,7 +520,6 @@ def test_missing_advance_relationship_needs_information_and_no_posting(accountin
 
 def test_partial_payment_and_later_employee_advance(accounting):
     from ai_accounting.models import OpenItem
-    from ai_accounting.schemas import RecordEventRequest
 
     session, org, evidence, attributed, bank = accounting
     source = record(
@@ -461,14 +530,28 @@ def test_partial_payment_and_later_employee_advance(accounting):
     item = session.scalar(select(OpenItem).where(OpenItem.source_event_id == source.event_id))
     record(session, attributed, payment(org, evidence, item, 400))
     assert item.status == "partial" and item.settled_amount_fen == 400
-    data = payment(org, evidence, item, 600).model_dump() | {
-        "event_type": "employee_reimbursement",
-        "bank_account_code": None,
-        "amounts": {"gross_amount_fen": 600},
-        "counterparty": {"kind": "employee", "name": "Later advancing person"},
-        "details": {"reimbursement_kind": "existing_payable", "paid_now": False},
-    }
-    transfer = record(session, attributed, RecordEventRequest.model_validate(data))
+    transfer = record(
+        session,
+        attributed,
+        RecordEventRequest.model_validate(
+            {
+                "org_id": org.id,
+                "idempotency_key": str(uuid.uuid4()),
+                "posting_date": "2026-08-10",
+                "evidence_references": [evidence.id],
+                "components": [
+                    {
+                        "key": "employee-advance-transfer",
+                        "kind": "debt_transfer",
+                        "business_date": "2026-08-10",
+                        "payment_date": "2026-08-10",
+                        "payer": {"kind": "employee", "name": "Later advancing person"},
+                        "allocations": [{"open_item_id": item.id, "amount_fen": 600}],
+                    }
+                ],
+            }
+        ),
+    )
     employee_item = session.scalar(
         select(OpenItem).where(OpenItem.source_event_id == transfer.event_id)
     )
@@ -515,7 +598,7 @@ def test_concurrent_payments_cannot_exceed_creditor_balance(accounting):
     item = session.scalar(select(OpenItem).where(OpenItem.source_event_id == source.event_id))
     requests = [payment(org, evidence, item, 700) for _ in range(2)]
     item_id = item.id
-    context = session.info["test_context"]
+    authority = session.info["test_authority"]
     engine = session.get_bind()
     session.commit()
     barrier = Barrier(2)
@@ -526,11 +609,7 @@ def test_concurrent_payments_cannot_exceed_creditor_balance(accounting):
             cached = worker_session.get(OpenItem, item_id)
             assert cached.settled_amount_fen == 0
             barrier.wait(timeout=10)
-            with persist_execution_attribution(
-                worker_session,
-                context=replace(context, request_correlation_id=uuid.uuid4()),
-                tool_name="finance_record_event",
-            ):
+            with authority.attributed_call(worker_session, tool_name="finance_record_event"):
                 result = FinanceService(worker_session).record_event(request)
                 worker_session.commit()
                 return result.status

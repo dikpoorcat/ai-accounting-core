@@ -28,6 +28,7 @@ from ai_accounting.bank_statement_schemas import (
 )
 from ai_accounting.bank_statement_service import BankStatementService
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.config import Settings
 from ai_accounting.execution_attribution import persist_execution_attribution
 from ai_accounting.financial_statement_schemas import (
@@ -43,6 +44,7 @@ from ai_accounting.models import (
     AccountingPeriodClose,
     AccountingPeriodCloseApproval,
     BusinessEvent,
+    BusinessEventComponent,
     BusinessEventDependency,
     Evidence,
     ExecutionAttribution,
@@ -51,7 +53,6 @@ from ai_accounting.models import (
     Voucher,
 )
 from ai_accounting.schemas import (
-    RecordEventRequest,
     ReverseEventRequest,
     TaxPeriodConfirmRequest,
     TaxPeriodPreviewRequest,
@@ -59,48 +60,72 @@ from ai_accounting.schemas import (
 from ai_accounting.service import FinanceService
 
 
-def _cash_sale_request(organization: Organization, *, key: str) -> RecordEventRequest:
+def _cash_sale_request(
+    organization: Organization, *, key: str, evidence: Evidence | None = None
+) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
             "idempotency_key": key,
-            "event_type": "service_cash_sale",
-            "business_dates": {
-                "business_date": "2026-08-08",
-                "posting_date": "2026-08-08",
-                "fulfillment_date": "2026-08-08",
-                "payment_date": "2026-08-08",
-                "tax_obligation_date": "2026-08-08",
-            },
-            "amounts": {"gross_amount_fen": 101_000},
-            "bank_account_code": "1002",
-            "tax_facts": {
-                "taxable": True,
-                "rate_percent": "1",
-                "invoice_type": "ordinary",
-                "waive_exemption": False,
-                "tax_due_on_event": True,
-            },
+            "posting_date": "2026-08-08",
+            "evidence_references": [evidence.id] if evidence else [],
+            "components": [
+                {
+                    "key": "sale",
+                    "kind": "service_sale",
+                    "business_date": "2026-08-08",
+                    "fulfillment_date": "2026-08-08",
+                    "payment_date": "2026-08-08",
+                    "tax_obligation_date": "2026-08-08",
+                    "amount_fen": 101_000,
+                    "counterparty": {"kind": "customer", "name": "期间控制客户"},
+                    "recognition_basis": "immediate",
+                    "tax_facts": {
+                        "taxable": True,
+                        "rate_percent": "1",
+                        "invoice_type": "ordinary",
+                        "waive_exemption": False,
+                        "tax_due_on_event": True,
+                    },
+                }
+            ],
+            "funds": [
+                {
+                    "key": "receipt",
+                    "account_code": "1002",
+                    "direction": "receipt",
+                    "payment_date": "2026-08-08",
+                    "amount_fen": 101_000,
+                    "allocations": [{"component_key": "sale", "amount_fen": 101_000}],
+                }
+            ],
         }
     )
 
 
 def _cash_sale_at(
-    organization: Organization, *, key: str, posting_date: date
+    organization: Organization,
+    *,
+    key: str,
+    posting_date: date,
+    evidence: Evidence | None = None,
 ) -> RecordEventRequest:
     value = posting_date.isoformat()
-    request = _cash_sale_request(organization, key=key)
+    request = _cash_sale_request(organization, key=key, evidence=evidence)
     return request.model_copy(
         update={
-            "business_dates": request.business_dates.model_copy(
-                update={
-                    "business_date": posting_date,
-                    "posting_date": posting_date,
-                    "fulfillment_date": posting_date,
-                    "payment_date": posting_date,
-                    "tax_obligation_date": posting_date,
-                }
-            ),
+            "posting_date": posting_date,
+            "components": [
+                request.components[0].model_copy(
+                    update={
+                        "business_date": posting_date,
+                        "fulfillment_date": posting_date,
+                        "payment_date": posting_date,
+                        "tax_obligation_date": posting_date,
+                    }
+                )
+            ],
+            "funds": [request.funds[0].model_copy(update={"payment_date": posting_date})],
             "description": f"期间控制测试 {value}",
         }
     )
@@ -121,77 +146,101 @@ def _period_evidence(session: Session, organization: Organization) -> Evidence:
     return evidence
 
 
-def _customer_receipt_request(organization: Organization) -> RecordEventRequest:
+def _customer_receipt_request(organization: Organization, evidence: Evidence) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
             "idempotency_key": "period-dependency-receipt",
-            "event_type": "customer_receipt",
-            "business_dates": {
-                "business_date": "2026-08-01",
-                "posting_date": "2026-08-01",
-                "payment_date": "2026-08-01",
-            },
-            "counterparty": {"kind": "customer", "name": "期间依赖客户"},
-            "amounts": {"amount_fen": 120_000},
-            "bank_account_code": "1002",
-            "details": {"unallocated_treatment": "advance"},
+            "posting_date": "2026-08-01",
+            "evidence_references": [evidence.id],
+            "components": [
+                {
+                    "key": "advance",
+                    "kind": "customer_advance",
+                    "business_date": "2026-08-01",
+                    "payment_date": "2026-08-01",
+                    "counterparty": {"kind": "customer", "name": "期间依赖客户"},
+                    "amount_fen": 120_000,
+                    "tax_facts": {"tax_due_on_event": False},
+                }
+            ],
+            "funds": [
+                {
+                    "key": "receipt",
+                    "account_code": "1002",
+                    "direction": "receipt",
+                    "payment_date": "2026-08-01",
+                    "amount_fen": 120_000,
+                    "allocations": [{"component_key": "advance", "amount_fen": 120_000}],
+                }
+            ],
         }
     )
 
 
 def _fulfillment_request(
-    organization: Organization, parent_event_id: object
+    organization: Organization, evidence: Evidence, parent_component_id: object
 ) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
             "idempotency_key": "period-dependency-fulfillment",
-            "event_type": "service_fulfillment",
-            "business_dates": {
-                "business_date": "2026-08-02",
-                "posting_date": "2026-08-02",
-                "fulfillment_date": "2026-08-02",
-                "tax_obligation_date": "2026-08-02",
-            },
-            "counterparty": {"kind": "customer", "name": "期间依赖客户"},
-            "amounts": {"gross_amount_fen": 70_000},
-            "tax_facts": {
-                "taxable": True,
-                "rate_percent": "1",
-                "invoice_type": "ordinary",
-                "waive_exemption": False,
-                "tax_due_on_event": True,
-            },
-            "details": {
-                "recognition_source": "contract_liability",
-                "tax_previously_accrued": False,
-                "original_event_id": str(parent_event_id),
-            },
+            "posting_date": "2026-08-02",
+            "evidence_references": [evidence.id],
+            "components": [
+                {
+                    "key": "fulfillment",
+                    "kind": "service_fulfillment",
+                    "business_date": "2026-08-02",
+                    "fulfillment_date": "2026-08-02",
+                    "tax_obligation_date": "2026-08-02",
+                    "counterparty": {"kind": "customer", "name": "期间依赖客户"},
+                    "amount_fen": 70_000,
+                    "source": {"component_id": parent_component_id},
+                    "tax_facts": {
+                        "taxable": True,
+                        "rate_percent": "1",
+                        "invoice_type": "ordinary",
+                        "waive_exemption": False,
+                        "tax_due_on_event": True,
+                    },
+                }
+            ],
         }
     )
 
 
 def _advance_refund_request(
-    organization: Organization, parent_event_id: object
+    organization: Organization, evidence: Evidence, parent_component_id: object
 ) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
             "idempotency_key": "period-dependency-refund",
-            "event_type": "customer_refund",
-            "business_dates": {
-                "business_date": "2026-08-03",
-                "posting_date": "2026-08-03",
-                "payment_date": "2026-08-03",
-            },
-            "counterparty": {"kind": "customer", "name": "期间依赖客户"},
-            "amounts": {"amount_fen": 50_000},
-            "bank_account_code": "1002",
-            "details": {
-                "refund_kind": "advance",
-                "original_event_id": str(parent_event_id),
-            },
+            "posting_date": "2026-08-03",
+            "evidence_references": [evidence.id],
+            "components": [
+                {
+                    "key": "refund",
+                    "kind": "customer_refund",
+                    "business_date": "2026-08-03",
+                    "payment_date": "2026-08-03",
+                    "counterparty": {"kind": "customer", "name": "期间依赖客户"},
+                    "amount_fen": 50_000,
+                    "source": {"component_id": parent_component_id},
+                    "refund_kind": "advance",
+                }
+            ],
+            "funds": [
+                {
+                    "key": "payment",
+                    "account_code": "1002",
+                    "direction": "payment",
+                    "payment_date": "2026-08-03",
+                    "amount_fen": 50_000,
+                    "allocations": [{"component_key": "refund", "amount_fen": 50_000}],
+                }
+            ],
         }
     )
 
@@ -215,9 +264,7 @@ def _confirm_default_bank_scope(
             password=password,
         )
     )
-    login = identity.authenticate(
-        OwnerLoginRequest(login_name=login_name, password=password)
-    )
+    login = identity.authenticate(OwnerLoginRequest(login_name=login_name, password=password))
     context = identity.authorize_execution(
         session_token=login.session_token.get_secret_value(),
         executor=ExecutorIdentity(
@@ -358,9 +405,7 @@ def _import_and_reconcile_bank_period(
         statement_import_action_ids=[imported.action_id],
         statement_evidence_references=[evidence.id],
     )
-    reconciliation_preview = service.preview_bank_reconciliation(
-        reconciliation_request
-    )
+    reconciliation_preview = service.preview_bank_reconciliation(reconciliation_request)
     assert reconciliation_preview.calculation_hash is not None
     reconciled = service.confirm_bank_reconciliation(
         ConfirmBankReconciliationRequest.model_validate(
@@ -388,19 +433,22 @@ def test_new_organization_defaults_to_period_control_fail_closed(session: Sessio
     assert organization.accounting_period_control_start_date is None
 
     result = FinanceService(session).record_event(
-        _cash_sale_request(organization, key="period-not-generated")
+        _cash_sale_request(organization, key="period-not-generated", evidence=evidence)
     )
 
     assert result.status == "rejected"
     assert result.errors == ["ACCOUNTING_PERIOD_NOT_GENERATED"]
     assert result.voucher_id is None
     assert session.scalar(select(Voucher).where(Voucher.org_id == organization.id)) is None
-    assert session.scalar(
-        select(BusinessEvent).where(
-            BusinessEvent.org_id == organization.id,
-            BusinessEvent.status == "posted",
+    assert (
+        session.scalar(
+            select(BusinessEvent).where(
+                BusinessEvent.org_id == organization.id,
+                BusinessEvent.status == "posted",
+            )
         )
-    ) is None
+        is None
+    )
 
 
 def test_china_current_date_boundary_blocks_future_posting(
@@ -428,15 +476,16 @@ def test_china_current_date_boundary_blocks_future_posting(
     )
     assert generated.status == "posted"
     current = FinanceService(session).record_event(
-        _cash_sale_at(controlled, key="china-date-current", posting_date=today)
+        _cash_sale_at(controlled, key="china-date-current", posting_date=today, evidence=evidence)
     )
     future = FinanceService(session).record_event(
-        _cash_sale_at(controlled, key="china-date-future", posting_date=tomorrow)
+        _cash_sale_at(controlled, key="china-date-future", posting_date=tomorrow, evidence=evidence)
     )
     assert current.status == "posted"
     assert future.status == "rejected"
     assert future.errors == ["ACCOUNTING_PERIOD_FUTURE_POSTING_NOT_ALLOWED"]
     assert future.voucher_id is None
+
 
 def test_explicitly_disabled_migrated_organization_remains_compatible(
     session: Session,
@@ -453,7 +502,7 @@ def test_explicitly_disabled_migrated_organization_remains_compatible(
     assert organization.accounting_period_control_start_date is None
 
     result = FinanceService(session).record_event(
-        _cash_sale_request(organization, key="disabled-migration-compatible")
+        _cash_sale_request(organization, key="disabled-migration-compatible", evidence=evidence)
     )
 
     assert result.status == "posted"
@@ -465,11 +514,18 @@ def test_dependency_edges_require_children_to_be_reversed_first(
     evidence = _period_evidence(session, organization)
     _confirm_default_bank_scope(session, organization, evidence)
     service = FinanceService(session)
-    parent = service.record_event(_customer_receipt_request(organization))
+    parent = service.record_event(_customer_receipt_request(organization, evidence))
     assert parent.status == "posted"
+    parent_component_id = next(
+        item["id"] for item in parent.data["components"] if item["kind"] == "customer_advance"
+    )
 
-    fulfillment = service.record_event(_fulfillment_request(organization, parent.event_id))
-    refund = service.record_event(_advance_refund_request(organization, parent.event_id))
+    fulfillment = service.record_event(
+        _fulfillment_request(organization, evidence, parent_component_id)
+    )
+    refund = service.record_event(
+        _advance_refund_request(organization, evidence, parent_component_id)
+    )
     assert fulfillment.status == "posted"
     assert refund.status == "posted"
 
@@ -479,10 +535,10 @@ def test_dependency_edges_require_children_to_be_reversed_first(
         .order_by(BusinessEventDependency.dependency_kind)
     ).all()
     assert [row.dependency_kind for row in dependencies] == [
-        "advance_fulfillment",
-        "advance_refund",
+        "component_source",
+        "component_source",
     ]
-    assert [row.amount_fen for row in dependencies] == [70_000, 50_000]
+    assert sorted(row.amount_fen for row in dependencies) == [50_000, 70_000]
 
     blocked = service.reverse_event(
         ReverseEventRequest(
@@ -563,6 +619,7 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
             organization,
             key="period-before-control-start",
             posting_date=date(2026, 6, 30),
+            evidence=evidence,
         )
     )
     assert before_control_start.status == "rejected"
@@ -573,6 +630,7 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
             organization,
             key="period-july-sale",
             posting_date=date(2026, 7, 15),
+            evidence=evidence,
         )
     )
     assert july_sale.status == "posted"
@@ -604,9 +662,9 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
         ConfirmAccountingPeriodCloseRequest(
             **preview_request.model_dump(),
             calculation_hash=preview.calculation_hash,
-            management_commentary_context_hash=preview.data[
-                "assistant_review_checklist"
-            ]["management_commentary"]["context_hash"],
+            management_commentary_context_hash=preview.data["assistant_review_checklist"][
+                "management_commentary"
+            ]["context_hash"],
             management_commentary="七月经营情况已基于关账上下文完成分析。",
             owner_approval_id=owner_approval_id,
             idempotency_key="close-2026-07",
@@ -633,6 +691,7 @@ def test_nonzero_month_close_blocks_same_month_and_allows_next_month_reversal(
             organization,
             key="period-july-after-close",
             posting_date=date(2026, 7, 20),
+            evidence=evidence,
         )
     )
     assert rejected_new.status == "rejected"
@@ -680,9 +739,7 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(
-        "ai_accounting.ledger.china_current_date", lambda: date(2026, 8, 11)
-    )
+    monkeypatch.setattr("ai_accounting.ledger.china_current_date", lambda: date(2026, 8, 11))
     organization = seed_organization(
         session,
         taxpayer_identification_number="91330106MA1234567T",
@@ -708,6 +765,7 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
             organization,
             key="tax-july-source",
             posting_date=date(2026, 7, 15),
+            evidence=evidence,
         )
     )
     assert source.status == "posted"
@@ -738,9 +796,9 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
         ConfirmAccountingPeriodCloseRequest(
             **close_preview_request.model_dump(),
             calculation_hash=close_preview.calculation_hash,
-            management_commentary_context_hash=close_preview.data[
-                "assistant_review_checklist"
-            ]["management_commentary"]["context_hash"],
+            management_commentary_context_hash=close_preview.data["assistant_review_checklist"][
+                "management_commentary"
+            ]["context_hash"],
             management_commentary="七月经营情况已基于关账上下文完成分析。",
             owner_approval_id=owner_approval_id,
             idempotency_key="tax-close-2026-07",
@@ -862,12 +920,15 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
     assert confirmed.status == "posted"
     tax_period = session.get(TaxPeriod, uuid.UUID(confirmed.data["tax_period_id"]))
     adjustment_event = session.get(BusinessEvent, confirmed.event_id)
+    adjustment_component = session.get(BusinessEventComponent, tax_period.component_id)
     adjustment_voucher = session.get(Voucher, confirmed.voucher_id)
     assert tax_period.start_date == date(2026, 7, 1)
     assert tax_period.end_date == date(2026, 7, 31)
     assert tax_period.adjustment_posting_date == date(2026, 8, 1)
     assert adjustment_event.business_date == date(2026, 7, 31)
-    assert adjustment_event.tax_obligation_date == date(2026, 7, 31)
+    assert adjustment_component.event_id == adjustment_event.id
+    assert adjustment_component.facts["end_date"] == "2026-07-31"
+    assert adjustment_component.facts["business_date"] == "2026-07-31"
     assert adjustment_event.posting_date == date(2026, 8, 1)
     assert adjustment_voucher.posting_date == date(2026, 8, 1)
 
@@ -917,7 +978,7 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
         )
     )
     assert locked_source_reversal.status == "rejected"
-    assert locked_source_reversal.errors == ["TAX_PERIOD_SOURCE_LOCKED"]
+    assert locked_source_reversal.errors == ["REVERSE_DEPENDENT_EVENTS_FIRST"]
 
     adjustment_reversal = finance_service.reverse_event(
         ReverseEventRequest(
@@ -944,12 +1005,11 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
         organization,
         key="tax-july-source-corrected",
         posting_date=date(2026, 7, 15),
+        evidence=evidence,
     )
     corrected_request = corrected_request.model_copy(
         update={
-            "business_dates": corrected_request.business_dates.model_copy(
-                update={"posting_date": date(2026, 8, 4)}
-            ),
+            "posting_date": date(2026, 8, 4),
             "description": "七月税务来源在八月开放期间更正入账",
         }
     )
@@ -957,7 +1017,14 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
     assert corrected_source.status == "posted"
     corrected_event = session.get(BusinessEvent, corrected_source.event_id)
     corrected_voucher = session.get(Voucher, corrected_source.voucher_id)
-    assert corrected_event.tax_obligation_date == date(2026, 7, 15)
+    corrected_component = session.scalar(
+        select(BusinessEventComponent).where(
+            BusinessEventComponent.event_id == corrected_event.id,
+            BusinessEventComponent.kind == "service_sale",
+        )
+    )
+    assert corrected_component is not None
+    assert corrected_component.facts["tax_obligation_date"] == "2026-07-15"
     assert corrected_event.posting_date == date(2026, 8, 4)
     assert corrected_voucher.posting_date == date(2026, 8, 4)
 
@@ -983,14 +1050,15 @@ def test_tax_belongs_to_closed_month_but_adjustment_posts_in_next_open_month(
     )
     assert corrected_confirm.status == "posted"
     assert corrected_confirm.data["tax_period_id"] != str(tax_period.id)
-    corrected_period = session.get(
-        TaxPeriod, uuid.UUID(corrected_confirm.data["tax_period_id"])
-    )
+    corrected_period = session.get(TaxPeriod, uuid.UUID(corrected_confirm.data["tax_period_id"]))
     corrected_adjustment_event = session.get(BusinessEvent, corrected_confirm.event_id)
     corrected_adjustment_voucher = session.get(Voucher, corrected_confirm.voucher_id)
     assert corrected_period.adjustment_posting_date == date(2026, 8, 5)
     assert corrected_adjustment_event.business_date == date(2026, 7, 31)
-    assert corrected_adjustment_event.tax_obligation_date == date(2026, 7, 31)
+    corrected_component = session.get(BusinessEventComponent, corrected_period.component_id)
+    assert corrected_component.event_id == corrected_adjustment_event.id
+    assert corrected_component.facts["end_date"] == "2026-07-31"
+    assert corrected_component.facts["business_date"] == "2026-07-31"
     assert corrected_adjustment_event.posting_date == date(2026, 8, 5)
     assert corrected_adjustment_voucher.posting_date == date(2026, 8, 5)
 

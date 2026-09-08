@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -13,40 +12,31 @@ from typing import Any
 
 import pytest
 import sqlalchemy as sa
-from alembic.config import Config
+from _postgres_helpers import authenticated_business_database
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
-from ai_accounting.models import Account, TaxPeriod, ZeroTaxPeriodConfirmation
+from ai_accounting.component_schemas import RecordEventRequest
+from ai_accounting.models import (
+    Account,
+    TaxPeriod,
+    ZeroTaxPeriodConfirmation,
+)
 from ai_accounting.schemas import (
-    RecordEventRequest,
     TaxPeriodConfirmRequest,
     TaxPeriodPreviewRequest,
 )
 from ai_accounting.service import FinanceService
-from alembic import command
 
-pytestmark = [
-    pytest.mark.postgres,
-    pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed"),
-]
+pytestmark = [pytest.mark.postgres, pytest.mark.postgres_current]
 
 
 GraphMutation = Callable[[dict[str, Any]], None]
 
 
-def _config(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Config:
-    monkeypatch.setenv("DATABASE_URL", database_url)
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url)
-    config.attributes["database_url_override"] = database_url
-    return config
-
-
 def _sale_request(
     org_id: uuid.UUID,
+    evidence_id: uuid.UUID,
     *,
     key: str,
     invoice_type: str,
@@ -56,23 +46,27 @@ def _sale_request(
         {
             "org_id": org_id,
             "idempotency_key": key,
-            "event_type": "service_credit_sale",
-            "business_dates": {
-                "business_date": business_date,
-                "fulfillment_date": business_date,
-                "payment_date": business_date,
-                "tax_obligation_date": business_date,
-                "posting_date": business_date,
-            },
-            "amounts": {"gross_amount_fen": 10_100},
-            "counterparty": {"kind": "customer", "name": "税务测试客户"},
-            "tax_facts": {
-                "taxable": True,
-                "rate_percent": "1",
-                "invoice_type": invoice_type,
-                "waive_exemption": False,
-                "tax_due_on_event": True,
-            },
+            "posting_date": business_date,
+            "evidence_references": [evidence_id],
+            "components": [
+                {
+                    "key": "sale",
+                    "kind": "service_sale",
+                    "business_date": business_date,
+                    "fulfillment_date": business_date,
+                    "tax_obligation_date": business_date,
+                    "amount_fen": 10_100,
+                    "counterparty": {"kind": "customer", "name": "税务测试客户"},
+                    "recognition_basis": "credit",
+                    "tax_facts": {
+                        "taxable": True,
+                        "rate_percent": "1",
+                        "invoice_type": invoice_type,
+                        "waive_exemption": False,
+                        "tax_due_on_event": True,
+                    },
+                }
+            ],
         }
     )
 
@@ -88,57 +82,67 @@ def _preview(service: FinanceService, org_id: uuid.UUID) -> dict[str, Any]:
     )
 
 
-def _confirm(service: FinanceService, org_id: uuid.UUID, calculation_hash: str, key: str):
-    return service.confirm_tax_period(
-        TaxPeriodConfirmRequest(
-            org_id=org_id,
-            start_date=date(2026, 1, 1),
-            end_date=date(2026, 3, 31),
-            adjustment_posting_date=date(2026, 3, 31),
-            calculation_hash=calculation_hash,
-            idempotency_key=key,
-        )
-    )
-
-
-def _seed_graph(engine: sa.Engine, label: str) -> dict[str, Any]:
-    with Session(engine) as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            name=f"税务伪造验收-{label}",
-            accounting_period_control_enabled=False,
-        )
-        service = FinanceService(session)
-        ordinary = service.record_event(
-            _sale_request(
-                organization.id,
-                key=f"forgery-{label}-ordinary",
-                invoice_type="ordinary",
+def _confirm(
+    service: FinanceService, authority, org_id: uuid.UUID, calculation_hash: str, key: str
+):
+    with authority.attributed_call(service.session, tool_name="finance_confirm_tax_period"):
+        return service.confirm_tax_period(
+            TaxPeriodConfirmRequest(
+                org_id=org_id,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 3, 31),
+                adjustment_posting_date=date(2026, 3, 31),
+                calculation_hash=calculation_hash,
+                idempotency_key=key,
             )
         )
-        special = service.record_event(
+
+
+def _record(session: Session, authority, request: RecordEventRequest):
+    with authority.attributed_call(session, tool_name="finance_record_event"):
+        return FinanceService(session).record_event(request)
+
+
+def _seed_graph(
+    engine: sa.Engine,
+    org_id: uuid.UUID,
+    evidence_id: uuid.UUID,
+    authority,
+    label: str,
+) -> dict[str, Any]:
+    with Session(engine) as session:
+        ordinary = _record(
+            session,
+            authority,
             _sale_request(
-                organization.id,
+                org_id,
+                evidence_id,
+                key=f"forgery-{label}-ordinary",
+                invoice_type="ordinary",
+            ),
+        )
+        special = _record(
+            session,
+            authority,
+            _sale_request(
+                org_id,
+                evidence_id,
                 key=f"forgery-{label}-special",
                 invoice_type="special",
                 business_date=date(2026, 2, 15),
-            )
+            ),
         )
         assert ordinary.status.value == "posted", ordinary.errors
         assert special.status.value == "posted", special.errors
-        preview = _preview(service, organization.id)
+        preview = _preview(FinanceService(session), org_id)
         assert preview["status"] == "calculated", preview
         assert preview["vat_relief_fen"] > 0
         assert preview["surtax_total_fen"] > 0
         accounts = {
             account.system_role: account.id
-            for account in session.scalars(
-                sa.select(Account).where(Account.org_id == organization.id)
-            ).all()
+            for account in session.scalars(sa.select(Account).where(Account.org_id == org_id)).all()
             if account.system_role
         }
-        org_id = organization.id
         session.commit()
 
     result = deepcopy(preview)
@@ -167,6 +171,8 @@ def _seed_graph(engine: sa.Engine, label: str) -> dict[str, Any]:
     ]
     return {
         "org_id": org_id,
+        "evidence_id": evidence_id,
+        "component_id": uuid.uuid4(),
         "event_id": uuid.uuid4(),
         "period_id": uuid.uuid4(),
         "voucher_id": uuid.uuid4(),
@@ -185,7 +191,11 @@ def _seed_graph(engine: sa.Engine, label: str) -> dict[str, Any]:
     }
 
 
-def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
+def _insert_graph(
+    connection: sa.Connection | Session,
+    graph: dict[str, Any],
+    execution_attribution_id: uuid.UUID,
+) -> None:
     connection.execute(
         sa.text(
             """
@@ -193,12 +203,13 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
                 id, org_id, idempotency_key, request_payload_hash, event_type, status,
                 description, facts, business_date, fulfillment_date, invoice_date,
                 payment_date, tax_obligation_date, posting_date, rule_trace,
-                rule_version, reversed_by_event_id, created_at
+                rule_version, reversed_by_event_id, execution_attribution_id, created_at
             ) VALUES (
                 :event_id, :org_id, :idempotency_key, :request_hash,
                 'tax_relief', 'draft', 'direct SQL forged tax period', CAST(:facts AS json),
                 DATE '2026-03-31', NULL, NULL, NULL, DATE '2026-03-31',
-                DATE '2026-03-31', CAST(:trace AS json), :rule_version, NULL, :created_at
+                DATE '2026-03-31', CAST(:trace AS json), :rule_version, NULL,
+                :execution_attribution_id, :created_at
             )
             """
         ),
@@ -210,7 +221,62 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
             "facts": json.dumps(graph["event_facts"], ensure_ascii=False),
             "trace": json.dumps(graph["event_trace"], ensure_ascii=False),
             "rule_version": graph["event_rule_version"],
+            "execution_attribution_id": execution_attribution_id,
             "created_at": graph["now"],
+        },
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO business_event_components (
+                id, org_id, event_id, key, ordinal, kind, facts, derived, rule_version
+            ) VALUES (
+                :component_id, :org_id, :event_id, 'tax_period', 1, 'tax_relief',
+                CAST(:facts AS json), CAST(:derived AS json), :rule_version
+            )
+            """
+        ),
+        {
+            "component_id": graph["component_id"],
+            "org_id": graph["org_id"],
+            "event_id": graph["event_id"],
+            "facts": json.dumps(graph["event_facts"], ensure_ascii=False),
+            "derived": json.dumps(
+                {
+                    "tax_period": graph["period_calculation"],
+                    "source_component_proofs": graph["period_calculation"][
+                        "source_event_snapshots"
+                    ],
+                    "source_review_proofs": graph["period_calculation"]["source_review_snapshots"],
+                    "_posting_entries": [
+                        {
+                            "account_id": str(graph["accounts"][line["role"]]),
+                            "counterparty_id": None,
+                            "debit_fen": line["debit_fen"],
+                            "credit_fen": line["credit_fen"],
+                        }
+                        for line in graph["lines"]
+                    ],
+                    "_posting_open_items": [],
+                    "_posting_settlements": [],
+                    "_posting_cash_flows": [],
+                },
+                ensure_ascii=False,
+            ),
+            "rule_version": graph["event_rule_version"],
+        },
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO event_evidence (org_id, event_id, evidence_id, relation_kind)
+            VALUES (:org_id, :event_id, :evidence_id, 'supporting')
+            """
+        ),
+        {
+            "org_id": graph["org_id"],
+            "event_id": graph["event_id"],
+            "evidence_id": graph["evidence_id"],
         },
     )
     connection.execute(
@@ -239,10 +305,10 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
                 """
                 INSERT INTO voucher_lines (
                     id, org_id, voucher_id, line_number, account_id, counterparty_id,
-                    debit_fen, credit_fen, memo
+                    debit_fen, credit_fen, memo, component_id
                 ) VALUES (
                     :id, :org_id, :voucher_id, :line_number, :account_id, NULL,
-                    :debit_fen, :credit_fen, ''
+                    :debit_fen, :credit_fen, '', :component_id
                 )
                 """
             ),
@@ -254,6 +320,7 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
                 "account_id": graph["accounts"][line["role"]],
                 "debit_fen": line["debit_fen"],
                 "credit_fen": line["credit_fen"],
+                "component_id": graph["component_id"],
             },
         )
     connection.execute(
@@ -270,14 +337,14 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
                 calculation, calculation_hash, calculation_hash_payload,
                 filing_cycle_snapshot, jurisdiction_snapshot,
                 urban_maintenance_rate_snapshot, vat_rule_id, surtax_rule_id,
-                adjustment_event_id, created_at
+                adjustment_event_id, component_id, created_at
             ) VALUES (
                 :period_id, :org_id, DATE '2026-01-01', DATE '2026-03-31',
                 DATE '2026-03-31',
                 :rule_version, 'posted', CAST(:calculation AS json), :calculation_hash,
                 :calculation_hash_payload, :filing_cycle, :jurisdiction,
                 :urban_maintenance_rate, :vat_rule_id, :surtax_rule_id,
-                :event_id, :created_at
+                :event_id, :component_id, :created_at
             )
             """
         ),
@@ -296,6 +363,7 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
             "vat_rule_id": uuid.UUID(result["vat_rule_id"]),
             "surtax_rule_id": uuid.UUID(result["surtax_rule_id"]),
             "event_id": graph["event_id"],
+            "component_id": graph["component_id"],
             "created_at": graph["now"],
         },
     )
@@ -304,18 +372,20 @@ def _insert_graph(connection: sa.Connection, graph: dict[str, Any]) -> None:
             sa.text(
                 """
                 INSERT INTO tax_period_sources (
-                    org_id, tax_period_id, source_event_id,
+                    id, org_id, tax_period_id, source_event_id, source_component_id,
                     gross_fen, net_fen, vat_fen, exemption_eligible
                 ) VALUES (
-                    :org_id, :period_id, :source_event_id,
+                    :id, :org_id, :period_id, :source_event_id, :source_component_id,
                     :gross_fen, :net_fen, :vat_fen, :exemption_eligible
                 )
                 """
             ),
             {
+                "id": uuid.uuid4(),
                 "org_id": graph["org_id"],
                 "period_id": graph["period_id"],
                 "source_event_id": uuid.UUID(source["event_id"]),
+                "source_component_id": uuid.UUID(source["component_id"]),
                 "gross_fen": source["gross_fen"],
                 "net_fen": source["net_fen"],
                 "vat_fen": source["vat_fen"],
@@ -392,132 +462,135 @@ def _forge_balanced_extra_lines(graph: dict[str, Any]) -> None:
     )
 
 
-FORGERIES: tuple[tuple[str, GraphMutation], ...] = (
-    ("hash-payload", _forge_hash_pair),
-    ("period-calculation", _forge_period_calculation),
-    ("event-facts", _forge_event_facts),
-    ("event-trace", _forge_trace),
-    ("rule-snapshot", _coherently_forge_rule_snapshot),
-    ("source-snapshot", _forge_source_snapshot),
-    ("balanced-wrong-role", _forge_balanced_wrong_role),
-    ("balanced-wrong-amount", _forge_balanced_wrong_amount),
-    ("balanced-extra-lines", _forge_balanced_extra_lines),
+FORGERIES: tuple[tuple[str, GraphMutation, str], ...] = (
+    ("hash-payload", _forge_hash_pair, "TAX_PERIOD_SNAPSHOT_IMMUTABLE"),
+    ("period-calculation", _forge_period_calculation, "TAX_PERIOD_SNAPSHOT_IMMUTABLE"),
+    ("event-facts", _forge_event_facts, "TAX_PERIOD_SNAPSHOT_IMMUTABLE"),
+    ("event-trace", _forge_trace, "TAX_PERIOD_SNAPSHOT_IMMUTABLE"),
+    ("rule-snapshot", _coherently_forge_rule_snapshot, "TAX_PERIOD_SNAPSHOT_IMMUTABLE"),
+    ("source-snapshot", _forge_source_snapshot, "TAX_PERIOD_SNAPSHOT_IMMUTABLE"),
+    (
+        "balanced-wrong-role",
+        _forge_balanced_wrong_role,
+        "COMPONENT_ACCOUNT_BUSINESS_CLASS_MISMATCH",
+    ),
+    ("balanced-wrong-amount", _forge_balanced_wrong_amount, "TAX_PERIOD_SNAPSHOT_IMMUTABLE"),
+    (
+        "balanced-extra-lines",
+        _forge_balanced_extra_lines,
+        "COMPONENT_ACCOUNT_BUSINESS_CLASS_MISMATCH",
+    ),
 )
 
 
-def test_direct_sql_forgeries_and_concurrent_confirm_are_closed_at_commit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url(driver="psycopg")
-        engine = sa.create_engine(database_url)
-        try:
-            command.upgrade(_config(database_url, monkeypatch), "head")
-            for label, mutate in FORGERIES:
-                graph = _seed_graph(engine, label)
-                mutate(graph)
-                with pytest.raises(DBAPIError, match="TAX_PERIOD_SNAPSHOT_IMMUTABLE"):
-                    with engine.begin() as connection:
-                        _insert_graph(connection, graph)
-
-            with Session(engine) as session:
-                organization = seed_organization(
-                    session,
-                    taxpayer_identification_number="91330106MA1234567T",
-                    name="双连接税期确认硬化验收",
-                    accounting_period_control_enabled=False,
-                )
-                service = FinanceService(session)
-                for invoice_type in ("ordinary", "special"):
-                    source = service.record_event(
-                        _sale_request(
-                            organization.id,
-                            key=f"concurrent-source-{invoice_type}",
-                            invoice_type=invoice_type,
-                        )
-                    )
-                    assert source.status.value == "posted", source.errors
-                preview = _preview(service, organization.id)
-                calculation_hash = str(preview["calculation_hash"])
-                org_id = organization.id
-                session.commit()
-
-            barrier = Barrier(2)
-
-            def concurrent_confirm(key: str) -> tuple[str, list[str], str | None]:
+def test_direct_sql_forgeries_and_concurrent_confirm_are_closed_at_commit() -> None:
+    with authenticated_business_database(
+        "tax_determinism_hardening", name="双连接税期确认硬化验收"
+    ) as (engine, org_id, evidence_id, authority):
+        for label, mutate, expected_code in FORGERIES:
+            graph = _seed_graph(engine, org_id, evidence_id, authority, label)
+            mutate(graph)
+            with pytest.raises(DBAPIError, match=expected_code):
                 with Session(engine) as session:
-                    barrier.wait()
-                    result = _confirm(
-                        FinanceService(session),
-                        org_id,
-                        calculation_hash,
-                        key,
-                    )
-                    outer_error: str | None = None
-                    try:
+                    with authority.attributed_call(
+                        session, tool_name="finance_test_tax_period_forgery"
+                    ) as attribution:
+                        _insert_graph(session, graph, attribution.id)
                         session.commit()
-                    except DBAPIError as exc:
-                        session.rollback()
-                        outer_error = str(exc)
-                    return result.status.value, result.errors, outer_error
 
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                outcomes = list(
-                    pool.map(
-                        concurrent_confirm,
-                        ("hardening-concurrent-a", "hardening-concurrent-b"),
-                    )
+        with Session(engine) as session:
+            for invoice_type in ("ordinary", "special"):
+                source = _record(
+                    session,
+                    authority,
+                    _sale_request(
+                        org_id,
+                        evidence_id,
+                        key=f"concurrent-source-{invoice_type}",
+                        invoice_type=invoice_type,
+                    ),
                 )
-            assert all(outer_error is None for _, _, outer_error in outcomes), outcomes
-            assert sorted(status for status, _, _ in outcomes) == ["posted", "rejected"]
-            loser = next(item for item in outcomes if item[0] == "rejected")
-            assert loser[1] == ["TAX_PERIOD_ALREADY_POSTED"]
+                assert source.status.value == "posted", source.errors
+            preview = _preview(FinanceService(session), org_id)
+            calculation_hash = str(preview["calculation_hash"])
+            session.commit()
+
+        barrier = Barrier(2)
+
+        def concurrent_confirm(key: str) -> tuple[str, list[str], str | None]:
             with Session(engine) as session:
-                assert session.scalar(
+                barrier.wait()
+                result = _confirm(FinanceService(session), authority, org_id, calculation_hash, key)
+                outer_error: str | None = None
+                try:
+                    session.commit()
+                except DBAPIError as exc:
+                    session.rollback()
+                    outer_error = str(exc)
+                return result.status.value, result.errors, outer_error
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(
+                pool.map(
+                    concurrent_confirm,
+                    ("hardening-concurrent-a", "hardening-concurrent-b"),
+                )
+            )
+        assert all(outer_error is None for _, _, outer_error in outcomes), outcomes
+        assert sorted(status for status, _, _ in outcomes) == ["posted", "rejected"]
+        loser = next(item for item in outcomes if item[0] == "rejected")
+        assert loser[1] == ["TAX_PERIOD_ALREADY_POSTED"]
+        with Session(engine) as session:
+            assert (
+                session.scalar(
                     sa.select(sa.func.count())
                     .select_from(TaxPeriod)
                     .where(TaxPeriod.org_id == org_id, TaxPeriod.status == "posted")
-                ) == 1
-
-            with Session(engine) as session:
-                zero_org = seed_organization(
-                    session,
-                    taxpayer_identification_number="91330106MA1234567T",
-                    name="零税额税期确认硬化验收",
-                    accounting_period_control_enabled=False,
                 )
-                zero_preview = _preview(FinanceService(session), zero_org.id)
-                zero_result = _confirm(
-                    FinanceService(session),
-                    zero_org.id,
-                    str(zero_preview["calculation_hash"]),
-                    "zero-tax-postgres-confirm",
-                )
-                assert zero_result.status.value == "posted", zero_result.errors
-                assert zero_result.event_id is None
-                assert zero_result.voucher_id is None
-                zero_org_id = zero_org.id
-                session.commit()
+                == 1
+            )
 
-            with Session(engine) as session:
-                assert session.scalar(
+
+def test_zero_tax_confirmation_is_immutable_in_single_company_database() -> None:
+    with authenticated_business_database("zero_tax_determinism", name="零税额税期确认硬化验收") as (
+        engine,
+        org_id,
+        _evidence_id,
+        authority,
+    ):
+        with Session(engine) as session:
+            zero_preview = _preview(FinanceService(session), org_id)
+            zero_result = _confirm(
+                FinanceService(session),
+                authority,
+                org_id,
+                str(zero_preview["calculation_hash"]),
+                "zero-tax-postgres-confirm",
+            )
+            assert zero_result.status.value == "posted", zero_result.errors
+            assert zero_result.event_id is None
+            assert zero_result.voucher_id is None
+            session.commit()
+            assert (
+                session.scalar(
                     sa.select(sa.func.count())
                     .select_from(ZeroTaxPeriodConfirmation)
-                    .where(ZeroTaxPeriodConfirmation.org_id == zero_org_id)
-                ) == 1
+                    .where(ZeroTaxPeriodConfirmation.org_id == org_id)
+                )
+                == 1
+            )
 
-            with pytest.raises(
-                DBAPIError,
-                match="ZERO_TAX_PERIOD_CONFIRMATION_IMMUTABLE",
-            ):
-                with engine.begin() as connection:
-                    connection.execute(
+        with pytest.raises(DBAPIError, match="ZERO_TAX_PERIOD_CONFIRMATION_IMMUTABLE"):
+            with Session(engine) as session:
+                with authority.attributed_call(
+                    session, tool_name="finance_test_zero_tax_confirmation_forgery"
+                ):
+                    session.execute(
                         sa.text(
                             "UPDATE zero_tax_period_confirmations "
                             "SET calculation_hash = repeat('0', 64) "
                             "WHERE org_id = :org_id"
                         ),
-                        {"org_id": zero_org_id},
+                        {"org_id": org_id},
                     )
-        finally:
-            engine.dispose()
+                    session.commit()

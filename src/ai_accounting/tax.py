@@ -11,7 +11,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import BusinessEvent, Organization, OrganizationProfileVersion, TaxRule
+from .models import (
+    BusinessEvent,
+    BusinessEventComponent,
+    Organization,
+    OrganizationProfileVersion,
+    TaxRule,
+)
 from .organization_profiles import profile_as_of
 
 
@@ -101,6 +107,7 @@ class TaxPeriodResult:
     vat_rule: dict[str, Any]
     surtax_rule: dict[str, Any]
     source_events: list[dict[str, Any]]
+    source_review_snapshots: list[dict[str, Any]]
     calculation_hash_payload: str
     calculation_hash: str
     trace: list[dict[str, Any]]
@@ -111,7 +118,7 @@ class TaxPeriodResult:
         payload["end_date"] = self.end_date.isoformat()
         payload["adjustment_posting_date"] = self.adjustment_posting_date.isoformat()
         payload["source_event_snapshots"] = payload["source_events"]
-        payload["source_events"] = [row["event_id"] for row in self.source_events]
+        payload["source_events"] = sorted({row["event_id"] for row in self.source_events})
         return payload
 
 
@@ -240,6 +247,59 @@ def _validate_natural_period(
         raise ValueError("TAX_PERIOD_INVALID_BOUNDARY")
 
 
+def tax_period_sources(
+    session: Session,
+    organization: Organization,
+    *,
+    pending_event_id: object | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    components = session.execute(
+        select(BusinessEventComponent, BusinessEvent)
+        .join(
+            BusinessEvent,
+            (BusinessEvent.org_id == BusinessEventComponent.org_id)
+            & (BusinessEvent.id == BusinessEventComponent.event_id),
+        )
+        .where(BusinessEvent.org_id == organization.id)
+        .order_by(BusinessEvent.id, BusinessEventComponent.id)
+    ).all()
+    actual: list[dict[str, Any]] = []
+    review: list[dict[str, Any]] = []
+    for component, event in components:
+        if event.status != "posted" and event.id != pending_event_id:
+            continue
+        derived = component.derived
+        if int(derived.get("taxable_gross_fen", 0)) == 0:
+            continue
+        obligation_value = derived.get("tax_obligation_date")
+        if obligation_value is None:
+            continue
+        values = {
+            "gross_fen": int(derived["taxable_gross_fen"]),
+            "net_fen": int(derived["net_sales_fen"]),
+            "vat_fen": int(derived["vat_fen"]),
+            "exemption_eligible": bool(derived.get("exemption_eligible", False)),
+            "tax_obligation_date": str(obligation_value),
+        }
+        actual.append(
+            {
+                "event_id": str(event.id),
+                "component_id": str(component.id),
+                **values,
+            }
+        )
+        review.append(
+            {
+                "event_idempotency_key": event.idempotency_key,
+                "component_key": component.key,
+                **values,
+            }
+        )
+    actual.sort(key=lambda row: (row["event_id"], row["component_id"]))
+    review.sort(key=lambda row: (row["event_idempotency_key"], row["component_key"]))
+    return actual, review
+
+
 def calculate_tax_period(
     session: Session,
     organization: Organization,
@@ -247,11 +307,44 @@ def calculate_tax_period(
     end_date: date,
     adjustment_posting_date: date,
 ) -> TaxPeriodResult:
-    profile = profile_as_of(
+    actual, review = tax_period_sources(session, organization)
+    actual = [
+        row
+        for row in actual
+        if start_date <= date.fromisoformat(row["tax_obligation_date"]) <= end_date
+    ]
+    review_keys = {
+        (row["event_idempotency_key"], row["component_key"])
+        for row in review
+        if start_date <= date.fromisoformat(row["tax_obligation_date"]) <= end_date
+    }
+    review = [
+        row for row in review if (row["event_idempotency_key"], row["component_key"]) in review_keys
+    ]
+    return calculate_tax_period_from_sources(
         session,
-        org_id=organization.id,
-        as_of=start_date,
+        organization,
+        start_date,
+        end_date,
+        adjustment_posting_date,
+        source_event_snapshots=actual,
+        source_review_snapshots=review,
     )
+
+
+def calculate_tax_period_from_sources(
+    session: Session,
+    organization: Organization,
+    start_date: date,
+    end_date: date,
+    adjustment_posting_date: date,
+    *,
+    source_event_snapshots: list[dict[str, Any]],
+    source_review_snapshots: list[dict[str, Any]],
+) -> TaxPeriodResult:
+    """Calculate from exact materialized sources and stable reviewed business identities."""
+
+    profile = profile_as_of(session, org_id=organization.id, as_of=start_date)
     _validate_natural_period(profile, start_date, end_date)
     if adjustment_posting_date < end_date:
         raise ValueError("TAX_PERIOD_ADJUSTMENT_POSTING_DATE_INVALID")
@@ -275,42 +368,23 @@ def calculate_tax_period(
     surtax_params = surtax_rule.parameters
     threshold_key = f"{profile.filing_cycle}_threshold_fen"
     threshold_fen = int(params[threshold_key])
-
-    events = session.scalars(
-        select(BusinessEvent)
-        .where(
-            BusinessEvent.org_id == organization.id,
-            BusinessEvent.status == "posted",
-            BusinessEvent.tax_obligation_date >= start_date,
-            BusinessEvent.tax_obligation_date <= end_date,
-        )
-        .order_by(BusinessEvent.id)
-    ).all()
-    taxable_rows: list[dict[str, Any]] = []
-    for event in events:
-        derived = event.facts.get("derived", {})
-        if int(derived.get("taxable_gross_fen", 0)) == 0:
-            continue
-        taxable_rows.append(
-            {
-                "event_id": str(event.id),
-                "gross_fen": int(derived["taxable_gross_fen"]),
-                "net_fen": int(derived["net_sales_fen"]),
-                "vat_fen": int(derived["vat_fen"]),
-                "exemption_eligible": bool(derived.get("exemption_eligible", False)),
-            }
-        )
-    taxable_rows.sort(key=lambda row: row["event_id"])
-
-    gross_sales = sum(row["gross_fen"] for row in taxable_rows)
-    net_sales = sum(row["net_fen"] for row in taxable_rows)
-    vat_accrued = sum(row["vat_fen"] for row in taxable_rows)
+    source_event_snapshots = [
+        {key: value for key, value in row.items() if key != "tax_obligation_date"}
+        for row in source_event_snapshots
+    ]
+    source_review_snapshots = [
+        {key: value for key, value in row.items() if key != "tax_obligation_date"}
+        for row in source_review_snapshots
+    ]
+    gross_sales = sum(row["gross_fen"] for row in source_review_snapshots)
+    net_sales = sum(row["net_fen"] for row in source_review_snapshots)
+    vat_accrued = sum(row["vat_fen"] for row in source_review_snapshots)
     threshold_operator = str(params["threshold_operator"])
     below_threshold = _below_threshold(net_sales, threshold_fen, threshold_operator)
     vat_relief = max(
         0,
         (
-            sum(row["vat_fen"] for row in taxable_rows if row["exemption_eligible"])
+            sum(row["vat_fen"] for row in source_review_snapshots if row["exemption_eligible"])
             if below_threshold
             else 0
         ),
@@ -320,9 +394,7 @@ def calculate_tax_period(
     reduction = Decimal(str(surtax_params["small_tax_reduction_factor"]))
     urban = round_fen(Decimal(vat_payable) * profile.urban_maintenance_rate * reduction)
     education = round_fen(
-        Decimal(vat_payable)
-        * Decimal(str(surtax_params["education_surcharge_rate"]))
-        * reduction
+        Decimal(vat_payable) * Decimal(str(surtax_params["education_surcharge_rate"])) * reduction
     )
     local_education = round_fen(
         Decimal(vat_payable)
@@ -348,9 +420,7 @@ def calculate_tax_period(
             "id": str(organization.id),
             "filing_cycle": profile.filing_cycle,
             "jurisdiction": profile.jurisdiction,
-            "urban_maintenance_rate": _five_place_rate(
-                profile.urban_maintenance_rate
-            ),
+            "urban_maintenance_rate": _five_place_rate(profile.urban_maintenance_rate),
         },
         "period": {
             "start_date": start_date.isoformat(),
@@ -359,20 +429,19 @@ def calculate_tax_period(
         },
         "vat_rule": vat_snapshot,
         "surtax_rule": surtax_snapshot,
-        "source_events": taxable_rows,
+        "source_review_snapshots": source_review_snapshots,
         "calculation": calculation,
     }
     calculation_hash_payload = canonical_tax_calculation_json(calculation_hash_input)
-    calculation_hash = hashlib.sha256(
-        calculation_hash_payload.encode("utf-8")
-    ).hexdigest()
+    calculation_hash = hashlib.sha256(calculation_hash_payload.encode("utf-8")).hexdigest()
     trace = [
         {
             "rule": rule.code,
             "version": rule.version,
             "threshold_operator": _threshold_expression(threshold_operator),
             "below_threshold": below_threshold,
-            "taxable_event_count": len(taxable_rows),
+            "taxable_component_count": len(source_event_snapshots),
+            "taxable_event_count": len({row["event_id"] for row in source_event_snapshots}),
             "adjustment_posting_date": adjustment_posting_date.isoformat(),
         },
         {
@@ -381,7 +450,7 @@ def calculate_tax_period(
             "reduction_factor": str(reduction),
             "urban_maintenance_rate": _five_place_rate(profile.urban_maintenance_rate),
         },
-        {"events": taxable_rows},
+        {"events": source_event_snapshots},
         {"stage": "calculation_hash", "sha256": calculation_hash},
     ]
     return TaxPeriodResult(
@@ -398,7 +467,8 @@ def calculate_tax_period(
         surtax_rule_id=str(surtax_rule.id),
         vat_rule=vat_snapshot,
         surtax_rule=surtax_snapshot,
-        source_events=taxable_rows,
+        source_events=source_event_snapshots,
+        source_review_snapshots=source_review_snapshots,
         calculation_hash_payload=calculation_hash_payload,
         calculation_hash=calculation_hash,
         trace=trace,

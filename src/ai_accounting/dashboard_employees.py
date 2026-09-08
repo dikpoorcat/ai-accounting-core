@@ -18,6 +18,7 @@ from .models import (
     Account,
     AccountingPeriod,
     BusinessEvent,
+    BusinessEventComponent,
     Employee,
     EmployeePayrollProfileVersion,
     LaborRemunerationBatch,
@@ -27,8 +28,6 @@ from .models import (
     PayrollBatch,
     PayrollLine,
     PayrollSalaryActualDeductionAllocation,
-    UnifiedPayoutRun,
-    UnifiedPayoutRunItem,
     Voucher,
     VoucherLine,
 )
@@ -517,7 +516,7 @@ def _load_ledger_cost(
         .join(Voucher, Voucher.id == VoucherLine.voucher_id)
         .where(
             Account.org_id == org_id,
-            Account.system_role.in_(expense_roles),
+            func.coalesce(Account.business_class, Account.system_role).in_(expense_roles),
             Voucher.org_id == org_id,
             Voucher.posting_date >= period.start_date,
             Voucher.posting_date <= period.end_date,
@@ -632,31 +631,37 @@ def _load_personal_labor_cost(
     effective_line_weights = {
         line_id: weight for line_id, weight in line_weights.items() if weight != 0
     }
-    payout_rows = (
-        session.execute(
-            select(UnifiedPayoutRunItem, UnifiedPayoutRun)
-            .join(
-                UnifiedPayoutRun,
-                and_(
-                    UnifiedPayoutRun.org_id == UnifiedPayoutRunItem.org_id,
-                    UnifiedPayoutRun.id == UnifiedPayoutRunItem.payout_run_id,
-                ),
-            )
-            .where(
-                UnifiedPayoutRunItem.org_id == org_id,
-                UnifiedPayoutRunItem.item_kind == "labor",
-                UnifiedPayoutRunItem.labor_line_id.in_(tuple(effective_line_weights)),
-                UnifiedPayoutRun.status == "posted",
-            )
-            .order_by(UnifiedPayoutRun.posting_date, UnifiedPayoutRunItem.id)
-        ).all()
-        if effective_line_weights
-        else []
-    )
-    payouts_by_line: dict[uuid.UUID, list[UnifiedPayoutRunItem]] = defaultdict(list)
-    for item, _run in payout_rows:
-        if item.labor_line_id is not None:
-            payouts_by_line[item.labor_line_id].append(item)
+    payout_rows = session.execute(
+        select(LaborRemunerationEventLink, BusinessEventComponent, BusinessEvent)
+        .join(
+            BusinessEventComponent,
+            and_(
+                BusinessEventComponent.org_id == LaborRemunerationEventLink.org_id,
+                BusinessEventComponent.event_id == LaborRemunerationEventLink.event_id,
+                BusinessEventComponent.id == LaborRemunerationEventLink.component_id,
+            ),
+        )
+        .join(
+            BusinessEvent,
+            and_(
+                BusinessEvent.org_id == BusinessEventComponent.org_id,
+                BusinessEvent.id == BusinessEventComponent.event_id,
+            ),
+        )
+        .where(
+            LaborRemunerationEventLink.org_id == org_id,
+            LaborRemunerationEventLink.link_kind == "payment",
+            LaborRemunerationEventLink.labor_line_id.in_(tuple(effective_line_weights)),
+            BusinessEventComponent.kind == "labor_settlement",
+            BusinessEvent.posting_date <= period.end_date,
+        )
+        .order_by(BusinessEvent.posting_date, BusinessEventComponent.ordinal)
+    ).all() if effective_line_weights else []
+    from .enterprise_income_tax import event_effective
+    payouts_by_line = defaultdict(list)
+    for link, component, payment_event in payout_rows:
+        if event_effective(session, payment_event, period.end_date):
+            payouts_by_line[link.labor_line_id].append(component)
 
     actual_withholding_tax_fen = 0
     unwithheld_tax_fen = 0
@@ -664,10 +669,10 @@ def _load_personal_labor_cost(
     settlement_modes: set[str] = set()
     for line_id, weight in effective_line_weights.items():
         for item in payouts_by_line.get(line_id, []):
-            actual_withholding_tax_fen += weight * item.individual_income_tax_fen
-            unwithheld_tax_fen += weight * item.unwithheld_individual_income_tax_fen
-            settled_gross_fen += weight * item.gross_amount_fen
-            settlement_modes.add(item.settlement_mode)
+            actual_withholding_tax_fen += weight * item.derived["withholding_tax_fen"]
+            unwithheld_tax_fen += weight * item.derived["unwithheld_tax_fen"]
+            settled_gross_fen += weight * item.derived["gross_amount_fen"]
+            settlement_modes.add(item.facts["settlement_mode"])
     unsettled_gross_fen = gross_remuneration_fen - settled_gross_fen
     pending_theoretical_tax_fen = (
         theoretical_withholding_tax_fen

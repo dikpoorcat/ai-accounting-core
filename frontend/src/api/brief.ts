@@ -8,6 +8,21 @@ export interface BriefVoucherLine {
   debit_fen: string;
   credit_fen: string;
   party: string;
+  component_id: string | null;
+}
+
+export interface BriefComponent {
+  id: string;
+  key: string;
+  kind: string;
+  group: string;
+  label: string;
+  description: string;
+  amount_fen: string;
+  parties: string[];
+  facts: Record<string, unknown>;
+  derived: Record<string, unknown>;
+  source_references: Array<{ type: string; value: string }>;
 }
 
 export interface BriefVoucher {
@@ -19,6 +34,8 @@ export interface BriefVoucher {
   list_summary: string;
   amount_fen: string;
   evidence: string[];
+  components: BriefComponent[];
+  funds: BriefComponent[];
   lines: BriefVoucherLine[];
 }
 
@@ -32,6 +49,8 @@ export interface BriefActivityRow {
   state: string;
   party: string;
   evidence: string[];
+  components: BriefComponent[];
+  funds: BriefComponent[];
 }
 
 export interface BriefActivityGroup {

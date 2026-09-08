@@ -120,6 +120,22 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
               </span>
               <span>{{ item.party || "无往来对象" }}</span>
             </div>
+            <details v-if="item.components.length || item.funds.length" class="disclosure">
+              <summary>
+                查看 {{ item.components.length }} 个业务组件和 {{ item.funds.length }} 个资金项
+              </summary>
+              <ul class="component-list">
+                <li v-for="component in [...item.components, ...item.funds]" :key="component.id">
+                  <strong>{{ component.label }}</strong>
+                  <span>{{ component.key }} · {{ component.kind }}</span>
+                  <span v-if="component.description">{{ component.description }}</span>
+                  <span v-if="component.parties.length">往来：{{ component.parties.join("、") }}</span>
+                  <span v-if="component.source_references.length">
+                    来源：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
+                  </span>
+                </li>
+              </ul>
+            </details>
             <details v-if="item.evidence.length" class="disclosure">
               <summary>查看 {{ item.evidence.length }} 份关联凭据</summary>
               <ul>
@@ -174,6 +190,21 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                 <strong>{{ formatFen(voucher.amount_fen) }}</strong>
               </div>
             </div>
+            <details v-if="voucher.components.length || voucher.funds.length" class="disclosure">
+              <summary>
+                查看 {{ voucher.components.length }} 个业务组件和 {{ voucher.funds.length }} 个资金项
+              </summary>
+              <ul class="component-list">
+                <li v-for="component in [...voucher.components, ...voucher.funds]" :key="component.id">
+                  <strong>{{ component.label }}</strong>
+                  <span>{{ component.key }} · {{ component.kind }}</span>
+                  <span v-if="component.description">{{ component.description }}</span>
+                  <span v-if="component.source_references.length">
+                    来源：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
+                  </span>
+                </li>
+              </ul>
+            </details>
             <div class="table-wrap">
               <table>
                 <colgroup>
@@ -415,6 +446,15 @@ h3 {
   margin: 10px 0 0;
   padding: 0;
   list-style: none;
+}
+
+.component-list li {
+  display: grid;
+  gap: 2px;
+}
+
+.component-list span {
+  color: var(--brief-muted);
 }
 
 .event-row {

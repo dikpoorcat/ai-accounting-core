@@ -11,9 +11,11 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.models import (
     BusinessEvent,
+    BusinessEventComponent,
     Evidence,
     FixedAssetDisposal,
     Organization,
@@ -27,7 +29,6 @@ from ai_accounting.schemas import (
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
     DisposeFixedAssetRequest,
-    RecordEventRequest,
     ReverseEventRequest,
     TaxPeriodConfirmRequest,
     TaxPeriodPreviewRequest,
@@ -50,6 +51,7 @@ def _explicit_tax_facts(*, invoice_type: str = "special") -> dict[str, object]:
 
 def _sale_request(
     organization: Organization,
+    evidence: Evidence,
     *,
     key: str,
     business_date: date = date(2026, 1, 15),
@@ -59,17 +61,32 @@ def _sale_request(
         {
             "org_id": organization.id,
             "idempotency_key": key,
-            "event_type": "service_cash_sale",
-            "bank_account_code": "1002",
-            "business_dates": {
-                "business_date": business_date,
-                "fulfillment_date": business_date,
-                "payment_date": business_date,
-                "tax_obligation_date": business_date,
-                "posting_date": business_date,
-            },
-            "amounts": {"gross_amount_fen": gross_fen},
-            "tax_facts": _explicit_tax_facts(),
+            "posting_date": business_date,
+            "evidence_references": [evidence.id],
+            "components": [
+                {
+                    "key": "sale",
+                    "kind": "service_sale",
+                    "business_date": business_date,
+                    "fulfillment_date": business_date,
+                    "payment_date": business_date,
+                    "tax_obligation_date": business_date,
+                    "amount_fen": gross_fen,
+                    "counterparty": {"kind": "customer", "name": "税务硬化客户"},
+                    "recognition_basis": "immediate",
+                    "tax_facts": _explicit_tax_facts(),
+                }
+            ],
+            "funds": [
+                {
+                    "key": "receipt",
+                    "account_code": "1002",
+                    "direction": "receipt",
+                    "payment_date": business_date,
+                    "amount_fen": gross_fen,
+                    "allocations": [{"component_key": "sale", "amount_fen": gross_fen}],
+                }
+            ],
         }
     )
 
@@ -113,11 +130,7 @@ def _confirm(
 
 def _leaf_paths(value: Any, prefix: tuple[str | int, ...] = ()) -> list[tuple[str | int, ...]]:
     if isinstance(value, dict):
-        return [
-            path
-            for key in sorted(value)
-            for path in _leaf_paths(value[key], (*prefix, key))
-        ]
+        return [path for key in sorted(value) for path in _leaf_paths(value[key], (*prefix, key))]
     if isinstance(value, list):
         return [
             path
@@ -232,7 +245,8 @@ def test_preview_hash_payload_is_reproducible_and_every_leaf_tamper_is_stale(
     session: Session, organization: Organization
 ) -> None:
     service = FinanceService(session)
-    source = service.record_event(_sale_request(organization, key="hash-payload-source"))
+    evidence = _evidence(session, organization, "hash-payload-source")
+    source = service.record_event(_sale_request(organization, evidence, key="hash-payload-source"))
     assert source.status.value == "posted"
     preview = _preview(service, organization)
     assert preview["status"] == "calculated", preview
@@ -244,7 +258,7 @@ def test_preview_hash_payload_is_reproducible_and_every_leaf_tamper_is_stale(
         "period",
         "vat_rule",
         "surtax_rule",
-        "source_events",
+        "source_review_snapshots",
         "calculation",
     }
     assert payload["organization"] == {
@@ -258,7 +272,7 @@ def test_preview_hash_payload_is_reproducible_and_every_leaf_tamper_is_stale(
         "end_date": "2026-03-31",
         "adjustment_posting_date": "2026-03-31",
     }
-    assert payload["source_events"] == preview["source_event_snapshots"]
+    assert payload["source_review_snapshots"] == preview["source_review_snapshots"]
     assert _canonical_hash(payload) == preview["calculation_hash"]
     assert hashlib.sha256(payload_text.encode("utf-8")).hexdigest() == preview["calculation_hash"]
 
@@ -289,7 +303,13 @@ def test_preview_hash_payload_is_reproducible_and_every_leaf_tamper_is_stale(
     assert period.calculation["calculation_hash_payload"] == payload_text
     event = session.get(BusinessEvent, confirmed.event_id)
     assert event is not None
-    assert event.facts["tax_period"]["calculation_hash_payload"] == payload_text
+    component = session.scalar(
+        select(BusinessEventComponent).where(
+            BusinessEventComponent.event_id == event.id,
+            BusinessEventComponent.kind == "tax_relief",
+        )
+    )
+    assert component.derived["tax_period"]["calculation_hash_payload"] == payload_text
 
 
 def test_old_snapshot_reverses_after_all_organization_tax_configuration_changes(
@@ -320,7 +340,10 @@ def test_old_snapshot_reverses_after_all_organization_tax_configuration_changes(
     session.flush()
 
     service = FinanceService(session)
-    source = service.record_event(_sale_request(organization, key="config-snapshot-source"))
+    evidence = _evidence(session, organization, "config-snapshot-source")
+    source = service.record_event(
+        _sale_request(organization, evidence, key="config-snapshot-source")
+    )
     assert source.status.value == "posted"
     old_preview = _preview(service, organization)
     confirmed = _confirm(
@@ -378,7 +401,9 @@ def test_fixed_asset_sale_is_locked_by_posted_period_but_retirement_is_not(
     retirement_asset_id = _active_asset(
         fixed_service, organization, evidence, asset_code="FA-HARDENING-RETIREMENT"
     )
-    source = fixed_service.record_event(_sale_request(organization, key="asset-lock-tax-source"))
+    source = fixed_service.record_event(
+        _sale_request(organization, evidence, key="asset-lock-tax-source")
+    )
     assert source.status.value == "posted"
     preview = _preview(fixed_service, organization)
     confirmed = _confirm(
@@ -474,6 +499,4 @@ def test_zero_adjustment_period_has_immutable_confirmation_without_ledger_side_e
     assert _count(session, Voucher) == before[Voucher]
     assert _count(session, TaxPeriod) == before[TaxPeriod]
     assert _count(session, TaxPeriodSource) == before[TaxPeriodSource]
-    assert _count(session, ZeroTaxPeriodConfirmation) == (
-        before[ZeroTaxPeriodConfirmation] + 1
-    )
+    assert _count(session, ZeroTaxPeriodConfirmation) == (before[ZeroTaxPeriodConfirmation] + 1)

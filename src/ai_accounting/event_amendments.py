@@ -25,6 +25,8 @@ from .ledger import assert_period_open
 # Each edge names ownership, not merely a foreign-key reference. Other incoming
 # references (payments, later depreciation, tax snapshots, reports) block editing.
 OWNERS = {
+    "business_event_components": ("event_id", "business_events"),
+    "component_cash_flow_allocations": ("event_id", "business_events"),
     "vouchers": ("event_id", "business_events"),
     "voucher_lines": ("voucher_id", "vouchers"),
     "event_evidence": ("event_id", "business_events"),
@@ -67,10 +69,6 @@ OWNERS = {
     "labor_withholding_entitlements": ("labor_line_id", "labor_remuneration_lines"),
     "labor_withholding_open_item_sources": ("payment_event_id", "business_events"),
     "labor_withholding_tax_payment_allocations": ("payment_event_id", "business_events"),
-    "unified_payout_runs": ("business_event_id", "business_events"),
-    "unified_payout_run_items": ("payout_run_id", "unified_payout_runs"),
-    "unified_payout_run_evidence": ("payout_run_id", "unified_payout_runs"),
-    "unified_payout_run_bank_transactions": ("payout_run_id", "unified_payout_runs"),
     "tax_periods": ("adjustment_event_id", "business_events"),
     "tax_period_sources": ("tax_period_id", "tax_periods"),
     "enterprise_income_tax_quarter_confirmations": ("business_event_id", "business_events"),
@@ -137,7 +135,9 @@ def _graph(session: Session, source: m.BusinessEvent) -> dict[str, list[dict[str
     return graph
 
 
-def _dependencies(session: Session, source: m.BusinessEvent, graph: dict) -> list[dict]:
+def _dependencies(
+    session: Session, source: m.BusinessEvent, graph: dict, *, deleting: bool = False
+) -> list[dict]:
     blockers = []
     for table in m.Base.metadata.sorted_tables:
         if table.name in {"audit_logs", "business_event_amendments", "bank_transactions"}:
@@ -153,26 +153,60 @@ def _dependencies(session: Session, source: m.BusinessEvent, graph: dict) -> lis
         if not conditions:
             continue
         query = select(table).where(or_(*conditions))
+        if table.name == "business_event_dependencies" and not deleting:
+            query = query.join(
+                m.BusinessEvent,
+                (m.BusinessEvent.org_id == table.c.org_id)
+                & (m.BusinessEvent.id == table.c.child_event_id),
+            ).where(m.BusinessEvent.status == "posted")
         if "org_id" in table.c:
             query = query.where(table.c.org_id == source.org_id)
         if graph.get(table.name):
             query = query.where(~_predicate(table, graph[table.name]))
         for row in session.execute(query.with_for_update()).mappings():
             blockers.append({"table": table.name, "id": str(row.get("id", ""))})
-    # Cumulative payroll snapshots also hold earlier inputs in JSON, rather than
-    # a foreign key. A later final batch must be handled first.
-    for batch in graph.get("payroll_batches", []):
-        if session.scalar(
-            select(m.PayrollBatch.id)
-            .where(
-                m.PayrollBatch.org_id == source.org_id,
-                m.PayrollBatch.status == "posted",
-                m.PayrollBatch.payroll_period > batch["payroll_period"],
-            )
-            .limit(1)
+    # Cumulative tax consumers have the same employee and tax year. Apply the
+    # same dependency rule as reversal, excluding every batch replaced together.
+    from .service import FinanceService
+
+    payroll = FinanceService(session)
+    batch_ids = {row["id"] for row in graph.get("payroll_batches", [])}
+    for batch_id in batch_ids:
+        batch = session.get(m.PayrollBatch, batch_id)
+        lines = list(
+            session.scalars(select(m.PayrollLine).where(m.PayrollLine.payroll_batch_id == batch_id))
+        )
+        for dependent_id in payroll._payroll_tax_dependent_batch_ids(
+            batch, lines, excluded_batch_ids=batch_ids
         ):
-            blockers.append({"table": "payroll_batches", "reason": "later_payroll"})
+            blockers.append(
+                {"table": "payroll_batches", "id": str(dependent_id), "reason": "later_payroll"}
+            )
     return blockers
+
+
+def component_fact_identity(
+    session: Session, table_name: str, component_key: str
+) -> uuid.UUID:
+    """Allocate a planned identity, retaining the fact owned by a replaced component."""
+    context = session.info.get("event_amendment")
+    if context is not None:
+        tables = context["original_tables"]
+        component_ids = {
+            row["id"]
+            for row in tables.get("business_event_components", [])
+            if row["key"] == component_key
+        }
+        candidates = [
+            row
+            for row in tables.get(table_name, [])
+            if row.get("component_id") in component_ids
+        ]
+        if len(candidates) > 1:
+            raise ValueError("AMENDMENT_COMPONENT_FACT_IDENTITY_AMBIGUOUS")
+        if candidates:
+            return candidates[0]["id"]
+    return uuid.uuid4()
 
 
 @event.listens_for(Session, "before_attach")
@@ -199,6 +233,14 @@ def _reuse_owned_identity(session: Session, instance: object) -> None:
             "pass_through_key",
             "insurance_kind",
             "source_key",
+            "key",
+            "kind",
+            "component_key",
+            "source_component_id",
+            "payment_component_id",
+            "component_id",
+            "parent_component_id",
+            "child_component_id",
         )
         if key in table.c
     ]
@@ -233,6 +275,7 @@ class EventAmendmentService:
             return {"status": "rejected", "errors": ["AMENDMENT_DATABASE_CONFLICT"]}
         finally:
             self.session.info.pop("event_amendment", None)
+            self.session.info.pop("preserve_accrual_batch_ids", None)
 
     def _write(self, request: AmendEventRequest | DeleteEventRequest) -> dict[str, Any]:
         session = self.session
@@ -270,21 +313,27 @@ class EventAmendmentService:
         if canonical_sha256(source.facts) != request.expected_facts_hash:
             raise ValueError("AMENDMENT_FACTS_STALE")
         before = _graph(session, source)
-        if deleting and any(
-            row["reversal_event_id"] is not None for row in before["enterprise_income_tax_results"]
-        ):
-            raise AmendmentRejected(
-                {
-                    "status": "rejected",
-                    "errors": ["DELETION_LINKED_REVERSAL_EXISTS"],
-                    "blocking_records": [
-                        {"table": "business_events", "id": str(row["reversal_event_id"])}
-                        for row in before["enterprise_income_tax_results"]
-                        if row["reversal_event_id"]
-                    ],
+        if not deleting:
+            from .component_schemas import RecordEventRequest
+
+            if isinstance(request.replacement, RecordEventRequest):
+                session.info["preserve_accrual_batch_ids"] = {
+                    "payroll": {
+                        component.batch_id
+                        for component in request.replacement.components
+                        if component.kind == "payroll_accrual"
+                        and component.batch_id
+                        in {row["id"] for row in before["payroll_batches"]}
+                    },
+                    "labor": {
+                        component.batch_id
+                        for component in request.replacement.components
+                        if component.kind == "labor_remuneration_accrual"
+                        and component.batch_id
+                        in {row["id"] for row in before["labor_remuneration_batches"]}
+                    },
                 }
-            )
-        if blockers := _dependencies(session, source, before):
+        if blockers := _dependencies(session, source, before, deleting=deleting):
             raise AmendmentRejected(
                 {
                     "status": "rejected",
@@ -342,6 +391,23 @@ class EventAmendmentService:
             raise AmendmentRejected(result)
         if not deleting and (source.status != "posted" or voucher.status != "posted"):
             raise ValueError("AMENDMENT_REQUIRES_POSTED_REPLACEMENT")
+        if not deleting:
+            required_ids = set(
+                session.scalars(
+                    select(m.BusinessEventDependency.parent_component_id).where(
+                        m.BusinessEventDependency.parent_event_id == source.id
+                    )
+                )
+            )
+            current_ids = set(
+                session.scalars(
+                    select(m.BusinessEventComponent.id).where(
+                        m.BusinessEventComponent.event_id == source.id
+                    )
+                )
+            )
+            if not required_ids <= current_ids:
+                raise ValueError("AMENDMENT_REFERENCED_COMPONENT_IDENTITY_REQUIRED")
         if source.posting_date.strftime("%Y-%m") != before["business_events"][0][
             "posting_date"
         ].strftime("%Y-%m"):
@@ -379,6 +445,25 @@ class EventAmendmentService:
         self, source: m.BusinessEvent, voucher: m.Voucher, before: dict
     ) -> None:
         session = self.session
+        preserved = session.info.get("preserve_accrual_batch_ids", {})
+        payroll_batch_ids = preserved.get("payroll", set())
+        labor_batch_ids = preserved.get("labor", set())
+        owned_payroll_batch_ids = {row["id"] for row in before["payroll_batches"]}
+        for batch_id in payroll_batch_ids:
+            batch = session.get(m.PayrollBatch, batch_id)
+            if batch is not None:
+                batch.status = "calculated"
+                batch.business_event_id = None
+                batch.confirmed_by = None
+                batch.confirmation_note = None
+                batch.confirmed_at = None
+        for batch_id in labor_batch_ids:
+            batch = session.get(m.LaborRemunerationBatch, batch_id)
+            if batch is not None:
+                batch.status = "calculated"
+                batch.business_event_id = None
+                batch.confirmation_note = None
+                batch.confirmed_at = None
         # Restore balances consumed by the old payment before deriving the new
         # allocation; all changes remain inside the amendment savepoint.
         for row in before["settlements"]:
@@ -416,8 +501,29 @@ class EventAmendmentService:
             if table.name in {"business_events", "vouchers"} or not before.get(table.name):
                 continue
             rows = before[table.name]
+            if table.name in {
+                "payroll_batches",
+                "payroll_lines",
+                "payroll_batch_evidence",
+                "payroll_first_wage_tax_treatment_uses",
+                "payroll_contribution_actual_uses",
+            }:
+                key = "id" if table.name == "payroll_batches" else "payroll_batch_id"
+                rows = [row for row in rows if row.get(key) not in payroll_batch_ids]
+            elif table.name in {
+                "labor_remuneration_batches",
+                "labor_remuneration_lines",
+                "labor_remuneration_batch_evidence",
+            }:
+                key = "id" if table.name == "labor_remuneration_batches" else "batch_id"
+                rows = [row for row in rows if row.get(key) not in labor_batch_ids]
             if table.name == "payroll_tax_state_slots":
-                rows = [row for row in rows if row["regular_batch_id"] == row["final_batch_id"]]
+                rows = [
+                    row
+                    for row in rows
+                    if row["regular_batch_id"] in owned_payroll_batch_ids
+                    and row["regular_batch_id"] not in payroll_batch_ids
+                ]
             if rows:
                 session.execute(delete(table).where(_predicate(table, rows)))
 
@@ -427,6 +533,7 @@ class EventAmendmentService:
         from . import labor_remuneration_schemas as ls
         from . import schemas as s
         from .borrowing_service import BorrowingService
+        from .component_schemas import RecordEventRequest
         from .enterprise_income_tax import EnterpriseIncomeTaxService
         from .enterprise_income_tax_schemas import (
             ConfirmEnterpriseIncomeTaxResultRequest,
@@ -447,8 +554,26 @@ class EventAmendmentService:
         def data(result: Any) -> dict:
             return result.model_dump(mode="json") if isinstance(result, BaseModel) else result
 
+        if isinstance(request, RecordEventRequest):
+            # Recalculate the complete replacement against the graph after its
+            # owned facts were removed, just like the individual domain previews
+            # below. The preview rolls back its temporary draft and reservations;
+            # keep identity reuse state separate for the one formal submission.
+            context = self.session.info["event_amendment"]
+            self.session.info["event_amendment"] = {
+                **context,
+                "identities": deepcopy(context["identities"]),
+            }
+            try:
+                preview = FinanceService(self.session).preview_event(request)
+            finally:
+                self.session.info["event_amendment"] = context
+            if preview.status != "calculated":
+                return data(preview)
+            reviewed = RecordEventRequest.model_validate(preview.data["reviewed_request"])
+            return data(FinanceService(self.session).record_event(reviewed))
+
         direct = {
-            s.RecordEventRequest: (FinanceService, "record_event"),
             s.RecordPayrollContributionSupplementRequest: (
                 FinanceService,
                 "record_payroll_contribution_supplement",
@@ -459,9 +584,6 @@ class EventAmendmentService:
             ins.AcquireIntangibleAssetRequest: (IntangibleAssetService, "acquire_intangible_asset"),
             ins.RetireIntangibleAssetRequest: (IntangibleAssetService, "retire_intangible_asset"),
             bs.DrawBorrowingRequest: (BorrowingService, "draw_borrowing"),
-            bs.PayBorrowingInterestRequest: (BorrowingService, "pay_borrowing_interest"),
-            bs.RepayBorrowingPrincipalRequest: (BorrowingService, "repay_borrowing_principal"),
-            ls.PayLaborWithholdingTaxRequest: (LaborRemunerationService, "pay_withholding_tax"),
             ConfirmEnterpriseIncomeTaxQuarterRequest: (
                 FinancialStatementService,
                 "confirm_enterprise_income_tax",
@@ -484,13 +606,6 @@ class EventAmendmentService:
                 "confirm_batch",
                 ls.ConfirmLaborRemunerationBatchRequest,
                 "batch_id",
-            ),
-            ls.PreviewUnifiedPayoutRunRequest: (
-                LaborRemunerationService,
-                "preview_payout",
-                "confirm_payout",
-                ls.ConfirmUnifiedPayoutRunRequest,
-                "payout_run_id",
             ),
             s.PreviewFixedAssetDepreciationRequest: (
                 FixedAssetService,

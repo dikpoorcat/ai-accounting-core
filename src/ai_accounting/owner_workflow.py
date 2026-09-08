@@ -637,8 +637,7 @@ class OwnerWorkflowService:
         contribution_current = active_employee_count == 0
         payroll_match: dict[str, Any] = {
             "satisfied": active_employee_count == 0,
-            "batch_id": None,
-            "calculation_hash": None,
+            "batches": [],
             "reason": "not_applicable" if active_employee_count == 0 else "missing",
         }
         if active_employee_count and not contribution["missing_information"]:
@@ -690,7 +689,7 @@ class OwnerWorkflowService:
                     "contribution_confirmation_id": (
                         str(assessment.id) if assessment_current and assessment else None
                     ),
-                    "payroll_batch_id": payroll_match["batch_id"],
+                    "payroll_batches": payroll_match["batches"],
                     "individual_income_tax_obligation_hash": (
                         iit_obligation["source_snapshot_hash"]
                         if iit_obligation is not None
@@ -958,7 +957,7 @@ class OwnerWorkflowService:
                 },
                 {
                     "kind": "posted_regular_payroll",
-                    "batch_id": gate["payroll"]["batch_id"],
+                    "batches": gate["payroll"]["batches"],
                 },
             ]
             return self._completed(proof)
@@ -1895,41 +1894,56 @@ class OwnerWorkflowService:
         period: AccountingPeriod,
         calculation: dict[str, Any],
     ) -> dict[str, Any]:
-        batch = self.session.scalar(
-            select(PayrollBatch)
-            .where(
-                PayrollBatch.org_id == org_id,
-                PayrollBatch.batch_kind == "regular",
-                PayrollBatch.payroll_period == self._period_month(period),
-                PayrollBatch.status == "posted",
-                PayrollBatch.reversal_of_batch_id.is_(None),
+        batches = list(
+            self.session.scalars(
+                select(PayrollBatch)
+                .where(
+                    PayrollBatch.org_id == org_id,
+                    PayrollBatch.batch_kind == "regular",
+                    PayrollBatch.payroll_period == self._period_month(period),
+                    PayrollBatch.status == "posted",
+                    PayrollBatch.reversal_of_batch_id.is_(None),
+                )
+                .order_by(PayrollBatch.id)
             )
-            .order_by(PayrollBatch.version.desc(), PayrollBatch.id.desc())
-            .limit(1)
         )
-        if batch is None:
+        if not batches:
             return {
                 "satisfied": False,
-                "batch_id": None,
-                "calculation_hash": None,
+                "batches": [],
                 "reason": "posted_regular_payroll_missing",
             }
+        batch_ids = [batch.id for batch in batches]
         lines = list(
             self.session.scalars(
                 select(PayrollLine)
                 .where(
                     PayrollLine.org_id == org_id,
-                    PayrollLine.payroll_batch_id == batch.id,
+                    PayrollLine.payroll_batch_id.in_(batch_ids),
                 )
-                .order_by(PayrollLine.employee_id, PayrollLine.id)
+                .order_by(
+                    PayrollLine.payroll_batch_id,
+                    PayrollLine.employee_id,
+                    PayrollLine.id,
+                )
             )
         )
         expected_employees = {row["employee_id"]: row for row in calculation["employees"]}
-        actual_employees = {str(line.employee_id): line for line in lines}
-        profile_match = set(expected_employees) == set(actual_employees) and all(
-            str(actual_employees[employee_id].employee_payroll_profile_version_id)
-            == row["profile_id"]
-            for employee_id, row in expected_employees.items()
+        actual_employees: dict[str, PayrollLine] = {}
+        duplicate_employee = False
+        for line in lines:
+            employee_id = str(line.employee_id)
+            if employee_id in actual_employees:
+                duplicate_employee = True
+            actual_employees[employee_id] = line
+        profile_match = (
+            not duplicate_employee
+            and set(expected_employees) == set(actual_employees)
+            and all(
+                str(actual_employees[employee_id].employee_payroll_profile_version_id)
+                == row["profile_id"]
+                for employee_id, row in expected_employees.items()
+            )
         )
         expected_actual_ids = {
             item_id for row in calculation["employees"] for item_id in row["actual_item_ids"]
@@ -1939,7 +1953,7 @@ class OwnerWorkflowService:
             for item_id in self.session.scalars(
                 select(PayrollContributionActualUse.actual_item_id).where(
                     PayrollContributionActualUse.org_id == org_id,
-                    PayrollContributionActualUse.payroll_batch_id == batch.id,
+                    PayrollContributionActualUse.payroll_batch_id.in_(batch_ids),
                 )
             )
         }
@@ -1954,18 +1968,31 @@ class OwnerWorkflowService:
             and sum(line.employer_housing_fund_fen for line in lines)
             == totals["employer_housing_fund_fen"]
         )
-        policy_id = (batch.policy_snapshot.get("contribution_policy") or {}).get("id")
         expected_policy_id = (calculation.get("policy") or {}).get("id")
+        policy_match = all(
+            (batch.policy_snapshot.get("contribution_policy") or {}).get("id")
+            == expected_policy_id
+            for batch in batches
+        )
         satisfied = (
             profile_match
             and expected_actual_ids == used_actual_ids
             and amount_match
-            and policy_id == expected_policy_id
+            and policy_match
         )
+        lines_by_batch: dict[uuid.UUID, list[str]] = {batch.id: [] for batch in batches}
+        for line in lines:
+            lines_by_batch[line.payroll_batch_id].append(str(line.employee_id))
         return {
             "satisfied": satisfied,
-            "batch_id": str(batch.id),
-            "calculation_hash": batch.calculation_hash,
+            "batches": [
+                {
+                    "batch_id": str(batch.id),
+                    "calculation_hash": batch.calculation_hash,
+                    "employee_ids": sorted(lines_by_batch[batch.id]),
+                }
+                for batch in batches
+            ],
             "reason": "same_snapshot" if satisfied else "snapshot_mismatch",
         }
 

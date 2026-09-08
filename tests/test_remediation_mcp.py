@@ -15,9 +15,10 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from ai_accounting import mcp_server
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.mcp_server import mcp
-from ai_accounting.schemas import RecordEventRequest, RegisterEmployeeRequest
+from ai_accounting.schemas import RegisterEmployeeRequest
 
 
 def _tool_schema(tool_name: str) -> dict[str, Any]:
@@ -261,7 +262,6 @@ def test_r2_007_record_reverse_and_policy_contracts_are_real_and_strict() -> Non
     record_request = _definition(record_schema, record_schema["properties"]["request"])
     reverse_request = _definition(reverse_schema, reverse_schema["properties"]["request"])
     policy_request = _definition(policy_schema, policy_schema["properties"]["request"])
-    details = _definition(record_schema, record_request["properties"]["details"])
     parameters = _definition(policy_schema, policy_request["properties"]["parameters"])
     income_tax = _definition(policy_schema, parameters["properties"]["income_tax"])
     annual_bonus = _definition(policy_schema, parameters["properties"]["annual_bonus"]["anyOf"][0])
@@ -270,9 +270,8 @@ def test_r2_007_record_reverse_and_policy_contracts_are_real_and_strict() -> Non
     assert reverse_schema["additionalProperties"] is False
     assert record_request["additionalProperties"] is False
     assert reverse_request["additionalProperties"] is False
-    assert details["additionalProperties"] is False
     assert parameters["additionalProperties"] is False
-    assert {"org_id", "idempotency_key", "event_type", "business_dates", "amounts"} <= set(
+    assert {"org_id", "idempotency_key", "posting_date", "components"} <= set(
         record_request["required"]
     )
     assert {"org_id", "event_id", "idempotency_key", "reason", "posting_date"} == set(
@@ -287,20 +286,24 @@ def test_r2_007_record_reverse_and_policy_contracts_are_real_and_strict() -> Non
         "request": {
             "org_id": "00000000-0000-0000-0000-000000000000",
             "idempotency_key": "r2-record-strict-float",
-            "event_type": "expense_cash",
-            "business_dates": {
-                "business_date": "2026-07-05",
-                "posting_date": "2026-07-05",
-                "payment_date": "2026-07-05",
-            },
-            "amounts": {"amount_fen": 12.0},
+            "posting_date": "2026-07-05",
+            "components": [
+                {
+                    "key": "expense",
+                    "kind": "expense",
+                    "business_date": "2026-07-05",
+                    "payment_date": "2026-07-05",
+                    "amount_fen": 12.0,
+                    "expense_class": "general_expense",
+                    "payment_basis": "immediate",
+                }
+            ],
         }
     }
     invalid_freeform_detail = {
         "request": {
             **invalid_float_amount["request"],
             "idempotency_key": "r2-record-strict-detail",
-            "amounts": {"amount_fen": 12},
             "details": {"untyped_client_payload": "not accepted"},
         }
     }
@@ -317,30 +320,12 @@ def test_r2_007_record_reverse_and_policy_contracts_are_real_and_strict() -> Non
 
 
 def test_pay_019_payroll_capability_is_discoverable_but_not_a_free_event() -> None:
-    capability = mcp_server.finance_get_event_schema("payroll")
-
+    capability = mcp_server.finance_get_event_schema()
     assert capability["status"] == "ok"
-    assert "payroll" not in capability["disabled_event_types"]
-    assert "payroll" in capability["internal_event_types"]
-    assert capability["module_capabilities"]["payroll"] == {
-        "status": "enabled",
-        "entry_tools": [
-            "finance_register_employee",
-            "finance_register_employee_profile_version",
-            "finance_register_payroll_policy_version",
-            "finance_register_payroll_opening_state",
-            "finance_register_payroll_first_wage_tax_treatment",
-            "finance_register_payroll_contribution_actual",
-            "finance_record_payroll_contribution_supplement",
-            "finance_preview_payroll",
-            "finance_confirm_payroll",
-            "finance_get_payroll_batch",
-            "finance_generate_payroll_tax_import",
-        ],
-        "generic_event_writer": "not_available",
-        "accrual_entry": "finance_confirm_payroll",
-        "individual_income_tax_import": "finance_generate_payroll_tax_import",
-    }
+    assert "salary_settlement" in capability["component_types"]
+    assert {"finance_preview_payroll", "finance_confirm_payroll"} <= set(
+        capability["domain_calculation_tools"]
+    )
 
     request = {
         "org_id": "00000000-0000-0000-0000-000000000000",
@@ -349,10 +334,8 @@ def test_pay_019_payroll_capability_is_discoverable_but_not_a_free_event() -> No
         "business_dates": {"business_date": "2026-07-05", "posting_date": "2026-07-05"},
         "amounts": {"amount_fen": 1},
     }
-    assert mcp_server.finance_record_event(RecordEventRequest.model_validate(request)) == {
-        "status": "rejected",
-        "errors": ["PAYROLL_REQUIRES_SPECIALIZED_WORKFLOW"],
-    }
+    with pytest.raises(ValueError):
+        RecordEventRequest.model_validate(request)
 
 
 def _stdio_payroll_policy_parameters() -> dict[str, object]:
@@ -524,6 +507,20 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                 )
                 assert policy["status"] == "registered"
 
+                evidence = await call(
+                    "finance_register_evidence",
+                    {
+                        "request": {
+                            "org_id": org_id,
+                            "source": "stdio-payroll-test",
+                            "content_base64": "cGF5cm9sbC1zb3VyY2U=",
+                            "original_name": "stdio-payroll-source.txt",
+                            "media_type": "text/plain",
+                        }
+                    },
+                )
+                assert evidence["status"] == "registered"
+
                 preview = await call(
                     "finance_preview_payroll",
                     {
@@ -534,6 +531,7 @@ def test_pay_020_stdio_payroll_register_preview_confirm_uses_isolated_database(
                             "payroll_period": "2026-07",
                             "posting_date": "2026-07-05",
                             "payment_date": "2026-07-05",
+                            "evidence_references": [evidence["evidence_id"]],
                             "employee_items": [
                                 {
                                     "employee_id": employee_id,

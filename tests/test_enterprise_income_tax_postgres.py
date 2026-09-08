@@ -7,10 +7,11 @@ import tarfile
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from contextlib import ExitStack
 from datetime import date
 
 import pytest
+from _postgres_helpers import catalog_owner_authority
 from alembic.config import Config
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import DBAPIError
@@ -23,8 +24,6 @@ from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.enterprise_income_tax import EnterpriseIncomeTaxService
 from ai_accounting.enterprise_income_tax_schemas import ConfirmEnterpriseIncomeTaxResultRequest
-from ai_accounting.execution_attribution import persist_execution_attribution
-from ai_accounting.identity import ExecutionContext, ExecutorKind
 from ai_accounting.models import (
     EnterpriseIncomeTaxResult,
     Evidence,
@@ -41,7 +40,7 @@ pytestmark = [
 IMAGE = "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"
 
 
-def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypatch):
+def test_v3_baseline_atomic_correction_concurrency_and_restore(tmp_path, monkeypatch):
     evidence_root = tmp_path / "evidence"
     evidence_root.mkdir()
     evidence_path = evidence_root / "pg-cit.txt"
@@ -63,14 +62,18 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
         session.flush()
         return evidence
 
-    with PostgresContainer(IMAGE, driver="psycopg") as postgres:
+    with PostgresContainer(IMAGE, driver="psycopg") as postgres, ExitStack() as authority_stack:
         url = postgres.get_connection_url(driver="psycopg")
         config = Config("alembic.ini")
         config.attributes["database_url_override"] = url
-        command.upgrade(config, "0001_business_baseline_v2")
+        command.upgrade(config, "head")
+        command.check(config)
         engine = create_engine(url)
-        catalog_id = uuid.uuid4()
-        with Session(engine) as session, session.begin():
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0001_business_baseline_v3"
+            )
+        with Session(engine) as session:
             org = seed_organization(
                 session,
                 name="所得税迁移验证",
@@ -78,31 +81,14 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
                 accounting_period_control_enabled=False,
             )
             org_id = org.id
-            session.add(
-                OrganizationDatabaseMetadata(
-                    singleton_key=1,
-                    org_id=org_id,
-                    database_identity=uuid.uuid4(),
-                    current_catalog_instance_id=catalog_id,
-                    owner_approval_required=True,
-                )
-            )
-        context = ExecutionContext(
-            org_id=org_id,
-            owner_account_id=uuid.uuid4(),
-            owner_session_id=uuid.uuid4(),
-            owner_credential_version=1,
-            executor_kind=ExecutorKind.AI_AGENT,
-            executor_name="cit-test",
-            executor_version="1",
-            request_correlation_id=uuid.uuid4(),
-            catalog_instance_id=catalog_id,
-        )
+            session.commit()
+            authority = authority_stack.enter_context(catalog_owner_authority(session, org))
+        context = authority.context
         with (
             Session(engine) as session,
             session.begin(),
-            persist_execution_attribution(
-                session, context=context, tool_name="finance_confirm_enterprise_income_tax_quarter"
+            authority.attributed_call(
+                session, tool_name="finance_confirm_enterprise_income_tax_quarter"
             ),
         ):
             org = session.get(Organization, org_id)
@@ -118,18 +104,15 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
                     )
                 )
                 assert generated.status == "posted", generated
-            # The old quarterly tool is exercised before the forward migration.
-            # It only takes an advisory lock, and does not query the new tables.
+            # The quarterly source and all correction rows start on the genuine
+            # empty v3 baseline; there is no supported forward revision chain.
             source = root(session, org, evidence, amount=0)
             request = change(org, evidence, source)
-        command.upgrade(config, "head")
-        command.check(config)
         with (
             Session(engine) as session,
             session.begin(),
-            persist_execution_attribution(
+            authority.attributed_call(
                 session,
-                context=replace(context, request_correlation_id=uuid.uuid4()),
                 tool_name="finance_confirm_enterprise_income_tax_result",
             ),
         ):
@@ -150,9 +133,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
             with (
                 Session(engine) as session,
                 session.begin(),
-                persist_execution_attribution(
+                authority.attributed_call(
                     session,
-                    context=replace(context, request_correlation_id=uuid.uuid4()),
                     tool_name="finance_confirm_enterprise_income_tax_result",
                 ),
             ):
@@ -230,7 +212,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
                 evidence_root=evidence_root,
                 evidence=(snapshot,),
                 database=DatabaseDumpMetadata(
-                    schema_revision="0002_cit_results", source_system_identifier="123456789"
+                    schema_revision="0001_business_baseline_v3",
+                    source_system_identifier="123456789",
                 ),
                 artifact_type="company",
                 org_id=str(org_id),
@@ -265,9 +248,17 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
             assert len(list(session.scalars(select(EnterpriseIncomeTaxResult)))) == 2
             from ai_accounting import replay_cli
 
-            operations = replay_cli._income_tax_operations(
-                session, org_id=org_id, maps=replay_cli._stable_maps(session, org_id)
+            maps = replay_cli._stable_maps(session, org_id)
+            standalone_operations = replay_cli._income_tax_operations(
+                session, org_id=org_id, maps=maps
             )
+            operations = [
+                replay_cli._event_operation(session, event, org_id=org_id, maps=maps)
+                for event in replay_cli._effective_events(session, org_id)
+                if maps["event"][str(event["id"])].get("$ref") == "event"
+            ]
+            operations.extend(standalone_operations)
+            operations.sort(key=lambda operation: operation["source_created_at"])
         run(["createdb", "-U", postgres.username, "cit_replayed"])
         replay_engine = create_engine(engine.url.set(database="cit_replayed"))
         config.attributes["database_url_override"] = replay_engine.url.render_as_string(
@@ -275,8 +266,7 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
         )
         command.upgrade(config, "head")
         replay_id = uuid.uuid4()
-        replay_context = replace(context, org_id=replay_id, request_correlation_id=uuid.uuid4())
-        with Session(replay_engine) as session, session.begin():
+        with Session(replay_engine) as session:
             org = seed_organization(
                 session,
                 org_id=replay_id,
@@ -284,21 +274,12 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
                 taxpayer_identification_number="91330106MA1234567T",
                 accounting_period_control_enabled=False,
             )
-            session.add(
-                OrganizationDatabaseMetadata(
-                    singleton_key=1,
-                    org_id=replay_id,
-                    database_identity=uuid.uuid4(),
-                    current_catalog_instance_id=catalog_id,
-                    owner_approval_required=True,
-                )
-            )
+            session.commit()
+            replay_authority = authority_stack.enter_context(catalog_owner_authority(session, org))
         with (
             Session(replay_engine) as session,
             session.begin(),
-            persist_execution_attribution(
-                session, context=replay_context, tool_name="finance_register_evidence"
-            ),
+            replay_authority.attributed_call(session, tool_name="finance_register_evidence"),
         ):
             replay_evidence = make_evidence(session, session.get(Organization, replay_id))
             for month in (6, 7, 8):
@@ -325,9 +306,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
             with (
                 Session(replay_engine) as session,
                 session.begin(),
-                persist_execution_attribution(
+                replay_authority.attributed_call(
                     session,
-                    context=replace(replay_context, request_correlation_id=uuid.uuid4()),
                     tool_name=name,
                 ),
             ):
@@ -343,8 +323,21 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
                     return EnterpriseIncomeTaxService(session).preview(
                         PreviewEnterpriseIncomeTaxResultRequest.model_validate(payload)
                     )
+                if name == "finance_preview_event":
+                    from ai_accounting import mcp_server
+                    from ai_accounting.component_schemas import RecordEventRequest
+                    from ai_accounting.component_service import ComponentService
+
+                    request = RecordEventRequest.model_validate(payload)
+                    return mcp_server._preview_with_ephemeral_attribution(
+                        session,
+                        replay_authority.context,
+                        lambda: ComponentService(session)
+                        .preview(request)
+                        .model_dump(mode="json"),
+                    )
                 if name == "finance_record_event":
-                    from ai_accounting.schemas import RecordEventRequest
+                    from ai_accounting.component_schemas import RecordEventRequest
                     from ai_accounting.service import FinanceService
 
                     return (
@@ -393,9 +386,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
         with (
             Session(engine) as session,
             session.begin(),
-            persist_execution_attribution(
+            authority.attributed_call(
                 session,
-                context=replace(context, request_correlation_id=uuid.uuid4()),
                 tool_name="finance_confirm_bank_reconciliation_scope",
             ),
         ):
@@ -430,9 +422,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
             with (
                 Session(engine) as session,
                 session.begin(),
-                persist_execution_attribution(
+                authority.attributed_call(
                     session,
-                    context=replace(context, request_correlation_id=uuid.uuid4()),
                     tool_name="finance_record_event",
                 ),
             ):
@@ -453,9 +444,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
         with (
             Session(engine) as session,
             session.begin(),
-            persist_execution_attribution(
+            authority.attributed_call(
                 session,
-                context=replace(context, request_correlation_id=uuid.uuid4()),
                 tool_name="finance_confirm_enterprise_income_tax_result",
             ),
         ):
@@ -478,9 +468,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
         with (
             Session(engine) as session,
             session.begin(),
-            persist_execution_attribution(
+            authority.attributed_call(
                 session,
-                context=replace(context, request_correlation_id=uuid.uuid4()),
                 tool_name="finance_record_event",
             ),
         ):
@@ -508,10 +497,18 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
         cash_export.mkdir()
         with Session(engine) as session:
             maps = replay_cli._stable_maps(session, org_id)
-            cash_operations = replay_cli._income_tax_operations(session, org_id=org_id, maps=maps)
             effective = replay_cli._effective_events(session, org_id)
+            cash_operations = sorted(
+                replay_cli._income_tax_operations(session, org_id=org_id, maps=maps)
+                    + [
+                        replay_cli._event_operation(session, event, org_id=org_id, maps=maps)
+                        for event in effective
+                        if maps["event"][str(event["id"])].get("$ref") == "event"
+                    ],
+                key=lambda operation: operation["source_created_at"],
+            )
             inventory = replay_cli._income_tax_event_inventory(effective, maps)
-            assert len(inventory) == len(effective) == 3
+            assert len(inventory) == len(effective) == 5
             assert {v["replay_key"] for v in inventory}.issubset(
                 {v["key"] for v in cash_operations}
             )
@@ -523,9 +520,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
         with (
             Session(replay_engine) as session,
             session.begin(),
-            persist_execution_attribution(
+            replay_authority.attributed_call(
                 session,
-                context=replace(replay_context, request_correlation_id=uuid.uuid4()),
                 tool_name="finance_confirm_bank_reconciliation_scope",
             ),
         ):
@@ -553,9 +549,8 @@ def test_migration_atomic_correction_concurrency_and_restore(tmp_path, monkeypat
             with (
                 Session(replay_engine) as session,
                 session.begin(),
-                persist_execution_attribution(
+                replay_authority.attributed_call(
                     session,
-                    context=replace(replay_context, request_correlation_id=uuid.uuid4()),
                     tool_name="finance_confirm_bank_statement_import",
                 ),
             ):

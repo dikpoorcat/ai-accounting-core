@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import pytest
+from pydantic import ValidationError
+
 from ai_accounting import mcp_server as mcp_server
-from ai_accounting.schemas import RecordEventRequest
+from ai_accounting.component_schemas import RecordEventRequest
 
 INTANGIBLE_TOOLS = {
     "finance_acquire_intangible_asset",
@@ -18,8 +21,6 @@ BORROWING_TOOLS = {
     "finance_draw_borrowing",
     "finance_preview_borrowing_interest",
     "finance_confirm_borrowing_interest",
-    "finance_pay_borrowing_interest",
-    "finance_repay_borrowing_principal",
     "finance_get_borrowing",
 }
 
@@ -47,53 +48,33 @@ def test_specialized_tools_publish_strict_typed_contracts() -> None:
 
 
 def test_specialized_capabilities_replace_legacy_disabled_sentinels() -> None:
-    intangible = mcp_server.finance_get_event_schema("intangible_asset")
-    borrowing = mcp_server.finance_get_event_schema("loan_interest")
-
-    assert "intangible_asset" not in intangible["disabled_event_types"]
-    assert "loan_interest" not in borrowing["disabled_event_types"]
-    assert "intangible_asset" in intangible["internal_event_types"]
-    assert "loan_interest" in borrowing["internal_event_types"]
-    assert set(intangible["module_capabilities"]["intangible_asset"]["entry_tools"]) == (
-        INTANGIBLE_TOOLS
-    )
-    assert set(borrowing["module_capabilities"]["borrowing"]["entry_tools"]) == BORROWING_TOOLS
-    assert intangible["event_requirements"]["workflow"].startswith("specialized")
-    assert borrowing["event_requirements"]["workflow"].startswith("specialized")
+    schema = mcp_server.finance_get_event_schema()
+    assert {
+        "intangible_asset_acquisition",
+        "intangible_asset_amortization",
+        "intangible_asset_retirement",
+        "borrowing_drawdown",
+        "borrowing_interest_accrual",
+        "borrowing_interest_payment",
+        "borrowing_principal_repayment",
+    } <= set(schema["component_types"])
 
 
 def test_generic_event_writer_returns_specialized_workflow_errors() -> None:
-    common = {
-        "org_id": uuid.uuid4(),
-        "business_dates": {
-            "business_date": "2026-08-10",
-            "posting_date": "2026-08-10",
-        },
-        "amounts": {"amount_fen": 1},
-    }
-    intangible = mcp_server.finance_record_event(
-        RecordEventRequest.model_validate(
-            {
-                **common,
-                "idempotency_key": "generic-intangible",
-                "event_type": "intangible_asset",
-            }
-        )
-    )
-    borrowing = mcp_server.finance_record_event(
-        RecordEventRequest.model_validate(
-            {
-                **common,
-                "idempotency_key": "generic-borrowing",
-                "event_type": "loan_interest",
-            }
-        )
-    )
-    assert intangible == {
-        "status": "rejected",
-        "errors": ["INTANGIBLE_ASSET_REQUIRES_SPECIALIZED_WORKFLOW"],
-    }
-    assert borrowing == {
-        "status": "rejected",
-        "errors": ["BORROWING_REQUIRES_SPECIALIZED_WORKFLOW"],
-    }
+    for kind in ("intangible_asset", "loan_interest"):
+        with pytest.raises(ValidationError):
+            RecordEventRequest.model_validate(
+                {
+                    "org_id": uuid.uuid4(),
+                    "idempotency_key": kind,
+                    "posting_date": "2026-08-10",
+                    "components": [
+                        {
+                            "key": "domain",
+                            "kind": kind,
+                            "business_date": "2026-08-10",
+                            "amount_fen": 1,
+                        }
+                    ],
+                }
+            )

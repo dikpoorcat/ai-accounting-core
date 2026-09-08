@@ -62,19 +62,24 @@ def test_r3_012_stdio_prevalidation_errors_expose_paths_but_not_input_values() -
                         "request": {
                             "org_id": "00000000-0000-0000-0000-000000000000",
                             "idempotency_key": "r3-invalid-sensitive-request",
-                            "event_type": "expense_cash",
-                            "business_dates": {
-                                "business_date": "2026-09-01",
-                                "posting_date": "2026-09-01",
-                            },
-                            "amounts": {"amount_fen": sentinel},
+                            "posting_date": "2026-09-01",
+                            "components": [
+                                {
+                                    "key": "expense",
+                                    "kind": "expense",
+                                    "business_date": "2026-09-01",
+                                    "amount_fen": sentinel,
+                                    "expense_class": "general_expense",
+                                    "payment_basis": "supplier_credit",
+                                }
+                            ],
                         }
                     },
                 )
                 assert nested.isError is True
                 nested_text = nested.content[0].text
                 assert "VALIDATION_ERROR" in nested_text
-                assert "request.amounts.amount_fen" in nested_text
+                assert "amount_fen" in nested_text
                 assert sentinel not in nested_text
                 assert "input_value" not in nested_text
 

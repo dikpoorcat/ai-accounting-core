@@ -8,10 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.models import (
     Account,
     BankTransaction,
     DeferredOutputVatTransfer,
+    Evidence,
     OpenItem,
     Organization,
     Voucher,
@@ -19,10 +21,25 @@ from ai_accounting.models import (
 )
 from ai_accounting.schemas import (
     BankTransactionReference,
-    RecordEventRequest,
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
+
+
+@pytest.fixture(autouse=True)
+def event_evidence(session: Session, organization: Organization) -> Evidence:
+    evidence = Evidence(
+        org_id=organization.id,
+        original_name="service-test.txt",
+        storage_path="service-test.txt",
+        sha256="e" * 64,
+        size_bytes=1,
+        media_type="text/plain",
+        source="test",
+    )
+    session.add(evidence)
+    session.flush()
+    return evidence
 
 
 @pytest.fixture(autouse=True)
@@ -45,18 +62,19 @@ def sale_request(
     amount_fen: int = 1_010_000,
     key: str | None = None,
 ) -> RecordEventRequest:
-    payload = {
-        "org_id": str(organization.id),
-        "idempotency_key": key or f"sale-{uuid.uuid4()}",
-        "event_type": event_type,
-        "business_dates": {
-            "business_date": "2026-08-08",
-            "posting_date": "2026-08-08",
-            "fulfillment_date": "2026-08-08",
-            "payment_date": "2026-08-08" if event_type == "service_cash_sale" else None,
-            "tax_obligation_date": "2026-08-08",
-        },
-        "amounts": {"gross_amount_fen": amount_fen},
+    session = organization._sa_instance_state.session
+    evidence = session.scalar(select(Evidence).where(Evidence.org_id == organization.id))
+    assert evidence is not None
+    component = {
+        "key": "sale",
+        "kind": "service_sale",
+        "business_date": "2026-08-08",
+        "payment_date": "2026-08-08" if event_type == "service_cash_sale" else None,
+        "amount_fen": amount_fen,
+        "counterparty": {"kind": "customer", "name": "甲客户"},
+        "recognition_basis": "immediate" if event_type == "service_cash_sale" else "credit",
+        "fulfillment_date": "2026-08-08",
+        "tax_obligation_date": "2026-08-08",
         "tax_facts": {
             "taxable": True,
             "rate_percent": "1",
@@ -64,18 +82,72 @@ def sale_request(
             "waive_exemption": False,
             "tax_due_on_event": True,
         },
-        "description": "咨询服务",
     }
-    if event_type == "service_credit_sale":
-        payload["counterparty"] = {"kind": "customer", "name": "甲客户"}
-    else:
-        payload["bank_account_code"] = "1002"
-    return RecordEventRequest.model_validate(payload)
+    return RecordEventRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "idempotency_key": key or f"sale-{uuid.uuid4()}",
+            "posting_date": "2026-08-08",
+            "description": "咨询服务",
+            "evidence_references": [evidence.id],
+            "components": [component],
+            "funds": (
+                [
+                    {
+                        "key": "sale-receipt",
+                        "account_code": "1002",
+                        "direction": "receipt",
+                        "payment_date": "2026-08-08",
+                        "amount_fen": amount_fen,
+                        "allocations": [{"component_key": "sale", "amount_fen": amount_fen}],
+                    }
+                ]
+                if event_type == "service_cash_sale"
+                else []
+            ),
+        }
+    )
 
 
 def voucher_totals(session: Session, voucher_id: uuid.UUID) -> tuple[int, int]:
     lines = session.scalars(select(VoucherLine).where(VoucherLine.voucher_id == voucher_id)).all()
     return sum(line.debit_fen for line in lines), sum(line.credit_fen for line in lines)
+
+
+def receivable_request(
+    organization: Organization, item: OpenItem, *, key: str, amount_fen: int, day: str
+) -> RecordEventRequest:
+    session = organization._sa_instance_state.session
+    evidence = session.scalar(select(Evidence).where(Evidence.org_id == organization.id))
+    assert evidence is not None
+    return RecordEventRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "idempotency_key": key,
+            "posting_date": day,
+            "evidence_references": [evidence.id],
+            "components": [
+                {
+                    "key": "receivable",
+                    "kind": "receivable_settlement",
+                    "business_date": day,
+                    "payment_date": day,
+                    "counterparty": {"id": item.counterparty_id},
+                    "allocations": [{"open_item_id": item.id, "amount_fen": amount_fen}],
+                }
+            ],
+            "funds": [
+                {
+                    "key": "receipt",
+                    "account_code": "1002",
+                    "direction": "receipt",
+                    "payment_date": day,
+                    "amount_fen": amount_fen,
+                    "allocations": [{"component_key": "receivable", "amount_fen": amount_fen}],
+                }
+            ],
+        }
+    )
 
 
 def test_cash_sale_10100_posts_expected_voucher(
@@ -95,27 +167,40 @@ def test_cash_sale_10100_posts_expected_voucher(
 def test_unclassified_receipt_never_credits_receivable(
     session: Session, organization: Organization
 ) -> None:
+    evidence = session.scalar(select(Evidence).where(Evidence.org_id == organization.id))
     request = RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
             "idempotency_key": "unknown-receipt",
-            "event_type": "customer_receipt",
-            "business_dates": {
-                "business_date": "2026-08-08",
-                "posting_date": "2026-08-08",
-                "payment_date": "2026-08-08",
-            },
-            "counterparty": {"kind": "customer", "name": "未知客户"},
-            "bank_account_code": "1002",
-            "amounts": {"amount_fen": 29_849_401},
-            "description": "银行收到款项，性质未确认",
+            "posting_date": "2026-08-08",
+            "evidence_references": [evidence.id],
+            "components": [
+                {
+                    "key": "advance",
+                    "kind": "customer_advance",
+                    "business_date": "2026-08-08",
+                    "payment_date": "2026-08-08",
+                    "amount_fen": 29_849_401,
+                    "counterparty": {"kind": "customer", "name": "未知客户"},
+                }
+            ],
+            "funds": [
+                {
+                    "key": "receipt",
+                    "account_code": "1002",
+                    "direction": "receipt",
+                    "payment_date": "2026-08-08",
+                    "amount_fen": 29_849_401,
+                    "allocations": [{"component_key": "advance", "amount_fen": 29_849_401}],
+                }
+            ],
         }
     )
     result = FinanceService(session).record_event(request)
 
     assert result.status == "needs_information"
     assert result.voucher_id is None
-    assert "allocations or details.unallocated_treatment='advance'" in result.missing_information
+    assert result.missing_information == ["components.advance.tax_facts"]
 
 
 def test_credit_sale_partial_settlement_and_oversettlement_rejected(
@@ -128,45 +213,19 @@ def test_credit_sale_partial_settlement_and_oversettlement_rejected(
     item = session.scalar(select(OpenItem).where(OpenItem.source_event_id == sale.event_id))
     assert item.original_amount_fen == 101_000
 
-    partial = RecordEventRequest.model_validate(
-        {
-            "org_id": organization.id,
-            "idempotency_key": "partial-receipt",
-            "event_type": "customer_receipt",
-            "business_dates": {
-                "business_date": "2026-08-09",
-                "posting_date": "2026-08-09",
-                "payment_date": "2026-08-09",
-            },
-            "counterparty": {"kind": "customer", "name": "甲客户"},
-            "bank_account_code": "1002",
-            "amounts": {"amount_fen": 40_000},
-            "allocations": [{"open_item_id": item.id, "amount_fen": 40_000}],
-        }
+    partial = receivable_request(
+        organization, item, key="partial-receipt", amount_fen=40_000, day="2026-08-09"
     )
     assert service.record_event(partial).status == "posted"
     assert item.settled_amount_fen == 40_000
     assert item.status == "partial"
 
-    excessive = RecordEventRequest.model_validate(
-        {
-            "org_id": organization.id,
-            "idempotency_key": "excessive-receipt",
-            "event_type": "customer_receipt",
-            "business_dates": {
-                "business_date": "2026-08-10",
-                "posting_date": "2026-08-10",
-                "payment_date": "2026-08-10",
-            },
-            "counterparty": {"kind": "customer", "name": "甲客户"},
-            "bank_account_code": "1002",
-            "amounts": {"amount_fen": 70_000},
-            "allocations": [{"open_item_id": item.id, "amount_fen": 70_000}],
-        }
+    excessive = receivable_request(
+        organization, item, key="excessive-receipt", amount_fen=70_000, day="2026-08-10"
     )
     rejected = service.record_event(excessive)
     assert rejected.status == "rejected"
-    assert "exceeds open amount" in rejected.errors[0]
+    assert rejected.errors == ["SETTLEMENT_EXCEEDS_OPEN_BALANCE"]
     assert item.settled_amount_fen == 40_000
 
 
@@ -180,19 +239,20 @@ def test_credit_sale_defers_vat_and_receipt_transfers_it_on_tax_date(
         amount_fen=149_400,
         key="march-revenue-deferred-vat",
     ).model_dump(mode="json")
-    sale_request_payload["business_dates"] = {
+    sale_request_payload["posting_date"] = "2026-03-31"
+    sale_request_payload["components"][0] |= {
         "business_date": "2026-03-31",
-        "posting_date": "2026-03-31",
         "fulfillment_date": "2026-03-31",
         "payment_date": None,
         "tax_obligation_date": "2026-04-02",
-        "invoice_date": None,
     }
+    sale_request_payload["components"][0]["tax_facts"]["tax_due_on_event"] = False
     sale = service.record_event(RecordEventRequest.model_validate(sale_request_payload))
 
     assert sale.status == "posted"
-    assert sale.data["derived"]["vat_fen"] == 1_479
-    assert sale.data["derived"]["vat_recognition"] == "deferred"
+    sale_derived = next(c["derived"] for c in sale.data["components"] if c["key"] == "sale")
+    assert sale_derived["vat_fen"] == 1_479, sale_derived
+    assert sale_derived["vat_recognition"] == "deferred"
     sale_voucher = session.get(Voucher, sale.voucher_id)
     sale_by_role = {line.account.system_role: line for line in sale_voucher.lines}
     assert sale_by_role["deferred_output_vat"].credit_fen == 1_479
@@ -200,27 +260,16 @@ def test_credit_sale_defers_vat_and_receipt_transfers_it_on_tax_date(
 
     item = session.scalar(select(OpenItem).where(OpenItem.source_event_id == sale.event_id))
     receipt = service.record_event(
-        RecordEventRequest.model_validate(
-            {
-                "org_id": organization.id,
-                "idempotency_key": "april-receipt-transfers-vat",
-                "event_type": "customer_receipt",
-                "business_dates": {
-                    "business_date": "2026-04-02",
-                    "posting_date": "2026-04-02",
-                    "payment_date": "2026-04-02",
-                },
-                "counterparty": {"kind": "customer", "name": "甲客户"},
-                "bank_account_code": "1002",
-                "amounts": {"amount_fen": 149_400},
-                "allocations": [{"open_item_id": item.id, "amount_fen": 149_400}],
-                "description": "收到3月服务款",
-            }
+        receivable_request(
+            organization,
+            item,
+            key="april-receipt-transfers-vat",
+            amount_fen=149_400,
+            day="2026-04-02",
         )
     )
 
     assert receipt.status == "posted"
-    assert receipt.data["derived"]["deferred_output_vat_transfer_fen"] == 1_479
     receipt_voucher = session.get(Voucher, receipt.voucher_id)
     receipt_by_role = {line.account.system_role: line for line in receipt_voucher.lines}
     assert receipt_by_role["deferred_output_vat"].debit_fen == 1_479
@@ -253,7 +302,8 @@ def test_credit_sale_same_day_tax_obligation_still_credits_vat_payable(
     by_role = {line.account.system_role: line for line in voucher.lines}
     assert by_role["vat_payable"].credit_fen == 1_000
     assert "deferred_output_vat" not in by_role
-    assert result.data["derived"]["vat_recognition"] == "payable"
+    derived = next(item["derived"] for item in result.data["components"] if item["key"] == "sale")
+    assert derived["vat_recognition"] == "payable"
 
 
 def test_idempotency_replays_original_result(session: Session, organization: Organization) -> None:
@@ -264,7 +314,6 @@ def test_idempotency_replays_original_result(session: Session, organization: Org
 
     assert first.event_id == second.event_id
     assert first.voucher_id == second.voucher_id
-    assert second.data["idempotent_replay"] is True
     assert session.query(Voucher).count() == 1
 
 
@@ -308,29 +357,43 @@ def test_reversal_swaps_lines_and_keeps_original_voucher(
 
 
 def test_small_taxpayer_purchase_is_gross_expense(
-    session: Session, organization: Organization
+    session: Session, organization: Organization, event_evidence: Evidence
 ) -> None:
     request = RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
             "idempotency_key": "expense-1",
-            "event_type": "expense_cash",
-            "business_dates": {
-                "business_date": "2026-08-08",
-                "posting_date": "2026-08-08",
-                "payment_date": "2026-08-08",
-                "invoice_date": "2026-08-08",
-            },
-            "amounts": {"gross_amount_fen": 10_300, "expense_account_role": "general_expense"},
-            "bank_account_code": "1002",
-            "invoice_references": [
+            "posting_date": "2026-08-08",
+            "evidence_references": [event_evidence.id],
+            "components": [
                 {
-                    "number": "IN-001",
-                    "direction": "input",
-                    "invoice_type": "ordinary",
-                    "issue_date": "2026-08-08",
-                    "gross_amount_fen": 10_300,
-                    "tax_amount_fen": 300,
+                    "key": "expense",
+                    "kind": "expense",
+                    "business_date": "2026-08-08",
+                    "payment_date": "2026-08-08",
+                    "amount_fen": 10_300,
+                    "expense_class": "general_expense",
+                    "payment_basis": "immediate",
+                    "invoice_references": [
+                        {
+                            "number": "IN-001",
+                            "direction": "input",
+                            "invoice_type": "ordinary",
+                            "issue_date": "2026-08-08",
+                            "gross_amount_fen": 10_300,
+                            "tax_amount_fen": 300,
+                        }
+                    ],
+                }
+            ],
+            "funds": [
+                {
+                    "key": "payment",
+                    "account_code": "1002",
+                    "direction": "payment",
+                    "payment_date": "2026-08-08",
+                    "amount_fen": 10_300,
+                    "allocations": [{"component_key": "expense", "amount_fen": 10_300}],
                 }
             ],
         }
@@ -342,7 +405,7 @@ def test_small_taxpayer_purchase_is_gross_expense(
 
 
 def test_customer_advance_cannot_be_fulfilled_twice(
-    session: Session, organization: Organization
+    session: Session, organization: Organization, event_evidence: Evidence
 ) -> None:
     service = FinanceService(session)
     advance = service.record_event(
@@ -350,53 +413,70 @@ def test_customer_advance_cannot_be_fulfilled_twice(
             {
                 "org_id": organization.id,
                 "idempotency_key": "advance-1",
-                "event_type": "customer_advance",
-                "business_dates": {
-                    "business_date": "2026-08-01",
-                    "posting_date": "2026-08-01",
-                    "payment_date": "2026-08-01",
-                    "tax_obligation_date": "2026-08-01",
-                },
-                "counterparty": {"kind": "customer", "name": "乙客户"},
-                "bank_account_code": "1002",
-                "amounts": {"gross_amount_fen": 101_000},
-                "tax_facts": {
-                    "taxable": True,
-                    "rate_percent": "1",
-                    "invoice_type": "ordinary",
-                    "waive_exemption": False,
-                    "tax_due_on_event": True,
-                },
+                "posting_date": "2026-08-01",
+                "evidence_references": [event_evidence.id],
+                "components": [
+                    {
+                        "key": "advance",
+                        "kind": "customer_advance",
+                        "business_date": "2026-08-01",
+                        "payment_date": "2026-08-01",
+                        "tax_obligation_date": "2026-08-01",
+                        "amount_fen": 101_000,
+                        "counterparty": {"kind": "customer", "name": "乙客户"},
+                        "tax_facts": {
+                            "taxable": True,
+                            "rate_percent": "1",
+                            "invoice_type": "ordinary",
+                            "waive_exemption": False,
+                            "tax_due_on_event": True,
+                        },
+                    }
+                ],
+                "funds": [
+                    {
+                        "key": "receipt",
+                        "account_code": "1002",
+                        "direction": "receipt",
+                        "payment_date": "2026-08-01",
+                        "amount_fen": 101_000,
+                        "allocations": [{"component_key": "advance", "amount_fen": 101_000}],
+                    }
+                ],
             }
         )
     )
     assert advance.status == "posted"
+    source_component_id = next(
+        item["id"] for item in advance.data["components"] if item["key"] == "advance"
+    )
 
     def fulfillment(key: str, amount: int) -> RecordEventRequest:
         return RecordEventRequest.model_validate(
             {
                 "org_id": organization.id,
                 "idempotency_key": key,
-                "event_type": "service_fulfillment",
-                "business_dates": {
-                    "business_date": "2026-08-10",
-                    "posting_date": "2026-08-10",
-                    "fulfillment_date": "2026-08-10",
-                },
-                "counterparty": {"kind": "customer", "name": "乙客户"},
-                "amounts": {"gross_amount_fen": amount},
-                "tax_facts": {
-                    "taxable": True,
-                    "rate_percent": "1",
-                    "invoice_type": "ordinary",
-                    "waive_exemption": False,
-                    "tax_due_on_event": False,
-                },
-                "details": {
-                    "recognition_source": "contract_liability",
-                    "tax_previously_accrued": True,
-                    "original_event_id": str(advance.event_id),
-                },
+                "posting_date": "2026-08-10",
+                "evidence_references": [event_evidence.id],
+                "components": [
+                    {
+                        "key": "fulfillment",
+                        "kind": "service_fulfillment",
+                        "business_date": "2026-08-10",
+                        "fulfillment_date": "2026-08-10",
+                        "amount_fen": amount,
+                        "counterparty": {"kind": "customer", "name": "乙客户"},
+                        "source": {"component_id": source_component_id},
+                        "tax_obligation_date": "2026-08-01",
+                        "tax_facts": {
+                            "taxable": True,
+                            "rate_percent": "1",
+                            "invoice_type": "ordinary",
+                            "waive_exemption": False,
+                            "tax_due_on_event": False,
+                        },
+                    }
+                ],
             }
         )
 
@@ -408,7 +488,7 @@ def test_customer_advance_cannot_be_fulfilled_twice(
 
     duplicate_consumption = service.record_event(fulfillment("fulfill-2", 1))
     assert duplicate_consumption.status == "rejected"
-    assert "exceeds the unused customer advance" in duplicate_consumption.errors[0]
+    assert duplicate_consumption.errors == ["COMPONENT_SOURCE_AMOUNT_EXCEEDED"]
 
 
 def test_mismatched_bank_row_is_not_linked(session: Session, organization: Organization) -> None:
@@ -425,9 +505,9 @@ def test_mismatched_bank_row_is_not_linked(session: Session, organization: Organ
     session.add(bank_row)
     session.flush()
     request = sale_request(organization, amount_fen=1_010_000)
-    request.bank_transaction_references.append(BankTransactionReference(id=bank_row.id))
+    request.funds[0].bank_transaction_references.append(BankTransactionReference(id=bank_row.id))
     result = FinanceService(session).record_event(request)
     assert result.status == "rejected"
-    assert "does not match event amount" in result.errors[0]
+    assert result.errors == ["FUNDS_BANK_AMOUNT_MISMATCH"]
     session.refresh(bank_row)
     assert bank_row.matched_event_id is None

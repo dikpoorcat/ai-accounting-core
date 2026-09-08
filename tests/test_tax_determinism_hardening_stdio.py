@@ -163,26 +163,30 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                         "request": {
                             "org_id": org_id,
                             "idempotency_key": "stdio-hardening-tax-source",
-                            "event_type": "service_credit_sale",
-                            "counterparty": {
-                                "kind": "customer",
-                                "name": "税务硬化 STDIO 客户",
-                            },
-                            "business_dates": {
-                                "business_date": "2026-01-15",
-                                "fulfillment_date": "2026-01-15",
-                                "payment_date": "2026-01-15",
-                                "tax_obligation_date": "2026-01-15",
-                                "posting_date": "2026-01-15",
-                            },
-                            "amounts": {"gross_amount_fen": 10100},
-                            "tax_facts": {
-                                "taxable": True,
-                                "rate_percent": "1",
-                                "invoice_type": "special",
-                                "waive_exemption": False,
-                                "tax_due_on_event": True,
-                            },
+                            "posting_date": "2026-01-15",
+                            "evidence_references": [evidence_id],
+                            "components": [
+                                {
+                                    "key": "sale",
+                                    "kind": "service_sale",
+                                    "business_date": "2026-01-15",
+                                    "fulfillment_date": "2026-01-15",
+                                    "tax_obligation_date": "2026-01-15",
+                                    "amount_fen": 10100,
+                                    "counterparty": {
+                                        "kind": "customer",
+                                        "name": "税务硬化 STDIO 客户",
+                                    },
+                                    "recognition_basis": "credit",
+                                    "tax_facts": {
+                                        "taxable": True,
+                                        "rate_percent": "1",
+                                        "invoice_type": "special",
+                                        "waive_exemption": False,
+                                        "tax_due_on_event": True,
+                                    },
+                                }
+                            ],
                         }
                     },
                 )
@@ -193,9 +197,7 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                     "end_date": "2026-03-31",
                     "adjustment_posting_date": "2026-03-31",
                 }
-                preview = await call(
-                    "finance_calculate_tax_period", {"request": q1_request}
-                )
+                preview = await call("finance_calculate_tax_period", {"request": q1_request})
                 assert preview["status"] == "calculated", preview
                 payload = json.loads(preview["calculation_hash_payload"])
                 assert _canonical_hash(payload) == preview["calculation_hash"]
@@ -272,9 +274,7 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                     "end_date": "2026-06-30",
                     "adjustment_posting_date": "2026-06-30",
                 }
-                empty_preview = await call(
-                    "finance_calculate_tax_period", {"request": q2_request}
-                )
+                empty_preview = await call("finance_calculate_tax_period", {"request": q2_request})
                 assert empty_preview["source_events"] == []
                 no_adjustment = await call(
                     "finance_confirm_tax_period",
@@ -304,18 +304,17 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
     verification_factory = make_session_factory(verification_engine)
     try:
         with verification_factory() as database_session:
-            assert database_session.scalar(
-                select(func.count()).select_from(ZeroTaxPeriodConfirmation)
-            ) == 1
+            assert (
+                database_session.scalar(select(func.count()).select_from(ZeroTaxPeriodConfirmation))
+                == 1
+            )
             source_id = uuid.UUID(result["source"]["event_id"])
             confirmation_id = uuid.UUID(result["confirmed"]["event_id"])
             retirement_id = uuid.UUID(result["retired"]["event_id"])
             assert database_session.get(BusinessEvent, source_id).status == "posted"
             assert database_session.get(BusinessEvent, confirmation_id).status == "posted"
             assert database_session.get(BusinessEvent, retirement_id).status == "posted"
-            assert database_session.scalar(
-                select(func.count()).select_from(TaxPeriod)
-            ) == 1
+            assert database_session.scalar(select(func.count()).select_from(TaxPeriod)) == 1
             assert database_session.scalar(select(func.count()).select_from(Voucher)) == 7
             disposals = database_session.scalars(select(FixedAssetDisposal)).all()
             assert len(disposals) == 1
@@ -328,9 +327,7 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
             )
             assert rejected_sale is not None
             assert rejected_sale.status == "rejected"
-            assert rejected_sale.facts["_decision"]["errors"] == [
-                "TAX_PERIOD_SOURCE_LOCKED"
-            ]
+            assert rejected_sale.facts["_decision"]["errors"] == ["TAX_PERIOD_SOURCE_LOCKED"]
             assert not rejected_sale.vouchers
             no_adjustment_event = database_session.scalar(
                 select(BusinessEvent).where(

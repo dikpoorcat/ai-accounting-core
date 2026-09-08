@@ -27,6 +27,7 @@ from ai_accounting.bank_statement_schemas import (
     PreviewBankReconciliationScopeRequest,
 )
 from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.credential_store import InMemoryCredentialStore
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.identity_schemas import OwnerLoginRequest, OwnerProvisionRequest
@@ -38,7 +39,6 @@ from ai_accounting.models import (
     OrganizationDatabaseMetadata,
     OwnerAccount,
 )
-from ai_accounting.schemas import RecordEventRequest
 
 PERIOD_TOOL_NAMES = {
     "finance_generate_accounting_period",
@@ -105,11 +105,9 @@ def test_accounting_period_tools_publish_strict_typed_contracts() -> None:
     assert tools["finance_preview_accounting_period_close"].annotations.readOnlyHint is True
     assert tools["finance_get_accounting_periods"].annotations.readOnlyHint is True
 
-    capability = mcp_server.finance_get_event_schema()["module_capabilities"][
-        "accounting_period"
-    ]
-    assert set(capability["entry_tools"]) == PERIOD_TOOL_NAMES
-    assert capability["reopen_entry"] == "not_available"
+    discovery = mcp_server.finance_get_event_schema()
+    assert discovery["protocol_version"] == "business-components-v1"
+    assert "reverse_event_schema" in discovery
 
 
 def test_accounting_period_tools_reject_extra_fields_without_echoing_values() -> None:
@@ -179,26 +177,38 @@ def test_accounting_period_tools_delegate_to_period_service(
     org_id = uuid.uuid4()
     period_id = uuid.uuid4()
 
-    assert mcp_server.finance_generate_accounting_period(
-        GenerateAccountingPeriodRequest(org_id=org_id, period_month="2026-08")
-    )["status"] == "posted"
-    assert mcp_server.finance_preview_accounting_period_close(
-        PreviewAccountingPeriodCloseRequest(
-            org_id=org_id,
-            period_id=period_id,
-            closing_date=date(2026, 8, 31),
-        )
-    )["status"] == "calculated"
-    assert mcp_server.finance_confirm_accounting_period_close(
-        ConfirmAccountingPeriodCloseRequest(
-            org_id=org_id,
-            period_id=period_id,
-            closing_date=date(2026, 8, 31),
-        )
-    )["status"] == "posted"
-    assert mcp_server.finance_get_accounting_periods(
-        GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-08")
-    )["status"] == "calculated"
+    assert (
+        mcp_server.finance_generate_accounting_period(
+            GenerateAccountingPeriodRequest(org_id=org_id, period_month="2026-08")
+        )["status"]
+        == "posted"
+    )
+    assert (
+        mcp_server.finance_preview_accounting_period_close(
+            PreviewAccountingPeriodCloseRequest(
+                org_id=org_id,
+                period_id=period_id,
+                closing_date=date(2026, 8, 31),
+            )
+        )["status"]
+        == "calculated"
+    )
+    assert (
+        mcp_server.finance_confirm_accounting_period_close(
+            ConfirmAccountingPeriodCloseRequest(
+                org_id=org_id,
+                period_id=period_id,
+                closing_date=date(2026, 8, 31),
+            )
+        )["status"]
+        == "posted"
+    )
+    assert (
+        mcp_server.finance_get_accounting_periods(
+            GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-08")
+        )["status"]
+        == "calculated"
+    )
     assert [name for name, _ in calls] == ["generate", "preview", "confirm", "get"]
 
 
@@ -389,7 +399,7 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
                     "calculation_hash": scope_preview["calculation_hash"],
                     "idempotency_key": "mcp-period-zero-bank-scope",
                 }
-            )
+            ),
         )
         assert scope_confirm["status"] == "posted", scope_confirm
 
@@ -401,12 +411,12 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
                 idempotency_key="mcp-generate-2026-07",
                 confirmation_note="MCP 显式生成七月",
                 evidence_references=[evidence_id],
-            )
+            ),
         )
         assert generated["status"] == "posted", generated
         periods = _call_registered_tool(
             "finance_get_accounting_periods",
-            GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-07")
+            GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-07"),
         )
         assert periods["status"] == "calculated"
         assert periods["data"]["period_count"] == 1
@@ -416,9 +426,7 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             period_id=uuid.UUID(generated["period_id"]),
             closing_date=date(2026, 7, 31),
         )
-        preview = _call_registered_tool(
-            "finance_preview_accounting_period_close", preview_request
-        )
+        preview = _call_registered_tool("finance_preview_accounting_period_close", preview_request)
         assert preview["status"] == "calculated", preview
         assert preview["data"]["calculation"]["voucher_sources"] == []
         missing_owner_approval = _call_registered_tool(
@@ -426,9 +434,9 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             ConfirmAccountingPeriodCloseRequest(
                 **preview_request.model_dump(),
                 calculation_hash=preview["calculation_hash"],
-                management_commentary_context_hash=preview["data"][
-                    "assistant_review_checklist"
-                ]["management_commentary"]["context_hash"],
+                management_commentary_context_hash=preview["data"]["assistant_review_checklist"][
+                    "management_commentary"
+                ]["context_hash"],
                 management_commentary="七月经营情况已基于关账上下文完成分析。",
                 idempotency_key="mcp-close-2026-07-without-owner-approval",
                 review_facts=AccountingPeriodReviewFacts(
@@ -471,9 +479,9 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
             ConfirmAccountingPeriodCloseRequest(
                 **preview_request.model_dump(),
                 calculation_hash=preview["calculation_hash"],
-                management_commentary_context_hash=preview["data"][
-                    "assistant_review_checklist"
-                ]["management_commentary"]["context_hash"],
+                management_commentary_context_hash=preview["data"]["assistant_review_checklist"][
+                    "management_commentary"
+                ]["context_hash"],
                 management_commentary="七月经营情况已基于关账上下文完成分析。",
                 owner_approval_id=owner_approval_id,
                 idempotency_key="mcp-close-2026-07",
@@ -488,7 +496,7 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
                 ),
                 confirmation_note="MCP 确认七月关账",
                 evidence_references=[evidence_id],
-            )
+            ),
         )
         # This is an MCP boundary smoke test.  The complete successful close
         # path (including owner workflow and statement-readiness facts) is
@@ -497,7 +505,7 @@ def test_all_accounting_period_mcp_handlers_run_against_sqlite(
         assert confirmed["errors"] == ["ACCOUNTING_PERIOD_CLOSE_BLOCKED"]
         still_open = _call_registered_tool(
             "finance_get_accounting_periods",
-            GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-07")
+            GetAccountingPeriodsRequest(org_id=org_id, period_month="2026-07"),
         )
         assert still_open["data"]["periods"][0]["status"] == "open"
     finally:
@@ -511,9 +519,7 @@ def test_mcp_posting_uses_china_current_date_boundary(
     today = date(2026, 8, 11)
     tomorrow = date(2026, 8, 12)
     monkeypatch.setattr("ai_accounting.ledger.china_current_date", lambda: today)
-    monkeypatch.setattr(
-        "ai_accounting.accounting_period_service.china_current_date", lambda: today
-    )
+    monkeypatch.setattr("ai_accounting.accounting_period_service.china_current_date", lambda: today)
     engine = make_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     factory = make_session_factory(engine)
@@ -582,7 +588,7 @@ def test_mcp_posting_uses_china_current_date_boundary(
                     "calculation_hash": scope_preview["calculation_hash"],
                     "idempotency_key": "mcp-china-date-bank-scope",
                 }
-            )
+            ),
         )
         assert scope_confirm["status"] == "posted", scope_confirm
         generated = _call_registered_tool(
@@ -593,7 +599,7 @@ def test_mcp_posting_uses_china_current_date_boundary(
                 idempotency_key="mcp-china-date-generation",
                 confirmation_note="验证中国日期",
                 evidence_references=[evidence_id],
-            )
+            ),
         )
         assert generated["status"] == "posted"
 
@@ -603,23 +609,38 @@ def test_mcp_posting_uses_china_current_date_boundary(
                 {
                     "org_id": org_id,
                     "idempotency_key": key,
-                    "event_type": "service_cash_sale",
-                    "bank_account_code": "1002",
-                    "business_dates": {
-                        "business_date": value,
-                        "posting_date": value,
-                        "fulfillment_date": value,
-                        "payment_date": value,
-                        "tax_obligation_date": value,
-                    },
-                    "amounts": {"gross_amount_fen": 101_000},
-                    "tax_facts": {
-                        "taxable": True,
-                        "rate_percent": "1",
-                        "invoice_type": "ordinary",
-                        "waive_exemption": False,
-                        "tax_due_on_event": True,
-                    },
+                    "posting_date": value,
+                    "evidence_references": [evidence_id],
+                    "components": [
+                        {
+                            "key": "sale",
+                            "kind": "service_sale",
+                            "business_date": value,
+                            "fulfillment_date": value,
+                            "payment_date": value,
+                            "tax_obligation_date": value,
+                            "amount_fen": 101_000,
+                            "counterparty": {"kind": "customer", "name": "MCP期间客户"},
+                            "recognition_basis": "immediate",
+                            "tax_facts": {
+                                "taxable": True,
+                                "rate_percent": "1",
+                                "invoice_type": "ordinary",
+                                "waive_exemption": False,
+                                "tax_due_on_event": True,
+                            },
+                        }
+                    ],
+                    "funds": [
+                        {
+                            "key": "receipt",
+                            "account_code": "1002",
+                            "direction": "receipt",
+                            "payment_date": value,
+                            "amount_fen": 101_000,
+                            "allocations": [{"component_key": "sale", "amount_fen": 101_000}],
+                        }
+                    ],
                 }
             )
 

@@ -10,13 +10,11 @@ from datetime import date
 from threading import Barrier
 
 import pytest
-from alembic.config import Config
-from sqlalchemy import create_engine
+from _postgres_helpers import authenticated_business_database
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
-from testcontainers.community.postgres import PostgresContainer
 
-from ai_accounting.coa import seed_organization
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.database import make_session_factory
 from ai_accounting.models import (
     BusinessEvent,
@@ -25,13 +23,11 @@ from ai_accounting.models import (
     PayrollPolicyVersion,
 )
 from ai_accounting.schemas import (
-    RecordEventRequest,
     RegisterEmployeePayrollProfileVersionRequest,
     RegisterEmployeeRequest,
     ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
-from alembic import command
 
 pytestmark = [
     pytest.mark.postgres,
@@ -39,37 +35,31 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def postgres_engine() -> Iterator[object]:
-    with PostgresContainer("postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193", driver="psycopg") as postgres:  # noqa: E501
-        database_url = postgres.get_connection_url(driver="psycopg")
-        config = Config("alembic.ini")
-        config.set_main_option("sqlalchemy.url", database_url)
-        command.upgrade(config, "head")
-        command.check(config)
-        engine = create_engine(database_url)
-        try:
-            yield engine
-        finally:
-            engine.dispose()
+    with authenticated_business_database("round4_transactions") as database:
+        yield database
 
 
-def _expense_request(org_id: object, *, key: str) -> RecordEventRequest:
+def _expense_request(org_id: object, *, key: str, evidence_id: object) -> RecordEventRequest:
     return RecordEventRequest.model_validate(
         {
             "org_id": org_id,
             "idempotency_key": key,
-            "event_type": "expense_payable",
-            "business_dates": {
-                "business_date": "2026-04-05",
-                "payment_date": "2026-04-05",
-                "posting_date": "2026-04-05",
-            },
-            "amounts": {
-                "gross_amount_fen": 100,
-                "expense_account_role": "general_expense",
-            },
-            "counterparty": {"kind": "supplier", "name": "R4 测试供应商"},
+            "posting_date": "2026-04-05",
+            "components": [
+                {
+                    "key": "expense",
+                    "kind": "expense",
+                    "business_date": "2026-04-05",
+                    "payment_date": "2026-04-05",
+                    "amount_fen": 100,
+                    "expense_class": "general_expense",
+                    "payment_basis": "supplier_credit",
+                    "counterparty": {"kind": "supplier", "name": "R4 测试供应商"},
+                    "evidence_references": [evidence_id],
+                }
+            ],
         }
     )
 
@@ -87,27 +77,25 @@ def _reverse_request(org_id: object, event_id: object, *, key: str) -> ReverseEv
 def _post_two_expenses(
     session: Session,
     *,
-    organization_name: str,
+    org_id: object,
+    evidence_id: object,
+    authority: object,
     key_prefix: str,
 ) -> tuple[object, list[object]]:
-    organization = seed_organization(
-        session,
-        taxpayer_identification_number="91330106MA1234567T",
-        accounting_period_control_enabled=False,
-        name=organization_name,
-    )
     event_ids: list[object] = []
     for index in (1, 2):
-        posted = FinanceService(session).record_event(
-            _expense_request(
-                organization.id,
-                key=f"{key_prefix}-expense-{index}",
+        with authority.attributed_call(session, tool_name="finance_record_event"):
+            posted = FinanceService(session).record_event(
+                _expense_request(
+                    org_id,
+                    key=f"{key_prefix}-expense-{index}",
+                    evidence_id=evidence_id,
+                )
             )
-        )
         assert posted.status == "posted", posted.errors
         assert posted.event_id is not None
         event_ids.append(posted.event_id)
-    return organization.id, event_ids
+    return org_id, event_ids
 
 
 def test_r4_007_two_sources_with_one_idempotency_key_return_a_stable_mismatch(
@@ -115,11 +103,14 @@ def test_r4_007_two_sources_with_one_idempotency_key_return_a_stable_mismatch(
 ) -> None:
     """Separate row locks must not leak a unique-index exception to callers."""
 
+    postgres_engine, org_id, evidence_id, authority = postgres_engine
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
         org_id, event_ids = _post_two_expenses(
             session,
-            organization_name="R4-007 concurrent reversal organization",
+            org_id=org_id,
+            evidence_id=evidence_id,
+            authority=authority,
             key_prefix="r4-idempotency-race",
         )
 
@@ -131,7 +122,8 @@ def test_r4_007_two_sources_with_one_idempotency_key_return_a_stable_mismatch(
     def reverse(request: ReverseEventRequest) -> object:
         barrier.wait(timeout=10)
         with factory.begin() as session:
-            return FinanceService(session).reverse_event(request)
+            with authority.attributed_call(session, tool_name="finance_reverse_event"):
+                return FinanceService(session).reverse_event(request)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(reverse, requests))
@@ -150,23 +142,18 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
 ) -> None:
     """The database catches non-ancestor version overlap even without the service."""
 
+    postgres_engine, org_id, _evidence_id, authority = postgres_engine
     with Session(postgres_engine) as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R4-009 version lineage organization",
-        )
-        org_id = organization.id
-        employee = FinanceService(session).register_employee(
-            RegisterEmployeeRequest(
-                org_id=organization.id,
-                employee_code="R4-009-EMPLOYEE",
-                name="版本链员工",
-                employment_start_date=date(2025, 7, 1),
-                status="active",
+        with authority.attributed_call(session, tool_name="finance_register_employee"):
+            employee = FinanceService(session).register_employee(
+                RegisterEmployeeRequest(
+                    org_id=org_id,
+                    employee_code="R4-009-EMPLOYEE",
+                    name="版本链员工",
+                    employment_start_date=date(2025, 7, 1),
+                    status="active",
+                )
             )
-        )
         assert employee["status"] == "registered"
         employee_id = uuid.UUID(employee["employee_id"])
 
@@ -214,58 +201,73 @@ def test_r4_009_postgresql_version_lineage_rejects_nonancestor_overlap_at_commit
             tax_year=2026,
             through_month=8,
         )
-        session.add_all([profile_a, profile_b, policy_a, policy_b, opening_a])
+        for tool_name, rows in (
+            ("finance_register_employee_payroll_profile_version", [profile_a, profile_b]),
+            ("finance_register_payroll_policy_version", [policy_a, policy_b]),
+            ("finance_register_payroll_opening_state", [opening_a]),
+        ):
+            with authority.attributed_call(session, tool_name=tool_name):
+                session.add_all(rows)
         session.commit()
         profile_a_id = profile_a.id
         policy_a_id = policy_a.id
         opening_a_id = opening_a.id
 
     with Session(postgres_engine) as session:
-        session.add(
-            EmployeePayrollProfileVersion(
-                org_id=org_id,
-                employee_id=employee_id,
-                supersedes_id=profile_a_id,
-                effective_from=date(2025, 7, 1),
-                effective_to=date(2026, 6, 30),
-                expense_role="payroll_management_expense",
-                social_insurance_base_fen=101,
-                housing_fund_base_fen=101,
-                resident_employee=True,
-            )
-        )
         with pytest.raises(DBAPIError, match="PAYROLL_PROFILE_VERSION_NON_ANCESTOR_OVERLAP"):
-            session.commit()
+            with authority.attributed_call(
+                session, tool_name="finance_register_employee_payroll_profile_version"
+            ):
+                session.add(
+                    EmployeePayrollProfileVersion(
+                        org_id=org_id,
+                        employee_id=employee_id,
+                        supersedes_id=profile_a_id,
+                        effective_from=date(2025, 7, 1),
+                        effective_to=date(2026, 6, 30),
+                        expense_role="payroll_management_expense",
+                        social_insurance_base_fen=101,
+                        housing_fund_base_fen=101,
+                        resident_employee=True,
+                    )
+                )
+                session.commit()
         session.rollback()
 
     with Session(postgres_engine) as session:
-        session.add(
-            PayrollPolicyVersion(
-                org_id=org_id,
-                region="R4-009",
-                supersedes_id=policy_a_id,
-                effective_from=date(2025, 7, 1),
-                effective_to=date(2026, 6, 30),
-                version="r4-009-policy-a-successor",
-                source_url="https://www.chinatax.gov.cn/",
-                parameters={},
-            )
-        )
         with pytest.raises(DBAPIError, match="PAYROLL_POLICY_VERSION_NON_ANCESTOR_OVERLAP"):
-            session.commit()
+            with authority.attributed_call(
+                session, tool_name="finance_register_payroll_policy_version"
+            ):
+                session.add(
+                    PayrollPolicyVersion(
+                        org_id=org_id,
+                        region="R4-009",
+                        supersedes_id=policy_a_id,
+                        effective_from=date(2025, 7, 1),
+                        effective_to=date(2026, 6, 30),
+                        version="r4-009-policy-a-successor",
+                        source_url="https://www.chinatax.gov.cn/",
+                        parameters={},
+                    )
+                )
+                session.commit()
         session.rollback()
 
     with Session(postgres_engine) as session:
-        session.add(
-            PayrollOpeningState(
-                org_id=org_id,
-                employee_id=employee_id,
-                tax_year=2026,
-                through_month=8,
-            )
-        )
         with pytest.raises(DBAPIError, match="PAYROLL_OPENING_STATE_NON_ANCESTOR_OVERLAP"):
-            session.commit()
+            with authority.attributed_call(
+                session, tool_name="finance_register_payroll_opening_state"
+            ):
+                session.add(
+                    PayrollOpeningState(
+                        org_id=org_id,
+                        employee_id=employee_id,
+                        tax_year=2026,
+                        through_month=8,
+                    )
+                )
+                session.commit()
         session.rollback()
 
     with Session(postgres_engine) as session:
@@ -277,24 +279,19 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
 ) -> None:
     """A predecessor lock makes concurrent successor writes deterministic."""
 
+    postgres_engine, org_id, _evidence_id, authority = postgres_engine
     factory = make_session_factory(postgres_engine)
     with factory.begin() as session:
-        organization = seed_organization(
-            session,
-            taxpayer_identification_number="91330106MA1234567T",
-            accounting_period_control_enabled=False,
-            name="R4-009 successor concurrency organization",
-        )
-        org_id = organization.id
-        employee = FinanceService(session).register_employee(
-            RegisterEmployeeRequest(
-                org_id=org_id,
-                employee_code="R4-009-CONCURRENCY",
-                name="并发版本员工",
-                employment_start_date=date(2025, 7, 1),
-                status="active",
+        with authority.attributed_call(session, tool_name="finance_register_employee"):
+            employee = FinanceService(session).register_employee(
+                RegisterEmployeeRequest(
+                    org_id=org_id,
+                    employee_code="R4-009-CONCURRENCY",
+                    name="并发版本员工",
+                    employment_start_date=date(2025, 7, 1),
+                    status="active",
+                )
             )
-        )
         assert employee["status"] == "registered"
         employee_id = uuid.UUID(employee["employee_id"])
         first_predecessor = EmployeePayrollProfileVersion(
@@ -317,8 +314,10 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
             housing_fund_base_fen=100,
             resident_employee=True,
         )
-        session.add_all([first_predecessor, second_predecessor])
-        session.flush()
+        with authority.attributed_call(
+            session, tool_name="finance_register_employee_payroll_profile_version"
+        ):
+            session.add_all([first_predecessor, second_predecessor])
         first_predecessor_id = first_predecessor.id
         second_predecessor_id = second_predecessor.id
 
@@ -343,9 +342,12 @@ def test_r4_009_concurrent_successors_replay_or_reject_without_unique_errors(
     def register_successor(profile_request: object, barrier: Barrier) -> object:
         barrier.wait(timeout=10)
         with factory.begin() as session:
-            return FinanceService(session).register_employee_payroll_profile_version(
-                profile_request
-            )
+            with authority.attributed_call(
+                session, tool_name="finance_register_employee_payroll_profile_version"
+            ):
+                return FinanceService(session).register_employee_payroll_profile_version(
+                    profile_request
+                )
 
     same_request = request(first_predecessor_id, social_base=101)
     with ThreadPoolExecutor(max_workers=2) as executor:

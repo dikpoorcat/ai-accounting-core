@@ -1,15 +1,31 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 import test_event_amendments as cases
 from sqlalchemy import func, select
+from test_fixed_asset_service import _evidence
 from test_service import sale_request
 
 from ai_accounting.accounting_periods import canonical_sha256
 from ai_accounting.event_amendment_schemas import DeleteEventRequest
 from ai_accounting.event_amendments import EventAmendmentService
-from ai_accounting.models import BusinessEvent, BusinessEventAmendment, Voucher
+from ai_accounting.ledger import account_balance_fen
+from ai_accounting.models import (
+    BusinessEvent,
+    BusinessEventAmendment,
+    BusinessEventComponent,
+    EnterpriseIncomeTaxQuarterConfirmation,
+    EnterpriseIncomeTaxResult,
+    Voucher,
+)
 from ai_accounting.service import FinanceService
+
+
+@pytest.fixture(autouse=True)
+def composition_evidence(session, organization):
+    return _evidence(session, organization, "deletion")
 
 
 def delete_event(session, source):
@@ -37,7 +53,7 @@ def test_delete_posted_business_preserves_audit_and_removes_voucher(session, org
     elif kind == "labor":
         cases.test_labor_batch_recalculates_tax_and_preserves_batch(session, organization)
     elif kind in {"fixed", "intangible"}:
-        cases.test_asset_acquisition_amendment_keeps_card_identity_and_recalculates_cost(
+        cases.test_asset_acquisition_amendment_replaces_projection_and_recalculates_cost(
             session, organization, kind
         )
     else:
@@ -68,7 +84,12 @@ def test_delete_rejects_locked_stale_or_dependent_business(
     if failure == "dependent":
         cases.test_tax_snapshot_amendment_and_locked_source(session, organization)
         source = session.scalar(
-            select(BusinessEvent).where(BusinessEvent.event_type == "service_credit_sale")
+            select(BusinessEvent)
+            .join(
+                BusinessEventComponent,
+                BusinessEventComponent.event_id == BusinessEvent.id,
+            )
+            .where(BusinessEventComponent.kind == "service_sale")
         )
     else:
         result = FinanceService(session).record_event(
@@ -100,8 +121,10 @@ def test_delete_rejects_locked_stale_or_dependent_business(
     assert session.scalar(select(Voucher.id).where(Voucher.event_id == source.id))
 
 
-def test_tax_result_with_linked_reversal_is_not_deleted_alone(session, organization):
-    cases.test_income_tax_result_amendment_reuses_prior_reversal(session, organization)
+def test_deleting_latest_tax_result_restores_original_confirmation(session, organization):
+    from ai_accounting.enterprise_income_tax import confirmation_effective
+
+    cases.test_income_tax_result_amendment_recalculates_delta_in_same_voucher(session, organization)
     latest = session.scalar(
         select(BusinessEventAmendment).order_by(BusinessEventAmendment.created_at.desc())
     )
@@ -115,5 +138,10 @@ def test_tax_result_with_linked_reversal_is_not_deleted_alone(session, organizat
             reason="Correction",
         )
     )
-    assert result["errors"] == ["DELETION_LINKED_REVERSAL_EXISTS"]
-    assert source.status == "posted"
+    assert result["status"] == "deleted", result
+    assert source.status == "deleted"
+    assert session.scalar(select(func.count()).select_from(EnterpriseIncomeTaxResult)) == 0
+    original = session.scalar(select(EnterpriseIncomeTaxQuarterConfirmation))
+    assert confirmation_effective(session, original, date(2026, 8, 31)) is True
+    assert account_balance_fen(session, organization.id, "enterprise_income_tax_expense") == 10_000
+    assert account_balance_fen(session, organization.id, "enterprise_income_tax_payable") == -10_000

@@ -16,18 +16,12 @@ from sqlalchemy.orm import Session
 from .enterprise_income_tax_schemas import (
     ConfirmEnterpriseIncomeTaxResultRequest,
     IncomeTaxSourceAllocation,
-    LinkEnterpriseIncomeTaxPaymentRequest,
     PreviewEnterpriseIncomeTaxResultRequest,
     QueryEnterpriseIncomeTaxRequest,
 )
-from .ledger import (
-    Entry,
-    assert_period_open,
-    build_business_event,
-    create_voucher,
-    posting_period_error_code,
-)
+from .ledger import assert_period_open, posting_period_error_code
 from .models import (
+    EXECUTION_ATTRIBUTION_SESSION_KEY,
     AuditLog,
     BusinessEvent,
     EnterpriseIncomeTaxQuarterConfirmation,
@@ -78,7 +72,7 @@ def event_effective(session: Session, event: BusinessEvent, as_of: date | None) 
 def confirmation_effective(
     session: Session, root: EnterpriseIncomeTaxQuarterConfirmation, as_of: date
 ) -> bool:
-    revision = session.scalar(
+    revisions = session.scalars(
         select(EnterpriseIncomeTaxResult)
         .where(
             EnterpriseIncomeTaxResult.org_id == root.org_id,
@@ -86,12 +80,16 @@ def confirmation_effective(
             EnterpriseIncomeTaxResult.posting_date <= as_of,
         )
         .order_by(EnterpriseIncomeTaxResult.revision.desc())
-        .limit(1)
-    )
-    event_id = revision.business_event_id if revision else root.business_event_id
-    if event_id is None:
+    ).all()
+    for revision in revisions:
+        if revision.business_event_id is None:
+            return True
+        event = session.get(BusinessEvent, revision.business_event_id)
+        if event is not None and event_effective(session, event, as_of):
+            return True
+    if root.business_event_id is None:
         return True
-    event = session.get(BusinessEvent, event_id)
+    event = session.get(BusinessEvent, root.business_event_id)
     return event is not None and event_effective(session, event, as_of)
 
 
@@ -132,7 +130,9 @@ class EnterpriseIncomeTaxService:
             )
         )
 
-    def query(self, request: QueryEnterpriseIncomeTaxRequest) -> dict[str, Any]:
+    def query(
+        self, request: QueryEnterpriseIncomeTaxRequest, *, pending_event_id=None
+    ) -> dict[str, Any]:
         if self.session.get(Organization, request.org_id) is None:
             return self.rejected("ORGANIZATION_NOT_FOUND")
         states: dict[tuple[int, int], dict[str, Any]] = {}
@@ -145,6 +145,13 @@ class EnterpriseIncomeTaxService:
             )
             if request.as_of and (root.posting_date or end) > request.as_of:
                 continue
+            if root.business_event_id is not None:
+                root_event = self.session.get(BusinessEvent, root.business_event_id)
+                if root_event is None or (
+                    root_event.id != pending_event_id
+                    and not event_effective(self.session, root_event, request.as_of)
+                ):
+                    continue
             states[root.calendar_year, root.calendar_quarter] = {
                 "year": root.calendar_year,
                 "quarter": root.calendar_quarter,
@@ -179,17 +186,23 @@ class EnterpriseIncomeTaxService:
                 "declaration_date": row.declaration_date.isoformat(),
                 "external_declaration_status": "confirmed",
             }
-            states[row.calendar_year, row.calendar_quarter] = item
+            effective = True
+            if row.business_event_id is not None:
+                result_event = self.session.get(BusinessEvent, row.business_event_id)
+                effective = result_event is not None and (
+                    result_event.id == pending_event_id
+                    or event_effective(self.session, result_event, request.as_of)
+                )
+            if effective:
+                states[row.calendar_year, row.calendar_quarter] = item
             history.append(
                 item.copy()
                 | {
+                    "effective": effective,
                     "expense_adjustment_fen": row.expense_adjustment_fen,
                     "calculation_hash": row.calculation_hash,
                     "previous_result_id": str(row.previous_result_id)
                     if row.previous_result_id
-                    else None,
-                    "reversal_event_id": str(row.reversal_event_id)
-                    if row.reversal_event_id
                     else None,
                     "declaration_reference": row.input_facts["declaration_reference"],
                     "evidence_references": row.input_facts["evidence_references"],
@@ -199,7 +212,7 @@ class EnterpriseIncomeTaxService:
         paid: dict[tuple[int, int], int] = {}
         cash_snapshot = []
         lines = self.session.execute(
-            select(EnterpriseIncomeTaxSettlementLine, BusinessEvent)
+            select(EnterpriseIncomeTaxSettlementLine, BusinessEvent, EnterpriseIncomeTaxSettlement)
             .join(
                 EnterpriseIncomeTaxSettlement,
                 EnterpriseIncomeTaxSettlement.id == EnterpriseIncomeTaxSettlementLine.settlement_id,
@@ -208,16 +221,19 @@ class EnterpriseIncomeTaxService:
             .where(EnterpriseIncomeTaxSettlementLine.org_id == request.org_id)
             .order_by(EnterpriseIncomeTaxSettlementLine.id)
         ).all()
-        for line, event in lines:
-            if not event_effective(self.session, event, request.as_of):
+        for line, event, settlement in lines:
+            if event.id != pending_event_id and not event_effective(
+                self.session, event, request.as_of
+            ):
                 continue
             key = line.calendar_year, line.calendar_quarter
-            sign = -1 if event.event_type == "enterprise_income_tax_refund" else 1
+            sign = -1 if settlement.input_facts["settlement_kind"] == "refund" else 1
             paid[key] = paid.get(key, 0) + sign * line.amount_fen
             cash_snapshot.append(
                 {
                     "id": str(line.id),
                     "event_id": str(event.id),
+                    "component_id": str(settlement.component_id),
                     "year": key[0],
                     "quarter": key[1],
                     "amount_fen": sign * line.amount_fen,
@@ -243,23 +259,6 @@ class EnterpriseIncomeTaxService:
                     "settlement_status": "settled" if balance == 0 else "pending",
                 }
             )
-        linked = select(EnterpriseIncomeTaxSettlement.event_id).where(
-            EnterpriseIncomeTaxSettlement.org_id == request.org_id
-        )
-        unallocated = []
-        for event in self.session.scalars(
-            select(BusinessEvent)
-            .where(
-                BusinessEvent.org_id == request.org_id,
-                BusinessEvent.event_type == "tax_payment",
-                BusinessEvent.id.not_in(linked),
-            )
-            .order_by(BusinessEvent.id)
-        ):
-            if event.facts.get("details", {}).get(
-                "tax_type"
-            ) == "enterprise_income_tax" and event_effective(self.session, event, request.as_of):
-                unallocated.append(str(event.id))
         return {
             "status": "calculated",
             "data": {
@@ -267,7 +266,6 @@ class EnterpriseIncomeTaxService:
                 "quarter_states": [v for k, v in sorted(states.items()) if k[1]],
                 "history": history,
                 "cash_snapshot": cash_snapshot,
-                "unallocated_payment_event_ids": unallocated,
             },
         }
 
@@ -292,8 +290,6 @@ class EnterpriseIncomeTaxService:
             QueryEnterpriseIncomeTaxRequest(org_id=request.org_id, year=request.year)
         )
         data = state["data"]
-        if data["unallocated_payment_event_ids"]:
-            return self.missing("link_historical_income_tax_payments") | {"data": data}
         quarters = {v["quarter"]: v for v in data["quarter_states"]}
         annual = next((v for v in data["sources"] if v["quarter"] == 0), None)
         if request.quarter and annual:
@@ -334,17 +330,7 @@ class EnterpriseIncomeTaxService:
         for item in quarters.values():
             if item["event_id"]:
                 event = self.session.get(BusinessEvent, uuid.UUID(item["event_id"]))
-                amendment = self.session.info.get("event_amendment")
-                replaced_result = (
-                    amendment["original_tables"].get("enterprise_income_tax_results", [])
-                    if amendment else []
-                )
-                already_reversed_predecessor = bool(
-                    event is not None and replaced_result
-                    and event.reversed_by_event_id == replaced_result[0]["reversal_event_id"]
-                    and event.reversed_by_event_id is not None
-                )
-                if event is None or (event.status != "posted" and not already_reversed_predecessor):
+                if event is None or not event_effective(self.session, event, None):
                     return self.missing("active_quarter_income_tax_confirmation")
         quarter_total = sum(v["recognized_tax_fen"] for v in quarters.values())
         before = current["recognized_tax_fen"] if current else quarter_total
@@ -394,7 +380,15 @@ class EnterpriseIncomeTaxService:
             "payable_fen": max(0, target - cash_paid),
             "refundable_fen": max(0, cash_paid - target),
             "previous_event_id": current["event_id"] if current else None,
-            "revision": (current["revision"] if current else 0) + 1,
+            "revision": max(
+                (
+                    item["revision"]
+                    for item in data["history"]
+                    if item["year"] == request.year and item["quarter"] == request.quarter
+                ),
+                default=0,
+            )
+            + 1,
         }
         return {
             "status": "calculated",
@@ -403,9 +397,8 @@ class EnterpriseIncomeTaxService:
         }
 
     def confirm(self, request: ConfirmEnterpriseIncomeTaxResultRequest) -> dict[str, Any]:
-        from .financial_statements import FinancialStatementService
-        from .schemas import ReverseEventRequest
-        from .service import FinanceService
+        from .component_schemas import RecordEventRequest
+        from .component_service import ComponentService
 
         lock_income_tax(self.session, request.org_id)
         payload = request.model_dump(mode="json")
@@ -429,130 +422,85 @@ class EnterpriseIncomeTaxService:
             return preview
         if preview["calculation_hash"] != request.calculation_hash:
             return self.rejected("CIT_CALCULATION_STALE")
-        calc = preview["data"]
-        try:
-            with self.session.begin_nested():
-                assert_period_open(self.session, request.org_id, request.posting_date)
-                event_id = calc["previous_event_id"]
-                reversal_id = None
-                amendment = self.session.info.get("event_amendment")
-                if amendment:
-                    old_result = amendment["original_tables"]["enterprise_income_tax_results"][0]
-                    if (
-                        old_result["calendar_year"] != request.year
-                        or old_result["calendar_quarter"] != request.quarter
-                        or old_result["previous_result_id"] != request.previous_result_id
-                        or old_result["original_confirmation_id"]
-                        != request.original_confirmation_id
-                    ):
-                        raise ValueError("AMENDMENT_TAX_SOURCE_CHANGE_NOT_ALLOWED")
-                    reversal_id = old_result["reversal_event_id"]
-                if calc["expense_adjustment_fen"] != 0 or amendment:
-                    if event_id and not amendment:
-                        # This private guard only authorizes an atomic replacement; it is
-                        # never a public request field or a bypass for cash reversals.
-                        self.session.info["cit_replacement_event_id"] = uuid.UUID(event_id)
-                        try:
-                            reversed_result = FinanceService(self.session).reverse_event(
-                                ReverseEventRequest(
-                                    org_id=request.org_id,
-                                    event_id=event_id,
-                                    posting_date=request.posting_date,
-                                    idempotency_key=request.idempotency_key + ":reverse",
-                                    reason=request.confirmation_note,
-                                )
-                            )
-                        finally:
-                            self.session.info.pop("cit_replacement_event_id", None)
-                        if reversed_result.status != "posted":
-                            raise ValueError(
-                                "CIT_REPLACEMENT_REVERSAL_FAILED:"
-                                + ",".join(reversed_result.errors)
-                            )
-                        reversal_id = reversed_result.event_id
-                    event_id = None
-                    amount = calc["contribution_fen"]
-                    if amount:
-                        event = build_business_event(
-                            self.session,
-                            org_id=request.org_id,
-                            idempotency_key=request.idempotency_key + ":assessment",
-                            request_payload_hash=digest(payload),
-                            event_type="enterprise_income_tax_result",
-                            status="draft",
-                            description=f"{request.year}年企业所得税申报结果调整",
-                            facts=payload,
-                            business_date=request.declaration_date,
-                            tax_obligation_date=date(request.year, request.quarter * 3 or 12, 1),
-                            posting_date=request.posting_date,
-                            rule_trace=[RULE],
-                            rule_version=RULE["version"],
-                        )
-                        self.session.add(event)
-                        self.session.flush()
-                        FinancialStatementService(self.session)._attach_evidence(
-                            event, request.evidence_references
-                        )
-                        positive = amount > 0
-                        create_voucher(
-                            self.session,
-                            event=event,
-                            posting_date=request.posting_date,
-                            description=event.description,
-                            entries=[
-                                Entry(
-                                    account_role="enterprise_income_tax_expense",
-                                    debit_fen=abs(amount) if positive else 0,
-                                    credit_fen=0 if positive else abs(amount),
-                                ),
-                                Entry(
-                                    account_role="enterprise_income_tax_payable",
-                                    credit_fen=abs(amount) if positive else 0,
-                                    debit_fen=0 if positive else abs(amount),
-                                ),
-                            ],
-                        )
-                        event.status = "posted"
-                        self.session.flush()
-                        event_id = event.id
-                row = EnterpriseIncomeTaxResult(
-                    org_id=request.org_id,
-                    calendar_year=request.year,
-                    calendar_quarter=request.quarter,
-                    revision=calc["revision"],
-                    previous_result_id=request.previous_result_id,
-                    original_confirmation_id=request.original_confirmation_id,
-                    declaration_date=request.declaration_date,
-                    posting_date=request.posting_date,
-                    target_tax_fen=calc["target_tax_fen"],
-                    contribution_fen=calc["contribution_fen"],
-                    expense_adjustment_fen=calc["expense_adjustment_fen"],
-                    business_event_id=uuid.UUID(str(event_id)) if event_id else None,
-                    reversal_event_id=reversal_id,
-                    idempotency_key=request.idempotency_key,
-                    request_hash=digest(payload),
-                    calculation_hash=request.calculation_hash,
-                    input_facts=payload,
-                    calculation=calc,
-                )
-                self.session.add(row)
-                self.session.flush()
-                self.session.add(
-                    AuditLog(
-                        org_id=request.org_id,
-                        event_id=row.business_event_id,
-                        action="enterprise_income_tax_result_confirmed",
-                        details={
-                            "result_id": str(row.id),
-                            "calculation_hash": row.calculation_hash,
-                        },
-                    )
-                )
-            return self._result(row)
-        except (ValueError, IntegrityError) as exc:
-            return self.rejected(
-                str(exc) if isinstance(exc, ValueError) else "CIT_CONCURRENT_CONFLICT"
+        calculation = preview["data"]
+        if calculation["expense_adjustment_fen"] == 0:
+            row = EnterpriseIncomeTaxResult(
+                org_id=request.org_id,
+                calendar_year=request.year,
+                calendar_quarter=request.quarter,
+                revision=calculation["revision"],
+                previous_result_id=request.previous_result_id,
+                original_confirmation_id=request.original_confirmation_id,
+                declaration_date=request.declaration_date,
+                posting_date=request.posting_date,
+                target_tax_fen=calculation["target_tax_fen"],
+                contribution_fen=calculation["contribution_fen"],
+                expense_adjustment_fen=0,
+                business_event_id=None,
+                component_id=None,
+                idempotency_key=request.idempotency_key,
+                request_hash=digest(payload),
+                calculation_hash=request.calculation_hash,
+                input_facts=payload,
+                calculation=calculation,
+                execution_attribution_id=self.session.info.get(EXECUTION_ATTRIBUTION_SESSION_KEY),
             )
+            try:
+                with self.session.begin_nested():
+                    assert_period_open(self.session, request.org_id, request.posting_date)
+                    self.session.add(row)
+                    self.session.flush()
+                    self.session.add(
+                        AuditLog(
+                            org_id=request.org_id,
+                            event_id=None,
+                            action="enterprise_income_tax_result_confirmed",
+                            details={
+                                "result_id": str(row.id),
+                                "calculation_hash": row.calculation_hash,
+                            },
+                        )
+                    )
+                return self._result(row)
+            except (ValueError, IntegrityError) as exc:
+                return self.rejected(
+                    str(exc) if isinstance(exc, ValueError) else "CIT_CONCURRENT_CONFLICT"
+                )
+
+        component = request.model_dump(
+            exclude={"org_id", "posting_date", "evidence_references", "idempotency_key"}
+        ) | {
+            "key": "result",
+            "kind": "enterprise_income_tax_result",
+            "business_date": request.declaration_date,
+        }
+        record_request = RecordEventRequest.model_validate(
+            {
+                "org_id": request.org_id,
+                "idempotency_key": request.idempotency_key,
+                "posting_date": request.posting_date,
+                "description": f"{request.year}年企业所得税申报结果调整",
+                "evidence_references": request.evidence_references,
+                "components": [component],
+            }
+        )
+        result = ComponentService(self.session).record(record_request)
+        if result.status.value == "needs_information":
+            return {
+                "status": "needs_information",
+                "missing_information": result.missing_information,
+            }
+        if result.status.value != "posted":
+            return self.rejected(result.errors[0] if result.errors else "CIT_CONFIRMATION_FAILED")
+        row = self.session.scalar(
+            select(EnterpriseIncomeTaxResult).where(
+                EnterpriseIncomeTaxResult.org_id == request.org_id,
+                EnterpriseIncomeTaxResult.business_event_id == result.event_id,
+            )
+        )
+        if row is None:
+            return self.rejected("CIT_COMPONENT_RESULT_MISSING")
+        return self._result(row)
 
     @staticmethod
     def _result(row: EnterpriseIncomeTaxResult, replay: bool = False) -> dict[str, Any]:
@@ -560,7 +508,6 @@ class EnterpriseIncomeTaxService:
             "status": "posted",
             "result_id": str(row.id),
             "event_id": str(row.business_event_id) if row.business_event_id else None,
-            "reversal_event_id": str(row.reversal_event_id) if row.reversal_event_id else None,
             "calculation_hash": row.calculation_hash,
             "data": row.calculation | {"idempotent_replay": replay},
         }
@@ -574,17 +521,18 @@ class EnterpriseIncomeTaxService:
             return root.calendar_year, root.calendar_quarter, False
         raise ValueError("CIT_SOURCE_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
 
-    def validate_payment(self, request: Any) -> None:
-        data = self.query(QueryEnterpriseIncomeTaxRequest(org_id=request.org_id))["data"]
-        if data["unallocated_payment_event_ids"]:
-            raise ValueError("CIT_LINK_HISTORICAL_PAYMENTS_REQUIRED")
+    def record_component_settlement(self, event, component, request) -> None:
+        lock_income_tax(self.session, event.org_id)
+        data = self.query(
+            QueryEnterpriseIncomeTaxRequest(org_id=event.org_id), pending_event_id=event.id
+        )["data"]
         sources = {v["source_id"]: v for v in data["sources"]}
         allocations = request.income_tax_allocations
-        if not allocations or sum(a.amount_fen for a in allocations) != request.amounts.amount_fen:
+        if not allocations or sum(a.amount_fen for a in allocations) != request.amount_fen:
             raise ValueError("CIT_ALLOCATIONS_MUST_EQUAL_PAYMENT")
         if len({a.source_id for a in allocations}) != len(allocations):
             raise ValueError("CIT_DUPLICATE_SOURCE_ALLOCATION")
-        refund = request.event_type == "enterprise_income_tax_refund"
+        refund = request.settlement_kind == "refund"
         for allocation in allocations:
             source = sources.get(str(allocation.source_id))
             if source is None:
@@ -593,12 +541,21 @@ class EnterpriseIncomeTaxService:
                 raise ValueError("CIT_CUMULATIVE_CREDIT_REQUIRES_ATTRIBUTION")
             if source["event_id"]:
                 source_event = self.session.get(BusinessEvent, uuid.UUID(source["event_id"]))
-                if source_event is None or source_event.status != "posted":
+                if source_event is None or (
+                    source_event.id != event.id and source_event.status != "posted"
+                ):
                     raise ValueError("CIT_ACTIVE_SOURCE_REQUIRED")
-            if date.fromisoformat(source["posting_date"]) > request.business_dates.posting_date:
+            if date.fromisoformat(source["posting_date"]) > event.posting_date:
                 raise ValueError("CIT_SETTLEMENT_PRECEDES_SOURCE")
             if allocation.amount_fen > source["refundable_fen" if refund else "payable_fen"]:
                 raise ValueError("CIT_SETTLEMENT_EXCEEDS_SOURCE_BALANCE")
+        self.attach_payment(
+            event,
+            allocations,
+            request.model_dump(mode="json"),
+            f"component:{component.id}",
+            component_id=component.id,
+        )
 
     def attach_payment(
         self,
@@ -606,10 +563,13 @@ class EnterpriseIncomeTaxService:
         allocations: list[IncomeTaxSourceAllocation],
         input_facts: dict[str, Any],
         key: str,
+        *,
+        component_id: uuid.UUID,
     ) -> EnterpriseIncomeTaxSettlement:
         row = EnterpriseIncomeTaxSettlement(
             org_id=event.org_id,
             event_id=event.id,
+            component_id=component_id,
             idempotency_key=key,
             request_hash=digest(input_facts),
             input_facts=input_facts,
@@ -632,78 +592,7 @@ class EnterpriseIncomeTaxService:
         self.session.flush()
         return row
 
-    def link_payment(self, request: LinkEnterpriseIncomeTaxPaymentRequest) -> dict[str, Any]:
-        from .financial_statements import FinancialStatementService
-
-        lock_income_tax(self.session, request.org_id)
-        payload = request.model_dump(mode="json")
-        existing = self.session.scalar(
-            select(EnterpriseIncomeTaxSettlement).where(
-                EnterpriseIncomeTaxSettlement.org_id == request.org_id,
-                EnterpriseIncomeTaxSettlement.idempotency_key == request.idempotency_key,
-            )
-        )
-        if existing:
-            return (
-                {"status": "posted", "settlement_id": str(existing.id)}
-                if existing.request_hash == digest(payload)
-                else self.rejected("CIT_IDEMPOTENCY_MISMATCH")
-            )
-        event = self.session.get(BusinessEvent, request.event_id)
-        if (
-            event is None
-            or event.org_id != request.org_id
-            or event.status != "posted"
-            or event.event_type != "tax_payment"
-            or event.facts.get("details", {}).get("tax_type") != "enterprise_income_tax"
-        ):
-            return self.rejected("CIT_POSTED_PAYMENT_REQUIRED")
-        if FinancialStatementService(self.session)._validate_evidence(
-            request.org_id, request.evidence_references
-        ):
-            return self.missing("valid_payment_attribution_evidence")
-        if sum(a.amount_fen for a in request.allocations) != event.facts["amounts"]["amount_fen"]:
-            return self.rejected("CIT_ALLOCATIONS_MUST_EQUAL_PAYMENT")
-        if len({a.source_id for a in request.allocations}) != len(request.allocations):
-            return self.rejected("CIT_DUPLICATE_SOURCE_ALLOCATION")
-        try:
-            with self.session.begin_nested():
-                row = self.attach_payment(
-                    event, request.allocations, payload, request.idempotency_key
-                )
-                self.session.add(
-                    AuditLog(
-                        org_id=request.org_id,
-                        event_id=event.id,
-                        action="enterprise_income_tax_payment_linked",
-                        details={"settlement_id": str(row.id)},
-                    )
-                )
-            return {"status": "posted", "settlement_id": str(row.id)}
-        except (ValueError, IntegrityError) as exc:
-            return self.rejected(
-                str(exc) if isinstance(exc, ValueError) else "CIT_PAYMENT_ALREADY_LINKED"
-            )
-
     def reversal_error(self, event: BusinessEvent) -> str | None:
-        if self.session.info.get("cit_replacement_event_id") == event.id:
-            return None
-        managed = self.session.scalar(
-            select(EnterpriseIncomeTaxResult.id).where(
-                EnterpriseIncomeTaxResult.org_id == event.org_id,
-                (EnterpriseIncomeTaxResult.business_event_id == event.id)
-                | (EnterpriseIncomeTaxResult.reversal_event_id == event.id),
-            )
-        )
-        if managed:
-            return "CIT_RESULT_REQUIRES_SPECIALIZED_CORRECTION"
-        root = self.session.scalar(
-            select(EnterpriseIncomeTaxQuarterConfirmation).where(
-                EnterpriseIncomeTaxQuarterConfirmation.business_event_id == event.id
-            )
-        )
-        if root:
-            return "CIT_QUARTER_REQUIRES_SPECIALIZED_CORRECTION"
         settlement = self.session.scalar(
             select(EnterpriseIncomeTaxSettlement).where(
                 EnterpriseIncomeTaxSettlement.event_id == event.id

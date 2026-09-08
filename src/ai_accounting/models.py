@@ -29,6 +29,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.orm import Mapped, Session, attributes, mapped_column, relationship, validates
 
 from .database import Base
@@ -276,11 +277,8 @@ event_evidence = Table(
         "event_id", Uuid, ForeignKey("business_events.id", ondelete="CASCADE"), primary_key=True
     ),
     Column("evidence_id", Uuid, ForeignKey("evidence.id", ondelete="RESTRICT"), primary_key=True),
-    # ``event_id`` and ``evidence_id`` remain individually constrained for
-    # compatibility with the original association-table shape.  The
-    # organization is intentionally stored on the edge as well: the composite
-    # foreign keys make a cross-enterprise evidence attachment impossible at
-    # the database boundary, rather than relying on relationship loading.
+    # The edge carries its organization so both references are checked against
+    # that same company at the database boundary.
     Column("org_id", Uuid, nullable=False, index=True),
     Column("relation_kind", String(30), nullable=False, default="supporting"),
     ForeignKeyConstraint(
@@ -792,6 +790,9 @@ class Account(Base):
     category: Mapped[str] = mapped_column(String(30))
     normal_side: Mapped[str] = mapped_column(String(10))
     system_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Classification is shared by detail accounts; system_role selects only
+    # the default account for an existing deterministic business capability.
+    business_class: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     active: Mapped[bool] = mapped_column(default=True)
     requires_bank_reconciliation: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default="0"
@@ -1929,7 +1930,8 @@ class PayrollContributionSupplement(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    component_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     source_payroll_batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     contribution_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
@@ -1939,6 +1941,13 @@ class PayrollContributionSupplement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            ["business_event_components.org_id", "business_event_components.event_id",
+             "business_event_components.id"],
+            name="fk_contribution_supplement_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "event_id"],
             ["business_events.org_id", "business_events.id"],
@@ -2119,7 +2128,7 @@ class PayrollBatch(Base):
     confirmed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     reversal_of_batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -2407,7 +2416,19 @@ class PayrollWithholdingPaymentAllocation(Base):
     reversed_by_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    payment_component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "payment_event_id", "payment_component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_payrollwithholdingpaymentallocation_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "entitlement_id"],
             ["payroll_withholding_entitlements.org_id", "payroll_withholding_entitlements.id"],
@@ -2429,7 +2450,7 @@ class PayrollWithholdingPaymentAllocation(Base):
         UniqueConstraint(
             "org_id",
             "entitlement_id",
-            "payment_event_id",
+            "payment_component_id",
             name="uq_withholding_payment_entitlement_event",
         ),
         CheckConstraint("amount_fen > 0", name="ck_withholding_payment_amount"),
@@ -2451,7 +2472,19 @@ class PayrollSalaryActualDeductionAllocation(Base):
     reversed_by_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    payment_component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "payment_event_id", "payment_component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_payrollsalaryactualdeductionallocation_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "payroll_line_id"],
             ["payroll_lines.org_id", "payroll_lines.id"],
@@ -2473,7 +2506,7 @@ class PayrollSalaryActualDeductionAllocation(Base):
         UniqueConstraint(
             "org_id",
             "payroll_line_id",
-            "payment_event_id",
+            "payment_component_id",
             name="uq_salary_actual_deduction_line_event",
         ),
         Index(
@@ -3077,12 +3110,25 @@ class FixedAsset(Base):
     settlement_method: Mapped[str] = mapped_column(String(40))
     payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    acquisition_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    acquisition_event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     accounting_rule_version: Mapped[str] = mapped_column(String(50))
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        UniqueConstraint("component_id", name="uq_fixedasset_component"),
+        ForeignKeyConstraint(
+            ["org_id", "acquisition_event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_fixedasset_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "supplier_id"],
             ["counterparties.org_id", "counterparties.id"],
@@ -3199,7 +3245,7 @@ class FixedAssetActivation(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
-    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     in_service_date: Mapped[date] = mapped_column(Date)
     posting_date: Mapped[date] = mapped_column(Date)
     depreciation_method: Mapped[str] = mapped_column(String(30), default="straight_line")
@@ -3214,7 +3260,20 @@ class FixedAssetActivation(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        UniqueConstraint("component_id", name="uq_fixedassetactivation_component"),
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_fixedassetactivation_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "asset_id"],
             ["fixed_assets.org_id", "fixed_assets.id"],
@@ -3258,7 +3317,7 @@ class FixedAssetDepreciationBatch(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
-    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     period_start: Mapped[date] = mapped_column(Date)
     posting_date: Mapped[date] = mapped_column(Date)
     asset_count: Mapped[int] = mapped_column(Integer)
@@ -3268,7 +3327,20 @@ class FixedAssetDepreciationBatch(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        UniqueConstraint("component_id", name="uq_fixedassetdepreciationbatch_component"),
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_fixedassetdepreciationbatch_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "event_id"],
             ["business_events.org_id", "business_events.id"],
@@ -3320,7 +3392,19 @@ class FixedAssetDepreciation(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_fixedassetdepreciation_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "asset_id"],
             ["fixed_assets.org_id", "fixed_assets.id"],
@@ -3347,7 +3431,7 @@ class FixedAssetDepreciation(Base):
         ),
         UniqueConstraint("org_id", "id", name="uq_fixed_asset_depreciation_org_id"),
         UniqueConstraint(
-            "org_id", "event_id", "asset_id", name="uq_fixed_asset_depreciation_event_asset"
+            "org_id", "component_id", "asset_id", name="uq_fixed_asset_depreciation_event_asset"
         ),
         CheckConstraint("sequence_no > 0", name="ck_fixed_asset_depreciation_sequence"),
         CheckConstraint("amount_fen > 0", name="ck_fixed_asset_depreciation_amount"),
@@ -3383,7 +3467,7 @@ class FixedAssetDisposal(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     asset_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     activation_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
-    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     disposal_date: Mapped[date] = mapped_column(Date)
     posting_date: Mapped[date] = mapped_column(Date)
     disposal_kind: Mapped[str] = mapped_column(String(20))
@@ -3406,7 +3490,20 @@ class FixedAssetDisposal(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        UniqueConstraint("component_id", name="uq_fixedassetdisposal_component"),
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_fixedassetdisposal_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "asset_id"],
             ["fixed_assets.org_id", "fixed_assets.id"],
@@ -3496,7 +3593,19 @@ class IntangibleAsset(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "acquisition_event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_intangibleasset_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "supplier_id"],
             ["counterparties.org_id", "counterparties.id"],
@@ -3511,7 +3620,7 @@ class IntangibleAsset(Base):
         ),
         UniqueConstraint("org_id", "id", name="uq_intangible_asset_org_id"),
         UniqueConstraint("org_id", "asset_code", name="uq_intangible_asset_org_code"),
-        UniqueConstraint("acquisition_event_id", name="uq_intangible_asset_acquisition_event"),
+        UniqueConstraint("component_id", name="uq_intangibleasset_component"),
         CheckConstraint(
             "category IN ('software','patent','trademark','copyright',"
             "'non_patented_technology','other_identifiable_non_land')",
@@ -3623,7 +3732,19 @@ class IntangibleAssetAmortization(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_intangibleassetamortization_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "asset_id"],
             ["intangible_assets.org_id", "intangible_assets.id"],
@@ -3637,7 +3758,7 @@ class IntangibleAssetAmortization(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_intangible_amortization_org_id"),
-        UniqueConstraint("event_id", name="uq_intangible_amortization_event"),
+        UniqueConstraint("component_id", name="uq_intangibleassetamortization_component"),
         CheckConstraint("sequence_no > 0", name="ck_intangible_amortization_sequence"),
         CheckConstraint(
             "amount_fen > 0 AND amount_fen <= 9223372036854775807",
@@ -3698,7 +3819,19 @@ class IntangibleAssetRetirement(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_intangibleassetretirement_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "asset_id"],
             ["intangible_assets.org_id", "intangible_assets.id"],
@@ -3712,7 +3845,7 @@ class IntangibleAssetRetirement(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_intangible_retirement_org_id"),
-        UniqueConstraint("event_id", name="uq_intangible_retirement_event"),
+        UniqueConstraint("component_id", name="uq_intangibleassetretirement_component"),
         CheckConstraint(
             "gross_proceeds_fen = 0 AND compensation_fen = 0 "
             "AND taxes_and_fees_fen = 0 AND residual_proceeds_fen = 0",
@@ -3779,7 +3912,19 @@ class Borrowing(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "drawdown_event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_borrowing_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "lender_id"],
             ["counterparties.org_id", "counterparties.id"],
@@ -3794,7 +3939,7 @@ class Borrowing(Base):
         ),
         UniqueConstraint("org_id", "id", name="uq_borrowing_org_id"),
         UniqueConstraint("org_id", "borrowing_code", name="uq_borrowing_org_code"),
-        UniqueConstraint("drawdown_event_id", name="uq_borrowing_drawdown_event"),
+        UniqueConstraint("component_id", name="uq_borrowing_component"),
         CheckConstraint(
             "length(trim(borrowing_code)) > 0 AND length(trim(contract_name)) > 0",
             name="ck_borrowing_identity_text",
@@ -3862,7 +4007,19 @@ class BorrowingInterestAccrual(Base):
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_borrowinginterestaccrual_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "borrowing_id"],
             ["borrowings.org_id", "borrowings.id"],
@@ -3882,7 +4039,7 @@ class BorrowingInterestAccrual(Base):
             "id",
             name="uq_borrowing_accrual_org_borrowing_id",
         ),
-        UniqueConstraint("event_id", name="uq_borrowing_accrual_event"),
+        UniqueConstraint("component_id", name="uq_borrowinginterestaccrual_component"),
         CheckConstraint("period_start < period_end", name="ck_borrowing_accrual_period"),
         CheckConstraint("posting_date = period_end", name="ck_borrowing_accrual_posting_date"),
         CheckConstraint("sequence_no > 0", name="ck_borrowing_accrual_sequence"),
@@ -3928,6 +4085,7 @@ class BorrowingPayment(Base):
     borrowing_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     accrual_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     payment_kind: Mapped[str] = mapped_column(String(20))
     payment_date: Mapped[date] = mapped_column(Date)
     posting_date: Mapped[date] = mapped_column(Date)
@@ -3960,7 +4118,17 @@ class BorrowingPayment(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_borrowing_payment_org_id"),
-        UniqueConstraint("event_id", name="uq_borrowing_payment_event"),
+        UniqueConstraint("component_id", name="uq_borrowing_payment_component"),
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_borrowing_payment_component",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "payment_kind IN ('interest','principal')",
             name="ck_borrowing_payment_kind",
@@ -4171,11 +4339,8 @@ class BusinessEvent(Base):
 
     evidence: Mapped[list[Evidence]] = relationship(
         secondary=event_evidence,
-        # The legacy single-column foreign keys remain for upgrade
-        # compatibility, while the R4 composite keys enforce organization
-        # isolation.  State both joins explicitly so ORM relationship loading
-        # follows the organization-bound edge rather than treating those two
-        # compatible foreign-key paths as ambiguous.
+        # Explicit joins select the company-scoped reference when the table
+        # also has individual foreign keys for each identifier.
         primaryjoin=lambda: and_(
             BusinessEvent.id == event_evidence.c.event_id,
             BusinessEvent.org_id == event_evidence.c.org_id,
@@ -4209,6 +4374,74 @@ class BusinessEvent(Base):
     )
 
 
+class BusinessEventComponent(Base):
+    """One typed, reproducible business fact within an atomic posting."""
+
+    __tablename__ = "business_event_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(60), nullable=False)
+    facts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    derived: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    rule_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            name="fk_component_org_event",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "event_id", "id", name="uq_component_event_id"),
+        UniqueConstraint("org_id", "id", name="uq_component_org_id"),
+        UniqueConstraint("event_id", "key", name="uq_component_event_key"),
+        UniqueConstraint("event_id", "ordinal", name="uq_component_event_ordinal"),
+        CheckConstraint("ordinal > 0", name="ck_component_ordinal"),
+        CheckConstraint(
+            "length(trim(key)) > 0 AND length(trim(kind)) > 0", name="ck_component_names"
+        ),
+    )
+
+
+class ComponentCashFlowAllocation(Base):
+    """Signed cash movement classified by its originating business component."""
+
+    __tablename__ = "component_cash_flow_allocations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    component_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    bank_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    category: Mapped[str] = mapped_column(String(60), nullable=False)
+    amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_cash_flow_component",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "bank_account_id"],
+            ["accounts.org_id", "accounts.id"],
+            name="fk_cash_flow_account",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("amount_fen <> 0", name="ck_component_cash_flow_amount"),
+        CheckConstraint("length(trim(category)) > 0", name="ck_component_cash_flow_category"),
+    )
+
+
 class BusinessEventAmendment(Base):
     """An audited replacement of an open-month event and its derived voucher."""
 
@@ -4234,7 +4467,8 @@ class BusinessEventAmendment(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["org_id", "event_id"], ["business_events.org_id", "business_events.id"],
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -4257,7 +4491,9 @@ class BusinessEventDependency(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     parent_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    child_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    child_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    parent_component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    child_component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     dependency_kind: Mapped[str] = mapped_column(String(30))
     amount_fen: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -4276,8 +4512,33 @@ class BusinessEventDependency(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("org_id", "id", name="uq_business_event_dependency_org_id"),
+        UniqueConstraint(
+            "parent_component_id", "child_component_id", name="uq_dependency_components"
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "parent_event_id", "parent_component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_dependency_parent_component",
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "child_event_id", "child_component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_dependency_child_component",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
-            "dependency_kind IN ('advance_fulfillment','advance_refund','sale_return')",
+            "dependency_kind = 'component_source'",
             name="ck_business_event_dependency_kind",
         ),
         CheckConstraint("parent_event_id <> child_event_id", name="ck_event_dependency_distinct"),
@@ -4357,6 +4618,7 @@ class PayrollEventLink(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     payroll_batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     source_payment_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     source_open_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -4368,6 +4630,16 @@ class PayrollEventLink(Base):
             ["org_id", "event_id"],
             ["business_events.org_id", "business_events.id"],
             name="fk_payroll_event_link_org_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_payroll_event_link_component",
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
@@ -4495,7 +4767,7 @@ class TaxPeriod(Base):
         Uuid, ForeignKey("tax_rules.id", ondelete="RESTRICT")
     )
     adjustment_event_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("business_events.id", ondelete="RESTRICT"), unique=True
+        Uuid, ForeignKey("business_events.id", ondelete="RESTRICT")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -4506,8 +4778,26 @@ class TaxPeriod(Base):
         lazy="selectin",
     )
 
+    component_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "adjustment_event_id", "component_id"],
+            ["business_event_components.org_id", "business_event_components.event_id",
+             "business_event_components.id"],
+            name="fk_tax_period_component", ondelete="RESTRICT",
+        ),
+        UniqueConstraint("component_id", name="uq_tax_period_component"),
         UniqueConstraint("org_id", "id", name="uq_tax_period_org_id"),
+        ExcludeConstraint(
+            ("org_id", "="),
+            (text("daterange(start_date, end_date, '[]')"), "&&"),
+            where=text("status = 'posted'"),
+            name="ex_tax_period_posted_range",
+            deferrable=True,
+            initially="DEFERRED",
+            using="gist",
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint("start_date <= end_date", name="ck_tax_period_dates"),
         CheckConstraint("status IN ('posted','reversed')", name="ck_tax_period_status"),
         CheckConstraint("length(calculation_hash) = 64", name="ck_tax_period_hash_length"),
@@ -4713,7 +5003,7 @@ class LaborRemunerationBatch(Base):
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     posting_date: Mapped[date] = mapped_column(Date, nullable=False)
     planned_payment_date: Mapped[date] = mapped_column(Date, nullable=False)
-    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
+    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -4948,249 +5238,6 @@ class LaborWithholdingEntitlement(Base):
     )
 
 
-class UnifiedPayoutRun(Base):
-    """One bank-matched parent for employee salary and personal labor children."""
-
-    __tablename__ = "unified_payout_runs"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
-    request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="calculated")
-    calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    calculation_input: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    calculation_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    bank_account_code: Mapped[str] = mapped_column(String(30), nullable=False)
-    bank_transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    business_date: Mapped[date] = mapped_column(Date, nullable=False)
-    payment_date: Mapped[date] = mapped_column(Date, nullable=False)
-    posting_date: Mapped[date] = mapped_column(Date, nullable=False)
-    gross_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    withholding_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    salary_petty_cash_recovery_total_fen: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
-    net_total_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["org_id", "bank_transaction_id"],
-            ["bank_transactions.org_id", "bank_transactions.id"],
-            name="fk_payout_run_org_bank_transaction",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "business_event_id"],
-            ["business_events.org_id", "business_events.id"],
-            name="fk_payout_run_org_event",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "execution_attribution_id"],
-            ["execution_attributions.org_id", "execution_attributions.id"],
-            name="fk_payout_run_execution_attribution",
-            ondelete="RESTRICT",
-        ),
-        UniqueConstraint("org_id", "id", name="uq_payout_run_org_id"),
-        UniqueConstraint("org_id", "idempotency_key", name="uq_payout_run_idempotency"),
-        Index(
-            "uq_active_payout_run_bank_transaction",
-            "org_id",
-            "bank_transaction_id",
-            unique=True,
-            postgresql_where=text("status IN ('calculated','posted')"),
-            sqlite_where=text("status IN ('calculated','posted')"),
-        ),
-        CheckConstraint(
-            "status IN ('calculated','posted','reversed','superseded')",
-            name="ck_payout_run_status",
-        ),
-        CheckConstraint(
-            "gross_total_fen > 0 AND withholding_total_fen >= 0 AND net_total_fen > 0 "
-            "AND salary_petty_cash_recovery_total_fen >= 0 "
-            "AND salary_petty_cash_recovery_total_fen <= withholding_total_fen "
-            "AND net_total_fen = gross_total_fen - withholding_total_fen "
-            "+ salary_petty_cash_recovery_total_fen",
-            name="ck_payout_run_totals",
-        ),
-        CheckConstraint("length(calculation_hash) = 64", name="ck_payout_run_hash"),
-        CheckConstraint("length(request_payload_hash) = 64", name="ck_payout_run_request_hash"),
-    )
-
-
-class UnifiedPayoutRunBankTransaction(Base):
-    """Normalized bank rows that jointly fund one unified payout run."""
-
-    __tablename__ = "unified_payout_run_bank_transactions"
-
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    payout_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    bank_transaction_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["org_id", "payout_run_id"],
-            ["unified_payout_runs.org_id", "unified_payout_runs.id"],
-            name="fk_payout_bank_org_run",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "bank_transaction_id"],
-            ["bank_transactions.org_id", "bank_transactions.id"],
-            name="fk_payout_bank_org_transaction",
-            ondelete="RESTRICT",
-        ),
-        UniqueConstraint(
-            "payout_run_id",
-            "bank_transaction_id",
-            name="uq_payout_bank_run_transaction",
-        ),
-    )
-
-
-class UnifiedPayoutRunItem(Base):
-    __tablename__ = "unified_payout_run_items"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    payout_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    item_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    source_open_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    payroll_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    labor_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    settlement_mode: Mapped[str] = mapped_column(String(50), nullable=False)
-    gross_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    employee_social_insurance_fen: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
-    employee_housing_fund_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    individual_income_tax_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    actual_salary_deduction_fen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    salary_petty_cash_recovery_fen: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
-    theoretical_individual_income_tax_fen: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
-    unwithheld_individual_income_tax_fen: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
-    net_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    withholding_components: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["org_id", "payout_run_id"],
-            ["unified_payout_runs.org_id", "unified_payout_runs.id"],
-            name="fk_payout_item_org_run",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "source_open_item_id"],
-            ["open_items.org_id", "open_items.id"],
-            name="fk_payout_item_org_open_item",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "payroll_line_id"],
-            ["payroll_lines.org_id", "payroll_lines.id"],
-            name="fk_payout_item_org_payroll_line",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "labor_line_id"],
-            ["labor_remuneration_lines.org_id", "labor_remuneration_lines.id"],
-            name="fk_payout_item_org_labor_line",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "counterparty_id"],
-            ["counterparties.org_id", "counterparties.id"],
-            name="fk_payout_item_org_counterparty",
-            ondelete="RESTRICT",
-        ),
-        UniqueConstraint("org_id", "id", name="uq_payout_item_org_id"),
-        UniqueConstraint("payout_run_id", "source_open_item_id", name="uq_payout_item_run_source"),
-        CheckConstraint(
-            "(item_kind = 'salary' AND payroll_line_id IS NOT NULL AND labor_line_id IS NULL "
-            "AND settlement_mode = 'not_applicable') OR "
-            "(item_kind = 'labor' AND payroll_line_id IS NULL AND labor_line_id IS NOT NULL "
-            "AND actual_salary_deduction_fen = 0 "
-            "AND salary_petty_cash_recovery_fen = 0 "
-            "AND settlement_mode IN "
-            "('net_after_withholding','gross_paid_without_withholding'))",
-            name="ck_payout_item_source_kind",
-        ),
-        CheckConstraint(
-            "gross_amount_fen > 0 AND employee_social_insurance_fen >= 0 "
-            "AND employee_housing_fund_fen >= 0 AND individual_income_tax_fen >= 0 "
-            "AND actual_salary_deduction_fen >= 0 "
-            "AND salary_petty_cash_recovery_fen >= 0 "
-            "AND salary_petty_cash_recovery_fen <= employee_social_insurance_fen "
-            "+ employee_housing_fund_fen + individual_income_tax_fen "
-            "AND theoretical_individual_income_tax_fen >= individual_income_tax_fen "
-            "AND unwithheld_individual_income_tax_fen = "
-            "theoretical_individual_income_tax_fen - individual_income_tax_fen "
-            "AND net_amount_fen = gross_amount_fen - employee_social_insurance_fen "
-            "- employee_housing_fund_fen - individual_income_tax_fen "
-            "- actual_salary_deduction_fen + salary_petty_cash_recovery_fen "
-            "AND net_amount_fen >= 0",
-            name="ck_payout_item_totals",
-        ),
-        CheckConstraint(
-            "(item_kind = 'salary' AND unwithheld_individual_income_tax_fen = 0) OR "
-            "(item_kind = 'labor' AND settlement_mode = 'net_after_withholding' "
-            "AND individual_income_tax_fen = theoretical_individual_income_tax_fen "
-            "AND unwithheld_individual_income_tax_fen = 0) OR "
-            "(item_kind = 'labor' AND settlement_mode = 'gross_paid_without_withholding' "
-            "AND individual_income_tax_fen = 0 "
-            "AND unwithheld_individual_income_tax_fen = "
-            "theoretical_individual_income_tax_fen)",
-            name="ck_payout_item_settlement_mode",
-        ),
-        CheckConstraint(
-            "salary_petty_cash_recovery_fen = 0 OR "
-            "(item_kind = 'salary' AND actual_salary_deduction_fen = 0 "
-            "AND salary_petty_cash_recovery_fen = employee_social_insurance_fen "
-            "+ employee_housing_fund_fen + individual_income_tax_fen)",
-            name="ck_payout_item_petty_recovery",
-        ),
-    )
-
-
-class UnifiedPayoutRunEvidence(Base):
-    __tablename__ = "unified_payout_run_evidence"
-
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    payout_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["org_id", "payout_run_id"],
-            ["unified_payout_runs.org_id", "unified_payout_runs.id"],
-            name="fk_payout_evidence_org_run",
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
-            ["org_id", "evidence_id"],
-            ["evidence.org_id", "evidence.id"],
-            name="fk_payout_evidence_org_evidence",
-            ondelete="RESTRICT",
-        ),
-    )
-
-
 class LaborWithholdingOpenItemSource(Base):
     """Exact per-person entitlement behind one labor-IIT payable open item."""
 
@@ -5291,6 +5338,7 @@ class LaborRemunerationEventLink(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     labor_line_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     source_open_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -5330,7 +5378,17 @@ class LaborRemunerationEventLink(Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint(
-            "event_id", "batch_id", "labor_line_id", "link_kind", name="uq_labor_event_link"
+            "component_id", "batch_id", "labor_line_id", "link_kind", name="uq_labor_event_link"
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_labor_event_link_component",
+            ondelete="RESTRICT",
         ),
         CheckConstraint(
             "link_kind IN ('accrual','payment','tax_payment','reversal')",
@@ -5507,7 +5565,18 @@ class EnterpriseIncomeTaxQuarterConfirmation(Base):
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "business_event_id", "component_id"],
+            ["business_event_components.org_id", "business_event_components.event_id",
+             "business_event_components.id"],
+            name="fk_cit_confirmation_component", ondelete="RESTRICT",
+        ),
+        UniqueConstraint("component_id", name="uq_cit_confirmation_component"),
+        CheckConstraint("(business_event_id IS NULL) = (component_id IS NULL)",
+                        name="ck_cit_confirmation_component_pair"),
         ForeignKeyConstraint(
             ["org_id"],
             ["organizations.id"],
@@ -5571,11 +5640,12 @@ class EnterpriseIncomeTaxQuarterConfirmation(Base):
 
 
 class ZeroTaxPeriodConfirmation(Base):
-    """Immutable confirmation of a deterministic all-zero VAT/surtax period.
+    """Immutable confirmation that a deterministic tax period needs no journal adjustment.
 
-    A zero calculation has no accounting adjustment and therefore must not
-    create a zero-value voucher.  This append-only control record preserves
-    the calculation hash and authenticated execution attribution instead.
+    VAT gross, net, accrued, and payable amounts may be nonzero.  The defining
+    condition is zero VAT relief and zero surtax, so there are no adjustment
+    entries and no fake zero-value voucher.  This append-only control record
+    preserves the exact calculation hash and authenticated attribution.
     """
 
     __tablename__ = "zero_tax_period_confirmations"
@@ -5677,9 +5747,11 @@ class TaxPeriodSource(Base):
 
     __tablename__ = "tax_period_sources"
 
-    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    tax_period_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, index=True)
-    source_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, index=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    tax_period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    source_event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    source_component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     gross_fen: Mapped[int] = mapped_column(BigInteger)
     net_fen: Mapped[int] = mapped_column(BigInteger)
     vat_fen: Mapped[int] = mapped_column(BigInteger)
@@ -5703,6 +5775,19 @@ class TaxPeriodSource(Base):
             ["business_events.org_id", "business_events.id"],
             name="fk_tax_period_source_org_event",
             ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "source_event_id", "source_component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_tax_period_source_component",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "org_id", "tax_period_id", "source_component_id", name="uq_tax_period_source_component"
         ),
     )
 
@@ -5819,11 +5904,16 @@ class BankStatementImportWithdrawal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
-        ForeignKeyConstraint(["org_id", "action_id"],
+        ForeignKeyConstraint(
+            ["org_id", "action_id"],
             ["bank_statement_import_actions.org_id", "bank_statement_import_actions.id"],
-            ondelete="RESTRICT"),
-        ForeignKeyConstraint(["org_id", "execution_attribution_id"],
-            ["execution_attributions.org_id", "execution_attributions.id"], ondelete="RESTRICT"),
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "action_id", name="uq_bank_withdrawal_action"),
         UniqueConstraint("org_id", "idempotency_key", name="uq_bank_withdrawal_key"),
     )
@@ -6538,6 +6628,9 @@ class OpenItem(Base):
     source_event_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("business_events.id", ondelete="RESTRICT")
     )
+    source_component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    component_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     item_type: Mapped[str] = mapped_column(String(20))
     original_amount_fen: Mapped[int] = mapped_column(BigInteger)
     settled_amount_fen: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -6554,6 +6647,29 @@ class OpenItem(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "source_event_id", "source_component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_open_item_component",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("source_component_id", "component_key", name="uq_open_item_component_key"),
+        ForeignKeyConstraint(
+            ["org_id", "account_id"],
+            ["accounts.org_id", "accounts.id"],
+            name="fk_open_item_account",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(source_component_id IS NULL AND component_key IS NULL) OR "
+            "(source_component_id IS NOT NULL AND component_key IS NOT NULL "
+            "AND length(trim(component_key)) > 0)",
+            name="ck_open_item_component_key",
+        ),
         ForeignKeyConstraint(
             ["org_id", "pass_through_beneficiary_id"],
             ["counterparties.org_id", "counterparties.id"],
@@ -6628,6 +6744,8 @@ class Settlement(Base):
     payment_event_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("business_events.id", ondelete="RESTRICT")
     )
+    payment_component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    purpose: Mapped[str | None] = mapped_column(String(60), nullable=True)
     amount_fen: Mapped[int] = mapped_column(BigInteger)
     reversed: Mapped[bool] = mapped_column(default=False)
     reversed_by_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -6637,6 +6755,20 @@ class Settlement(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "payment_event_id", "payment_component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_settlement_component",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "payment_component_id IS NULL OR (purpose IS NOT NULL AND length(trim(purpose)) > 0)",
+            name="ck_settlement_component_purpose",
+        ),
         ForeignKeyConstraint(
             ["org_id", "open_item_id"],
             ["open_items.org_id", "open_items.id"],
@@ -6655,7 +6787,17 @@ class Settlement(Base):
             name="fk_settlement_org_reversal_event",
             ondelete="RESTRICT",
         ),
-        UniqueConstraint("open_item_id", "payment_event_id", name="uq_settlement_event_item"),
+        UniqueConstraint(
+            "open_item_id", "payment_component_id", name="uq_settlement_component_item"
+        ),
+        Index(
+            "uq_settlement_event_item",
+            "open_item_id",
+            "payment_event_id",
+            unique=True,
+            postgresql_where=text("payment_component_id IS NULL"),
+            sqlite_where=text("payment_component_id IS NULL"),
+        ),
         CheckConstraint("amount_fen > 0", name="ck_settlement_amount"),
         CheckConstraint(
             "(reversed IS FALSE AND reversed_by_event_id IS NULL) OR "
@@ -6725,6 +6867,7 @@ class VoucherLine(Base):
     voucher_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("vouchers.id", ondelete="RESTRICT"), index=True
     )
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
     line_number: Mapped[int] = mapped_column(Integer)
     account_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("accounts.id", ondelete="RESTRICT")
@@ -6740,6 +6883,12 @@ class VoucherLine(Base):
     account: Mapped[Account] = relationship(lazy="joined", foreign_keys=[account_id])
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "component_id"],
+            ["business_event_components.org_id", "business_event_components.id"],
+            name="fk_voucher_line_component",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["org_id", "voucher_id"],
             ["vouchers.org_id", "vouchers.id"],
@@ -6800,7 +6949,6 @@ class EnterpriseIncomeTaxResult(Base):
     contribution_fen: Mapped[int] = mapped_column(BigInteger)
     expense_adjustment_fen: Mapped[int] = mapped_column(BigInteger)
     business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    reversal_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     idempotency_key: Mapped[str] = mapped_column(String(160))
     request_hash: Mapped[str] = mapped_column(String(64))
     calculation_hash: Mapped[str] = mapped_column(String(64))
@@ -6809,7 +6957,18 @@ class EnterpriseIncomeTaxResult(Base):
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "business_event_id", "component_id"],
+            ["business_event_components.org_id", "business_event_components.event_id",
+             "business_event_components.id"],
+            name="fk_cit_result_component", ondelete="RESTRICT",
+        ),
+        UniqueConstraint("component_id", name="uq_cit_result_component"),
+        CheckConstraint("(business_event_id IS NULL) = (component_id IS NULL)",
+                        name="ck_cit_result_component_pair"),
         UniqueConstraint("org_id", "id", name="uq_cit_result_org_id"),
         UniqueConstraint("org_id", "idempotency_key", name="uq_cit_result_key"),
         UniqueConstraint(
@@ -6841,11 +7000,6 @@ class EnterpriseIncomeTaxResult(Base):
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
-            ["org_id", "reversal_event_id"],
-            ["business_events.org_id", "business_events.id"],
-            ondelete="RESTRICT",
-        ),
-        ForeignKeyConstraint(
             ["org_id", "execution_attribution_id"],
             ["execution_attributions.org_id", "execution_attributions.id"],
             ondelete="RESTRICT",
@@ -6865,9 +7019,21 @@ class EnterpriseIncomeTaxSettlement(Base):
     input_facts: Mapped[dict[str, Any]] = mapped_column(JSON)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "event_id", "component_id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_enterpriseincometaxsettlement_component",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint("org_id", "id", name="uq_cit_settlement_org_id"),
-        UniqueConstraint("org_id", "event_id", name="uq_cit_settlement_event"),
+        UniqueConstraint("org_id", "component_id", name="uq_cit_settlement_event"),
         UniqueConstraint("org_id", "idempotency_key", name="uq_cit_settlement_key"),
         ForeignKeyConstraint(
             ["org_id", "event_id"],
@@ -6947,7 +7113,6 @@ _ATTRIBUTED_ROOT_TYPES = (
     PayrollOpeningState,
     PayrollPolicyVersion,
     PayrollTaxImportExport,
-    UnifiedPayoutRun,
     ZeroTaxPeriodConfirmation,
 )
 
@@ -7133,7 +7298,7 @@ Index(
 Index(
     "uq_payroll_event_link_without_source",
     PayrollEventLink.org_id,
-    PayrollEventLink.event_id,
+    PayrollEventLink.component_id,
     PayrollEventLink.link_kind,
     unique=True,
     postgresql_where=(
@@ -7148,7 +7313,7 @@ Index(
 Index(
     "uq_payroll_event_link_salary_source",
     PayrollEventLink.org_id,
-    PayrollEventLink.event_id,
+    PayrollEventLink.component_id,
     PayrollEventLink.link_kind,
     PayrollEventLink.source_open_item_id,
     unique=True,
@@ -7164,7 +7329,7 @@ Index(
 Index(
     "uq_payroll_event_link_payment_source",
     PayrollEventLink.org_id,
-    PayrollEventLink.event_id,
+    PayrollEventLink.component_id,
     PayrollEventLink.link_kind,
     PayrollEventLink.source_payment_event_id,
     PayrollEventLink.source_open_item_id,
@@ -7181,7 +7346,7 @@ Index(
 Index(
     "uq_payroll_event_link_reversal_source",
     PayrollEventLink.org_id,
-    PayrollEventLink.event_id,
+    PayrollEventLink.component_id,
     PayrollEventLink.link_kind,
     PayrollEventLink.source_payment_event_id,
     unique=True,
@@ -7213,20 +7378,4 @@ Index(
     PayrollBatch.batch_kind,
     PayrollBatch.payroll_period,
     PayrollBatch.status,
-)
-Index(
-    "uq_payroll_regular_posted_period",
-    PayrollBatch.org_id,
-    PayrollBatch.payroll_period,
-    unique=True,
-    postgresql_where=(
-        (PayrollBatch.batch_kind == "regular")
-        & (PayrollBatch.status == "posted")
-        & PayrollBatch.reversal_of_batch_id.is_(None)
-    ),
-    sqlite_where=(
-        (PayrollBatch.batch_kind == "regular")
-        & (PayrollBatch.status == "posted")
-        & PayrollBatch.reversal_of_batch_id.is_(None)
-    ),
 )

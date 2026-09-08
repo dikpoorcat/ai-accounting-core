@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, date, datetime
+from datetime import date
 
 import pytest
+from conftest import import_test_bank_transaction, prepare_authenticated_bank_account
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.fixed_asset_service import FixedAssetService
 from ai_accounting.models import (
-    Account,
     BankTransaction,
     BankTransactionMatch,
     BusinessEvent,
@@ -35,7 +35,6 @@ from ai_accounting.schemas import (
     DisposeFixedAssetRequest,
     PreviewFixedAssetDepreciationBatchRequest,
     PreviewFixedAssetDepreciationRequest,
-    RecordEventRequest,
     ReverseEventRequest,
     TaxPeriodConfirmRequest,
     TaxPeriodPreviewRequest,
@@ -43,30 +42,35 @@ from ai_accounting.schemas import (
 from ai_accounting.tax import calculate_tax_period
 
 
+@pytest.fixture
+def session(committable_session: Session) -> Session:
+    return committable_session
+
+
 @pytest.fixture(autouse=True)
 def confirmed_bank_scope(session: Session, organization: Organization) -> None:
-    account = session.scalar(
-        select(Account).where(Account.org_id == organization.id, Account.code == "1002")
+    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", None)
+    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", None)
+    prepare_authenticated_bank_account(
+        session,
+        organization,
+        booking_date=date(2024, 2, 29),
+        accounts=[
+            {
+                "bank_account_code": "1002",
+                "account_name": "银行存款",
+                "start_date": date(2000, 1, 1),
+            },
+            {
+                "bank_account_code": "1003",
+                "account_name": "测试银行二户",
+                "start_date": date(2000, 1, 1),
+            },
+        ],
     )
-    account.requires_bank_reconciliation = True
-    account.bank_reconciliation_start_date = date(2000, 1, 1)
-    account.bank_reconciliation_configured_at = datetime.now(UTC)
-    session.add(
-        Account(
-            org_id=organization.id,
-            code="1003",
-            name="测试银行二户",
-            category="asset",
-            normal_side="debit",
-            active=True,
-            requires_bank_reconciliation=True,
-            bank_reconciliation_start_date=date(2000, 1, 1),
-            bank_reconciliation_configured_at=datetime.now(UTC),
-        )
-    )
+    organization.accounting_period_control_enabled = False
+    organization.accounting_period_control_start_date = None
     session.flush()
-    set_committed_value(organization, "bank_reconciliation_scope_current_action_id", uuid.uuid4())
-    set_committed_value(organization, "bank_reconciliation_scope_confirmed_at", datetime.now(UTC))
 
 
 def _evidence(session: Session, organization: Organization, seed: str) -> Evidence:
@@ -165,7 +169,17 @@ def _bank_row(
     booking_date: date,
     seed: str,
     account_code: str = "1002",
+    controlled: bool = True,
 ) -> BankTransaction:
+    if controlled:
+        return import_test_bank_transaction(
+            session,
+            organization,
+            amount_fen=amount_fen,
+            key=seed,
+            booking_date=booking_date,
+            bank_account_code=account_code,
+        )
     row = BankTransaction(
         org_id=organization.id,
         bank_account_code=account_code,
@@ -211,7 +225,7 @@ def test_acquire_and_activate_fixed_asset_are_normalized_balanced_and_idempotent
 
     acquired = service.acquire_fixed_asset(request)
 
-    assert acquired.status == "posted"
+    assert acquired.status == "posted", acquired
     assert acquired.data["cost_fen"] == 1_050_000
     _assert_balanced(session, acquired.voucher_id)
     asset = session.get(FixedAsset, acquired.asset_id)
@@ -430,6 +444,7 @@ def test_second_bank_acquisition_and_sale_clearance_freeze_account_and_reverse(
         booking_date=date(2026, 1, 2),
         seed="bank-acquire-wrong-account",
         account_code="1002",
+        controlled=False,
     )
     wrong_account_data = {
         **request_data,
@@ -440,7 +455,7 @@ def test_second_bank_acquisition_and_sale_clearance_freeze_account_and_reverse(
     wrong_account = service.acquire_fixed_asset(
         AcquireFixedAssetRequest.model_validate(wrong_account_data)
     )
-    assert wrong_account.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
+    assert wrong_account.errors == ["FUNDS_BANK_ACCOUNT_OR_DIRECTION_MISMATCH"]
     assert wrong_account_bank.matched_event_id is None
 
     acquired = service.acquire_fixed_asset(AcquireFixedAssetRequest.model_validate(request_data))
@@ -539,6 +554,7 @@ def test_second_bank_acquisition_and_sale_clearance_freeze_account_and_reverse(
         booking_date=date(2026, 1, 20),
         seed="sale-proceeds-wrong-account",
         account_code="1002",
+        controlled=False,
     )
     wrong_disposal = service.dispose_fixed_asset(
         DisposeFixedAssetRequest.model_validate(
@@ -552,7 +568,7 @@ def test_second_bank_acquisition_and_sale_clearance_freeze_account_and_reverse(
             }
         )
     )
-    assert wrong_disposal.errors == ["BANK_TRANSACTION_BANK_ACCOUNT_MISMATCH"]
+    assert wrong_disposal.errors == ["FUNDS_BANK_ACCOUNT_OR_DIRECTION_MISMATCH"]
     assert clearance_bank.matched_event_id is None
     assert wrong_disposal_bank.matched_event_id is None
 
@@ -588,32 +604,41 @@ def test_settled_acquisition_payable_uses_common_reversal_dependency_error(
         _acquisition_request(organization, evidence, key="asset-payable-acquire")
     )
     payable = session.scalar(select(OpenItem).where(OpenItem.source_event_id == acquired.event_id))
-    bank = _bank_row(
-        session,
-        organization,
-        amount_fen=-payable.original_amount_fen,
-        booking_date=date(2026, 2, 2),
-        seed="supplier-payment",
-    )
     payment = service.record_event(
         RecordEventRequest.model_validate(
             {
                 "org_id": organization.id,
                 "idempotency_key": "asset-supplier-payment",
-                "event_type": "supplier_payment",
-                "business_dates": {
-                    "business_date": "2026-02-02",
-                    "payment_date": "2026-02-02",
-                    "posting_date": "2026-02-02",
-                },
-                "counterparty": {"id": payable.counterparty_id},
-                "amounts": {"amount_fen": payable.original_amount_fen},
-                "bank_account_code": "1002",
-                "bank_transaction_references": [{"id": bank.id}],
-                "allocations": [
+                "posting_date": "2026-02-02",
+                "evidence_references": [evidence.id],
+                "components": [
                     {
-                        "open_item_id": payable.id,
+                        "key": "settlement",
+                        "kind": "payable_settlement",
+                        "business_date": "2026-02-02",
+                        "payment_date": "2026-02-02",
+                        "counterparty": {"id": payable.counterparty_id},
+                        "allocations": [
+                            {
+                                "open_item_id": payable.id,
+                                "amount_fen": payable.original_amount_fen,
+                            }
+                        ],
+                    }
+                ],
+                "funds": [
+                    {
+                        "key": "payment",
+                        "account_code": "1002",
+                        "direction": "payment",
+                        "payment_date": "2026-02-02",
                         "amount_fen": payable.original_amount_fen,
+                        "allocations": [
+                            {
+                                "component_key": "settlement",
+                                "amount_fen": payable.original_amount_fen,
+                            }
+                        ],
                     }
                 ],
             }
@@ -1264,28 +1289,47 @@ def test_fixed_asset_sale_respects_tax_period_date_lock_but_retirement_does_not(
 ) -> None:
     service = FixedAssetService(session)
     evidence = _evidence(session, organization, "tax-lock")
-    session.add(
-        BusinessEvent(
-            org_id=organization.id,
-            idempotency_key="fixed-asset-tax-lock-source",
-            event_type="service_cash_sale",
-            status="posted",
-            description="tax lock source",
-            facts={
-                "derived": {
-                    "taxable_gross_fen": 1_010_000,
-                    "net_sales_fen": 1_000_000,
-                    "vat_fen": 10_000,
-                    "exemption_eligible": False,
-                }
-            },
-            business_date=date(2026, 1, 15),
-            tax_obligation_date=date(2026, 1, 15),
-            posting_date=date(2026, 1, 15),
-            rule_trace=[],
+    source = service.record_event(
+        RecordEventRequest.model_validate(
+            {
+                "org_id": organization.id,
+                "idempotency_key": "fixed-asset-tax-lock-source",
+                "posting_date": "2026-01-15",
+                "evidence_references": [evidence.id],
+                "components": [
+                    {
+                        "key": "sale",
+                        "kind": "service_sale",
+                        "business_date": "2026-01-15",
+                        "fulfillment_date": "2026-01-15",
+                        "payment_date": "2026-01-15",
+                        "tax_obligation_date": "2026-01-15",
+                        "amount_fen": 1_010_000,
+                        "counterparty": {"kind": "customer", "name": "税期锁定来源客户"},
+                        "recognition_basis": "immediate",
+                        "tax_facts": {
+                            "taxable": True,
+                            "rate_percent": "1",
+                            "invoice_type": "ordinary",
+                            "waive_exemption": False,
+                            "tax_due_on_event": True,
+                        },
+                    }
+                ],
+                "funds": [
+                    {
+                        "key": "receipt",
+                        "account_code": "1002",
+                        "direction": "receipt",
+                        "payment_date": "2026-01-15",
+                        "amount_fen": 1_010_000,
+                        "allocations": [{"component_key": "sale", "amount_fen": 1_010_000}],
+                    }
+                ],
+            }
         )
     )
-    session.flush()
+    assert source.status == "posted", source.errors
     preview = service.preview_tax_period(
         TaxPeriodPreviewRequest(
             org_id=organization.id,

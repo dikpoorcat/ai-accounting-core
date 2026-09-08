@@ -1,8 +1,8 @@
 """Create the flattened business-database schema from an empty database.
 
-Revision ID: 0001_business_baseline_v2
+Revision ID: 0001_business_baseline_v3
 Revises:
-Create Date: 2026-09-02
+Create Date: 2026-09-08
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0001_business_baseline_v2"
+revision = "0001_business_baseline_v3"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -28,7 +28,7 @@ _LABOR_REMUNERATION_TAX_POLICY_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000
 _VAT_2022_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000031")
 _VAT_2023_2025_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000032")
 _SURTAX_2022_ID = uuid.UUID("0198c6e1-3c21-7000-8000-000000000033")
-_CREATED_AT = datetime(2026, 9, 2, tzinfo=UTC)
+_CREATED_AT = datetime(2026, 9, 8, tzinfo=UTC)
 
 
 def _read_asset(name: str) -> str:
@@ -90,9 +90,7 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
                 "effective_from": date(2022, 4, 1),
                 "effective_to": date(2022, 12, 31),
                 "version": "2022.15",
-                "source_url": (
-                    "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5202026/content.html"
-                ),
+                "source_url": ("https://fgk.chinatax.gov.cn/zcfgk/c102416/c5202026/content.html"),
                 "parameters": {
                     "monthly_threshold_fen": 15_000_000,
                     "quarterly_threshold_fen": 45_000_000,
@@ -100,8 +98,7 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
                     "reduced_rate_percent": "0",
                     "threshold_operator": "at_or_below",
                     "basis_source_urls": [
-                        "https://jiangsu.chinatax.gov.cn/art/2022/3/24/"
-                        "art_22639_404403.html"
+                        "https://jiangsu.chinatax.gov.cn/art/2022/3/24/art_22639_404403.html"
                     ],
                 },
             },
@@ -112,9 +109,7 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
                 "effective_from": date(2023, 1, 1),
                 "effective_to": date(2025, 12, 31),
                 "version": "2023.19",
-                "source_url": (
-                    "https://fgk.chinatax.gov.cn/zcfgk/c102416/c5210457/content.html"
-                ),
+                "source_url": ("https://fgk.chinatax.gov.cn/zcfgk/c102416/c5210457/content.html"),
                 "parameters": {
                     "monthly_threshold_fen": 10_000_000,
                     "quarterly_threshold_fen": 30_000_000,
@@ -131,18 +126,15 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
                 "effective_to": date(2022, 12, 31),
                 "version": "2022.10-ZJ.4",
                 "source_url": (
-                    "https://zhejiang.chinatax.gov.cn/art/2022/3/22/"
-                    "art_12793_541127.html"
+                    "https://zhejiang.chinatax.gov.cn/art/2022/3/22/art_12793_541127.html"
                 ),
                 "parameters": {
                     "small_tax_reduction_factor": "0.5",
                     "education_surcharge_rate": "0.03",
                     "local_education_surcharge_rate": "0.02",
                     "basis_source_urls": [
-                        "https://zhejiang.chinatax.gov.cn/art/2022/3/7/"
-                        "art_8409_82432.html",
-                        "https://fgk.chinatax.gov.cn/zcfgk/c100009/"
-                        "c5193055/content.html",
+                        "https://zhejiang.chinatax.gov.cn/art/2022/3/7/art_8409_82432.html",
+                        "https://fgk.chinatax.gov.cn/zcfgk/c100009/c5193055/content.html",
                         "https://www.chinatax.gov.cn/chinatax/n810214/n810641/"
                         "n2985871/c101728/c5160742/content.html",
                     ],
@@ -179,12 +171,14 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
         sa.column("invoice_withholding_source_url", sa.Text()),
         sa.column("legal_filing_source_url", sa.Text()),
         sa.column("parameters", sa.JSON()),
+        sa.column("created_at", sa.DateTime(timezone=True)),
     )
     op.bulk_insert(
         labor_policy_versions,
         [
             {
                 "id": _LABOR_REMUNERATION_TAX_POLICY_ID,
+                "created_at": _CREATED_AT,
                 "code": "cn_resident_labor_remuneration_withholding",
                 "version": "2019.1",
                 "effective_from": date(2019, 1, 1),
@@ -259,6 +253,9 @@ def _seed_baseline(existing_extensions: set[str]) -> None:
 
 def upgrade() -> None:
     bind = op.get_bind()
+    existing_tables = set(sa.inspect(bind).get_table_names()) - {"alembic_version"}
+    if existing_tables:
+        raise RuntimeError("BUSINESS_V3_REQUIRES_EMPTY_DATABASE")
     existing_extensions: set[str] = set()
     if bind.dialect.name == "postgresql":
         existing_extensions = set(

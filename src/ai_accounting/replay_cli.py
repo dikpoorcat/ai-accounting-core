@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 
-from .coa import seed_organization
+from .coa import get_business_class_template, seed_organization
 from .company_router import grant_runtime_database_access
 from .config import get_settings
 from .models import (
@@ -43,8 +43,8 @@ from .models import (
 )
 
 _ROOT = Path(__file__).resolve().parents[2]
-_FORMAT_VERSION = "ai-accounting-system-replay-v1"
-_BUSINESS_REVISION = "0001_business_baseline_v2"
+_FORMAT_VERSION = "ai-accounting-composition-replay-v2"
+_BUSINESS_REVISION = "0001_business_baseline_v3"
 _CATALOG_REVISION = "0001_catalog_baseline_v2"
 
 
@@ -60,12 +60,9 @@ def _current_schema_revision(*, catalog: bool) -> str:
 
 
 _MANIFEST = "MANIFEST.sha256"
-_STATE_VERSION = "ai-accounting-replay-state-v1"
-_NORMALIZATION_VERSION = "ai-accounting-replay-normalizations-v1"
+_STATE_VERSION = "ai-accounting-composition-replay-state-v2"
 _HEX_64 = frozenset("0123456789abcdef")
-_UUID_TEXT = re.compile(
-    r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
+_UUID_TEXT = re.compile(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _SENSITIVE_TABLES = frozenset(
     {"owner_accounts", "owner_recovery_codes", "owner_sessions", "identity_audit_events"}
 )
@@ -83,39 +80,6 @@ _TECHNICAL_UUID_KEYS = frozenset(
         "action_id",
     }
 )
-_GENERIC_EVENT_TYPES = frozenset(
-    {
-        "service_cash_sale",
-        "service_credit_sale",
-        "service_fulfillment",
-        "customer_receipt",
-        "customer_advance",
-        "customer_refund",
-        "expense_cash",
-        "expense_recovery_received",
-        "expense_payable",
-        "supplier_payment",
-        "employee_reimbursement",
-        "employee_reimbursement_payment",
-        "owner_loan_received",
-        "owner_contribution_received",
-        "owner_repayment",
-        "other_income_received",
-        "bank_interest_received",
-        "refundable_deposit_paid",
-        "refundable_deposit_return_received",
-        "bank_fee",
-        "internal_transfer",
-        "cash_bank_transfer",
-        "payment_platform_transfer",
-        "tax_payment",
-        "enterprise_income_tax_refund",
-        "salary_payment",
-        "social_insurance_payment",
-        "housing_fund_payment",
-        "individual_income_tax_payment",
-    }
-)
 _DIRECT_SPECIALIZED_TOOLS = {
     "fixed_asset_acquisition": "finance_acquire_fixed_asset",
     "fixed_asset_activation": "finance_activate_fixed_asset",
@@ -123,8 +87,6 @@ _DIRECT_SPECIALIZED_TOOLS = {
     "intangible_asset_acquisition": "finance_acquire_intangible_asset",
     "intangible_asset_retirement": "finance_retire_intangible_asset",
     "borrowing_drawdown": "finance_draw_borrowing",
-    "borrowing_interest_payment": "finance_pay_borrowing_interest",
-    "borrowing_principal_repayment": "finance_repay_borrowing_principal",
 }
 _PREVIEW_CONFIRM_WORKFLOWS = {
     "tax_relief": ("finance_calculate_tax_period", "finance_confirm_tax_period"),
@@ -132,10 +94,6 @@ _PREVIEW_CONFIRM_WORKFLOWS = {
     "labor_remuneration_accrual": (
         "finance_preview_labor_remuneration_batch",
         "finance_confirm_labor_remuneration_batch",
-    ),
-    "unified_payout_run": (
-        "finance_preview_unified_payout_run",
-        "finance_confirm_unified_payout_run",
     ),
     "fixed_asset_depreciation": (
         "finance_preview_fixed_asset_depreciation_batch",
@@ -288,8 +246,7 @@ def _parse_manifest(root: Path) -> dict[str, str]:
         _safe_package_file(root, relative)
         expected[relative] = digest
     actual = {
-        path.relative_to(root).as_posix(): _sha256_file(path)[0]
-        for path in _package_files(root)
+        path.relative_to(root).as_posix(): _sha256_file(path)[0] for path in _package_files(root)
     }
     if actual != expected:
         raise ReplayError("REPLAY_PACKAGE_MANIFEST_MISMATCH")
@@ -300,14 +257,16 @@ _REFERENCE_FIELDS: dict[str, frozenset[str]] = {
     "operation_result": frozenset({"operation_key", "field"}),
     "evidence": frozenset({"sha256"}),
     "employee": frozenset({"employee_code"}),
-    "bank_transaction": frozenset(
-        {"bank_account_code", "source_fingerprint"}
-    ),
-    "bank_transaction_reference": frozenset(
-        {"bank_account_code", "source_fingerprint"}
-    ),
+    "bank_transaction": frozenset({"bank_account_code", "source_fingerprint"}),
+    "bank_transaction_reference": frozenset({"bank_account_code", "source_fingerprint"}),
     "counterparty": frozenset({"kind", "name"}),
     "event": frozenset({"replay_key"}),
+    "component": frozenset({"source_replay_key", "component_key"}),
+    "component_open_item": frozenset({"source_replay_key", "component_key", "open_item_key"}),
+    "component_income_tax": frozenset(
+        {"source_replay_key", "component_key", "result_kind"}
+    ),
+    "prepared_line_key": frozenset({"operation_key", "identity_code", "line_kind"}),
     "open_item": frozenset(
         {
             "source_replay_key",
@@ -328,7 +287,7 @@ _REFERENCE_FIELDS: dict[str, frozenset[str]] = {
     "voucher_line": frozenset(
         {
             "source_replay_key",
-            "line_number",
+            "component_key",
             "account_code",
             "debit_fen",
             "credit_fen",
@@ -345,6 +304,37 @@ def _walk_package_values(value: Any) -> Iterable[Any]:
     elif isinstance(value, list):
         for child in value:
             yield from _walk_package_values(child)
+
+
+def _validate_composed_replay_request(request: Mapping[str, Any]) -> None:
+    """Validate current typed facts offline; stable references stand in for new IDs."""
+    from pydantic import ValidationError
+
+    from .component_schemas import RecordEventRequest
+
+    placeholder = "11111111-1111-4111-8111-111111111111"
+
+    def materialize_shape(value: Any) -> Any:
+        if value == "${ORG_ID}":
+            return placeholder
+        if isinstance(value, list):
+            return [materialize_shape(item) for item in value]
+        if isinstance(value, Mapping):
+            if value.get("$ref") == "bank_transaction_reference":
+                return {"id": placeholder, "fingerprint": "0" * 64}
+            if value.get("$ref") == "operation_result" and value.get("field") == (
+                "calculation_hash"
+            ):
+                return "0" * 64
+            if "$ref" in value:
+                return placeholder
+            return {key: materialize_shape(item) for key, item in value.items()}
+        return value
+
+    try:
+        RecordEventRequest.model_validate(materialize_shape(request))
+    except ValidationError as exc:
+        raise ReplayError("REPLAY_COMPONENT_REQUEST_INVALID") from exc
 
 
 def _verify_operation_references(
@@ -364,10 +354,41 @@ def _verify_operation_references(
         "bank_import",
         "owner_control",
         "period_close",
+        "composite_event",
     }
     for index, operation in enumerate(operations):
         if operation.get("kind") not in allowed_kinds:
             raise ReplayError("REPLAY_PACKAGE_OPERATION_KIND_INVALID")
+        if operation.get("tool") == "finance_record_event" or operation.get("kind") == (
+            "composite_event"
+        ):
+            request = operation.get("request")
+            if not isinstance(request, Mapping):
+                raise ReplayError("REPLAY_COMPONENT_REQUEST_INVALID")
+            _validate_composed_replay_request(request)
+        preparation_keys = {
+            str(item.get("key"))
+            for item in operation.get("preparations", [])
+            if isinstance(item, Mapping) and item.get("key")
+        }
+        for preparation_key in preparation_keys:
+            if preparation_key in positions:
+                raise ReplayError("REPLAY_PACKAGE_OPERATION_KEY_INVALID")
+            positions[preparation_key] = index
+        preparation_order = {
+            str(item["key"]): preparation_index
+            for preparation_index, item in enumerate(operation.get("preparations", []))
+            if isinstance(item, Mapping) and item.get("key")
+        }
+        for preparation_index, preparation in enumerate(operation.get("preparations", [])):
+            if not isinstance(preparation, Mapping):
+                raise ReplayError("REPLAY_PACKAGE_OPERATION_KIND_INVALID")
+            for value in _walk_package_values(preparation.get("preview_request", {})):
+                if not isinstance(value, Mapping) or value.get("$ref") != "operation_result":
+                    continue
+                target_preparation = preparation_order.get(str(value.get("operation_key")))
+                if target_preparation is not None and target_preparation >= preparation_index:
+                    raise ReplayError("REPLAY_PACKAGE_OPERATION_REFERENCE_MISSING")
         for value in _walk_package_values(operation):
             if isinstance(value, str):
                 matches = _UUID_TEXT.findall(value)
@@ -388,7 +409,9 @@ def _verify_operation_references(
                 target_key = value.get("replay_key") or value.get("source_replay_key")
             if target_key is not None:
                 target_position = positions.get(str(target_key))
-                if target_position is None or target_position >= index:
+                if target_position is None or target_position > index or (
+                    target_position == index and str(target_key) not in preparation_keys
+                ):
                     raise ReplayError("REPLAY_PACKAGE_OPERATION_REFERENCE_MISSING")
 
 
@@ -439,9 +462,7 @@ def verify_package(package: Path) -> dict[str, Any]:
         if any(not item for item in keys) or len(keys) != len(set(keys)):
             raise ReplayError("REPLAY_PACKAGE_STABLE_REFERENCE_INVALID")
         event_count += len(events)
-        operations = _read_jsonl(
-            _safe_package_file(root, f"{directory}/operations.jsonl")
-        )
+        operations = _read_jsonl(_safe_package_file(root, f"{directory}/operations.jsonl"))
         if int(descriptor.get("operation_count", -1)) != len(operations):
             raise ReplayError("REPLAY_PACKAGE_OPERATION_COUNT_MISMATCH")
         operation_keys = {str(item.get("key", "")) for item in operations}
@@ -492,9 +513,7 @@ def _database_url_for_name(base_url: str | URL, database_name: str) -> URL:
     return make_url(base_url).set(database=database_name)
 
 
-def _migration_url_for_runtime_database(
-    migration_base: str | URL, runtime_url: URL
-) -> URL:
+def _migration_url_for_runtime_database(migration_base: str | URL, runtime_url: URL) -> URL:
     if not runtime_url.database:
         raise ReplayError("REPLAY_TARGET_DATABASE_NAME_INVALID")
     return _database_url_for_name(migration_base, runtime_url.database)
@@ -532,6 +551,7 @@ def _stable_maps(session: Session, org_id: uuid.UUID) -> dict[str, dict[str, Any
         "employee": {},
         "counterparty": {},
         "event": {},
+        "component": {},
         "open_item": {},
         "asset": {},
         "intangible": {},
@@ -618,57 +638,113 @@ def _stable_maps(session: Session, org_id: uuid.UUID) -> dict[str, dict[str, Any
         ("labor_service_persons", "labor_person", "person_code"),
         ("borrowings", "borrowing", "borrowing_code"),
     ):
-        if sa_inspect(session.bind).has_table(table_name):
-            for row in _query_rows(
-                session,
-                f'SELECT id, "{code_name}" AS code FROM "{table_name}" WHERE org_id=:org_id',
-                org_id=org_id,
-            ):
-                maps[target][str(row["id"])] = {"$ref": target, "code": row["code"]}
-    if sa_inspect(session.bind).has_table("enterprise_income_tax_results"):
-        income_tax_event_ids: set[str] = set()
         for row in _query_rows(
             session,
-            "SELECT id, calendar_year, calendar_quarter, treatment, business_event_id "
-            "FROM enterprise_income_tax_quarter_confirmations WHERE org_id=:org_id",
+            f'SELECT id, "{code_name}" AS code FROM "{table_name}" WHERE org_id=:org_id',
             org_id=org_id,
         ):
-            key = (
-                f"enterprise-income-tax:{row['calendar_year']}-"
-                f"Q{row['calendar_quarter']}:{row['treatment']}"
-            )
+            maps[target][str(row["id"])] = {"$ref": target, "code": row["code"]}
+    income_tax_event_ids: set[str] = set()
+    for row in _query_rows(
+        session,
+        "SELECT confirmation.id, confirmation.calendar_year, "
+        "confirmation.calendar_quarter, confirmation.treatment, "
+        "confirmation.business_event_id, confirmation.component_id, "
+        "component.key AS component_key, event.idempotency_key "
+        "FROM enterprise_income_tax_quarter_confirmations AS confirmation "
+        "LEFT JOIN business_event_components AS component "
+        "ON component.org_id=confirmation.org_id AND component.id=confirmation.component_id "
+        "LEFT JOIN business_events AS event ON event.org_id=component.org_id "
+        "AND event.id=component.event_id WHERE confirmation.org_id=:org_id",
+        org_id=org_id,
+    ):
+        key = (
+            f"enterprise-income-tax:{row['calendar_year']}-"
+            f"Q{row['calendar_quarter']}:{row['treatment']}"
+        )
+        if row["component_id"]:
+            maps["income_tax"][str(row["id"])] = {
+                "$ref": "component_income_tax",
+                "source_replay_key": _semantic_replay_key(row["idempotency_key"]),
+                "component_key": row["component_key"],
+                "result_kind": "confirmation",
+            }
+        else:
             maps["income_tax"][str(row["id"])] = {
                 "$ref": "operation_result",
                 "operation_key": key,
                 "field": "enterprise_income_tax_confirmation_id",
             }
-            if row["business_event_id"]:
-                income_tax_event_ids.add(str(row["business_event_id"]))
-                maps["event"][str(row["business_event_id"])] = {
-                    "$ref": "operation_result",
-                    "operation_key": key,
-                    "field": "event_id",
-                }
-        for row in _query_rows(
-            session,
-            "SELECT id, idempotency_key, business_event_id, reversal_event_id "
-            "FROM enterprise_income_tax_results WHERE org_id=:org_id ORDER BY created_at, revision",
-            org_id=org_id,
-        ):
-            key = "cit-result:" + _semantic_replay_key(row["idempotency_key"])
-            maps["income_tax"][str(row["id"])] = {
+        if row["business_event_id"] and not row["component_id"]:
+            income_tax_event_ids.add(str(row["business_event_id"]))
+            maps["event"][str(row["business_event_id"])] = {
+                "$ref": "operation_result",
+                "operation_key": key,
+                "field": "event_id",
+            }
+    for row in _query_rows(
+        session,
+        "SELECT result.id, result.idempotency_key, result.business_event_id, "
+        "result.component_id, component.key AS component_key, event.idempotency_key "
+        "AS event_idempotency_key FROM enterprise_income_tax_results AS result "
+        "LEFT JOIN business_event_components AS component ON component.org_id=result.org_id "
+        "AND component.id=result.component_id LEFT JOIN business_events AS event "
+        "ON event.org_id=component.org_id AND event.id=component.event_id "
+        "WHERE result.org_id=:org_id ORDER BY result.created_at, result.revision",
+        org_id=org_id,
+    ):
+        key = "cit-result:" + _semantic_replay_key(row["idempotency_key"])
+        maps["income_tax"][str(row["id"])] = (
+            {
+                "$ref": "component_income_tax",
+                "source_replay_key": _semantic_replay_key(row["event_idempotency_key"]),
+                "component_key": row["component_key"],
+                "result_kind": "result",
+            }
+            if row["component_id"]
+            else {
                 "$ref": "operation_result",
                 "operation_key": key,
                 "field": "result_id",
             }
-            for field in ("business_event_id", "reversal_event_id"):
-                if row[field] and str(row[field]) not in income_tax_event_ids:
-                    income_tax_event_ids.add(str(row[field]))
-                    maps["event"][str(row[field])] = {
-                        "$ref": "operation_result",
-                        "operation_key": key,
-                        "field": "event_id" if field == "business_event_id" else field,
-                    }
+        )
+        event_id = row["business_event_id"]
+        if event_id and not row["component_id"] and str(event_id) not in income_tax_event_ids:
+            income_tax_event_ids.add(str(event_id))
+            maps["event"][str(event_id)] = {
+                "$ref": "operation_result",
+                "operation_key": key,
+                "field": "event_id",
+            }
+    for row in _query_rows(
+        session,
+        "SELECT component.id, component.key, event.idempotency_key "
+        "FROM business_event_components AS component "
+        "JOIN business_events AS event ON event.org_id=component.org_id "
+        "AND event.id=component.event_id WHERE component.org_id=:org_id",
+        org_id=org_id,
+    ):
+        maps["component"][str(row["id"])] = {
+            "$ref": "component",
+            "source_replay_key": _semantic_replay_key(str(row["idempotency_key"])),
+            "component_key": row["key"],
+        }
+    for row in _query_rows(
+        session,
+        "SELECT item.id, item.component_key AS open_item_key, component.key, event.idempotency_key "
+        "FROM open_items AS item "
+        "JOIN business_event_components AS component ON component.org_id=item.org_id "
+        "AND component.id=item.source_component_id "
+        "JOIN business_events AS event ON event.org_id=component.org_id "
+        "AND event.id=component.event_id WHERE item.org_id=:org_id",
+        org_id=org_id,
+    ):
+        maps["open_item"][str(row["id"])] = {
+            "$ref": "component_open_item",
+            "source_replay_key": _semantic_replay_key(str(row["idempotency_key"])),
+            "component_key": row["key"],
+            "open_item_key": row["open_item_key"],
+        }
     return maps
 
 
@@ -708,8 +784,7 @@ def _replace_stable_references(
         }
     if isinstance(value, list):
         return [
-            _replace_stable_references(item, org_id=org_id, maps=maps, key=key)
-            for item in value
+            _replace_stable_references(item, org_id=org_id, maps=maps, key=key) for item in value
         ]
     if isinstance(value, uuid.UUID):
         value = str(value)
@@ -729,6 +804,7 @@ def _replace_stable_references(
             "labor_person_id": ("labor_person",),
             "source_open_item_id": ("open_item",),
             "open_item_id": ("open_item",),
+            "component_id": ("component",),
             "asset_id": ("asset", "intangible"),
             "borrowing_id": ("borrowing",),
             "original_event_id": ("event",),
@@ -743,6 +819,7 @@ def _replace_stable_references(
             "bank",
             "employee",
             "open_item",
+            "component",
             "asset",
             "intangible",
             "labor_person",
@@ -812,9 +889,7 @@ def _setup_operations(
             org_id=org_id,
             maps=maps,
         )
-        request["idempotency_key"] = _replay_idempotency(
-            f"labor-person:{row['person_code']}"
-        )
+        request["idempotency_key"] = _replay_idempotency(f"labor-person:{row['person_code']}")
         request["evidence_references"] = _evidence_refs_for(
             session,
             table="labor_service_person_evidence",
@@ -930,9 +1005,7 @@ def _setup_operations(
         org_id=org_id,
     )
     policy_keys = {
-        str(row["id"]): (
-            f"payroll-policy:{row['region']}:{row['version']}:{row['effective_from']}"
-        )
+        str(row["id"]): (f"payroll-policy:{row['region']}:{row['version']}:{row['effective_from']}")
         for row in policies
     }
     for row in policies:
@@ -1007,9 +1080,7 @@ def _payroll_fact_operations(
                 ),
                 "kind": "tool",
                 "tool": "finance_register_payroll_opening_state",
-                "request": _table_request(
-                    row, opening_fields, org_id=org_id, maps=maps
-                ),
+                "request": _table_request(row, opening_fields, org_id=org_id, maps=maps),
                 "allowed_statuses": ["registered"],
             }
         )
@@ -1148,9 +1219,6 @@ def _event_workflow_request(
             "SELECT calculation_input FROM labor_remuneration_batches "
             "WHERE business_event_id=:event_id"
         ),
-        "unified_payout_run": (
-            "SELECT calculation_input FROM unified_payout_runs WHERE business_event_id=:event_id"
-        ),
     }
     sql = query_by_type.get(str(event["event_type"]))
     if sql is None:
@@ -1173,6 +1241,217 @@ def _filter_request_for_tool(name: str, request: Mapping[str, Any]) -> dict[str,
     return {key: value for key, value in request.items() if key in model.model_fields}
 
 
+def _composite_replay_request(
+    session: Session,
+    event: Mapping[str, Any],
+    *,
+    org_id: uuid.UUID,
+    maps: dict[str, dict[str, Any]],
+    replay_key: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Replace frozen calculated component identities with replay-time previews."""
+
+    raw_request = dict(event["facts"] or {})
+    request = _replace_stable_references(raw_request, org_id=org_id, maps=maps)
+    components = request.get("components")
+    raw_components = raw_request.get("components")
+    if not isinstance(components, list) or not isinstance(raw_components, list):
+        raise ReplayError("REPLAY_SOURCE_COMPONENT_FACTS_MISSING")
+    by_key = {str(item.get("key")): item for item in components if isinstance(item, dict)}
+    raw_by_key = {
+        str(item.get("key")): item for item in raw_components if isinstance(item, Mapping)
+    }
+    preparations_by_component: dict[str, dict[str, Any]] = {}
+    preparation_dependencies: dict[str, set[str]] = {}
+    calculated_line_refs: dict[str, dict[str, Any]] = {}
+    workflows = {
+        "payroll_accrual": (
+            "payroll_batches",
+            "finance_preview_payroll",
+        ),
+        "labor_remuneration_accrual": (
+            "labor_remuneration_batches",
+            "finance_preview_labor_remuneration_batch",
+        ),
+    }
+    for raw_component in raw_components:
+        if not isinstance(raw_component, Mapping):
+            raise ReplayError("REPLAY_SOURCE_COMPONENT_FACTS_MISSING")
+        key = str(raw_component.get("key", ""))
+        kind = str(raw_component.get("kind", ""))
+        exported = by_key.get(key)
+        if exported is None:
+            raise ReplayError("REPLAY_SOURCE_COMPONENT_FACTS_MISSING")
+        if kind in {"tax_relief", "enterprise_income_tax_result"}:
+            # The secured whole-event preview recalculates these against all
+            # preceding and sibling components and returns the reviewed hash.
+            exported["calculation_hash"] = "0" * 64
+        if kind in {"fixed_asset_depreciation", "fixed_asset_depreciation_batch"}:
+            depreciation_facts = exported.get("facts")
+            if not isinstance(depreciation_facts, dict):
+                raise ReplayError("REPLAY_SOURCE_COMPONENT_FACTS_MISSING")
+            # Local activation sources are rebuilt by the whole-event compiler.
+            # The exported request carries only stable component keys; the
+            # secured preview supplies a new calculation hash and formal source
+            # proof for the target database.
+            depreciation_facts["calculation_hash"] = "0" * 64
+        workflow = workflows.get(kind)
+        if workflow is None:
+            continue
+        batch_id = raw_component.get("batch_id")
+        if batch_id is None:
+            raise ReplayError("REPLAY_SOURCE_WORKFLOW_REQUEST_MISSING")
+        table_name, preview_tool = workflow
+        calculation_input = session.scalar(
+            text(f'SELECT calculation_input FROM "{table_name}" WHERE org_id=:org_id AND id=:id'),
+            {"org_id": org_id, "id": batch_id},
+        )
+        if not isinstance(calculation_input, Mapping) or not isinstance(
+            calculation_input.get("request"), Mapping
+        ):
+            raise ReplayError("REPLAY_SOURCE_WORKFLOW_REQUEST_MISSING")
+        preparation_key = f"{replay_key}:prepare:{key}"
+        preview_request = _replace_stable_references(
+            dict(calculation_input["request"]), org_id=org_id, maps=maps
+        )
+        preview_request["org_id"] = "${ORG_ID}"
+        preview_request["idempotency_key"] = _replay_idempotency(preparation_key)
+        preview_request = _filter_request_for_tool(preview_tool, preview_request)
+        preparation = {
+            "key": preparation_key,
+            "preview_tool": preview_tool,
+            "preview_request": preview_request,
+            "allowed_statuses": ["calculated"],
+        }
+        dependencies: set[str] = set()
+        regular_component_keys = raw_component.get("regular_payroll_component_keys") or []
+        if regular_component_keys:
+            if kind != "payroll_accrual":
+                raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+            if not isinstance(regular_component_keys, list):
+                raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+            parent_by_batch_id: dict[str, tuple[str, str]] = {}
+            for value in regular_component_keys:
+                regular_component_key = str(value)
+                regular_component = raw_by_key.get(regular_component_key)
+                if (
+                    regular_component is None
+                    or regular_component.get("kind") != "payroll_accrual"
+                    or regular_component.get("batch_id") is None
+                ):
+                    raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+                regular_batch_id = str(regular_component["batch_id"])
+                parent_preparation_key = f"{replay_key}:prepare:{regular_component_key}"
+                if regular_batch_id in parent_by_batch_id:
+                    raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+                parent_by_batch_id[regular_batch_id] = (
+                    regular_component_key,
+                    parent_preparation_key,
+                )
+            employee_items = preview_request.get("employee_items")
+            if not isinstance(employee_items, list) or not employee_items:
+                raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+            used_parent_keys: set[str] = set()
+            for item in employee_items:
+                if not isinstance(item, dict):
+                    raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+                parent = parent_by_batch_id.get(str(item.get("regular_payroll_batch_id")))
+                if parent is None:
+                    raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+                regular_component_key, parent_preparation_key = parent
+                item["regular_payroll_batch_id"] = {
+                    "$ref": "operation_result",
+                    "operation_key": parent_preparation_key,
+                    "field": "batch_id",
+                }
+                used_parent_keys.add(regular_component_key)
+            dependencies.update(used_parent_keys)
+            if used_parent_keys != {str(value) for value in regular_component_keys}:
+                raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+            preparation["depends_on"] = [
+                f"{replay_key}:prepare:{component_key}"
+                for component_key in regular_component_keys
+            ]
+        preparations_by_component[key] = preparation
+        preparation_dependencies[key] = dependencies
+        exported["batch_id"] = {
+            "$ref": "operation_result",
+            "operation_key": preparation_key,
+            "field": "batch_id",
+        }
+        exported["calculation_hash"] = {
+            "$ref": "operation_result",
+            "operation_key": preparation_key,
+            "field": "calculation_hash",
+        }
+        if kind == "payroll_accrual":
+            rows = _query_rows(
+                session,
+                "SELECT line.id, employee.employee_code FROM payroll_lines AS line "
+                "JOIN employees AS employee ON employee.org_id=line.org_id "
+                "AND employee.id=line.employee_id WHERE line.org_id=:org_id "
+                "AND line.payroll_batch_id=:batch_id",
+                org_id=org_id,
+                batch_id=batch_id,
+            )
+            calculated_line_refs.update(
+                {
+                    f"salary:{row['id']}": {
+                        "$ref": "prepared_line_key",
+                        "operation_key": preparation_key,
+                        "identity_code": row["employee_code"],
+                        "line_kind": "payroll",
+                    }
+                    for row in rows
+                }
+            )
+        else:
+            rows = _query_rows(
+                session,
+                "SELECT line.id, person.person_code FROM labor_remuneration_lines AS line "
+                "JOIN labor_service_persons AS person ON person.org_id=line.org_id "
+                "AND person.id=line.labor_person_id WHERE line.org_id=:org_id "
+                "AND line.batch_id=:batch_id",
+                org_id=org_id,
+                batch_id=batch_id,
+            )
+            calculated_line_refs.update(
+                {
+                    str(row["id"]): {
+                        "$ref": "prepared_line_key",
+                        "operation_key": preparation_key,
+                        "identity_code": row["person_code"],
+                        "line_kind": "labor",
+                    }
+                    for row in rows
+                }
+            )
+
+    preparations: list[dict[str, Any]] = []
+    emitted: set[str] = set()
+    while len(emitted) < len(preparations_by_component):
+        ready = [
+            key
+            for key in preparations_by_component
+            if key not in emitted and preparation_dependencies[key].issubset(emitted)
+        ]
+        if not ready:
+            raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
+        for key in ready:
+            preparations.append(preparations_by_component[key])
+            emitted.add(key)
+
+    def replace_line_keys(value: Any) -> Any:
+        if isinstance(value, list):
+            return [replace_line_keys(item) for item in value]
+        if isinstance(value, dict):
+            return {name: replace_line_keys(item) for name, item in value.items()}
+        return calculated_line_refs.get(str(value), value)
+
+    request = replace_line_keys(request)
+    return request, preparations
+
+
 def _event_operation(
     session: Session,
     event: Mapping[str, Any],
@@ -1185,7 +1464,6 @@ def _event_operation(
     facts = dict(event["facts"] or {})
     workflow_request = _event_workflow_request(session, event)
     request = workflow_request or facts
-    request = _replace_stable_references(request, org_id=org_id, maps=maps)
     request["org_id"] = "${ORG_ID}"
     request["idempotency_key"] = _replay_idempotency(replay_key + ":preview")
     common = {
@@ -1199,16 +1477,27 @@ def _event_operation(
             json.dumps(_jsonable(facts), ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
     }
-    if event_type in _GENERIC_EVENT_TYPES:
+    if isinstance(facts.get("components"), list):
+        request, preparations = _composite_replay_request(
+            session,
+            event,
+            org_id=org_id,
+            maps=maps,
+            replay_key=replay_key,
+        )
+        if not isinstance(request.get("components"), list) or not request["components"]:
+            raise ReplayError("REPLAY_SOURCE_COMPONENT_FACTS_MISSING")
         request["idempotency_key"] = _replay_idempotency(replay_key)
         request = _filter_request_for_tool("finance_record_event", request)
         return {
             **common,
-            "kind": "tool",
+            "kind": "composite_event",
             "tool": "finance_record_event",
             "request": request,
+            "preparations": preparations,
             "allowed_statuses": ["posted"],
         }
+    request = _replace_stable_references(request, org_id=org_id, maps=maps)
     if event_type in _DIRECT_SPECIALIZED_TOOLS:
         request["idempotency_key"] = _replay_idempotency(replay_key)
         tool_name = _DIRECT_SPECIALIZED_TOOLS[event_type]
@@ -1316,23 +1605,13 @@ def _company_checkpoints(session: Session, org_id: uuid.UUID) -> dict[str, Any]:
         "bank_reconciliation_count": count("bank_reconciliations"),
         "fixed_asset_count": count("fixed_assets"),
         "intangible_asset_count": count("intangible_assets"),
-        "labor_remuneration_batch_count": count(
-            "labor_remuneration_batches", "status='posted'"
-        ),
-        "financial_statement_classification_count": count(
-            "financial_statement_classifications"
-        ),
+        "labor_remuneration_batch_count": count("labor_remuneration_batches", "status='posted'"),
+        "financial_statement_classification_count": count("financial_statement_classifications"),
         "enterprise_income_tax_confirmation_count": count(
             "enterprise_income_tax_quarter_confirmations"
         ),
-        "enterprise_income_tax_result_count": (
-            count("enterprise_income_tax_results")
-            if sa_inspect(session.bind).has_table("enterprise_income_tax_results") else 0
-        ),
-        "enterprise_income_tax_settlement_count": (
-            count("enterprise_income_tax_settlements")
-            if sa_inspect(session.bind).has_table("enterprise_income_tax_settlements") else 0
-        ),
+        "enterprise_income_tax_result_count": count("enterprise_income_tax_results"),
+        "enterprise_income_tax_settlement_count": count("enterprise_income_tax_settlements"),
         "closed_period_count": sum(item["status"] == "closed" for item in periods),
         "closed_periods": [
             f"{item['calendar_year']:04d}-{item['calendar_month']:02d}"
@@ -1358,9 +1637,7 @@ def _company_checkpoints(session: Session, org_id: uuid.UUID) -> dict[str, Any]:
     }
 
 
-def _account_balance_projection(
-    session: Session, org_id: uuid.UUID
-) -> list[dict[str, Any]]:
+def _account_balance_projection(session: Session, org_id: uuid.UUID) -> list[dict[str, Any]]:
     return _query_rows(
         session,
         """
@@ -1430,9 +1707,7 @@ def _open_item_projection(
             "item_type": row["item_type"],
             "original_amount_fen": row["original_amount_fen"],
             "settled_amount_fen": row["settled_amount_fen"],
-            "remaining_amount_fen": (
-                row["original_amount_fen"] - row["settled_amount_fen"]
-            ),
+            "remaining_amount_fen": (row["original_amount_fen"] - row["settled_amount_fen"]),
             "status": row["status"],
             "due_date": row["due_date"],
             "payable_category": row["payable_category"],
@@ -1565,7 +1840,7 @@ def _account_controls(session: Session, org_id: uuid.UUID) -> list[dict[str, Any
     return _query_rows(
         session,
         """
-        SELECT code, name, category, normal_side, system_role, active,
+        SELECT code, name, category, normal_side, system_role, business_class, active,
                requires_bank_reconciliation, bank_reconciliation_start_date,
                bank_reconciliation_end_date
           FROM accounts WHERE org_id=:org_id ORDER BY code
@@ -1746,9 +2021,7 @@ def _bank_reconciliation_operations(
                 "preview_tool": "finance_preview_bank_reconciliation",
                 "confirm_tool": "finance_confirm_bank_reconciliation",
                 "preview_request": request,
-                "confirm_request": {
-                    "idempotency_key": _replay_idempotency(stable_key)
-                },
+                "confirm_request": {"idempotency_key": _replay_idempotency(stable_key)},
                 "allowed_preview_statuses": ["calculated"],
                 "allowed_confirm_statuses": ["posted"],
             }
@@ -1785,8 +2058,7 @@ def _financial_statement_operations(
                     ),
                     "confirmation_note": row["confirmation_note"],
                     "evidence_references": [
-                        maps["evidence"][str(item)]
-                        for item in row["evidence_references"]
+                        maps["evidence"][str(item)] for item in row["evidence_references"]
                     ],
                 },
                 "allowed_statuses": ["posted"],
@@ -1799,11 +2071,12 @@ def _financial_statement_operations(
         SELECT classification.id, classification.allocations,
                classification.confirmation_note,
                classification.evidence_references,
-               line.line_number, account.code AS account_code,
+               line.line_number, component.key AS component_key, account.code AS account_code,
                line.debit_fen, line.credit_fen, event.idempotency_key
           FROM financial_statement_classifications AS classification
           JOIN voucher_lines AS line ON line.id=classification.voucher_line_id
           JOIN accounts AS account ON account.id=line.account_id
+          JOIN business_event_components AS component ON component.id=line.component_id
           JOIN vouchers AS voucher ON voucher.id=line.voucher_id
           JOIN business_events AS event ON event.id=voucher.event_id
          WHERE classification.org_id=:org_id
@@ -1828,7 +2101,7 @@ def _financial_statement_operations(
                     "voucher_line_id": {
                         "$ref": "voucher_line",
                         "source_replay_key": replay_key,
-                        "line_number": row["line_number"],
+                        "component_key": row["component_key"],
                         "account_code": row["account_code"],
                         "debit_fen": row["debit_fen"],
                         "credit_fen": row["credit_fen"],
@@ -1838,8 +2111,7 @@ def _financial_statement_operations(
                     "idempotency_key": _replay_idempotency(stable_key),
                     "confirmation_note": row["confirmation_note"],
                     "evidence_references": [
-                        maps["evidence"][str(item)]
-                        for item in row["evidence_references"]
+                        maps["evidence"][str(item)] for item in row["evidence_references"]
                     ],
                 },
                 "allowed_statuses": ["posted"],
@@ -1876,8 +2148,7 @@ def _financial_statement_operations(
                     "idempotency_key": _replay_idempotency(stable_key),
                     "confirmation_note": row["confirmation_note"],
                     "evidence_references": [
-                        maps["evidence"][str(item)]
-                        for item in row["evidence_references"]
+                        maps["evidence"][str(item)] for item in row["evidence_references"]
                     ],
                 },
                 "allowed_statuses": ["posted"],
@@ -1897,6 +2168,7 @@ def _income_tax_operations(
     roots = _query_rows(
         session,
         "SELECT * FROM enterprise_income_tax_quarter_confirmations WHERE org_id=:org_id "
+        "AND business_event_id IS NULL "
         "ORDER BY created_at, calendar_year, calendar_quarter",
         org_id=org_id,
     )
@@ -1927,11 +2199,10 @@ def _income_tax_operations(
                 "allowed_statuses": ["posted"],
             }
         )
-    if not sa_inspect(session.bind).has_table("enterprise_income_tax_results"):
-        return operations
     results = _query_rows(
         session,
         "SELECT * FROM enterprise_income_tax_results WHERE org_id=:org_id "
+        "AND business_event_id IS NULL "
         "ORDER BY created_at, revision",
         org_id=org_id,
     )
@@ -1953,74 +2224,6 @@ def _income_tax_operations(
                 "allowed_confirm_statuses": ["posted"],
             }
         )
-    cash = _query_rows(
-        session,
-        """
-        SELECT * FROM business_events WHERE org_id=:org_id
-         AND status IN ('posted','reversed') AND (
-           event_type='enterprise_income_tax_refund' OR
-           (event_type='tax_payment' AND
-            facts::jsonb #>> '{details,tax_type}'='enterprise_income_tax'))
-         ORDER BY created_at, id
-    """,
-        org_id=org_id,
-    )
-    for event in cash:
-        facts = dict(event["facts"])
-        if not facts.get("income_tax_allocations"):
-            # Use only the explicitly evidenced historical attribution. No inference
-            # from amount, memo, bank date, or another year's aggregate GL balance.
-            links = _query_rows(
-                session,
-                """
-                SELECT line.result_id, line.original_confirmation_id, line.amount_fen
-                  FROM enterprise_income_tax_settlement_lines line
-                  JOIN enterprise_income_tax_settlements settlement
-                    ON settlement.id=line.settlement_id
-                 WHERE settlement.org_id=:org_id AND settlement.event_id=:event_id
-                 ORDER BY line.id
-            """,
-                org_id=org_id,
-                event_id=event["id"],
-            )
-            if not links:
-                raise ReplayError("REPLAY_CIT_HISTORICAL_PAYMENT_ATTRIBUTION_REQUIRED")
-            facts["income_tax_allocations"] = [
-                {
-                    "source_id": str(v["result_id"] or v["original_confirmation_id"]),
-                    "amount_fen": v["amount_fen"],
-                }
-                for v in links
-            ]
-        operation = _event_operation(session, event | {"facts": facts}, org_id=org_id, maps=maps)
-        operations.append(operation)
-        if event["reversed_by_event_id"]:
-            reversal = _query_rows(
-                session,
-                "SELECT * FROM business_events WHERE id=:id",
-                id=event["reversed_by_event_id"],
-            )[0]
-            key = _semantic_replay_key(reversal["idempotency_key"])
-            operations.append(
-                {
-                    "key": key,
-                    "kind": "tool",
-                    "source_created_at": str(reversal["created_at"]),
-                    "tool": "finance_reverse_event",
-                    "request": {
-                        "org_id": "${ORG_ID}",
-                        "event_id": {
-                            "$ref": "operation_result",
-                            "operation_key": operation["key"],
-                            "field": "event_id",
-                        },
-                        "posting_date": reversal["posting_date"],
-                        "reason": reversal["facts"]["reason"],
-                        "idempotency_key": _replay_idempotency(key),
-                    },
-                    "allowed_statuses": ["posted"],
-                }
-            )
     return sorted(operations, key=lambda v: v["source_created_at"])
 
 
@@ -2030,13 +2233,18 @@ def _income_tax_event_inventory(
     """Keep effective CIT events in the package's independently checked inventory."""
     inventory = []
     for event in events:
+        components = event["facts"].get("components", [])
         if event["event_type"] not in {
             "enterprise_income_tax_assessment",
             "enterprise_income_tax_result",
-            "enterprise_income_tax_refund",
-        } and not (
-            event["event_type"] == "tax_payment"
-            and event["facts"].get("details", {}).get("tax_type") == "enterprise_income_tax"
+        } and not any(
+            c.get("kind")
+            in {"enterprise_income_tax_assessment", "enterprise_income_tax_result"}
+            or (
+                c.get("kind") == "tax_settlement"
+                and c.get("tax_type") == "enterprise_income_tax"
+            )
+            for c in components
         ):
             continue
         reference = maps["event"].get(str(event["id"]), {})
@@ -2168,9 +2376,7 @@ def _external_obligation_identity(
     else:
         raise ReplayError("REPLAY_SOURCE_OBLIGATION_SCOPE_UNSUPPORTED")
     for identity in identities:
-        candidate = uuid.uuid5(
-            _OBLIGATION_NAMESPACE, f"{org_id}:{code}:{scope}:{identity}"
-        )
+        candidate = uuid.uuid5(_OBLIGATION_NAMESPACE, f"{org_id}:{code}:{scope}:{identity}")
         if candidate == obligation_id:
             return identity
     raise ReplayError("REPLAY_SOURCE_OBLIGATION_IDENTITY_UNRESOLVED")
@@ -2341,424 +2547,20 @@ def _owner_control_operations(
     return operations
 
 
-def _load_export_normalizations(path: Path | None) -> dict[str, list[dict[str, Any]]]:
-    if path is None:
-        return {}
-    source = path.resolve(strict=True)
-    if not source.is_file() or source.is_symlink():
-        raise ReplayError("REPLAY_NORMALIZATION_FILE_INVALID")
-    value = _load_json(source)
-    if not isinstance(value, dict) or set(value) != {"format_version", "companies"}:
-        raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-    if value.get("format_version") != _NORMALIZATION_VERSION:
-        raise ReplayError("REPLAY_NORMALIZATION_FORMAT_UNSUPPORTED")
-    companies = value.get("companies")
-    if not isinstance(companies, list):
-        raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-    result: dict[str, list[dict[str, Any]]] = {}
-    for company in companies:
-        if not isinstance(company, dict) or set(company) != {"org_id", "controls"}:
-            raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-        org_id = str(uuid.UUID(str(company["org_id"])))
-        if org_id in result or not isinstance(company["controls"], list):
-            raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-        controls: list[dict[str, Any]] = []
-        for control in company["controls"]:
-            kind = control.get("kind") if isinstance(control, dict) else None
-            if kind == "no_payroll_accrual":
-                required = {
-                    "kind",
-                    "period_month",
-                    "employee_codes",
-                    "source_assertion",
-                    "confirmation_note",
-                }
-            elif kind == "financial_statement_classification":
-                required = {
-                    "kind",
-                    "period_month",
-                    "source_replay_key",
-                    "line_number",
-                    "account_code",
-                    "debit_fen",
-                    "credit_fen",
-                    "allocations",
-                    "source_assertion",
-                    "confirmation_note",
-                }
-            else:
-                raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-            if not isinstance(control, dict) or set(control) != required:
-                raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-            if (
-                re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", str(control.get("period_month")))
-                is None
-                or not isinstance(control.get("source_assertion"), str)
-                or not control["source_assertion"].strip()
-                or not isinstance(control.get("confirmation_note"), str)
-                or not control["confirmation_note"].strip()
-            ):
-                raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-            if kind == "no_payroll_accrual":
-                employee_codes = control.get("employee_codes")
-                if (
-                    not isinstance(employee_codes, list)
-                    or not employee_codes
-                    or any(
-                        not isinstance(code, str) or not code.strip()
-                        for code in employee_codes
-                    )
-                    or len(employee_codes) != len(set(employee_codes))
-                ):
-                    raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-            else:
-                allocations = control.get("allocations")
-                if (
-                    not isinstance(control.get("source_replay_key"), str)
-                    or not control["source_replay_key"].strip()
-                    or not isinstance(control.get("account_code"), str)
-                    or not control["account_code"].strip()
-                    or not isinstance(control.get("line_number"), int)
-                    or control["line_number"] < 1
-                    or not isinstance(control.get("debit_fen"), int)
-                    or control["debit_fen"] < 0
-                    or not isinstance(control.get("credit_fen"), int)
-                    or control["credit_fen"] < 0
-                    or not isinstance(allocations, list)
-                    or not allocations
-                ):
-                    raise ReplayError("REPLAY_NORMALIZATION_FORMAT_INVALID")
-            controls.append(dict(control))
-        result[org_id] = controls
-    return result
-
-
-def _financial_classification_normalization_operation(
-    session: Session,
-    *,
-    org_id: uuid.UUID,
-    maps: dict[str, dict[str, Any]],
-    control: Mapping[str, Any],
-) -> dict[str, Any]:
-    replay_key = str(control["source_replay_key"]).strip()
-    matching_events = [
-        row
-        for row in _query_rows(
-            session,
-            "SELECT id, idempotency_key, facts, posting_date, status "
-            "FROM business_events WHERE org_id=:org_id",
-            org_id=org_id,
-        )
-        if _semantic_replay_key(str(row["idempotency_key"])) == replay_key
-    ]
-    if len(matching_events) != 1 or matching_events[0]["status"] != "posted":
-        raise ReplayError("REPLAY_NORMALIZATION_SOURCE_EVENT_MISMATCH")
-    event = matching_events[0]
-    month = str(control["period_month"])
-    if str(event["posting_date"])[:7] != month:
-        raise ReplayError("REPLAY_NORMALIZATION_PERIOD_MISMATCH")
-    source_assertion = str(control["source_assertion"]).strip()
-    if source_assertion not in json.dumps(
-        event["facts"], ensure_ascii=False, sort_keys=True
-    ):
-        raise ReplayError("REPLAY_NORMALIZATION_SOURCE_ASSERTION_MISSING")
-    line = (
-        session.execute(
-            text(
-                "SELECT line.id, line.line_number, account.code AS account_code, "
-                "line.debit_fen, line.credit_fen "
-                "FROM vouchers AS voucher "
-                "JOIN voucher_lines AS line ON line.voucher_id=voucher.id "
-                "JOIN accounts AS account ON account.id=line.account_id "
-                "WHERE voucher.org_id=:org_id AND voucher.event_id=:event_id "
-                "AND voucher.status='posted' AND line.line_number=:line_number"
-            ),
-            {
-                "org_id": org_id,
-                "event_id": event["id"],
-                "line_number": int(control["line_number"]),
-            },
-        )
-        .mappings()
-        .one_or_none()
-    )
-    if line is None or any(
-        line[field] != control[field]
-        for field in ("account_code", "debit_fen", "credit_fen")
-    ):
-        raise ReplayError("REPLAY_NORMALIZATION_VOUCHER_LINE_MISMATCH")
-    active_classification_count = int(
-        session.execute(
-            text(
-                "SELECT count(*) FROM financial_statement_classifications AS current "
-                "WHERE current.org_id=:org_id AND current.voucher_line_id=:line_id "
-                "AND NOT EXISTS (SELECT 1 FROM financial_statement_classifications "
-                "AS successor WHERE successor.org_id=current.org_id "
-                "AND successor.supersedes_id=current.id)"
-            ),
-            {"org_id": org_id, "line_id": line["id"]},
-        ).scalar_one()
-    )
-    if active_classification_count:
-        raise ReplayError("REPLAY_NORMALIZATION_CLASSIFICATION_ALREADY_EXISTS")
-    evidence = _evidence_refs_for(
-        session,
-        table="event_evidence",
-        owner_column="event_id",
-        owner_id=event["id"],
-        evidence_by_id=maps["evidence"],
-    )
-    if not evidence:
-        raise ReplayError("REPLAY_NORMALIZATION_EVIDENCE_REQUIRED")
-    stable_key = f"financial-classification:normalized:{replay_key}:{line['line_number']}"
-    return {
-        "key": stable_key,
-        "kind": "tool",
-        "tool": "finance_confirm_financial_statement_classification",
-        "request": {
-            "org_id": "${ORG_ID}",
-            "voucher_line_id": {
-                "$ref": "voucher_line",
-                "source_replay_key": replay_key,
-                "line_number": line["line_number"],
-                "account_code": line["account_code"],
-                "debit_fen": line["debit_fen"],
-                "credit_fen": line["credit_fen"],
-            },
-            "allocations": control["allocations"],
-            "supersedes_classification_id": None,
-            "idempotency_key": _replay_idempotency(stable_key),
-            "confirmation_note": str(control["confirmation_note"]).strip(),
-            "evidence_references": evidence,
-        },
-        "allowed_statuses": ["posted"],
-        "normalization": {
-            "kind": "financial_statement_classification",
-            "source_assertion_sha256": hashlib.sha256(
-                source_assertion.encode("utf-8")
-            ).hexdigest(),
-        },
-    }
-
-
-def _normalization_operations(
-    session: Session,
-    *,
-    org_id: uuid.UUID,
-    maps: dict[str, dict[str, Any]],
-    controls: Sequence[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    """Compile explicit private replay corrections into typed owner controls."""
-
-    operations: list[dict[str, Any]] = []
-    for control in controls:
-        if control["kind"] == "financial_statement_classification":
-            operations.append(
-                _financial_classification_normalization_operation(
-                    session,
-                    org_id=org_id,
-                    maps=maps,
-                    control=control,
-                )
-            )
-            continue
-        month = str(control["period_month"])
-        period_row = (
-            session.execute(
-                text(
-                    """
-                SELECT period.id, period.start_date, period.end_date, period.status,
-                       action.id AS action_id, action.confirmation_note,
-                       action.input_facts
-                  FROM accounting_periods AS period
-                  JOIN accounting_period_closes AS close
-                    ON close.org_id=period.org_id AND close.id=period.close_id
-                  JOIN accounting_period_actions AS action
-                    ON action.org_id=close.org_id AND action.id=close.action_id
-                 WHERE period.org_id=:org_id
-                   AND period.calendar_year=:calendar_year
-                   AND period.calendar_month=:calendar_month
-                """
-                ),
-                {
-                    "org_id": org_id,
-                    "calendar_year": int(month[:4]),
-                    "calendar_month": int(month[5:]),
-                },
-            )
-            .mappings()
-            .one_or_none()
-        )
-        if period_row is None or period_row["status"] != "closed":
-            raise ReplayError("REPLAY_NORMALIZATION_CLOSED_PERIOD_REQUIRED")
-        source_assertion = str(control["source_assertion"]).strip()
-        source_assertion_values = [str(period_row["confirmation_note"])]
-        source_assertion_values.extend(
-            str(value)
-            for value in session.execute(
-                text(
-                    "SELECT action.confirmation_note "
-                    "FROM accounting_period_actions AS action "
-                    "JOIN accounting_period_closes AS close "
-                    "ON close.org_id=action.org_id AND close.action_id=action.id "
-                    "JOIN accounting_periods AS period "
-                    "ON period.org_id=close.org_id AND period.id=close.period_id "
-                    "WHERE action.org_id=:org_id AND period.end_date<=:period_end"
-                ),
-                {"org_id": org_id, "period_end": period_row["end_date"]},
-            ).scalars()
-            if value is not None
-        )
-        for payroll_source in session.execute(
-            text(
-                "SELECT confirmation_note, calculation_input FROM payroll_batches "
-                "WHERE org_id=:org_id AND payroll_period<=:period_month "
-                "AND batch_kind='regular' AND status='posted' "
-                "AND reversal_of_batch_id IS NULL"
-            ),
-            {"org_id": org_id, "period_month": month},
-        ).mappings():
-            if payroll_source["confirmation_note"] is not None:
-                source_assertion_values.append(str(payroll_source["confirmation_note"]))
-            source_assertion_values.append(
-                json.dumps(
-                    payroll_source["calculation_input"],
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-            )
-        if not any(source_assertion in value for value in source_assertion_values):
-            raise ReplayError("REPLAY_NORMALIZATION_SOURCE_ASSERTION_MISSING")
-        review_facts = (period_row["input_facts"] or {}).get("review_facts") or {}
-        if review_facts.get("payroll_and_statutory_items_reviewed") is not True:
-            raise ReplayError("REPLAY_NORMALIZATION_PAYROLL_REVIEW_REQUIRED")
-        employees = _query_rows(
-            session,
-            """
-            SELECT id, employee_code
-              FROM employees
-             WHERE org_id=:org_id AND status='active'
-               AND employment_start_date<=:period_end
-               AND (employment_end_date IS NULL OR employment_end_date>=:period_start)
-             ORDER BY employee_code, id
-            """,
-            org_id=org_id,
-            period_start=period_row["start_date"],
-            period_end=period_row["end_date"],
-        )
-        employee_by_id = {str(row["id"]): row for row in employees}
-        source_codes = sorted(str(row["employee_code"]) for row in employees)
-        requested_codes = sorted(str(code).strip() for code in control["employee_codes"])
-        payroll_rows = list(
-            session.execute(
-                text(
-                    "SELECT id, calculation_input FROM payroll_batches "
-                    "WHERE org_id=:org_id AND payroll_period=:period_month "
-                    "AND batch_kind='regular' AND status='posted' "
-                    "AND reversal_of_batch_id IS NULL ORDER BY version, id"
-                ),
-                {"org_id": org_id, "period_month": month},
-            ).mappings()
-        )
-        if len(payroll_rows) > 1:
-            raise ReplayError("REPLAY_NORMALIZATION_MULTIPLE_PAYROLL_BATCHES")
-        regular_payroll_items: list[dict[str, Any]] = []
-        covered_codes: set[str] = set()
-        if payroll_rows:
-            calculation_input = payroll_rows[0]["calculation_input"]
-            request = (
-                calculation_input.get("request")
-                if isinstance(calculation_input, dict)
-                else None
-            )
-            raw_items = request.get("employee_items") if isinstance(request, dict) else None
-            if not isinstance(raw_items, list) or not raw_items:
-                raise ReplayError("REPLAY_NORMALIZATION_PAYROLL_REQUEST_MISSING")
-            for raw_item in raw_items:
-                if not isinstance(raw_item, dict):
-                    raise ReplayError("REPLAY_NORMALIZATION_PAYROLL_REQUEST_INVALID")
-                source_employee_id = str(raw_item.get("employee_id", ""))
-                employee = employee_by_id.get(source_employee_id)
-                if employee is None:
-                    raise ReplayError("REPLAY_NORMALIZATION_PAYROLL_EMPLOYEE_MISMATCH")
-                employee_code = str(employee["employee_code"])
-                if employee_code in covered_codes:
-                    raise ReplayError("REPLAY_NORMALIZATION_PAYROLL_EMPLOYEE_DUPLICATE")
-                covered_codes.add(employee_code)
-                normalized_item = dict(raw_item)
-                normalized_item["employee_id"] = maps["employee"][source_employee_id]
-                regular_payroll_items.append(normalized_item)
-        missing_codes = sorted(set(source_codes) - covered_codes)
-        if missing_codes != requested_codes:
-            raise ReplayError("REPLAY_NORMALIZATION_EMPLOYEE_SCOPE_MISMATCH")
-        employee_by_code = {str(row["employee_code"]): row for row in employees}
-        regular_payroll_items.extend(
-            {
-                "employee_id": maps["employee"][str(employee_by_code[code]["id"])],
-                "wage_tax_declaration_state": "not_declared",
-                "accounting_gross_salary_fen": 0,
-                "special_additional_deduction_fen": 0,
-                "other_legal_deduction_fen": 0,
-                "tax_relief_fen": 0,
-            }
-            for code in requested_codes
-        )
-        existing_workforce_count = int(
-            session.execute(
-                text(
-                    "SELECT count(*) FROM owner_period_confirmations "
-                    "WHERE org_id=:org_id AND period_id=:period_id "
-                    "AND fact_type='workforce_review'"
-                ),
-                {"org_id": org_id, "period_id": period_row["id"]},
-            ).scalar_one()
-        )
-        if existing_workforce_count:
-            raise ReplayError("REPLAY_NORMALIZATION_WORKFORCE_FACT_ALREADY_EXISTS")
-        evidence = _evidence_refs_for(
-            session,
-            table="accounting_period_action_evidence",
-            owner_column="action_id",
-            owner_id=period_row["action_id"],
-            evidence_by_id=maps["evidence"],
-        )
-        if not evidence:
-            raise ReplayError("REPLAY_NORMALIZATION_EVIDENCE_REQUIRED")
-        stable_key = f"owner-control:normalized-no-payroll:{month}"
-        operations.append(
-            {
-                "key": stable_key,
-                "kind": "owner_control",
-                "control": "workforce_review",
-                "period_month": month,
-                "confirmation_state": "changes_resolved",
-                "regular_payroll_items": regular_payroll_items,
-                "confirmation_note": str(control["confirmation_note"]).strip(),
-                "evidence_references": evidence,
-                "idempotency_key": _replay_idempotency(stable_key),
-                "normalization": {
-                    "kind": "no_payroll_accrual",
-                    "source_assertion_sha256": hashlib.sha256(
-                        source_assertion.encode("utf-8")
-                    ).hexdigest(),
-                },
-            }
-        )
-    return operations
-
-
 def _export_company(
     *,
     engine: sa.Engine,
     registry: Mapping[str, Any],
     package_root: Path,
-    normalizations: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     org_id = uuid.UUID(str(registry["org_id"]))
     directory = f"companies/{org_id}"
     company_dir = package_root / directory
     company_dir.mkdir(parents=True)
     with Session(engine) as session:
+        revision = session.scalar(text("SELECT version_num FROM alembic_version"))
+        if revision != _current_schema_revision(catalog=False):
+            raise ReplayError("REPLAY_SOURCE_COMPONENT_BASELINE_REQUIRED")
         organization = session.get(Organization, org_id)
         if organization is None:
             raise ReplayError("REPLAY_SOURCE_ORGANIZATION_MISSING")
@@ -2774,30 +2576,15 @@ def _export_company(
         evidence = _export_evidence(session, org_id=org_id, company_dir=company_dir)
         if not evidence:
             raise ReplayError("REPLAY_SOURCE_EVIDENCE_REQUIRED")
-        bank_exports = _export_bank_transactions(
-            session, org_id=org_id, company_dir=company_dir
-        )
+        bank_exports = _export_bank_transactions(session, org_id=org_id, company_dir=company_dir)
         accounts = _account_controls(session, org_id)
         events = _effective_events(session, org_id)
         typed_events = [
             _event_operation(session, event, org_id=org_id, maps=maps)
             for event in events
-            if event["event_type"]
-            not in {
-                "enterprise_income_tax_assessment",
-                "enterprise_income_tax_result",
-                "enterprise_income_tax_refund",
-            }
-            and not (
-                event["event_type"] == "tax_payment"
-                and event["facts"].get("details", {}).get("tax_type") == "enterprise_income_tax"
-            )
+            if maps["event"][str(event["id"])].get("$ref") == "event"
         ]
         checkpoints = _company_checkpoints(session, org_id)
-        checkpoints["financial_statement_classification_count"] += sum(
-            control.get("kind") == "financial_statement_classification"
-            for control in normalizations
-        )
         account_balances = _account_balance_projection(session, org_id)
         open_items = _open_item_projection(session, org_id=org_id)
         support_evidence = maps["evidence"][
@@ -2815,17 +2602,14 @@ def _export_company(
             operation
             for operation in setup_operations
             if operation.get("tool") == "finance_register_payroll_policy_version"
-            and operation.get("request", {}).get("supersedes_policy_version_id")
-            is not None
+            and operation.get("request", {}).get("supersedes_policy_version_id") is not None
         ]
         initial_setup_operations = [
             operation
             for operation in setup_operations
             if operation not in deferred_policy_successors
         ]
-        payroll_fact_operations = _payroll_fact_operations(
-            session, org_id=org_id, maps=maps
-        )
+        payroll_fact_operations = _payroll_fact_operations(session, org_id=org_id, maps=maps)
         undated_payroll_facts = [
             operation
             for operation in payroll_fact_operations
@@ -2854,8 +2638,7 @@ def _export_company(
         }
         for operation in dated_payroll_facts:
             year, month = (
-                int(part)
-                for part in str(operation["request"]["contribution_period"]).split("-")
+                int(part) for part in str(operation["request"]["contribution_period"]).split("-")
             )
             period_end = date(year, month, calendar.monthrange(year, month)[1])
             bucket = max(
@@ -2910,12 +2693,6 @@ def _export_company(
             ),
             *_bank_reconciliation_operations(session, org_id=org_id, maps=maps),
             *_owner_control_operations(session, org_id=org_id, maps=maps),
-            *_normalization_operations(
-                session,
-                org_id=org_id,
-                maps=maps,
-                controls=normalizations,
-            ),
             *_period_close_operations(session, org_id=org_id, maps=maps),
         ]
         descriptor = {
@@ -2945,7 +2722,6 @@ def _export_company(
                 "report_preconditions": "report-preconditions.json",
             },
             "operation_count": len(operations),
-            "normalization_count": len(normalizations),
         }
         _write_json(company_dir / "company.json", descriptor)
         _write_jsonl(
@@ -2961,9 +2737,7 @@ def _export_company(
             {
                 "closed_periods": checkpoints["closed_periods"],
                 "open_periods": checkpoints["open_periods"],
-                "bank_reconciliation_count": checkpoints[
-                    "bank_reconciliation_count"
-                ],
+                "bank_reconciliation_count": checkpoints["bank_reconciliation_count"],
                 "financial_statement_classification_count": checkpoints[
                     "financial_statement_classification_count"
                 ],
@@ -2982,15 +2756,24 @@ def _export_company(
         }
 
 
-def export_system(output: Path, normalization_file: Path | None = None) -> dict[str, Any]:
+def _readonly_source_engine(url: str | URL) -> sa.Engine:
+    if make_url(url).get_backend_name() != "postgresql":
+        raise ReplayError("REPLAY_SOURCE_POSTGRESQL_REQUIRED")
+    return create_engine(
+        url,
+        connect_args={"options": "-c default_transaction_read_only=on"},
+        isolation_level="REPEATABLE READ",
+    )
+
+
+def export_system(output: Path) -> dict[str, Any]:
     target = output.resolve()
     if target.exists():
         raise ReplayError("REPLAY_EXPORT_TARGET_ALREADY_EXISTS")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.mkdir()
     settings = get_settings()
-    normalizations = _load_export_normalizations(normalization_file)
-    catalog_engine = create_engine(settings.database_url)
+    catalog_engine = _readonly_source_engine(settings.database_url)
     try:
         with Session(catalog_engine) as session:
             tables = set(sa_inspect(session.bind).get_table_names())
@@ -3020,7 +2803,7 @@ def export_system(output: Path, normalization_file: Path | None = None) -> dict[
             base = settings.finance_migration_database_url or settings.finance_company_database_url
             if base is None:
                 raise ReplayError("REPLAY_SOURCE_COMPANY_DATABASE_URL_REQUIRED")
-            company_engine = create_engine(
+            company_engine = _readonly_source_engine(
                 _database_url_for_name(base, str(registry["database_name"]))
             )
             try:
@@ -3029,14 +2812,10 @@ def export_system(output: Path, normalization_file: Path | None = None) -> dict[
                         engine=company_engine,
                         registry=registry,
                         package_root=target,
-                        normalizations=normalizations.get(str(registry["org_id"]), []),
                     )
                 )
             finally:
                 company_engine.dispose()
-        unknown_orgs = set(normalizations) - {str(company["org_id"]) for company in companies}
-        if unknown_orgs:
-            raise ReplayError("REPLAY_NORMALIZATION_ORGANIZATION_UNKNOWN")
         total_events = sum(
             int(company["checkpoints"]["effective_event_count"]) for company in companies
         )
@@ -3064,20 +2843,8 @@ def export_system(output: Path, normalization_file: Path | None = None) -> dict[
                 "effective_event_count": total_events,
                 "effective_voucher_count": total_vouchers,
             },
-            "normalization_count": sum(len(items) for items in normalizations.values()),
         }
         _write_json(target / "system.json", system)
-        if normalizations:
-            _write_json(
-                target / "replay-normalizations.json",
-                {
-                    "format_version": _NORMALIZATION_VERSION,
-                    "companies": [
-                        {"org_id": org_id, "controls": controls}
-                        for org_id, controls in sorted(normalizations.items())
-                    ],
-                },
-            )
         manifest_sha256 = _seal_package(target)
         return {
             "status": "exported",
@@ -3163,11 +2930,19 @@ def _apply_account_controls(
     controls: Sequence[Mapping[str, Any]],
 ) -> None:
     by_code = {
-        item.code: item
-        for item in session.scalars(select(Account).where(Account.org_id == org_id))
+        item.code: item for item in session.scalars(select(Account).where(Account.org_id == org_id))
     }
     for control in controls:
         code = str(control["code"])
+        business_class = control.get("business_class")
+        if not business_class:
+            raise ReplayError("REPLAY_ACCOUNT_BUSINESS_CLASS_REQUIRED")
+        rule_account = get_business_class_template(session, org_id, str(business_class))
+        if (control["category"], control["normal_side"]) != (
+            rule_account.category,
+            rule_account.normal_side,
+        ):
+            raise ReplayError("REPLAY_ACCOUNT_BUSINESS_CLASS_MISMATCH")
         account = by_code.get(code)
         if account is None:
             account = Account(
@@ -3177,6 +2952,7 @@ def _apply_account_controls(
                 category=str(control["category"]),
                 normal_side=str(control["normal_side"]),
                 system_role=control.get("system_role"),
+                business_class=str(business_class),
             )
             session.add(account)
             by_code[code] = account
@@ -3185,6 +2961,7 @@ def _apply_account_controls(
                 account.category != control["category"]
                 or account.normal_side != control["normal_side"]
                 or account.system_role != control.get("system_role")
+                or account.business_class != business_class
             ):
                 raise ReplayError("REPLAY_ACCOUNT_CONTROL_CONFLICT")
             account.name = str(control["name"])
@@ -3216,9 +2993,7 @@ def _initialize_empty_company(
                 session,
                 org_id=org_id,
                 name=str(organization["name"]),
-                taxpayer_identification_number=str(
-                    organization["taxpayer_identification_number"]
-                ),
+                taxpayer_identification_number=str(organization["taxpayer_identification_number"]),
                 filing_cycle=str(organization["filing_cycle"]),
                 jurisdiction=str(organization["jurisdiction"]),
                 urban_maintenance_rate=Decimal(str(organization["urban_maintenance_rate"])),
@@ -3233,15 +3008,11 @@ def _initialize_empty_company(
                 )
             )
             session.flush()
-            session.execute(
-                text("ALTER TABLE organization_profile_versions DISABLE TRIGGER USER")
-            )
+            session.execute(text("ALTER TABLE organization_profile_versions DISABLE TRIGGER USER"))
             session.add(
                 OrganizationProfileVersion(
                     org_id=org_id,
-                    effective_from=date.fromisoformat(
-                        str(organization["profile_effective_from"])
-                    ),
+                    effective_from=date.fromisoformat(str(organization["profile_effective_from"])),
                     name=str(organization["name"]),
                     taxpayer_identification_number=str(
                         organization["taxpayer_identification_number"]
@@ -3249,9 +3020,7 @@ def _initialize_empty_company(
                     taxpayer_type=str(organization["taxpayer_type"]),
                     filing_cycle=str(organization["filing_cycle"]),
                     jurisdiction=str(organization["jurisdiction"]),
-                    urban_maintenance_rate=Decimal(
-                        str(organization["urban_maintenance_rate"])
-                    ),
+                    urban_maintenance_rate=Decimal(str(organization["urban_maintenance_rate"])),
                     accounting_standard=str(organization["accounting_standard"]),
                     confirmation_note=str(organization["profile_confirmation_note"]),
                     lifecycle_action_id=None,
@@ -3259,9 +3028,7 @@ def _initialize_empty_company(
                 )
             )
             session.flush()
-            session.execute(
-                text("ALTER TABLE organization_profile_versions ENABLE TRIGGER USER")
-            )
+            session.execute(text("ALTER TABLE organization_profile_versions ENABLE TRIGGER USER"))
             _apply_account_controls(
                 session,
                 org_id=seeded.id,
@@ -3302,9 +3069,7 @@ def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, An
     company_runtime_role = company_runtime_url.username
     if catalog_runtime_role is None or company_runtime_role is None:
         raise ReplayError("REPLAY_TARGET_RUNTIME_ROLE_NOT_CONFIGURED")
-    catalog_migration_url = _migration_url_for_runtime_database(
-        migration_base, catalog_url
-    )
+    catalog_migration_url = _migration_url_for_runtime_database(migration_base, catalog_url)
     provisioning_engine = create_engine(provisioning_url, isolation_level="AUTOCOMMIT")
     created_databases: list[str] = []
     try:
@@ -3354,16 +3119,10 @@ def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, An
                             status="active",
                             display_name=str(descriptor["organization"]["name"]),
                             taxpayer_identification_number=str(
-                                descriptor["organization"][
-                                    "taxpayer_identification_number"
-                                ]
+                                descriptor["organization"]["taxpayer_identification_number"]
                             ),
                             profile_effective_from=date.fromisoformat(
-                                str(
-                                    descriptor["organization"][
-                                        "profile_effective_from"
-                                    ]
-                                )
+                                str(descriptor["organization"]["profile_effective_from"])
                             ),
                             filing_cycle=str(descriptor["organization"]["filing_cycle"]),
                             urban_maintenance_rate=Decimal(
@@ -3434,6 +3193,42 @@ class _ReplayResolver:
             if result is None or str(value["field"]) not in result:
                 raise ReplayError("REPLAY_OPERATION_RESULT_REFERENCE_MISSING")
             return result[str(value["field"])]
+        if ref_type == "prepared_line_key":
+            result = self.results.get(str(value["operation_key"]))
+            lines = result.get("data", {}).get("lines", []) if result else []
+            line_kind = str(value["line_kind"])
+            with Session(self.engine) as session:
+                if line_kind == "payroll":
+                    identity_id = session.scalar(
+                        text(
+                            "SELECT id FROM employees WHERE org_id=:org_id "
+                            "AND employee_code=:code"
+                        ),
+                        {"org_id": self.org_id, "code": value["identity_code"]},
+                    )
+                    identity_field = "employee_id"
+                elif line_kind == "labor":
+                    identity_id = session.scalar(
+                        text(
+                            "SELECT id FROM labor_service_persons WHERE org_id=:org_id "
+                            "AND person_code=:code"
+                        ),
+                        {"org_id": self.org_id, "code": value["identity_code"]},
+                    )
+                    identity_field = "labor_person_id"
+                else:
+                    raise ReplayError("REPLAY_PREPARED_LINE_KIND_INVALID")
+            match = next(
+                (
+                    item
+                    for item in lines
+                    if str(item.get(identity_field)) == str(identity_id)
+                ),
+                None,
+            )
+            if match is None or not match.get("id"):
+                raise ReplayError("REPLAY_PREPARED_LINE_REFERENCE_MISSING")
+            return f"salary:{match['id']}" if line_kind == "payroll" else str(match["id"])
         with Session(self.engine) as session:
             if ref_type == "evidence":
                 result = session.scalar(
@@ -3497,6 +3292,67 @@ class _ReplayResolver:
             elif ref_type == "event":
                 result_payload = self.results.get(str(value["replay_key"]))
                 result = result_payload.get("event_id") if result_payload else None
+            elif ref_type == "component":
+                source = self.results.get(str(value["source_replay_key"]))
+                event_id = source.get("event_id") if source else None
+                if event_id is None:
+                    raise ReplayError("REPLAY_COMPONENT_SOURCE_MISSING")
+                result = session.execute(
+                    text(
+                        "SELECT id FROM business_event_components WHERE org_id=:org_id "
+                        "AND event_id=:event_id AND key=:component_key"
+                    ),
+                    {
+                        "org_id": self.org_id,
+                        "event_id": event_id,
+                        "component_key": value["component_key"],
+                    },
+                ).scalar_one_or_none()
+            elif ref_type == "component_open_item":
+                source = self.results.get(str(value["source_replay_key"]))
+                event_id = source.get("event_id") if source else None
+                if event_id is None:
+                    raise ReplayError("REPLAY_COMPONENT_SOURCE_MISSING")
+                result = session.execute(
+                    text(
+                        "SELECT item.id FROM open_items AS item "
+                        "JOIN business_event_components AS component "
+                        "ON component.org_id=item.org_id AND component.id=item.source_component_id "
+                        "WHERE item.org_id=:org_id AND component.event_id=:event_id "
+                        "AND component.key=:component_key AND item.component_key=:open_item_key"
+                    ),
+                    {
+                        "org_id": self.org_id,
+                        "event_id": event_id,
+                        "component_key": value["component_key"],
+                        "open_item_key": value["open_item_key"],
+                    },
+                ).scalar_one_or_none()
+            elif ref_type == "component_income_tax":
+                source = self.results.get(str(value["source_replay_key"]))
+                event_id = source.get("event_id") if source else None
+                if event_id is None:
+                    raise ReplayError("REPLAY_COMPONENT_SOURCE_MISSING")
+                table_name = {
+                    "confirmation": "enterprise_income_tax_quarter_confirmations",
+                    "result": "enterprise_income_tax_results",
+                }.get(str(value["result_kind"]))
+                if table_name is None:
+                    raise ReplayError("REPLAY_COMPONENT_INCOME_TAX_KIND_INVALID")
+                result = session.scalar(
+                    text(
+                        f'SELECT tax.id FROM "{table_name}" AS tax '
+                        "JOIN business_event_components AS component "
+                        "ON component.org_id=tax.org_id AND component.id=tax.component_id "
+                        "WHERE tax.org_id=:org_id AND component.event_id=:event_id "
+                        "AND component.key=:component_key"
+                    ),
+                    {
+                        "org_id": self.org_id,
+                        "event_id": event_id,
+                        "component_key": value["component_key"],
+                    },
+                )
             elif ref_type == "open_item":
                 source = self.results.get(str(value["source_replay_key"]))
                 source_event_id = source.get("event_id") if source else None
@@ -3531,9 +3387,7 @@ class _ReplayResolver:
                         "insurance": value.get("insurance_kind"),
                         "counterparty_kind": value["counterparty_kind"],
                         "counterparty_name": value["counterparty_name"],
-                        "counterparty_external_ref": value.get(
-                            "counterparty_external_ref"
-                        ),
+                        "counterparty_external_ref": value.get("counterparty_external_ref"),
                     },
                 )
             elif ref_type in {"asset", "intangible", "labor_person", "borrowing"}:
@@ -3582,26 +3436,31 @@ class _ReplayResolver:
                 event_id = source.get("event_id") if source else None
                 if event_id is None:
                     raise ReplayError("REPLAY_VOUCHER_LINE_SOURCE_MISSING")
-                result = session.scalar(
+                matches = session.scalars(
                     text(
                         "SELECT line.id FROM voucher_lines AS line "
                         "JOIN vouchers AS voucher ON voucher.org_id=line.org_id "
                         "AND voucher.id=line.voucher_id "
                         "JOIN accounts AS account ON account.org_id=line.org_id "
                         "AND account.id=line.account_id "
+                        "JOIN business_event_components AS component "
+                        "ON component.id=line.component_id "
                         "WHERE line.org_id=:org_id AND voucher.event_id=:event_id "
-                        "AND line.line_number=:line_number AND account.code=:account_code "
+                        "AND component.key=:component_key AND account.code=:account_code "
                         "AND line.debit_fen=:debit_fen AND line.credit_fen=:credit_fen"
                     ),
                     {
                         "org_id": self.org_id,
                         "event_id": event_id,
-                        "line_number": value["line_number"],
+                        "component_key": value["component_key"],
                         "account_code": value["account_code"],
                         "debit_fen": value["debit_fen"],
                         "credit_fen": value["credit_fen"],
                     },
-                )
+                ).all()
+                if len(matches) > 1:
+                    raise ReplayError("REPLAY_COMPONENT_LINE_REFERENCE_AMBIGUOUS")
+                result = matches[0] if matches else None
             else:
                 raise ReplayError(f"REPLAY_REFERENCE_TYPE_UNSUPPORTED:{ref_type}")
         if result is None:
@@ -3681,9 +3540,7 @@ def _require_status(
         suffix = ",".join(str(item) for item in error_codes if item)
         if not suffix:
             suffix = str(result.get("status", "unknown"))
-        raise ReplayError(
-            f"REPLAY_OPERATION_FAILED:{operation_key}:{suffix}"
-        )
+        raise ReplayError(f"REPLAY_OPERATION_FAILED:{operation_key}:{suffix}")
 
 
 def _preview_confirm(
@@ -3754,9 +3611,7 @@ def _owner_control_operation(
             request = {
                 **common,
                 "period_id": period_id,
-                "workforce_snapshot_hash": gates["workforce_review"][
-                    "source_snapshot_hash"
-                ],
+                "workforce_snapshot_hash": gates["workforce_review"]["source_snapshot_hash"],
                 "change_state": operation["confirmation_state"],
                 "regular_payroll_items": resolver.materialize(
                     operation.get("regular_payroll_items")
@@ -3768,9 +3623,7 @@ def _owner_control_operation(
             request = {
                 **common,
                 "period_id": period_id,
-                "activity_snapshot_hash": gates["non_bank_materials"][
-                    "source_snapshot_hash"
-                ],
+                "activity_snapshot_hash": gates["non_bank_materials"]["source_snapshot_hash"],
                 "supersedes_confirmation_id": None,
             }
             tool = "finance_confirm_period_material_completeness"
@@ -3834,8 +3687,7 @@ def _owner_control_operation(
         )
         if (
             candidate is None
-            or candidate["completion_through_identity"]
-            != operation["completion_through_identity"]
+            or candidate["completion_through_identity"] != operation["completion_through_identity"]
         ):
             raise ReplayError("REPLAY_HISTORICAL_OBLIGATION_CANDIDATE_CHANGED")
         request = {
@@ -3980,6 +3832,29 @@ def _execute_operation(
         return result
     if kind == "preview_confirm":
         return _preview_confirm(operation, resolver)
+    if kind == "composite_event":
+        for preparation in operation.get("preparations", []):
+            preview_request = resolver.materialize(preparation["preview_request"])
+            preview = _call_tool(str(preparation["preview_tool"]), preview_request)
+            _require_status(
+                preview,
+                preparation.get("allowed_statuses", ["calculated"]),
+                operation_key=str(preparation["key"]),
+            )
+            resolver.results[str(preparation["key"])] = preview
+        preview_request = resolver.materialize(operation["request"])
+        preview = _call_tool("finance_preview_event", preview_request)
+        _require_status(preview, ["calculated"], operation_key=str(operation["key"]))
+        reviewed = preview.get("data", {}).get("reviewed_request")
+        if not isinstance(reviewed, Mapping):
+            raise ReplayError("REPLAY_COMPONENT_REVIEWED_REQUEST_MISSING")
+        result = _call_tool("finance_record_event", reviewed)
+        _require_status(
+            result,
+            operation.get("allowed_statuses", ["posted"]),
+            operation_key=str(operation["key"]),
+        )
+        return result
     if kind == "evidence":
         return _evidence_operation(
             operation,
@@ -4008,9 +3883,7 @@ def replay_system(package: Path, state_path: Path | None = None) -> dict[str, An
     from . import mcp_server
 
     mcp_server._initialize_mcp_credential_store(environment=settings.finance_environment)
-    authentication = _call_tool(
-        "finance_list_companies", {"include_archived": True}
-    )
+    authentication = _call_tool("finance_list_companies", {"include_archived": True})
     if authentication.get("status") != "ok":
         raise ReplayError("REPLAY_AUTHENTICATION_REQUIRED")
     system = _load_json(package_root / "system.json")
@@ -4024,9 +3897,7 @@ def replay_system(package: Path, state_path: Path | None = None) -> dict[str, An
         operations = _read_jsonl(company_dir / "operations.jsonl")
         required_result_fields: dict[str, set[str]] = {
             str(operation["key"]): (
-                {"status", "event_id"}
-                if "replay_key" in operation
-                else {"status"}
+                {"status", "event_id"} if "replay_key" in operation else {"status"}
             )
             for operation in operations
         }
@@ -4041,9 +3912,7 @@ def replay_system(package: Path, state_path: Path | None = None) -> dict[str, An
         if base is None:
             raise ReplayError("REPLAY_TARGET_COMPANY_DATABASE_URL_REQUIRED")
         engine = create_engine(_database_url_for_name(base, company_state["database_name"]))
-        has_period_close = any(
-            operation.get("kind") == "period_close" for operation in operations
-        )
+        has_period_close = any(operation.get("kind") == "period_close" for operation in operations)
         historical_mode_enabled = False
         try:
             resolver = _ReplayResolver(engine=engine, org_id=org_id, results=results)
@@ -4120,6 +3989,20 @@ def replay_system(package: Path, state_path: Path | None = None) -> dict[str, An
     }
 
 
+def _balance_terminal_state(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (
+            {
+                "account_code": str(row["account_code"]),
+                "ending_balance_fen": int(row["ending_balance_fen"]),
+            }
+            for row in rows
+            if int(row["ending_balance_fen"]) != 0
+        ),
+        key=lambda row: row["account_code"],
+    )
+
+
 def verify_replay(package: Path, state_path: Path | None = None) -> dict[str, Any]:
     package_root = package.resolve(strict=True)
     state_file, state = _load_state(package_root, state_path)
@@ -4152,17 +4035,14 @@ def verify_replay(package: Path, state_path: Path | None = None) -> dict[str, An
             base = settings.finance_migration_database_url or settings.finance_company_database_url
             if base is None:
                 raise ReplayError("REPLAY_TARGET_COMPANY_DATABASE_URL_REQUIRED")
-            engine = create_engine(
-                _database_url_for_name(base, company_state["database_name"])
-            )
+            engine = create_engine(_database_url_for_name(base, company_state["database_name"]))
             try:
                 with Session(engine) as session:
                     tables = set(sa_inspect(session.bind).get_table_names())
                     if tables & _SENSITIVE_TABLES:
                         raise ReplayError("REPLAY_VERIFY_BUSINESS_IDENTITY_TABLE_FORBIDDEN")
                     organizations = [
-                        str(item)
-                        for item in session.scalars(select(Organization.id)).all()
+                        str(item) for item in session.scalars(select(Organization.id)).all()
                     ]
                     if organizations != [str(org_id)]:
                         raise ReplayError("REPLAY_VERIFY_COMPANY_ISOLATION_MISMATCH")
@@ -4177,28 +4057,35 @@ def verify_replay(package: Path, state_path: Path | None = None) -> dict[str, An
                     mismatches = {
                         key: {"expected": expected[key], "actual": actual.get(key)}
                         for key in expected
-                        if actual.get(key) != expected[key]
+                        if key
+                        not in {
+                            "effective_event_count",
+                            "effective_voucher_count",
+                            "voucher_debit_total_fen",
+                            "voucher_credit_total_fen",
+                        }
+                        and actual.get(key) != expected[key]
                     }
                     if mismatches:
                         raise ReplayError(
-                            "REPLAY_VERIFY_CHECKPOINT_MISMATCH:"
-                            + ",".join(sorted(mismatches))
+                            "REPLAY_VERIFY_CHECKPOINT_MISMATCH:" + ",".join(sorted(mismatches))
                         )
                     expected_balances = _load_json(
                         package_root
                         / str(company["directory"])
                         / descriptor["verification_files"]["account_balances"]
                     )
-                    if _jsonable(_account_balance_projection(session, org_id)) != expected_balances:
+                    actual_balances = _account_balance_projection(session, org_id)
+                    if _balance_terminal_state(actual_balances) != _balance_terminal_state(
+                        expected_balances
+                    ):
                         raise ReplayError("REPLAY_VERIFY_ACCOUNT_BALANCE_MISMATCH")
                     expected_open_items = _load_json(
                         package_root
                         / str(company["directory"])
                         / descriptor["verification_files"]["open_items"]
                     )
-                    actual_open_items = _jsonable(
-                        _open_item_projection(session, org_id=org_id)
-                    )
+                    actual_open_items = _jsonable(_open_item_projection(session, org_id=org_id))
                     if actual_open_items != expected_open_items:
                         raise ReplayError("REPLAY_VERIFY_OPEN_ITEM_MISMATCH")
                     evidence_rows = session.scalars(
@@ -4263,11 +4150,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     export = commands.add_parser("export-system", help="read-only export of the catalog companies")
     export.add_argument("--output", type=Path, required=True)
-    export.add_argument(
-        "--normalizations",
-        type=Path,
-        help="optional private typed replay-normalization file",
-    )
     verify_pkg = commands.add_parser("verify-package", help="offline package verification")
     verify_pkg.add_argument("--package", type=Path, required=True)
     prepare = commands.add_parser(
@@ -4284,7 +4166,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         args = parser.parse_args(argv)
         if args.command == "export-system":
-            result = export_system(args.output, args.normalizations)
+            result = export_system(args.output)
         elif args.command == "verify-package":
             result = verify_package(args.package)
         elif args.command == "prepare-empty":

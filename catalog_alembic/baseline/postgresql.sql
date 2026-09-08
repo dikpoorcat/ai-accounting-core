@@ -335,9 +335,11 @@ CREATE TABLE public.owner_accounts (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_owner_account_credential_version CHECK ((credential_version >= 1)),
+    CONSTRAINT ck_owner_account_login_ascii CHECK (login_name ~ '^[A-Za-z0-9][A-Za-z0-9._-]{2,99}$'),
     CONSTRAINT ck_owner_account_login_name CHECK ((((length((login_name)::text) >= 3) AND (length((login_name)::text) <= 100)) AND ((login_name)::text = TRIM(BOTH FROM login_name)))),
     CONSTRAINT ck_owner_account_login_normalized CHECK (((login_name_normalized)::text = lower(TRIM(BOTH FROM login_name)))),
     CONSTRAINT ck_owner_account_password_failures CHECK ((password_failed_attempts >= 0)),
+    CONSTRAINT ck_owner_account_password_hash_shape CHECK (password_hash ~ '^\$argon2id\$v=19\$m=65536,t=3,p=4\$[A-Za-z0-9+/]{22}\$[A-Za-z0-9+/]{43}$'),
     CONSTRAINT ck_owner_account_password_hash CHECK (((length((password_hash)::text) = 97) AND ((password_hash)::text ~~ '$argon2id$v=19$m=65536,t=3,p=4$%'::text))),
     CONSTRAINT ck_owner_account_recovery_failures CHECK ((recovery_failed_attempts >= 0)),
     CONSTRAINT ck_owner_account_singleton CHECK ((singleton_key = 1)),
@@ -360,6 +362,7 @@ CREATE TABLE public.owner_recovery_codes (
     invalidated_at timestamp with time zone,
     CONSTRAINT ck_owner_recovery_code_credential_version CHECK ((credential_version >= 1)),
     CONSTRAINT ck_owner_recovery_code_sha256 CHECK ((length((code_sha256)::text) = 64)),
+    CONSTRAINT ck_owner_recovery_code_lowerhex CHECK (code_sha256 ~ '^[0-9a-f]{64}$'),
     CONSTRAINT ck_owner_recovery_code_terminal_state CHECK (((used_at IS NULL) OR (invalidated_at IS NULL)))
 );
 
@@ -386,7 +389,8 @@ CREATE TABLE public.owner_sessions (
     CONSTRAINT ck_owner_session_idle_expiry CHECK ((idle_expires_at > created_at)),
     CONSTRAINT ck_owner_session_last_seen CHECK ((last_seen_at >= created_at)),
     CONSTRAINT ck_owner_session_revocation_state CHECK ((((revoked_at IS NULL) AND (revoke_reason IS NULL)) OR ((revoked_at IS NOT NULL) AND (revoke_reason IS NOT NULL)))),
-    CONSTRAINT ck_owner_session_secret_sha256 CHECK ((length((secret_sha256)::text) = 64))
+    CONSTRAINT ck_owner_session_secret_sha256 CHECK ((length((secret_sha256)::text) = 64)),
+    CONSTRAINT ck_owner_session_secret_lowerhex CHECK (secret_sha256 ~ '^[0-9a-f]{64}$')
 );
 
 
