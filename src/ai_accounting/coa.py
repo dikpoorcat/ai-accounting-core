@@ -14,6 +14,7 @@ DEFAULT_ACCOUNTS = [
     ("1002", "银行存款", "asset", "debit", "bank"),
     ("1012", "其他货币资金—支付平台", "asset", "debit", "payment_platform_funds"),
     ("1122", "应收账款", "asset", "debit", "accounts_receivable"),
+    ("1123", "预付账款", "asset", "debit", "prepayments"),
     ("1221", "其他应收款", "asset", "debit", "employee_receivable"),
     ("2202", "应付账款", "liability", "credit", "accounts_payable"),
     ("2203", "合同负债及预收款", "liability", "credit", "contract_liability"),
@@ -98,6 +99,8 @@ DEFAULT_ACCOUNTS = [
         "social_insurance_late_fee_expense",
     ),
     ("1701", "无形资产", "asset", "debit", "intangible_asset_cost"),
+    ("189901", "其他非流动资产—外购无形资产项目成本", "asset", "debit", "intangible_project_cost"),
+    ("4301", "研发支出—资本化支出", "asset", "debit", "development_expenditure"),
     ("1702", "累计摊销", "asset", "credit", "accumulated_amortization"),
     (
         "560203",

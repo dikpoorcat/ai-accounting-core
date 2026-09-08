@@ -50,6 +50,11 @@ COMPONENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
     "expense": ("expense_supplier", "费用"),
     "service_sale": ("income_customer", "服务收入"),
     "customer_advance": ("income_customer", "客户预收款"),
+    "supplier_advance": ("expense_supplier", "供应商预付款"),
+    "supplier_advance_application": ("expense_supplier", "供应商预付款冲抵"),
+    "supplier_advance_refund": ("expense_supplier", "供应商预付款退回"),
+    "project_cost": ("assets", "项目阶段成本"),
+    "project_cost_expense": ("assets", "项目成本转费用"),
     "service_fulfillment": ("income_customer", "服务履约确认"),
     "customer_refund": ("income_customer", "客户退款"),
     "receivable_settlement": ("income_customer", "应收款结算"),
@@ -83,6 +88,7 @@ COMPONENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
 
 OPEN_ITEM_CONFIGS = {
     "customer_receivables": ("待收客户款", "receivable", "笔"),
+    "supplier_advances": ("待冲抵供应商预付款", "receivable", "笔"),
     "refundable_deposit_receivables": ("待收回保证金", "receivable", "个往来对象"),
     "other_receivables": ("其他应收事项", "receivable", "笔"),
     "supplier_payables": ("待付供应商款", "payable", "笔"),
@@ -702,7 +708,9 @@ def _load_open_items(
             continue
         if open_item.item_type == "receivable":
             category = (
-                "refundable_deposit_receivables"
+                "supplier_advances"
+                if component_kind == "supplier_advance"
+                else "refundable_deposit_receivables"
                 if component_kind == "refundable_deposit"
                 else "customer_receivables"
                 if party_kind == "customer"

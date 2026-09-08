@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v34"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v35"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
 
 COMPOSITION_RUNTIME_INSTRUCTION = (
@@ -25,6 +25,12 @@ COMPOSITION_RUNTIME_INSTRUCTION = (
     "工资、劳务、资产、借款和税务的专用计算及预览确认仍按内核要求执行；"
     "已计算的工资和劳务使用对应计提组件携带批次与计算哈希，可与同笔结算组合。"
     "社保公积金历史补缴使用payroll_contribution_supplement组件，核销保留具体来源。"
+    "供应商交付前付款使用supplier_advance，交付确认应付后以supplier_advance_application冲抵，"
+    "退回用supplier_advance_refund；预付款与应付须保留一致的供应商和project_reference。"
+    "确有阶段验收、付款义务及资本化依据时使用project_cost确认成本和债务，付款独立核销；"
+    "无形资产可用时用intangible_asset_acquisition的project_cost结算及cost_sources归集，"
+    "不得重复形成债务；项目废弃成本用project_cost_expense转费用。预付款不能推断成阶段验收，"
+    "已费用化支出不得作为项目成本来源；自行开发需明确资本化条件及满足日期。"
 )
 
 PASS_THROUGH_RUNTIME_INSTRUCTION = (

@@ -3670,12 +3670,13 @@ class IntangibleAsset(Base):
             name="ck_intangible_asset_cost_total",
         ),
         CheckConstraint(
-            "settlement_method IN ('bank','payable')",
+            "settlement_method IN ('bank','payable','project_cost')",
             name="ck_intangible_asset_settlement_method",
         ),
         CheckConstraint(
             "(settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL) OR "
-            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL)",
+            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL) OR "
+            "(settlement_method = 'project_cost' AND payment_date IS NULL AND due_date IS NULL)",
             name="ck_intangible_asset_settlement_dates",
         ),
         CheckConstraint(

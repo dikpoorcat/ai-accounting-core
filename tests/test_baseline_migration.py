@@ -14,7 +14,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 
 BUSINESS_REVISION = "0001_business_baseline_v3"
-BUSINESS_HEAD = BUSINESS_REVISION
+BUSINESS_HEAD = "0002_purchase_projects"
 POSTGRES_IMAGE = (
     "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 )
@@ -138,16 +138,18 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         BUSINESS_HEAD,
+        BUSINESS_REVISION,
     ]
 
+    command.upgrade(config, BUSINESS_REVISION)
+    command.downgrade(config, "base")
     command.upgrade(config, "head")
     engine = create_engine(database_url)
     try:
         _assert_business_baseline(engine)
         command.check(config)
-        command.downgrade(config, "base")
-        assert set(inspect(engine).get_table_names()) == {"alembic_version"}
-        command.upgrade(config, "head")
+        with pytest.raises(RuntimeError, match="PURCHASE_PROJECTS_FORWARD_ONLY"):
+            command.downgrade(config, "base")
         _assert_business_baseline(engine)
     finally:
         engine.dispose()
@@ -169,6 +171,40 @@ def test_unknown_database_is_rejected_without_even_creating_version_table(tmp_pa
         engine.dispose()
 
 
+def test_purchase_forward_migration_seeds_existing_company_accounts(tmp_path):
+    from sqlalchemy.orm import Session
+
+    from ai_accounting.coa import seed_organization
+    from ai_accounting.models import Account
+
+    url = f"sqlite+pysqlite:///{(tmp_path / 'existing-v3.db').as_posix()}"
+    config = _config(url)
+    command.upgrade(config, BUSINESS_REVISION)
+    engine = create_engine(url)
+    roles = {"prepayments", "intangible_project_cost", "development_expenditure"}
+    try:
+        with Session(engine) as session:
+            org = seed_organization(
+                session, name="迁移测试", taxpayer_identification_number="91330106MA1234567T"
+            )
+            org_id = org.id
+            # Reproduce v3 before these new business classes existed.
+            session.execute(
+                sa.delete(Account).where(Account.org_id == org_id, Account.system_role.in_(roles))
+            )
+            session.commit()
+        command.upgrade(config, "head")
+        with Session(engine) as session:
+            accounts = session.scalars(
+                sa.select(Account).where(Account.org_id == org_id, Account.system_role.in_(roles))
+            ).all()
+            assert {account.business_class for account in accounts} == roles
+            assert len(accounts) == 3
+        command.check(config)
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.postgres
 @pytest.mark.postgres_current
 @pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed")
@@ -180,9 +216,22 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
     with container as postgres:
         database_url = external or postgres.get_connection_url(driver="psycopg")
         config = _config(database_url)
-        command.upgrade(config, "head")
+        command.upgrade(config, BUSINESS_REVISION)
         engine = create_engine(database_url)
         try:
+            command.downgrade(config, "base")
+            assert set(inspect(engine).get_table_names()) == {"alembic_version"}
+            with engine.begin() as connection:
+                connection.exec_driver_sql("DROP TABLE alembic_version")
+                connection.exec_driver_sql("CREATE TABLE unknown_business (id INTEGER PRIMARY KEY)")
+                connection.exec_driver_sql("INSERT INTO unknown_business VALUES (1)")
+            with pytest.raises(RuntimeError, match="BUSINESS_V3_REQUIRES_EMPTY_DATABASE"):
+                command.upgrade(config, "head")
+            assert set(inspect(engine).get_table_names()) == {"unknown_business"}
+            with engine.begin() as connection:
+                assert connection.scalar(sa.text("SELECT id FROM unknown_business")) == 1
+                connection.exec_driver_sql("DROP TABLE unknown_business")
+            command.upgrade(config, "head")
             _assert_business_baseline(engine)
             command.check(config)
             with engine.connect() as connection:
@@ -281,19 +330,8 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                 "finance_guard_late_bank_action_0015",
             }
             assert obsolete_unified_payout_runtime == 0
-            command.downgrade(config, "base")
-            assert set(inspect(engine).get_table_names()) == {"alembic_version"}
-            with engine.begin() as connection:
-                connection.exec_driver_sql("DROP TABLE alembic_version")
-                connection.exec_driver_sql("CREATE TABLE unknown_business (id INTEGER PRIMARY KEY)")
-                connection.exec_driver_sql("INSERT INTO unknown_business VALUES (1)")
-            with pytest.raises(RuntimeError, match="BUSINESS_V3_REQUIRES_EMPTY_DATABASE"):
-                command.upgrade(config, "head")
-            assert set(inspect(engine).get_table_names()) == {"unknown_business"}
-            with engine.begin() as connection:
-                assert connection.scalar(sa.text("SELECT id FROM unknown_business")) == 1
-                connection.exec_driver_sql("DROP TABLE unknown_business")
-            command.upgrade(config, "head")
+            with pytest.raises(RuntimeError, match="PURCHASE_PROJECTS_FORWARD_ONLY"):
+                command.downgrade(config, "base")
             _assert_business_baseline(engine)
         finally:
             engine.dispose()

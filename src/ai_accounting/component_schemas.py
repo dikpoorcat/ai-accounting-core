@@ -10,7 +10,7 @@ import uuid
 from datetime import date
 from typing import Annotated, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 from . import domain_action_schemas as domain
 from .enterprise_income_tax_schemas import IncomeTaxSourceAllocation
@@ -38,6 +38,7 @@ class ComponentFacts(BaseModel):
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     account_selections: dict[str, str] = Field(default_factory=dict)
+    project_reference: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class SourceReference(BaseModel):
@@ -99,6 +100,67 @@ class CustomerAdvanceComponent(ComponentFacts):
     tax_obligation_date: date | None = None
     tax_facts: TaxFacts | None = None
     invoice_references: list[InvoiceReference] = Field(default_factory=list)
+
+
+class SupplierAdvanceComponent(ComponentFacts):
+    kind: Literal["supplier_advance"]
+    amount_fen: PositiveFen | None = None
+    counterparty: CounterpartyRef | None = None
+    purchase_purpose: (
+        Literal["goods_or_services", "operating_expense", "fixed_asset", "intangible_asset"] | None
+    ) = None
+    contract_reference: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class SupplierAdvanceApplicationComponent(ComponentFacts):
+    kind: Literal["supplier_advance_application"]
+    counterparty: CounterpartyRef | None = None
+    advances: list[ObligationAllocation] = Field(min_length=1)
+    allocations: list[ObligationAllocation] = Field(min_length=1)
+
+
+class SupplierAdvanceRefundComponent(ComponentFacts):
+    kind: Literal["supplier_advance_refund"]
+    counterparty: CounterpartyRef | None = None
+    advances: list[ObligationAllocation] = Field(min_length=1)
+    refund_reference: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class DevelopmentCapitalizationFacts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    conditions_met_date: date | None = None
+    technically_feasible: StrictBool | None = None
+    intention_to_complete_and_use: StrictBool | None = None
+    probable_economic_benefits: StrictBool | None = None
+    adequate_resources: StrictBool | None = None
+    reliably_measurable_cost: StrictBool | None = None
+
+
+class ProjectCostComponent(ComponentFacts):
+    kind: Literal["project_cost"]
+    amount_fen: PositiveFen | None = None
+    counterparty: CounterpartyRef | None = None
+    project_nature: Literal["purchased_intangible", "internal_development"] | None = None
+    cost_element: (
+        Literal["purchase_price", "noncreditable_tax", "directly_attributable_cost"] | None
+    ) = None
+    acceptance_reference: str | None = Field(default=None, min_length=1, max_length=500)
+    obligation_reference: str | None = Field(default=None, min_length=1, max_length=500)
+    rights_controlled: StrictBool | None = None
+    capitalization_basis: str | None = Field(default=None, min_length=1, max_length=2000)
+    development_conditions: DevelopmentCapitalizationFacts | None = None
+    due_date: date | None = None
+
+
+class ProjectCostAllocation(SourceReference):
+    amount_fen: PositiveFen
+
+
+class ProjectCostExpenseComponent(ComponentFacts):
+    kind: Literal["project_cost_expense"]
+    cost_sources: list[ProjectCostAllocation] = Field(min_length=1)
+    expense_class: Literal["general_expense", "sales_expense", "service_cost"] | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
 class ServiceFulfillmentComponent(ComponentFacts):
@@ -417,6 +479,7 @@ class FixedAssetDisposalComponent(ComponentFacts):
 class IntangibleAssetAcquisitionComponent(ComponentFacts):
     kind: Literal["intangible_asset_acquisition"]
     facts: domain.IntangibleAssetAcquisitionFacts
+    cost_sources: list[ProjectCostAllocation] = Field(default_factory=list)
 
 
 class IntangibleAssetAmortizationComponent(ComponentFacts):
@@ -443,6 +506,11 @@ BusinessComponent = Annotated[
     ExpenseBusinessComponent
     | ServiceSaleComponent
     | CustomerAdvanceComponent
+    | SupplierAdvanceComponent
+    | SupplierAdvanceApplicationComponent
+    | SupplierAdvanceRefundComponent
+    | ProjectCostComponent
+    | ProjectCostExpenseComponent
     | ServiceFulfillmentComponent
     | CustomerRefundComponent
     | ObligationSettlementComponent
@@ -524,8 +592,11 @@ class RecordEventRequest(BaseModel):
             dependencies.add(source.component_key)
         dependencies.update(
             a.source_component_key
-            for a in getattr(component, "allocations", [])
+            for a in [*getattr(component, "allocations", []), *getattr(component, "advances", [])]
             if a.source_component_key
+        )
+        dependencies.update(
+            a.component_key for a in getattr(component, "cost_sources", []) if a.component_key
         )
         if getattr(component, "accrual_component_key", None):
             dependencies.add(component.accrual_component_key)
@@ -596,6 +667,11 @@ COMPONENT_TYPES = sorted(
             ExpenseBusinessComponent,
             ServiceSaleComponent,
             CustomerAdvanceComponent,
+            SupplierAdvanceComponent,
+            SupplierAdvanceApplicationComponent,
+            SupplierAdvanceRefundComponent,
+            ProjectCostComponent,
+            ProjectCostExpenseComponent,
             ServiceFulfillmentComponent,
             CustomerRefundComponent,
             ObligationSettlementComponent,

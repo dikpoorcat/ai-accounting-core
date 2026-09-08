@@ -376,7 +376,11 @@ class IntangibleAssetService(FinanceService):
             )
 
     def compile_acquisition(
-        self, request: AcquireIntangibleAssetRequest, *, key: str
+        self,
+        request: AcquireIntangibleAssetRequest,
+        *,
+        key: str,
+        project_cost_entries: list[Entry] | None = None,
     ) -> ComponentPostingPlan:
         if request.is_available_for_use is not True:
             self._reject("INTANGIBLE_ASSET_NOT_READY_WORKFLOW_NOT_ENABLED")
@@ -418,6 +422,10 @@ class IntangibleAssetService(FinanceService):
         )
         supplier = self._resolve_supplier(request.org_id, request.supplier)
         settlement = request.settlement_method.value
+        if (settlement == "project_cost") != bool(project_cost_entries):
+            self._reject("INTANGIBLE_ASSET_PROJECT_COST_SOURCES_REQUIRED")
+        if settlement == "project_cost" and request.due_date is not None:
+            self._reject("PROJECT_COST_TRANSFER_FORBIDS_NEW_PAYABLE")
         if settlement == "bank":
             if request.due_date is not None:
                 self._reject("INTANGIBLE_ASSET_BANK_SETTLEMENT_FORBIDS_DUE_DATE")
@@ -432,6 +440,13 @@ class IntangibleAssetService(FinanceService):
         asset_id = uuid.uuid4()
         entries = [Entry(account_role="intangible_asset_cost", debit_fen=calculation.cost_fen)]
         open_items = []
+        if project_cost_entries:
+            if (
+                sum(e.credit_fen - e.debit_fen for e in project_cost_entries)
+                != calculation.cost_fen
+            ):
+                self._reject("INTANGIBLE_ASSET_PROJECT_COST_TOTAL_MISMATCH")
+            entries.extend(project_cost_entries)
         if settlement == "payable":
             entries.append(
                 Entry(

@@ -330,6 +330,8 @@ class ComponentService:
                 if deps - self.plans.keys():
                     continue
                 plan = self.select_accounts(component, self.compile(component))
+                if component.project_reference is not None:
+                    plan.facts["project_reference"] = component.project_reference
                 self.plans[component.key] = plan
                 pending.remove(component)
                 progress = True
@@ -576,6 +578,7 @@ class ComponentService:
         if not c.account_selections:
             return plan
         source_accounts = set()
+        source_accounts.update(use["account_code"] for use in plan.derived.get("cost_uses", []))
         for settlement in plan.settlements:
             item, _, derived, item_key = self.obligation(settlement)
             role, code = self.obligation_account(item, derived, item_key)
@@ -699,6 +702,36 @@ class ComponentService:
             open_items=items,
             cash_line=3 if c.expense_class in {"service_cost", "labor_service_cost"} else 6,
         )
+
+    def compile_supplier_advance(self, c):
+        from .purchase_components import compile_supplier_advance
+
+        return compile_supplier_advance(self, c)
+
+    def compile_supplier_advance_application(self, c):
+        from .purchase_components import compile_supplier_advance_application
+
+        return compile_supplier_advance_application(self, c)
+
+    def compile_supplier_advance_refund(self, c):
+        from .purchase_components import compile_supplier_advance_refund
+
+        return compile_supplier_advance_refund(self, c)
+
+    def compile_project_cost(self, c):
+        from .purchase_components import compile_project_cost
+
+        return compile_project_cost(self, c)
+
+    def compile_project_cost_expense(self, c):
+        from .purchase_components import compile_project_cost_expense
+
+        return compile_project_cost_expense(self, c)
+
+    def compile_intangible_asset_acquisition(self, c):
+        from .purchase_components import compile_intangible_asset_acquisition
+
+        return compile_intangible_asset_acquisition(self, c)
 
     def sales_split(self, c, *, allow_deferred: bool = False) -> tuple[int, int, dict]:
         self.need(c, "tax_facts")
@@ -1051,6 +1084,8 @@ class ComponentService:
         supplied_party = self.party(getattr(c, "counterparty", None))
         for a in c.allocations:
             item, facts, derived, key = self.obligation(a)
+            if facts.get("kind") == "supplier_advance":
+                raise ValueError("SUPPLIER_ADVANCE_REQUIRES_TYPED_APPLICATION_OR_REFUND")
             if item.item_type != expected:
                 raise ValueError("OPEN_ITEM_DIRECTION_MISMATCH")
             if supplied_party and supplied_party.id != item.counterparty_id:

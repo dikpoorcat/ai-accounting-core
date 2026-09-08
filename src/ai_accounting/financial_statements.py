@@ -248,6 +248,7 @@ _BALANCE_DEBIT_LINES = {
     "fixed_asset_clearance": 23,
     "productive_biological_asset": 24,
     "development_expenditure": 26,
+    "intangible_project_cost": 28,
     "long_term_prepaid_expense": 27,
     "other_noncurrent_asset": 28,
 }

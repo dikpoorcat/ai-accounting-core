@@ -35,6 +35,7 @@ class IntangibleAssetCategory(StrEnum):
 class IntangibleAssetAcquisitionSettlement(StrEnum):
     BANK = "bank"
     PAYABLE = "payable"
+    PROJECT_COST = "project_cost"
 
 
 class IntangibleAssetLifeBasis(StrEnum):
