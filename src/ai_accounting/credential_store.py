@@ -50,13 +50,15 @@ class InMemoryCredentialStore:
 class WindowsCredentialStore:
     """Current-Windows-user Credential Manager storage, with no fallback."""
 
-    def __init__(self, *, target_name: str = WINDOWS_CREDENTIAL_TARGET) -> None:
+    def __init__(self, *, target_name: str | None = None) -> None:
         if sys.platform != "win32":
             raise IdentityError("IDENTITY_CREDENTIAL_STORE_UNAVAILABLE")
-        if not target_name or len(target_name) > 512 or "\x00" in target_name:
+        if target_name is not None and (
+            not target_name or len(target_name) > 512 or "\x00" in target_name
+        ):
             raise IdentityError("IDENTITY_CREDENTIAL_STORE_UNAVAILABLE")
         _assert_windows_credential_layout()
-        self._target = target_name
+        self._explicit_target = target_name
         self._advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
         self._advapi32.CredWriteW.argtypes = [ctypes.POINTER(_CREDENTIALW), ctypes.c_uint32]
         self._advapi32.CredWriteW.restype = ctypes.c_int
@@ -71,6 +73,20 @@ class WindowsCredentialStore:
         self._advapi32.CredDeleteW.restype = ctypes.c_int
         self._advapi32.CredFree.argtypes = [ctypes.c_void_p]
         self._advapi32.CredFree.restype = None
+
+    @property
+    def _target(self) -> str:
+        if self._explicit_target is not None:
+            return self._explicit_target
+        from .owner_security import OwnerSecurityOperations
+
+        # Discovery needs no database connection; every actual read checks the live identity.
+        try:
+            return "ai-accounting-core/local-owner-session/v2/" + OwnerSecurityOperations().scope()
+        except IdentityError:
+            raise
+        except Exception:
+            raise IdentityError("IDENTITY_CREDENTIAL_STORE_UNAVAILABLE") from None
 
     def save_session_token(self, token: SecretStr) -> None:
         raw = token.get_secret_value().encode("ascii")

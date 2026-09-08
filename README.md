@@ -131,7 +131,7 @@ Alembic revision。需要恢复已有系统时，先验证本地私有回放包�
   --package .\outputs\system-replay-YYYYMMDD
 ```
 
-命令输出默认公司的 `primary_org_id`；用它设置新负责人并登录后，再执行 `finance-replay replay`
+命令先保存初始化状态，再打开首次负责人设置表单；保存恢复码后自动登录。核验窗口状态成功后，再执行 `finance-replay replay`
 和 `finance-replay verify`。回放固定先处理非默认公司、最后处理默认公司，以便高风险公司
 尽早失败。全新公司仍通过登录后的 `finance_create_company` 类型化入口创建，正常公司创建会把
 业务库升级到 `0001_business_baseline_v3`。
@@ -153,10 +153,16 @@ Alembic revision。需要恢复已有系统时，先验证本地私有回放包�
 ```powershell
 $trialOrgId = "将 finance-bootstrap 输出的 org_id 粘贴到这里"
 .\.venv\Scripts\python.exe -m ai_accounting.identity_cli setup --org-id $trialOrgId --login-name owner
-.\.venv\Scripts\python.exe -m ai_accounting.identity_cli login --login-name owner
 ```
 
-妥善保存设置时显示的一次性恢复码。登录成功后，当前运行中的 MCP 会在下一次企业数据工具
+首次设置仅输入两次新密码，确认保存恢复码后直接登录。设置、登录、关账授权、改密、恢复账号、
+更换恢复码共用原生表单；旧 CLI 均为窗口入口，不再读取终端密码或输出恢复码。
+使用 `finance_request_owner_security_window` 和 `finance_get_owner_security_window_status`，
+或 CLI 的 `security-window` / `security-window-status` 请求窗口并核验真实状态；窗口启动不等于认证成功。
+令牌按真实数据库身份隔离，升级后每个实例首次重新登录一次，不复制旧全局令牌。
+完整状态及故障恢复见[Windows 操作说明](docs/windows-local-operations.md)。
+
+妥善保存设置时仅在表单显示的一次性恢复码。登录成功后，当前运行中的 MCP 会在下一次企业数据工具
 调用时读取最新的本地会话令牌，无需重启 Codex。
 
 负责人会话连续 7 天未使用时失效，且无论是否持续使用都会在登录 30 天后强制失效。企业

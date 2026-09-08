@@ -42,8 +42,17 @@ continue this accounting workflow only when the user also requests accounting wo
 5. If the user provides a concrete task or materials, begin that task after company selection; do
    not insert an unrelated dashboard-style briefing.
 
-If authentication is required, tell the user to complete the visible local login window and retry
-the interrupted call after login. Never request or handle a password in chat.
+For owner setup, login, close approval, password changes, recovery, and recovery-code replacement,
+use `finance_request_owner_security_window` and the kernel's native local form. Query the returned
+request with `finance_get_owner_security_window_status`: `starting` is not a visible window;
+`waiting_for_user` means the form is displayed. After success, retry the original tool to verify
+authentication; window status never replaces a close approval. Existing CLI commands launch this
+same form and do not accept terminal password input. Never use chat, `write_stdin`, an integrated
+terminal, or a custom script to receive passwords, recovery codes, or session tokens. On cancellation,
+failure, or a busy window, stop that action and report its stable result. If an identity change was
+already committed, do not repeat it merely because login or recovery-code acknowledgement failed.
+For an isolated replay target, use the replay executor's target-bound window request; the live MCP
+may still point to a different catalog.
 If MCP, the database, or login remains unavailable, report only the returned state and the concrete
 recovery action. Do not invent a company, work queue, or posting result.
 

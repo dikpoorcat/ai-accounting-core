@@ -129,7 +129,12 @@ from .models import (
     event_evidence,
 )
 from .owner_brief import OwnerBriefService
-from .owner_login_launcher import OwnerCloseApprovalWindowLauncher, OwnerLoginWindowLauncher
+from .owner_login_launcher import (
+    OwnerCloseApprovalWindowLauncher,
+    OwnerLoginWindowLauncher,
+    OwnerSecurityWindowLauncher,
+)
+from .owner_security import OwnerSecurityStatusRequest, OwnerSecurityWindowRequest
 from .owner_workflow import OwnerWorkflowService
 from .owner_workflow_schemas import (
     ConfirmExternalObligationRequest,
@@ -310,11 +315,21 @@ def _rejected_identity(code: str) -> dict[str, Any]:
 def _authentication_required(*, login_name: str) -> dict[str, Any]:
     """Fail closed while asking the local owner to renew the opaque session."""
 
-    if _OWNER_LOGIN_WINDOW_ENABLED and not _OWNER_LOGIN_WINDOW_LAUNCHER.request(
-        login_name=login_name
-    ):
-        logger.warning("Owner authentication is required but no login window could be launched")
-    return _rejected_identity("AUTHENTICATION_REQUIRED")
+    result = _rejected_identity("AUTHENTICATION_REQUIRED")
+    if _OWNER_LOGIN_WINDOW_ENABLED:
+        try:
+            window = _OWNER_LOGIN_WINDOW_LAUNCHER.request(login_name=login_name)
+            if isinstance(window, dict):
+                result["owner_security_window"] = window
+                if window.get("status") == "failed":
+                    result["errors"].append(window["error_code"])
+            elif not window:
+                result["errors"].append("OWNER_SECURITY_WINDOW_UNAVAILABLE")
+        except IdentityError as exc:
+            result["errors"].append(exc.code)
+        except Exception:
+            result["errors"].append("OWNER_SECURITY_WINDOW_UNAVAILABLE")
+    return result
 
 
 def _pending_close_approval(
@@ -353,7 +368,10 @@ def _secure_registered_data_tools() -> None:
     """Wrap every enterprise-data tool without changing its public schema."""
 
     for tool in mcp._tool_manager.list_tools():
-        if tool.name == "finance_get_event_schema":
+        if tool.name in {
+            "finance_get_event_schema", "finance_request_owner_security_window",
+            "finance_get_owner_security_window_status",
+        }:
             continue
         original = tool.fn
         is_write = not bool(tool.annotations and tool.annotations.readOnlyHint)
@@ -510,7 +528,8 @@ def _secure_registered_data_tools() -> None:
                                         tool_result = _original(*args, **kwargs)
                                 elif _tool_name == "finance_preview_event":
                                     tool_result = _preview_with_ephemeral_attribution(
-                                        business_session, context,
+                                        business_session,
+                                        context,
                                         lambda: _original(*args, **kwargs),
                                     )
                                 else:
@@ -1866,6 +1885,32 @@ def finance_preview_accounting_period_close(
 
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_request_owner_security_window(
+    request: OwnerSecurityWindowRequest,
+) -> dict[str, Any]:
+    """打开本机负责人安全表单；不接收密码。各操作仍独立验证权限和目标库。"""
+    try:
+        return OwnerSecurityWindowLauncher().request(request)
+    except IdentityError as exc:
+        return _rejected_identity(exc.code)
+    except Exception:
+        return _rejected_identity("OWNER_SECURITY_WINDOW_UNAVAILABLE")
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_owner_security_window_status(
+    request: OwnerSecurityStatusRequest,
+) -> dict[str, Any]:
+    """只读查询本目标库的窗口状态；成功状态不能代替登录或关账授权校验。"""
+    try:
+        return OwnerSecurityWindowLauncher().status(request.request_id)
+    except IdentityError as exc:
+        return _rejected_identity(exc.code)
+    except Exception:
+        return _rejected_identity("OWNER_SECURITY_STATE_UNAVAILABLE")
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_request_accounting_period_close_approval_window(
     request: RequestAccountingPeriodCloseApprovalWindowRequest,
 ) -> dict[str, Any]:
@@ -1896,12 +1941,19 @@ def finance_request_accounting_period_close_approval_window(
             login_name = _active_owner_login_name(session, org_id=request.org_id)
             if login_name is None:
                 return _rejected_identity("AUTHENTICATION_REQUIRED")
-        if not _OWNER_CLOSE_APPROVAL_WINDOW_LAUNCHER.request(
-            org_id=str(request.org_id),
-            period_id=str(request.period_id),
-            calculation_hash=request.calculation_hash,
-            login_name=login_name,
-        ):
+        try:
+            window = _OWNER_CLOSE_APPROVAL_WINDOW_LAUNCHER.request(
+                org_id=str(request.org_id),
+                period_id=str(request.period_id),
+                calculation_hash=request.calculation_hash,
+                login_name=login_name,
+            )
+        except IdentityError as exc:
+            return _rejected_identity(exc.code)
+        if isinstance(window, dict):
+            return {**window, "period_id": str(request.period_id),
+                    "calculation_hash": request.calculation_hash}
+        if not window:
             return _rejected_identity("IDENTITY_CLOSE_APPROVAL_WINDOW_UNAVAILABLE")
         return {
             "status": "requested",
@@ -2542,6 +2594,9 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
             for row in evidence_rows
             if row.evidence_id in evidence_by_id
         ]
+        from .purchase_components import project_cost_balances
+
+        cost_balances = project_cost_balances(session, parsed_org, components)
         return {
             "status": "ok",
             "event": {
@@ -2573,6 +2628,11 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                     "kind": component.kind,
                     "facts": component.facts,
                     "derived": component.derived,
+                    **(
+                        {"project_cost_balance": cost_balances[str(component.id)]}
+                        if str(component.id) in cost_balances
+                        else {}
+                    ),
                     "rule_version": component.rule_version,
                 }
                 for component in components

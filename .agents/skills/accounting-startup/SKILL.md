@@ -10,7 +10,7 @@ description: Prepare this repository's installed Windows accounting environment 
 1. 从仓库根目录执行 `./deploy/windows/start_accounting.ps1`。脚本等待 Docker Engine 和已有 PostgreSQL 容器就绪，复用或启动本仓库的看板，并检查页面响应。长时间启动时持续报告实际进度。细节与手工入口见 [Windows 本地运行速查](../../../docs/windows-local-operations.md)。
 2. 通过当前宿主的工具发现机制查找 `ai_accounting`，调用 `finance_get_event_schema` 并遵守其 `agent_operating_protocol`，然后调用 `finance_list_companies(include_archived=false)` 验证目录库连接和负责人登录。工具名称可见或看板返回 HTTP 200 都不等于 MCP 已连接、登录有效；必须以实际调用结果为准。
    - MCP 是由 Codex 按仓库 `.codex/config.toml` 管理的 STDIO 进程，不另起后台 `finance-mcp` 进程冒充连接。若宿主提供重连功能，重连后重试；若当前会话没有可调用的工具或连接仍失败，报告服务已就绪但 MCP 未连接，请用户重新打开本项目会话后再说“启动”。不改写 MCP 配置或审批设置。
-   - 认证要求出现时，沿用内核启动的可见本机登录窗口，请负责人在窗口完成登录，随后重试被中断的只读调用。不得在聊天中索取、读取或代输密码，不在隐藏终端运行交互式登录。等待登录期间不能报告准备完成。
+   - 认证要求出现时，沿用内核返回的原生负责人安全窗口请求，必要时使用 `finance_request_owner_security_window(kind=login)`。通过 `finance_get_owner_security_window_status` 区分启动中、已显示等待输入、完成和失败；启动请求不代表窗口已显示。负责人完成后重试被中断的只读调用，以该调用成功作为登录证明。不得通过聊天、`write_stdin`、集成终端或临时脚本处理密码、恢复码及会话令牌；窗口取消、冲突或失败时报告稳定结果，不重复弹窗或回退到终端输入。等待登录期间不能报告准备完成。
 3. 成功后打开脚本返回的看板地址（默认 `http://127.0.0.1:8765/`）。优先用宿主的浏览器面板；没有面板工具时使用系统默认浏览器。已存在对应标签页则复用。
 4. 单独的“启动”只报告准备结果和看板入口，例如：“记账环境已就绪，看板已打开。可以说‘开始记账’，或直接发送业务资料。”不选公司、不读取公司账务或展示月度待办。若没有可访问的公司，如实说明尚无可用公司，不自动创建。
 

@@ -46,6 +46,8 @@ def test_project_mcp_config_does_not_override_application_environment() -> None:
 def test_mcp_exposes_only_domain_tools() -> None:
     names = {tool.name for tool in asyncio.run(mcp.list_tools())}
     assert names == {
+        "finance_request_owner_security_window",
+        "finance_get_owner_security_window_status",
         "finance_get_profile",
         "finance_get_owner_brief",
         "finance_get_owner_workflow",
@@ -488,7 +490,10 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "finance_request_accounting_period_close_approval_window" in mcp.instructions
     assert "finance_get_accounting_period_close_approval" in mcp.instructions
     assert "AI 记账内核 - 关账密码确认" in mcp.instructions
-    assert "不得直接在隐藏终端" in mcp.instructions
+    assert "finance_request_owner_security_window" in mcp.instructions
+    assert "finance_get_owner_security_window_status" in mcp.instructions
+    assert protocol["owner_security_window"]["accepts_secrets"] is False
+    assert protocol["owner_security_window"]["window_status_is_authorization"] is False
     assert "finance_get_close_backup_configuration" in mcp.instructions
     assert "close_backup.status=failed" in mcp.instructions
     assert "另写临时备份脚本" in mcp.instructions

@@ -35,11 +35,13 @@ from .company_router import grant_runtime_database_access
 from .config import get_settings
 from .models import (
     Account,
+    CatalogMetadata,
     CompanyRegistry,
     Evidence,
     Organization,
     OrganizationDatabaseMetadata,
     OrganizationProfileVersion,
+    OwnerAccount,
 )
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -3154,13 +3156,15 @@ def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, An
             "created_databases": created_databases,
         }
         _write_json(state_file, state)
+        security = _request_replay_security(state, settings)
         return {
             "status": "prepared",
             "state_file": str(state_file),
             "catalog_database": catalog_url.database,
             "company_count": len(company_states),
             "primary_org_id": state["primary_org_id"],
-            "next_step": "run finance-login setup once for primary_org_id, then login",
+            "owner_security_window": security,
+            "next_action": "complete_owner_security_window_then_replay",
         }
     finally:
         provisioning_engine.dispose()
@@ -3874,18 +3878,101 @@ def _execute_operation(
     raise ReplayError(f"REPLAY_OPERATION_KIND_UNSUPPORTED:{kind}")
 
 
+def _validate_replay_target(state: Mapping[str, Any], settings) -> None:
+    """Verify persisted identities before opening authentication or touching business data."""
+    if not settings.multi_company_enabled:
+        raise ReplayError("REPLAY_TARGET_CATALOG_MISMATCH")
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as session:
+            marker = session.get(CatalogMetadata, 1)
+            if (
+                marker is None
+                or str(marker.catalog_instance_id) != state.get("catalog_instance_id")
+                or make_url(settings.database_url).database != state.get("catalog_database")
+            ):
+                raise ReplayError("REPLAY_TARGET_CATALOG_MISMATCH")
+            for company in state.get("companies", []):
+                registry = session.get(CompanyRegistry, uuid.UUID(company["org_id"]))
+                if (
+                    registry is None
+                    or registry.database_name != company["database_name"]
+                    or str(registry.database_identity) != company["database_identity"]
+                ):
+                    raise ReplayError("REPLAY_TARGET_COMPANY_MISMATCH")
+                for base in {
+                    settings.finance_company_database_url,
+                    settings.finance_migration_database_url,
+                } - {None}:
+                    business_engine = create_engine(
+                        _database_url_for_name(base, registry.database_name)
+                    )
+                    try:
+                        with Session(business_engine) as business:
+                            binding = business.get(OrganizationDatabaseMetadata, 1)
+                            if (
+                                binding is None
+                                or binding.org_id != registry.org_id
+                                or binding.database_identity != registry.database_identity
+                                or binding.current_catalog_instance_id != marker.catalog_instance_id
+                            ):
+                                raise ReplayError("REPLAY_TARGET_COMPANY_MISMATCH")
+                    finally:
+                        business_engine.dispose()
+    finally:
+        engine.dispose()
+
+
+def _request_replay_security(state: Mapping[str, Any], settings) -> dict[str, Any]:
+    from sqlalchemy.orm import sessionmaker
+
+    from .identity import IdentityError
+    from .owner_login_launcher import OwnerSecurityWindowLauncher
+    from .owner_security import OwnerSecurityOperations, OwnerSecurityWindowRequest
+
+    _validate_replay_target(state, settings)
+    engine = create_engine(settings.database_url)
+    try:
+        with Session(engine) as session:
+            owner = session.scalar(select(OwnerAccount).limit(1))
+            request = OwnerSecurityWindowRequest(
+                kind="bootstrap_owner" if owner is None else "login",
+                org_id=state["primary_org_id"] if owner is None else None,
+                login_name="owner" if owner is None else owner.login_name,
+            )
+        operations = OwnerSecurityOperations(settings=settings, factory=sessionmaker(engine))
+        return OwnerSecurityWindowLauncher(operations=operations).request(request)
+    except IdentityError as exc:
+        return {
+            "status": "failed", "error_code": exc.code, "next_action": "request_window_again"
+        }
+    except Exception:
+        return {
+            "status": "failed", "error_code": "OWNER_SECURITY_WINDOW_UNAVAILABLE",
+            "next_action": "request_window_again",
+        }
+    finally:
+        engine.dispose()
+
+
 def replay_system(package: Path, state_path: Path | None = None) -> dict[str, Any]:
     package_root = package.resolve(strict=True)
     state_file, state = _load_state(package_root, state_path)
     if state["phase"] not in {"prepared", "replaying"}:
         raise ReplayError("REPLAY_STATE_PHASE_INVALID")
     settings = get_settings()
+    _validate_replay_target(state, settings)
     from . import mcp_server
 
     mcp_server._initialize_mcp_credential_store(environment=settings.finance_environment)
     authentication = _call_tool("finance_list_companies", {"include_archived": True})
     if authentication.get("status") != "ok":
-        raise ReplayError("REPLAY_AUTHENTICATION_REQUIRED")
+        security = _request_replay_security(state, settings)
+        return {
+            "status": "blocked" if security.get("status") == "failed" else "waiting_for_owner",
+            "error_code": "REPLAY_AUTHENTICATION_REQUIRED", "state_file": str(state_file),
+            "owner_security_window": security,
+        }
     system = _load_json(package_root / "system.json")
     state["phase"] = "replaying"
     _write_json(state_file, state)

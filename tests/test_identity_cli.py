@@ -1,220 +1,89 @@
 from __future__ import annotations
 
+import json
 import sys
 import uuid
-from argparse import Namespace
-from datetime import date
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import func, select
 
 from ai_accounting import identity_cli
-from ai_accounting.accounting_period_schemas import (
-    GenerateAccountingPeriodRequest,
-    PreviewAccountingPeriodCloseRequest,
+from ai_accounting.credential_store import WindowsCredentialStore, _assert_windows_credential_layout
+
+
+@pytest.mark.parametrize("command,kind", list(identity_cli._ALIASES.items()))
+def test_legacy_commands_only_launch_the_unified_form(monkeypatch, capsys, command, kind):
+    org, period = uuid.uuid4(), uuid.uuid4()
+    calls = []
+
+    class Launcher:
+        def __init__(self, **kwargs):
+            pass
+
+        def request(self, request):
+            calls.append(request)
+            return {"status": "starting", "request_id": str(uuid.uuid4())}
+
+    monkeypatch.setattr(identity_cli, "OwnerSecurityWindowLauncher", Launcher)
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("terminal input forbidden"))
+    argv = ["finance-login", command]
+    if kind in {"bootstrap_owner", "approve_period_close"}:
+        argv += ["--org-id", str(org)]
+    if kind == "approve_period_close":
+        argv += ["--period-id", str(period), "--calculation-hash", "a" * 64]
+    monkeypatch.setattr(sys, "argv", argv)
+    identity_cli.main()
+    assert len(calls) == 1 and calls[0].kind == kind
+    assert json.loads(capsys.readouterr().out)["status"] == "starting"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["login", "--password", "SENTINEL-SECRET"],
+        ["security-window", "--kind", "SENTINEL-SECRET"],
+        ["setup", "--org-id", "SENTINEL-SECRET"],
+    ],
 )
-from ai_accounting.accounting_period_service import AccountingPeriodService
-from ai_accounting.coa import seed_organization
-from ai_accounting.credential_store import (
-    InMemoryCredentialStore,
-    WindowsCredentialStore,
-    _assert_windows_credential_layout,
-)
-from ai_accounting.database import Base, make_engine, make_session_factory
-from ai_accounting.identity import IdentityError
-from ai_accounting.identity_schemas import OwnerProvisionRequest
-from ai_accounting.identity_service import IdentityService
-from ai_accounting.models import (
-    AccountingPeriodCloseApproval,
-    Evidence,
-    IdentityAuditEvent,
-    OwnerAccount,
-)
+def test_cli_rejects_secret_arguments_without_echo(monkeypatch, capsys, arguments):
+    monkeypatch.setattr(sys, "argv", ["finance-login", *arguments])
+    with pytest.raises(SystemExit) as error:
+        identity_cli.main()
+    output = capsys.readouterr()
+    assert error.value.code == 2
+    assert "SENTINEL-SECRET" not in output.out + output.err
+    assert "IDENTITY_LOCAL_COMMAND_INVALID" in output.err
 
 
-def test_cli_failed_login_commits_throttle_and_fixed_audit_across_sessions(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    engine = make_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = make_session_factory(engine)
-    store = InMemoryCredentialStore()
-    try:
-        with factory.begin() as session:
-            organization = seed_organization(
-                session,
-                taxpayer_identification_number="91330106MA1234567T",
-                name="CLI failure persistence",
-            )
-            IdentityService(session).provision_owner(
-                OwnerProvisionRequest(
-                    org_id=organization.id,
-                    login_name="owner",
-                    password=SecretStr("Correct-Horse-Battery-2026!"),
-                )
-            )
-        monkeypatch.setattr(identity_cli, "SessionLocal", factory)
-        monkeypatch.setattr(identity_cli, "WindowsCredentialStore", lambda: store)
-        monkeypatch.setattr(
-            identity_cli,
-            "_secret_prompt",
-            lambda _prompt: "Wrong-Horse-Battery-2026!",
-        )
+def test_cli_status_and_logout_do_not_open_a_window(monkeypatch, capsys):
+    calls = []
 
-        for _ in range(5):
-            with pytest.raises(IdentityError, match="IDENTITY_AUTHENTICATION_FAILED"):
-                identity_cli._login(Namespace(login_name="owner"))
+    class Operations:
+        def __init__(self, **kwargs):
+            pass
 
-        with factory() as session:
-            account = session.scalar(select(OwnerAccount))
-            assert account is not None
-            assert account.password_failed_attempts == 5
-            assert account.password_throttled_until is not None
-            assert session.scalar(
-                select(func.count()).select_from(IdentityAuditEvent).where(
-                    IdentityAuditEvent.event_type == "login_failed"
-                )
-            ) == 5
+        def logout(self):
+            calls.append("logout")
 
-        with pytest.raises(IdentityError, match="IDENTITY_AUTHENTICATION_FAILED"):
-            identity_cli._login(Namespace(login_name="unknown-owner"))
-        with factory() as session:
-            assert session.scalar(
-                select(func.count()).select_from(IdentityAuditEvent).where(
-                    IdentityAuditEvent.event_type == "login_failed"
-                )
-            ) == 6
-    finally:
-        engine.dispose()
+    class Launcher:
+        def __init__(self, **kwargs):
+            pass
 
+        def status(self, request_id):
+            calls.append(request_id)
+            return {"status": "cancelled"}
 
-def test_cli_setup_surfaces_password_policy_as_stable_identity_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(identity_cli, "_secret_prompt", lambda _prompt: "12345")
-
-    with pytest.raises(IdentityError, match="IDENTITY_PASSWORD_POLICY_REJECTED"):
-        identity_cli._setup(
-            Namespace(
-                org_id=uuid.uuid4(),
-                login_name="owner",
-            )
-        )
-
-
-def test_cli_approve_close_reauthenticates_and_binds_exact_preview_hash(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    engine = make_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = make_session_factory(engine)
-    store = InMemoryCredentialStore()
-    password = "Owner-Explicit-Close-Approval-2026!"
-    try:
-        with factory.begin() as session:
-            organization = seed_organization(
-                session,
-                taxpayer_identification_number="91330106MA1234567T",
-                name="CLI owner close approval",
-            )
-            evidence = Evidence(
-                org_id=organization.id,
-                sha256="c" * 64,
-                original_name="period-generation.txt",
-                media_type="text/plain",
-                source="test",
-                size_bytes=1,
-                storage_path="test/period-generation.txt",
-            )
-            session.add(evidence)
-            session.flush()
-            generated = AccountingPeriodService(session).generate_accounting_period(
-                GenerateAccountingPeriodRequest(
-                    org_id=organization.id,
-                    period_month="2026-07",
-                    idempotency_key="generate-close-approval-test",
-                    confirmation_note="test period",
-                    evidence_references=[evidence.id],
-                )
-            )
-            assert generated.status.value == "posted"
-            IdentityService(session).provision_owner(
-                OwnerProvisionRequest(
-                    org_id=organization.id,
-                    login_name="close-owner",
-                    password=SecretStr(password),
-                )
-            )
-            org_id = organization.id
-            period_id = generated.period_id
-        assert period_id is not None
-        with factory() as session:
-            preview = AccountingPeriodService(session).preview_accounting_period_close(
-                PreviewAccountingPeriodCloseRequest(
-                    org_id=org_id,
-                    period_id=period_id,
-                    closing_date=date(2026, 7, 31),
-                )
-            )
-        assert preview.calculation_hash is not None
-        monkeypatch.setattr(identity_cli, "SessionLocal", factory)
-        monkeypatch.setattr(identity_cli, "WindowsCredentialStore", lambda: store)
-        monkeypatch.setattr(identity_cli, "_secret_prompt", lambda _prompt: password)
-
-        identity_cli._approve_close(
-            Namespace(
-                org_id=org_id,
-                period_id=period_id,
-                calculation_hash=preview.calculation_hash,
-                login_name="close-owner",
-            )
-        )
-
-        with factory() as session:
-            approval = session.scalar(select(AccountingPeriodCloseApproval))
-            assert approval is not None
-            assert approval.period_id == period_id
-            assert approval.calculation_hash == preview.calculation_hash
-            assert approval.confirmation_method == "local_password_reauthentication"
-            assert approval.consumed_at is None
-        assert store.load_session_token() is not None
-    finally:
-        engine.dispose()
-
-
-def test_cli_close_approval_window_uses_dedicated_launcher(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[dict[str, str]] = []
-
-    class _Launcher:
-        def request(self, **kwargs: str) -> bool:
-            calls.append(kwargs)
-            return True
-
-    monkeypatch.setattr(identity_cli, "OwnerCloseApprovalWindowLauncher", _Launcher)
-    org_id = uuid.uuid4()
-    period_id = uuid.uuid4()
-    calculation_hash = "a" * 64
-
-    identity_cli._approve_close_window(
-        Namespace(
-            org_id=org_id,
-            period_id=period_id,
-            calculation_hash=calculation_hash,
-            login_name="owner",
-        )
+    monkeypatch.setattr(identity_cli, "OwnerSecurityOperations", Operations)
+    monkeypatch.setattr(identity_cli, "OwnerSecurityWindowLauncher", Launcher)
+    request_id = uuid.uuid4()
+    monkeypatch.setattr(
+        sys, "argv", ["finance-login", "security-window-status", "--request-id", str(request_id)]
     )
-
-    assert calls == [
-        {
-            "org_id": str(org_id),
-            "period_id": str(period_id),
-            "calculation_hash": calculation_hash,
-            "login_name": "owner",
-        }
-    ]
+    identity_cli.main()
+    monkeypatch.setattr(sys, "argv", ["finance-login", "logout"])
+    identity_cli.main()
+    assert calls == [request_id, "logout"]
+    assert "LOGOUT_SUCCEEDED" in capsys.readouterr().out
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Credential Manager only")

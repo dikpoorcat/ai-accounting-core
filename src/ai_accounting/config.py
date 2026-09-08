@@ -208,4 +208,8 @@ def _is_loopback_database_host(host: str | None) -> bool:
 
 @lru_cache
 def get_settings() -> Settings:
+    # A native security child receives a complete snapshot from its launcher.
+    # Never mix it with a changed .env while the owner is entering a password.
+    if os.environ.get("FINANCE_SECURITY_FROZEN_CONFIG") == "1":
+        return Settings(_env_file=None)
     return Settings()

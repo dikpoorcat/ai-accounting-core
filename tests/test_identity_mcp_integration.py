@@ -86,6 +86,8 @@ def test_authenticated_data_tools_fail_closed_without_session(
     assert schema.fn()["status"] == "ok"
 
     close_bootstrap_tool_names = {
+        "finance_request_owner_security_window",
+        "finance_get_owner_security_window_status",
         "finance_request_accounting_period_close_approval_window",
         "finance_get_accounting_period_close_approval",
     }

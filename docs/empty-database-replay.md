@@ -7,6 +7,18 @@
 旧业务基线及至 `0006_pass_through` 的旧场景迁移不支持原地升级。
 此次重构只交付代码、隔离测试和重录资料，不自动重录、清空或更正试用公司。
 
+供应商预付与项目成本要求业务库继续升级至 `0002_purchase_projects`。这是 v3 基线后的
+前向迁移，不是重新生成基线。新空库初始化应执行迁移到 `head`。
+
+跨期预付款必须按真实日期先录预付、交付确认应付后再冲抵，不能把付款指向未来才形成的
+应付。真实阶段验收则先录项目成本及债务，交付时按来源结转资产；字段及示例见
+[供应商预付款与项目成本](purchase-project-components.md)。没有阶段验收证据时不改变为
+阶段成本路径，也不从旧库错误核销结果推断业务事实。
+
+本次修正版资料另存于 Git 忽略的 `outputs/`，保留原包及原始依据。使用修正版包须创建
+独立空目标及新的回放状态文件，不能沿用旧包已执行步骤的状态。包哈希和协议校验只代表
+资料结构有效；隔离测试数据回放成功也不代表试用公司已实际重录，仍须分别报告状态。
+
 ## 1. 先保全最新事实
 
 源数据库必须强制只读连接并在一致性事务中读取；不得仅凭旧回放包推断最新状态。
@@ -71,14 +83,18 @@ $replayState = ".\outputs\.composition-replay.state.json"
   --state-file $replayState
 ```
 
-执行器先创建目录结构，再逐公司创建业务结构，核对独立 revision 和公司身份。使用返回的
-`primary_org_id` 在本地无回显流程设置新负责人并登录；旧身份凭据、会话及审批不回放。
+执行器先创建目录结构，再逐公司创建业务结构，核对独立 revision 和公司身份，并保存状态。
+随后自动请求原生“首次负责人设置”表单；`owner_security_window` 返回请求编号和状态。
+在窗口输入两次新密码并确认已保存恢复码后自动登录；旧身份凭据、会话及审批不回放。
+`starting` 仅代表正在启动，`waiting_for_user` 才表示表单已显示。
+弹窗失败不撤销初始化，继续使用同一包和状态运行 `replay` 即可重新请求设置或登录。
 
 ```powershell
 $primaryOrgId = "prepare-empty 返回的 primary_org_id"
 .\.venv\Scripts\python.exe -m ai_accounting.identity_cli setup `
   --org-id $primaryOrgId --login-name owner
-.\.venv\Scripts\python.exe -m ai_accounting.identity_cli login --login-name owner
+.\.venv\Scripts\python.exe -m ai_accounting.identity_cli security-window-status `
+  --request-id "返回的 request_id"
 ```
 
 ## 4. 逐条执行和期间处理
@@ -89,6 +105,10 @@ $primaryOrgId = "prepare-empty 返回的 primary_org_id"
   --state-file $replayState
 ```
 
+回放先检查实际目录和公司身份是否与状态文件一致。身份设置或登录尚未完成时，返回
+`waiting_for_owner` 和当前目标库的窗口请求，不执行包内操作；失败返回 `blocked`。
+窗口返回成功后再次执行同一回放命令，由内核重新验证本机会话。
+每个目标实例独立保存会话；不要用仍连接现账库的 MCP 请求替代回放库窗口。
 先非默认公司、后默认公司；状态文件逐条记录成功结果和新编号，使用同一包及状态可断点续跑。
 证据、人员、合同、卡片、应收应付来源先于引用它们的付款或核销。重复同类业务可在一笔中
 出现，明确分配到同一笔实际收付；不同公司的事实不能组合。同笔组件依赖通过稳定键表达。

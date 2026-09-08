@@ -153,10 +153,22 @@ CLOSE_APPROVAL_RUNTIME_INSTRUCTION = (
     "finance_get_accounting_period_close_approval 取得与当前会话、期间和预览哈希精确匹配的"
     "未消费授权。普通MCP会话过期时，请求工具仍应直接启动该专用窗口，不得先要求负责人"
     "完成一次通用登录再重复输入关账密码；专用窗口等待期间，授权查询遇到旧会话或过期会话"
-    "只能继续返回等待状态，不得另启通用登录窗。approve-close 是专用窗口内部命令，AI不得直接在"
+    "只能继续返回等待状态，不得另启通用登录窗。approve-close 兼容命令只启动同一原生表单，AI不得在"
     "隐藏终端、后台会话、"
     "MCP stdio、Codex底部终端或其他不可见输入通道中运行它等待密码；窗口未出现时必须"
     "修复启动链，不得回退到不可见终端。AI不得索取、代输、读取或记录负责人密码。"
+)
+
+OWNER_SECURITY_RUNTIME_INSTRUCTION = (
+    "首次负责人设置、登录、关账授权、改密码、恢复账号和更换恢复码统一使用"
+    "finance_request_owner_security_window及原生本机表单。首次设置保存恢复码后自动登录。"
+    "工具仅接收操作类型和非秘密上下文；不得通过聊天、集成终端、write_stdin、命令参数或"
+    "临时脚本输入、读取、记录密码、恢复码及会话令牌。使用"
+    "finance_get_owner_security_window_status查询请求；starting仅表示启动中，"
+    "waiting_for_user才表示表单已显示，succeeded仍须重试原业务工具核验认证。"
+    "窗口状态不能替代关账授权。窗口冲突、取消或失败时停止对应动作并报告返回的稳定错误码；"
+    "不得把已提交身份变更后的登录失败当成未建号或未改密而重复操作。"
+    "空库回放使用执行器返回的窗口请求及其冻结目标，不用现账MCP替代回放库身份设置。"
 )
 
 CLOSE_BACKUP_RUNTIME_INSTRUCTION = (
@@ -206,6 +218,7 @@ CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
 
 MCP_SERVER_INSTRUCTIONS = (
     f"{IDENTITY_RUNTIME_INSTRUCTION}"
+    f"{OWNER_SECURITY_RUNTIME_INSTRUCTION}"
     f"{COMPOSITION_RUNTIME_INSTRUCTION}"
     f"{PASS_THROUGH_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
@@ -234,6 +247,13 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "owner_security_window": {
+            "request_tool": "finance_request_owner_security_window",
+            "status_tool": "finance_get_owner_security_window_status",
+            "instruction": OWNER_SECURITY_RUNTIME_INSTRUCTION,
+            "accepts_secrets": False,
+            "window_status_is_authorization": False,
+        },
         "composed_accounting": {
             "tool": "finance_record_event",
             "preview_tool": "finance_preview_event",
