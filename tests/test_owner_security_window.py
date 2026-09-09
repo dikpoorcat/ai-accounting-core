@@ -5,6 +5,7 @@ import time
 import uuid
 from types import SimpleNamespace
 from typing import get_args
+from unittest.mock import Mock
 
 import pytest
 from pydantic import SecretStr
@@ -23,6 +24,8 @@ def form():
 
     root = tk.Tk()
     root.withdraw()
+    destroy = root.destroy
+    root.destroy = Mock()
     forms = []
 
     def create(kind, error=None):
@@ -77,7 +80,10 @@ def form():
     for window in forms:
         window.message = None
     try:
-        root.destroy()
+        for timer in root.tk.call("after", "info"):
+            root.after_cancel(timer)
+        root.report_callback_exception = None
+        destroy()
     except tk.TclError:
         pass
 
@@ -107,6 +113,7 @@ def test_all_six_forms_success_and_no_duplicate_submission(form, kind):
         window.submit()
         settle(window)
     assert records[-1]["status"] == "succeeded"
+    window.root.destroy.assert_called_once_with()
     assert "TEST-PASSWORD" not in repr(records)
     assert "TEST-RECOVERY-ONLY-IN-FORM" not in repr(records)
     assert window.saved_new_password is None
@@ -136,6 +143,8 @@ def test_safe_error_leaves_form_retryable(form, code):
     assert records[-1]["status"] == "waiting_for_user"
     assert code in window.message.get()
     assert not window.finished
+    assert window.root.winfo_exists()
+    window.root.destroy.assert_not_called()
 
 
 def test_close_after_rotation_is_not_reported_as_cancelled_or_success(form):
@@ -184,3 +193,88 @@ def test_state_write_failure_before_submit_never_executes_identity_operation(for
     assert window.finished
     assert not calls
     assert "OWNER_SECURITY_STATE_ACCESS_DENIED" in window.message.get()
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "bootstrap_owner",
+        "change_password",
+        "recover",
+        "replace_recovery_code",
+    ],
+)
+def test_copy_recovery_code_requires_click_and_does_not_acknowledge(form, monkeypatch, kind):
+    window, records, calls = form(kind)
+    clipboard = []
+    monkeypatch.setattr(window.root, "clipboard_clear", lambda: clipboard.append("clear"))
+    monkeypatch.setattr(window.root, "clipboard_append", clipboard.append)
+    assert not window.copy_button.winfo_manager()
+    window.copy_recovery_code()
+    assert not clipboard
+    for entry in window.entries.values():
+        entry.insert(0, "TEST-PASSWORD")
+    window.submit()
+    settle(window)
+    assert not clipboard
+    assert window.copy_button.winfo_manager() == "grid"
+    previous_records = [dict(record) for record in records]
+    window.copy_button.invoke()
+    assert clipboard == ["clear", "TEST-RECOVERY-ONLY-IN-FORM"]
+    assert window.copy_button.cget("text") == "已复制"
+    assert records == previous_records
+    assert len(calls) == 1
+    assert not any(record.get("recovery_code_acknowledged") for record in records)
+    assert "TEST-RECOVERY-ONLY-IN-FORM" not in repr(records)
+    window.submit()
+    window.copy_recovery_code()
+    settle(window)
+    assert len(clipboard) == 2
+    window.root.destroy.assert_called_once_with()
+    assert records[-1]["status"] == "succeeded"
+
+
+def test_copy_failure_is_safe_and_retryable(form, monkeypatch):
+    window, records, calls = form("replace_recovery_code")
+    window.submit()
+    settle(window)
+    previous_records = [dict(record) for record in records]
+    monkeypatch.setattr(window.root, "clipboard_clear", lambda: None)
+
+    def fail(_):
+        raise RuntimeError("TEST-RECOVERY-ONLY-IN-FORM")
+
+    monkeypatch.setattr(window.root, "clipboard_append", fail)
+    window.copy_button.invoke()
+    assert "OWNER_SECURITY_CLIPBOARD_UNAVAILABLE" in window.message.get()
+    assert "TEST-RECOVERY-ONLY-IN-FORM" not in window.message.get()
+    assert records == previous_records
+    assert not window.finished
+    copied = []
+    monkeypatch.setattr(window.root, "clipboard_append", copied.append)
+    window.copy_button.invoke()
+    assert copied == ["TEST-RECOVERY-ONLY-IN-FORM"]
+    assert window.copy_button.cget("text") == "已复制"
+    assert "OWNER_SECURITY_CLIPBOARD_UNAVAILABLE" not in window.message.get()
+    assert len(calls) == 1
+
+
+def test_recovery_acknowledgement_failure_keeps_window_open(form, monkeypatch):
+    window, records, _ = form("bootstrap_owner")
+    for entry in window.entries.values():
+        entry.insert(0, "TEST-PASSWORD")
+    window.submit()
+    settle(window)
+    assert window.root.winfo_exists()
+    assert records[-1]["status"] == "waiting_for_user"
+
+    def fail(*args, **kwargs):
+        raise IdentityError("IDENTITY_CREDENTIAL_STORE_WRITE_FAILED")
+
+    monkeypatch.setattr(window.operations, "finish_recovery_display", fail)
+    window.submit()
+    settle(window)
+    assert records[-1]["status"] == "failed"
+    assert window.root.winfo_exists()
+    window.root.destroy.assert_not_called()
+    assert "IDENTITY_CREDENTIAL_STORE_WRITE_FAILED" in window.message.get()

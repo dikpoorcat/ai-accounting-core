@@ -1,4 +1,4 @@
-"""Native local-only form. Never export secrets via stdout, logs, files, or IPC."""
+"""Native form. Recovery codes leave it only through an explicit clipboard-copy action."""
 
 from __future__ import annotations
 
@@ -96,8 +96,15 @@ class SecurityForm:
             self.entries[field] = entry
         self.message = tk.StringVar(value="请在此窗口完成操作，密码不会发送到聊天。")
         ttk.Label(frame, textvariable=self.message, wraplength=460).grid(sticky="w", pady=14)
-        self.recovery_label = ttk.Label(frame, text="", wraplength=460)
-        self.recovery_label.grid(sticky="w")
+        recovery_row = ttk.Frame(frame)
+        recovery_row.grid(sticky="ew")
+        self.recovery_label = ttk.Label(recovery_row, text="", wraplength=340)
+        self.recovery_label.grid(row=0, column=0, sticky="w")
+        self.copy_button = ttk.Button(
+            recovery_row, text="复制恢复码", command=self.copy_recovery_code
+        )
+        self.copy_button.grid(row=0, column=1, padx=(12, 0), sticky="e")
+        self.copy_button.grid_remove()
         buttons = ttk.Frame(frame)
         buttons.grid(sticky="e", pady=(12, 0))
         self.cancel_button = ttk.Button(buttons, text="取消", command=self.cancel)
@@ -131,6 +138,28 @@ class SecurityForm:
             finally:
                 self.finished = True
 
+    def copy_recovery_code(self):
+        if self.busy or not self.recovery_displayed:
+            return
+        recovery_code = self.recovery_label.cget("text")
+        if not recovery_code:
+            return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(recovery_code)
+        except Exception:
+            self.copy_button.configure(text="复制恢复码")
+            self.message.set(
+                "复制失败，请重试或手动保存恢复码。\nOWNER_SECURITY_CLIPBOARD_UNAVAILABLE"
+            )
+            return
+        self.copy_button.configure(text="已复制")
+        if self.message.get().endswith("OWNER_SECURITY_CLIPBOARD_UNAVAILABLE"):
+            self.message.set(
+                "恢复码已复制，请粘贴到安全位置，再点击“我已保存恢复码”。请勿粘贴到聊天中。"
+            )
+        # Copying is not acknowledgement that the owner has securely saved the code.
+
     def submit(self):
         if self.busy:
             return
@@ -145,6 +174,7 @@ class SecurityForm:
             self.saved_new_password = values.get("new_password")
         finishing = self.recovery_displayed
         self.busy = True
+        self.copy_button.configure(state="disabled")
         self.submit_button.configure(state="disabled")
         self.cancel_button.configure(state="disabled")
         self.message.set("正在处理，请稍候……")
@@ -164,6 +194,7 @@ class SecurityForm:
             self.message.set("无法记录窗口状态，操作已停止，请关闭窗口。\n" + safe_error(exc))
             self.submit_button.configure(state="normal", text="关闭")
             self.cancel_button.configure(state="normal")
+            self.copy_button.configure(state="normal")
             return
 
         def work():
@@ -192,6 +223,7 @@ class SecurityForm:
             self.root.after(100, self.poll)
             return
         self.busy = False
+        self.copy_button.configure(state="normal")
         self.submit_button.configure(state="normal")
         self.cancel_button.configure(state="normal")
         facts = {
@@ -229,20 +261,22 @@ class SecurityForm:
             for entry in self.entries.values():
                 entry.configure(state="disabled")
             self.recovery_label.configure(text=recovery.get_secret_value())
-            self.message.set("请现在保存下面的恢复码。它只在此窗口显示，不会自动复制或保存。")
+            self.copy_button.configure(text="复制恢复码")
+            self.copy_button.grid()
+            self.message.set(
+                "请保存下面的恢复码，可点击按钮复制到剪贴板，再粘贴到安全位置。"
+                "复制不等于已保存，请勿粘贴到聊天中。"
+            )
             self.submit_button.configure(text="我已保存恢复码")
             self.launcher.update(self.record.request_id, status="waiting_for_user", **facts)
         else:
             self.saved_new_password = None
             self.recovery_label.configure(text="")
+            self.copy_button.grid_remove()
             self.finished = True
             self.launcher.update(self.record.request_id, status="succeeded", **facts)
-            self.message.set(
-                "操作完成。"
-                + ("请重新登录。" if self.request.kind in {"recover", "change_password"} else "")
-            )
-            self.submit_button.configure(text="关闭")
-            self.root.after(1800, self.root.destroy)
+            self.root.destroy()
+            return
         self.root.after(100, self.poll)
 
     def cancel(self):
