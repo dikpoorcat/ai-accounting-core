@@ -34,11 +34,11 @@ def _need(service, c, *fields):
 
 
 def _date(service, c, *, payment=False):
-    if c.business_date > service.request.posting_date:
+    if c.recognition_date > service.request.posting_date:
         raise ValueError("PURCHASE_BUSINESS_DATE_IN_FUTURE")
     if payment:
         _need(service, c, "payment_date")
-        if c.payment_date > service.request.posting_date:
+        if service.first_payment_date(c) > service.request.posting_date:
             raise ValueError("PURCHASE_PAYMENT_DATE_IN_FUTURE")
 
 
@@ -171,7 +171,7 @@ def compile_project_cost(service, c):
             raise MissingFacts(missing)
         conditions = c.development_conditions.model_dump()
         met = conditions.pop("conditions_met_date")
-        if met > c.business_date or not all(conditions.values()):
+        if met > c.recognition_date or not all(conditions.values()):
             raise ValueError("PROJECT_DEVELOPMENT_CAPITALIZATION_CONDITIONS_NOT_MET")
         if c.cost_element == "purchase_price":
             raise ValueError("DEVELOPMENT_COST_REQUIRES_ATTRIBUTABLE_COST_OR_TAX")
@@ -355,7 +355,7 @@ def compile_intangible_asset_acquisition(service, c):
             org_id=service.request.org_id,
             key=c.key,
             posting_date=service.request.posting_date,
-            business_date=c.business_date,
+            business_date=c.recognition_date,
             payment_date=c.payment_date,
             evidence_references=list(service.evidence_ids),
             description="",

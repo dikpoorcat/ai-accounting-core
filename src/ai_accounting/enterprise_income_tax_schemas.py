@@ -31,7 +31,9 @@ class PreviewEnterpriseIncomeTaxResultRequest(BaseModel):
     quarter: int = Field(ge=0, le=4, description="1–4季度；0表示年度汇算")
     previous_result_id: uuid.UUID | None = None
     original_confirmation_id: uuid.UUID | None = None
-    declaration_date: date
+    declaration_date: date | None = None
+    business_date: date | None = None
+    recognition_period: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
     posting_date: date
     declaration_reference: str | None = Field(default=None, min_length=1, max_length=200)
     amount_basis: Literal["quarter", "year_to_date", "annual", "adjustment_notice"]
@@ -43,6 +45,12 @@ class PreviewEnterpriseIncomeTaxResultRequest(BaseModel):
 
     @model_validator(mode="after")
     def valid_shape(self) -> PreviewEnterpriseIncomeTaxResultRequest:
+        if self.business_date is not None and self.recognition_period is not None:
+            raise ValueError("provide either recognition_period or business_date")
+        if self.recognition_period:
+            from .fact_dates import period_end
+
+            period_end(self.recognition_period)
         if self.quarter == 0 and self.amount_basis in {"quarter", "year_to_date"}:
             raise ValueError("annual result requires annual or adjustment_notice basis")
         if self.quarter and self.amount_basis == "annual":
@@ -55,6 +63,14 @@ class PreviewEnterpriseIncomeTaxResultRequest(BaseModel):
         if len(set(self.evidence_references)) != len(self.evidence_references):
             raise ValueError("duplicate evidence")
         return self
+
+    @property
+    def recognition_date(self):
+        from .fact_dates import period_end
+
+        return (
+            period_end(self.recognition_period) if self.recognition_period else self.business_date
+        )
 
 
 class ConfirmEnterpriseIncomeTaxResultRequest(PreviewEnterpriseIncomeTaxResultRequest):

@@ -29,6 +29,7 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
             **component.model_dump(
                 exclude={
                     "key",
+                    "recognition_period",
                     "kind",
                     "business_date",
                     "payment_date",

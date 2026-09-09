@@ -3539,6 +3539,18 @@ class _ReplayResolver:
                 source_event_id = source.get("event_id") if source else None
                 if source_event_id is None:
                     raise ReplayError("REPLAY_OPEN_ITEM_SOURCE_MISSING")
+                parameters = {
+                    "org_id": self.org_id,
+                    "source_event_id": source_event_id,
+                    "item_type": value["item_type"],
+                    "amount": value["original_amount_fen"],
+                    "category": value.get("payable_category"),
+                    "agency": value.get("payable_agency_code"),
+                    "insurance": value.get("insurance_kind"),
+                    "counterparty_kind": value["counterparty_kind"],
+                    "counterparty_name": value["counterparty_name"],
+                    "counterparty_external_ref": value.get("counterparty_external_ref"),
+                }
                 result = session.scalar(
                     text(
                         "SELECT item.id FROM open_items AS item "
@@ -3558,19 +3570,26 @@ class _ReplayResolver:
                         "AND (:counterparty_external_ref IS NOT NULL "
                         "OR counterparty.name=:counterparty_name)"
                     ),
-                    {
-                        "org_id": self.org_id,
-                        "source_event_id": source_event_id,
-                        "item_type": value["item_type"],
-                        "amount": value["original_amount_fen"],
-                        "category": value.get("payable_category"),
-                        "agency": value.get("payable_agency_code"),
-                        "insurance": value.get("insurance_kind"),
-                        "counterparty_kind": value["counterparty_kind"],
-                        "counterparty_name": value["counterparty_name"],
-                        "counterparty_external_ref": value.get("counterparty_external_ref"),
-                    },
+                    parameters,
                 )
+                if result is None:
+                    anonymous_matches = session.scalars(
+                        text(
+                            "SELECT item.id FROM open_items AS item "
+                            "WHERE item.org_id=:org_id "
+                            "AND item.source_event_id=:source_event_id "
+                            "AND item.item_type=:item_type "
+                            "AND item.original_amount_fen=:amount "
+                            "AND item.payable_category IS NOT DISTINCT FROM :category "
+                            "AND item.insurance_kind IS NOT DISTINCT FROM :insurance "
+                            "AND item.counterparty_id IS NULL "
+                            "AND item.payable_agency_code IS NULL"
+                        ),
+                        parameters,
+                    ).all()
+                    if len(anonymous_matches) > 1:
+                        raise ReplayError("REPLAY_ANONYMOUS_OPEN_ITEM_REFERENCE_AMBIGUOUS")
+                    result = anonymous_matches[0] if anonymous_matches else None
             elif ref_type in {"asset", "intangible", "labor_person", "borrowing"}:
                 table_name, code_name = {
                     "asset": ("fixed_assets", "asset_code"),

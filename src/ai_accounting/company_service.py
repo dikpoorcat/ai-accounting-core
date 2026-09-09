@@ -94,12 +94,8 @@ class CompanyService:
         database_name = f"finance_company_{org_id.hex}"
         payload = request.model_dump(mode="json")
         payload_hash = canonical_sha256(payload)
-        self._lock_catalog_key(
-            f"company-action:{org_id}:create:{request.idempotency_key}"
-        )
-        self._lock_catalog_key(
-            f"company-taxpayer:{request.taxpayer_identification_number}"
-        )
+        self._lock_catalog_key(f"company-action:{org_id}:create:{request.idempotency_key}")
+        self._lock_catalog_key(f"company-taxpayer:{request.taxpayer_identification_number}")
         self._lock_catalog_key("company-primary")
         duplicate_org_id = self.catalog_session.scalar(
             select(CompanyRegistry.org_id).where(
@@ -214,9 +210,7 @@ class CompanyService:
             self.catalog_session.flush()
             return self._rejected("COMPANY_PROVISIONING_FAILED", org_id=org_id)
 
-    def preview_profile_change(
-        self, request: PreviewCompanyProfileChangeRequest
-    ) -> dict[str, Any]:
+    def preview_profile_change(self, request: PreviewCompanyProfileChangeRequest) -> dict[str, Any]:
         registry = self.router.resolve(self.catalog_session, request.org_id, for_write=True)
         with self.router.factory_for(registry)() as business_session:
             facts = self._profile_preview_facts(business_session, request)
@@ -228,16 +222,14 @@ class CompanyService:
             "affected_future_periods": facts["affected_future_periods"],
         }
 
-    def confirm_profile_change(
-        self, request: ConfirmCompanyProfileChangeRequest
-    ) -> dict[str, Any]:
-        payload_hash = canonical_sha256(request.model_dump(mode="json"))
+    def confirm_profile_change(self, request: ConfirmCompanyProfileChangeRequest) -> dict[str, Any]:
+        payload_hash = canonical_sha256(
+            request.model_dump(mode="json", exclude={"confirmation_note"})
+        )
         self._lock_catalog_key(
             f"company-action:{request.org_id}:profile_change:{request.idempotency_key}"
         )
-        self._lock_catalog_key(
-            f"company-taxpayer:{request.taxpayer_identification_number}"
-        )
+        self._lock_catalog_key(f"company-taxpayer:{request.taxpayer_identification_number}")
         existing = self._existing_action(
             org_id=request.org_id,
             action_type="profile_change",
@@ -260,9 +252,7 @@ class CompanyService:
                 return self._rejected("COMPANY_PROFILE_RETRY_STATE_INVALID")
             action = existing
         else:
-            registry = self.router.resolve(
-                self.catalog_session, request.org_id, for_write=True
-            )
+            registry = self.router.resolve(self.catalog_session, request.org_id, for_write=True)
         with self.router.factory_for(registry)() as business_session:
             preview_facts = self._profile_preview_facts(business_session, request)
         if canonical_sha256(preview_facts) != request.calculation_hash:
@@ -363,9 +353,7 @@ class CompanyService:
             self.catalog_session.flush()
             return self._rejected("COMPANY_PROFILE_CHANGE_FAILED", org_id=request.org_id)
 
-    def preview_status_change(
-        self, request: PreviewCompanyStatusChangeRequest
-    ) -> dict[str, Any]:
+    def preview_status_change(self, request: PreviewCompanyStatusChangeRequest) -> dict[str, Any]:
         registry = self.catalog_session.scalar(
             select(CompanyRegistry)
             .where(CompanyRegistry.org_id == request.org_id)
@@ -381,7 +369,6 @@ class CompanyService:
             "org_id": str(request.org_id),
             "current_status": registry.status,
             "target_status": request.target_status,
-            "confirmation_note": request.confirmation_note,
         }
         return {
             "status": "calculated",
@@ -389,10 +376,10 @@ class CompanyService:
             "change": facts,
         }
 
-    def confirm_status_change(
-        self, request: ConfirmCompanyStatusChangeRequest
-    ) -> dict[str, Any]:
-        payload_hash = canonical_sha256(request.model_dump(mode="json"))
+    def confirm_status_change(self, request: ConfirmCompanyStatusChangeRequest) -> dict[str, Any]:
+        payload_hash = canonical_sha256(
+            request.model_dump(mode="json", exclude={"confirmation_note"})
+        )
         self._lock_catalog_key(
             f"company-action:{request.org_id}:status_change:{request.idempotency_key}"
         )
@@ -524,7 +511,6 @@ class CompanyService:
                 "taxpayer_type": "small_scale",
                 "jurisdiction": "CN",
                 "accounting_standard": "small_enterprise",
-                "confirmation_note": request.confirmation_note,
                 "evidence_references": [str(item) for item in evidence_ids],
             },
             "affected_future_periods": [
@@ -590,9 +576,7 @@ class CompanyService:
                             org_id=organization.id,
                             effective_from=request.effective_from,
                             name=request.name,
-                            taxpayer_identification_number=(
-                                request.taxpayer_identification_number
-                            ),
+                            taxpayer_identification_number=(request.taxpayer_identification_number),
                             taxpayer_type="small_scale",
                             filing_cycle=request.filing_cycle,
                             jurisdiction="CN",
@@ -632,9 +616,9 @@ class CompanyService:
         settings = self.router.settings
         if settings.finance_environment != "production":
             return
-        migration_url = self.router.company_url(
-            database_name, migration=True
-        ).render_as_string(hide_password=False)
+        migration_url = self.router.company_url(database_name, migration=True).render_as_string(
+            hide_password=False
+        )
         runtime_url = self.router.company_url(database_name)
         if runtime_url.username is None:
             raise CompanyLifecycleError("COMPANY_RUNTIME_ACCOUNT_INVALID")
@@ -654,9 +638,9 @@ class CompanyService:
         catalog_id: uuid.UUID,
     ) -> None:
         config = Config(str(_ROOT / "alembic.ini"))
-        database_url = self.router.company_url(
-            database_name, migration=True
-        ).render_as_string(hide_password=False)
+        database_url = self.router.company_url(database_name, migration=True).render_as_string(
+            hide_password=False
+        )
         config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
         config.attributes["database_url_override"] = database_url
         config.attributes["company_org_id"] = org_id

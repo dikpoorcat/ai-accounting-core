@@ -345,7 +345,7 @@ Set-Location ..
 非员工个人劳务人员不进入 `Employee`、工资、社保或公积金模块，按以下受控顺序处理：
 
 1. `finance_register_labor_service_person` 登记自然人劳务身份、关系有效期和证据；`finance_end_labor_service_person` 以追加证据结束关系。后续 `finance_register_employee` 可通过 `prior_labor_person_id` 显式连接同一自然人的历史劳务身份，但员工与劳务往来角色保持分离。
-2. `finance_preview_labor_remuneration_batch` 逐人保存服务期间、固定劳务费、佣金、受益费用角色、居民身份、按次或连续收入归组及外部申报状态。缺少任一会改变处理的事实时返回 `needs_information`；非居民和学生实习特殊算法在首期明确拒绝。
+2. `finance_preview_labor_remuneration_batch` 逐人保存服务期间、总报酬 `gross_remuneration_fen`、受益费用角色、居民身份及按次或连续收入归组。固定劳务费与佣金分解一起选填并核对合计；外部申报状态与编号仅作管理资料，不参与计算哈希。缺少会改变处理的事实时返回 `needs_information`；非居民和学生实习特殊算法在首期明确拒绝。
 3. 内核按业务日期选择有效的普通居民个人劳务报酬政策版本，用整数分和 `Decimal` 计算费用扣除、应纳税所得额、预扣率、速算扣除数、预扣个税和实付净额。`finance_confirm_labor_remuneration_batch` 复核哈希后按固定模板计提：借有限枚举费用/成本，贷个人劳务报酬应付。
 4. 劳务付款使用 `labor_settlement` 组件；同一笔汇总扣款可以组合多个劳务组件及 `salary_settlement` 组件，并由一个 `funds` 项按组件键分配。各分配合计必须精确等于已受控导入的银行流水，流水只匹配父事件一次，任一组件失败则整笔回滚。
 5. 劳务支付首期只支持全额结算，不按比例猜测部分支付的个税分配。每个劳务子项必须显式选择 `net_after_withholding` 或 `gross_paid_without_withholding`。前者按政策税额扣缴并支付净额；后者仅表达有单独证据支持的“毛额已全部支付、实际未扣税”历史事实，仍保存理论税额和未扣差异，按毛额匹配银行且不虚构个税应付。支付模板固定，不接受调用方自组分录或自填税额。

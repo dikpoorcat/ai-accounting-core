@@ -121,20 +121,22 @@ class OpenItemPlan:
             "pass_through",
         }:
             raise ValueError(f"unsupported payable category: {self.payable_category}")
-        if self.payable_category == "pass_through" and (
-            not self.pass_through_key
-        ):
+        if self.payable_category == "pass_through" and (not self.pass_through_key):
             raise ValueError("pass through payable requires its stable business key")
         if self.payable_category != "pass_through" and (
             self.pass_through_key is not None or self.pass_through_beneficiary_id is not None
         ):
             raise ValueError("pass through metadata requires pass through category")
-        if self.payable_category in {
-            "employer_social",
-            "withheld_employee_social",
-            "employer_housing",
-            "withheld_employee_housing",
-        } and self.insurance_kind is None:
+        if (
+            self.payable_category
+            in {
+                "employer_social",
+                "withheld_employee_social",
+                "employer_housing",
+                "withheld_employee_housing",
+            }
+            and self.insurance_kind is None
+        ):
             raise ValueError("statutory payable requires insurance kind")
 
 
@@ -361,6 +363,14 @@ def commit_posting_plan(
                 if item.counterparty_id != settlement.counterparty_id:
                     raise ValueError("SETTLEMENT_SOURCE_COUNTERPARTY_MISMATCH")
                 source = session.get(BusinessEvent, item.source_event_id)
+                from .fact_dates import recognition_date
+
+                source_component = session.get(BusinessEventComponent, item.source_component_id)
+                if source_component and source_component.facts.get("recognition_period"):
+                    if recognition_date(source_component.facts) > (
+                        recognition_date(plan.facts) or posting_date
+                    ):
+                        raise ValueError("MONTHLY_SOURCE_NOT_RECOGNIZED_BY_SETTLEMENT")
                 if (
                     source is None
                     or source.org_id != event.org_id

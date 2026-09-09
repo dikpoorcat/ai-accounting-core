@@ -294,7 +294,7 @@ def test_borrowing_interest_and_principal_compile_in_either_order(
         session=session,
         org_id=organization.id,
         borrowing_id=borrowing.id,
-        posting_date=due_day,
+        posting_date=date(2026, 2, 1),
         payment_date=due_day,
     )
     with pytest.raises(ValueError, match="REQUIRES_INTEREST_SETTLEMENT"):
@@ -317,7 +317,7 @@ def test_borrowing_interest_and_principal_compile_in_either_order(
         amount_fen=interest_amount,
     )
     assert session.scalar(select(BorrowingPayment)) is None
-    payment_parent = event(organization, "loan-repaid", due_day)
+    payment_parent = event(organization, "loan-repaid", date(2026, 2, 1))
     bank = ComponentPostingPlan(
         key="cash",
         kind="money_movement",
@@ -328,7 +328,7 @@ def test_borrowing_interest_and_principal_compile_in_either_order(
         session,
         event=payment_parent,
         components=[principal, interest, bank],
-        posting_date=due_day,
+        posting_date=date(2026, 2, 1),
         description="同笔还本付息",
     )
     payments = list(session.scalars(select(BorrowingPayment)))

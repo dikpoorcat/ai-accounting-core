@@ -113,7 +113,7 @@ from .schemas import (
     PayrollPolicyParameters,
     PayrollResult,
     PayrollResultStatus,
-    PayrollWageTaxDeclarationState,
+    PayrollWageTaxScope,
     PreviewPayrollRequest,
     RecordPayrollContributionSupplementRequest,
     RegisterEmployeePayrollProfileVersionRequest,
@@ -158,9 +158,7 @@ class FinanceService:
         return self._canonical_payload_hash(
             request.model_dump(
                 mode="json",
-                exclude={
-                    "employee_items": {"__all__": {"tax_reporting_difference_reason"}}
-                },
+                exclude={"employee_items": {"__all__": {"tax_reporting_difference_reason"}}},
             )
         )
 
@@ -479,7 +477,7 @@ class FinanceService:
     @staticmethod
     def _line_uses_cumulative_tax_state(batch: PayrollBatch, line: PayrollLine) -> bool:
         if batch.batch_kind == PayrollBatchKind.REGULAR.value:
-            return line.wage_tax_declaration_state == "declared"
+            return line.wage_tax_scope == "wage_income"
         return batch.tax_method == AnnualBonusTaxMethod.COMBINED.value
 
     def _allocate_payroll_batch_version(
@@ -906,7 +904,7 @@ class FinanceService:
         return supplied_amounts, persisted
 
     def _salary_withholding_open_item_plans(
-        self, org_id: uuid.UUID, payment_date: date, derived: dict[str, Any]
+        self, org_id: uuid.UUID, derived: dict[str, Any]
     ) -> list[OpenItemPlan]:
         plans: list[OpenItemPlan] = []
         for field_name, category in (
@@ -1704,7 +1702,9 @@ class FinanceService:
         """Register the evidenced employee-year treatment without changing employment dates."""
 
         payload_hash = self._canonical_payload_hash(
-            request.model_dump(mode="json", exclude={"confirmation_description"})
+            request.model_dump(
+                mode="json", exclude={"confirmation_description", "declaration_date"}
+            )
         )
         existing = self.session.scalar(
             select(PayrollFirstWageTaxTreatment).where(
@@ -1898,7 +1898,9 @@ class FinanceService:
         """Persist sparse, evidenced actual amounts without mutating company policy."""
 
         payload_hash = self._canonical_payload_hash(
-            request.model_dump(mode="json", exclude={"reason_code", "reason_description"})
+            request.model_dump(
+                mode="json", exclude={"reason_code", "reason_description", "declaration_date"}
+            )
         )
         existing_set = self.session.scalar(
             select(PayrollContributionActualSet).where(
@@ -3682,7 +3684,7 @@ class FinanceService:
                 continue
             uses_wage_tax = (
                 request.batch_kind == PayrollBatchKind.ANNUAL_BONUS
-                or item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
+                or item.wage_tax_scope == PayrollWageTaxScope.WAGE_INCOME
             )
             if uses_wage_tax and profile.resident_employee is None:
                 missing.append(
@@ -3724,7 +3726,7 @@ class FinanceService:
                     )
                     continue
                 if (
-                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
+                    item.wage_tax_scope == PayrollWageTaxScope.WAGE_INCOME
                     and employee.tax_withholding_start_date is None
                 ):
                     missing.append(
@@ -3794,7 +3796,7 @@ class FinanceService:
                     payroll_input.gross_salary_fen,
                     shortfall_treatment,
                 )
-                if item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED:
+                if item.wage_tax_scope == PayrollWageTaxScope.CONTRIBUTIONS_ONLY:
                     prepared_lines.append(
                         self._unreported_regular_prepared_line(
                             employee,
@@ -3808,7 +3810,7 @@ class FinanceService:
                         {
                             "employee_id": str(employee.id),
                             "profile": profile_snapshot,
-                            "wage_tax_declaration_state": "not_declared",
+                            "wage_tax_scope": "contributions_only",
                             "tax_withholding_start_date": None,
                             "prior_tax_state": None,
                             "contribution_actual_item_ids": [
@@ -3887,7 +3889,7 @@ class FinanceService:
                     {
                         "employee_id": str(employee.id),
                         "profile": profile_snapshot,
-                        "wage_tax_declaration_state": "declared",
+                        "wage_tax_scope": "wage_income",
                         "accounting_gross_salary_fen": payroll_input.gross_salary_fen,
                         "tax_reported_salary_fen": payroll_input.tax_reported_salary_fen,
                         "tax_withholding_start_date": (
@@ -4994,7 +4996,7 @@ class FinanceService:
         return {
             "employee_id": employee.id,
             "employee_payroll_profile_version_id": profile.id,
-            "wage_tax_declaration_state": "declared",
+            "wage_tax_scope": "wage_income",
             "tax_reported_salary_fen": item.tax_reported_salary_fen,
             "tax_reporting_difference_reason": item.tax_reporting_difference_reason,
             "special_additional_deduction_fen": item.special_additional_deduction_fen,
@@ -5039,7 +5041,7 @@ class FinanceService:
         return {
             "employee_id": employee.id,
             "employee_payroll_profile_version_id": profile.id,
-            "wage_tax_declaration_state": "not_declared",
+            "wage_tax_scope": "contributions_only",
             "tax_reported_salary_fen": None,
             "tax_reporting_difference_reason": None,
             "special_additional_deduction_fen": item.special_additional_deduction_fen,
@@ -5088,7 +5090,7 @@ class FinanceService:
             "employee_id": employee.id,
             "employee_payroll_profile_version_id": profile.id,
             "regular_payroll_batch_id": regular_payroll_batch_id,
-            "wage_tax_declaration_state": "not_applicable",
+            "wage_tax_scope": "not_applicable",
             "tax_reported_salary_fen": None,
             "tax_reporting_difference_reason": None,
             "special_additional_deduction_fen": 0,
@@ -5343,7 +5345,7 @@ class FinanceService:
         return {
             "id": str(line.id),
             "employee_id": str(line.employee_id),
-            "wage_tax_declaration_state": line.wage_tax_declaration_state,
+            "wage_tax_scope": line.wage_tax_scope,
             "tax_reported_salary_fen": line.tax_reported_salary_fen,
             "tax_reporting_difference_reason": line.tax_reporting_difference_reason,
             "annual_bonus_fen": line.annual_bonus_fen,
@@ -5845,7 +5847,7 @@ class FinanceService:
                 payroll_batch_id=reversal_batch.id,
                 employee_id=source.employee_id,
                 employee_payroll_profile_version_id=source.employee_payroll_profile_version_id,
-                wage_tax_declaration_state=source.wage_tax_declaration_state,
+                wage_tax_scope=source.wage_tax_scope,
                 tax_reported_salary_fen=source.tax_reported_salary_fen,
                 tax_reporting_difference_reason=source.tax_reporting_difference_reason,
                 special_additional_deduction_fen=source.special_additional_deduction_fen,

@@ -32,6 +32,7 @@ export interface BriefComponent {
     history: Array<{ version: number; created_at: string; metadata: Record<string, unknown> }>;
   };
   facts: Record<string, unknown>;
+  recognition?: { precision: "month" | "day"; period: string | null; date: string | null; label: string };
   derived: Record<string, unknown>;
   source_references: Array<{ type: string; value: string }>;
 }

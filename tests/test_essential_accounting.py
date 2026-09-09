@@ -362,9 +362,7 @@ def test_accounting_idempotency_reuses_dates_and_equivalent_sources(
     assert len(session.scalars(select(BusinessEvent)).all()) == 2
 
 
-def test_component_cannot_infer_date_from_different_fund_dates(
-    session, organization, sample_evidence
-):
+def test_component_keeps_individual_fund_dates(session, organization, sample_evidence):
     request = RecordEventRequest(
         org_id=organization.id,
         posting_date="2026-03-05",
@@ -384,5 +382,7 @@ def test_component_cannot_infer_date_from_different_fund_dates(
         ],
     )
     result = ComponentService(session).record(request)
-    assert result.errors == ["COMPONENT_MULTIPLE_PAYMENT_DATES_REQUIRES_SPLIT"]
-    assert not session.scalars(select(BusinessEvent)).all()
+    assert result.status == "posted", result
+    event = session.get(BusinessEvent, result.event_id)
+    assert event.facts["components"][0]["payment_date"] is None
+    assert {f["payment_date"] for f in event.facts["funds"]} == {"2026-03-04", "2026-03-05"}

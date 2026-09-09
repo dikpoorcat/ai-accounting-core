@@ -91,6 +91,7 @@ class LaborRemunerationItemFacts(BaseModel):
     service_end_date: date | None = None
     fixed_fee_fen: Fen | None = None
     commission_fen: Fen | None = None
+    gross_remuneration_fen: Fen | None = None
     expense_role: (
         Literal["labor_management_expense", "labor_sales_expense", "labor_service_cost"] | None
     ) = None
@@ -102,6 +103,15 @@ class LaborRemunerationItemFacts(BaseModel):
 
     @model_validator(mode="after")
     def service_dates_are_ordered(self) -> LaborRemunerationItemFacts:
+        parts = (self.fixed_fee_fen, self.commission_fen)
+        if any(value is not None for value in parts):
+            if any(value is None for value in parts):
+                raise ValueError("provide both remuneration breakdown amounts or omit both")
+            total = sum(parts)
+            if self.gross_remuneration_fen is None:
+                self.gross_remuneration_fen = total
+            elif self.gross_remuneration_fen != total:
+                raise ValueError("remuneration breakdown must equal gross_remuneration_fen")
         if (
             self.service_start_date is not None
             and self.service_end_date is not None
@@ -117,8 +127,7 @@ class LaborRemunerationItemFacts(BaseModel):
                 "labor_person_id",
                 "service_start_date",
                 "service_end_date",
-                "fixed_fee_fen",
-                "commission_fen",
+                "gross_remuneration_fen",
                 "expense_role",
                 "tax_identity",
                 "income_grouping",

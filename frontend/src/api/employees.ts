@@ -35,8 +35,8 @@ export interface EmployeeDashboardItem {
   net_salary_fen: Fen;
   tax_reported_salary_fen: Fen;
   company_cost_fen: Fen;
-  declaration_state: "none" | "declared" | "not_declared" | "not_applicable" | "mixed";
-  declaration_label: string;
+  wage_tax_scope: "none" | "wage_income" | "contributions_only" | "not_applicable" | "mixed";
+  wage_tax_scope_label: string;
 }
 
 export interface EmployeesSummary {
@@ -45,7 +45,7 @@ export interface EmployeesSummary {
   payroll_count: number;
   without_payroll_count: number;
   profile_missing_count: number;
-  declaration_attention_count: number;
+  contributions_only_count: number;
   gross_salary_fen: Fen;
   annual_bonus_fen: Fen;
   employer_social_insurance_fen: Fen;

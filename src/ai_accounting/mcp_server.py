@@ -1044,7 +1044,7 @@ def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any
         selected = {"$ref": reference, "$defs": schema["$defs"]}
     return {
         "status": "ok",
-        "protocol_version": "business-components-v2",
+        "protocol_version": "business-components-v3",
         "component_types": COMPONENT_TYPES,
         "selected_component_type": component_type,
         "component_schema": selected,

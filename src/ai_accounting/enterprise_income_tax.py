@@ -43,6 +43,25 @@ RULE = {
 }
 
 
+def accounting_projection(value):
+    """Keep query-only filing metadata out of calculation dependencies."""
+    if isinstance(value, dict):
+        return {
+            key: accounting_projection(item)
+            for key, item in value.items()
+            if key
+            not in {
+                "declaration_date",
+                "declaration_reference",
+                "confirmation_note",
+                "external_declaration_status",
+            }
+        }
+    if isinstance(value, list):
+        return [accounting_projection(item) for item in value]
+    return value
+
+
 def digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -183,7 +202,9 @@ class EnterpriseIncomeTaxService:
                 "contribution_fen": row.contribution_fen,
                 "revision": row.revision,
                 "posting_date": row.posting_date.isoformat(),
-                "declaration_date": row.declaration_date.isoformat(),
+                "declaration_date": row.declaration_date.isoformat()
+                if row.declaration_date
+                else None,
                 "external_declaration_status": "confirmed",
             }
             effective = True
@@ -284,7 +305,9 @@ class EnterpriseIncomeTaxService:
             return self.rejected(error)
         month = request.quarter * 3 if request.quarter else 12
         period_end = date(request.year, month, calendar.monthrange(request.year, month)[1])
-        if request.declaration_date < period_end or request.posting_date < request.declaration_date:
+        if request.recognition_date is None:
+            return self.missing("business_date_or_recognition_period")
+        if request.recognition_date < period_end or request.posting_date < request.recognition_date:
             return self.rejected("CIT_RESULT_DATE_ORDER_INVALID")
         state = self.query(
             QueryEnterpriseIncomeTaxRequest(org_id=request.org_id, year=request.year)
@@ -370,9 +393,10 @@ class EnterpriseIncomeTaxService:
         )
         calculation = {
             "input": request.model_dump(
-                mode="json", exclude={"declaration_reference", "confirmation_note"}
+                mode="json",
+                exclude={"declaration_reference", "confirmation_note", "declaration_date"},
             ),
-            "state": data,
+            "state": accounting_projection(data),
             "rule": RULE,
             "previously_recognized_fen": before,
             "target_tax_fen": target,
@@ -404,7 +428,7 @@ class EnterpriseIncomeTaxService:
 
         lock_income_tax(self.session, request.org_id)
         payload = request.model_dump(
-            mode="json", exclude={"declaration_reference", "confirmation_note"}
+            mode="json", exclude={"declaration_reference", "confirmation_note", "declaration_date"}
         )
         existing = self.session.scalar(
             select(EnterpriseIncomeTaxResult).where(
@@ -483,7 +507,6 @@ class EnterpriseIncomeTaxService:
         ) | {
             "key": "result",
             "kind": "enterprise_income_tax_result",
-            "business_date": request.declaration_date,
         }
         record_request = RecordEventRequest.model_validate(
             {

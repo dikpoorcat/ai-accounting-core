@@ -195,11 +195,11 @@ class AnnualBonusTaxMethod(StrEnum):
     COMBINED = "combined"
 
 
-class PayrollWageTaxDeclarationState(StrEnum):
-    """Whether a regular payroll person was included in the wage-tax filing."""
+class PayrollWageTaxScope(StrEnum):
+    """Accounting income applicability, independent of external filing progress."""
 
-    DECLARED = "declared"
-    NOT_DECLARED = "not_declared"
+    WAGE_INCOME = "wage_income"
+    CONTRIBUTIONS_ONLY = "contributions_only"
 
 
 class PayrollEmployeeItem(BaseModel):
@@ -208,12 +208,12 @@ class PayrollEmployeeItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     employee_id: uuid.UUID
-    wage_tax_declaration_state: PayrollWageTaxDeclarationState = Field(
-        default=PayrollWageTaxDeclarationState.DECLARED,
-        title="工资个税申报状态",
+    wage_tax_scope: PayrollWageTaxScope = Field(
+        default=PayrollWageTaxScope.WAGE_INCOME,
+        title="工资所得适用范围",
         description=(
-            "常规工资默认表示已纳入工资薪金个税申报；确有证据证明本月未申报工资、"
-            "但仍需处理社保时，明确填 not_declared。"
+            "wage_income 表示存在工资所得；本月没有工资所得、仅处理社保时，"
+            "明确填 contributions_only。此字段不表示是否完成外部申报。"
         ),
     )
     # The final wage amount approved for tax declaration.  The core never
@@ -274,7 +274,7 @@ class RegisterPayrollFirstWageTaxTreatmentRequest(BaseModel):
     tax_year: int = Field(ge=1900, le=9999)
     first_wage_month: int = Field(ge=1, le=12)
     treatment_state: PayrollFirstWageTaxTreatmentState
-    declaration_date: date
+    declaration_date: date | None = None
     confirmation_description: str = Field(default="", max_length=2000)
     evidence_references: list[uuid.UUID] = Field(min_length=1)
     supersedes_treatment_id: uuid.UUID | None = None
@@ -319,7 +319,7 @@ class RegisterPayrollContributionActualRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
     employee_id: uuid.UUID
     contribution_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    declaration_date: date
+    declaration_date: date | None = None
     reason_code: (
         Literal[
             "late_enrollment",
@@ -649,34 +649,31 @@ class PreviewPayrollRequest(BaseModel):
                 raise ValueError("annual_bonus_fen is only available for annual_bonus payroll")
             for item in self.employee_items:
                 if (
-                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
+                    item.wage_tax_scope == PayrollWageTaxScope.WAGE_INCOME
                     and item.tax_reported_salary_fen is None
                 ):
                     raise ValueError(
                         "tax_reported_salary_fen is required when wage tax is declared, "
                         "including zero"
                     )
-                if (
-                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED
-                    and (
-                        item.tax_reported_salary_fen is not None
-                        or item.special_additional_deduction_fen
-                        or item.other_legal_deduction_fen
-                        or item.tax_relief_fen
-                    )
+                if item.wage_tax_scope == PayrollWageTaxScope.CONTRIBUTIONS_ONLY and (
+                    item.tax_reported_salary_fen is not None
+                    or item.special_additional_deduction_fen
+                    or item.other_legal_deduction_fen
+                    or item.tax_relief_fen
                 ):
                     raise ValueError(
                         "not_declared regular payroll cannot include wage-tax amounts or deductions"
                     )
                 if (
-                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED
+                    item.wage_tax_scope == PayrollWageTaxScope.CONTRIBUTIONS_ONLY
                     and item.accounting_gross_salary_fen not in {None, 0}
                 ):
                     raise ValueError(
                         "not_declared regular payroll cannot include accounting gross salary"
                     )
                 if (
-                    item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
+                    item.wage_tax_scope == PayrollWageTaxScope.WAGE_INCOME
                     and item.tax_reported_salary_fen is not None
                 ):
                     accounting_gross = (
@@ -699,10 +696,10 @@ class PreviewPayrollRequest(BaseModel):
             if self.payment_date < self.posting_date:
                 raise ValueError("payment_date must not precede posting_date")
             if any(
-                item.wage_tax_declaration_state != PayrollWageTaxDeclarationState.DECLARED
+                item.wage_tax_scope != PayrollWageTaxScope.WAGE_INCOME
                 for item in self.employee_items
             ):
-                raise ValueError("wage_tax_declaration_state is only available for regular payroll")
+                raise ValueError("wage_tax_scope is only available for regular payroll")
             if any(item.annual_bonus_fen <= 0 for item in self.employee_items):
                 raise ValueError("annual_bonus_fen must be positive for annual_bonus payroll")
             if any(

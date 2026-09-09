@@ -106,7 +106,7 @@ def test_accounting_period_tools_publish_strict_typed_contracts() -> None:
     assert tools["finance_get_accounting_periods"].annotations.readOnlyHint is True
 
     discovery = mcp_server.finance_get_event_schema()
-    assert discovery["protocol_version"] == "business-components-v2"
+    assert discovery["protocol_version"] == "business-components-v3"
     assert "reverse_event_schema" in discovery
 
 

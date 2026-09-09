@@ -431,7 +431,7 @@ class OrganizationProfileVersion(Base):
             name="ck_org_profile_taxpayer_id",
         ),
         CheckConstraint(
-            "length(trim(confirmation_note)) > 0", name="ck_org_profile_confirmation_note"
+            "length(confirmation_note) <= 2000", name="ck_org_profile_confirmation_note"
         ),
     )
 
@@ -1159,7 +1159,7 @@ class PayrollFirstWageTaxTreatment(Base):
     tax_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     first_wage_month: Mapped[int] = mapped_column(Integer, nullable=False)
     treatment_state: Mapped[str] = mapped_column(String(20), nullable=False)
-    declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    declaration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     confirmation_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     legal_basis_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
@@ -1268,7 +1268,7 @@ class PayrollContributionActualSet(Base):
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     contribution_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
-    declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
+    declaration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     reason_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     reason_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -2233,7 +2233,7 @@ class PayrollLine(Base):
     regular_payroll_batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     employee_payroll_profile_version_id: Mapped[uuid.UUID] = mapped_column(Uuid)
-    wage_tax_declaration_state: Mapped[str] = mapped_column(String(20), default="declared")
+    wage_tax_scope: Mapped[str] = mapped_column(String(20), default="wage_income")
     tax_reported_salary_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     tax_reporting_difference_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     special_additional_deduction_fen: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -2300,12 +2300,12 @@ class PayrollLine(Base):
             name="ck_payroll_line_nonnegative_amounts",
         ),
         CheckConstraint(
-            "((wage_tax_declaration_state = 'declared' AND "
+            "((wage_tax_scope = 'wage_income' AND "
             "tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0) OR "
-            "(wage_tax_declaration_state = 'not_declared' AND "
+            "(wage_tax_scope = 'contributions_only' AND "
             "tax_reported_salary_fen IS NULL AND annual_bonus_fen = 0 AND "
             "gross_salary_fen = 0) OR "
-            "(wage_tax_declaration_state = 'not_applicable' AND "
+            "(wage_tax_scope = 'not_applicable' AND "
             "tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND "
             "gross_salary_fen = annual_bonus_fen)) AND "
             "(tax_reporting_difference_reason IS NULL OR "
@@ -2313,8 +2313,8 @@ class PayrollLine(Base):
             name="ck_payroll_line_gross_salary",
         ),
         CheckConstraint(
-            "wage_tax_declaration_state IN ('declared','not_declared','not_applicable')",
-            name="ck_payroll_line_wage_tax_declaration_state",
+            "wage_tax_scope IN ('wage_income','contributions_only','not_applicable')",
+            name="ck_payroll_line_wage_tax_scope",
         ),
         CheckConstraint(
             "net_salary_fen = gross_salary_fen - employee_social_insurance_fen - "
@@ -4143,7 +4143,7 @@ class BorrowingPayment(Base):
             "(payment_kind = 'principal' AND accrual_id IS NULL)",
             name="ck_borrowing_payment_accrual_shape",
         ),
-        CheckConstraint("posting_date = payment_date", name="ck_borrowing_payment_posting_date"),
+        CheckConstraint("posting_date >= payment_date", name="ck_borrowing_payment_posting_date"),
         CheckConstraint(
             "amount_fen > 0 AND amount_fen <= 9223372036854775807",
             name="ck_borrowing_payment_amount",
@@ -5063,8 +5063,8 @@ class LaborRemunerationLine(Base):
     counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     service_start_date: Mapped[date] = mapped_column(Date, nullable=False)
     service_end_date: Mapped[date] = mapped_column(Date, nullable=False)
-    fixed_fee_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    commission_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    fixed_fee_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    commission_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     gross_remuneration_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     expense_role: Mapped[str] = mapped_column(String(50), nullable=False)
     tax_identity: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -5103,8 +5103,10 @@ class LaborRemunerationLine(Base):
         UniqueConstraint("batch_id", "labor_person_id", name="uq_labor_line_batch_person"),
         CheckConstraint("service_start_date <= service_end_date", name="ck_labor_line_dates"),
         CheckConstraint(
-            "fixed_fee_fen >= 0 AND commission_fen >= 0 AND gross_remuneration_fen > 0 "
-            "AND gross_remuneration_fen = fixed_fee_fen + commission_fen",
+            "gross_remuneration_fen > 0 AND ((fixed_fee_fen IS NULL AND commission_fen IS NULL) "
+            "OR (fixed_fee_fen IS NOT NULL AND commission_fen IS NOT NULL "
+            "AND fixed_fee_fen >= 0 AND commission_fen >= 0 "
+            "AND gross_remuneration_fen = fixed_fee_fen + commission_fen))",
             name="ck_labor_line_gross",
         ),
         CheckConstraint(
@@ -6939,7 +6941,7 @@ class EnterpriseIncomeTaxResult(Base):
     revision: Mapped[int] = mapped_column(Integer)
     previous_result_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     original_confirmation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    declaration_date: Mapped[date] = mapped_column(Date)
+    declaration_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     posting_date: Mapped[date] = mapped_column(Date)
     target_tax_fen: Mapped[int] = mapped_column(BigInteger)
     contribution_fen: Mapped[int] = mapped_column(BigInteger)

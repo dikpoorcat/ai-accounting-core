@@ -67,9 +67,7 @@ def load_employees_dashboard(
         return {
             "schema_version": 1,
             "selected_period": period_view(period),
-            "data": build_employees_data(
-                session, organization=organization, period=period
-            ),
+            "data": build_employees_data(session, organization=organization, period=period),
         }
 
 
@@ -160,8 +158,7 @@ def _load_employees(
             and_(
                 EmployeePayrollProfileVersion.org_id == PayrollLine.org_id,
                 EmployeePayrollProfileVersion.employee_id == PayrollLine.employee_id,
-                EmployeePayrollProfileVersion.id
-                == PayrollLine.employee_payroll_profile_version_id,
+                EmployeePayrollProfileVersion.id == PayrollLine.employee_payroll_profile_version_id,
             ),
         )
         .join(
@@ -207,7 +204,7 @@ def _load_employees(
         values["payroll_periods"].add(batch.payroll_period)
         values["batch_kinds"].add(batch.batch_kind)
         values["expense_roles"].add(profile.expense_role)
-        values["declaration_states"].add(line.wage_tax_declaration_state)
+        values["wage_tax_scopes"].add(line.wage_tax_scope)
 
     items: list[dict[str, Any]] = []
     for employee in employee_records:
@@ -240,9 +237,7 @@ def _load_employees(
             + payroll["employee_housing_fund_fen"]
             + payroll["individual_income_tax_fen"]
         )
-        declaration_state, declaration_label = _declaration_view(
-            payroll["declaration_states"]
-        )
+        wage_tax_scope, wage_tax_scope_label = _wage_tax_scope_view(payroll["wage_tax_scopes"])
         expense_roles = payroll["expense_roles"]
         if not expense_roles and profile is not None:
             expense_roles = {profile.expense_role}
@@ -289,21 +284,17 @@ def _load_employees(
                 "has_annual_bonus": "annual_bonus" in payroll["batch_kinds"],
                 "gross_salary_fen": payroll["gross_salary_fen"],
                 "annual_bonus_fen": payroll["annual_bonus_fen"],
-                "employer_social_insurance_fen": payroll[
-                    "employer_social_insurance_fen"
-                ],
+                "employer_social_insurance_fen": payroll["employer_social_insurance_fen"],
                 "employer_housing_fund_fen": payroll["employer_housing_fund_fen"],
-                "employee_social_insurance_fen": payroll[
-                    "employee_social_insurance_fen"
-                ],
+                "employee_social_insurance_fen": payroll["employee_social_insurance_fen"],
                 "employee_housing_fund_fen": payroll["employee_housing_fund_fen"],
                 "individual_income_tax_fen": payroll["individual_income_tax_fen"],
                 "personal_deduction_fen": personal_deduction_fen,
                 "net_salary_fen": payroll["net_salary_fen"],
                 "tax_reported_salary_fen": payroll["tax_reported_salary_fen"],
                 "company_cost_fen": company_cost_fen,
-                "declaration_state": declaration_state,
-                "declaration_label": declaration_label,
+                "wage_tax_scope": wage_tax_scope,
+                "wage_tax_scope_label": wage_tax_scope_label,
             }
         )
 
@@ -321,27 +312,22 @@ def _load_employees(
         "profile_missing_count": sum(
             item["in_period"] and not item["profile_available"] for item in items
         ),
-        "declaration_attention_count": sum(
-            item["declaration_state"] == "not_declared" for item in items
+        "contributions_only_count": sum(
+            item["wage_tax_scope"] == "contributions_only" for item in items
         ),
         "gross_salary_fen": sum(item["gross_salary_fen"] for item in items),
         "annual_bonus_fen": sum(item["annual_bonus_fen"] for item in items),
         "employer_social_insurance_fen": sum(
             item["employer_social_insurance_fen"] for item in items
         ),
-        "employer_housing_fund_fen": sum(
-            item["employer_housing_fund_fen"] for item in items
-        ),
+        "employer_housing_fund_fen": sum(item["employer_housing_fund_fen"] for item in items),
         "personal_deduction_fen": sum(item["personal_deduction_fen"] for item in items),
-        "individual_income_tax_fen": sum(
-            item["individual_income_tax_fen"] for item in items
-        ),
+        "individual_income_tax_fen": sum(item["individual_income_tax_fen"] for item in items),
         "net_salary_fen": sum(item["net_salary_fen"] for item in items),
         "controlled_cost_fen": controlled_cost_fen,
         "settlement_adjustment_fen": settlement_adjustment_fen,
         "ledger_cost_fen": ledger_cost_fen,
-        "detail_reconciled": controlled_cost_fen + settlement_adjustment_fen
-        == ledger_cost_fen,
+        "detail_reconciled": controlled_cost_fen + settlement_adjustment_fen == ledger_cost_fen,
         "breakdown_available": employee_cost["breakdown_available"],
         "breakdown_reason": employee_cost["reason"],
         "items": items,
@@ -356,20 +342,20 @@ def _empty_employee_payroll(amount_keys: tuple[str, ...]) -> dict[str, Any]:
         "payroll_periods": set(),
         "batch_kinds": set(),
         "expense_roles": set(),
-        "declaration_states": set(),
+        "wage_tax_scopes": set(),
     }
 
 
-def _declaration_view(states: set[str]) -> tuple[str, str]:
+def _wage_tax_scope_view(states: set[str]) -> tuple[str, str]:
     if not states:
-        return "none", "本月无已过账工资申报状态"
-    if "not_declared" in states:
-        return "not_declared", "存在未申报工资个税的工资行"
+        return "none", "本月无已过账工资"
+    if "contributions_only" in states:
+        return "contributions_only", "存在仅处理社保的工资行"
     if states == {"not_applicable"}:
-        return "not_applicable", "仅全年一次性奖金，不适用工资申报状态"
-    if states == {"declared"}:
-        return "declared", "工资个税申报状态已记录"
-    return "mixed", "工资与奖金采用不同申报状态"
+        return "not_applicable", "仅全年一次性奖金"
+    if states == {"wage_income"}:
+        return "wage_income", "存在工资所得"
+    return "mixed", "包含不同所得适用范围"
 
 
 def _load_employee_compensation(
@@ -473,9 +459,7 @@ def _load_employee_compensation(
         "total_fen": total_fen,
         "controlled_total_fen": controlled_total_fen,
         "settlement_adjustment_fen": settlement_adjustment_fen,
-        "prior_period_settlement_adjustment_fen": settlement_adjustments[
-            "prior_period_fen"
-        ],
+        "prior_period_settlement_adjustment_fen": settlement_adjustments["prior_period_fen"],
         "gross_salary_fen": totals["gross_salary_fen"] if breakdown_available else None,
         "employer_social_insurance_fen": (
             totals["employer_social_insurance_fen"] if breakdown_available else None
@@ -490,8 +474,7 @@ def _load_employee_compensation(
             totals["employee_housing_fund_fen"] if breakdown_available else None
         ),
         "personal_withholding_fen": (
-            totals["employee_social_insurance_fen"]
-            + totals["employee_housing_fund_fen"]
+            totals["employee_social_insurance_fen"] + totals["employee_housing_fund_fen"]
             if breakdown_available
             else None
         ),
@@ -625,39 +608,42 @@ def _load_personal_labor_cost(
         reason = "现有历史数据缺少受控个人劳务批次关联，明细不可拆。"
     else:
         reason = "受控个人劳务批次与个人劳务费用科目净额不一致，明细不可拆。"
-    periods = sorted(
-        by_remuneration_period.values(), key=lambda item: item["remuneration_period"]
-    )
+    periods = sorted(by_remuneration_period.values(), key=lambda item: item["remuneration_period"])
     effective_line_weights = {
         line_id: weight for line_id, weight in line_weights.items() if weight != 0
     }
-    payout_rows = session.execute(
-        select(LaborRemunerationEventLink, BusinessEventComponent, BusinessEvent)
-        .join(
-            BusinessEventComponent,
-            and_(
-                BusinessEventComponent.org_id == LaborRemunerationEventLink.org_id,
-                BusinessEventComponent.event_id == LaborRemunerationEventLink.event_id,
-                BusinessEventComponent.id == LaborRemunerationEventLink.component_id,
-            ),
-        )
-        .join(
-            BusinessEvent,
-            and_(
-                BusinessEvent.org_id == BusinessEventComponent.org_id,
-                BusinessEvent.id == BusinessEventComponent.event_id,
-            ),
-        )
-        .where(
-            LaborRemunerationEventLink.org_id == org_id,
-            LaborRemunerationEventLink.link_kind == "payment",
-            LaborRemunerationEventLink.labor_line_id.in_(tuple(effective_line_weights)),
-            BusinessEventComponent.kind == "labor_settlement",
-            BusinessEvent.posting_date <= period.end_date,
-        )
-        .order_by(BusinessEvent.posting_date, BusinessEventComponent.ordinal)
-    ).all() if effective_line_weights else []
+    payout_rows = (
+        session.execute(
+            select(LaborRemunerationEventLink, BusinessEventComponent, BusinessEvent)
+            .join(
+                BusinessEventComponent,
+                and_(
+                    BusinessEventComponent.org_id == LaborRemunerationEventLink.org_id,
+                    BusinessEventComponent.event_id == LaborRemunerationEventLink.event_id,
+                    BusinessEventComponent.id == LaborRemunerationEventLink.component_id,
+                ),
+            )
+            .join(
+                BusinessEvent,
+                and_(
+                    BusinessEvent.org_id == BusinessEventComponent.org_id,
+                    BusinessEvent.id == BusinessEventComponent.event_id,
+                ),
+            )
+            .where(
+                LaborRemunerationEventLink.org_id == org_id,
+                LaborRemunerationEventLink.link_kind == "payment",
+                LaborRemunerationEventLink.labor_line_id.in_(tuple(effective_line_weights)),
+                BusinessEventComponent.kind == "labor_settlement",
+                BusinessEvent.posting_date <= period.end_date,
+            )
+            .order_by(BusinessEvent.posting_date, BusinessEventComponent.ordinal)
+        ).all()
+        if effective_line_weights
+        else []
+    )
     from .enterprise_income_tax import event_effective
+
     payouts_by_line = defaultdict(list)
     for link, component, payment_event in payout_rows:
         if event_effective(session, payment_event, period.end_date):
@@ -675,9 +661,7 @@ def _load_personal_labor_cost(
             settlement_modes.add(item.facts["settlement_mode"])
     unsettled_gross_fen = gross_remuneration_fen - settled_gross_fen
     pending_theoretical_tax_fen = (
-        theoretical_withholding_tax_fen
-        - actual_withholding_tax_fen
-        - unwithheld_tax_fen
+        theoretical_withholding_tax_fen - actual_withholding_tax_fen - unwithheld_tax_fen
     )
     has_cost_correction = any(weight < 0 for weight in effective_line_weights.values())
     if has_cost_correction:
@@ -703,9 +687,7 @@ def _load_personal_labor_cost(
         "theoretical_withholding_tax_fen": (
             theoretical_withholding_tax_fen if breakdown_available else None
         ),
-        "actual_withholding_tax_fen": (
-            actual_withholding_tax_fen if breakdown_available else None
-        ),
+        "actual_withholding_tax_fen": (actual_withholding_tax_fen if breakdown_available else None),
         "unwithheld_tax_fen": unwithheld_tax_fen if breakdown_available else None,
         "pending_theoretical_tax_fen": (
             pending_theoretical_tax_fen if breakdown_available else None
@@ -761,8 +743,7 @@ def _load_employee_settlement_adjustments(
             reversal_event,
             and_(
                 reversal_event.org_id == PayrollSalaryActualDeductionAllocation.org_id,
-                reversal_event.id
-                == PayrollSalaryActualDeductionAllocation.reversed_by_event_id,
+                reversal_event.id == PayrollSalaryActualDeductionAllocation.reversed_by_event_id,
             ),
         )
         .where(

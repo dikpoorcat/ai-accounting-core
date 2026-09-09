@@ -41,6 +41,7 @@ class BusinessMetadata(BaseModel):
     life_basis_explanation: str | None = Field(default=None, max_length=2000)
     due_date: date | None = None
     advance_payment_date: date | None = None
+    declaration_date: date | None = None
     withholding_agency_code: str | None = Field(default=None, max_length=100)
     withholding_agency_name: str | None = Field(default=None, max_length=200)
     other_right_type_description: str | None = Field(default=None, max_length=500)
@@ -141,6 +142,14 @@ def save_initial_metadata(session, event, component):
     from .models import BusinessMetadataVersion
 
     values = component.metadata.model_dump(mode="json", exclude_none=True)
+    if component.kind == "enterprise_income_tax_result" and component.declaration_date:
+        values.setdefault("declaration_date", component.declaration_date.isoformat())
+    if (
+        component.kind == "debt_transfer"
+        or (component.kind == "expense" and component.payment_basis == "person_advance")
+        or (component.kind == "refundable_deposit" and component.advanced_by)
+    ) and component.payment_date:
+        values.setdefault("advance_payment_date", component.payment_date.isoformat())
     if not values:
         return
     validate_metadata(session, event.org_id, component.metadata)

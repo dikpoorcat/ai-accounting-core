@@ -3,11 +3,12 @@
 `finance_record_event` 的一笔请求由公司、记账日期、幂等键、`components` 和 `funds`
 组成。单项业务也使用此协议。业务组件保留稳定 `key`、类型化事实、必要业务日期、
 证据及来源；资金项单独描述真实收付、账户、日期和分配。所有金额都是整数分。
-协议版本为 `business-components-v2`。普通往来对象不必填，客户／供应商标签不决定业务分类；
+协议版本为 `business-components-v3`。普通往来对象不必填，客户／供应商标签不决定业务分类；
 名称、用途、编号、普通到期日和说明放入类型化 `metadata`，不生成虚构对象。
 
-资金项唯一确定的收付款日期直接复用；履约日期有独立意义时仍单独保留。同一组件不能
-用多个不同资金日期推断一个发生日期，应按实际收付拆为组件后在同笔组合。
+资金项唯一确定的收付款日期直接复用；履约日期有独立意义时仍单独保留。同一普通组件可
+分配多个资金日期，实际日期逐项保存，不能用最早或最晚日期冒充整笔实际付款日。
+工资结算复用明确来源的扣缴事实，派生 `settlement_schedule` 保存各日资金及来源分配。
 幂等校验使用解析后的核算事实：等价的稳定来源与 UUID 引用、显式或复用的同一日期，
 以及管理资料或可选摘要的变化，不会生成第二笔业务。重试不会更新管理资料，后补使用专用入口。
 
@@ -123,7 +124,8 @@
 
 后续付款的 `payable_settlement.allocations` 可以直接使用
 `{"source_event_key":"receipt-001","source_component_key":"collection","amount_fen":40000}`。
-无需再填对象、科目或受益人。只有明确形成个人垫付债务的业务才使用 `payer`、垫付日期及依据。
+无需再填对象、科目或受益人。明确个人垫付债务时提供 `payer`、债务确认日期或月份及依据；
+具体垫付日选填 `metadata.advance_payment_date`，不进入核算哈希。
 
 `finance_update_business_metadata` 接收 `org_id`、`source={event_key,component_key}`、
 `metadata`、`expected_version`、`idempotency_key`。例如 `metadata={"purpose":"后补用途"}`。
@@ -138,5 +140,30 @@
 整笔修改、删除和冲正的审计说明可省略；来源、预期事实版本、期间和依赖校验仍保留。
 关账计算使用当前会计事实及分录金额；管理说明与更正命令的审计摘要只保留在展示记录中。
 
-数据库通过前向迁移 `0003_essential_accounting` 安装这些约束，不回写正式基线。
+数据库通过前向迁移 `0003_essential_accounting`、`0004_fact_precision` 安装这些约束，不回写正式基线。
+
+## 按月确认
+
+普通非现金费用、个人垫付押金、债务转换、项目阶段成本及非现金归集、预付冲抵、企业所得税结果
+可以提供 `recognition_period: "2026-06"`，与 `business_date` 二选一。
+月份表示费用或权利义务截至该月末已经成立，记账日期不能早于月末；月份原样保存，查询显示“按月确认”。
+核销资金不能早于来源的确认截止日；若只确认到月末，月中付款需要另有能够证明债务当时已成立的事实。
+该要求不等于索要员工向外付款的具体日期。金额、往来身份、来源及证据仍按业务需要提供。
+
+```json
+{
+  "key": "commission", "kind": "expense", "recognition_period": "2026-06",
+  "expense_class": "labor_service_cost", "payment_basis": "person_advance",
+  "amount_fen": 3230302, "payer": {"id": "已登记员工的往来UUID"}
+}
+```
+
+借款按不同日期部分偿还本金或同一期利息、单项劳务所得分次支付会涉及当前尚未实现的核算机制，
+分别返回 `BORROWING_INSTALLMENT_SETTLEMENT_NOT_SUPPORTED` 或
+`LABOR_INSTALLMENT_INCOME_ATTRIBUTION_NOT_SUPPORTED`；不能选择一个日期代替这些事实并错误计算。
+不同完整借款结算、不同劳务来源仍可通过各自组件组合，正式写入使用同一个提交器。
+
+工资使用 `wage_tax_scope: wage_income | contributions_only` 表示所得适用性；不表示外部申报是否完成。
+首次工资扣除处理与社保实际数登记的申报日期选填。劳务明确总报酬 `gross_remuneration_fen`，
+固定报酬与佣金分解可一起省略；提供分解时校验合计，不将未知分项保存成零。
 逐规则处理和验证范围见 [必要事实审查清单](essential-accounting-review.md)。

@@ -223,9 +223,7 @@ def register_payroll_facts(session: Session, organization: Organization) -> uuid
     return employee_id
 
 
-def payroll_evidence(
-    session: Session, organization: Organization, key: str
-) -> Evidence:
+def payroll_evidence(session: Session, organization: Organization, key: str) -> Evidence:
     evidence = Evidence(
         org_id=organization.id,
         sha256=hashlib.sha256(f"{organization.id}:{key}".encode()).hexdigest(),
@@ -436,7 +434,7 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
     assert preparation["employee_items"] == [
         {
             "employee_id": str(employee_id),
-            "wage_tax_declaration_state": "declared",
+            "wage_tax_scope": "wage_income",
             "tax_reported_salary_fen": 1_000_000,
             "accounting_gross_salary_fen": None,
             "tax_reporting_difference_reason": None,
@@ -1267,13 +1265,13 @@ def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
             "payment_date": "2026-03-05",
             "evidence_references": [evidence.id],
             "employee_items": [
-                    {
-                        "employee_id": employee_id,
-                        "tax_reported_salary_fen": 500_000,
-                        "accounting_gross_salary_fen": 150_000,
-                        "special_additional_deduction_fen": 0,
-                        "other_legal_deduction_fen": 0,
-                    }
+                {
+                    "employee_id": employee_id,
+                    "tax_reported_salary_fen": 500_000,
+                    "accounting_gross_salary_fen": 150_000,
+                    "special_additional_deduction_fen": 0,
+                    "other_legal_deduction_fen": 0,
+                }
             ],
         }
     )
@@ -1289,9 +1287,8 @@ def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
     without_reason = service._calculate_payroll(request)
     with_reason = service._calculate_payroll(request_with_reason)
     assert with_reason["calculation_hash"] == without_reason["calculation_hash"]
-    assert (
-        service._preview_request_payload_hash(request)
-        == service._preview_request_payload_hash(request_with_reason)
+    assert service._preview_request_payload_hash(request) == service._preview_request_payload_hash(
+        request_with_reason
     )
 
     preview = service.preview_payroll(request)
@@ -1442,7 +1439,7 @@ def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
                 "employee_items": [
                     {
                         "employee_id": employee_id,
-                        "wage_tax_declaration_state": "not_declared",
+                        "wage_tax_scope": "contributions_only",
                         "tax_reported_salary_fen": None,
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
@@ -1459,7 +1456,7 @@ def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
         "employer_housing_fund_fen": 0,
         "individual_income_tax_fen": 0,
     }
-    assert preview.data["lines"][0]["wage_tax_declaration_state"] == "not_declared"
+    assert preview.data["lines"][0]["wage_tax_scope"] == "contributions_only"
 
     confirmed = service.confirm_payroll(
         ConfirmPayrollRequest(
@@ -1474,7 +1471,7 @@ def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
         select(PayrollLine).where(PayrollLine.payroll_batch_id == preview.batch_id)
     )
     assert line is not None
-    assert line.wage_tax_declaration_state == "not_declared"
+    assert line.wage_tax_scope == "contributions_only"
     assert line.tax_reported_salary_fen is None
     assert line.employee_social_insurance_fen == 0
     assert line.employer_social_insurance_fen == 184_500

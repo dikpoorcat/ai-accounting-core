@@ -1517,7 +1517,7 @@ class OwnerWorkflowService:
             normalized.append(
                 {
                     "employee_id": str(item.employee_id),
-                    "wage_tax_declaration_state": item.wage_tax_declaration_state.value,
+                    "wage_tax_scope": item.wage_tax_scope.value,
                     "tax_reported_salary_fen": item.tax_reported_salary_fen,
                     "accounting_gross_salary_fen": item.accounting_gross_salary_fen,
                     "tax_reporting_difference_reason": item.tax_reporting_difference_reason,
@@ -1970,8 +1970,7 @@ class OwnerWorkflowService:
         )
         expected_policy_id = (calculation.get("policy") or {}).get("id")
         policy_match = all(
-            (batch.policy_snapshot.get("contribution_policy") or {}).get("id")
-            == expected_policy_id
+            (batch.policy_snapshot.get("contribution_policy") or {}).get("id") == expected_policy_id
             for batch in batches
         )
         satisfied = (
@@ -2012,7 +2011,7 @@ class OwnerWorkflowService:
                 PayrollBatch.payroll_period == self._period_month(period),
                 PayrollBatch.status == "posted",
                 PayrollBatch.reversal_of_batch_id.is_(None),
-                PayrollLine.wage_tax_declaration_state == "declared",
+                PayrollLine.wage_tax_scope == "wage_income",
             )
             .order_by(PayrollBatch.id, PayrollLine.employee_id, PayrollLine.id)
         ).all()
@@ -2349,9 +2348,7 @@ class OwnerWorkflowService:
                 else None
             ),
             "completion_date_status": confirmation.completion_date_status,
-            "timeliness": OwnerWorkflowService._completion_timeliness(
-                confirmation, obligation
-            ),
+            "timeliness": OwnerWorkflowService._completion_timeliness(confirmation, obligation),
         }
 
     @staticmethod

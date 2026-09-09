@@ -42,7 +42,7 @@ from .tax_accounts import vat_relief_entries
 
 
 def _component_payload(compiler, component) -> dict:
-    return component.model_dump(mode="json", exclude={"metadata"})
+    return component.accounting_facts()
 
 
 def _request_evidence(compiler, component) -> list[uuid.UUID]:
@@ -418,15 +418,12 @@ def compile_enterprise_income_tax_result(compiler, component) -> ComponentPostin
     session = compiler.session
     request = compiler.request
     lock_income_tax(session, request.org_id)
-    if component.business_date != component.declaration_date:
-        raise ValueError("CIT_RESULT_BUSINESS_DATE_MISMATCH")
     evidence_ids = _request_evidence(compiler, component)
     preview_request = PreviewEnterpriseIncomeTaxResultRequest.model_validate(
         component.model_dump(
             exclude={
                 "key",
                 "kind",
-                "business_date",
                 "payment_date",
                 "description",
                 "depends_on",
@@ -478,7 +475,7 @@ def compile_enterprise_income_tax_result(compiler, component) -> ComponentPostin
         }
     )
     input_facts = specialized.model_dump(
-        mode="json", exclude={"declaration_reference", "confirmation_note"}
+        mode="json", exclude={"declaration_reference", "confirmation_note", "declaration_date"}
     )
     request_hash = digest(input_facts)
 

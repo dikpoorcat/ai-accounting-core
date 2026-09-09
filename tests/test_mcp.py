@@ -222,7 +222,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     schema = mcp_server.finance_get_event_schema()
     protocol = schema["agent_operating_protocol"]
 
-    assert schema["protocol_version"] == "business-components-v2"
+    assert schema["protocol_version"] == "business-components-v3"
     assert {
         key: value for key, value in schema["preview_event_schema"].items() if key != "title"
     } == {key: value for key, value in schema["record_event_schema"].items() if key != "title"}
@@ -313,7 +313,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "resume_queue_after": "blocker_resolved_and_operation_continued",
         "needs_information_is_technical_error": False,
     }
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.12"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.13"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
     assert protocol["owner_workflow"]["target_selection"] == (

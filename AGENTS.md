@@ -43,6 +43,7 @@
 - 旧业务 revision `0001`–`0022`、`0001_business_baseline_v2` 及其后续旧场景 revision（至 `0006_pass_through`），以及旧目录 revision `0001`–`0004` 不支持原地升级；旧库只允许只读导出后按 `docs/empty-database-replay.md` 在空库回放。
 - 基线启用后的结构变化必须通过后续前向 revision 迁移，不得回写基线或用未跟踪的现场脚本代替迁移；发现未知历史库或非空回放目标时立即停止。
 - 必要事实与管理资料解耦通过前向 revision `0003_essential_accounting` 管理；两个正式空库基线保持不变。管理资料后补不属于会计更正，不得改写原凭证和关账会计快照。
+- 日期精度和必要事实补修通过 `0004_fact_precision` 管理。月度确认保存 `recognition_period`，不得将月末冒充实际付款日；后续结构变化仍新增前向迁移。
 
 ## 初始备份交付
 

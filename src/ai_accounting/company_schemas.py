@@ -24,9 +24,9 @@ class _CompanyFacts(BaseModel):
     effective_from: date
     filing_cycle: FilingCycle
     urban_maintenance_rate: Decimal
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str = Field(default="", max_length=2000)
 
-    @field_validator("name", "confirmation_note")
+    @field_validator("name")
     @classmethod
     def strip_required_text(cls, value: str) -> str:
         stripped = value.strip()
@@ -67,14 +67,12 @@ class PreviewCompanyStatusChangeRequest(BaseModel):
 
     org_id: uuid.UUID
     target_status: CompanyTargetStatus
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str = Field(default="", max_length=2000)
 
     @field_validator("confirmation_note")
     @classmethod
     def strip_note(cls, value: str) -> str:
         stripped = value.strip()
-        if not stripped:
-            raise ValueError("confirmation note is blank")
         return stripped
 
 
@@ -91,9 +89,9 @@ class ConfigureCloseBackupRequest(BaseModel):
     org_id: uuid.UUID
     backup_directory: str = Field(min_length=3, max_length=2048)
     idempotency_key: str = Field(min_length=1, max_length=200)
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str = Field(default="", max_length=2000)
 
-    @field_validator("backup_directory", "idempotency_key", "confirmation_note")
+    @field_validator("backup_directory", "idempotency_key")
     @classmethod
     def strip_close_backup_text(cls, value: str) -> str:
         stripped = value.strip()

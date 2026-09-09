@@ -92,7 +92,7 @@ def test_essential_forward_migration_matches_models_and_installs_guards() -> Non
             with engine.connect() as connection:
                 assert (
                     connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                    == "0003_essential_accounting"
+                    == "0004_fact_precision"
                 )
                 purchase = connection.scalar(
                     sa.text(

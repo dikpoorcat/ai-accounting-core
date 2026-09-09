@@ -36,7 +36,7 @@
 不进入正式运行代码。旧数据的撤销、删除及冲正历史保留供核验，不机械重放已撤去的业务。
 
 当前运行工具只接受 `ai-accounting-composition-replay-v3`，不接受旧包协议或运行时转换。
-业务库从正式空库基线前向执行至 `0003_essential_accounting`，不能改写基线。
+业务库从正式空库基线前向执行至 `0004_fact_precision`，不能改写基线。
 今后从 v3 公司库刷新包使用：
 
 ```powershell
@@ -143,11 +143,19 @@ $primaryOrgId = "prepare-empty 返回的 primary_org_id"
 从新内核导出的资料包在会计业务及期间操作之后，通过 `finance_update_business_metadata`
 逐版本恢复管理资料；明确清除值使用 `null`，不改写已形成的关账会计快照。
 
-本轮私有交付目录是 `outputs/essential-accounting/`：`read-only-snapshot/` 为9月9日最新只读
+上一轮私有交付目录是 `outputs/essential-accounting/`：`read-only-snapshot/` 为9月9日只读
 快照，`source-comparison.json` 为与9月8日快照的核对，`composition-replay-v3-essential/`
 为更新后的逐公司材料包，`reentry-verification.json` 为离线验证结果。该包保留414条有效
-业务资料和90份已核验证据，真实业务尚未重录。UI项目9月阶段成果事实未获确认，材料仍
+业务资料和90份已核验证据；当时仅完成资料整理。UI项目9月阶段成果事实未获确认，材料仍
 采用已确认的预付款路径；不能把阶段成本测试场景当作真实业务事实。
+
+0004 日期精度补修交付在 `outputs/fact-precision/composition-replay-v3-fact-precision/`，
+仅修订未完成操作及逐公司说明，保留已完成的158项、原始包、证据和恢复状态文件。
+两笔佣金依据原负责人确认第6项，使用 `recognition_period="2026-06"` 记录员工债务，
+七月七日资金付款按原来源核销；不补造具体垫付日。凭证日期须不早于确认月份月末。
+`outputs/fact-precision/reentry-verification.json` 记录包校验及内存副本上的恢复绑定检查。
+本次未对现有回放数据库迁移或续录，也未启动密码窗口；将来实际续录前应先按当次授权
+处理0004迁移并使用新包，不能重新执行已完成前缀。
 
 “资料已整理并离线验证”“隔离库测试通过”“业务已实际重录并核验”是不同状态，交付报告
 必须分别说明。报告未通过不得启动正式服务。

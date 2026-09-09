@@ -172,7 +172,7 @@ def _add_payroll(
             payroll_batch_id=batch.id,
             employee_id=employee.id,
             employee_payroll_profile_version_id=profile.id,
-            wage_tax_declaration_state="declared",
+            wage_tax_scope="wage_income",
             tax_reported_salary_fen=gross_salary_fen,
             employee_social_insurance_fen=10_000,
             employer_social_insurance_fen=employer_social_insurance_fen,
@@ -289,7 +289,7 @@ def test_employee_dashboard_reconciles_payroll_details_to_ledger(session: Sessio
     assert employees["ledger_cost_fen"] == 550_000
     assert employees["detail_reconciled"] is True
     assert employees["breakdown_available"] is True
-    assert employees["items"][0]["declaration_state"] == "declared"
+    assert employees["items"][0]["wage_tax_scope"] == "wage_income"
     assert employees["items"][0]["personal_deduction_fen"] == 15_000
     assert employees["items"][0]["net_salary_fen"] == 485_000
     assert employee_cost["gross_salary_fen"] == 500_000

@@ -4,7 +4,7 @@
 
 ## 身份与批次
 
-`finance_register_labor_service_person` 创建与 `Employee` 分离的劳务人员记录，以 `Counterparty(kind=labor_person)` 作为历史往来锚点，并保存关系开始日、可选结束日及证据。`finance_end_labor_service_person` 是结束有效期的唯一公共写入口；结束后，现有员工登记可用 `prior_labor_person_id` 显式保留同一自然人的角色转换链，且入职日必须晚于劳务关系结束日。员工与劳务记录使用各自的角色化往来主体，历史凭证不改写。每个报酬所属月的批次逐人保存服务期间、固定劳务费、佣金、费用角色、税收身份、收入归组、学生状态和外部申报状态。固定劳务费与佣金分别保存，毛额仅由两者确定性相加。
+`finance_register_labor_service_person` 创建与 `Employee` 分离的劳务人员记录，以 `Counterparty(kind=labor_person)` 作为历史往来锚点，并保存关系开始日、可选结束日及证据。`finance_end_labor_service_person` 是结束有效期的唯一公共写入口；结束后，现有员工登记可用 `prior_labor_person_id` 显式保留同一自然人的角色转换链，且入职日必须晚于劳务关系结束日。员工与劳务记录使用各自的角色化往来主体，历史凭证不改写。每个报酬所属月的批次逐人保存服务期间、总报酬 `gross_remuneration_fen`、费用角色、税收身份、收入归组和学生状态。固定劳务费与佣金分解可一起省略；提供分解时核对合计，未知分项保留为空。外部申报状态和编号是可选管理资料，不进入计税输入或确认哈希。
 
 公共入口不接收科目代码、借贷方向、税率、速算扣除数或自由分录行。金额均为整数分；税率、20% 费用扣除和税额计算使用 `Decimal`，逐步按分四舍五入。
 
@@ -41,14 +41,14 @@
 
 每个劳务子项必须显式选择结算模式：
 
-- `net_after_withholding`：按政策计算的预扣税作为实际扣缴额，银行支付毛额减预扣税后的净额，并生成劳务个税开放项；调用方必须提供扣缴机构身份。
+- `net_after_withholding`：按政策计算的预扣税作为实际扣缴额，银行支付毛额减预扣税后的净额，并生成劳务个税开放项；扣缴机构名称和编号可在管理资料中补充。
 - `gross_paid_without_withholding`：仅用于有证据证明毛额已经全部付出、实际扣缴为零的历史事实。调用方必须另行提供 `withholding_exception_evidence_references`，且这些证据也必须包含在通用 `evidence_references` 中。内核仍保存政策计算的理论预扣税、实际扣缴零元和全部未扣差额，不把理论税额改写为零；银行按毛额精确匹配，不生成个税应付、开放项或凭证行。
 
 后一模式记录的是已发生的合规例外，不代表免税、不改变政策计算，也不是允许调用方自由输入税额的接口。示例：
 
-劳务组件明确提供 `key`、`kind="labor_settlement"`、业务日期、付款日期、
-`source_open_item_id`、毛额 `amount_fen`、`settlement_mode` 及必要的扣缴机构、例外证据。
-父请求提供公司、记账日期、幂等键和 `funds`，每笔真实资金收付按组件键分配。
+劳务组件明确提供 `key`、`kind="labor_settlement"`、确认事实、
+`source_open_item_id`、毛额 `amount_fen`、`settlement_mode` 及适用时的例外证据。
+父请求提供公司、记账日期、幂等键和 `funds`，每笔真实资金收付提供实际日期并按组件键分配；单一资金日期可直接复用，无需重复填写组件付款日期。
 完整字段通过 `finance_get_event_schema(component_type="labor_settlement")` 获取。
 
 缴纳劳务个税使用 `labor_tax_settlement` 组件，其来源必须是劳务个税开放项。
@@ -71,7 +71,7 @@
 
 未关账业务通过 `finance_amend_event` 原子重算，保留原凭证编号与审计历史；无外部后续依赖的误记通过 `finance_delete_event` 整笔撤去。已关账业务使用 `finance_reverse_event` 生成关联冲正。更正遍历全部组件及扣缴分配；存在外部后续缴款时，先处理其依赖。同一事件内部的来源和核销一起撤销。
 
-月结门禁阻止关闭仍为 `calculated` 的当月劳务计提或发放批次。月结建议清单同时列示未支付劳务应付、已扣未缴劳务个税和已经到申报期限但外部状态仍未确认的项目；尚未到次月十五日的外部申报事项标为未到期，不逐月重复询问。`gross_paid_without_withholding` 已经全额结清劳务应付，且没有虚构个税应付，因此不会被列成未结清账款或阻断待办；清单仍以 `completed_with_warning` 展示理论预扣税与实际零扣缴差异。个人年度汇算不属于本内核管理范围。
+单纯存在 `calculated` 试算草稿不阻止关账；已知应计业务、税额事实和账务完整性继续检查。月结建议清单列示未支付劳务应付、已扣未缴劳务个税和到期外部申报提示，外部办理进度不作为硬门禁。`gross_paid_without_withholding` 已经全额结清劳务应付，且没有虚构个税应付，因此不会被列成未结清账款或阻断待办；清单仍以 `completed_with_warning` 展示理论预扣税与实际零扣缴差异。个人年度汇算不属于本内核管理范围。
 
 劳务模块、毛额实付未扣税结算模式及 PostgreSQL 终态事件保护均已并入业务库空库基线
 `0001_business_baseline_v3`。该基线只建立结构和版本化税收政策，不迁移或写入任何业务数据。

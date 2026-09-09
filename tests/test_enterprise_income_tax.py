@@ -57,6 +57,9 @@ def change(org, evidence, root_id, **kwargs):
             "quarter": 2,
             "original_confirmation_id": root_id,
             "declaration_date": "2026-08-05",
+            "business_date": kwargs.get(
+                "business_date", kwargs.get("declaration_date", "2026-08-05")
+            ),
             "posting_date": "2026-08-05",
             "declaration_reference": "更正申报回执",
             "amount_basis": "quarter",
@@ -78,6 +81,37 @@ def confirm(service, request, key="correct"):
     result = service.confirm(confirm_request)
     assert result["status"] == "posted", result
     return result, confirm_request
+
+
+def test_monthly_result_without_external_declaration_date(session, organization):
+    evidence = _evidence(session, organization, "monthly-result.txt")
+    root_id = root(session, organization, evidence)
+    service = EnterpriseIncomeTaxService(session)
+    request = change(
+        organization,
+        evidence,
+        root_id,
+        business_date=None,
+        recognition_period="2026-08",
+        posting_date="2026-08-31",
+        declaration_date=None,
+        declaration_reference=None,
+        confirmation_note="",
+    )
+    preview = service.preview(request)
+    decorated = request.model_copy(
+        update={"declaration_date": date(2026, 9, 1), "declaration_reference": "管理编号"}
+    )
+    assert service.preview(decorated)["calculation_hash"] == preview["calculation_hash"]
+    result, confirmed = confirm(service, request, key="monthly-cit")
+    assert result["data"]["expense_adjustment_fen"] == 5000
+    event = session.get(BusinessEvent, uuid.UUID(result["event_id"]))
+    facts = event.facts["components"][0]
+    assert facts["recognition_period"] == "2026-08"
+    assert facts.get("business_date") is None
+    assert facts.get("declaration_date") is None
+    retry = service.confirm(confirmed.model_copy(update={"declaration_date": date(2026, 9, 1)}))
+    assert retry["event_id"] == result["event_id"]
 
 
 def payment(

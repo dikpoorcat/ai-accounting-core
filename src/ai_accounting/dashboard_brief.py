@@ -16,6 +16,7 @@ from .dashboard_common import (
     resolve_dashboard_organization,
     resolve_dashboard_period,
 )
+from .fact_dates import recognition_projection
 from .models import (
     Account,
     AccountingPeriod,
@@ -347,6 +348,7 @@ def _component_view(
         "amount_fen": max(debit_fen, credit_fen),
         "parties": sorted({line["party"] for line in component_lines if line["party"]}),
         "facts": facts,
+        "recognition": recognition_projection(facts),
         "management": management or {"version": 0, "metadata": {}, "history": []},
         "derived": component.derived if isinstance(component.derived, dict) else {},
         "source_references": _source_references(facts, component.derived),

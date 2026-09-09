@@ -277,6 +277,7 @@ def test_labor_batch_recalculates_tax_and_preserves_batch(session, organization)
     )
     assert source.status == "posted", source
     request.items[0].fixed_fee_fen = 500_000
+    request.items[0].gross_remuneration_fen = 500_000
     result = EventAmendmentService(session).amend(amendment(session, source, request))
     assert result["status"] == "posted", result
     assert result["batch_id"] == str(source.batch_id)

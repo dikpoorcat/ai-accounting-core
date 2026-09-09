@@ -155,6 +155,8 @@ class LaborRemunerationService:
                     "__all__": {
                         "external_declaration_status",
                         "external_declaration_reference",
+                        "fixed_fee_fen",
+                        "commission_fen",
                     }
                 },
             },
@@ -499,8 +501,8 @@ class LaborRemunerationService:
                 raise ValueError("STUDENT_INTERNSHIP_WITHHOLDING_METHOD_NOT_SUPPORTED")
             if item.tax_identity != "resident" or item.is_full_time_student is not False:
                 raise ValueError("LABOR_TAX_IDENTITY_IS_NOT_SUPPORTED")
-            assert item.fixed_fee_fen is not None and item.commission_fen is not None
-            gross = item.fixed_fee_fen + item.commission_fen
+            assert item.gross_remuneration_fen is not None
+            gross = item.gross_remuneration_fen
             calculation = calculate_resident_labor_withholding(gross, policy.parameters)
             derived_lines.append(
                 {
@@ -525,7 +527,20 @@ class LaborRemunerationService:
         calculation_input = {
             "request": accounting_request,
             "policy": policy_snapshot,
-            "lines": derived_lines,
+            "lines": [
+                {
+                    key: value
+                    for key, value in line.items()
+                    if key
+                    not in {
+                        "external_declaration_status",
+                        "external_declaration_reference",
+                        "fixed_fee_fen",
+                        "commission_fen",
+                    }
+                }
+                for line in derived_lines
+            ],
         }
         return policy, calculation_input, derived_lines
 
@@ -665,14 +680,20 @@ class LaborRemunerationService:
                 "business_date": batch.business_date.isoformat(),
                 "posting_date": batch.posting_date.isoformat(),
                 "planned_payment_date": (
-                    batch.planned_payment_date.isoformat()
-                    if batch.planned_payment_date
-                    else None
+                    batch.planned_payment_date.isoformat() if batch.planned_payment_date else None
                 ),
                 "policy_snapshot": batch.policy_snapshot,
                 "totals": {
-                    "fixed_fee_fen": sum(line.fixed_fee_fen for line in lines),
-                    "commission_fen": sum(line.commission_fen for line in lines),
+                    "fixed_fee_fen": (
+                        sum(line.fixed_fee_fen for line in lines)
+                        if all(line.fixed_fee_fen is not None for line in lines)
+                        else None
+                    ),
+                    "commission_fen": (
+                        sum(line.commission_fen for line in lines)
+                        if all(line.commission_fen is not None for line in lines)
+                        else None
+                    ),
                     "gross_fen": sum(line.gross_remuneration_fen for line in lines),
                     "withholding_tax_fen": sum(line.withholding_tax_fen for line in lines),
                     "net_fen": sum(line.net_payment_fen for line in lines),
@@ -923,9 +944,7 @@ class LaborRemunerationService:
                     ]
                     return self._rejected(*errors)
                 self.session.refresh(batch)
-                return self._batch_result(
-                    batch, replay=bool(result.data.get("idempotent_replay"))
-                )
+                return self._batch_result(batch, replay=bool(result.data.get("idempotent_replay")))
         except AccountingPeriodError as exc:
             return self._rejected(exc.code)
         except (IntegrityError, OperationalError):

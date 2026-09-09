@@ -48,17 +48,15 @@ def validate_salary_settlement_plans(session, org_id, plans) -> None:
                 for item in plan.settlements
                 if (
                     item_id == f"id:{item.open_item_id}"
-                    or item_id
-                    == f"local:{item.source_component_key}:{item.source_open_item_key}"
+                    or item_id == f"local:{item.source_component_key}:{item.source_open_item_key}"
                 )
             )
             gross_by_item[item_id] = gross_by_item.get(item_id, 0) + settlement.amount_fen
         for allocation in plan.derived["withholding_payment_allocations"]:
             entitlement_id = uuid.UUID(allocation["entitlement_id"])
-            planned_by_entitlement[entitlement_id] = (
-                planned_by_entitlement.get(entitlement_id, 0)
-                + int(allocation["amount_fen"])
-            )
+            planned_by_entitlement[entitlement_id] = planned_by_entitlement.get(
+                entitlement_id, 0
+            ) + int(allocation["amount_fen"])
 
     persisted_ids = [uuid.UUID(key[3:]) for key in gross_by_item if key.startswith("id:")]
     items = {
@@ -80,9 +78,7 @@ def validate_salary_settlement_plans(session, org_id, plans) -> None:
         else:
             _, component_key, open_item_key = item_id.split(":", 2)
             source_plan = all_plans[component_key]
-            item_plan = next(
-                item for item in source_plan.open_items if item.key == open_item_key
-            )
+            item_plan = next(item for item in source_plan.open_items if item.key == open_item_key)
             available = item_plan.original_amount_fen
         if requested > available:
             raise ValueError(
@@ -138,8 +134,7 @@ def validate_salary_settlement_plans(session, org_id, plans) -> None:
             raise ValueError(f"{label} withholding exceeds the payroll-line entitlement")
         if entitlement.payroll_line_id in final_line_ids and projected != entitlement.amount_fen:
             raise ValueError(
-                "final salary payment must explicitly account for every "
-                "payroll-line withholding"
+                "final salary payment must explicitly account for every payroll-line withholding"
             )
 
 
@@ -163,9 +158,7 @@ def compile_salary_settlement(
         )
     derived = service.derive_salary_settlement(org_id, component)
     derived["salary_withholding_allocations"] = derived["allocations"]
-    allocation_details = {
-        uuid.UUID(row["open_item_id"]): row for row in derived["allocations"]
-    }
+    allocation_details = {uuid.UUID(row["open_item_id"]): row for row in derived["allocations"]}
     cash_flow_parts = []
     for allocation in component.allocations:
         details = allocation_details[allocation.open_item_id]
@@ -185,7 +178,7 @@ def compile_salary_settlement(
                 }
             )
     derived["cash_flow_parts"] = cash_flow_parts
-    derived["payment_date"] = component.payment_date.isoformat()
+    derived["payment_date"] = component.payment_date.isoformat() if component.payment_date else None
     entries, settlements = [], []
     for allocation in component.allocations:
         item = session.scalar(
@@ -214,7 +207,6 @@ def compile_salary_settlement(
         )
     open_items = service._salary_withholding_open_item_plans(
         org_id,
-        component.payment_date,
         derived,
     )
     roles = {
@@ -423,11 +415,9 @@ def _compile_local_salary_settlement(
         "withholding_payment_allocations": withholding_rows,
         "payroll_line_ids": sorted({row["payroll_line_id"] for row in withholding_rows}),
         "cash_flow_category": "cash_flow_4",
-        "payment_date": component.payment_date.isoformat(),
+        "payment_date": component.payment_date.isoformat() if component.payment_date else None,
     }
-    open_items = service._salary_withholding_open_item_plans(
-        org_id, component.payment_date, derived
-    )
+    open_items = service._salary_withholding_open_item_plans(org_id, derived)
     roles = {
         "withheld_employee_social": "withheld_employee_social_payable",
         "withheld_employee_housing": "withheld_employee_housing_fund_payable",
@@ -451,16 +441,12 @@ def _compile_local_salary_settlement(
     def apply(session, event, persisted):
         materialized = {
             (row.source_component_id, row.component_key): row
-            for row in session.scalars(
-                select(OpenItem).where(OpenItem.source_event_id == event.id)
-            )
+            for row in session.scalars(select(OpenItem).where(OpenItem.source_event_id == event.id))
         }
         components = {
             row.key: row
             for row in session.scalars(
-                select(BusinessEventComponent).where(
-                    BusinessEventComponent.event_id == event.id
-                )
+                select(BusinessEventComponent).where(BusinessEventComponent.event_id == event.id)
             )
         }
         for row in derived["allocations"]:
@@ -470,9 +456,7 @@ def _compile_local_salary_settlement(
             row["open_item_id"] = str(item.id)
         for row in derived["actual_salary_deduction_allocations"]:
             source_row = next(
-                a
-                for a in derived["allocations"]
-                if a["payroll_line_id"] == row["payroll_line_id"]
+                a for a in derived["allocations"] if a["payroll_line_id"] == row["payroll_line_id"]
             )
             source_item = materialized[
                 (

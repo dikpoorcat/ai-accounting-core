@@ -66,11 +66,6 @@ const attentionItems = computed(() => {
       `${data.profile_missing_count} 名本月核算范围内员工在月末没有有效工资核算配置。未据此推断社保、公积金或个税口径。`,
     );
   }
-  if (data.declaration_attention_count) {
-    items.push(
-      `${data.declaration_attention_count} 名员工存在已过账但尚未记录个税申报完成状态的工资行。`,
-    );
-  }
   if (!data.breakdown_available) {
     items.push(data.breakdown_reason || "账面职工薪酬成本暂时不能拆分到逐人工资明细。");
   } else if (!data.detail_reconciled) {
@@ -174,7 +169,7 @@ function refresh() {
 }
 
 function employeeHasAttention(item: EmployeeDashboardItem) {
-  return (item.in_period && !item.profile_available) || item.declaration_state === "not_declared";
+  return (item.in_period && !item.profile_available);
 }
 
 function participationLabel(
@@ -351,10 +346,10 @@ onBeforeUnmount(() => controller?.abort());
                   <div class="employee-list-identity">
                     <span
                       class="employee-status"
-                      :class="item.declaration_state"
+                      :class="item.wage_tax_scope"
                       role="img"
-                      :aria-label="`个税申报：${item.declaration_label}`"
-                      :title="`个税申报：${item.declaration_label}`"
+                      :aria-label="`个税申报：${item.wage_tax_scope_label}`"
+                      :title="`个税申报：${item.wage_tax_scope_label}`"
                     ></span>
                     <div class="employee-name">
                       <span>{{ item.code }}</span>
@@ -407,8 +402,8 @@ onBeforeUnmount(() => controller?.abort());
                   </div>
 
                   <div class="employee-status-row">
-                    <span class="employee-status" :class="[item.period_state, item.declaration_state]">
-                      {{ item.declaration_label }}
+                    <span class="employee-status" :class="[item.period_state, item.wage_tax_scope]">
+                      {{ item.wage_tax_scope_label }}
                     </span>
                     <span>
                       {{ item.expense_areas.length ? `费用归属：${item.expense_areas.join("、")}` : "暂无费用归属" }}
@@ -435,7 +430,7 @@ onBeforeUnmount(() => controller?.abort());
                   </div>
                   <dl class="employee-profile-grid employee-list-facts">
                     <div><dt>本月公司成本</dt><dd>{{ formatFen(item.company_cost_fen) }}</dd></div>
-                    <div class="employee-declaration-detail"><dt>个税申报</dt><dd>{{ item.declaration_label }}</dd></div>
+                    <div class="employee-declaration-detail"><dt>所得适用范围</dt><dd>{{ item.wage_tax_scope_label }}</dd></div>
                   </dl>
                   <p v-if="!item.profile_available" class="muted employee-list-expense">
                     费用归属：{{ item.expense_areas.join("、") || "未设置" }}
@@ -987,7 +982,7 @@ small {
   background: var(--muted);
 }
 
-.employee-status.not_declared::before {
+.employee-status.contributions_only::before {
   background: var(--warning);
 }
 

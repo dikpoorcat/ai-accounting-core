@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .schemas import PayrollEmployeeItem, PayrollWageTaxDeclarationState
+from .schemas import PayrollEmployeeItem, PayrollWageTaxScope
 
 
 class _StrictRequest(BaseModel):
@@ -62,11 +62,11 @@ class ConfirmWorkforceReviewRequest(_StrictRequest):
             if item.annual_bonus_fen or item.regular_payroll_batch_id is not None:
                 raise ValueError("regular_payroll_items only accepts regular monthly wage facts")
             if (
-                item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
+                item.wage_tax_scope == PayrollWageTaxScope.WAGE_INCOME
                 and item.tax_reported_salary_fen is None
             ):
                 raise ValueError("tax_reported_salary_fen is required for a declared regular wage")
-            if item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED and (
+            if item.wage_tax_scope == PayrollWageTaxScope.CONTRIBUTIONS_ONLY and (
                 item.tax_reported_salary_fen is not None
                 or item.accounting_gross_salary_fen not in {None, 0}
                 or item.tax_reporting_difference_reason is not None
@@ -76,7 +76,7 @@ class ConfirmWorkforceReviewRequest(_StrictRequest):
             ):
                 raise ValueError("not-declared regular wage cannot include wage-tax facts")
             if (
-                item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
+                item.wage_tax_scope == PayrollWageTaxScope.WAGE_INCOME
                 and item.tax_reported_salary_fen is not None
             ):
                 accounting_gross = (
@@ -104,9 +104,7 @@ class ConfirmPayrollContributionAssessmentRequest(_StrictRequest):
     declaration_status: Literal["declared"]
     declaration_date: date | None = Field(
         default=None,
-        description=(
-            "仅在负责人明确提供或可靠回执已经载明时填写；申报完成事实不依赖日期。"
-        ),
+        description=("仅在负责人明确提供或可靠回执已经载明时填写；申报完成事实不依赖日期。"),
     )
     external_reference: str | None = Field(default=None, max_length=300)
     idempotency_key: str = Field(min_length=1, max_length=200)
@@ -156,9 +154,7 @@ class ConfirmExternalObligationRequest(_StrictRequest):
     completion_status: Literal["submitted", "not_applicable"]
     completion_date: date | None = Field(
         default=None,
-        description=(
-            "仅在现有业务事实中已经建立时填写；申报完成事实不依赖日期。"
-        ),
+        description=("仅在现有业务事实中已经建立时填写；申报完成事实不依赖日期。"),
     )
     external_reference: str | None = Field(default=None, max_length=300)
     idempotency_key: str = Field(min_length=1, max_length=200)

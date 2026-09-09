@@ -14,7 +14,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 
 BUSINESS_REVISION = "0001_business_baseline_v3"
-BUSINESS_HEAD = "0003_essential_accounting"
+BUSINESS_HEAD = "0004_fact_precision"
 POSTGRES_IMAGE = (
     "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 )
@@ -90,7 +90,7 @@ def _assert_business_baseline(engine: sa.Engine) -> None:
         assert {
             "tax_reported_salary_fen",
             "tax_reporting_difference_reason",
-            "wage_tax_declaration_state",
+            "wage_tax_scope",
         } <= payroll_columns
         assert {
             "base_salary_fen",
@@ -138,6 +138,7 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         BUSINESS_HEAD,
+        "0003_essential_accounting",
         "0002_purchase_projects",
         BUSINESS_REVISION,
     ]
@@ -149,7 +150,7 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     try:
         _assert_business_baseline(engine)
         command.check(config)
-        with pytest.raises(RuntimeError, match="ESSENTIAL_ACCOUNTING_FORWARD_ONLY"):
+        with pytest.raises(RuntimeError, match="FACT_PRECISION_FORWARD_ONLY"):
             command.downgrade(config, "base")
         _assert_business_baseline(engine)
     finally:
@@ -333,7 +334,7 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                 "finance_guard_late_bank_action_0015",
             }
             assert obsolete_unified_payout_runtime == 0
-            with pytest.raises(RuntimeError, match="ESSENTIAL_ACCOUNTING_FORWARD_ONLY"):
+            with pytest.raises(RuntimeError, match="FACT_PRECISION_FORWARD_ONLY"):
                 command.downgrade(config, "base")
             _assert_business_baseline(engine)
         finally:

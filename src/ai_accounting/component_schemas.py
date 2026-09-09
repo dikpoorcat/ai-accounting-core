@@ -31,14 +31,48 @@ from .schemas import (
 class ComponentFacts(BaseModel):
     model_config = ConfigDict(extra="forbid")
     contributes_tax_sources: ClassVar[bool] = False
+    supports_monthly_recognition: ClassVar[bool] = False
 
     key: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     business_date: date | None = None
+    recognition_period: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
     payment_date: date | None = None
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     account_selections: dict[str, str] = Field(default_factory=dict)
     metadata: BusinessMetadata = Field(default_factory=BusinessMetadata)
+
+    @model_validator(mode="after")
+    def recognition_precision_is_explicit(self):
+        if self.recognition_period is not None:
+            from .fact_dates import period_end
+
+            period_end(self.recognition_period)
+            if self.business_date is not None:
+                raise ValueError("provide either recognition_period or business_date")
+            if not self.supports_monthly_recognition:
+                raise ValueError("this component requires its specific accounting dates")
+        return self
+
+    @property
+    def recognition_date(self) -> date | None:
+        from .fact_dates import period_end
+
+        return (
+            period_end(self.recognition_period) if self.recognition_period else self.business_date
+        )
+
+    def accounting_facts(self) -> dict:
+        excluded = {"metadata"}
+        if self.kind == "enterprise_income_tax_result":
+            excluded.add("declaration_date")
+        if (
+            self.kind == "debt_transfer"
+            or (self.kind == "expense" and self.payment_basis == "person_advance")
+            or (self.kind == "refundable_deposit" and self.advanced_by)
+        ):
+            excluded.add("payment_date")
+        return self.model_dump(mode="json", exclude=excluded)
 
 
 class SourceReference(BaseModel):
@@ -76,6 +110,7 @@ class ObligationAllocation(BaseModel):
 
 
 class ExpenseBusinessComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["expense"]
     amount_fen: PositiveFen | None = None
     expense_class: str | None = None
@@ -115,6 +150,7 @@ class SupplierAdvanceComponent(ComponentFacts):
 
 
 class SupplierAdvanceApplicationComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["supplier_advance_application"]
     advances: list[ObligationAllocation] = Field(min_length=1)
     allocations: list[ObligationAllocation] = Field(min_length=1)
@@ -136,6 +172,7 @@ class DevelopmentCapitalizationFacts(BaseModel):
 
 
 class ProjectCostComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["project_cost"]
     amount_fen: PositiveFen | None = None
     project_nature: Literal["purchased_intangible", "internal_development"] | None = None
@@ -151,6 +188,7 @@ class ProjectCostAllocation(SourceReference):
 
 
 class ProjectCostExpenseComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["project_cost_expense"]
     cost_sources: list[ProjectCostAllocation] = Field(min_length=1)
     expense_class: Literal["general_expense", "sales_expense", "service_cost"] | None = None
@@ -188,12 +226,14 @@ class PassThroughComponent(ComponentFacts):
 
 
 class DebtTransferComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["debt_transfer"]
     payer: CounterpartyRef | None = None
     allocations: list[ObligationAllocation] = Field(min_length=1)
 
 
 class RefundableDepositComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["refundable_deposit"]
     amount_fen: PositiveFen | None = None
     advanced_by: CounterpartyRef | None = None
@@ -261,12 +301,13 @@ class EnterpriseIncomeTaxAssessmentComponent(ComponentFacts):
 
 
 class EnterpriseIncomeTaxResultComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["enterprise_income_tax_result"]
     year: int = Field(ge=2013, le=9998)
     quarter: int = Field(ge=0, le=4)
     previous_result_id: uuid.UUID | None = None
     original_confirmation_id: uuid.UUID | None = None
-    declaration_date: date
+    declaration_date: date | None = None
     amount_basis: Literal["quarter", "year_to_date", "annual", "adjustment_notice"]
     declared_tax_fen: StrictInt | None = Field(default=None, ge=0)
     adjustment_fen: StrictInt | None = None

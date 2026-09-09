@@ -150,7 +150,7 @@ def _record_source_protocol_facts(engine: Engine, evidence_path: Path) -> uuid.U
                     {
                         "key": "consulting",
                         "kind": "expense",
-                        "business_date": "2026-03-05",
+                        "recognition_period": "2026-02",
                         "amount_fen": 1200,
                         "expense_class": "general_expense",
                         "account_code": "560299",
@@ -235,7 +235,7 @@ def test_new_component_protocol_replays_to_empty_postgres_with_stable_open_item_
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Scoped executor integration: export v2 facts, prepare empty target, and replay them."""
+    """Export v3 facts with monthly recognition and replay into an empty target."""
 
     with (
         _migrated_throwaway_business_database("source") as source_engine,
@@ -269,6 +269,9 @@ def test_new_component_protocol_replays_to_empty_postgres_with_stable_open_item_
         ]
         assert all(operation["source_event_type"] == "composite" for operation in event_operations)
         assert all("components" in operation["request"] for operation in event_operations)
+        monthly_facts = event_operations[0]["request"]["components"][0]
+        assert monthly_facts["recognition_period"] == "2026-02"
+        assert monthly_facts.get("business_date") is None
         assert all("event_type" not in operation["request"] for operation in event_operations)
         assert not any(
             forbidden in operation["request"]

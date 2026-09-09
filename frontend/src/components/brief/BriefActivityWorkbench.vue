@@ -128,6 +128,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                 <li v-for="component in [...item.components, ...item.funds]" :key="component.id">
                   <strong>{{ component.label }}</strong>
                   <span>{{ component.key }} · {{ component.kind }}</span>
+                  <span v-if="component.recognition?.precision === 'month'">按月确认 · {{ component.recognition.period }}</span>
                   <span v-if="component.description">{{ component.description }}</span>
                   <span v-if="component.parties.length">往来：{{ component.parties.join("、") }}</span>
                   <span v-if="component.management?.version">
@@ -213,6 +214,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                 <li v-for="component in [...voucher.components, ...voucher.funds]" :key="component.id">
                   <strong>{{ component.label }}</strong>
                   <span>{{ component.key }} · {{ component.kind }}</span>
+                  <span v-if="component.recognition?.precision === 'month'">按月确认 · {{ component.recognition.period }}</span>
                   <span v-if="component.description">{{ component.description }}</span>
                   <span v-if="component.source_references.length">
                     来源：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}

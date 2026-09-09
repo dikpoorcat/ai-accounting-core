@@ -192,8 +192,7 @@ class PayrollTaxImportService:
             )
             .join(
                 Employee,
-                (Employee.org_id == PayrollLine.org_id)
-                & (Employee.id == PayrollLine.employee_id),
+                (Employee.org_id == PayrollLine.org_id) & (Employee.id == PayrollLine.employee_id),
             )
             .where(
                 PayrollBatch.org_id == request.org_id,
@@ -201,7 +200,7 @@ class PayrollTaxImportService:
                 PayrollBatch.payroll_period == request.payroll_period,
                 PayrollBatch.status == "posted",
                 PayrollBatch.reversal_of_batch_id.is_(None),
-                PayrollLine.wage_tax_declaration_state == "declared",
+                PayrollLine.wage_tax_scope == "wage_income",
             )
             .order_by(Employee.employee_code, PayrollLine.id)
         ).all()

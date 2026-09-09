@@ -22,6 +22,7 @@ from .coa import (
     get_business_class_template,
 )
 from .component_schemas import ConfigureAccountRequest, RecordEventRequest
+from .fact_dates import recognition_date, recognition_projection
 from .ledger import (
     CashFlowPlan,
     ComponentPostingPlan,
@@ -53,7 +54,7 @@ from .schemas import FinanceResult, ResultStatus
 from .tax import active_tax_rule, calculate_tax_period, split_tax_inclusive
 from .tax_accounts import deferred_vat_transfer_entries, tax_settlement_entries
 
-RULE_VERSION = "business-components-v2"
+RULE_VERSION = "business-components-v3"
 EXPENSE_CLASSES = frozenset(
     {
         "service_cost",
@@ -185,15 +186,26 @@ class ComponentService:
                 for f in resolved.funds
                 if any(a.component_key == c.key for a in f.allocations)
             }
-            if len(dates) > 1:
-                raise ValueError("COMPONENT_MULTIPLE_PAYMENT_DATES_REQUIRES_SPLIT")
+            if any(day > request.posting_date for day in dates):
+                raise ValueError("FUNDS_PAYMENT_DATE_IN_FUTURE")
             if c.payment_date is None and len(dates) == 1:
                 c.payment_date = next(iter(dates))
-            if c.business_date is None:
+            if c.recognition_period:
+                if c.recognition_date > request.posting_date:
+                    raise ValueError("RECOGNITION_PERIOD_IN_FUTURE")
+                if (c.kind == "expense" and c.payment_basis == "immediate") or (
+                    c.kind == "refundable_deposit" and not c.advanced_by
+                ):
+                    raise ValueError("MONTHLY_RECOGNITION_REQUIRES_NONCASH_BUSINESS")
+            elif c.business_date is None:
                 if getattr(c, "fulfillment_date", None):
                     c.business_date = c.fulfillment_date
-                elif dates:
+                elif len(dates) == 1:
                     c.business_date = next(iter(dates))
+                elif dates:
+                    # This is the explicit voucher recognition date; actual
+                    # movements remain individually dated in the fund items.
+                    c.business_date = request.posting_date
                 elif c.kind in {
                     "payable_settlement",
                     "receivable_settlement",
@@ -207,9 +219,11 @@ class ComponentService:
 
     @staticmethod
     def accounting_request(request):
-        return request.model_dump(
+        values = request.model_dump(
             mode="json", exclude={"description": True, "components": {"__all__": {"metadata"}}}
         )
+        values["components"] = [component.accounting_facts() for component in request.components]
+        return values
 
     def record(self, request: RecordEventRequest) -> FinanceResult:
         self.previewing = False
@@ -259,7 +273,7 @@ class ComponentService:
                     status="draft",
                     description=request.description,
                     facts=self.accounting_request(request),
-                    business_date=min(c.business_date for c in request.components),
+                    business_date=min(c.recognition_date for c in request.components),
                     posting_date=request.posting_date,
                     rule_version=RULE_VERSION,
                     rule_trace=[{"stage": "component_compilation", "version": RULE_VERSION}],
@@ -327,7 +341,7 @@ class ComponentService:
                 status="draft",
                 description=request.description,
                 facts=self.accounting_request(request),
-                business_date=min(component.business_date for component in request.components),
+                business_date=min(component.recognition_date for component in request.components),
                 posting_date=request.posting_date,
                 rule_version=RULE_VERSION,
                 rule_trace=[{"stage": "component_preview", "version": RULE_VERSION}],
@@ -484,6 +498,7 @@ class ComponentService:
                         "key": c.key,
                         "kind": c.kind,
                         "derived": c.derived,
+                        "recognition": recognition_projection(c.facts),
                         "business_reference": {
                             "event_key": event.idempotency_key,
                             "component_key": c.key,
@@ -508,10 +523,27 @@ class ComponentService:
 
     def need(self, component: Any, *fields: str) -> None:
         missing = [
-            f"components.{component.key}.{f}" for f in fields if getattr(component, f, None) is None
+            f"components.{component.key}.{f}"
+            for f in fields
+            if getattr(component, f, None) is None
+            and not (f == "payment_date" and self.fund_dates(component))
         ]
         if missing:
             raise MissingFacts(missing)
+
+    def fund_dates(self, component) -> set[date]:
+        return {
+            f.payment_date
+            for f in self.request.funds
+            if any(a.component_key == component.key for a in f.allocations)
+        }
+
+    def first_payment_date(self, component) -> date:
+        dates = self.fund_dates(component)
+        if dates:
+            return min(dates)
+        self.need(component, "payment_date")
+        return component.payment_date
 
     def party(self, reference: Any) -> Counterparty | None:
         return self.common._resolve_counterparty_reference(self.request.org_id, reference)
@@ -533,7 +565,7 @@ class ComponentService:
         plan = ComponentPostingPlan(
             key=c.key,
             kind=c.kind,
-            facts=c.model_dump(mode="json", exclude={"metadata"}),
+            facts=c.accounting_facts(),
             entries=entries,
             derived=values,
             rule_version=values.get("tax_rule_version", RULE_VERSION),
@@ -808,7 +840,7 @@ class ComponentService:
         if c.payment_basis != "immediate":
             role = "accounts_payable"
             if c.payment_basis == "person_advance":
-                self.need(c, "payer", "payment_date")
+                self.need(c, "payer")
                 if party.kind not in {"employee", "owner"}:
                     raise ValueError("PERSON_ADVANCE_REQUIRES_EMPLOYEE_OR_OWNER")
                 role = "employee_payable" if party.kind == "employee" else "owner_payable"
@@ -1265,7 +1297,7 @@ class ComponentService:
             item, facts, derived, _ = self.obligation(a)
             if derived.get("vat_recognition") == "deferred":
                 due_date = date.fromisoformat(derived["tax_obligation_date"])
-                if c.payment_date < due_date:
+                if self.first_payment_date(c) < due_date:
                     raise ValueError("DEFERRED_VAT_EARLY_RECEIPT_REQUIRES_FACT_CORRECTION")
                 if self.request.posting_date != due_date:
                     raise ValueError(
@@ -1421,7 +1453,7 @@ class ComponentService:
         )
 
     def compile_debt_transfer(self, c) -> ComponentPostingPlan:
-        self.need(c, "payer", "payment_date")
+        self.need(c, "payer")
         payer = self.party(c.payer)
         if payer.kind not in {"owner", "employee"}:
             raise ValueError("DEBT_TRANSFER_PAYER_MUST_BE_PERSON")
@@ -1460,7 +1492,8 @@ class ComponentService:
         )
 
     def compile_refundable_deposit(self, c) -> ComponentPostingPlan:
-        self.need(c, "payment_date")
+        if not c.advanced_by:
+            self.need(c, "payment_date")
         entries = [
             Entry(
                 account_role="employee_receivable",
@@ -1650,7 +1683,7 @@ class ComponentService:
                     "tax_confirmation_hash": period.calculation_hash,
                 }
             if (
-                c.payment_date < period.adjustment_posting_date
+                self.first_payment_date(c) < period.adjustment_posting_date
                 or self.request.posting_date < period.adjustment_posting_date
             ):
                 raise ValueError("TAX_SETTLEMENT_PRECEDES_ASSESSMENT")
@@ -1838,6 +1871,11 @@ class ComponentService:
         from .models import BorrowingInterestAccrual
 
         self.need(c, "payment_date")
+        if c.payment_date is None:
+            # The borrowing mechanism supports full principal / accrual payoff.
+            # Partial payoff changes future interest and must not be simulated
+            # by assigning an aggregate payment an invented date.
+            raise ValueError("BORROWING_INSTALLMENT_SETTLEMENT_NOT_SUPPORTED")
         pending_accruals = []
         pending_ids = {}
         for key, plan in self.plans.items():
@@ -1891,6 +1929,8 @@ class ComponentService:
         from .domain_components import compile_labor_payment
 
         self.need(c, "payment_date")
+        if c.payment_date is None:
+            raise ValueError("LABOR_INSTALLMENT_INCOME_ATTRIBUTION_NOT_SUPPORTED")
         if (
             c.settlement_mode == "gross_paid_without_withholding"
             and not c.withholding_exception_evidence_ids
@@ -1919,7 +1959,7 @@ class ComponentService:
         return compile_labor_tax_settlement(
             self.session,
             org_id=self.request.org_id,
-            payment_date=c.payment_date,
+            payment_date=self.first_payment_date(c),
             key=c.key,
             source_open_item_id=c.source_open_item_id,
             source_plan=self.plans.get(c.source_component_key),
@@ -1996,6 +2036,19 @@ class ComponentService:
                 payment_date = plan.facts.get("payment_date")
                 if payment_date and payment_date != funds.payment_date.isoformat():
                     raise ValueError("COMPONENT_FUNDS_PAYMENT_DATE_MISMATCH")
+                self.validate_fund_source_dates(plan, allocation, funds.payment_date)
+                plan.derived.setdefault("settlement_schedule", []).append(
+                    {
+                        "fund_key": funds.key,
+                        "payment_date": funds.payment_date.isoformat(),
+                        "direction": funds.direction,
+                        "amount_fen": allocation.amount_fen,
+                        "sources": [
+                            source.model_dump(mode="json")
+                            for source in allocation.source_allocations
+                        ],
+                    }
+                )
                 assigned[key] += sign * allocation.amount_fen
                 counts[key].append((sign, allocation.amount_fen))
                 parts = plan.derived.get("cash_flow_parts")
@@ -2068,6 +2121,27 @@ class ComponentService:
                         raise ValueError("COMPONENT_GROSS_FUNDS_CONSERVATION_FAILED")
             elif any(sign != (1 if required > 0 else -1) for sign, _ in counts[key]):
                 raise ValueError("BUSINESS_COMPONENT_FORBIDS_OFFSETTING_FUNDS")
+
+    def validate_fund_source_dates(self, plan, allocation, paid_on):
+        """Do not use an obligation before its evidenced recognition cutoff."""
+        selected = allocation.source_allocations or plan.settlements
+        for reference in selected:
+            if reference.open_item_id:
+                item = self.session.get(OpenItem, reference.open_item_id)
+                if item is None or item.org_id != self.request.org_id:
+                    raise ValueError("OPEN_ITEM_NOT_FOUND")
+                source = self.session.get(BusinessEventComponent, item.source_component_id)
+                facts = source.facts
+            else:
+                source = self.plans[reference.source_component_key]
+                facts = source.facts
+            cutoff = recognition_date(facts)
+            if cutoff is not None and cutoff > paid_on:
+                if facts.get("recognition_period"):
+                    raise MissingFacts(
+                        [f"components.{plan.key}.source_recognized_by.{paid_on.isoformat()}"]
+                    )
+                raise ValueError("SETTLEMENT_SOURCE_NOT_ACTIVE_OR_FUTURE")
 
     def configure_account(self, request: ConfigureAccountRequest) -> dict:
         with self.session.begin_nested():

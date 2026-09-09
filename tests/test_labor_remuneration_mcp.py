@@ -56,4 +56,4 @@ def test_event_schema_advertises_labor_workflow_separately_from_payroll() -> Non
         schema["component_types"]
     )
     assert "payroll" not in schema["component_types"]
-    assert schema["protocol_version"] == "business-components-v2"
+    assert schema["protocol_version"] == "business-components-v3"

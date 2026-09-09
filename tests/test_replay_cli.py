@@ -70,7 +70,7 @@ def _resume_state(package, org_id, completed):
 
 def test_replay_distinguishes_baseline_identity_from_current_heads() -> None:
     assert replay_cli._BUSINESS_REVISION == "0001_business_baseline_v3"
-    assert replay_cli._current_schema_revision(catalog=False) == "0003_essential_accounting"
+    assert replay_cli._current_schema_revision(catalog=False) == "0004_fact_precision"
     assert replay_cli._current_schema_revision(catalog=True) == "0001_catalog_baseline_v2"
 
 
@@ -129,6 +129,55 @@ def test_manifest_covers_archived_nested_manifest(tmp_path) -> None:
         replay_cli._parse_manifest(package)
 
     assert error.value.code == "REPLAY_PACKAGE_MANIFEST_MISMATCH"
+
+
+def test_replay_resolves_uniquely_anonymized_legacy_open_item(monkeypatch) -> None:
+    source_event_id = uuid.uuid4()
+    open_item_id = uuid.uuid4()
+
+    class FakeSession:
+        def __init__(self, _engine):
+            self.fallback_sql = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def scalar(self, _statement, _parameters):
+            return None
+
+        def scalars(self, statement, _parameters):
+            self.fallback_sql = str(statement)
+            return SimpleNamespace(all=lambda: [open_item_id])
+
+    fake_session = FakeSession(None)
+    monkeypatch.setattr(replay_cli, "Session", lambda _engine: fake_session)
+    resolver = replay_cli._ReplayResolver(
+        engine=object(),
+        org_id=uuid.uuid4(),
+        results={"source": {"event_id": str(source_event_id)}},
+    )
+
+    resolved = resolver.materialize(
+        {
+            "$ref": "open_item",
+            "source_replay_key": "source",
+            "item_type": "payable",
+            "original_amount_fen": 115_000,
+            "payable_category": "employer_social",
+            "payable_agency_code": "legacy-agency",
+            "insurance_kind": "medical_and_maternity",
+            "counterparty_kind": "other",
+            "counterparty_name": "旧缴费机构",
+            "counterparty_external_ref": "legacy-agency",
+        }
+    )
+
+    assert resolved == str(open_item_id)
+    assert "item.counterparty_id IS NULL" in fake_session.fallback_sql
+    assert "item.payable_agency_code IS NULL" in fake_session.fallback_sql
 
 
 def test_resume_accepts_correction_after_completed_prefix(tmp_path) -> None:

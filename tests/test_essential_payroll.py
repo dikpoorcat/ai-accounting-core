@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
 from sqlalchemy import select
 from test_labor_remuneration_service import _evidence, _register_person
 from test_payroll_service import payroll_evidence, payroll_parameters, register_payroll_facts
@@ -89,8 +90,9 @@ def _post_payroll(session, organization, employee_id, period: str, sequence: int
     return posted, evidence
 
 
+@pytest.mark.parametrize("split_dates", [False, True])
 def test_salary_payment_combines_multiple_payroll_batches_without_agency_metadata(
-    session, organization
+    session, organization, split_dates
 ):
     employee_id = register_payroll_facts(session, organization)
     march, march_evidence = _post_payroll(session, organization, employee_id, "2026-03", 1)
@@ -162,13 +164,9 @@ def test_salary_payment_combines_multiple_payroll_batches_without_agency_metadat
         }
         withholdings.append({"open_item_id": item.id, **withholding})
         stable_withholdings.append({**stable_source, **withholding})
-        cash_sources.append(
-            {"open_item_id": item.id, "amount_fen": net_cash}
-        )
+        cash_sources.append({"open_item_id": item.id, "amount_fen": net_cash})
         stable_cash_sources.append({**stable_source, "amount_fen": net_cash})
-        stable_allocations.append(
-            {**stable_source, "amount_fen": item.original_amount_fen}
-        )
+        stable_allocations.append({**stable_source, "amount_fen": item.original_amount_fen})
 
     request_payload = {
         "org_id": organization.id,
@@ -208,6 +206,24 @@ def test_salary_payment_combines_multiple_payroll_batches_without_agency_metadat
             }
         ],
     }
+    if split_dates:
+        request_payload["funds"] = [
+            {
+                "key": f"cash-{index}",
+                "account_code": "1001",
+                "direction": "payment",
+                "payment_date": date(2026, 5, 4 + index),
+                "amount_fen": source["amount_fen"],
+                "allocations": [
+                    {
+                        "component_key": "salary",
+                        "amount_fen": source["amount_fen"],
+                        "source_allocations": [source],
+                    }
+                ],
+            }
+            for index, source in enumerate(cash_sources)
+        ]
     service = FinanceService(session)
     result = service.record_event(RecordEventRequest.model_validate(request_payload))
     assert result.status == "posted", result
@@ -254,14 +270,19 @@ def test_salary_payment_combines_multiple_payroll_batches_without_agency_metadat
         ],
         "funds": [
             {
-                **request_payload["funds"][0],
+                **fund,
                 "allocations": [
                     {
-                        **request_payload["funds"][0]["allocations"][0],
-                        "source_allocations": stable_cash_sources,
+                        **allocation,
+                        "source_allocations": [
+                            stable_cash_sources[cash_sources.index(source)]
+                            for source in allocation["source_allocations"]
+                        ],
                     }
+                    for allocation in fund["allocations"]
                 ],
             }
+            for fund in request_payload["funds"]
         ],
     }
     replay = service.record_event(RecordEventRequest.model_validate(stable_request_payload))

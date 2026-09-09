@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v36"
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v37"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.13"
 
 COMPOSITION_RUNTIME_INSTRUCTION = (
     "一笔业务通过finance_record_event提交业务组件和独立资金结算项；单项业务也使用同一组件协议。"
@@ -36,9 +36,10 @@ COMPOSITION_RUNTIME_INSTRUCTION = (
 PASS_THROUGH_RUNTIME_INSTRUCTION = (
     "代收不确认为收入或预收款。代收只需金额、实际收款日期、稳定业务键及证据；付款引用原代收来源核销。"
     "受益人、经办人、用途说明等放入可选metadata，不因缺少管理资料追问或阻断。"
-    "只有明确形成员工或股东垫付债务时，才通过个人垫付或debt_transfer组件提供垫付人、实际日期及依据。"
+    "只有明确形成员工或股东垫付债务时，才通过个人垫付或debt_transfer组件提供垫付人、债务确认日期或月份及依据。具体垫付日选填metadata.advance_payment_date，不据此追问。"
     "普通应收、应付、预收及预付同样可按稳定业务键入账，不创建虚构往来对象；核销继承来源账户和余额。"
     "finance_update_business_metadata可在关账后后补管理资料并保留历史，不改变原凭证、核算及关账快照。"
+    "普通非现金业务可用recognition_period按月确认，表示债务截至月末已成立，不代表实际付款日。不得将月份补成外部付款日。"
     "管理资料不参与计算确认；仅缺少影响核算的事实才返回needs_information，不重复索要来源已有事实。"
 )
 
@@ -81,8 +82,7 @@ OWNER_WORKFLOW_RUNTIME_INSTRUCTION = (
     "展示必须逐行复制工具返回的queue_steps：第1至6项固定展示，第7至9项只有需要负责人注意"
     "时才出现；不得自行从完整steps增删或重新编号。所有当前活跃提醒必须一次性展示，排序只"
     "决定当前追问。第1至6项只处理工具返回的当前会计期间；期间一经关闭即成为这些月结步骤的"
-    "终态依据，不得把已关闭月份重新展开为工资个税或其他月结待办。社保公积金和个人所得税必须"
-    "先完成外部申报并核对申报值，再进入后续关账步骤；"
+    "终态依据，不得把已关闭月份重新展开为工资个税或其他月结待办。外部申报进度仅作管理提醒，不阻断工资计提或关账；必要税额事实仍须明确；"
     "工资及社保公积金计提是关账义务，正常次月实发和实际缴款不是关上月账的直接前置条件。"
 )
 

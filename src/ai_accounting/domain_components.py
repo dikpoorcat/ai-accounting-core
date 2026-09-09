@@ -141,7 +141,7 @@ def compile_borrowing_payment(
     Each referenced component is still compiled independently before submission.
     """
     _positive_fen(amount_fen)
-    if posting_date != payment_date:
+    if posting_date < payment_date:
         raise ValueError("BORROWING_PAYMENT_POSTING_DATE_MISMATCH")
     service = BorrowingService(session)
     borrowing = service._get_borrowing(org_id, borrowing_id, lock=True)
@@ -247,6 +247,7 @@ def compile_borrowing_payment(
         entries=[Entry(account_role=role, debit_fen=amount_fen)],
         effects=[persist],
     )
+
 
 def _active_source(
     session: Session,

@@ -2002,10 +2002,8 @@ class AccountingPeriodService:
                         for item, actual_set in active_contribution_actual_rows
                     ],
                     "historical_contribution_supplement_count": contribution_supplement_count,
-                    "workforce_change_confirmation_required": True,
-                    "external_payroll_compliance_confirmation_required": bool(
-                        social_confirmation_required or individual_income_tax_confirmation_required
-                    ),
+                    "workforce_change_confirmation_required": False,
+                    "external_payroll_compliance_confirmation_required": False,
                     "social_confirmation_required": social_confirmation_required,
                     "individual_income_tax_confirmation_required": (
                         individual_income_tax_confirmation_required
@@ -2690,7 +2688,7 @@ class AccountingPeriodService:
             except (KeyError, TypeError, ValueError):
                 return set()
             if (
-                item.get("wage_tax_declaration_state") == "not_declared"
+                item.get("wage_tax_scope") == "contributions_only"
                 and all(
                     item.get(field) in {None, 0}
                     for field in (
