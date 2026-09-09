@@ -50,7 +50,7 @@ from .models import (
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FORMAT_VERSION = "ai-accounting-composition-replay-v3"
-_BUSINESS_REVISION = "0001_business_baseline_v4"
+_BUSINESS_REVISION = "0002_atomic_corrections"
 _CATALOG_REVISION = "0001_catalog_baseline_v2"
 
 
@@ -2596,20 +2596,12 @@ def _owner_control_operations(
             and isinstance(plan.get("employee_items"), list)
             else None
         )
-        payroll_items, migrated_difference = _normalize_replayed_workforce_items(
-            payroll_items
-        )
-        evidence_references = _snapshot_evidence_refs(
-            row["evidence_snapshot"] or [], maps
-        )
+        payroll_items, migrated_difference = _normalize_replayed_workforce_items(payroll_items)
+        evidence_references = _snapshot_evidence_refs(row["evidence_snapshot"] or [], maps)
         if migrated_difference and not evidence_references:
-            evidence_references = _payroll_evidence_for_period(
-                event_operations, month
-            )
+            evidence_references = _payroll_evidence_for_period(event_operations, month)
             if not evidence_references:
-                raise ReplayError(
-                    "REPLAY_SOURCE_WORKFORCE_DIFFERENCE_EVIDENCE_MISSING"
-                )
+                raise ReplayError("REPLAY_SOURCE_WORKFORCE_DIFFERENCE_EVIDENCE_MISSING")
         operations.append(
             {
                 "key": stable_key,
@@ -2778,9 +2770,10 @@ def _payroll_evidence_for_period(
         if not isinstance(preparations, list):
             continue
         for preparation in preparations:
-            if not isinstance(preparation, Mapping) or preparation.get(
-                "preview_tool"
-            ) != "finance_preview_payroll":
+            if (
+                not isinstance(preparation, Mapping)
+                or preparation.get("preview_tool") != "finance_preview_payroll"
+            ):
                 continue
             request = preparation.get("preview_request")
             if (
@@ -2864,9 +2857,7 @@ def _metadata_operations(session, org_id, maps, event_operations):
             target_versions[identity] = 1 if target_values[identity] else 0
         if row.version == 1 and target_values[identity] == values:
             continue
-        patch = {
-            key: None for key in target_values[identity] if key not in values
-        } | values
+        patch = {key: None for key in target_values[identity] if key not in values} | values
         key = f"metadata:{_semantic_replay_key(event_key)}:{row.component_key}:{row.version}"
         operations.append(
             {
@@ -2902,6 +2893,27 @@ def _operation_replays_payroll(operation: Mapping[str, Any]) -> bool:
     )
 
 
+def _correction_history(session: Session, org_id: uuid.UUID, revision: str) -> dict[str, Any]:
+    """Read-only audit export, separate from the operations replayed into an empty DB."""
+    source_tables = set(sa_inspect(session.bind).get_table_names())
+    return {
+        "schema_revision": revision,
+        "purpose": "audit_only_not_replay_operations",
+        "event_amendments": _query_rows(
+            session,
+            "SELECT * FROM business_event_amendments WHERE org_id=:org_id ORDER BY created_at,id",
+            org_id=org_id,
+        ),
+        "corrections": _query_rows(
+            session,
+            "SELECT * FROM business_corrections WHERE org_id=:org_id ORDER BY created_at,id",
+            org_id=org_id,
+        )
+        if "business_corrections" in source_tables
+        else [],
+    }
+
+
 def _export_company(
     *,
     engine: sa.Engine,
@@ -2915,7 +2927,11 @@ def _export_company(
     with Session(engine) as session:
         revision = session.scalar(text("SELECT version_num FROM alembic_version"))
         # The just-retired chain remains a read-only export source for v4 replay.
-        if revision not in {_current_schema_revision(catalog=False), "0004_fact_precision"}:
+        if revision not in {
+            _current_schema_revision(catalog=False),
+            "0001_business_baseline_v4",
+            "0004_fact_precision",
+        }:
             raise ReplayError("REPLAY_SOURCE_COMPONENT_BASELINE_REQUIRED")
         organization = session.get(Organization, org_id)
         if organization is None:
@@ -3082,6 +3098,7 @@ def _export_company(
                 "account_balances": "account-balances.json",
                 "open_items": "open-items.json",
                 "report_preconditions": "report-preconditions.json",
+                "correction_history": "correction-history.json",
             },
             "operation_count": len(operations),
         }
@@ -3094,6 +3111,12 @@ def _export_company(
         _write_json(company_dir / "checkpoints.json", checkpoints)
         _write_json(company_dir / "account-balances.json", account_balances)
         _write_json(company_dir / "open-items.json", open_items)
+        # Historical corrections are evidence, not extra payments to replay.
+        # Read old export sources through SELECT *, never a runtime adapter.
+        _write_json(
+            company_dir / "correction-history.json",
+            _correction_history(session, org_id, revision),
+        )
         _write_json(
             company_dir / "report-preconditions.json",
             {
@@ -3677,11 +3700,21 @@ class _ReplayResolver:
         self.org_id = org_id
         self.results = results
 
-    def existing_calculation_hash(self, idempotency_key: str) -> str | None:
+    def existing_calculation_hash(
+        self, idempotency_key: str, *, correction: bool = False
+    ) -> str | None:
         """Return the hash needed to re-confirm a write committed before checkpointing."""
-        from .models import BusinessEvent
+        from .models import BusinessCorrection, BusinessEvent
 
         with Session(self.engine) as session:
+            if correction:
+                return session.scalar(
+                    select(BusinessCorrection.calculation_hash).where(
+                        BusinessCorrection.org_id == self.org_id,
+                        BusinessCorrection.idempotency_key == idempotency_key,
+                        BusinessCorrection.result.is_not(None),
+                    )
+                )
             facts = session.scalar(
                 select(BusinessEvent.facts).where(
                     BusinessEvent.org_id == self.org_id,
@@ -3695,11 +3728,7 @@ class _ReplayResolver:
         value = (
             facts.get("calculation_hash")
             or facts.get("_result_calculation_hash")
-            or (
-                result_data.get("calculation_hash")
-                if isinstance(result_data, Mapping)
-                else None
-            )
+            or (result_data.get("calculation_hash") if isinstance(result_data, Mapping) else None)
         )
         return str(value) if value else None
 
@@ -4146,12 +4175,16 @@ def _preview_confirm(
     resolver: _ReplayResolver,
 ) -> dict[str, Any]:
     preview_request = resolver.materialize(operation["preview_request"])
+    if operation["confirm_tool"] == "finance_confirm_correction":
+        # Its preview intentionally has no command key. After a lost checkpoint,
+        # previewing the already corrected state would produce a different hash.
+        recovered = _recover_confirmed_preview_operation(operation, resolver, preview_request)
+        if recovered is not None:
+            return recovered
     preview = _call_tool(str(operation["preview_tool"]), preview_request)
     preview_allowed = operation.get("allowed_preview_statuses", ["calculated"])
     if str(preview.get("status")) not in preview_allowed:
-        recovered = _recover_confirmed_preview_operation(
-            operation, resolver, preview_request
-        )
+        recovered = _recover_confirmed_preview_operation(operation, resolver, preview_request)
         if recovered is not None:
             return recovered
     _require_status(
@@ -4193,13 +4226,15 @@ def _recover_confirmed_preview_operation(
     preview_request: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     """Recover when confirm committed but the replay checkpoint did not."""
-    persisted_confirm_request = resolver.materialize(
-        operation.get("confirm_request", {})
-    )
+    persisted_confirm_request = resolver.materialize(operation.get("confirm_request", {}))
     idempotency_key = persisted_confirm_request.get("idempotency_key")
     if not idempotency_key:
         return None
-    calculation_hash = resolver.existing_calculation_hash(str(idempotency_key))
+    calculation_hash = (
+        resolver.existing_calculation_hash(str(idempotency_key), correction=True)
+        if operation["confirm_tool"] == "finance_confirm_correction"
+        else resolver.existing_calculation_hash(str(idempotency_key))
+    )
     if calculation_hash is None:
         return None
 

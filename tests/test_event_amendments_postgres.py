@@ -379,7 +379,6 @@ def banked_checks(engine, authority, evidence_id, tmp_path):
             action_id=action.id,
             expected_calculation_hash=action.calculation_hash,
             idempotency_key="withdraw-import",
-            reason="Wrong ID column",
         )
         with attributed(session, "finance_withdraw_bank_statement_import"):
             result = BankImportWithdrawalService(session).withdraw(request)
@@ -475,7 +474,7 @@ def test_v3_baseline_and_all_posting_families(tmp_path):
         engine = create_engine(url)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0001_business_baseline_v4"
+                "0002_atomic_corrections"
             )
         with Session(engine) as session:
             org = seed_organization(
@@ -617,7 +616,16 @@ def test_v3_baseline_and_all_posting_families(tmp_path):
             request = cases.amendment(
                 session,
                 source,
-                source_request.model_copy(update={"description": "Second edit"}),
+                source_request.model_copy(
+                    update={
+                        "description": "Second edit",
+                        "components": [
+                            source_request.components[0].model_copy(
+                                update={"amount_fen": source_request.components[0].amount_fen + 100}
+                            )
+                        ],
+                    }
+                ),
                 key="conflict",
             )
         with ThreadPoolExecutor(max_workers=2) as pool:

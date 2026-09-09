@@ -12,7 +12,7 @@ from . import models as m
 from .accounting_periods import canonical_sha256
 from .bank_statement_service import BankStatementService
 from .event_amendment_schemas import WithdrawBankImportRequest
-from .event_amendments import AmendmentRejected, _json
+from .event_amendments import AmendmentRejected, _json, database_failure
 from .ledger import assert_period_open
 
 
@@ -28,8 +28,8 @@ class BankImportWithdrawalService:
             return exc.result
         except ValueError as exc:
             return {"status": "rejected", "errors": [str(exc)]}
-        except DBAPIError:
-            return {"status": "rejected", "errors": ["BANK_IMPORT_WITHDRAWAL_CONFLICT"]}
+        except DBAPIError as exc:
+            return database_failure(exc)
 
     def _write(self, request: WithdrawBankImportRequest) -> dict:
         session = self.session

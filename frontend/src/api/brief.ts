@@ -159,6 +159,8 @@ export interface WorkforcePeriod {
   remuneration_period?: string;
   total_fen: string;
   has_reversal: boolean;
+  has_amendment: boolean;
+  correction_ids: string[];
 }
 
 export interface BriefEmployeeCost {

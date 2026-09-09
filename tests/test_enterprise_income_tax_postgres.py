@@ -71,7 +71,7 @@ def test_v3_baseline_atomic_correction_concurrency_and_restore(tmp_path, monkeyp
         engine = create_engine(url)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0001_business_baseline_v4"
+                "0002_atomic_corrections"
             )
         with Session(engine) as session:
             org = seed_organization(
@@ -212,7 +212,7 @@ def test_v3_baseline_atomic_correction_concurrency_and_restore(tmp_path, monkeyp
                 evidence_root=evidence_root,
                 evidence=(snapshot,),
                 database=DatabaseDumpMetadata(
-                    schema_revision="0001_business_baseline_v4",
+                    schema_revision="0002_atomic_corrections",
                     source_system_identifier="123456789",
                 ),
                 artifact_type="company",

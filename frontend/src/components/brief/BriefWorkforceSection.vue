@@ -19,7 +19,7 @@ function costPeriodLabel(
     sourcePeriod === props.periodKey
       ? `${sourceMonth} 月本月计提`
       : `${sourceMonth} 月${period.has_reversal ? "补记/调整" : "补记"}`;
-  return `${label}${period.has_reversal ? "（含更正）" : ""}`;
+  return `${label}${period.has_amendment ? "（原凭证已更正）" : period.has_reversal ? "（含冲正）" : ""}`;
 }
 
 function employeeCostNote() {

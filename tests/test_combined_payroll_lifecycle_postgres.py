@@ -285,7 +285,7 @@ def test_combined_payroll_whole_amend_and_delete_preserve_then_remove_graph():
 
 
 @pytest.mark.postgres
-def test_combined_payroll_whole_reverse_respects_only_external_later_dependencies():
+def test_combined_payroll_and_later_month_correct_in_one_group():
     with authenticated_business_database("combined_payroll_reverse") as (
         engine,
         org_id,
@@ -350,51 +350,57 @@ def test_combined_payroll_whole_reverse_respects_only_external_later_dependencie
                     )
                 )
                 assert blocked.status == "rejected", blocked
-                assert blocked.errors == ["REVERSE_DEPENDENT_PAYROLL_BATCHES_FIRST"]
-                reversed_later = FinanceService(session).reverse_event(
-                    ReverseEventRequest(
-                        org_id=org_id,
-                        event_id=later.event_id,
-                        idempotency_key="reverse-later-payroll",
-                        posting_date=date(2026, 4, 6),
-                        reason="先冲正后续月份工资",
-                    )
-                )
-                assert reversed_later.status == "posted", reversed_later
-                reversed_combined = FinanceService(session).reverse_event(
-                    ReverseEventRequest(
-                        org_id=org_id,
-                        event_id=combined.event_id,
-                        idempotency_key="reverse-combined-payroll",
-                        posting_date=date(2026, 4, 7),
-                        reason="整体冲正工资与年终奖",
-                    )
-                )
-                assert reversed_combined.status == "posted", reversed_combined
-            session.commit()
-
-            source_ids = {regular.batch_id, bonus.batch_id}
-            assert {session.get(PayrollBatch, batch_id).status for batch_id in source_ids} == {
-                "reversed"
-            }
-            reversal_batches = list(
-                session.scalars(
-                    select(PayrollBatch).where(PayrollBatch.reversal_of_batch_id.in_(source_ids))
-                )
+                assert blocked.errors == ["OPEN_PERIOD_REQUIRES_AMENDMENT"]
+            from ai_accounting.corrections import CorrectionService
+            from ai_accounting.event_amendment_schemas import (
+                ConfirmCorrectionRequest,
+                PreviewCorrectionRequest,
             )
-            assert {batch.reversal_of_batch_id for batch in reversal_batches} == source_ids
-            assert {batch.business_event_id for batch in reversal_batches} == {
-                reversed_combined.event_id
-            }
-            assert {batch.status for batch in reversal_batches} == {"posted"}
-            assert len(_component_ids(session, reversed_combined.event_id)) == 2
+            from ai_accounting.schemas import RegisterPayrollFirstWageTaxTreatmentRequest
+
+            original_numbers = {v.id: v.voucher_number for v in session.scalars(select(Voucher))}
+            correction = PreviewCorrectionRequest(
+                org_id=org_id,
+                source_changes=[
+                    RegisterPayrollFirstWageTaxTreatmentRequest(
+                        org_id=org_id,
+                        employee_id=employee_id,
+                        tax_year=2026,
+                        first_wage_month=3,
+                        treatment_state="eligible",
+                        evidence_references=[evidence_id],
+                        idempotency_key="combined-first-wage",
+                    )
+                ],
+            )
+            with authority.attributed_call(session, tool_name="finance_preview_correction"):
+                preview = CorrectionService(session).preview(correction)
+            assert preview["status"] == "calculated", preview
+            assert len(preview["data"]["changes"]) == 2
+            with authority.attributed_call(session, tool_name="finance_confirm_correction"):
+                corrected = CorrectionService(session).confirm(
+                    ConfirmCorrectionRequest(
+                        **correction.model_dump(),
+                        calculation_hash=preview["calculation_hash"],
+                        idempotency_key="combined-correction",
+                    )
+                )
+            assert corrected["status"] == "posted", corrected
+            session.commit()
+            assert {
+                v.id: v.voucher_number for v in session.scalars(select(Voucher))
+            } == original_numbers
+            assert {
+                session.get(PayrollBatch, batch_id).business_event_id
+                for batch_id in (regular.batch_id, bonus.batch_id)
+            } == {combined.event_id}
             assert (
                 session.scalar(
                     select(func.count())
                     .select_from(PayrollTaxStateSlot)
                     .where(PayrollTaxStateSlot.employee_id == employee_id)
                 )
-                == 0
+                == 2
             )
 
 

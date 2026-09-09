@@ -137,6 +137,9 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_confirm_tax_period",
         "finance_reverse_event",
         "finance_amend_event",
+        "finance_preview_correction",
+        "finance_confirm_correction",
+        "finance_get_correction",
         "finance_delete_event",
         "finance_withdraw_bank_statement_import",
         "finance_get_event",
@@ -313,7 +316,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "resume_queue_after": "blocker_resolved_and_operation_continued",
         "needs_information_is_technical_error": False,
     }
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.13"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.14"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
     assert protocol["owner_workflow"]["target_selection"] == (

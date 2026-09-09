@@ -30,7 +30,6 @@ from ai_accounting.schemas import (
     BankTransactionReference,
     ConfirmPayrollRequest,
     PreviewPayrollRequest,
-    ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
 
@@ -275,25 +274,19 @@ def _post_two_statutory_components(
     return source, result
 
 
-def _reverse(session, organization, event_id, key, authority=None):
+def _delete(session, organization, event_id, key, authority=None):
+    from _correction_helpers import delete_open_event
+
     context = (
-        authority.attributed_call(session, tool_name="finance_reverse_event")
+        authority.attributed_call(session, tool_name="finance_delete_event")
         if authority is not None
         else nullcontext()
     )
     with context:
-        return FinanceService(session).reverse_event(
-            ReverseEventRequest(
-                org_id=organization.id,
-                event_id=event_id,
-                idempotency_key=key,
-                reason="验证同一事件内重复组件冲正",
-                posting_date=date(2026, 3, 5),
-            )
-        )
+        return delete_open_event(session, organization.id, event_id, key)
 
 
-def test_repeated_salary_and_statutory_components_post_and_reverse_as_one_plan(
+def test_repeated_salary_and_statutory_components_post_and_delete_as_one_plan(
     session: Session, organization
 ) -> None:
     _, payroll = preview_and_confirm(session, organization)
@@ -350,25 +343,24 @@ def test_repeated_salary_and_statutory_components_post_and_reverse_as_one_plan(
     )
     assert statutory_source.status == "settled"
 
-    statutory_reversal = _reverse(
+    statutory_deleted = _delete(
         session,
         organization,
         statutory.event_id,
-        "reverse-two-statutory-components",
+        "delete-two-statutory-components",
     )
-    assert statutory_reversal.status == "posted", statutory_reversal.errors
+    assert statutory_deleted["status"] == "deleted", statutory_deleted
     assert statutory_source.status == "open"
-    salary_reversal = _reverse(
+    salary_deleted = _delete(
         session,
         organization,
         salary.event_id,
-        "reverse-two-salary-components",
+        "delete-two-salary-components",
     )
-    assert salary_reversal.status == "posted", salary_reversal.errors
+    assert salary_deleted["status"] == "deleted", salary_deleted
     assert salary_source.status == "open"
-    assert all(
-        allocation.reversed
-        for allocation in session.scalars(
+    assert not list(
+        session.scalars(
             select(PayrollWithholdingPaymentAllocation).where(
                 PayrollWithholdingPaymentAllocation.payment_event_id == salary.event_id
             )
@@ -516,9 +508,12 @@ def test_postgres_local_salary_tax_payment_links_every_source_payroll_batch() ->
                     if row.contribution_group == "individual_income_tax"
                 )
                 tax_fen += line_tax
-                cash_fen += item.original_amount_fen - sum(social.values()) - sum(
-                    housing.values()
-                ) - line_tax
+                cash_fen += (
+                    item.original_amount_fen
+                    - sum(social.values())
+                    - sum(housing.values())
+                    - line_tax
+                )
                 withholding_allocations.append(
                     {
                         "open_item_id": item.id,
@@ -590,14 +585,10 @@ def test_postgres_local_salary_tax_payment_links_every_source_payroll_batch() ->
                 )
             )
             assert {
-                link.payroll_batch_id
-                for link in links
-                if link.link_kind == "salary_payment"
+                link.payroll_batch_id for link in links if link.link_kind == "salary_payment"
             } == expected_batch_ids
             assert {
-                link.payroll_batch_id
-                for link in links
-                if link.link_kind == "statutory_payment"
+                link.payroll_batch_id for link in links if link.link_kind == "statutory_payment"
             } == expected_batch_ids
 
 
@@ -657,24 +648,24 @@ def test_postgres_repeated_salary_components_commit_with_real_attribution_and_ba
             )
             session.commit()
             assert statutory_source.status == "settled"
-            statutory_reversal = _reverse(
+            statutory_deleted = _delete(
                 session,
                 organization,
                 statutory.event_id,
-                "postgres-reverse-two-statutory-components",
+                "postgres-delete-two-statutory-components",
                 authority,
             )
-            assert statutory_reversal.status == "posted", statutory_reversal.errors
+            assert statutory_deleted["status"] == "deleted", statutory_deleted
             session.commit()
             assert statutory_source.status == "open"
-            salary_reversal = _reverse(
+            salary_deleted = _delete(
                 session,
                 organization,
                 result.event_id,
-                "postgres-reverse-two-salary-components",
+                "postgres-delete-two-salary-components",
                 authority,
             )
-            assert salary_reversal.status == "posted", salary_reversal.errors
+            assert salary_deleted["status"] == "deleted", salary_deleted
             session.commit()
             assert source.status == "open"
             assert (
@@ -686,7 +677,7 @@ def test_postgres_repeated_salary_components_commit_with_real_attribution_and_ba
                         )
                     ).all()
                 )
-                == 2
+                == 0
             )
 
 
@@ -730,9 +721,9 @@ def test_repeated_salary_actual_deductions_belong_to_each_component():
                     )
                 )
             ) == [100, 200]
-            reversal = _reverse(
-                session, organization, result.event_id, "reverse-actual-deductions", authority
+            deleted = _delete(
+                session, organization, result.event_id, "delete-actual-deductions", authority
             )
-            assert reversal.status == "posted", reversal
+            assert deleted["status"] == "deleted", deleted
             session.commit()
             assert source.status == "open"

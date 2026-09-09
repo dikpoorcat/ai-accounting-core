@@ -1,6 +1,7 @@
 import uuid
 
 import pytest
+from _correction_helpers import delete_open_event
 from _postgres_helpers import catalog_owner_authority
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
@@ -131,11 +132,12 @@ def test_postgres_whole_component_amend_delete_and_reverse_are_atomic():
                         reason="整笔更正来源及核销",
                     )
                 )
-                assert reversed_result.status == "posted", reversed_result
+                assert reversed_result.errors == ["OPEN_PERIOD_REQUIRES_AMENDMENT"]
+            with authority.attributed_call(session, tool_name="finance_delete_event"):
+                delete_open_event(session, org.id, posted.event_id, "delete-local-source")
             session.commit()
-            item = session.scalar(select(OpenItem))
-            assert item.status == "reversed" and item.settled_amount_fen == 0
-            assert session.scalar(select(Settlement)).reversed is True
+            assert session.scalar(select(OpenItem)) is None
+            assert session.scalar(select(Settlement)) is None
 
 
 def test_postgres_refund_receipt_dependencies_prevent_partial_lifecycle_changes():

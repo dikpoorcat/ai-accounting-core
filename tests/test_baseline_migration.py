@@ -15,7 +15,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 
 BUSINESS_REVISION = "0001_business_baseline_v4"
-BUSINESS_HEAD = BUSINESS_REVISION
+BUSINESS_HEAD = "0002_atomic_corrections"
 POSTGRES_IMAGE = (
     "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 )
@@ -138,7 +138,7 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
 
     assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
-        BUSINESS_HEAD,
+        BUSINESS_HEAD, BUSINESS_REVISION,
     ]
 
     command.upgrade(config, BUSINESS_REVISION)
@@ -148,9 +148,8 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     try:
         _assert_business_baseline(engine)
         command.check(config)
-        command.downgrade(config, "base")
-        command.upgrade(config, "head")
-        _assert_business_baseline(engine)
+        with pytest.raises(RuntimeError, match="atomic correction history cannot be discarded"):
+            command.downgrade(config, "base")
     finally:
         engine.dispose()
 
@@ -223,7 +222,7 @@ def test_new_baseline_seeds_purchase_accounts_and_refuses_populated_downgrade(tm
             assert len(accounts) == 3
         command.check(config)
         with pytest.raises(
-            RuntimeError, match="BUSINESS_BASELINE_DOWNGRADE_REQUIRES_EMPTY_DATABASE"
+            RuntimeError, match="atomic correction history cannot be discarded"
         ):
             command.downgrade(config, "base")
     finally:
@@ -357,8 +356,7 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                 "finance_guard_late_bank_action_0015",
             }
             assert obsolete_unified_payout_runtime == 0
-            command.downgrade(config, "base")
-            command.upgrade(config, "head")
-            _assert_business_baseline(engine)
+            with pytest.raises(RuntimeError, match="atomic correction history cannot be discarded"):
+                command.downgrade(config, "base")
         finally:
             engine.dispose()

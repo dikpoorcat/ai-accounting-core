@@ -1723,6 +1723,10 @@ class FinanceService:
                 "treatment_id": str(existing.id),
                 "idempotent_replay": True,
             }
+        from .corrections import source_change_gate
+
+        if correction_required := source_change_gate(self.session, request):
+            return correction_required
         employee = self._employee_for_org(request.org_id, request.employee_id)
         if employee is None:
             return {"status": "rejected", "errors": ["EMPLOYEE_NOT_FOUND"]}
@@ -1768,30 +1772,11 @@ class FinanceService:
                 "status": "rejected",
                 "errors": ["FIRST_WAGE_TREATMENT_CORRECTION_REQUIRES_SUPERSEDES"],
             }
-        calculated_batches_to_supersede: list[PayrollBatch] = []
-        if predecessor is not None:
-            uses = self.session.execute(
-                select(PayrollFirstWageTaxTreatmentUse, PayrollBatch)
-                .join(
-                    PayrollBatch,
-                    (PayrollBatch.org_id == PayrollFirstWageTaxTreatmentUse.org_id)
-                    & (PayrollBatch.id == PayrollFirstWageTaxTreatmentUse.payroll_batch_id),
-                )
-                .where(
-                    PayrollFirstWageTaxTreatmentUse.org_id == request.org_id,
-                    PayrollFirstWageTaxTreatmentUse.treatment_id == predecessor.id,
-                    PayrollBatch.status.in_(("calculated", "posted")),
-                )
-                .with_for_update()
-            ).all()
-            posted_ids = sorted({str(batch.id) for _, batch in uses if batch.status == "posted"})
-            if posted_ids:
-                return {
-                    "status": "rejected",
-                    "errors": ["FIRST_WAGE_POSTED_PAYROLL_MUST_BE_REVERSED_FIRST"],
-                    "blocking_payroll_batch_ids": posted_ids,
-                }
-            calculated_batches_to_supersede = [batch for _, batch in uses]
+        from .corrections import source_batches
+
+        calculated_batches_to_supersede = source_batches(
+            self.session, request, statuses=("calculated",)
+        )
         treatment = PayrollFirstWageTaxTreatment(
             org_id=request.org_id,
             employee_id=request.employee_id,
@@ -1929,6 +1914,10 @@ class FinanceService:
                 ],
                 "idempotent_replay": True,
             }
+        from .corrections import source_change_gate
+
+        if correction_required := source_change_gate(self.session, request):
+            return correction_required
         employee = self._employee_for_org(request.org_id, request.employee_id)
         if employee is None:
             return {"status": "rejected", "errors": ["EMPLOYEE_NOT_FOUND"]}
@@ -2007,33 +1996,11 @@ class FinanceService:
                     "status": "rejected",
                     "errors": ["CONTRIBUTION_ACTUAL_CORRECTION_REQUIRES_SUPERSEDES"],
                 }
-        calculated_batches_to_supersede: list[PayrollBatch] = []
-        if supersedes_ids:
-            use_rows = self.session.execute(
-                select(PayrollContributionActualUse, PayrollBatch)
-                .join(
-                    PayrollBatch,
-                    (PayrollBatch.org_id == PayrollContributionActualUse.org_id)
-                    & (PayrollBatch.id == PayrollContributionActualUse.payroll_batch_id),
-                )
-                .where(
-                    PayrollContributionActualUse.org_id == request.org_id,
-                    PayrollContributionActualUse.actual_item_id.in_(supersedes_ids),
-                    PayrollBatch.status.in_(("calculated", "posted")),
-                )
-                .with_for_update()
-            ).all()
-            posted_batches = sorted(
-                {str(batch.id) for _, batch in use_rows if batch.status == "posted"}
-            )
-            if posted_batches:
-                return {
-                    "status": "rejected",
-                    "errors": ["CONTRIBUTION_ACTUAL_POSTED_PAYROLL_MUST_BE_REVERSED_FIRST"],
-                    "blocking_payroll_batch_ids": posted_batches,
-                }
-            calculated_batches_to_supersede = [batch for _, batch in use_rows]
+        from .corrections import source_batches
 
+        calculated_batches_to_supersede = source_batches(
+            self.session, request, statuses=("calculated",)
+        )
         actual_set = PayrollContributionActualSet(
             org_id=request.org_id,
             employee_id=request.employee_id,
@@ -3463,7 +3430,8 @@ class FinanceService:
         ).all()
         if later:
             raise CalculationValidationError(
-                "LATER_PAYROLL_TAX_STATE_EXISTS", "later tax state must be reversed first"
+                "LATER_PAYROLL_TAX_STATE_EXISTS",
+                "later posted tax state must be included in the correction scope",
             )
         if batch.batch_kind == PayrollBatchKind.REGULAR.value:
             insert_stmt = (
@@ -6017,6 +5985,15 @@ class FinanceService:
             return self._result_for_existing(existing_after_lock)
         if original.status != "posted" or original.reversed_by_event_id:
             return FinanceResult(status=ResultStatus.REJECTED, errors=["EVENT_IS_NOT_REVERSIBLE"])
+        from .corrections import correction_route
+
+        route = correction_route(self.session, request.org_id, original.id)
+        if route["route"] != "linked_reversal":
+            return FinanceResult(
+                status=ResultStatus.REJECTED,
+                errors=["OPEN_PERIOD_REQUIRES_AMENDMENT"],
+                data={**route, "next_action": "finance_preview_correction"},
+            )
         if error := EnterpriseIncomeTaxService(self.session).reversal_error(original):
             return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
         dependent_children = self.session.scalars(

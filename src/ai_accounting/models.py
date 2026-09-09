@@ -4447,6 +4447,36 @@ class ComponentCashFlowAllocation(Base):
     )
 
 
+class BusinessCorrection(Base):
+    """One atomic correction, including immutable source versions and event audits."""
+
+    __tablename__ = "business_corrections"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"))
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    calculation_hash: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    before_state: Mapped[dict[str, Any]] = mapped_column(JSON)
+    after_state: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+    result: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True, active_history=True
+    )
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_correction_org_id"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_correction_key"),
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+        ),
+    )
+
+
 class BusinessEventAmendment(Base):
     """An audited replacement of an open-month event and its derived voucher."""
 
@@ -4455,6 +4485,7 @@ class BusinessEventAmendment(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("organizations.id"))
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    correction_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     operation: Mapped[str] = mapped_column(String(10), server_default="amend")
     revision: Mapped[int] = mapped_column(Integer)
     idempotency_key: Mapped[str] = mapped_column(String(200))
@@ -4471,6 +4502,11 @@ class BusinessEventAmendment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "correction_id"],
+            ["business_corrections.org_id", "business_corrections.id"],
+            name="fk_amendment_correction",
+        ),
         ForeignKeyConstraint(
             ["org_id", "event_id"],
             ["business_events.org_id", "business_events.id"],
@@ -7092,6 +7128,7 @@ class EnterpriseIncomeTaxSettlementLine(Base):
 EXECUTION_ATTRIBUTION_SESSION_KEY = "finance_execution_attribution_id"
 _ATTRIBUTED_ROOT_TYPES = (
     BankStatementImportWithdrawal,
+    BusinessCorrection,
     BusinessEventAmendment,
     EnterpriseIncomeTaxResult,
     EnterpriseIncomeTaxSettlement,
@@ -7254,10 +7291,11 @@ def _enforce_bank_withdrawal_audit(
 def _enforce_event_amendment_audit(
     session: Session, _flush_context: object, _instances: object
 ) -> None:
-    if any(isinstance(item, BusinessEventAmendment) for item in session.deleted):
+    audit_types = (BusinessEventAmendment, BusinessCorrection)
+    if any(isinstance(item, audit_types) for item in session.deleted):
         raise ValueError("AMENDMENT_AUDIT_IMMUTABLE")
     for item in session.dirty:
-        if not isinstance(item, BusinessEventAmendment) or not session.is_modified(item):
+        if not isinstance(item, audit_types) or not session.is_modified(item):
             continue
         changed = {
             column.name

@@ -71,6 +71,7 @@ from .company_schemas import (
 from .company_service import CompanyLifecycleError, CompanyService
 from .component_schemas import ConfigureAccountRequest, RecordEventRequest
 from .config import get_settings
+from .corrections import CorrectionService
 from .credential_store import CredentialStore, WindowsCredentialStore
 from .database import SessionLocal
 from .enterprise_income_tax import EnterpriseIncomeTaxService
@@ -81,7 +82,9 @@ from .enterprise_income_tax_schemas import (
 )
 from .event_amendment_schemas import (
     AmendEventRequest,
+    ConfirmCorrectionRequest,
     DeleteEventRequest,
+    PreviewCorrectionRequest,
     WithdrawBankImportRequest,
 )
 from .event_amendments import EventAmendmentService
@@ -117,6 +120,7 @@ from .models import (
     AuditLog,
     BankTransaction,
     BankTransactionMatch,
+    BusinessCorrection,
     BusinessEvent,
     BusinessEventAmendment,
     BusinessEventComponent,
@@ -533,11 +537,15 @@ def _secure_registered_data_tools() -> None:
                                         tool_name=_tool_name,
                                     ):
                                         tool_result = _original(*args, **kwargs)
-                                elif _tool_name == "finance_preview_event":
+                                elif _tool_name in {
+                                    "finance_preview_event",
+                                    "finance_preview_correction",
+                                }:
                                     tool_result = _preview_with_ephemeral_attribution(
                                         business_session,
                                         context,
                                         lambda: _original(*args, **kwargs),
+                                        tool_name=_tool_name,
                                     )
                                 else:
                                     tool_result = _original(*args, **kwargs)
@@ -584,9 +592,12 @@ def _secure_registered_data_tools() -> None:
                             tool_name=_tool_name,
                         ):
                             return _original(*args, **kwargs)
-                    if _tool_name == "finance_preview_event":
+                    if _tool_name in {"finance_preview_event", "finance_preview_correction"}:
                         return _preview_with_ephemeral_attribution(
-                            session, context, lambda: _original(*args, **kwargs)
+                            session,
+                            context,
+                            lambda: _original(*args, **kwargs),
+                            tool_name=_tool_name,
                         )
                     return _original(*args, **kwargs)
                 finally:
@@ -596,13 +607,13 @@ def _secure_registered_data_tools() -> None:
         object.__setattr__(tool, "fn", authenticated)
 
 
-def _preview_with_ephemeral_attribution(session, context, invoke):
+def _preview_with_ephemeral_attribution(
+    session, context, invoke, *, tool_name="finance_preview_event"
+):
     """Apply normal identity checks to temporary plans without leaving call records."""
     transaction = session.begin_nested()
     try:
-        with persist_execution_attribution(
-            session, context=context, tool_name="finance_preview_event"
-        ):
+        with persist_execution_attribution(session, context=context, tool_name=tool_name):
             return invoke()
     finally:
         if transaction.is_active:
@@ -1073,6 +1084,12 @@ def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any
             "finance_configure_account"
         ).parameters,
         "amend_event_schema": mcp._tool_manager.get_tool("finance_amend_event").parameters,
+        "preview_correction_schema": mcp._tool_manager.get_tool(
+            "finance_preview_correction"
+        ).parameters,
+        "confirm_correction_schema": mcp._tool_manager.get_tool(
+            "finance_confirm_correction"
+        ).parameters,
         "delete_event_schema": mcp._tool_manager.get_tool("finance_delete_event").parameters,
         "reverse_event_schema": mcp._tool_manager.get_tool("finance_reverse_event").parameters,
         "update_metadata_schema": mcp._tool_manager.get_tool(
@@ -2359,6 +2376,45 @@ def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
         return _invalid(exc)
 
 
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_correction(org_id: str, correction_id: str) -> dict[str, Any]:
+    """读取同一次更正的来源版本、全部原凭证及前后审计快照。"""
+    with SessionLocal() as session:
+        correction = session.scalar(
+            select(BusinessCorrection).where(
+                BusinessCorrection.org_id == uuid.UUID(org_id),
+                BusinessCorrection.id == uuid.UUID(correction_id),
+            )
+        )
+        if correction is None:
+            return {"status": "rejected", "errors": ["CORRECTION_NOT_FOUND"]}
+        return {
+            "status": "found",
+            "data": {
+                "correction_id": str(correction.id),
+                "reason": correction.reason,
+                "created_at": correction.created_at.isoformat(),
+                "before_state": correction.before_state,
+                "after_state": correction.after_state,
+                "result": correction.result,
+            },
+        }
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_correction(request: PreviewCorrectionRequest) -> dict[str, Any]:
+    """预览来源事实和全部开放期间依赖的原位更正；不留下正式写入。"""
+    with SessionLocal() as session:
+        return CorrectionService(session).preview(request)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_confirm_correction(request: ConfirmCorrectionRequest) -> dict[str, Any]:
+    """按预览哈希一次确认全部联动更正，保留每笔原凭证编号；任何失败整体回滚。"""
+    with SessionLocal.begin() as session:
+        return CorrectionService(session).confirm(request)
+
+
 @mcp.tool(annotations=REVERSAL_WRITE)
 def finance_amend_event(request: AmendEventRequest) -> dict[str, Any]:
     """未关账业务可直接修改时必须使用本工具，不得以冲正重记替代；重算并保留凭证编号及修改历史。"""
@@ -2719,6 +2775,9 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
             "amendments": [
                 {
                     "id": str(amendment.id),
+                    "correction_id": str(amendment.correction_id)
+                    if amendment.correction_id
+                    else None,
                     "revision": amendment.revision,
                     "operation": amendment.operation,
                     "reason": amendment.reason,

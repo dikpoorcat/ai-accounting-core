@@ -382,6 +382,15 @@ def test_discovery_and_query_expose_typed_amendments_and_history(
 
     request = sale_request(organization, event_type="service_credit_sale")
     source = FinanceService(session).record_event(request)
+    request = request.model_copy(
+        update={
+            "components": [
+                request.components[0].model_copy(
+                    update={"amount_fen": request.components[0].amount_fen + 100}
+                )
+            ]
+        }
+    )
     result = EventAmendmentService(session).amend(amendment(session, source, request))
     assert result["status"] == "posted", result
     monkeypatch.setattr(mcp_server, "SessionLocal", lambda: nullcontext(session))

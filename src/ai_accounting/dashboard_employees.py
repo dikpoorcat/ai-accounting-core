@@ -18,6 +18,7 @@ from .models import (
     Account,
     AccountingPeriod,
     BusinessEvent,
+    BusinessEventAmendment,
     BusinessEventComponent,
     Employee,
     EmployeePayrollProfileVersion,
@@ -358,6 +359,21 @@ def _wage_tax_scope_view(states: set[str]) -> tuple[str, str]:
     return "mixed", "包含不同所得适用范围"
 
 
+def _correction_history(session, org_id, event_ids):
+    histories = {}
+    for event_id, correction_id in session.execute(
+        select(BusinessEventAmendment.event_id, BusinessEventAmendment.correction_id).where(
+            BusinessEventAmendment.org_id == org_id,
+            BusinessEventAmendment.event_id.in_(event_ids),
+            BusinessEventAmendment.result.is_not(None),
+        )
+    ):
+        histories.setdefault(event_id, set())
+        if correction_id:
+            histories[event_id].add(str(correction_id))
+    return histories
+
+
 def _load_employee_compensation(
     session: Session,
     *,
@@ -395,6 +411,9 @@ def _load_employee_compensation(
         )
         .order_by(PayrollBatch.posting_date, PayrollBatch.id, PayrollLine.id)
     ).all()
+    corrections = _correction_history(
+        session, org_id, [batch.business_event_id for batch, _ in rows]
+    )
     totals = {
         "gross_salary_fen": 0,
         "employer_social_insurance_fen": 0,
@@ -414,6 +433,8 @@ def _load_employee_compensation(
                 **{key: 0 for key in totals},
                 "total_fen": 0,
                 "has_reversal": False,
+                "has_amendment": False,
+                "correction_ids": [],
             },
         )
         for key in totals:
@@ -427,6 +448,10 @@ def _load_employee_compensation(
         )
         period_totals["has_reversal"] = (
             period_totals["has_reversal"] or batch.reversal_of_batch_id is not None
+        )
+        period_totals["has_amendment"] |= batch.business_event_id in corrections
+        period_totals["correction_ids"] = sorted(
+            set(period_totals["correction_ids"]) | corrections.get(batch.business_event_id, set())
         )
 
     controlled_total_fen = (
@@ -566,6 +591,7 @@ def _load_personal_labor_cost(
             LaborRemunerationLine.id,
         )
     ).all()
+    corrections = _correction_history(session, org_id, [link.event_id for link, _, _ in rows])
     gross_remuneration_fen = 0
     theoretical_withholding_tax_fen = 0
     by_remuneration_period: dict[str, dict[str, Any]] = {}
@@ -585,6 +611,8 @@ def _load_personal_labor_cost(
                 "theoretical_withholding_tax_fen": 0,
                 "total_fen": 0,
                 "has_reversal": False,
+                "has_amendment": False,
+                "correction_ids": [],
             },
         )
         gross = sign * line.gross_remuneration_fen
@@ -596,6 +624,10 @@ def _load_personal_labor_cost(
         period_totals["total_fen"] += gross
         period_totals["has_reversal"] = (
             period_totals["has_reversal"] or link.link_kind == "reversal"
+        )
+        period_totals["has_amendment"] |= link.event_id in corrections
+        period_totals["correction_ids"] = sorted(
+            set(period_totals["correction_ids"]) | corrections.get(link.event_id, set())
         )
 
     has_controlled_basis = bool(event_link_ids)
@@ -617,6 +649,7 @@ def _load_personal_labor_cost(
             select(LaborRemunerationEventLink, BusinessEventComponent, BusinessEvent)
             .join(
                 BusinessEventComponent,
+                BusinessEventAmendment,
                 and_(
                     BusinessEventComponent.org_id == LaborRemunerationEventLink.org_id,
                     BusinessEventComponent.event_id == LaborRemunerationEventLink.event_id,

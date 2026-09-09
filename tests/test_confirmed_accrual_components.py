@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import date
 
 import pytest
+from _correction_helpers import delete_open_event
 from _postgres_helpers import authenticated_business_database
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
@@ -119,7 +120,7 @@ def _accruals(payroll, payroll_proof, labor, labor_proof):
     ]
 
 
-def test_payroll_labor_and_expense_confirm_and_reverse_as_one_event(session, organization):
+def test_payroll_labor_and_expense_open_event_deletes_as_one_event(session, organization):
     payroll, payroll_proof, labor, labor_proof = _calculated_batches(session, organization)
     request = RecordEventRequest.model_validate(
         {
@@ -166,9 +167,10 @@ def test_payroll_labor_and_expense_confirm_and_reverse_as_one_event(session, org
             reason="组合计提整体冲正",
         )
     )
-    assert reversed_result.status == "posted", reversed_result
-    assert session.get(PayrollBatch, payroll.batch_id).status == "reversed"
-    assert session.get(LaborRemunerationBatch, labor.batch_id).status == "reversed"
+    assert reversed_result.errors == ["OPEN_PERIOD_REQUIRES_AMENDMENT"]
+    delete_open_event(session, organization.id, result.event_id, "delete-mixed")
+    assert session.get(PayrollBatch, payroll.batch_id) is None
+    assert session.get(LaborRemunerationBatch, labor.batch_id) is None
 
 
 def test_same_event_accruals_are_explicit_local_settlement_sources(session, organization):
@@ -439,7 +441,7 @@ def test_amendment_cannot_take_accrual_batch_from_another_event(
     assert session.get(Voucher, expense.voucher_id) is not None
 
 
-def test_repeated_labor_accrual_components_reverse_every_owned_batch(session, organization):
+def test_repeated_labor_accrual_components_delete_every_owned_batch(session, organization):
     _, _, first, proof = _calculated_batches(session, organization)
     second_person = _register_person(
         session, organization, proof, "component-labor-person-two", "第二位组件劳务人员"
@@ -501,11 +503,10 @@ def test_repeated_labor_accrual_components_reverse_every_owned_batch(session, or
             reason="整体撤销重复劳务计提",
         )
     )
-    assert reversed_result.status == "posted", reversed_result
-    assert {
-        session.get(LaborRemunerationBatch, first.batch_id).status,
-        session.get(LaborRemunerationBatch, second.batch_id).status,
-    } == {"reversed"}
+    assert reversed_result.errors == ["OPEN_PERIOD_REQUIRES_AMENDMENT"]
+    delete_open_event(session, organization.id, posted.event_id, "delete-repeated-labor")
+    assert session.get(LaborRemunerationBatch, first.batch_id) is None
+    assert session.get(LaborRemunerationBatch, second.batch_id) is None
 
 
 @pytest.mark.postgres
@@ -604,15 +605,15 @@ def test_mixed_accrual_components_commit_in_real_postgres():
                         reason="整笔撤销工资劳务计提及同笔发放",
                     )
                 )
-                assert reversed_result.status == "posted", reversed_result
+                assert reversed_result.errors == ["OPEN_PERIOD_REQUIRES_AMENDMENT"]
+            with authority.attributed_call(session, tool_name="finance_delete_event"):
+                delete_open_event(session, org_id, result.event_id, "delete-mixed-accrual")
                 session.commit()
-            assert session.get(PayrollBatch, payroll.batch_id).status == "reversed"
-            assert session.get(LaborRemunerationBatch, labor.batch_id).status == "reversed"
-            assert all(
-                item.status == "reversed"
-                for item in session.scalars(
-                    select(OpenItem).where(OpenItem.source_event_id == result.event_id)
-                )
+            assert session.get(PayrollBatch, payroll.batch_id) is None
+            assert session.get(LaborRemunerationBatch, labor.batch_id) is None
+            assert (
+                session.scalar(select(OpenItem).where(OpenItem.source_event_id == result.event_id))
+                is None
             )
 
 

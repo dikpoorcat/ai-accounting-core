@@ -80,7 +80,7 @@ def test_essential_baseline_matches_models_and_installs_guards() -> None:
             with engine.connect() as connection:
                 assert (
                     connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                    == "0001_business_baseline_v4"
+                    == "0002_atomic_corrections"
                 )
                 purchase = connection.scalar(
                     sa.text(

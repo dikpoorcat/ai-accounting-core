@@ -52,6 +52,8 @@ def build_business_event(session: Session, **facts: Any) -> BusinessEvent:
     amendment["event_built"] = True
     for key, value in facts.items():
         if key not in {"id", "idempotency_key", "request_payload_hash", "execution_attribution_id"}:
+            if key == "facts" and isinstance(value, dict) and "idempotency_key" in value:
+                value = {**value, "idempotency_key": original.idempotency_key}
             setattr(original, key, value)
     return original
 

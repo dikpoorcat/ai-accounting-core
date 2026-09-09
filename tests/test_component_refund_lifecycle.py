@@ -144,19 +144,12 @@ def exercise_refund_receipt_dependencies(session, organization, evidence, author
             result = EventAmendmentService(session).amend(request)
             assert result["status"] == "rejected", result
     assert session.get(OpenItem, item.id).settled_amount_fen == 100
-    with attributed("finance_reverse_event"):
-        result = FinanceService(session).reverse_event(
-            reverse_request.model_copy(
-                update={
-                    "event_id": refund.event_id,
-                    "idempotency_key": "reverse-refund",
-                }
-            )
-        )
-        assert result.status == "posted", result
-    with attributed("finance_reverse_event"):
-        result = FinanceService(session).reverse_event(reverse_request)
-        assert result.status == "posted", result
+    from _correction_helpers import delete_open_event
+
+    with attributed("finance_delete_event"):
+        delete_open_event(session, organization.id, refund.event_id, "delete-refund")
+    with attributed("finance_delete_event"):
+        delete_open_event(session, organization.id, receipt.event_id, "delete-receipt")
     assert session.get(OpenItem, item.id).settled_amount_fen == 50
 
 

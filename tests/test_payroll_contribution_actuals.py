@@ -37,7 +37,6 @@ from ai_accounting.schemas import (
     RegisterPayrollContributionActualRequest,
     RegisterPayrollFirstWageTaxTreatmentRequest,
     RegisterPayrollPolicyVersionRequest,
-    ReverseEventRequest,
 )
 from ai_accounting.service import FinanceService
 
@@ -273,7 +272,7 @@ def test_sparse_july_actual_then_august_returns_to_uniform_four_insurance(
     assert [rule["enabled"] for rule in policy.parameters["contribution_rules"]] == [True] * 4
 
 
-def test_actual_requires_evidence_policy_kind_and_reversal_before_posted_correction(
+def test_actual_requires_evidence_policy_kind_and_linked_posted_correction(
     session: Session, organization: Organization
 ) -> None:
     service, employee_id, evidence = _setup_four_insurance_employee(session, organization)
@@ -348,7 +347,7 @@ def test_actual_requires_evidence_policy_kind_and_reversal_before_posted_correct
             supersedes=current_ids,
         )
     )
-    assert blocked["errors"] == ["CONTRIBUTION_ACTUAL_POSTED_PAYROLL_MUST_BE_REVERSED_FIRST"]
+    assert blocked["errors"] == ["SOURCE_CHANGE_REQUIRES_CORRECTION"]
     assert blocked["blocking_payroll_batch_ids"] == [str(final_preview.batch_id)]
     assert (
         session.scalar(
@@ -511,28 +510,24 @@ def test_historical_supplement_posts_now_without_rewriting_original_payroll(
     payment_payload["funds"][0]["payment_date"] = "2026-09-15"
     payment = service.record_event(RecordEventRequest.model_validate(payment_payload))
     assert payment.status == "posted", payment.model_dump(mode="json")
-    reversed_payment = service.reverse_event(
-        ReverseEventRequest(
-            org_id=organization.id,
-            event_id=payment.event_id,
-            idempotency_key="reverse-supplement-social-payment",
-            reason="测试先撤销现金缴款",
-            posting_date=date(2026, 9, 16),
-        )
-    )
-    assert reversed_payment.status == "posted"
+    from ai_accounting.accounting_periods import canonical_sha256
+    from ai_accounting.event_amendment_schemas import DeleteEventRequest
+    from ai_accounting.event_amendments import EventAmendmentService
 
-    reversed_result = service.reverse_event(
-        ReverseEventRequest(
-            org_id=organization.id,
-            event_id=supplement.event_id,
-            idempotency_key="reverse-historical-medical-injury-supplement",
-            reason="撤销错误补缴认定",
-            posting_date=date(2026, 9, 17),
+    # Both errors belong to open periods: remove the mistaken payment first,
+    # then its supplement, retaining the independently posted July payroll.
+    for event_id in (payment.event_id, supplement.event_id):
+        event = session.get(BusinessEvent, event_id)
+        deleted = EventAmendmentService(session).amend(
+            DeleteEventRequest(
+                org_id=organization.id,
+                event_id=event_id,
+                idempotency_key=f"delete:{event_id}",
+                expected_facts_hash=canonical_sha256(event.facts),
+            )
         )
-    )
-    assert reversed_result.status == "posted"
-    assert session.get(BusinessEvent, supplement.event_id).status == "reversed"
+        assert deleted["status"] == "deleted", deleted
+    assert session.get(BusinessEvent, supplement.event_id).status == "deleted"
     assert session.get(PayrollBatch, july.batch_id).status == "posted"
 
 

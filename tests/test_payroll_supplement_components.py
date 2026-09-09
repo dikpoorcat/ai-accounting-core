@@ -188,10 +188,14 @@ def _scenario(session, organization, batch, evidence, authority=None):
                 reason="整笔补缴业务撤销",
             )
         )
-    assert reverse.status == "posted", reverse.model_dump(mode="json")
+    assert reverse.errors == ["OPEN_PERIOD_REQUIRES_AMENDMENT"]
+    from _correction_helpers import delete_open_event
+
+    with call("finance_delete_event"):
+        delete_open_event(session, organization.id, result.event_id, "delete-mixed-supplements")
     if authority:
         session.commit()
-    assert all(item.status == "reversed" and item.settled_amount_fen == 0 for item in items)
+    assert all(session.get(OpenItem, item.id) is None for item in items)
 
     removable = request.model_dump(mode="json")
     removable["idempotency_key"] = "removable-supplements"
@@ -224,7 +228,7 @@ def _scenario(session, organization, batch, evidence, authority=None):
     )
 
 
-def test_repeated_supplements_local_payment_and_reversal(session, organization):
+def test_repeated_supplements_local_payment_and_deletion(session, organization):
     _, posted = preview_and_confirm(session, organization)
     batch = session.get(PayrollBatch, posted.batch_id)
     evidence = session.get(BusinessEvent, posted.event_id).evidence[0]
@@ -233,7 +237,7 @@ def test_repeated_supplements_local_payment_and_reversal(session, organization):
 
 @pytest.mark.postgres
 @pytest.mark.postgres_current
-def test_repeated_supplements_local_payment_and_reversal_postgres():
+def test_repeated_supplements_local_payment_and_deletion_postgres():
     with authenticated_business_database("supplement_components") as (engine, org_id, proof, owner):
         with Session(engine) as session:
             prepare_authenticated_bank_account(

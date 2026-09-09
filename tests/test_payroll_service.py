@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import xlrd
+from _correction_helpers import delete_open_event
 from conftest import import_test_bank_transaction
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -688,7 +689,7 @@ def test_generate_payroll_tax_import_requires_deduction_breakdown_reconciliation
     assert not list(tmp_path.rglob("*.xls"))
 
 
-def test_generate_payroll_tax_import_excludes_reversal_batches(
+def test_generate_payroll_tax_import_excludes_deleted_batches(
     session: Session,
     organization: Organization,
     tmp_path: Path,
@@ -708,7 +709,8 @@ def test_generate_payroll_tax_import_excludes_reversal_batches(
             posting_date=date(2026, 3, 6),
         )
     )
-    assert reversed_result.status == "posted"
+    assert reversed_result.errors == ["OPEN_PERIOD_REQUIRES_AMENDMENT"]
+    delete_open_event(session, organization.id, confirmed.event_id, "delete-before-export")
 
     result = PayrollTaxImportService(
         session,
@@ -1630,55 +1632,17 @@ def test_payroll_accrual_is_gross_salary_and_payment_events_are_category_bound(
         assert_balanced(session, result.voucher_id)
         posted_statutory_payments.append(result)
 
+    # Each recorded payment is explicitly identified as mistaken for this
+    # lifecycle test; deleting the source alone must never delete payments.
     for payment in posted_statutory_payments:
-        reversed_payment = service.reverse_event(
-            ReverseEventRequest(
-                org_id=organization.id,
-                event_id=payment.event_id,
-                idempotency_key=f"reverse-{payment.event_id}",
-                reason="测试冲正",
-                posting_date=date(2026, 9, 6),
-            )
-        )
-        assert reversed_payment.status == "posted"
-        assert_balanced(session, reversed_payment.voucher_id)
-
-    reversed_salary = service.reverse_event(
-        ReverseEventRequest(
-            org_id=organization.id,
-            event_id=salary_payment.event_id,
-            idempotency_key="reverse-salary-payment",
-            reason="测试冲正",
-            posting_date=date(2026, 9, 6),
-        )
-    )
-    assert reversed_salary.status == "posted"
-    assert_balanced(session, reversed_salary.voucher_id)
-
-    reversed_accrual = service.reverse_event(
-        ReverseEventRequest(
-            org_id=organization.id,
-            event_id=confirmed.event_id,
-            idempotency_key="reverse-payroll-accrual",
-            reason="测试工资计提冲正",
-            posting_date=date(2026, 9, 6),
-        )
-    )
-    assert reversed_accrual.status == "posted"
-    assert_balanced(session, reversed_accrual.voucher_id)
-    original_batch = session.get(PayrollBatch, confirmed.batch_id)
-    reversal_batch = session.scalar(
-        select(PayrollBatch).where(PayrollBatch.reversal_of_batch_id == original_batch.id)
-    )
-    assert original_batch.status == "reversed"
-    assert reversal_batch.status == "posted"
-    assert reversal_batch.business_event_id == reversed_accrual.event_id
-    assert reversal_batch.calculation_hash != original_batch.calculation_hash
-    assert reversal_batch.idempotency_key != original_batch.idempotency_key
-    assert reversal_batch.version > original_batch.version
+        delete_open_event(session, organization.id, payment.event_id, f"delete-{payment.event_id}")
+    delete_open_event(session, organization.id, salary_payment.event_id, "delete-salary")
+    delete_open_event(session, organization.id, confirmed.event_id, "delete-accrual")
+    assert session.get(PayrollBatch, confirmed.batch_id) is None
+    assert session.scalar(select(OpenItem).where(OpenItem.org_id == organization.id)) is None
 
 
-def test_payroll_accruals_can_be_reversed_repeatedly_from_latest_to_earliest(
+def test_mistaken_open_payroll_accruals_delete_from_latest_to_earliest(
     session: Session, organization: Organization
 ) -> None:
     employee_id = register_payroll_facts(session, organization)
@@ -1720,20 +1684,9 @@ def test_payroll_accruals_can_be_reversed_repeatedly_from_latest_to_earliest(
         confirmed.append(result)
 
     for month, result in zip((4, 3), reversed(confirmed), strict=True):
-        reversed_result = service.reverse_event(
-            ReverseEventRequest(
-                org_id=organization.id,
-                event_id=result.event_id,
-                idempotency_key=f"payroll-chain-reverse-{month}",
-                reason="从最新月份向前重建累计工资链",
-                posting_date=date(2026, month, 6),
-            )
-        )
-        assert reversed_result.status == "posted", reversed_result.model_dump(mode="json")
+        delete_open_event(session, organization.id, result.event_id, f"delete-chain-{month}")
 
-    assert all(
-        session.get(PayrollBatch, result.batch_id).status == "reversed" for result in confirmed
-    )
+    assert all(session.get(PayrollBatch, result.batch_id) is None for result in confirmed)
 
 
 def test_social_insurance_payment_can_separate_evidenced_late_fee(

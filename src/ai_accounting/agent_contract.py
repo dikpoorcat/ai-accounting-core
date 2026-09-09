@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v39"
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.13"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v40"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.14"
 
 FACT_RESOLUTION_RUNTIME_INSTRUCTION = (
     "处理缺项或校验失败时，先核对本次原请求、来源证据、字段的x-accounting-fact语义和data.fact_issues；"
@@ -30,7 +30,10 @@ CORRECTION_RUNTIME_INSTRUCTION = (
     "未关账的整笔误记需要撤销且符合删除条件时，使用finance_delete_event，不得以冲正代替可执行的删除。"
     "修改或删除受阻时，先核对fact_issues、blocking_records及原调用；缺事实先补事实，事实版本过期先重读，"
     "后续依赖按各自期间状态和业务事实处理，不得因一次失败自动改走冲正，也不得为方便修改而批量冲正依赖。"
-    "仅在原业务已关账，或经核对确实无法通过未关账修改、删除入口完成且内核允许时，才使用关联冲正；"
+    "社保实际数、首次工资扣除处理或其他业务事实变化涉及已入账依赖时，使用finance_preview_correction审查完整影响和差额，"
+    "再通过finance_confirm_correction按同一请求、预览哈希和幂等键一次确认；各原凭证编号保留。"
+    "实际付款、扣缴与明确申报结果按原事实复用；差额需要明确业务处理，不自动改金额或制造退款、补款、员工应收。"
+    "影响范围全部未关账时内核禁止误记冲正；仅涉及已关账记录时才进入关联冲正流程，技术故障永远不是冲正例外。"
     "已关账业务须在后续开放月冲正，并在需要保留正确业务时按原类型化工作流重记，不得改日期绕过关账锁定。"
     "仅后补或修订管理资料时使用finance_update_business_metadata，即使已关账也不因此修改凭证或冲正。"
 )
@@ -311,13 +314,18 @@ def agent_operating_protocol() -> dict[str, Any]:
             "metadata_only_tool": "finance_update_business_metadata",
             "prefer_direct_open_month_changes": True,
             "automatic_reversal_on_failure": False,
+            "linked_preview_tool": "finance_preview_correction",
+            "linked_confirm_tool": "finance_confirm_correction",
+            "linked_history_tool": "finance_get_correction",
+            "kernel_enforces_route": True,
+            "reason_required": False,
         },
         "open_month_deletions": {
             "event_tool": "finance_delete_event",
             "bank_import_tool": "finance_withdraw_bank_statement_import",
             "instructions": [
                 "未关账整笔误记符合删除条件时必须直接删除，不使用冲正；先读取 finance_get_event，"
-                "提交事件编号、facts_hash、新幂等键和原因。",
+                "提交事件编号、facts_hash和新幂等键；原因选填。",
                 "删除撤去原凭证及派生明细、恢复核销余额，保留事件删除标记、原编号和删除前快照。",
                 "误导入流水先查询 finance_query_bank_statement_state，"
                 "读取批次编号和 calculation_hash。",
@@ -333,7 +341,8 @@ def agent_operating_protocol() -> dict[str, Any]:
             "instructions": [
                 "未关账业务能直接修改时必须使用本入口，不得冲正后重记；先读取 finance_get_event，"
                 "使用其 facts_hash 防止覆盖他人的修改。",
-                "提交修改原因、新幂等键和完整类型化 replacement 事实；复用对应业务原有的事实结构。",
+                "提交新幂等键和完整类型化 replacement 事实；"
+                "修改原因选填；复用对应业务原有的事实结构。",
                 "普通收支、工资、资产、借款、劳务和税务均可走修改入口；原凭证编号保留，修改历史可查询。",
                 "组件 replacement 在原业务撤去后的事务状态中重新预览、生成确认哈希，"
                 "再统一提交；不能沿用旧来源状态推断新的计算结果。",

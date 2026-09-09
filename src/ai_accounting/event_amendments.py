@@ -1,12 +1,14 @@
 """Atomic, audited replacement through the existing deterministic workflows.
 
-Only the target's owned facts are rebuilt. Foreign references outside that graph
-are dependencies, never a license to rewrite another business event.
+Only explicitly planned owned facts are rebuilt. Linked corrections prepare every
+member audit before releasing and rebuilding their shared dependency graph.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import re
 import uuid
 from copy import deepcopy
 from typing import Any
@@ -87,6 +89,49 @@ class AmendmentRejected(ValueError):
         super().__init__(str(result.get("errors", [])))
 
 
+def database_failure(exc: DBAPIError) -> dict:
+    """Expose bounded classifications, never SQL, parameters or inferred missing facts."""
+    from .service import FinanceService
+
+    sqlstate, constraint, primary = FinanceService._database_error_identity(exc)
+    guard = primary if primary and re.fullmatch(r"[A-Z][A-Z0-9_]{0,99}", primary) else None
+    constraint = (
+        constraint
+        if constraint and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,99}", constraint)
+        else None
+    )
+    if sqlstate in {"40001", "40P01", "55P03", "23505"}:
+        code, category = "CORRECTION_CONCURRENT_WRITE_CONFLICT", "concurrency_conflict"
+    elif sqlstate == "P0001" and guard and guard.startswith("ACCOUNTING_PERIOD_"):
+        code, category = guard, "business_constraint"
+    else:
+        code, category = "CORRECTION_INTERNAL_DATABASE_ERROR", "technical_failure"
+    diagnostic_id = uuid.uuid4().hex
+    logging.getLogger(__name__).warning(
+        "Correction database failure diagnostic=%s sqlstate=%s constraint=%s guard=%s",
+        diagnostic_id,
+        sqlstate,
+        constraint,
+        guard,
+    )
+    return {
+        "status": "rejected",
+        "errors": [code],
+        "data": {
+            "diagnostic_id": diagnostic_id,
+            "failure_kind": category,
+            "diagnostic": {
+                "sqlstate": sqlstate,
+                "constraint": constraint,
+                "guard": guard,
+            },
+            "next_action": "retry_after_reload"
+            if category == "concurrency_conflict"
+            else "inspect_failure",
+        },
+    }
+
+
 def _json(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str, ensure_ascii=False))
 
@@ -145,6 +190,7 @@ def _dependencies(
             "business_event_amendments",
             "bank_transactions",
             "business_metadata_versions",
+            "business_corrections",
         }:
             continue
         conditions = []
@@ -169,7 +215,13 @@ def _dependencies(
         if graph.get(table.name):
             query = query.where(~_predicate(table, graph[table.name]))
         for row in session.execute(query.with_for_update()).mappings():
-            blockers.append({"table": table.name, "id": str(row.get("id", ""))})
+            blockers.append(
+                {
+                    "table": table.name,
+                    "id": str(row.get("id", "")),
+                    "key": _json({c.name: row[c.name] for c in table.primary_key}),
+                }
+            )
     # Cumulative tax consumers have the same employee and tax year. Apply the
     # same dependency rule as reversal, excluding every batch replaced together.
     from .service import FinanceService
@@ -207,6 +259,8 @@ def component_fact_identity(session: Session, table_name: str, component_key: st
             raise ValueError("AMENDMENT_COMPONENT_FACT_IDENTITY_AMBIGUOUS")
         if candidates:
             return candidates[0]["id"]
+        if context.get("identity_namespace"):
+            return uuid.uuid5(context["identity_namespace"], f"{table_name}:{component_key}")
     return uuid.uuid4()
 
 
@@ -225,6 +279,9 @@ def _reuse_owned_identity(session: Session, instance: object) -> None:
         key
         for key in (
             "employee_id",
+            "batch_kind",
+            "payroll_period",
+            "remuneration_period",
             "labor_person_id",
             "counterparty_id",
             "asset_id",
@@ -253,11 +310,24 @@ def _reuse_owned_identity(session: Session, instance: object) -> None:
         ),
         None,
     )
+    if table.name == "payroll_batches" and context.get("rebuilding_payroll_id"):
+        chosen = next(
+            (row for row in candidates if row["id"] == context["rebuilding_payroll_id"]), None
+        )
     if chosen is None and not dimensions and candidates:
         chosen = candidates[0]
     if chosen is not None:
         instance.id = chosen["id"]
         candidates.remove(chosen)
+    elif context.get("identity_namespace"):
+        identity = canonical_sha256(
+            _json({key: getattr(instance, key, None) for key in dimensions})
+        )
+        identity_key = f"{table.name}:{identity}"
+        counts = context.setdefault("new_identity_counts", {})
+        count = counts.get(identity_key, 0)
+        counts[identity_key] = count + 1
+        instance.id = uuid.uuid5(context["identity_namespace"], f"{identity_key}:{count}")
 
 
 class EventAmendmentService:
@@ -272,16 +342,25 @@ class EventAmendmentService:
             return exc.result
         except ValueError as exc:
             return {"status": "rejected", "errors": [str(exc)]}
-        except DBAPIError:
-            return {"status": "rejected", "errors": ["AMENDMENT_DATABASE_CONFLICT"]}
+        except DBAPIError as exc:
+            return database_failure(exc)
         finally:
             self.session.info.pop("event_amendment", None)
             self.session.info.pop("preserve_accrual_batch_ids", None)
+            self.session.expire_all()
 
     def _write(self, request: AmendEventRequest | DeleteEventRequest) -> dict[str, Any]:
+        state = self.prepare(request)
+        if "existing_result" in state:
+            return state["existing_result"]
+        self.unpost(state)
+        return self.complete(state)
+
+    def prepare(self, request, *, correction_id=None, check_dependencies=True):
         session = self.session
         lock_income_tax(session, request.org_id)
         deleting = isinstance(request, DeleteEventRequest)
+        session.info.pop("preserve_accrual_batch_ids", None)
         command = request.model_dump(mode="json")
         if not deleting:
             from .component_schemas import RecordEventRequest
@@ -299,7 +378,7 @@ class EventAmendmentService:
         if existing:
             if existing.request_hash != request_hash:
                 raise ValueError("AMENDMENT_IDEMPOTENCY_PAYLOAD_MISMATCH")
-            return deepcopy(existing.result) | {"idempotent_replay": True}
+            return {"existing_result": deepcopy(existing.result) | {"idempotent_replay": True}}
         source = session.scalar(
             select(m.BusinessEvent)
             .where(
@@ -340,12 +419,15 @@ class EventAmendmentService:
                         in {row["id"] for row in before["labor_remuneration_batches"]}
                     },
                 }
-        if blockers := _dependencies(session, source, before, deleting=deleting):
+        if check_dependencies and (
+            blockers := _dependencies(session, source, before, deleting=deleting)
+        ):
             raise AmendmentRejected(
                 {
                     "status": "rejected",
                     "errors": ["AMENDMENT_DEPENDENT_FACTS_EXIST"],
                     "blocking_records": blockers,
+                    "data": {"next_action": "finance_preview_correction"} if not deleting else {},
                 }
             )
         voucher = session.scalar(select(m.Voucher).where(m.Voucher.event_id == source.id))
@@ -363,6 +445,7 @@ class EventAmendmentService:
         amendment = m.BusinessEventAmendment(
             org_id=source.org_id,
             event_id=source.id,
+            correction_id=correction_id,
             revision=revision,
             operation="delete" if deleting else "amend",
             idempotency_key=request.idempotency_key,
@@ -373,6 +456,21 @@ class EventAmendmentService:
         )
         session.add(amendment)
         session.flush()
+        return {
+            "request": request,
+            "source": source,
+            "voucher": voucher,
+            "before": before,
+            "amendment": amendment,
+            "revision": revision,
+            "deleting": deleting,
+            "preserved": deepcopy(session.info.get("preserve_accrual_batch_ids", {})),
+        }
+
+    def unpost(self, state):
+        session = self.session
+        source, voucher, before = state["source"], state["voucher"], state["before"]
+        session.info["preserve_accrual_batch_ids"] = state["preserved"]
         source.status = "draft"
         session.flush()
         voucher.status = "draft"
@@ -380,11 +478,19 @@ class EventAmendmentService:
         self._remove_owned_facts(source, voucher, before)
         session.expire(voucher, ["lines"])
         session.expire(source, ["evidence"])
+
+    def complete(self, state):
+        session = self.session
+        request, source, voucher = state["request"], state["source"], state["voucher"]
+        before, amendment = state["before"], state["amendment"]
+        revision, deleting = state["revision"], state["deleting"]
+        session.info["preserve_accrual_batch_ids"] = state["preserved"]
         session.info["event_amendment"] = {
             "event": source,
             "voucher": voucher,
             "identities": deepcopy(before),
             "original_tables": before,
+            "identity_namespace": state.get("identity_namespace"),
         }
         if deleting:
             session.delete(voucher)
@@ -392,6 +498,10 @@ class EventAmendmentService:
             session.flush()
             result = {"status": "deleted"}
         else:
+            if state.get("rebuild_payroll"):
+                from .corrections import rebuild_payroll_components
+
+                request = rebuild_payroll_components(session, state, request)
             result = self._repost(request, amendment.id)
         session.flush()
         if result.get("status") != ("deleted" if deleting else "posted"):
@@ -438,6 +548,9 @@ class EventAmendmentService:
                 details={
                     "amendment_id": str(amendment.id),
                     "revision": revision,
+                    "correction_id": str(amendment.correction_id)
+                    if amendment.correction_id
+                    else None,
                     "reason": request.reason,
                 },
             )
@@ -525,10 +638,13 @@ class EventAmendmentService:
                 key = "id" if table.name == "labor_remuneration_batches" else "batch_id"
                 rows = [row for row in rows if row.get(key) not in labor_batch_ids]
             if table.name == "payroll_tax_state_slots":
+                replaced_batches = owned_payroll_batch_ids | session.info.get(
+                    "correction_payroll_batch_ids", set()
+                )
                 rows = [
                     row
                     for row in rows
-                    if row["regular_batch_id"] in owned_payroll_batch_ids
+                    if row["regular_batch_id"] in replaced_batches
                     and row["regular_batch_id"] not in payroll_batch_ids
                 ]
             if rows:
@@ -554,7 +670,8 @@ class EventAmendmentService:
         from .service import FinanceService
 
         request = envelope.replacement
-        key = f"amend:{amendment_id}"
+        context = self.session.info["event_amendment"]
+        key = f"amend:{context.get('identity_namespace') or amendment_id}"
         if "idempotency_key" in type(request).model_fields:
             request = request.model_copy(update={"idempotency_key": key})
 
