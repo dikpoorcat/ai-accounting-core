@@ -18,6 +18,8 @@ from pydantic import (
     model_validator,
 )
 
+from .fact_requirements import ExternalDeclarationDate
+
 # Monetary accounting facts are always integer fen.  ``StrictInt`` is
 # intentional: JSON 12.0, ``true`` and "12" must never be silently accepted
 # as a monetary value merely because they can be coerced by Python.
@@ -274,7 +276,7 @@ class RegisterPayrollFirstWageTaxTreatmentRequest(BaseModel):
     tax_year: int = Field(ge=1900, le=9999)
     first_wage_month: int = Field(ge=1, le=12)
     treatment_state: PayrollFirstWageTaxTreatmentState
-    declaration_date: date | None = None
+    declaration_date: ExternalDeclarationDate = None
     confirmation_description: str = Field(default="", max_length=2000)
     evidence_references: list[uuid.UUID] = Field(min_length=1)
     supersedes_treatment_id: uuid.UUID | None = None
@@ -319,7 +321,7 @@ class RegisterPayrollContributionActualRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
     employee_id: uuid.UUID
     contribution_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    declaration_date: date | None = None
+    declaration_date: ExternalDeclarationDate = None
     reason_code: (
         Literal[
             "late_enrollment",

@@ -57,9 +57,7 @@ def change(org, evidence, root_id, **kwargs):
             "quarter": 2,
             "original_confirmation_id": root_id,
             "declaration_date": "2026-08-05",
-            "business_date": kwargs.get(
-                "business_date", kwargs.get("declaration_date", "2026-08-05")
-            ),
+            "business_date": "2026-08-05",
             "posting_date": "2026-08-05",
             "declaration_reference": "更正申报回执",
             "amount_basis": "quarter",
@@ -265,6 +263,7 @@ def test_paid_reduction_refund_partial_and_repeated_correction(session, organiza
             declared_tax_fen=6000,
             previous_result_id=result["result_id"],
             declaration_date="2026-08-10",
+            business_date="2026-08-10",
             posting_date="2026-08-10",
         ),
         key="again",
@@ -632,6 +631,7 @@ def test_closed_q2_current_posting_and_atomic_rollback(session, organization, mo
             root_id,
             posting_date="2026-06-30",
             declaration_date="2026-06-30",
+            business_date="2026-06-30",
         )
     )
     assert blocked["errors"] == ["ACCOUNTING_PERIOD_CLOSED"]
@@ -718,9 +718,9 @@ def test_foreign_source_and_invalid_date_are_rejected(session, organization):
         service.preview(change(organization, evidence, uuid.uuid4()))["status"]
         == "needs_information"
     )
-    assert service.preview(change(organization, evidence, root_id, declaration_date="2026-05-01"))[
+    assert service.preview(change(organization, evidence, root_id, business_date="2026-05-01"))[
         "errors"
-    ] == ["CIT_RESULT_DATE_ORDER_INVALID"]
+    ] == ["CIT_RESULT_RECOGNITION_BEFORE_TAX_PERIOD_END"]
     invalid, _, _ = payment(session, organization, evidence, uuid.uuid4(), 1000)
     assert invalid.errors == ["CIT_CURRENT_SOURCE_REQUIRED"]
 
@@ -794,6 +794,7 @@ def test_closed_quarter_report_hash_unchanged_after_replacement(session, organiz
             quarter=1,
             declared_tax_fen=10000,
             declaration_date="2026-03-31",
+            business_date="2026-03-31",
             posting_date="2026-03-31",
         ),
         key="before-close",

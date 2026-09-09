@@ -9,8 +9,19 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v37"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v38"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.13"
+
+FACT_RESOLUTION_RUNTIME_INSTRUCTION = (
+    "处理缺项或校验失败时，先核对本次原请求、来源证据、字段的x-accounting-fact语义和data.fact_issues；"
+    "错误码不是向负责人追问的字段清单，rejected也不等于缺少事实。"
+    "核算确认日、真实资金日、税务所属期和外部办理日必须区分，不按字段名称相近或错误码猜测。"
+    "管理资料缺失不得升级为入账门禁；从明确来源已能唯一取得的事实直接复用。"
+    "仅当已核对材料仍缺少会改变核算的事实时才追问；允许月份或其他精度时不得强索精确日期。"
+    "字段语义或错误上下文不明确时先查发现接口及原调用，不凭猜测新增必填事实；不将计算哈希或来源ID等技术缺项交给负责人。"
+    "所得税更正的business_date/recognition_period表示结果的核算确认，declaration_date仅是可选外部申报日。"
+    "月末截止晚于记账日时核对确认事实与入账期间，不得改问更正申报的具体日期，也不得擅改真实资金日或绕过闭期保护。"
+)
 
 COMPOSITION_RUNTIME_INSTRUCTION = (
     "一笔业务通过finance_record_event提交业务组件和独立资金结算项；单项业务也使用同一组件协议。"
@@ -221,6 +232,7 @@ MCP_SERVER_INSTRUCTIONS = (
     f"{OWNER_SECURITY_RUNTIME_INSTRUCTION}"
     f"{COMPOSITION_RUNTIME_INSTRUCTION}"
     f"{PASS_THROUGH_RUNTIME_INSTRUCTION}"
+    f"{FACT_RESOLUTION_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
     f"{OWNER_WORKFLOW_RUNTIME_INSTRUCTION}"
     f"{HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION}"
@@ -311,8 +323,12 @@ def agent_operating_protocol() -> dict[str, Any]:
             "query_tool": "finance_query_enterprise_income_tax",
             "preview_tool": "finance_preview_enterprise_income_tax_result",
             "confirm_tool": "finance_confirm_enterprise_income_tax_result",
+            "recognition_fields_any_of": ["business_date", "recognition_period"],
+            "optional_management_fields": ["declaration_date", "declaration_reference"],
             "instructions": [
                 "更正申报或年度汇算补退税先查询原计提、历次更正和已缴税归属，不能把流水扣款直接当成新增费用。",
+                "确认日期／月份表示核算结果何时成立，不等于外部更正申报日期；declaration_date不参与日期顺序校验和核算哈希，未知时省略。",
+                "日期错误按fact_issues核对税期末、确认截止和记账日；不得仅据错误码追问外部申报日期，或为配合付款日补造日期。",
                 "季度填1至4，年度汇算填0；明确申报表为本季数、累计数或年度数。补税通知必须明确差额及原计提金额。",
                 "缺资料按needs_information列出具体缺项，不默认原税额为零，不要求负责人选择技术方案。",
                 "缴退组件入账时必须具备明确所属期及来源；资料缺失先补齐依据，再预览及确认更正结果。",
@@ -320,6 +336,27 @@ def agent_operating_protocol() -> dict[str, Any]:
                 "年度多缴保留待退余额，不自动抵缴下一年度；登记申报结果不等于向税务机关提交申报或实际缴退完成。",
                 "已有年度汇算结果后发现季度变化，应取得包含该变化的年度更正结果，避免季度和年度重复调整。",
             ],
+        },
+        "fact_resolution": {
+            "version": "accounting-fact-semantics-v1",
+            "instruction": FACT_RESOLUTION_RUNTIME_INSTRUCTION,
+            "field_semantics": "x-accounting-fact",
+            "supported_recognition_precision": "x-recognition-precision",
+            "diagnostics": "data.fact_issues",
+            "issue_schema": "finance_get_event_schema.fact_issue_schema",
+            "resolution_order": [
+                "inspect_original_request",
+                "read_field_semantics_and_issue",
+                "reuse_unambiguous_source_facts",
+                "correct_input_mapping",
+                "ask_only_unresolved_accounting_fact",
+            ],
+            "error_code_is_question": False,
+            "management_missing_blocks_posting": False,
+            "unclassified_field_policy": (
+                "inspect_contract_and_source_before_asking; "
+                "never infer requiredness or precision from its name"
+            ),
         },
         "version": AI_OPERATING_PROTOCOL_VERSION,
         "objective": "充分利用已有事实，在不臆测的前提下把对用户的打扰降到最低。",
@@ -715,6 +752,7 @@ def agent_operating_protocol() -> dict[str, Any]:
             },
         ],
         "question_policy": {
+            "fact_resolution_contract": "agent_operating_protocol.fact_resolution",
             "owner_burden": "AI先调查、推理并提出方案；老板只确认、纠正或完成外部动作。",
             "provided_materials": (
                 "默认AI尚未完成审阅，必须实际核对；不得假定用户再次说明才算提供。"

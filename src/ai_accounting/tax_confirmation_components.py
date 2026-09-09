@@ -441,6 +441,12 @@ def compile_enterprise_income_tax_result(compiler, component) -> ComponentPostin
     )
     service = EnterpriseIncomeTaxService(session)
     preview = service.preview(preview_request)
+    if issues := preview.get("data", {}).get("fact_issues"):
+        from .fact_requirements import AccountingFactError, AccountingFactIssue
+
+        issue = AccountingFactIssue.model_validate(issues[0])
+        issue.context["component_key"] = component.key
+        raise AccountingFactError(issue, preview.get("missing_information"))
     if preview["status"] == "needs_information":
         from .component_service import MissingFacts
 

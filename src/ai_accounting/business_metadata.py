@@ -11,11 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from .fact_requirements import MANAGEMENT_FACT
 from .schemas import CounterpartyRef
 
 
 class BusinessMetadata(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra={"x-accounting-fact": MANAGEMENT_FACT}
+    )
 
     counterparty: CounterpartyRef | None = None
     beneficiary: CounterpartyRef | None = None

@@ -1032,6 +1032,7 @@ def finance_update_business_metadata(request: UpdateBusinessMetadataRequest) -> 
 def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any]:
     """发现可复用业务组件、资金分配及领域计算工具。"""
     from .component_schemas import COMPONENT_TYPES
+    from .fact_requirements import AccountingFactIssue
 
     if component_type is not None and component_type not in COMPONENT_TYPES:
         return {"status": "rejected", "errors": ["UNKNOWN_COMPONENT_TYPE"]}
@@ -1045,6 +1046,7 @@ def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any
     return {
         "status": "ok",
         "protocol_version": "business-components-v3",
+        "fact_issue_schema": AccountingFactIssue.model_json_schema(),
         "component_types": COMPONENT_TYPES,
         "selected_component_type": component_type,
         "component_schema": selected,
@@ -2260,7 +2262,7 @@ def finance_confirm_enterprise_income_tax_quarter(
 def finance_preview_enterprise_income_tax_result(
     request: PreviewEnterpriseIncomeTaxResultRequest,
 ) -> dict[str, Any]:
-    """核对季度更正或年度汇算的外部结果，分别预览所得税费用差额和待缴退税款。"""
+    """按结果确认日期或月份预览更正／汇算差额；外部申报日期选填，日期错误不等于缺少申报日。"""
     try:
         with SessionLocal() as session:
             return EnterpriseIncomeTaxService(session).preview(request)
@@ -2272,7 +2274,7 @@ def finance_preview_enterprise_income_tax_result(
 def finance_confirm_enterprise_income_tax_result(
     request: ConfirmEnterpriseIncomeTaxResultRequest,
 ) -> dict[str, Any]:
-    """按预览哈希追加申报结果，将核算差额通过统一组件提交器入账。"""
+    """按预览哈希及核算确认事实入账；外部申报日期选填，正式差额使用统一组件提交器。"""
     try:
         with SessionLocal.begin() as session:
             return EnterpriseIncomeTaxService(session).confirm(request)

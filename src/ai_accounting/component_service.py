@@ -23,6 +23,7 @@ from .coa import (
 )
 from .component_schemas import ConfigureAccountRequest, RecordEventRequest
 from .fact_dates import recognition_date, recognition_projection
+from .fact_requirements import AccountingFactError, AccountingFactIssue, recognition_issue
 from .ledger import (
     CashFlowPlan,
     ComponentPostingPlan,
@@ -187,12 +188,31 @@ class ComponentService:
                 if any(a.component_key == c.key for a in f.allocations)
             }
             if any(day > request.posting_date for day in dates):
-                raise ValueError("FUNDS_PAYMENT_DATE_IN_FUTURE")
+                raise AccountingFactError(
+                    AccountingFactIssue(
+                        code="FUNDS_PAYMENT_DATE_IN_FUTURE",
+                        kind="conflicting_accounting_facts",
+                        fields=["funds.payment_date", "posting_date"],
+                        actual_values={
+                            "payment_dates": sorted(dates),
+                            "posting_date": request.posting_date,
+                        },
+                        expected={"payment_not_after": request.posting_date},
+                        context={"component_key": c.key},
+                        message="核对本公司资金项的真实收付款日期和记账日；不得用外部申报日或月末替代，不得为通过校验改写真实资金日期。",
+                    )
+                )
             if c.payment_date is None and len(dates) == 1:
                 c.payment_date = next(iter(dates))
             if c.recognition_period:
                 if c.recognition_date > request.posting_date:
-                    raise ValueError("RECOGNITION_PERIOD_IN_FUTURE")
+                    raise recognition_issue(
+                        code="RECOGNITION_PERIOD_IN_FUTURE",
+                        business_date=c.business_date,
+                        recognition_period=c.recognition_period,
+                        posting_date=request.posting_date,
+                        component_key=c.key,
+                    )
                 if (c.kind == "expense" and c.payment_basis == "immediate") or (
                     c.kind == "refundable_deposit" and not c.advanced_by
                 ):
@@ -214,6 +234,15 @@ class ComponentService:
                 }:
                     c.business_date = request.posting_date
                 else:
+                    if c.supports_monthly_recognition:
+                        raise recognition_issue(
+                            code="ACCOUNTING_RECOGNITION_REQUIRED",
+                            business_date=None,
+                            recognition_period=None,
+                            posting_date=request.posting_date,
+                            component_key=c.key,
+                            missing=True,
+                        )
                     raise MissingFacts([f"components.{c.key}.business_date"])
         return resolved
 
@@ -296,6 +325,8 @@ class ComponentService:
                 self.session.flush()
                 self.session.expire(event, ["vouchers"])
                 return self.result(event)
+        except AccountingFactError as exc:
+            return FinanceResult(**exc.result())
         except MissingFacts as exc:
             return FinanceResult(
                 status=ResultStatus.NEEDS_INFORMATION, missing_information=exc.paths
@@ -399,6 +430,8 @@ class ComponentService:
                     "facts_hash": payload_hash(self.accounting_request(request)),
                 },
             )
+        except AccountingFactError as exc:
+            return FinanceResult(**exc.result())
         except MissingFacts as exc:
             return FinanceResult(
                 status=ResultStatus.NEEDS_INFORMATION,
@@ -2138,8 +2171,28 @@ class ComponentService:
             cutoff = recognition_date(facts)
             if cutoff is not None and cutoff > paid_on:
                 if facts.get("recognition_period"):
-                    raise MissingFacts(
-                        [f"components.{plan.key}.source_recognized_by.{paid_on.isoformat()}"]
+                    source_context = {"component_key": plan.key, "source_component_key": source.key}
+                    if reference.open_item_id:
+                        source_context |= {
+                            "source_event_id": str(source.event_id),
+                            "source_component_id": str(source.id),
+                            "open_item_id": str(item.id),
+                        }
+                    raise AccountingFactError(
+                        AccountingFactIssue(
+                            code="SOURCE_RECOGNITION_BY_PAYMENT_REQUIRED",
+                            kind="missing_accounting_fact",
+                            fields=["source.business_date", "source.recognition_period"],
+                            alternatives=["source.business_date", "source.recognition_period"],
+                            actual_values={
+                                "source_recognition_period": facts["recognition_period"],
+                                "payment_date": paid_on,
+                            },
+                            expected={"source_recognized_not_after": paid_on},
+                            context=source_context,
+                            message="现有来源仅证明截至月末债务成立。先核对原来源和证据是否已能证明付款前债务成立；若需更正来源，使用正式更正入口。缺项不是外部申报日或个人实际垫付日，不得补造日期或改动真实资金日。",
+                        ),
+                        [f"components.{plan.key}.source_recognized_by.{paid_on.isoformat()}"],
                     )
                 raise ValueError("SETTLEMENT_SOURCE_NOT_ACTIVE_OR_FUTURE")
 

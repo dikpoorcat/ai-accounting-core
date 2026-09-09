@@ -15,6 +15,12 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_
 from . import domain_action_schemas as domain
 from .business_metadata import BusinessMetadata
 from .enterprise_income_tax_schemas import IncomeTaxSourceAllocation
+from .fact_requirements import (
+    ActualFundsDate,
+    ExternalDeclarationDate,
+    RecognitionDate,
+    RecognitionPeriod,
+)
 from .schemas import (
     BankTransactionReference,
     CounterpartyRef,
@@ -34,13 +40,27 @@ class ComponentFacts(BaseModel):
     supports_monthly_recognition: ClassVar[bool] = False
 
     key: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-    business_date: date | None = None
-    recognition_period: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
-    payment_date: date | None = None
+    business_date: RecognitionDate = None
+    recognition_period: RecognitionPeriod = None
+    payment_date: date | None = Field(
+        default=None,
+        description="依组件业务解释；实际公司收付款日期来自funds并在唯一时复用。个人垫付等非现金业务的外部付款日是可选管理资料，不得按字段名推断为必填。",
+        json_schema_extra={
+            "x-accounting-fact": {"role": "contextual", "resolve_from": "component kind and funds"}
+        },
+    )
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     account_selections: dict[str, str] = Field(default_factory=dict)
     metadata: BusinessMetadata = Field(default_factory=BusinessMetadata)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        schema = handler(core_schema)
+        schema["x-recognition-precision"] = (
+            ["day", "month"] if cls.supports_monthly_recognition else ["day"]
+        )
+        return schema
 
     @model_validator(mode="after")
     def recognition_precision_is_explicit(self):
@@ -307,7 +327,7 @@ class EnterpriseIncomeTaxResultComponent(ComponentFacts):
     quarter: int = Field(ge=0, le=4)
     previous_result_id: uuid.UUID | None = None
     original_confirmation_id: uuid.UUID | None = None
-    declaration_date: date | None = None
+    declaration_date: ExternalDeclarationDate = None
     amount_basis: Literal["quarter", "year_to_date", "annual", "adjustment_notice"]
     declared_tax_fen: StrictInt | None = Field(default=None, ge=0)
     adjustment_fen: StrictInt | None = None
@@ -562,7 +582,7 @@ class FundsSettlement(BaseModel):
     key: str = Field(min_length=1, max_length=94)
     account_code: str = Field(min_length=1, max_length=30)
     direction: Literal["receipt", "payment"]
-    payment_date: date
+    payment_date: ActualFundsDate
     amount_fen: PositiveFen
     allocations: list[FundsAllocation] = Field(min_length=1)
     bank_transaction_references: list[BankTransactionReference] = Field(default_factory=list)

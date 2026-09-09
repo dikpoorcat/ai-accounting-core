@@ -8,6 +8,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
+from .fact_requirements import (
+    MANAGEMENT_FACT,
+    ExternalDeclarationDate,
+    RecognitionDate,
+    RecognitionPeriod,
+)
+
 
 class IncomeTaxSourceAllocation(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -24,23 +31,32 @@ class IncomeTaxSourceAllocation(BaseModel):
 
 
 class PreviewEnterpriseIncomeTaxResultRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra={"x-recognition-precision": ["day", "month"]}
+    )
 
     org_id: uuid.UUID
     year: int = Field(ge=2013, le=9998)
     quarter: int = Field(ge=0, le=4, description="1–4季度；0表示年度汇算")
     previous_result_id: uuid.UUID | None = None
     original_confirmation_id: uuid.UUID | None = None
-    declaration_date: date | None = None
-    business_date: date | None = None
-    recognition_period: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
+    declaration_date: ExternalDeclarationDate = None
+    business_date: RecognitionDate = None
+    recognition_period: RecognitionPeriod = None
     posting_date: date
-    declaration_reference: str | None = Field(default=None, min_length=1, max_length=200)
+    declaration_reference: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        json_schema_extra={"x-accounting-fact": MANAGEMENT_FACT},
+    )
     amount_basis: Literal["quarter", "year_to_date", "annual", "adjustment_notice"]
     declared_tax_fen: StrictInt | None = Field(default=None, ge=0)
     adjustment_fen: StrictInt | None = None
     previously_recognized_fen: StrictInt | None = None
-    confirmation_note: str = Field(default="", max_length=2000)
+    confirmation_note: str = Field(
+        default="", max_length=2000, json_schema_extra={"x-accounting-fact": MANAGEMENT_FACT}
+    )
     evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")

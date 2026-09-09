@@ -19,6 +19,7 @@ from .enterprise_income_tax_schemas import (
     PreviewEnterpriseIncomeTaxResultRequest,
     QueryEnterpriseIncomeTaxRequest,
 )
+from .fact_requirements import recognition_issue
 from .ledger import assert_period_open, posting_period_error_code
 from .models import (
     EXECUTION_ATTRIBUTION_SESSION_KEY,
@@ -305,10 +306,22 @@ class EnterpriseIncomeTaxService:
             return self.rejected(error)
         month = request.quarter * 3 if request.quarter else 12
         period_end = date(request.year, month, calendar.monthrange(request.year, month)[1])
+        date_code = None
         if request.recognition_date is None:
-            return self.missing("business_date_or_recognition_period")
-        if request.recognition_date < period_end or request.posting_date < request.recognition_date:
-            return self.rejected("CIT_RESULT_DATE_ORDER_INVALID")
+            date_code = "CIT_RESULT_RECOGNITION_REQUIRED"
+        elif request.recognition_date < period_end:
+            date_code = "CIT_RESULT_RECOGNITION_BEFORE_TAX_PERIOD_END"
+        elif request.posting_date < request.recognition_date:
+            date_code = "CIT_RESULT_RECOGNITION_AFTER_POSTING_DATE"
+        if date_code:
+            return recognition_issue(
+                code=date_code,
+                business_date=request.business_date,
+                recognition_period=request.recognition_period,
+                posting_date=request.posting_date,
+                earliest=period_end,
+                missing=request.recognition_date is None,
+            ).result()
         state = self.query(
             QueryEnterpriseIncomeTaxRequest(org_id=request.org_id, year=request.year)
         )

@@ -129,6 +129,11 @@ def test_monthly_obligation_cannot_pay_before_cutoff(session, organization, samp
     )
     assert refused.status == "needs_information", refused
     assert refused.missing_information == ["components.pay.source_recognized_by.2026-06-15"]
+    issue = refused.data["fact_issues"][0]
+    assert issue["code"] == "SOURCE_RECOGNITION_BY_PAYMENT_REQUIRED"
+    assert issue["fields"] == ["source.business_date", "source.recognition_period"]
+    assert issue["expected"]["source_recognized_not_after"] == "2026-06-15"
+    assert issue["context"]["source_event_id"] == str(created.event_id)
     assert len(session.scalars(select(BusinessEvent)).all()) == 1
     assert session.scalar(select(OpenItem)).settled_amount_fen == 0
 
