@@ -13,7 +13,7 @@ from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, raiseload
 
 from .accounting_period_schemas import (
     AccountingPeriodInformationRequirement,
@@ -174,6 +174,7 @@ class AccountingPeriodService:
 
         item_rows = self.session.execute(
             select(OpenItem, BusinessEvent)
+            .options(raiseload("*"))
             .join(BusinessEvent, BusinessEvent.id == OpenItem.source_event_id)
             .where(
                 OpenItem.org_id == org_id,
@@ -208,7 +209,9 @@ class AccountingPeriodService:
         events = {
             event.id: event
             for event in self.session.scalars(
-                select(BusinessEvent).where(
+                select(BusinessEvent)
+                .options(raiseload("*"))
+                .where(
                     BusinessEvent.org_id == org_id,
                     BusinessEvent.id.in_(event_ids),
                 )
@@ -2888,12 +2891,14 @@ class AccountingPeriodService:
             self.session,
             current_date=self._today(),
         )
+        match_snapshot = bank_service._current_match_snapshot(org_id, active_matches)
         unmatched_bank = 0
         for transaction in ordinary_rows:
             try:
                 matched = bank_service._valid_current_match(
                     transaction,
                     active_by_transaction.get(transaction.id),
+                    snapshot=match_snapshot,
                 )
             except ValueError:
                 matched = False

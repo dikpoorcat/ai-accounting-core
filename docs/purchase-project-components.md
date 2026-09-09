@@ -1,6 +1,6 @@
 # 供应商预付款与项目成本
 
-业务库执行至前向迁移 `0003_essential_accounting`；目录库保持独立的 v2 基线。
+业务库使用空库基线 `0001_business_baseline_v4`；目录库保持独立的 v2 基线。
 所有新增组件使用 `finance_preview_event` / `finance_record_event`，金额为整数分，
 正式写入仍只有统一提交器。缺少关键事实返回 `needs_information`。
 

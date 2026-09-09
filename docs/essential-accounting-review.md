@@ -160,7 +160,7 @@
 |C08|生成自然月份还需说明和重复证据|只需公司、月份和幂等键；生成日历本身不生成会计分录|GenerateAccountingPeriodRequest|
 |C09|对象内连接导致匿名往来丢出报表|改外连接，稳定业务引用显示；金额分类取业务来源|dashboard_brief / replay_cli / 报表回归|
 |C10|回放丢失管理资料或把它混回会计事实|回放v3分别重建会计事实与追加式管理版本|_metadata_operations及PG空库回放|
-|C11|改写两个正式空库基线|禁止；新增0003_essential_accounting前向迁移|test_baseline_migration：空库、升级、command.check及保护|
+|C11|基线与迁移策略|2026-09-09 按负责人要求归并为业务 v4 空库基线；目录库 v2 保持独立；旧库只读导出后回放|test_baseline_migration：空库、command.check及非空保护|
 |C12|以资料包验证代替真实重录完成|分别报告资料验证、隔离回放、真实业务重录|下述交付记录|
 |C13|凭证摘要、分录说明及更正原因影响关账计算哈希|从计算投影排除；保留当前会计事实哈希、金额及来源，原文字仍存展示快照|test_close_hash_uses_accounting_facts_and_ignores_management_and_command_audit|
 
@@ -183,7 +183,11 @@
 
 ## 上轮验证记录（0003 历史记录）
 
-本次仅在隔离 SQLite／PostgreSQL 17 数据库验证，未对试用公司的旧数据库执行迁移。
+以下为必要事实解耦阶段的历史验收记录，不代表当前回放状态。2026-09-09 整理项目时，
+表中旧 `outputs/` 日志和旧资料包已移入回收站；当前本机资料及验证结果以 `outputs/README.md`
+为索引。
+
+该阶段仅在隔离 SQLite／PostgreSQL 17 数据库验证，未对试用公司的旧数据库执行迁移。
 下表按实际命令分组；各组可能重复覆盖同一测试，不累加为总数。
 
 |范围|结果|记录位置|

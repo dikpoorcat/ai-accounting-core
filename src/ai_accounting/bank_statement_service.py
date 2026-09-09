@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import uuid
 from calendar import monthrange
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -95,6 +97,15 @@ class _BankDecision(ValueError):
         self.code = code
         self.field_path = field_path
         super().__init__(code)
+
+
+@dataclass(frozen=True)
+class _CurrentMatchSnapshot:
+    org_id: uuid.UUID
+    posted_event_ids: frozenset[uuid.UUID]
+    vouchers: dict[uuid.UUID, uuid.UUID]
+    matched_movements: dict[tuple[uuid.UUID, str], int]
+    voucher_movements: dict[tuple[uuid.UUID, str], int]
 
 
 class BankStatementService:
@@ -312,16 +323,13 @@ class BankStatementService:
             select(BankReconciliationScopeAction)
             .where(
                 BankReconciliationScopeAction.org_id == request.org_id,
-                BankReconciliationScopeAction.idempotency_key
-                == request.idempotency_key,
+                BankReconciliationScopeAction.idempotency_key == request.idempotency_key,
             )
             .with_for_update()
         )
         if existing is not None:
             if existing.request_payload_hash != request_payload_hash:
-                return self._action_error(
-                    "BANK_RECONCILIATION_SCOPE_IDEMPOTENCY_PAYLOAD_MISMATCH"
-                )
+                return self._action_error("BANK_RECONCILIATION_SCOPE_IDEMPOTENCY_PAYLOAD_MISMATCH")
             return self._replay_scope_action(existing)
         self._lock_tax_period_org(request.org_id)
         preview_request = PreviewBankReconciliationScopeRequest.model_validate(
@@ -334,9 +342,7 @@ class BankStatementService:
         ):
             issues = self._scope_issues(preview)
             if preview.status == BankStatementPreviewStatus.CALCULATED:
-                issues = [
-                    BankStatementIssue(code="BANK_RECONCILIATION_SCOPE_CALCULATION_STALE")
-                ]
+                issues = [BankStatementIssue(code="BANK_RECONCILIATION_SCOPE_CALCULATION_STALE")]
             return self._persist_scope_rejection(
                 request,
                 request_payload_hash,
@@ -405,9 +411,7 @@ class BankStatementService:
                     trace=[*preview.trace, {"stage": "bank_scope_action_posted"}],
                     data={
                         "scope": normalized_payload["scope"],
-                        "affected_closed_periods": normalized_payload[
-                            "affected_closed_periods"
-                        ],
+                        "affected_closed_periods": normalized_payload["affected_closed_periods"],
                     },
                 )
         except IntegrityError:
@@ -560,9 +564,7 @@ class BankStatementService:
                 "status": "rejected",
                 "errors": ["BANK_STATEMENT_HANDLING_PERIOD_NOT_FOUND"],
             }
-        transaction_query = select(BankTransaction).where(
-            BankTransaction.org_id == request.org_id
-        )
+        transaction_query = select(BankTransaction).where(BankTransaction.org_id == request.org_id)
         if request.bank_transaction_id is not None:
             transaction_query = transaction_query.where(
                 BankTransaction.id == request.bank_transaction_id
@@ -602,31 +604,28 @@ class BankStatementService:
                 item
                 for item in transactions
                 if item.is_late
-                and (
-                    original := self.session.get(
-                        AccountingPeriod, item.original_period_id
-                    )
-                )
+                and (original := self.session.get(AccountingPeriod, item.original_period_id))
                 is not None
                 and original.end_date < handling_period.start_date
             ]
-        active_matches = self.session.scalars(
-            select(BankTransactionMatch).where(
-                BankTransactionMatch.org_id == request.org_id,
-                BankTransactionMatch.bank_transaction_id.in_(
-                    [item.id for item in transactions]
-                ),
-                BankTransactionMatch.invalidated_by_event_id.is_(None),
-            )
-        ).all() if transactions else []
-        match_by_transaction = {
-            item.bank_transaction_id: item for item in active_matches
-        }
+        active_matches = (
+            self.session.scalars(
+                select(BankTransactionMatch).where(
+                    BankTransactionMatch.org_id == request.org_id,
+                    BankTransactionMatch.bank_transaction_id.in_(
+                        [item.id for item in transactions]
+                    ),
+                    BankTransactionMatch.invalidated_by_event_id.is_(None),
+                )
+            ).all()
+            if transactions
+            else []
+        )
+        match_by_transaction = {item.bank_transaction_id: item for item in active_matches}
+        match_snapshot = self._current_match_snapshot(request.org_id, active_matches)
         transaction_projection: list[dict[str, object]] = []
         for transaction in transactions:
-            current_late = (
-                self._current_late_action(transaction) if transaction.is_late else None
-            )
+            current_late = self._current_late_action(transaction) if transaction.is_late else None
             late_actions = (
                 self.session.scalars(
                     select(LateBankEvidenceAction)
@@ -648,7 +647,7 @@ class BankStatementService:
                 try:
                     ordinary_state = (
                         "matched"
-                        if self._valid_current_match(transaction, match)
+                        if self._valid_current_match(transaction, match, snapshot=match_snapshot)
                         else "unmatched"
                     )
                 except _BankDecision:
@@ -676,9 +675,7 @@ class BankStatementService:
                         if transaction.original_closed_at is not None
                         else None
                     ),
-                    "late_handling_state": (
-                        "handled" if current_late is not None else "pending"
-                    )
+                    "late_handling_state": ("handled" if current_late is not None else "pending")
                     if transaction.is_late
                     else "not_applicable",
                     "current_late_action_id": (
@@ -719,8 +716,7 @@ class BankStatementService:
                             "workflow_name": action.workflow_name,
                             "calculation_hash": action.calculation_hash,
                             "currently_effective": (
-                                current_late is not None
-                                and action.id == current_late.id
+                                current_late is not None and action.id == current_late.id
                             ),
                             "created_at": self._aware(action.created_at).isoformat(),
                         }
@@ -743,8 +739,7 @@ class BankStatementService:
             )
             if request.bank_account_code is not None:
                 import_query = import_query.where(
-                    BankStatementImportAction.bank_account_code
-                    == request.bank_account_code
+                    BankStatementImportAction.bank_account_code == request.bank_account_code
                 )
             import_rows = self.session.scalars(
                 import_query.order_by(
@@ -768,7 +763,8 @@ class BankStatementService:
                 for item in import_rows
             ]
         withdrawn = {
-            str(item.action_id): item for item in self.session.scalars(
+            str(item.action_id): item
+            for item in self.session.scalars(
                 select(BankStatementImportWithdrawal).where(
                     BankStatementImportWithdrawal.org_id == request.org_id
                 )
@@ -778,7 +774,8 @@ class BankStatementService:
             if withdrawal := withdrawn.get(item["action_id"]):
                 item["status"] = "withdrawn"
                 item["withdrawal"] = {
-                    "id": str(withdrawal.id), "reason": withdrawal.reason,
+                    "id": str(withdrawal.id),
+                    "reason": withdrawal.reason,
                     "created_at": self._aware(withdrawal.created_at).isoformat(),
                     "result": withdrawal.result,
                     "execution_attribution_id": str(withdrawal.execution_attribution_id),
@@ -790,8 +787,7 @@ class BankStatementService:
             )
             if request.bank_account_code is not None:
                 reconciliation_query = reconciliation_query.where(
-                    BankReconciliation.bank_account_code
-                    == request.bank_account_code
+                    BankReconciliation.bank_account_code == request.bank_account_code
                 )
             reconciliation_rows = self.session.scalars(
                 reconciliation_query.order_by(
@@ -811,20 +807,15 @@ class BankStatementService:
                         .where(
                             BankReconciliation.org_id == item.org_id,
                             BankReconciliation.period_id == item.period_id,
-                            BankReconciliation.bank_account_code
-                            == item.bank_account_code,
+                            BankReconciliation.bank_account_code == item.bank_account_code,
                         )
                         .order_by(BankReconciliation.version.desc())
                         .limit(1)
                     ),
                     "calculation_hash": item.calculation_hash,
-                    "statement_to_book_difference_fen": (
-                        item.statement_to_book_difference_fen
-                    ),
+                    "statement_to_book_difference_fen": (item.statement_to_book_difference_fen),
                     "unmatched_transaction_count": item.unmatched_transaction_count,
-                    "pending_late_transaction_count": (
-                        item.pending_late_transaction_count
-                    ),
+                    "pending_late_transaction_count": (item.pending_late_transaction_count),
                     "warnings": item.warnings,
                     "confirmed_at": self._aware(item.confirmed_at).isoformat(),
                 }
@@ -833,17 +824,14 @@ class BankStatementService:
         return {
             "status": "ok",
             "scope": {
-                "confirmed": organization.bank_reconciliation_scope_current_action_id
-                is not None,
+                "confirmed": organization.bank_reconciliation_scope_current_action_id is not None,
                 "current_action_id": (
                     str(organization.bank_reconciliation_scope_current_action_id)
                     if organization.bank_reconciliation_scope_current_action_id
                     else None
                 ),
                 "confirmed_at": (
-                    self._aware(
-                        organization.bank_reconciliation_scope_confirmed_at
-                    ).isoformat()
+                    self._aware(organization.bank_reconciliation_scope_confirmed_at).isoformat()
                     if organization.bank_reconciliation_scope_confirmed_at
                     else None
                 ),
@@ -893,9 +881,7 @@ class BankStatementService:
         )
         if existing is not None:
             if existing.request_payload_hash != payload_hash:
-                return self._action_error(
-                    "BANK_RECONCILIATION_IDEMPOTENCY_PAYLOAD_MISMATCH"
-                )
+                return self._action_error("BANK_RECONCILIATION_IDEMPOTENCY_PAYLOAD_MISMATCH")
             return self._replay_reconciliation_action(existing)
         self._lock_tax_period_org(request.org_id)
         period_discovery = self.session.scalar(
@@ -936,8 +922,7 @@ class BankStatementService:
                         .where(
                             BankReconciliation.org_id == request.org_id,
                             BankReconciliation.period_id == request.period_id,
-                            BankReconciliation.bank_account_code
-                            == request.bank_account_code,
+                            BankReconciliation.bank_account_code == request.bank_account_code,
                         )
                         .order_by(BankReconciliation.version.desc())
                         .limit(1)
@@ -978,9 +963,7 @@ class BankStatementService:
                     statement_to_book_difference_fen=int(
                         calculation["statement_to_book_difference_fen"]
                     ),
-                    statement_transaction_count=int(
-                        calculation["statement_transaction_count"]
-                    ),
+                    statement_transaction_count=int(calculation["statement_transaction_count"]),
                     unmatched_transaction_count=facts.unmatched_transaction_count,
                     pending_late_transaction_count=facts.pending_late_transaction_count,
                     warnings=preview.warnings,
@@ -1064,15 +1047,11 @@ class BankStatementService:
             )
         organization = self.session.scalar(organization_query)
         if organization is None:
-            return self._scope_preview_error(
-                "BANK_RECONCILIATION_SCOPE_ORGANIZATION_NOT_FOUND"
-            )
+            return self._scope_preview_error("BANK_RECONCILIATION_SCOPE_ORGANIZATION_NOT_FOUND")
         current_action_id = organization.bank_reconciliation_scope_current_action_id
         if request.action_type == "initial_confirmation":
             if current_action_id is not None:
-                return self._scope_preview_error(
-                    "BANK_RECONCILIATION_SCOPE_ALREADY_CONFIRMED"
-                )
+                return self._scope_preview_error("BANK_RECONCILIATION_SCOPE_ALREADY_CONFIRMED")
         elif current_action_id != request.previous_action_id:
             return self._scope_preview_error(
                 "BANK_RECONCILIATION_SCOPE_VERSION_CONFLICT",
@@ -1160,9 +1139,8 @@ class BankStatementService:
             .where(Evidence.id.in_(request.evidence_references))
             .order_by(Evidence.id)
         ).all()
-        if (
-            len(evidence_rows) != len(request.evidence_references)
-            or any(item.org_id != request.org_id for item in evidence_rows)
+        if len(evidence_rows) != len(request.evidence_references) or any(
+            item.org_id != request.org_id for item in evidence_rows
         ):
             return self._scope_preview_error(
                 "BANK_RECONCILIATION_SCOPE_EVIDENCE_INVALID",
@@ -1181,10 +1159,7 @@ class BankStatementService:
             "target_account_id": target_account_id,
             "scope": desired_scope,
             "explanation": request.explanation,
-            "evidence": [
-                {"evidence_id": item.id, "sha256": item.sha256}
-                for item in evidence_rows
-            ],
+            "evidence": [{"evidence_id": item.id, "sha256": item.sha256} for item in evidence_rows],
             "affected_closed_periods": affected_closed_periods,
         }
         calculation_hash = canonical_sha256(payload)
@@ -1232,10 +1207,7 @@ class BankStatementService:
                 and item["start_date"] <= period_end
                 and (
                     item["end_date"] is None
-                    or (
-                        isinstance(item["end_date"], date)
-                        and period_end <= item["end_date"]
-                    )
+                    or (isinstance(item["end_date"], date) and period_end <= item["end_date"])
                 )
             }
 
@@ -1279,10 +1251,21 @@ class BankStatementService:
         ).all()
         accounts = {
             item.id: item
-            for item in self.session.scalars(
-                select(Account).where(Account.org_id == org_id)
-            ).all()
+            for item in self.session.scalars(select(Account).where(Account.org_id == org_id)).all()
         }
+        close_ids = {period.close_id for period in periods if period.close_id is not None}
+        close_times = (
+            dict(
+                self.session.execute(
+                    select(AccountingPeriodClose.id, AccountingPeriodClose.confirmed_at).where(
+                        AccountingPeriodClose.org_id == org_id,
+                        AccountingPeriodClose.id.in_(close_ids),
+                    )
+                ).all()
+            )
+            if close_ids
+            else {}
+        )
         pending: dict[tuple[uuid.UUID, uuid.UUID], dict[str, object]] = {}
         for history in histories:
             if history.new_start_date is None:
@@ -1295,27 +1278,21 @@ class BankStatementService:
                     continue
                 newly_covered = (
                     period.end_date >= history.new_start_date
-                    and (
-                        history.new_end_date is None
-                        or period.end_date <= history.new_end_date
-                    )
+                    and (history.new_end_date is None or period.end_date <= history.new_end_date)
                     and not (
                         history.old_required
                         and history.old_start_date is not None
                         and period.end_date >= history.old_start_date
                         and (
-                            history.old_end_date is None
-                            or period.end_date <= history.old_end_date
+                            history.old_end_date is None or period.end_date <= history.old_end_date
                         )
                     )
                 )
                 if not newly_covered:
                     continue
-                close = self.session.get(AccountingPeriodClose, period.close_id)
-                if (
-                    close is None
-                    or self._aware(history.created_at)
-                    <= self._aware(close.confirmed_at)
+                confirmed_at = close_times.get(period.close_id)
+                if confirmed_at is None or self._aware(history.created_at) <= self._aware(
+                    confirmed_at
                 ):
                     continue
                 corrected_at = self._aware(history.created_at)
@@ -1363,9 +1340,7 @@ class BankStatementService:
         attribution_id: uuid.UUID,
     ) -> None:
         now = self._database_clock()
-        desired = {
-            uuid.UUID(str(item["account_id"])): item for item in payload["scope"]
-        }
+        desired = {uuid.UUID(str(item["account_id"])): item for item in payload["scope"]}
         existing = self.session.scalars(
             select(Account)
             .where(Account.org_id == request.org_id)
@@ -1384,9 +1359,7 @@ class BankStatementService:
         for account_id, item in desired.items():
             start_date = date.fromisoformat(str(item["start_date"]))
             end_date = (
-                date.fromisoformat(str(item["end_date"]))
-                if item["end_date"] is not None
-                else None
+                date.fromisoformat(str(item["end_date"])) if item["end_date"] is not None else None
             )
             account = by_id.get(account_id)
             if account is None:
@@ -1543,8 +1516,7 @@ class BankStatementService:
             errors=(
                 [
                     BankStatementIssue(
-                        code=action.error_code
-                        or "BANK_RECONCILIATION_SCOPE_REJECTED",
+                        code=action.error_code or "BANK_RECONCILIATION_SCOPE_REJECTED",
                         field_path=action.error_field_path,
                     )
                 ]
@@ -1570,13 +1542,9 @@ class BankStatementService:
             )
         )
         if winner is None:
-            return self._action_error(
-                "BANK_RECONCILIATION_SCOPE_CONCURRENT_WRITE_CONFLICT"
-            )
+            return self._action_error("BANK_RECONCILIATION_SCOPE_CONCURRENT_WRITE_CONFLICT")
         if winner.request_payload_hash != request_payload_hash:
-            return self._action_error(
-                "BANK_RECONCILIATION_SCOPE_IDEMPOTENCY_PAYLOAD_MISMATCH"
-            )
+            return self._action_error("BANK_RECONCILIATION_SCOPE_IDEMPOTENCY_PAYLOAD_MISMATCH")
         return self._replay_scope_action(winner)
 
     def _late_bank_preview(
@@ -1686,19 +1654,17 @@ class BankStatementService:
                 field_path="evidence_references",
             )
         handling = self.session.scalar(
-
-                select(AccountingPeriod)
-                .where(
-                    AccountingPeriod.org_id == request.org_id,
-                    AccountingPeriod.id == request.handling_period_id,
-                )
-                .with_for_update()
-                if lock
-                else select(AccountingPeriod).where(
-                    AccountingPeriod.org_id == request.org_id,
-                    AccountingPeriod.id == request.handling_period_id,
-                )
-
+            select(AccountingPeriod)
+            .where(
+                AccountingPeriod.org_id == request.org_id,
+                AccountingPeriod.id == request.handling_period_id,
+            )
+            .with_for_update()
+            if lock
+            else select(AccountingPeriod).where(
+                AccountingPeriod.org_id == request.org_id,
+                AccountingPeriod.id == request.handling_period_id,
+            )
         )
         if handling is None or handling.status != "open":
             return self._late_preview_error(
@@ -1831,9 +1797,7 @@ class BankStatementService:
         except _BankDecision as exc:
             return BankReconciliationPreview(
                 status=BankStatementPreviewStatus.REJECTED,
-                errors=[
-                    BankStatementIssue(code=exc.code, field_path=exc.field_path)
-                ],
+                errors=[BankStatementIssue(code=exc.code, field_path=exc.field_path)],
                 trace=[{"stage": "bank_reconciliation_rejected", "code": exc.code}],
             )
         return calculate_bank_reconciliation(request, facts)
@@ -1859,18 +1823,12 @@ class BankStatementService:
             AccountingPeriod.id == request.period_id,
         )
         if lock:
-            period_query = period_query.with_for_update().execution_options(
-                populate_existing=True
-            )
+            period_query = period_query.with_for_update().execution_options(populate_existing=True)
         period = self.session.scalar(period_query)
         if period is None:
-            raise _BankDecision(
-                "BANK_RECONCILIATION_PERIOD_NOT_FOUND", field_path="period_id"
-            )
+            raise _BankDecision("BANK_RECONCILIATION_PERIOD_NOT_FOUND", field_path="period_id")
         if period.status != "open":
-            raise _BankDecision(
-                "BANK_RECONCILIATION_PERIOD_NOT_OPEN", field_path="period_id"
-            )
+            raise _BankDecision("BANK_RECONCILIATION_PERIOD_NOT_OPEN", field_path="period_id")
         if period.start_date > self._today().replace(day=1):
             raise _BankDecision(
                 "BANK_RECONCILIATION_FUTURE_PERIOD_NOT_ALLOWED",
@@ -1886,12 +1844,9 @@ class BankStatementService:
                 "BANK_ACCOUNT_NOT_CONFIRMED_FOR_RECONCILIATION",
                 field_path="bank_account_code",
             )
-        if (
-            account.bank_reconciliation_start_date > period.start_date
-            or (
-                account.bank_reconciliation_end_date is not None
-                and account.bank_reconciliation_end_date < period.end_date
-            )
+        if account.bank_reconciliation_start_date > period.start_date or (
+            account.bank_reconciliation_end_date is not None
+            and account.bank_reconciliation_end_date < period.end_date
         ):
             raise _BankDecision(
                 "BANK_ACCOUNT_RECONCILIATION_SCOPE_NOT_EFFECTIVE",
@@ -1910,9 +1865,7 @@ class BankStatementService:
             transaction_query = transaction_query.with_for_update()
         transactions = self.session.scalars(transaction_query).all()
         if any(item.import_action_id is None for item in transactions):
-            raise _BankDecision(
-                "BANK_RECONCILIATION_LEGACY_TRANSACTION_REQUIRES_MIGRATION"
-            )
+            raise _BankDecision("BANK_RECONCILIATION_LEGACY_TRANSACTION_REQUIRES_MIGRATION")
         required_action_ids = {item.import_action_id for item in transactions}
         requested_action_ids = set(request.statement_import_action_ids)
         if required_action_ids != requested_action_ids:
@@ -1928,22 +1881,17 @@ class BankStatementService:
         if lock:
             action_query = action_query.with_for_update()
         actions = self.session.scalars(action_query).all()
-        if (
-            len(actions) != len(request.statement_import_action_ids)
-            or any(
-                action.status not in {"posted", "partially_posted"}
-                or action.bank_account_code != request.bank_account_code
-                or action.calculation_hash is None
-                for action in actions
-            )
+        if len(actions) != len(request.statement_import_action_ids) or any(
+            action.status not in {"posted", "partially_posted"}
+            or action.bank_account_code != request.bank_account_code
+            or action.calculation_hash is None
+            for action in actions
         ):
             raise _BankDecision(
                 "BANK_RECONCILIATION_IMPORT_ACTION_SCOPE_MISMATCH",
                 field_path="statement_import_action_ids",
             )
-        by_action: dict[uuid.UUID, list[BankTransaction]] = {
-            action.id: [] for action in actions
-        }
+        by_action: dict[uuid.UUID, list[BankTransaction]] = {action.id: [] for action in actions}
         for transaction in transactions:
             assert transaction.import_action_id is not None
             by_action[transaction.import_action_id].append(transaction)
@@ -1952,9 +1900,8 @@ class BankStatementService:
             .where(Evidence.id.in_(request.statement_evidence_references))
             .order_by(Evidence.id)
         ).all()
-        if (
-            len(evidence_rows) != len(request.statement_evidence_references)
-            or any(item.org_id != request.org_id for item in evidence_rows)
+        if len(evidence_rows) != len(request.statement_evidence_references) or any(
+            item.org_id != request.org_id for item in evidence_rows
         ):
             raise _BankDecision(
                 "BANK_RECONCILIATION_EVIDENCE_SCOPE_MISMATCH",
@@ -1981,24 +1928,28 @@ class BankStatementService:
                 BankTransaction.is_late.is_(False),
             )
         ).all()
-        active_matches = self.session.scalars(
-            select(BankTransactionMatch).where(
-                BankTransactionMatch.org_id == request.org_id,
-                BankTransactionMatch.bank_transaction_id.in_(
-                    [item.id for item in cumulative_ordinary]
-                ),
-                BankTransactionMatch.invalidated_by_event_id.is_(None),
-            )
-        ).all() if cumulative_ordinary else []
-        active_by_transaction = {
-            item.bank_transaction_id: item for item in active_matches
-        }
+        active_matches = (
+            self.session.scalars(
+                select(BankTransactionMatch).where(
+                    BankTransactionMatch.org_id == request.org_id,
+                    BankTransactionMatch.bank_transaction_id.in_(
+                        [item.id for item in cumulative_ordinary]
+                    ),
+                    BankTransactionMatch.invalidated_by_event_id.is_(None),
+                )
+            ).all()
+            if cumulative_ordinary
+            else []
+        )
+        active_by_transaction = {item.bank_transaction_id: item for item in active_matches}
+        match_snapshot = self._current_match_snapshot(request.org_id, active_matches)
         unmatched = sum(
             1
             for transaction in cumulative_ordinary
             if not self._valid_current_match(
                 transaction,
                 active_by_transaction.get(transaction.id),
+                snapshot=match_snapshot,
             )
         )
         pending_late = 0
@@ -2087,33 +2038,41 @@ class BankStatementService:
                 return action
         return None
 
-    def _valid_current_match(
-        self,
-        transaction: BankTransaction,
-        match: BankTransactionMatch | None,
-    ) -> bool:
-        if match is None:
-            return False
-        event = self.session.scalar(
-            select(BusinessEvent).where(
-                BusinessEvent.org_id == transaction.org_id,
-                BusinessEvent.id == match.event_id,
+    def _current_match_snapshot(
+        self, org_id: uuid.UUID, matches: Sequence[BankTransactionMatch]
+    ) -> _CurrentMatchSnapshot:
+        """Batch the same checks without caching facts across previews or writes.
+
+        Aggregate all active matches for each event/account, including matches
+        outside the requested month: one voucher may cover several bank rows.
+        Select columns so ORM relationship loaders cannot fetch entire ledgers.
+        """
+        event_ids = {match.event_id for match in matches}
+        if not event_ids:
+            return _CurrentMatchSnapshot(org_id, frozenset(), {}, {}, {})
+        events = self.session.execute(
+            select(BusinessEvent.id, Voucher.id)
+            .outerjoin(
+                Voucher,
+                and_(
+                    Voucher.org_id == BusinessEvent.org_id,
+                    Voucher.event_id == BusinessEvent.id,
+                    Voucher.status == "posted",
+                ),
             )
-        )
-        if event is None or event.status != "posted":
-            return False
-        voucher = self.session.scalar(
-            select(Voucher).where(
-                Voucher.org_id == transaction.org_id,
-                Voucher.event_id == event.id,
-                Voucher.status == "posted",
+            .where(
+                BusinessEvent.org_id == org_id,
+                BusinessEvent.id.in_(event_ids),
+                BusinessEvent.status == "posted",
             )
-        )
-        matched_bank_movement = self.session.scalar(
+        ).all()
+        vouchers = {event_id: voucher_id for event_id, voucher_id in events if voucher_id}
+        matched_movements = self.session.execute(
             select(
-                func.coalesce(func.sum(BankTransaction.amount_fen), 0)
+                BankTransactionMatch.event_id,
+                BankTransaction.bank_account_code,
+                func.sum(BankTransaction.amount_fen),
             )
-            .select_from(BankTransactionMatch)
             .join(
                 BankTransaction,
                 and_(
@@ -2122,20 +2081,53 @@ class BankStatementService:
                 ),
             )
             .where(
-                BankTransactionMatch.org_id == transaction.org_id,
-                BankTransactionMatch.event_id == event.id,
+                BankTransactionMatch.org_id == org_id,
+                BankTransactionMatch.event_id.in_(event_ids),
                 BankTransactionMatch.invalidated_by_event_id.is_(None),
-                BankTransaction.bank_account_code == transaction.bank_account_code,
             )
+            .group_by(BankTransactionMatch.event_id, BankTransaction.bank_account_code)
+        ).all()
+        voucher_movements = (
+            self.session.execute(
+                select(
+                    VoucherLine.voucher_id,
+                    Account.code,
+                    func.sum(VoucherLine.debit_fen - VoucherLine.credit_fen),
+                )
+                .join(Account, Account.id == VoucherLine.account_id)
+                .where(VoucherLine.voucher_id.in_(set(vouchers.values())))
+                .group_by(VoucherLine.voucher_id, Account.code)
+            ).all()
+            if vouchers
+            else []
         )
-        if (
-            voucher is None
-            or self._voucher_bank_movement(voucher.id, transaction.bank_account_code)
-            != int(matched_bank_movement or 0)
-        ):
-            raise _BankDecision(
-                "BANK_RECONCILIATION_MATCHED_EVENT_BANK_ACCOUNT_MISMATCH"
-            )
+        return _CurrentMatchSnapshot(
+            org_id,
+            frozenset(event_id for event_id, _ in events),
+            vouchers,
+            {(event_id, code): int(amount) for event_id, code, amount in matched_movements},
+            {(voucher_id, code): int(amount) for voucher_id, code, amount in voucher_movements},
+        )
+
+    def _valid_current_match(
+        self,
+        transaction: BankTransaction,
+        match: BankTransactionMatch | None,
+        *,
+        snapshot: _CurrentMatchSnapshot | None = None,
+    ) -> bool:
+        if match is None:
+            return False
+        snapshot = snapshot or self._current_match_snapshot(transaction.org_id, [match])
+        if snapshot.org_id != transaction.org_id:
+            raise ValueError("BANK_RECONCILIATION_MATCH_SNAPSHOT_ORG_MISMATCH")
+        if match.event_id not in snapshot.posted_event_ids:
+            return False
+        voucher_id = snapshot.vouchers.get(match.event_id)
+        if voucher_id is None or snapshot.voucher_movements.get(
+            (voucher_id, transaction.bank_account_code), 0
+        ) != snapshot.matched_movements.get((match.event_id, transaction.bank_account_code), 0):
+            raise _BankDecision("BANK_RECONCILIATION_MATCHED_EVENT_BANK_ACCOUNT_MISMATCH")
         return True
 
     def _voucher_bank_movement(self, voucher_id: uuid.UUID, account_code: str) -> int:
@@ -2594,13 +2586,16 @@ class BankStatementService:
         self,
         action: BankStatementImportAction,
     ) -> BankStatementActionResult:
-        withdrawal = self.session.scalar(select(BankStatementImportWithdrawal).where(
-            BankStatementImportWithdrawal.org_id == action.org_id,
-            BankStatementImportWithdrawal.action_id == action.id,
-        ))
+        withdrawal = self.session.scalar(
+            select(BankStatementImportWithdrawal).where(
+                BankStatementImportWithdrawal.org_id == action.org_id,
+                BankStatementImportWithdrawal.action_id == action.id,
+            )
+        )
         if withdrawal:
             return BankStatementActionResult(
-                status=BankStatementActionStatus.WITHDRAWN, action_id=action.id,
+                status=BankStatementActionStatus.WITHDRAWN,
+                action_id=action.id,
                 calculation_hash=action.calculation_hash,
                 data=withdrawal.result | {"idempotent_replay": True},
             )
@@ -2779,8 +2774,7 @@ class BankStatementService:
         for requirement in preview.missing_information:
             fields = requirement.fields or [None]
             issues.extend(
-                BankStatementIssue(code=requirement.code, field_path=field)
-                for field in fields
+                BankStatementIssue(code=requirement.code, field_path=field) for field in fields
             )
         return issues or [BankStatementIssue(code="BANK_RECONCILIATION_REJECTED")]
 
@@ -2887,8 +2881,7 @@ class BankStatementService:
             action_id=action.id,
             calculation_hash=action.calculation_hash,
             errors=[
-                BankStatementIssue(code=item.code, field_path=item.field_path)
-                for item in failures
+                BankStatementIssue(code=item.code, field_path=item.field_path) for item in failures
             ],
             trace=[{"stage": "bank_reconciliation_idempotent_replay"}],
             data={
@@ -2956,9 +2949,7 @@ class BankStatementService:
         if winner is None:
             return self._action_error("BANK_RECONCILIATION_CONCURRENT_WRITE_CONFLICT")
         if winner.request_payload_hash != request_payload_hash:
-            return self._action_error(
-                "BANK_RECONCILIATION_IDEMPOTENCY_PAYLOAD_MISMATCH"
-            )
+            return self._action_error("BANK_RECONCILIATION_IDEMPOTENCY_PAYLOAD_MISMATCH")
         return self._replay_reconciliation_action(winner)
 
     @staticmethod
@@ -3025,10 +3016,7 @@ class BankStatementService:
         if self.session.get_bind().dialect.name != "postgresql":
             return
         installed = self.session.scalar(
-            text(
-                "SELECT to_regclass('public.bank_reconciliation_scope_actions') "
-                "IS NOT NULL"
-            )
+            text("SELECT to_regclass('public.bank_reconciliation_scope_actions') IS NOT NULL")
         )
         if installed is not True:
             return

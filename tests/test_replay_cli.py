@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import uuid
 from types import SimpleNamespace
 
@@ -7,6 +9,108 @@ import pytest
 from sqlalchemy.engine import make_url
 
 from ai_accounting import replay_cli
+
+
+def test_checkpoint_replacement_failure_preserves_previous_state(tmp_path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    replay_cli._write_json(state_file, {"completed": ["first"]})
+
+    def fail_replace(*_args):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(replay_cli.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        replay_cli._write_json(state_file, {"completed": ["first", "second"]}, compact=True)
+    assert replay_cli._load_json(state_file) == {"completed": ["first"]}
+    assert list(tmp_path.iterdir()) == [state_file]
+
+
+def test_replay_lock_excludes_another_process_and_releases_after_failure(tmp_path):
+    state_file = tmp_path / "state.json"
+    code = (
+        "import sys\nfrom pathlib import Path\n"
+        "from ai_accounting.replay_cli import _replay_state_lock, ReplayError\n"
+        "try:\n"
+        "    with _replay_state_lock(Path(sys.argv[1])): print('acquired')\n"
+        "except ReplayError as exc: print(exc.code)\n"
+    )
+
+    def attempt():
+        return subprocess.run(
+            [sys.executable, "-c", code, str(state_file)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        with replay_cli._replay_state_lock(state_file):
+            assert attempt() == "REPLAY_STATE_ALREADY_IN_USE"
+            raise RuntimeError("interrupted")
+    assert attempt() == "acquired"
+
+
+def test_replay_checkpoints_progress_and_resumes_only_pending_operations(tmp_path, monkeypatch):
+    operations = [
+        {"key": key, "kind": "tool", "tool": "test", "request": {}}
+        for key in ("first", "second", "third")
+    ]
+    package, org_id = _resume_package(tmp_path, operations)
+    state = _resume_state(package, org_id, [])
+    state["companies"][0]["database_name"] = "isolated"
+    state_file = tmp_path / "state.json"
+    replay_cli._write_json(state_file, state)
+    monkeypatch.setattr(
+        replay_cli, "_load_state", lambda *_: (state_file, replay_cli._load_json(state_file))
+    )
+    monkeypatch.setattr(replay_cli, "_validate_replay_target", lambda *_: None)
+    monkeypatch.setattr(
+        replay_cli,
+        "get_settings",
+        lambda: SimpleNamespace(
+            finance_environment="development",
+            finance_migration_database_url="sqlite://",
+        ),
+    )
+    disposed = []
+    monkeypatch.setattr(
+        replay_cli,
+        "create_engine",
+        lambda *_: SimpleNamespace(dispose=lambda: disposed.append(True)),
+    )
+    from ai_accounting import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_initialize_mcp_credential_store", lambda **_: None)
+    monkeypatch.setattr(replay_cli, "_call_tool", lambda *_: {"status": "ok"})
+    executed = []
+
+    def execute(operation, **_kwargs):
+        if operation["key"] == "second" and executed == ["first"]:
+            executed.append("failed-second")
+            raise replay_cli.ReplayError("TEST_INTERRUPTION")
+        executed.append(operation["key"])
+        return {"status": "posted"}
+
+    monkeypatch.setattr(replay_cli, "_execute_operation", execute)
+    progress = []
+    with pytest.raises(replay_cli.ReplayError, match="TEST_INTERRUPTION"):
+        replay_cli.replay_system(package, state_file, progress=progress.append)
+    assert replay_cli._load_json(state_file)["companies"][0]["completed_operations"] == ["first"]
+    result = replay_cli.replay_system(package, state_file, progress=progress.append)
+    assert executed == ["first", "failed-second", "second", "third"]
+    assert result["completed_operations_this_run"] == 2
+    assert result["timing"]["operation_seconds_by_kind"]["tool"]["count"] == 2
+    assert len(disposed) == 2
+    assert [row["operation_key"] for row in progress if row["status"] == "operation_completed"] == [
+        "first",
+        "second",
+        "third",
+    ]
+    assert progress[-1]["company_completed"] == progress[-1]["company_total"] == 3
+    saved = replay_cli._load_json(state_file)
+    assert saved["phase"] == "replayed"
+    assert saved["last_run_timing"] == result["timing"]
 
 
 def _resume_package(tmp_path, operations):
@@ -69,8 +173,8 @@ def _resume_state(package, org_id, completed):
 
 
 def test_replay_distinguishes_baseline_identity_from_current_heads() -> None:
-    assert replay_cli._BUSINESS_REVISION == "0001_business_baseline_v3"
-    assert replay_cli._current_schema_revision(catalog=False) == "0004_fact_precision"
+    assert replay_cli._BUSINESS_REVISION == "0001_business_baseline_v4"
+    assert replay_cli._current_schema_revision(catalog=False) == "0001_business_baseline_v4"
     assert replay_cli._current_schema_revision(catalog=True) == "0001_catalog_baseline_v2"
 
 
@@ -538,3 +642,93 @@ def test_export_connection_forces_source_read_only(monkeypatch: pytest.MonkeyPat
     replay_cli._readonly_source_engine("postgresql://local/source")
     assert seen["connect_args"]["options"] == "-c default_transaction_read_only=on"
     assert seen["isolation_level"] == "REPEATABLE READ"
+
+
+def test_export_retains_confirmed_no_wage_plan_with_stable_employee_reference(monkeypatch):
+    org_id, employee_id = uuid.uuid4(), uuid.uuid4()
+    items = [{"employee_id": str(employee_id), "wage_tax_scope": "contributions_only"}]
+
+    def rows(_session, sql, **_parameters):
+        if "FROM owner_period_confirmations" not in sql:
+            return []
+        return [
+            {
+                "fact_type": "workforce_review",
+                "confirmation_state": "no_change",
+                "confirmation_note": "已确认",
+                "evidence_snapshot": [],
+                "calendar_year": 2026,
+                "calendar_month": 7,
+                "source_snapshot": {
+                    "regular_payroll_plan": {
+                        "version": "regular_payroll_plan_v1",
+                        "employee_items": items,
+                    }
+                },
+            }
+        ]
+
+    monkeypatch.setattr(replay_cli, "_query_rows", rows)
+    reference = {"$ref": "employee", "employee_code": "E01"}
+    maps = {
+        key: {}
+        for key in (
+            "income_tax",
+            "evidence",
+            "bank",
+            "employee",
+            "open_item",
+            "component",
+            "asset",
+            "intangible",
+            "labor_person",
+            "borrowing",
+            "event",
+            "counterparty",
+        )
+    }
+    maps["employee"][str(employee_id)] = reference
+    operations = replay_cli._owner_control_operations(object(), org_id=org_id, maps=maps)
+    assert operations[0]["regular_payroll_items"] == [
+        {"employee_id": reference, "wage_tax_scope": "contributions_only"}
+    ]
+
+
+def test_export_repreviews_specialized_depreciation_batch():
+    operation = replay_cli._event_operation(
+        object(),
+        {
+            "id": uuid.uuid4(),
+            "idempotency_key": "asset-batch",
+            "event_type": "fixed_asset_depreciation_batch",
+            "description": "月折旧",
+            "business_date": "2026-08-31",
+            "posting_date": "2026-08-31",
+            "created_at": "2026-09-01",
+            "facts": {
+                "depreciation_period": "2026-08",
+                "posting_date": "2026-08-31",
+            },
+        },
+        org_id=uuid.uuid4(),
+        maps={
+            key: {}
+            for key in (
+                "income_tax",
+                "evidence",
+                "bank",
+                "employee",
+                "open_item",
+                "component",
+                "asset",
+                "intangible",
+                "labor_person",
+                "borrowing",
+                "event",
+                "counterparty",
+            )
+        },
+    )
+    assert operation["preview_tool"] == "finance_preview_fixed_asset_depreciation_batch"
+    assert operation["confirm_tool"] == "finance_confirm_fixed_asset_depreciation_batch"
+    assert operation["preview_request"]["depreciation_period"] == "2026-08"

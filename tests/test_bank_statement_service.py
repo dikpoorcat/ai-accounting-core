@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 import pytest
 from pydantic import SecretStr, ValidationError
+from sqlalchemy import event as sa_event
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -59,10 +60,13 @@ ORG_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 PERIOD_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
 
 
+@pytest.mark.parametrize("row_count", [2, 40])
 def test_bank_match_validation_accepts_multiple_rows_for_one_aggregate_voucher(
     session: Session,
     organization: Organization,
+    row_count: int,
 ) -> None:
+    total_fen = sum(10_000 * (index + 1) for index in range(row_count))
     bank_account = session.scalar(
         select(Account).where(
             Account.org_id == organization.id,
@@ -106,7 +110,7 @@ def test_bank_match_validation_accepts_multiple_rows_for_one_aggregate_voucher(
                 voucher_id=voucher.id,
                 line_number=1,
                 account_id=expense_account.id,
-                debit_fen=30_000,
+                debit_fen=total_fen,
                 credit_fen=0,
             ),
             VoucherLine(
@@ -115,7 +119,7 @@ def test_bank_match_validation_accepts_multiple_rows_for_one_aggregate_voucher(
                 line_number=2,
                 account_id=bank_account.id,
                 debit_fen=0,
-                credit_fen=30_000,
+                credit_fen=total_fen,
             ),
         ]
     )
@@ -123,15 +127,15 @@ def test_bank_match_validation_accepts_multiple_rows_for_one_aggregate_voucher(
         BankTransaction(
             org_id=organization.id,
             bank_account_code=bank_account.code,
-            fingerprint=character * 64,
-            booking_date=date(2026, 8, 10),
-            amount_fen=amount_fen,
+            fingerprint=f"{index:064x}",
+            booking_date=date(2026, 8 if index == 0 else 9, 10),
+            amount_fen=-10_000 * (index + 1),
             currency="CNY",
             memo="汇总付款",
             source_sha256="f" * 64,
             matched_event_id=event.id,
         )
-        for character, amount_fen in (("a", -10_000), ("b", -20_000))
+        for index in range(row_count)
     ]
     session.add_all(transactions)
     session.flush()
@@ -149,6 +153,46 @@ def test_bank_match_validation_accepts_multiple_rows_for_one_aggregate_voucher(
     service = BankStatementService(session)
     assert service._valid_current_match(transactions[0], matches[0]) is True
     assert service._valid_current_match(transactions[1], matches[1]) is True
+
+    queries = []
+
+    def count_query(_connection, _cursor, statement, _parameters, _context, _many):
+        queries.append(statement)
+
+    engine = session.get_bind()
+    sa_event.listen(engine, "before_cursor_execute", count_query)
+    try:
+        snapshot = service._current_match_snapshot(organization.id, matches)
+        assert all(
+            service._valid_current_match(transaction, match, snapshot=snapshot)
+            for transaction, match in zip(transactions, matches, strict=True)
+        )
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", count_query)
+    assert len(queries) == 3  # independent of bank-row count and ORM eager loaders
+
+    # A subset (e.g. the first month) must still include the other active rows.
+    subset = service._current_match_snapshot(organization.id, matches[:1])
+    assert service._valid_current_match(transactions[0], matches[0], snapshot=subset)
+    assert not service._valid_current_match(transactions[0], None, snapshot=subset)
+    foreign = service._current_match_snapshot(uuid.uuid4(), matches)
+    with pytest.raises(ValueError, match="MATCH_SNAPSHOT_ORG_MISMATCH"):
+        service._valid_current_match(transactions[0], matches[0], snapshot=foreign)
+
+    # Every new snapshot observes invalidations and reversals in the same session.
+    matches[-1].invalidated_by_event_id = event.id
+    matches[-1].invalidated_at = datetime.now(UTC)
+    session.flush()
+    with pytest.raises(ValueError, match="MATCHED_EVENT_BANK_ACCOUNT_MISMATCH"):
+        service._valid_current_match(transactions[0], matches[0])
+    event.status = "reversed"
+    session.flush()
+    assert not service._valid_current_match(transactions[0], matches[0])
+    event.status = "posted"
+    voucher.status = "reversed"
+    session.flush()
+    with pytest.raises(ValueError, match="MATCHED_EVENT_BANK_ACCOUNT_MISMATCH"):
+        service._valid_current_match(transactions[0], matches[0])
 
 
 class _Rows:
@@ -356,9 +400,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             explanation="首次确认当前没有实际银行账户",
             evidence_references=[evidence.id],
         )
-        zero_scope_preview = service.preview_bank_reconciliation_scope(
-            zero_scope_request
-        )
+        zero_scope_preview = service.preview_bank_reconciliation_scope(zero_scope_request)
         assert zero_scope_preview.calculation_hash is not None
         zero_scope_confirm = ConfirmBankReconciliationScopeRequest.model_validate(
             zero_scope_request.model_dump()
@@ -368,9 +410,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             }
         )
         zero_scope = service.confirm_bank_reconciliation_scope(zero_scope_confirm)
-        zero_scope_replay = service.confirm_bank_reconciliation_scope(
-            zero_scope_confirm
-        )
+        zero_scope_replay = service.confirm_bank_reconciliation_scope(zero_scope_confirm)
         zero_scope_changed_same_key = service.confirm_bank_reconciliation_scope(
             zero_scope_confirm.model_copy(update={"explanation": "改变后的说明"})
         )
@@ -393,9 +433,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             explanation="确认银行存款账户从八月启用",
             evidence_references=[evidence.id],
         )
-        bind_scope_preview = service.preview_bank_reconciliation_scope(
-            bind_scope_request
-        )
+        bind_scope_preview = service.preview_bank_reconciliation_scope(bind_scope_request)
         assert bind_scope_preview.calculation_hash is not None
         bind_scope = service.confirm_bank_reconciliation_scope(
             ConfirmBankReconciliationScopeRequest.model_validate(
@@ -428,9 +466,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             explanation="新增第二个实际银行账户",
             evidence_references=[evidence.id],
         )
-        add_account_preview = service.preview_bank_reconciliation_scope(
-            add_account_request
-        )
+        add_account_preview = service.preview_bank_reconciliation_scope(add_account_request)
         assert add_account_preview.calculation_hash is not None
         renamed_scope = service.confirm_bank_reconciliation_scope(
             ConfirmBankReconciliationScopeRequest.model_validate(
@@ -438,9 +474,9 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
                 | {
                     "accounts": [
                         add_account_request.accounts[0].model_dump(),
-                        add_account_request.accounts[1].model_copy(
-                            update={"account_name": "被替换的银行账户名称"}
-                        ).model_dump(),
+                        add_account_request.accounts[1]
+                        .model_copy(update={"account_name": "被替换的银行账户名称"})
+                        .model_dump(),
                     ],
                     "calculation_hash": add_account_preview.calculation_hash,
                     "idempotency_key": "scope-add-1003-renamed",
@@ -448,9 +484,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             )
         )
         assert renamed_scope.status == "rejected"
-        assert renamed_scope.errors[0].code == (
-            "BANK_RECONCILIATION_SCOPE_CALCULATION_STALE"
-        )
+        assert renamed_scope.errors[0].code == ("BANK_RECONCILIATION_SCOPE_CALCULATION_STALE")
         stale_scope = service.confirm_bank_reconciliation_scope(
             ConfirmBankReconciliationScopeRequest.model_validate(
                 add_account_request.model_dump()
@@ -461,9 +495,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             )
         )
         assert stale_scope.status == "rejected"
-        assert stale_scope.errors[0].code == (
-            "BANK_RECONCILIATION_SCOPE_CALCULATION_STALE"
-        )
+        assert stale_scope.errors[0].code == ("BANK_RECONCILIATION_SCOPE_CALCULATION_STALE")
         add_account = service.confirm_bank_reconciliation_scope(
             ConfirmBankReconciliationScopeRequest.model_validate(
                 add_account_request.model_dump()
@@ -488,18 +520,22 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
         scope_action = session.get(BankReconciliationScopeAction, add_account.action_id)
         assert scope_action is not None
         assert scope_action.scope_snapshot is not None
-        assert next(
-            item
-            for item in scope_action.scope_snapshot
-            if item["bank_account_code"] == "1003"
-        )["account_name"] == "第二银行账户"
-        assert len(
-            session.scalars(
-                select(AccountBankReconciliationScopeHistory).where(
-                    AccountBankReconciliationScopeHistory.org_id == organization.id
-                )
-            ).all()
-        ) == 2
+        assert (
+            next(
+                item for item in scope_action.scope_snapshot if item["bank_account_code"] == "1003"
+            )["account_name"]
+            == "第二银行账户"
+        )
+        assert (
+            len(
+                session.scalars(
+                    select(AccountBankReconciliationScopeHistory).where(
+                        AccountBankReconciliationScopeHistory.org_id == organization.id
+                    )
+                ).all()
+            )
+            == 2
+        )
         generated = AccountingPeriodService(
             session,
             current_date=date(2026, 8, 11),
@@ -559,9 +595,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
         assert different_key.status == "posted"
         assert different_key.data["imported_count"] == 0
         assert different_key.data["duplicate_count"] == 1
-        assert changed_same_key.errors[0].code == (
-            "BANK_STATEMENT_IDEMPOTENCY_PAYLOAD_MISMATCH"
-        )
+        assert changed_same_key.errors[0].code == ("BANK_STATEMENT_IDEMPOTENCY_PAYLOAD_MISMATCH")
         assert session.get(BankStatementImportAction, first.action_id) is not None
         transactions = session.scalars(
             select(BankTransaction).where(BankTransaction.org_id == organization.id)
@@ -577,12 +611,8 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             calculation_hash="0" * 64,
             idempotency_key="reject-non-late-transaction",
         )
-        late_rejection = service.confirm_late_bank_evidence(
-            late_rejection_request
-        )
-        late_rejection_replay = service.confirm_late_bank_evidence(
-            late_rejection_request
-        )
+        late_rejection = service.confirm_late_bank_evidence(late_rejection_request)
+        late_rejection_replay = service.confirm_late_bank_evidence(late_rejection_request)
         late_rejection_mismatch = service.confirm_late_bank_evidence(
             late_rejection_request.model_copy(update={"calculation_hash": "1" * 64})
         )
@@ -597,9 +627,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             late_rejection.action_id,
         )
         assert late_rejection_action is not None
-        assert late_rejection_action.error_code == (
-            "LATE_BANK_EVIDENCE_ORIGINAL_PERIOD_NOT_CLOSED"
-        )
+        assert late_rejection_action.error_code == ("LATE_BANK_EVIDENCE_ORIGINAL_PERIOD_NOT_CLOSED")
         assert late_rejection_action.calculation_payload is None
 
         unavailable_confirm = confirm.model_copy(
@@ -638,9 +666,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
         )
         assert failure is not None
         assert failure.code == "BANK_STATEMENT_INPUT_UNAVAILABLE"
-        assert "missing.csv" not in canonical_json(
-            unavailable.model_dump(mode="json")
-        )
+        assert "missing.csv" not in canonical_json(unavailable.model_dump(mode="json"))
 
         reconciliation_request = PreviewBankReconciliationRequest(
             org_id=organization.id,
@@ -661,9 +687,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
                 }
             ],
         )
-        reconciliation_preview = service.preview_bank_reconciliation(
-            reconciliation_request
-        )
+        reconciliation_preview = service.preview_bank_reconciliation(reconciliation_request)
         assert reconciliation_preview.status == "calculated"
         assert reconciliation_preview.calculation_hash is not None
         reconciliation_confirm = ConfirmBankReconciliationRequest.model_validate(
@@ -674,12 +698,8 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             }
         )
 
-        reconciliation_result = service.confirm_bank_reconciliation(
-            reconciliation_confirm
-        )
-        reconciliation_replay = service.confirm_bank_reconciliation(
-            reconciliation_confirm
-        )
+        reconciliation_result = service.confirm_bank_reconciliation(reconciliation_confirm)
+        reconciliation_replay = service.confirm_bank_reconciliation(reconciliation_confirm)
 
         assert reconciliation_result.status == "posted"
         assert reconciliation_replay.action_id == reconciliation_result.action_id
@@ -693,13 +713,16 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
         assert reconciliation.version == 1
         assert reconciliation.unmatched_transaction_count == 1
         assert session.get(BankReconciliationAction, reconciliation_result.action_id)
-        assert len(
-            session.scalars(
-                select(BankReconciliationEvidence).where(
-                    BankReconciliationEvidence.reconciliation_id == reconciliation.id
-                )
-            ).all()
-        ) == 1
+        assert (
+            len(
+                session.scalars(
+                    select(BankReconciliationEvidence).where(
+                        BankReconciliationEvidence.reconciliation_id == reconciliation.id
+                    )
+                ).all()
+            )
+            == 1
+        )
         original_reconciliation_payload = reconciliation.calculation_payload
         (tmp_path / "august-extra.csv").write_bytes(
             b"date,amount,reference\n2026-08-09,2.00,A002\n"
@@ -707,9 +730,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
         extra_import_request = preview_request.model_copy(
             update={"source_file_name": "august-extra.csv"}
         )
-        extra_import_preview = service.preview_bank_statement_import(
-            extra_import_request
-        )
+        extra_import_preview = service.preview_bank_statement_import(extra_import_request)
         assert extra_import_preview.calculation_hash is not None
         extra_import = service.confirm_bank_statement_import(
             ConfirmBankStatementFileImportRequest.model_validate(
@@ -721,9 +742,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             )
         )
         assert extra_import.status == "posted"
-        stale_old_reconciliation = service.preview_bank_reconciliation(
-            reconciliation_request
-        )
+        stale_old_reconciliation = service.preview_bank_reconciliation(reconciliation_request)
         assert stale_old_reconciliation.status == "rejected"
         assert stale_old_reconciliation.errors[0].code == (
             "BANK_RECONCILIATION_INCOMPLETE_IMPORT_ACTION_SET"
@@ -742,25 +761,22 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             rejected_old_reconciliation_request
         )
         rejected_old_reconciliation_mismatch = service.confirm_bank_reconciliation(
-            rejected_old_reconciliation_request.model_copy(
-                update={"calculation_hash": "0" * 64}
-            )
+            rejected_old_reconciliation_request.model_copy(update={"calculation_hash": "0" * 64})
         )
         assert rejected_old_reconciliation.status == "rejected"
         assert rejected_old_reconciliation.action_id is not None
-        assert (
-            rejected_old_reconciliation.action_id
-            == rejected_old_reconciliation_replay.action_id
-        )
+        assert rejected_old_reconciliation.action_id == rejected_old_reconciliation_replay.action_id
         assert rejected_old_reconciliation_mismatch.errors[0].code == (
             "BANK_RECONCILIATION_IDEMPOTENCY_PAYLOAD_MISMATCH"
         )
-        assert session.scalar(
-            select(BankReconciliationFailure).where(
-                BankReconciliationFailure.action_id
-                == rejected_old_reconciliation.action_id
+        assert (
+            session.scalar(
+                select(BankReconciliationFailure).where(
+                    BankReconciliationFailure.action_id == rejected_old_reconciliation.action_id
+                )
             )
-        ) is not None
+            is not None
+        )
         second_reconciliation_request = PreviewBankReconciliationRequest.model_validate(
             reconciliation_request.model_dump()
             | {
@@ -798,20 +814,26 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
         assert second_snapshot is not None
         assert second_snapshot.version == 2
         assert reconciliation.calculation_payload == original_reconciliation_payload
-        assert len(
-            session.scalars(
-                select(BankReconciliationImportAction).where(
-                    BankReconciliationImportAction.reconciliation_id == reconciliation.id
-                )
-            ).all()
-        ) == 1
-        assert len(
-            session.scalars(
-                select(BankReconciliationTransaction).where(
-                    BankReconciliationTransaction.reconciliation_id == reconciliation.id
-                )
-            ).all()
-        ) == 1
+        assert (
+            len(
+                session.scalars(
+                    select(BankReconciliationImportAction).where(
+                        BankReconciliationImportAction.reconciliation_id == reconciliation.id
+                    )
+                ).all()
+            )
+            == 1
+        )
+        assert (
+            len(
+                session.scalars(
+                    select(BankReconciliationTransaction).where(
+                        BankReconciliationTransaction.reconciliation_id == reconciliation.id
+                    )
+                ).all()
+            )
+            == 1
+        )
 
         activity = service.get_bank_statement_activity(
             GetBankStatementActivityRequest(
@@ -834,8 +856,9 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
                 closing_date=date(2026, 8, 31),
             )
         )
-        assert "ACCOUNTING_PERIOD_BANK_RECONCILIATIONS_CURRENT" in (
-            close_preview.data["blocker_codes"]
+        assert (
+            "ACCOUNTING_PERIOD_BANK_RECONCILIATIONS_CURRENT"
+            in (close_preview.data["blocker_codes"])
         )
         zero_activity_request = PreviewBankReconciliationRequest(
             org_id=organization.id,
@@ -847,9 +870,7 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
             statement_closing_balance_fen=0,
             statement_evidence_references=[evidence.id],
         )
-        zero_activity_preview = service.preview_bank_reconciliation(
-            zero_activity_request
-        )
+        zero_activity_preview = service.preview_bank_reconciliation(zero_activity_request)
         assert zero_activity_preview.calculation_hash is not None
         zero_activity = service.confirm_bank_reconciliation(
             ConfirmBankReconciliationRequest.model_validate(
@@ -878,8 +899,9 @@ def test_confirm_csv_posts_once_and_replays_same_idempotency_key(session, tmp_pa
                 closing_date=date(2026, 8, 31),
             )
         )
-        assert "ACCOUNTING_PERIOD_BANK_RECONCILIATIONS_CURRENT" not in (
-            current_close_preview.data["blocker_codes"]
+        assert (
+            "ACCOUNTING_PERIOD_BANK_RECONCILIATIONS_CURRENT"
+            not in (current_close_preview.data["blocker_codes"])
         )
 
 

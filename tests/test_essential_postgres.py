@@ -60,24 +60,12 @@ def _config(database_url: str) -> Config:
 
 @pytest.mark.postgres
 @pytest.mark.postgres_current
-def test_essential_forward_migration_matches_models_and_installs_guards() -> None:
+def test_essential_baseline_matches_models_and_installs_guards() -> None:
     with isolated_postgres_url("essential_migration") as database_url:
         config = _config(database_url)
-        command.upgrade(config, "0002_purchase_projects")
+        command.upgrade(config, "head")
         engine = sa.create_engine(database_url)
         try:
-            before = inspect(engine)
-            assert "business_metadata_versions" not in before.get_table_names()
-            assert (
-                next(
-                    column
-                    for column in before.get_columns("open_items")
-                    if column["name"] == "counterparty_id"
-                )["nullable"]
-                is False
-            )
-
-            command.upgrade(config, "head")
             command.check(config)
             inspector = inspect(engine)
             assert "business_metadata_versions" in inspector.get_table_names()
@@ -92,7 +80,7 @@ def test_essential_forward_migration_matches_models_and_installs_guards() -> Non
             with engine.connect() as connection:
                 assert (
                     connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-                    == "0004_fact_precision"
+                    == "0001_business_baseline_v4"
                 )
                 purchase = connection.scalar(
                     sa.text(

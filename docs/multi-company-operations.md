@@ -32,7 +32,7 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 ## 双基线与旧库边界
 
 目录库和业务库分别只有一个空库基线：`0001_catalog_baseline_v2` 与
-`0001_business_baseline_v3`。旧业务 revision `0001`–`0022`、旧目录 revision
+`0001_business_baseline_v4`。旧业务 revision `0001`–`0022`、旧目录 revision
 `0001`–`0004` 以及 `migrate-single-database` 过渡入口均已移除。
 
 这些新基线不支持旧库原地升级，也不接受通过 SQL 搬运业务行。需要重建已有系统时，只读导出

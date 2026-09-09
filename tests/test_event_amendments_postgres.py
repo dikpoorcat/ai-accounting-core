@@ -475,7 +475,7 @@ def test_v3_baseline_and_all_posting_families(tmp_path):
         engine = create_engine(url)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0001_business_baseline_v3"
+                "0001_business_baseline_v4"
             )
         with Session(engine) as session:
             org = seed_organization(

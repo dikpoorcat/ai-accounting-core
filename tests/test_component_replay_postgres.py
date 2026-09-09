@@ -813,6 +813,23 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                 target_session, org_id=target_org_id
             ) == replay_cli._open_item_projection(source_session, org_id=source_org_id)
 
+            exported_refs = replay_cli._stable_maps(source_session, source_org_id)["open_item"]
+            generated_line_refs = {
+                source_id: reference
+                for source_id, reference in exported_refs.items()
+                if isinstance(reference.get("open_item_key"), dict)
+            }
+            assert generated_line_refs
+            for source_id, reference in generated_line_refs.items():
+                target_id = resolver.materialize(reference)
+                assert target_id != source_id
+                assert (
+                    target_session.scalar(
+                        select(OpenItem.org_id).where(OpenItem.id == uuid.UUID(target_id))
+                    )
+                    == target_org_id
+                )
+
             def obligation_state(session: Session, org_id: uuid.UUID) -> list[tuple]:
                 return list(
                     session.execute(

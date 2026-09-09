@@ -1,6 +1,6 @@
 # 组件式代收代付
 
-运行协议 `business-components-v3`，业务库执行至前向迁移 `0004_fact_precision`。
+运行协议 `business-components-v3`，业务库使用空库基线 `0001_business_baseline_v4`。
 代收与应收核销、预收和其他业务采用相同 `finance_record_event` 组件协议，银行或现金收付
 统一放在 `funds`。代收确认代收代付负债，不形成收入或预收款；不必先登记受益人或债权人。
 

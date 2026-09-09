@@ -71,7 +71,7 @@ def test_v3_baseline_atomic_correction_concurrency_and_restore(tmp_path, monkeyp
         engine = create_engine(url)
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0001_business_baseline_v3"
+                "0001_business_baseline_v4"
             )
         with Session(engine) as session:
             org = seed_organization(
@@ -212,7 +212,7 @@ def test_v3_baseline_atomic_correction_concurrency_and_restore(tmp_path, monkeyp
                 evidence_root=evidence_root,
                 evidence=(snapshot,),
                 database=DatabaseDumpMetadata(
-                    schema_revision="0001_business_baseline_v3",
+                    schema_revision="0001_business_baseline_v4",
                     source_system_identifier="123456789",
                 ),
                 artifact_type="company",
@@ -332,9 +332,7 @@ def test_v3_baseline_atomic_correction_concurrency_and_restore(tmp_path, monkeyp
                     return mcp_server._preview_with_ephemeral_attribution(
                         session,
                         replay_authority.context,
-                        lambda: ComponentService(session)
-                        .preview(request)
-                        .model_dump(mode="json"),
+                        lambda: ComponentService(session).preview(request).model_dump(mode="json"),
                     )
                 if name == "finance_record_event":
                     from ai_accounting.component_schemas import RecordEventRequest
@@ -500,11 +498,11 @@ def test_v3_baseline_atomic_correction_concurrency_and_restore(tmp_path, monkeyp
             effective = replay_cli._effective_events(session, org_id)
             cash_operations = sorted(
                 replay_cli._income_tax_operations(session, org_id=org_id, maps=maps)
-                    + [
-                        replay_cli._event_operation(session, event, org_id=org_id, maps=maps)
-                        for event in effective
-                        if maps["event"][str(event["id"])].get("$ref") == "event"
-                    ],
+                + [
+                    replay_cli._event_operation(session, event, org_id=org_id, maps=maps)
+                    for event in effective
+                    if maps["event"][str(event["id"])].get("$ref") == "event"
+                ],
                 key=lambda operation: operation["source_created_at"],
             )
             inventory = replay_cli._income_tax_event_inventory(effective, maps)

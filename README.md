@@ -134,10 +134,11 @@ Alembic revision。需要恢复已有系统时，先验证本地私有回放包�
 命令先保存初始化状态，再打开首次负责人设置表单；保存恢复码后自动登录。核验窗口状态成功后，再执行 `finance-replay replay`
 和 `finance-replay verify`。回放固定先处理非默认公司、最后处理默认公司，以便高风险公司
 尽早失败。全新公司仍通过登录后的 `finance_create_company` 类型化入口创建，正常公司创建会把
-业务库升级到 `0001_business_baseline_v3`。
+业务库升级到 `0001_business_baseline_v4`。
 
-`0001_catalog_baseline_v2` 和 `0001_business_baseline_v3` 分别是目录库与业务库的唯一空库
-基线。旧业务 revision `0001`–`0022`、旧目录 revision `0001`–`0004` 已移除，均不支持原地
+`0001_catalog_baseline_v2` 和 `0001_business_baseline_v4` 分别是目录库与业务库的唯一空库
+基线。旧业务 revision `0001`–`0022`、业务 v2/v3 及后续至 `0004_fact_precision`、
+旧目录 revision `0001`–`0004` 已移除，均不支持原地
 升级；旧库只能按受控空库回放重建。正式库启用后的结构变化继续使用新的前向 revision 管理。
 拉取新代码后不要把迁移命令当成日常启动命令直接执行。
 

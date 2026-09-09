@@ -19,13 +19,6 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: public; Type: SCHEMA; Schema: -; Owner: -
---
-
--- *not* creating schema, since initdb creates it
-
-
---
 -- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
 --
 
@@ -157,9 +150,9 @@ BEGIN
            OR length(trim(target_action.idempotency_key)) = 0
            OR target_action.request_payload_hash !~ '^[0-9a-f]{64}$'
            OR target_action.confirmed_by IS NOT NULL
-           OR target_action.confirmation_note IS NULL
-           OR length(trim(target_action.confirmation_note)) = 0
-           OR length(target_action.confirmation_note) > 2000
+           OR (target_action.confirmation_note IS NOT NULL AND (
+                  length(trim(target_action.confirmation_note)) = 0
+                  OR length(target_action.confirmation_note) > 2000))
            OR target_action.input_facts::jsonb = '{}'::jsonb
            OR target_action.request_payload_hash <> expected_request_hash
            OR target_action.input_facts::jsonb ->> 'org_id' <> target_action.org_id::text
@@ -173,9 +166,7 @@ BEGIN
            OR jsonb_array_length(target_action.input_facts::jsonb -> 'evidence_references') <>
               (SELECT count(DISTINCT value) FROM jsonb_array_elements_text(
                   target_action.input_facts::jsonb -> 'evidence_references') AS value)
-           OR NOT EXISTS (SELECT 1 FROM accounting_period_action_evidence AS evidence
-                WHERE evidence.org_id = target_action.org_id
-                  AND evidence.action_id = target_action.id) THEN
+ THEN
             RAISE EXCEPTION 'ACCOUNTING_PERIOD_SNAPSHOT_IMMUTABLE';
         END IF;
         SELECT EXISTS (
@@ -227,20 +218,6 @@ BEGIN
         IF linked_count <> 1 THEN
             RAISE EXCEPTION 'ACCOUNTING_PERIOD_SNAPSHOT_IMMUTABLE';
         END IF;
-        IF target_action.action_type = 'period_close' AND (
-            target_action.input_facts::jsonb
-                #>> '{review_facts,voucher_completeness_reviewed}' <> 'true'
-            OR target_action.input_facts::jsonb
-                #>> '{review_facts,bank_reconciliation_reviewed}' <> 'true'
-            OR target_action.input_facts::jsonb
-                #>> '{review_facts,open_items_reviewed}' <> 'true'
-            OR target_action.input_facts::jsonb
-                #>> '{review_facts,payroll_and_statutory_items_reviewed}' <> 'true'
-            OR target_action.input_facts::jsonb
-                #>> '{review_facts,tax_items_reviewed}' <> 'true'
-            OR target_action.input_facts::jsonb
-                #>> '{review_facts,asset_and_borrowing_schedules_reviewed}' <> 'true'
-        ) THEN RAISE EXCEPTION 'ACCOUNTING_PERIOD_REVIEW_INCOMPLETE'; END IF;
     ELSE
         IF target_action.request_payload_hash IS NULL
            OR target_action.request_payload_hash !~ '^[0-9a-f]{64}$'
@@ -789,173 +766,51 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
             SELECT count(*) INTO borrowing_missing
               FROM borrowings AS borrowing
               JOIN business_events AS draw_event
-                ON draw_event.org_id = borrowing.org_id
-               AND draw_event.id = borrowing.drawdown_event_id
-             WHERE borrowing.org_id = target_period.org_id
-               AND borrowing.drawdown_date <= target_period.end_date
-               AND draw_event.status = 'posted'
-               AND EXISTS (
-                   SELECT 1
-                     FROM jsonb_array_elements_text(
-                         borrowing.interest_due_dates::jsonb
-                     ) WITH ORDINALITY AS due(value, sequence_no)
-                    WHERE due.value::date <= target_period.end_date
-                      AND (SELECT count(*)
-                             FROM borrowing_interest_accruals AS accrual
-                             JOIN business_events AS accrual_event
-                               ON accrual_event.org_id = accrual.org_id
-                              AND accrual_event.id = accrual.event_id
-                            WHERE accrual.org_id = borrowing.org_id
-                              AND accrual.borrowing_id = borrowing.id
-                              AND accrual.period_end = due.value::date
-                              AND accrual.sequence_no = due.sequence_no
-                              AND accrual_event.status = 'posted') <> 1
+                ON draw_event.org_id=borrowing.org_id
+               AND draw_event.id=borrowing.drawdown_event_id
+             WHERE borrowing.org_id=target_period.org_id
+               AND draw_event.status='posted'
+               AND borrowing.drawdown_date<=target_period.end_date
+               AND borrowing.drawdown_date<LEAST(target_period.end_date,borrowing.due_date)
+               AND (
+                   (SELECT min(accrual.period_start)
+                      FROM borrowing_interest_accruals accrual
+                      JOIN business_events event
+                        ON event.org_id=accrual.org_id AND event.id=accrual.event_id
+                     WHERE accrual.org_id=borrowing.org_id
+                       AND accrual.borrowing_id=borrowing.id
+                       AND accrual.period_end<=LEAST(target_period.end_date,borrowing.due_date)
+                       AND event.status='posted') IS DISTINCT FROM borrowing.drawdown_date
+                   OR (SELECT max(accrual.period_end)
+                         FROM borrowing_interest_accruals accrual
+                         JOIN business_events event
+                           ON event.org_id=accrual.org_id AND event.id=accrual.event_id
+                        WHERE accrual.org_id=borrowing.org_id
+                          AND accrual.borrowing_id=borrowing.id
+                          AND accrual.period_end<=LEAST(target_period.end_date,borrowing.due_date)
+                          AND event.status='posted') IS DISTINCT FROM
+                      LEAST(target_period.end_date,borrowing.due_date)
+                   OR EXISTS (
+                       SELECT 1 FROM (
+                           SELECT accrual.period_start,
+                                  lag(accrual.period_end) OVER (
+                                      ORDER BY accrual.period_start,accrual.sequence_no,accrual.id
+                                  ) AS prior_end
+                             FROM borrowing_interest_accruals accrual
+                             JOIN business_events event
+                               ON event.org_id=accrual.org_id AND event.id=accrual.event_id
+                            WHERE accrual.org_id=borrowing.org_id
+                              AND accrual.borrowing_id=borrowing.id
+                              AND accrual.period_end<=LEAST(
+                                  target_period.end_date,borrowing.due_date)
+                              AND event.status='posted'
+                       ) ordered
+                       WHERE ordered.prior_end IS NOT NULL
+                         AND ordered.period_start<>ordered.prior_end
+                   )
                );
 
-            IF target_close.checker_version = 'accounting_period_close_checker_2026.8'
-               AND target_period.start_date >= DATE '2026-08-01' THEN
-                IF target_close.calculation::jsonb #>>
-                       '{owner_workflow_close_gates,version}'
-                       IS DISTINCT FROM 'owner_workflow_close_gates_2026.3'
-                   OR COALESCE((target_close.calculation::jsonb #>>
-                       '{owner_workflow_close_gates,enforced_for_period}')::boolean,
-                       false) IS NOT TRUE
-                   OR COALESCE((target_close.calculation::jsonb #>>
-                       '{owner_workflow_close_gates,gates,workforce_review,satisfied}')::boolean,
-                       false) IS NOT TRUE
-                   OR COALESCE((target_close.calculation::jsonb #>>
-                       '{owner_workflow_close_gates,gates,contribution_accounting,satisfied}')::boolean,
-                       false) IS NOT TRUE
-                   OR COALESCE((target_close.calculation::jsonb #>>
-                       '{owner_workflow_close_gates,gates,individual_income_tax_declaration,satisfied}')::boolean,
-                       false) IS NOT TRUE
-                   OR COALESCE((target_close.calculation::jsonb #>>
-                       '{owner_workflow_close_gates,gates,individual_income_tax_declaration,applicable}')::boolean,
-                       false) IS DISTINCT FROM EXISTS (
-                       SELECT 1
-                         FROM payroll_batches AS batch
-                         JOIN payroll_lines AS line
-                           ON line.org_id = batch.org_id
-                          AND line.payroll_batch_id = batch.id
-                        WHERE batch.org_id = target_period.org_id
-                          AND batch.batch_kind = 'regular'
-                          AND batch.payroll_period = to_char(target_period.start_date, 'YYYY-MM')
-                          AND batch.status = 'posted'
-                          AND batch.reversal_of_batch_id IS NULL
-                          AND line.wage_tax_declaration_state = 'declared')
-                   OR (
-                       COALESCE((target_close.calculation::jsonb #>>
-                           '{owner_workflow_close_gates,gates,individual_income_tax_declaration,applicable}')::boolean,
-                           false) IS FALSE
-                       AND (
-                           target_close.calculation::jsonb #>>
-                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,obligation_id}'
-                               IS NOT NULL
-                           OR target_close.calculation::jsonb #>>
-                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,source_snapshot_hash}'
-                               IS NOT NULL
-                           OR target_close.calculation::jsonb #>>
-                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,confirmation_id}'
-                               IS NOT NULL
-                           OR target_close.calculation::jsonb #>>
-                               '{owner_workflow_close_gates,gates,individual_income_tax_declaration,completion_date_status}'
-                               IS NOT NULL))
-                   OR (
-                       COALESCE((target_close.calculation::jsonb #>>
-                           '{owner_workflow_close_gates,gates,individual_income_tax_declaration,applicable}')::boolean,
-                           false) IS TRUE
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM external_obligation_confirmations AS confirmation
-                            WHERE confirmation.org_id = target_period.org_id
-                              AND confirmation.id = (target_close.calculation::jsonb #>>
-                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,confirmation_id}')::uuid
-                              AND confirmation.obligation_id = (target_close.calculation::jsonb #>>
-                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,obligation_id}')::uuid
-                              AND confirmation.obligation_code = 'individual_income_tax'
-                              AND confirmation.obligation_scope = 'month'
-                              AND confirmation.source_snapshot_hash =
-                                  target_close.calculation::jsonb #>>
-                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,source_snapshot_hash}'
-                              AND confirmation.completion_status = 'submitted'
-                              AND confirmation.completion_date_status =
-                                  target_close.calculation::jsonb #>>
-                                  '{owner_workflow_close_gates,gates,individual_income_tax_declaration,completion_date_status}'
-                              AND NOT EXISTS (
-                                  SELECT 1
-                                    FROM external_obligation_confirmations AS successor
-                                   WHERE successor.supersedes_id = confirmation.id)))
-                   OR COALESCE((target_close.calculation::jsonb #>>
-                       '{owner_workflow_close_gates,gates,non_bank_materials,satisfied}')::boolean,
-                       false) IS NOT TRUE
-                   OR NOT EXISTS (
-                       SELECT 1 FROM owner_period_confirmations AS confirmation
-                        WHERE confirmation.org_id = target_period.org_id
-                          AND confirmation.period_id = target_period.id
-                          AND confirmation.fact_type = 'workforce_review'
-                          AND confirmation.id = (target_close.calculation::jsonb #>>
-                              '{owner_workflow_close_gates,gates,workforce_review,confirmation_id}')::uuid
-                          AND confirmation.source_snapshot_hash =
-                              target_close.calculation::jsonb #>>
-                              '{owner_workflow_close_gates,gates,workforce_review,source_snapshot_hash}'
-                          AND NOT EXISTS (
-                              SELECT 1 FROM owner_period_confirmations AS successor
-                               WHERE successor.supersedes_id = confirmation.id))
-                   OR NOT EXISTS (
-                       SELECT 1 FROM owner_period_confirmations AS confirmation
-                        WHERE confirmation.org_id = target_period.org_id
-                          AND confirmation.period_id = target_period.id
-                          AND confirmation.fact_type = 'non_bank_materials'
-                          AND confirmation.id = (target_close.calculation::jsonb #>>
-                              '{owner_workflow_close_gates,gates,non_bank_materials,confirmation_id}')::uuid
-                          AND confirmation.source_snapshot_hash =
-                              target_close.calculation::jsonb #>>
-                              '{owner_workflow_close_gates,gates,non_bank_materials,source_snapshot_hash}'
-                          AND NOT EXISTS (
-                              SELECT 1 FROM owner_period_confirmations AS successor
-                               WHERE successor.supersedes_id = confirmation.id))
-                   OR (
-                       EXISTS (
-                           SELECT 1 FROM employees AS employee
-                            WHERE employee.org_id = target_period.org_id
-                              AND employee.status = 'active'
-                              AND employee.employment_start_date <= target_period.end_date
-                              AND (employee.employment_end_date IS NULL OR
-                                   employee.employment_end_date >= target_period.start_date))
-                       AND (
-                           NOT EXISTS (
-                               SELECT 1
-                                 FROM payroll_contribution_assessment_confirmations AS assessment
-                                WHERE assessment.org_id = target_period.org_id
-                                  AND assessment.period_id = target_period.id
-                                  AND assessment.id = (target_close.calculation::jsonb #>>
-                                      '{owner_workflow_close_gates,gates,contribution_accounting,confirmation_id}')::uuid
-                                  AND assessment.calculation_hash =
-                                      target_close.calculation::jsonb #>>
-                                      '{owner_workflow_close_gates,gates,contribution_accounting,calculation_hash}'
-                                  AND NOT EXISTS (
-                                      SELECT 1
-                                      FROM payroll_contribution_assessment_confirmations
-                                           AS successor
-                                       WHERE successor.supersedes_id = assessment.id))
-                           OR NOT EXISTS (
-                               SELECT 1 FROM payroll_batches AS batch
-                                WHERE batch.org_id = target_period.org_id
-                                  AND batch.id = (target_close.calculation::jsonb #>>
-                                      '{owner_workflow_close_gates,gates,contribution_accounting,payroll,batch_id}')::uuid
-                                  AND batch.payroll_period =
-                                      to_char(target_period.start_date, 'YYYY-MM')
-                                  AND batch.batch_kind = 'regular'
-                                  AND batch.status = 'posted')))
-                THEN
-                    RAISE EXCEPTION 'ACCOUNTING_PERIOD_OWNER_WORKFLOW_GATE_INVALID';
-                END IF;
-            END IF;
-
-            SELECT count(*) INTO unfinished_payroll FROM payroll_batches
-             WHERE org_id = target_period.org_id
-               AND payroll_period = to_char(target_period.start_date, 'YYYY-MM')
-               AND status NOT IN ('posted','reversed','superseded');
+            unfinished_payroll := 0;
             IF target_close.checker_version IN ('accounting_period_close_checker_2026.7', 'accounting_period_close_checker_2026.8') THEN
                 SELECT GREATEST(unfinished_payroll, count(*))
                   INTO unfinished_payroll
@@ -1009,8 +864,8 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
                                   )
                               ), 'UTF8'), 'sha256'), 'hex')
                           AND plan_item.item ->> 'employee_id' = employee.id::text
-                          AND plan_item.item ->> 'wage_tax_declaration_state' =
-                              'not_declared'
+                          AND plan_item.item ->> 'wage_tax_scope' =
+                              'contributions_only'
                           AND (plan_item.item ->> 'tax_reported_salary_fen' IS NULL
                                OR (plan_item.item ->> 'tax_reported_salary_fen')::bigint = 0)
                           AND (plan_item.item ->> 'accounting_gross_salary_fen' IS NULL
@@ -1037,8 +892,7 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
                 ) INTO unfinished_labor;
             END IF;
             IF fixed_missing <> 0 OR intangible_missing <> 0
-               OR borrowing_missing <> 0 OR unfinished_payroll <> 0
-               OR unfinished_labor <> 0 THEN
+               OR borrowing_missing <> 0 OR unfinished_payroll <> 0 THEN
                 RAISE EXCEPTION 'ACCOUNTING_PERIOD_CLOSE_BLOCKED';
             END IF;
 
@@ -1337,17 +1191,24 @@ CREATE FUNCTION public.finance_assert_accounting_period_close(target_close_id uu
                     'id', source.voucher_id,
                     'voucher_number', source.voucher_number,
                     'posting_date', source.posting_date::text,
-                    'description', source.description,
                     'event_id', source.event_id,
                     'event_type', source.event_type,
                     'event_status_at_close', source.event_status_at_close,
-                    'request_payload_hash_at_close', source.request_payload_hash_at_close,
+                    'accounting_facts_hash_at_close', encode(digest(convert_to(
+                        finance_canonical_jsonb(event.facts::jsonb),'UTF8'
+                    ),'sha256'),'hex'),
                     'debit_fen', source.debit_fen,
                     'credit_fen', source.credit_fen,
-                    'line_snapshot', source.line_snapshot::jsonb
+                    'line_snapshot', (
+                        SELECT COALESCE(jsonb_agg(line.item - 'memo' ORDER BY
+                            (line.item->>'line_number')::integer,line.item->>'id'),'[]'::jsonb)
+                          FROM jsonb_array_elements(source.line_snapshot::jsonb) AS line(item)
+                    )
                 ) ORDER BY source.posting_date, source.voucher_id
             ), '[]'::jsonb) INTO expected_sources
               FROM accounting_period_close_sources AS source
+              JOIN business_events AS event
+                ON event.org_id=source.org_id AND event.id=source.event_id
              WHERE source.org_id = target_close.org_id
                AND source.close_id = target_close.id;
 
@@ -2521,190 +2382,131 @@ $$;
 CREATE FUNCTION public.finance_assert_borrowing(target_borrowing_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-        DECLARE borrowing borrowings%ROWTYPE;
-        DECLARE drawdown business_events%ROWTYPE;
-        DECLARE accrual RECORD;
-        DECLARE payment RECORD;
-        DECLARE due_text text;
-        DECLARE parsed_due date;
-        DECLARE previous_due date;
-        DECLARE expected_due date;
-        DECLARE expected_start date;
-        DECLARE expected_amount bigint;
-        DECLARE denominator integer;
-        DECLARE expected_sequence integer := 0;
-        DECLARE active_principal_count integer := 0;
-        DECLARE active_interest_count integer;
-        DECLARE due_count integer := 0;
-        DECLARE latest_end date;
-        BEGIN
-            SELECT * INTO borrowing FROM borrowings WHERE id = target_borrowing_id;
-            IF NOT FOUND THEN RETURN; END IF;
-            SELECT * INTO drawdown FROM business_events
-             WHERE org_id = borrowing.org_id AND id = borrowing.drawdown_event_id;
-            IF drawdown.id IS NULL OR drawdown.status NOT IN ('posted','reversed') THEN
-                RAISE EXCEPTION 'BORROWING_DRAWDOWN_FACT_SHAPE_INVALID';
-            END IF;
-            IF drawdown.status IN ('posted','reversed') THEN
-                PERFORM finance_assert_intangible_borrowing_event_shape(drawdown.id);
-            END IF;
-            IF jsonb_typeof(borrowing.interest_due_dates::jsonb) <> 'array' THEN
-                RAISE EXCEPTION 'BORROWING_INTEREST_DUE_DATES_INVALID';
-            END IF;
-            previous_due := borrowing.drawdown_date;
-            FOR due_text IN SELECT jsonb_array_elements_text(borrowing.interest_due_dates::jsonb)
-            LOOP
-                BEGIN
-                    parsed_due := due_text::date;
-                EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
-                    RAISE EXCEPTION 'BORROWING_INTEREST_DUE_DATES_INVALID';
-                END;
-                due_count := due_count + 1;
-                IF parsed_due::text <> due_text OR parsed_due <= previous_due THEN
-                    RAISE EXCEPTION 'BORROWING_INTEREST_DUE_DATES_INVALID';
-                END IF;
-                previous_due := parsed_due;
-            END LOOP;
-            IF due_count = 0 OR previous_due <> borrowing.due_date THEN
-                RAISE EXCEPTION 'BORROWING_INTEREST_DUE_DATES_INVALID';
-            END IF;
-            IF EXISTS (
-                SELECT 1 FROM borrowing_interest_accruals AS fact
-                LEFT JOIN business_events AS event
-                  ON event.org_id = fact.org_id AND event.id = fact.event_id
-                WHERE fact.org_id = borrowing.org_id AND fact.borrowing_id = borrowing.id
-                  AND (event.id IS NULL OR event.status NOT IN ('posted','reversed'))
-            ) OR EXISTS (
-                SELECT 1 FROM borrowing_payments AS fact
-                LEFT JOIN business_events AS event
-                  ON event.org_id = fact.org_id AND event.id = fact.event_id
-                WHERE fact.org_id = borrowing.org_id AND fact.borrowing_id = borrowing.id
-                  AND (event.id IS NULL OR event.status NOT IN ('posted','reversed'))
-            ) THEN
-                RAISE EXCEPTION 'INTANGIBLE_BORROWING_EVENT_FACT_SHAPE_INVALID';
-            END IF;
-            IF drawdown.status <> 'posted' AND EXISTS (
-                SELECT 1 FROM (
-                    SELECT fact.event_id FROM borrowing_interest_accruals AS fact
-                    JOIN business_events AS event
-                      ON event.org_id = fact.org_id AND event.id = fact.event_id
-                    WHERE fact.org_id = borrowing.org_id AND fact.borrowing_id = borrowing.id
-                      AND event.status = 'posted'
-                    UNION ALL
-                    SELECT fact.event_id FROM borrowing_payments AS fact
-                    JOIN business_events AS event
-                      ON event.org_id = fact.org_id AND event.id = fact.event_id
-                    WHERE fact.org_id = borrowing.org_id AND fact.borrowing_id = borrowing.id
-                      AND event.status = 'posted'
-                ) AS downstream
-            ) THEN
-                RAISE EXCEPTION 'BORROWING_OPEN_DEPENDENCIES_EXIST';
-            END IF;
-            expected_start := borrowing.drawdown_date;
-            denominator := CASE borrowing.day_count_basis
-                WHEN 'actual_360' THEN 360 WHEN 'actual_365' THEN 365 END;
-            FOR accrual IN
-                SELECT fact.*, event.status AS event_status
-                  FROM borrowing_interest_accruals AS fact
-                  JOIN business_events AS event
-                    ON event.org_id = fact.org_id AND event.id = fact.event_id
-                 WHERE fact.org_id = borrowing.org_id AND fact.borrowing_id = borrowing.id
-                   AND event.status IN ('posted','reversed')
-                 ORDER BY fact.sequence_no, fact.period_start, fact.id
-            LOOP
-                PERFORM finance_assert_intangible_borrowing_event_shape(accrual.event_id);
-                IF accrual.event_status = 'posted' THEN
-                    expected_sequence := expected_sequence + 1;
-                    expected_due := (
-                        borrowing.interest_due_dates::jsonb ->> (expected_sequence - 1)
-                    )::date;
-                    expected_amount := round(
-                        borrowing.principal_fen::numeric * borrowing.annual_rate_percent
-                        / 100 * (expected_due - expected_start) / denominator
-                    )::bigint;
-                    IF accrual.sequence_no <> expected_sequence
-                       OR accrual.period_start <> expected_start
-                       OR accrual.period_end <> expected_due
-                       OR accrual.posting_date <> expected_due
-                       OR accrual.period_end > borrowing.due_date
-                       OR accrual.principal_fen <> borrowing.principal_fen
-                       OR accrual.annual_rate_percent <> borrowing.annual_rate_percent
-                       OR accrual.day_count_basis <> borrowing.day_count_basis
-                       OR accrual.actual_days <> accrual.period_end - accrual.period_start
-                       OR accrual.amount_fen <> expected_amount OR expected_amount <= 0 THEN
-                        RAISE EXCEPTION 'BORROWING_INTEREST_OUT_OF_SEQUENCE';
-                    END IF;
-                    expected_start := expected_due;
-                    latest_end := expected_due;
-                END IF;
-            END LOOP;
-            IF expected_sequence > due_count THEN
-                RAISE EXCEPTION 'BORROWING_INTEREST_OUT_OF_SEQUENCE';
-            END IF;
-            FOR payment IN
-                SELECT fact.*, event.status AS event_status
-                  FROM borrowing_payments AS fact
-                  JOIN business_events AS event
-                    ON event.org_id = fact.org_id AND event.id = fact.event_id
-                 WHERE fact.org_id = borrowing.org_id AND fact.borrowing_id = borrowing.id
-                   AND event.status IN ('posted','reversed')
-            LOOP
-                PERFORM finance_assert_intangible_borrowing_event_shape(payment.event_id);
-                IF payment.event_status = 'posted' AND payment.payment_kind = 'interest' THEN
-                    SELECT COUNT(*) INTO active_interest_count
-                      FROM borrowing_payments AS paid
-                      JOIN business_events AS paid_event
-                        ON paid_event.org_id = paid.org_id AND paid_event.id = paid.event_id
-                     WHERE paid.org_id = borrowing.org_id
-                       AND paid.borrowing_id = borrowing.id
-                       AND paid.accrual_id = payment.accrual_id
-                       AND paid.payment_kind = 'interest' AND paid_event.status = 'posted';
-                    SELECT fact.* INTO accrual FROM borrowing_interest_accruals AS fact
-                    JOIN business_events AS event
-                      ON event.org_id = fact.org_id AND event.id = fact.event_id
-                    WHERE fact.org_id = borrowing.org_id AND fact.id = payment.accrual_id
-                      AND fact.borrowing_id = borrowing.id AND event.status = 'posted';
-                    IF accrual.id IS NOT NULL AND (
-                        payment.payment_date < accrual.period_end
-                        OR payment.payment_date > borrowing.due_date
-                    ) THEN
-                        RAISE EXCEPTION 'BORROWING_INTEREST_PAYMENT_DATE_INVALID';
-                    END IF;
-                    IF active_interest_count <> 1 OR accrual.id IS NULL
-                       OR payment.amount_fen <> accrual.amount_fen THEN
-                        RAISE EXCEPTION 'BORROWING_INTEREST_ALREADY_PAID';
-                    END IF;
-                ELSIF payment.event_status = 'posted' AND payment.payment_kind = 'principal' THEN
-                    active_principal_count := active_principal_count + 1;
-                    IF payment.payment_date <> borrowing.due_date
-                       OR payment.amount_fen <> borrowing.principal_fen THEN
-                        RAISE EXCEPTION 'BORROWING_PRINCIPAL_NOT_REPAYABLE';
-                    END IF;
-                END IF;
-            END LOOP;
-            IF active_principal_count > 1 THEN
-                RAISE EXCEPTION 'BORROWING_PRINCIPAL_NOT_REPAYABLE';
-            END IF;
-            IF active_principal_count = 1 AND (
-                expected_sequence <> due_count OR latest_end <> borrowing.due_date OR EXISTS (
-                    SELECT 1 FROM borrowing_interest_accruals AS fact
-                    JOIN business_events AS event
-                      ON event.org_id = fact.org_id AND event.id = fact.event_id
-                    WHERE fact.org_id = borrowing.org_id AND fact.borrowing_id = borrowing.id
-                      AND event.status = 'posted' AND NOT EXISTS (
-                          SELECT 1 FROM borrowing_payments AS paid
-                          JOIN business_events AS paid_event
-                            ON paid_event.org_id = paid.org_id AND paid_event.id = paid.event_id
-                          WHERE paid.org_id = fact.org_id AND paid.borrowing_id = fact.borrowing_id
-                            AND paid.accrual_id = fact.id AND paid.payment_kind = 'interest'
-                            AND paid_event.status = 'posted'
-                      )
-                )
-            ) THEN
-                RAISE EXCEPTION 'BORROWING_PRINCIPAL_NOT_REPAYABLE';
-            END IF;
-        END;
-        $$;
+DECLARE borrowing borrowings%ROWTYPE;
+DECLARE drawdown business_events%ROWTYPE;
+DECLARE accrual RECORD;
+DECLARE payment RECORD;
+DECLARE expected_start date;
+DECLARE expected_amount bigint;
+DECLARE denominator integer;
+DECLARE expected_sequence integer := 0;
+DECLARE active_principal_count integer := 0;
+DECLARE active_interest_count integer;
+DECLARE latest_end date;
+BEGIN
+    SELECT * INTO borrowing FROM borrowings WHERE id=target_borrowing_id;
+    IF NOT FOUND THEN RETURN; END IF;
+    SELECT * INTO drawdown FROM business_events
+     WHERE org_id=borrowing.org_id AND id=borrowing.drawdown_event_id;
+    IF drawdown.id IS NULL OR drawdown.status NOT IN ('posted','reversed') THEN
+        RAISE EXCEPTION 'BORROWING_DRAWDOWN_FACT_SHAPE_INVALID'; END IF;
+    PERFORM finance_assert_intangible_borrowing_event_shape(drawdown.id);
+    IF borrowing.interest_due_dates IS NOT NULL
+       AND borrowing.interest_due_dates::jsonb <> 'null'::jsonb
+       AND jsonb_typeof(borrowing.interest_due_dates::jsonb) <> 'array' THEN
+        RAISE EXCEPTION 'BORROWING_INTEREST_DUE_DATES_INVALID'; END IF;
+    IF EXISTS (
+        SELECT 1 FROM borrowing_interest_accruals fact
+        LEFT JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+        WHERE fact.org_id=borrowing.org_id AND fact.borrowing_id=borrowing.id
+          AND (event.id IS NULL OR event.status NOT IN ('posted','reversed'))
+    ) OR EXISTS (
+        SELECT 1 FROM borrowing_payments fact
+        LEFT JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+        WHERE fact.org_id=borrowing.org_id AND fact.borrowing_id=borrowing.id
+          AND (event.id IS NULL OR event.status NOT IN ('posted','reversed'))
+    ) THEN RAISE EXCEPTION 'INTANGIBLE_BORROWING_EVENT_FACT_SHAPE_INVALID'; END IF;
+    IF drawdown.status<>'posted' AND EXISTS (
+        SELECT 1 FROM (
+            SELECT fact.event_id FROM borrowing_interest_accruals fact
+            JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+            WHERE fact.org_id=borrowing.org_id AND fact.borrowing_id=borrowing.id
+              AND event.status='posted'
+            UNION ALL
+            SELECT fact.event_id FROM borrowing_payments fact
+            JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+            WHERE fact.org_id=borrowing.org_id AND fact.borrowing_id=borrowing.id
+              AND event.status='posted') downstream
+    ) THEN RAISE EXCEPTION 'BORROWING_OPEN_DEPENDENCIES_EXIST'; END IF;
+    expected_start := borrowing.drawdown_date;
+    denominator := CASE borrowing.day_count_basis
+        WHEN 'actual_360' THEN 360 WHEN 'actual_365' THEN 365 END;
+    FOR accrual IN
+        SELECT fact.*,event.status event_status FROM borrowing_interest_accruals fact
+        JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+        WHERE fact.org_id=borrowing.org_id AND fact.borrowing_id=borrowing.id
+          AND event.status IN ('posted','reversed')
+        ORDER BY fact.sequence_no,fact.period_start,fact.id
+    LOOP
+        PERFORM finance_assert_intangible_borrowing_event_shape(accrual.event_id);
+        IF accrual.event_status='posted' THEN
+            expected_sequence := expected_sequence+1;
+            expected_amount := round(
+                borrowing.principal_fen::numeric*borrowing.annual_rate_percent/100
+                *(accrual.period_end-accrual.period_start)/denominator)::bigint;
+            IF accrual.sequence_no<>expected_sequence
+               OR accrual.period_start<>expected_start
+               OR accrual.period_end<=accrual.period_start
+               OR accrual.posting_date<>accrual.period_end
+               OR accrual.period_end>borrowing.due_date
+               OR accrual.principal_fen<>borrowing.principal_fen
+               OR accrual.annual_rate_percent<>borrowing.annual_rate_percent
+               OR accrual.day_count_basis<>borrowing.day_count_basis
+               OR accrual.actual_days<>accrual.period_end-accrual.period_start
+               OR accrual.amount_fen<>expected_amount OR expected_amount<=0 THEN
+                RAISE EXCEPTION 'BORROWING_INTEREST_OUT_OF_SEQUENCE'; END IF;
+            expected_start := accrual.period_end;
+            latest_end := accrual.period_end;
+        END IF;
+    END LOOP;
+    FOR payment IN
+        SELECT fact.*,event.status event_status FROM borrowing_payments fact
+        JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+        WHERE fact.org_id=borrowing.org_id AND fact.borrowing_id=borrowing.id
+          AND event.status IN ('posted','reversed')
+    LOOP
+        PERFORM finance_assert_intangible_borrowing_event_shape(payment.event_id);
+        IF payment.event_status='posted' AND payment.payment_kind='interest' THEN
+            SELECT count(*) INTO active_interest_count FROM borrowing_payments paid
+            JOIN business_events paid_event
+              ON paid_event.org_id=paid.org_id AND paid_event.id=paid.event_id
+            WHERE paid.org_id=borrowing.org_id AND paid.borrowing_id=borrowing.id
+              AND paid.accrual_id=payment.accrual_id AND paid.payment_kind='interest'
+              AND paid_event.status='posted';
+            SELECT fact.* INTO accrual FROM borrowing_interest_accruals fact
+            JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+            WHERE fact.org_id=borrowing.org_id AND fact.id=payment.accrual_id
+              AND fact.borrowing_id=borrowing.id AND event.status='posted';
+            IF accrual.id IS NOT NULL AND (
+                payment.payment_date<accrual.period_end OR payment.payment_date>borrowing.due_date
+            ) THEN RAISE EXCEPTION 'BORROWING_INTEREST_PAYMENT_DATE_INVALID'; END IF;
+            IF active_interest_count<>1 OR accrual.id IS NULL
+               OR payment.amount_fen<>accrual.amount_fen THEN
+                RAISE EXCEPTION 'BORROWING_INTEREST_ALREADY_PAID'; END IF;
+        ELSIF payment.event_status='posted' AND payment.payment_kind='principal' THEN
+            active_principal_count := active_principal_count+1;
+            IF payment.payment_date<>borrowing.due_date
+               OR payment.amount_fen<>borrowing.principal_fen THEN
+                RAISE EXCEPTION 'BORROWING_PRINCIPAL_NOT_REPAYABLE'; END IF;
+        END IF;
+    END LOOP;
+    IF active_principal_count>1 THEN
+        RAISE EXCEPTION 'BORROWING_PRINCIPAL_NOT_REPAYABLE'; END IF;
+    IF active_principal_count=1 AND (
+        latest_end IS DISTINCT FROM borrowing.due_date OR EXISTS (
+            SELECT 1 FROM borrowing_interest_accruals fact
+            JOIN business_events event ON event.org_id=fact.org_id AND event.id=fact.event_id
+            WHERE fact.org_id=borrowing.org_id AND fact.borrowing_id=borrowing.id
+              AND event.status='posted' AND NOT EXISTS (
+                SELECT 1 FROM borrowing_payments paid
+                JOIN business_events paid_event
+                  ON paid_event.org_id=paid.org_id AND paid_event.id=paid.event_id
+                WHERE paid.org_id=fact.org_id AND paid.borrowing_id=fact.borrowing_id
+                  AND paid.accrual_id=fact.id AND paid.payment_kind='interest'
+                  AND paid_event.status='posted'))
+    ) THEN RAISE EXCEPTION 'BORROWING_PRINCIPAL_NOT_REPAYABLE'; END IF;
+END;
+$$;
 
 
 --
@@ -2955,6 +2757,119 @@ $$;
 
 
 --
+-- Name: finance_assert_component_salary_actual_deduction(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_component_salary_actual_deduction(target_component_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target business_events%ROWTYPE;
+DECLARE active_total bigint;
+DECLARE expected_total bigint;
+DECLARE target_component business_event_components%ROWTYPE;
+BEGIN
+    SELECT * INTO target_component FROM business_event_components WHERE id=target_component_id;
+    IF NOT FOUND THEN RETURN; END IF;
+    SELECT * INTO target FROM business_events WHERE id=target_component.event_id;
+    IF target_component.kind <> 'salary_settlement' OR target.id IS NULL THEN
+        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_PAYMENT_EVENT_INVALID';
+    END IF;
+    SELECT coalesce(sum(amount_fen) FILTER (WHERE reversed IS FALSE), 0)
+      INTO active_total
+      FROM payroll_salary_actual_deduction_allocations
+     WHERE org_id = target.org_id AND payment_component_id = target_component.id;
+    SELECT coalesce(NULLIF(target_component.derived->>'actual_salary_deduction_fen','')::bigint,0)
+      INTO expected_total;
+    IF active_total = 0 AND expected_total = 0 THEN RETURN; END IF;
+    IF target_component.id IS NULL OR target.status NOT IN ('posted','reversed') THEN
+        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_PAYMENT_EVENT_INVALID';
+    END IF;
+    IF target.status = 'posted' AND (active_total <= 0 OR active_total <> expected_total) THEN
+        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_EVENT_TOTAL_MISMATCH';
+    END IF;
+    IF target.status = 'posted' AND EXISTS (
+        SELECT 1
+          FROM payroll_salary_actual_deduction_allocations AS allocation
+          JOIN payroll_lines AS line
+            ON line.org_id = allocation.org_id AND line.id = allocation.payroll_line_id
+          JOIN payroll_batches AS batch
+            ON batch.org_id = line.org_id AND batch.id = line.payroll_batch_id
+          JOIN employee_payroll_profile_versions AS profile
+            ON profile.org_id = line.org_id
+           AND profile.employee_id = line.employee_id
+           AND profile.id = line.employee_payroll_profile_version_id
+         WHERE allocation.org_id = target.org_id
+           AND allocation.payment_component_id = target_component.id
+           AND allocation.reversed IS FALSE
+           AND (batch.status <> 'posted' OR allocation.expense_role <> profile.expense_role
+                OR NOT EXISTS (
+                    SELECT 1
+                      FROM settlements AS settlement
+                      JOIN open_items AS item
+                        ON item.org_id = settlement.org_id
+                       AND item.id = settlement.open_item_id
+                      JOIN employees AS employee
+                        ON employee.org_id = item.org_id
+                       AND employee.counterparty_id = item.counterparty_id
+                     WHERE settlement.org_id = allocation.org_id
+                       AND settlement.payment_component_id = allocation.payment_component_id
+                       AND settlement.reversed IS FALSE
+                       AND item.payable_category = 'salary'
+                       AND item.source_event_id = batch.business_event_id
+                       AND employee.id = line.employee_id
+                       AND settlement.amount_fen >= allocation.amount_fen
+                ))
+    ) THEN
+        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_SOURCE_MISMATCH';
+    END IF;
+    IF target.status = 'posted' AND EXISTS (
+        WITH allocation_total AS (
+            SELECT expense_role, sum(amount_fen)::bigint AS amount_fen
+              FROM payroll_salary_actual_deduction_allocations
+             WHERE org_id = target.org_id AND payment_component_id = target_component.id
+               AND reversed IS FALSE
+             GROUP BY expense_role
+        ), voucher_total AS (
+            SELECT coalesce(account.business_class,account.system_role) AS expense_role,
+                   sum(line.credit_fen)::bigint AS amount_fen
+              FROM vouchers AS voucher
+              JOIN voucher_lines AS line ON line.voucher_id = voucher.id
+              JOIN accounts AS account ON account.id = line.account_id
+             WHERE line.component_id = target_component.id
+               AND coalesce(account.business_class,account.system_role) IN (
+                   'payroll_management_expense','payroll_sales_expense','payroll_service_cost'
+               )
+             GROUP BY coalesce(account.business_class,account.system_role)
+        )
+        SELECT 1 FROM allocation_total
+        FULL JOIN voucher_total USING (expense_role)
+         WHERE coalesce(allocation_total.amount_fen, 0)
+               <> coalesce(voucher_total.amount_fen, 0)
+    ) THEN
+        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_VOUCHER_MISMATCH';
+    END IF;
+    IF target.status = 'reversed' AND EXISTS (
+        SELECT 1 FROM payroll_salary_actual_deduction_allocations AS allocation
+         WHERE allocation.org_id = target.org_id
+           AND allocation.payment_component_id = target_component.id
+           AND (allocation.reversed IS FALSE OR allocation.reversed_by_event_id IS NULL
+                OR NOT EXISTS (
+                    SELECT 1 FROM business_events AS reversal
+                     WHERE reversal.org_id = allocation.org_id
+                       AND reversal.id = allocation.reversed_by_event_id
+                       AND reversal.status = 'posted'
+                       AND EXISTS (SELECT 1 FROM business_event_components c
+                           WHERE c.event_id=reversal.id AND c.kind='reversal'
+                             AND c.facts->>'source_event_id'=target.id::text)
+                ))
+    ) THEN
+        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_REVERSAL_MISMATCH';
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: finance_assert_component_semantics(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3042,6 +2957,10 @@ BEGIN
            OR EXISTS (SELECT 1 FROM voucher_lines l JOIN accounts a ON a.id=l.account_id
                        WHERE l.component_id=c.id AND a.code IS DISTINCT FROM c.facts->>'account_code')
         THEN RAISE EXCEPTION 'FUNDS_COMPONENT_FACTS_MISMATCH'; END IF;
+    WHEN 'supplier_advance','supplier_advance_application',
+         'supplier_advance_refund',
+         'project_cost','project_cost_expense' THEN
+        PERFORM finance_assert_purchase_component(c.id); RETURN;
     WHEN 'expense' THEN
         requested_class := c.facts->>'expense_class';
         allowed_classes := ARRAY[requested_class,'accounts_payable','employee_payable','owner_payable'];
@@ -3164,6 +3083,12 @@ BEGIN
     WHEN 'receivable_settlement','payable_settlement','debt_transfer','expense_reserve_settlement',
          'labor_settlement','labor_tax_settlement','salary_settlement' THEN
         -- Source accounts are normalized on every obligation, including detail accounts.
+        IF c.kind='receivable_settlement' AND EXISTS(
+            SELECT 1 FROM settlements s JOIN open_items i ON i.id=s.open_item_id
+            JOIN accounts a ON a.id=i.account_id WHERE s.payment_component_id=c.id
+              AND coalesce(a.business_class,a.system_role)='prepayments') THEN
+            RAISE EXCEPTION 'SUPPLIER_ADVANCE_REQUIRES_TYPED_APPLICATION_OR_REFUND';
+        END IF;
         IF EXISTS (
             SELECT 1 FROM settlements s JOIN open_items i ON i.id=s.open_item_id
               JOIN business_events source ON source.id=i.source_event_id
@@ -3203,11 +3128,8 @@ BEGIN
         IF (SELECT count(*) FROM fixed_assets WHERE component_id=c.id)<>1
            OR EXISTS(SELECT 1 FROM fixed_assets a WHERE a.component_id=c.id AND
                (a.org_id<>e.org_id OR a.acquisition_event_id<>e.id OR a.posting_date<>e.posting_date
-                OR a.asset_code IS DISTINCT FROM c.facts->>'asset_code'
-                OR a.cost_fen<>coalesce((c.facts::jsonb#>>'{cost_components,purchase_price_fen}')::bigint,0)
-                              +coalesce((c.facts::jsonb#>>'{cost_components,noncreditable_tax_fen}')::bigint,0)
-                              +coalesce((c.facts::jsonb#>>'{cost_components,transport_and_handling_fen}')::bigint,0)
-                              +coalesce((c.facts::jsonb#>>'{cost_components,installation_and_direct_cost_fen}')::bigint,0)))
+                OR a.asset_code IS DISTINCT FROM c.derived->>'asset_code'
+                OR a.cost_fen<>(c.facts->>'cost_fen')::bigint))
            OR debit_total<>(SELECT cost_fen FROM fixed_assets WHERE component_id=c.id)
         THEN RAISE EXCEPTION 'FIXED_ASSET_COMPONENT_FACTS_MISMATCH'; END IF;
         PERFORM finance_assert_fixed_asset((SELECT id FROM fixed_assets WHERE component_id=c.id));
@@ -3251,11 +3173,19 @@ BEGIN
         THEN RAISE EXCEPTION 'FIXED_ASSET_DISPOSAL_COMPONENT_MISMATCH'; END IF;
         PERFORM finance_assert_fixed_asset((SELECT asset_id FROM fixed_asset_disposals WHERE component_id=c.id));
     WHEN 'intangible_asset_acquisition' THEN
-        allowed_classes := ARRAY['intangible_asset_cost','accounts_payable'];
+        allowed_classes := ARRAY['intangible_asset_cost','accounts_payable','intangible_project_cost','development_expenditure'];
+        IF c.facts->>'settlement_method'='project_cost' THEN
+            PERFORM finance_assert_purchase_component(c.id);
+        ELSIF EXISTS (SELECT 1 FROM voucher_lines l
+            JOIN accounts a ON a.id=l.account_id
+            WHERE l.component_id=c.id AND coalesce(a.business_class,a.system_role)
+                IN ('intangible_project_cost','development_expenditure')) THEN
+            RAISE EXCEPTION 'PROJECT_COST_SOURCES_REQUIRED'; END IF;
         IF (SELECT count(*) FROM intangible_assets WHERE component_id=c.id)<>1
            OR EXISTS(SELECT 1 FROM intangible_assets a WHERE a.component_id=c.id AND
                      (a.org_id<>e.org_id OR a.acquisition_event_id<>e.id OR a.posting_date<>e.posting_date
-                      OR a.asset_code IS DISTINCT FROM c.facts->>'asset_code'))
+                      OR a.asset_code IS DISTINCT FROM c.derived->>'asset_code'
+                      OR a.cost_fen<>(c.facts->>'cost_fen')::bigint))
            OR debit_total<>(SELECT cost_fen FROM intangible_assets WHERE component_id=c.id)
         THEN RAISE EXCEPTION 'INTANGIBLE_ASSET_COMPONENT_FACTS_MISMATCH'; END IF;
         PERFORM finance_assert_intangible_asset((SELECT id FROM intangible_assets WHERE component_id=c.id));
@@ -3281,7 +3211,9 @@ BEGIN
         allowed_classes := ARRAY['short_term_borrowing','long_term_borrowing'];
         IF (SELECT count(*) FROM borrowings WHERE component_id=c.id)<>1
            OR EXISTS(SELECT 1 FROM borrowings b WHERE b.component_id=c.id AND
-                     (b.org_id<>e.org_id OR b.drawdown_event_id<>e.id OR b.drawdown_date<>e.business_date
+                     (b.org_id<>e.org_id OR b.drawdown_event_id<>e.id
+                      OR b.borrowing_code IS DISTINCT FROM c.derived->>'borrowing_code'
+                      OR b.drawdown_date<>e.business_date
                       OR b.principal_fen<>(c.facts->>'principal_fen')::bigint))
            OR debit_total<>0 OR credit_total<>(SELECT principal_fen FROM borrowings WHERE component_id=c.id)
         THEN RAISE EXCEPTION 'BORROWING_DRAWDOWN_COMPONENT_MISMATCH'; END IF;
@@ -3330,23 +3262,37 @@ BEGIN
             'withheld_employee_housing_fund_payable'];
         IF (SELECT count(*) FROM payroll_contribution_supplements WHERE component_id=c.id
             AND event_id=e.id AND org_id=e.org_id)<>1
-           OR (SELECT count(*) FROM payroll_event_links WHERE component_id=c.id
-               AND event_id=e.id AND link_kind='contribution_supplement')<>1
-           OR debit_total=0 OR credit_total=0 THEN
+           OR EXISTS (
+               SELECT 1 FROM payroll_contribution_supplements s
+                WHERE s.component_id=c.id AND (
+                    (s.source_payroll_batch_id IS NULL AND EXISTS (
+                        SELECT 1 FROM payroll_event_links l WHERE l.component_id=c.id
+                          AND l.event_id=e.id AND l.link_kind='contribution_supplement'))
+                    OR (s.source_payroll_batch_id IS NOT NULL AND (
+                        (SELECT count(*) FROM payroll_event_links l
+                          WHERE l.component_id=c.id AND l.event_id=e.id
+                            AND l.link_kind='contribution_supplement')<>1
+                        OR (SELECT count(*) FROM payroll_event_links l
+                             WHERE l.component_id=c.id AND l.event_id=e.id
+                               AND l.payroll_batch_id=s.source_payroll_batch_id
+                               AND l.link_kind='contribution_supplement')<>1))
+                )
+           ) OR debit_total=0 OR credit_total=0 THEN
             RAISE EXCEPTION 'PAYROLL_SUPPLEMENT_COMPONENT_MISMATCH'; END IF;
         IF NOT EXISTS (
             SELECT 1 FROM payroll_contribution_supplements s
-            JOIN payroll_event_links l ON l.component_id=s.component_id
-             AND l.payroll_batch_id=s.source_payroll_batch_id AND l.link_kind='contribution_supplement'
-            JOIN payroll_batches b ON b.id=s.source_payroll_batch_id AND b.org_id=s.org_id
              WHERE s.component_id=c.id AND s.employee_id::text=c.facts->>'employee_id'
                AND s.contribution_period=c.facts->>'contribution_period'
-               AND s.assessment_reference=c.facts->>'assessment_reference'
-               AND s.reason_code=c.facts->>'reason_code'
-               AND s.reason_description=c.facts->>'reason_description'
-               AND b.payroll_period=s.contribution_period AND b.batch_kind='regular'
-               AND EXISTS (SELECT 1 FROM payroll_lines p WHERE p.payroll_batch_id=b.id
-                            AND p.employee_id=s.employee_id)
+               AND s.assessment_reference IS NOT DISTINCT FROM c.facts->>'assessment_reference'
+               AND s.reason_code IS NOT DISTINCT FROM c.facts->>'reason_code'
+               AND s.reason_description IS NOT DISTINCT FROM c.facts->>'reason_description'
+               AND (s.source_payroll_batch_id IS NULL OR EXISTS (
+                   SELECT 1 FROM payroll_batches b
+                    WHERE b.id=s.source_payroll_batch_id AND b.org_id=s.org_id
+                      AND b.payroll_period=s.contribution_period AND b.batch_kind='regular'
+                      AND EXISTS (SELECT 1 FROM payroll_lines p
+                                   WHERE p.payroll_batch_id=b.id
+                                     AND p.employee_id=s.employee_id)))
                AND debit_total=(SELECT coalesce(sum(employee_amount_fen+employer_amount_fen),0)
                     FROM payroll_contribution_supplement_items WHERE supplement_id=s.id)
         ) THEN RAISE EXCEPTION 'PAYROLL_SUPPLEMENT_COMPONENT_SOURCE_MISMATCH'; END IF;
@@ -3616,6 +3562,69 @@ CREATE FUNCTION public.finance_assert_exact_reversal_voucher(target_event_id uui
 
 
 --
+-- Name: finance_assert_fact_precision(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_fact_precision(target_event_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE e business_events%ROWTYPE;
+DECLARE c business_event_components%ROWTYPE;
+DECLARE period_text text;
+DECLARE cutoff date;
+BEGIN
+    SELECT * INTO e FROM business_events WHERE id=target_event_id;
+    IF NOT FOUND OR e.status <> 'posted' THEN RETURN; END IF;
+    FOR c IN SELECT * FROM business_event_components WHERE event_id=e.id LOOP
+        period_text := c.facts->>'recognition_period';
+        IF period_text IS NOT NULL THEN
+            IF period_text !~ '^[0-9]{4}-(0[1-9]|1[0-2])$'
+               OR c.facts->>'business_date' IS NOT NULL
+               OR c.kind NOT IN ('expense','refundable_deposit','debt_transfer',
+                   'project_cost','project_cost_expense','supplier_advance_application',
+                   'enterprise_income_tax_result')
+               OR (c.kind='expense' AND c.facts->>'payment_basis'='immediate')
+               OR (c.kind='refundable_deposit' AND c.facts->>'advanced_by' IS NULL)
+            THEN RAISE EXCEPTION 'RECOGNITION_PRECISION_INVALID'; END IF;
+            cutoff := (to_date(period_text || '-01','YYYY-MM-DD')
+                       + interval '1 month - 1 day')::date;
+            IF e.posting_date < cutoff THEN
+                RAISE EXCEPTION 'RECOGNITION_PERIOD_IN_FUTURE';
+            END IF;
+        END IF;
+        IF c.kind='funds' AND (c.facts->>'payment_date')::date > e.posting_date THEN
+            RAISE EXCEPTION 'FUNDS_PAYMENT_DATE_IN_FUTURE';
+        END IF;
+    END LOOP;
+    IF EXISTS (
+        SELECT 1 FROM settlements s
+        JOIN open_items i ON i.id=s.open_item_id
+        JOIN business_event_components source ON source.id=i.source_component_id
+        JOIN business_event_components payment ON payment.id=s.payment_component_id
+        WHERE s.payment_event_id=e.id AND source.facts->>'recognition_period' IS NOT NULL
+        AND (to_date(source.facts->>'recognition_period' || '-01','YYYY-MM-DD')
+            + interval '1 month - 1 day')::date > coalesce(
+            (SELECT min((fund.facts->>'payment_date')::date)
+             FROM business_event_components fund,
+                  jsonb_array_elements(fund.facts::jsonb->'allocations') a
+             WHERE fund.event_id=e.id AND fund.kind='funds'
+               AND a->>'component_key'=payment.key
+               AND (coalesce(jsonb_array_length(a->'source_allocations'),0)=0 OR EXISTS (
+                   SELECT 1 FROM jsonb_array_elements(a->'source_allocations') selected
+                   WHERE selected->>'open_item_id'=i.id::text
+                      OR (source.event_id=e.id AND selected->>'source_component_key'=source.key
+                          AND selected->>'source_open_item_key'=i.component_key)
+               ))),
+            CASE WHEN payment.facts->>'recognition_period' IS NOT NULL
+                 THEN (to_date(payment.facts->>'recognition_period' || '-01','YYYY-MM-DD')
+                       + interval '1 month - 1 day')::date
+                 ELSE (payment.facts->>'business_date')::date END,
+            e.posting_date)
+    ) THEN RAISE EXCEPTION 'MONTHLY_SOURCE_NOT_RECOGNIZED_BY_SETTLEMENT'; END IF;
+END $_$;
+
+
+--
 -- Name: finance_assert_final_business_event(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3786,12 +3795,29 @@ BEGIN
         END IF;
         IF EXISTS (SELECT 1 FROM business_event_components WHERE id=target_component_id
                    AND kind='payable_settlement')
-           AND (SELECT count(*) FROM payroll_event_links WHERE component_id=target_component_id
-                AND link_kind='statutory_payment') <>
-               (SELECT count(*) FROM settlements s JOIN open_items i ON i.id=s.open_item_id
-                 WHERE s.payment_component_id=target_component_id
-                   AND i.payable_category IN ('employer_social','withheld_employee_social',
-                       'employer_housing','withheld_employee_housing','individual_income_tax')) THEN
+           AND EXISTS (
+               SELECT 1 FROM settlements s
+               JOIN open_items i ON i.id=s.open_item_id AND i.org_id=s.org_id
+               JOIN payroll_event_links origin
+                 ON origin.org_id=i.org_id AND origin.event_id=i.source_event_id
+                AND origin.component_id=i.source_component_id
+                AND origin.link_kind IN (
+                    'payroll_accrual','salary_payment','contribution_supplement')
+                WHERE s.payment_component_id=target_component_id
+                  AND i.payable_category IN (
+                      'employer_social','withheld_employee_social',
+                      'employer_housing','withheld_employee_housing',
+                      'individual_income_tax')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM payroll_event_links covered
+                       WHERE covered.org_id=i.org_id
+                         AND covered.component_id=target_component_id
+                         AND covered.link_kind='statutory_payment'
+                         AND covered.payroll_batch_id=origin.payroll_batch_id
+                         AND covered.source_payment_event_id=i.source_event_id
+                         AND covered.source_open_item_id=i.id
+                  )
+           ) THEN
             RAISE EXCEPTION 'STATUTORY_COMPONENT_LINK_COVERAGE_MISMATCH';
         END IF;
     END LOOP;
@@ -3815,8 +3841,6 @@ BEGIN
     ) THEN RAISE EXCEPTION 'PAYROLL_REVERSAL_COMPONENT_LINK_MISMATCH'; END IF;
 END;
 $$;
-
-
 
 
 --
@@ -4170,6 +4194,146 @@ CREATE FUNCTION public.finance_assert_fixed_asset(target_asset_id uuid) RETURNS 
             END IF;
         END;
         $$;
+
+
+--
+-- Name: finance_assert_fixed_asset_activation_projection(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_fixed_asset_activation_projection(target_component_id uuid) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c business_event_components%ROWTYPE;
+DECLARE asset fixed_assets%ROWTYPE;
+DECLARE activation fixed_asset_activations%ROWTYPE;
+DECLARE projection jsonb;
+DECLARE projection_hash text;
+BEGIN
+    SELECT * INTO c FROM business_event_components WHERE id=target_component_id;
+    SELECT * INTO activation FROM fixed_asset_activations
+     WHERE component_id=c.id AND org_id=c.org_id AND event_id=c.event_id;
+    SELECT * INTO asset FROM fixed_assets WHERE id=activation.asset_id AND org_id=c.org_id;
+    IF c.kind NOT IN ('fixed_asset_acquisition','fixed_asset_activation')
+       OR activation.id IS NULL OR asset.id IS NULL THEN
+        RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID';
+    END IF;
+    projection := jsonb_build_object(
+        'asset',jsonb_build_object(
+            'category',asset.category,
+            'acquisition_date',to_char(asset.acquisition_date,'YYYY-MM-DD'),
+            'posting_date',to_char(asset.posting_date,'YYYY-MM-DD'),
+            'purchase_price_fen',asset.purchase_price_fen,
+            'noncreditable_tax_fen',asset.noncreditable_tax_fen,
+            'transport_and_handling_fen',asset.transport_and_handling_fen,
+            'installation_and_direct_cost_fen',asset.installation_and_direct_cost_fen,
+            'cost_fen',asset.cost_fen
+        ),
+        'activation',jsonb_build_object(
+            'in_service_date',to_char(activation.in_service_date,'YYYY-MM-DD'),
+            'posting_date',to_char(activation.posting_date,'YYYY-MM-DD'),
+            'depreciation_method',activation.depreciation_method,
+            'useful_life_months',activation.useful_life_months,
+            'residual_value_fen',activation.residual_value_fen,
+            'benefit_area',activation.benefit_area,
+            'depreciation_group_code',activation.depreciation_group_code,
+            'depreciation_rounding_policy',activation.depreciation_rounding_policy,
+            'accounting_rule_version',activation.accounting_rule_version,
+            'accounting_rule_source_url',activation.accounting_rule_source_url
+        )
+    );
+    projection_hash := encode(digest(convert_to(finance_canonical_jsonb(jsonb_build_object(
+        'command','finance_project_fixed_asset_activation','request','{}'::jsonb,
+        'calculation',projection
+    )),'UTF8'),'sha256'),'hex');
+    IF c.derived->>'asset_id' IS DISTINCT FROM asset.id::text
+       OR c.derived->>'activation_id' IS DISTINCT FROM activation.id::text
+       OR (c.derived->'activation_projection')::jsonb IS DISTINCT FROM projection
+       OR c.derived->>'activation_projection_hash' IS DISTINCT FROM projection_hash THEN
+        RAISE EXCEPTION 'FIXED_ASSET_ACTIVATION_PROJECTION_MISMATCH';
+    END IF;
+    RETURN projection_hash;
+END;
+$$;
+
+
+--
+-- Name: finance_assert_fixed_asset_component_sources(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_fixed_asset_component_sources(target_component_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c business_event_components%ROWTYPE;
+DECLARE parent_component business_event_components%ROWTYPE;
+DECLARE activation fixed_asset_activations%ROWTYPE;
+DECLARE parent_keys jsonb;
+DECLARE parent_key text;
+DECLARE source_hash text;
+DECLARE expected_proofs jsonb := '[]'::jsonb;
+DECLARE local_activation_ids uuid[] := ARRAY[]::uuid[];
+BEGIN
+    SELECT * INTO c FROM business_event_components WHERE id=target_component_id;
+    IF c.id IS NULL OR c.kind NOT IN (
+        'fixed_asset_depreciation','fixed_asset_depreciation_batch'
+    ) THEN RETURN; END IF;
+    IF c.kind='fixed_asset_depreciation' THEN
+        parent_keys := CASE WHEN c.facts->>'activation_component_key' IS NOT NULL
+            THEN jsonb_build_array(c.facts->>'activation_component_key')
+            ELSE '[]'::jsonb END;
+    ELSE
+        parent_keys := coalesce((c.facts->'activation_component_keys')::jsonb,'[]'::jsonb);
+    END IF;
+    IF jsonb_typeof(parent_keys) IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID';
+    END IF;
+    IF jsonb_array_length(parent_keys) <> (
+        SELECT count(DISTINCT value) FROM jsonb_array_elements_text(parent_keys)
+    ) THEN RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID'; END IF;
+    FOR parent_key IN SELECT value FROM jsonb_array_elements_text(parent_keys)
+                     ORDER BY value COLLATE "C" LOOP
+        SELECT * INTO parent_component FROM business_event_components
+         WHERE org_id=c.org_id AND event_id=c.event_id AND key=parent_key;
+        IF parent_component.id IS NULL OR parent_component.kind NOT IN (
+            'fixed_asset_acquisition','fixed_asset_activation'
+        ) OR parent_component.id=c.id THEN
+            RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID';
+        END IF;
+        SELECT * INTO activation FROM fixed_asset_activations
+         WHERE org_id=c.org_id AND event_id=c.event_id AND component_id=parent_component.id;
+        IF activation.id IS NULL OR activation.id=ANY(local_activation_ids)
+           OR NOT EXISTS (SELECT 1 FROM fixed_asset_depreciations
+                          WHERE component_id=c.id AND org_id=c.org_id
+                            AND activation_id=activation.id AND asset_id=activation.asset_id) THEN
+            RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_UNUSED';
+        END IF;
+        source_hash := finance_assert_fixed_asset_activation_projection(parent_component.id);
+        local_activation_ids := array_append(local_activation_ids,activation.id);
+        expected_proofs := expected_proofs || jsonb_build_array(jsonb_build_object(
+            'component_key',parent_key,'source_kind',parent_component.kind,
+            'activation_projection_hash',source_hash,
+            'asset_id',activation.asset_id::text,'activation_id',activation.id::text
+        ));
+    END LOOP;
+    IF coalesce((c.derived->'local_activation_proofs')::jsonb,'[]'::jsonb)
+       IS DISTINCT FROM expected_proofs THEN
+        RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_PROOF_MISMATCH';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM fixed_asset_depreciations d
+          JOIN fixed_asset_activations a ON a.id=d.activation_id AND a.org_id=d.org_id
+         WHERE d.component_id=c.id AND a.event_id=c.event_id
+           AND NOT a.id=ANY(local_activation_ids)
+    ) THEN RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_MISSING'; END IF;
+    IF c.facts->>'calculation_hash' IS DISTINCT FROM c.derived->>'calculation_hash'
+       OR (c.kind='fixed_asset_depreciation' AND EXISTS (
+           SELECT 1 FROM fixed_asset_depreciations d WHERE d.component_id=c.id
+             AND d.calculation_hash IS DISTINCT FROM c.derived->>'calculation_hash'
+       )) OR (c.kind='fixed_asset_depreciation_batch' AND EXISTS (
+           SELECT 1 FROM fixed_asset_depreciation_batches b WHERE b.component_id=c.id
+             AND b.calculation_hash IS DISTINCT FROM c.derived->>'calculation_hash'
+       )) THEN RAISE EXCEPTION 'FIXED_ASSET_COMPONENT_CALCULATION_ORIGIN_INVALID'; END IF;
+END;
+$$;
 
 
 --
@@ -4527,9 +4691,9 @@ BEGIN
                     = target.policy_snapshot::jsonb ->> 'legal_filing_source_url'
                AND policy.parameters::jsonb
                     = target.policy_snapshot::jsonb -> 'parameters'
-               AND policy.effective_from <= target.planned_payment_date
+               AND policy.effective_from <= target.business_date
                AND coalesce(policy.effective_to, 'infinity'::date)
-                    >= target.planned_payment_date
+                    >= target.business_date
        ) THEN
         RAISE EXCEPTION 'LABOR_FINAL_BATCH_HASH_OR_POLICY_MISMATCH';
     END IF;
@@ -4974,6 +5138,120 @@ $$;
 
 
 --
+-- Name: finance_assert_no_adjustment_tax_settlement(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_no_adjustment_tax_settlement(target_component_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE component business_event_components%ROWTYPE;
+DECLARE payment business_events%ROWTYPE;
+DECLARE confirmation zero_tax_period_confirmations%ROWTYPE;
+DECLARE period tax_periods%ROWTYPE;
+DECLARE confirmation_id_text text;
+DECLARE confirmation_hash text;
+DECLARE source_snapshots jsonb;
+BEGIN
+    SELECT * INTO component FROM business_event_components WHERE id=target_component_id;
+    IF component.id IS NULL OR component.kind<>'tax_settlement' THEN RETURN; END IF;
+    SELECT * INTO payment FROM business_events
+     WHERE org_id=component.org_id AND id=component.event_id;
+    IF payment.status IS DISTINCT FROM 'posted' THEN RETURN; END IF;
+
+    confirmation_id_text := component.derived::jsonb ->> 'tax_confirmation_id';
+    confirmation_hash := component.derived::jsonb ->> 'tax_confirmation_hash';
+    IF component.facts::jsonb ->> 'tax_type' NOT IN ('vat', 'surtax') THEN RETURN; END IF;
+    IF component.facts::jsonb ->> 'settlement_kind' <> 'payment'
+       OR (confirmation_id_text IS NULL) <> (confirmation_hash IS NULL) THEN
+        RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_LINEAGE_INVALID';
+    END IF;
+    IF confirmation_id_text IS NOT NULL THEN
+        IF component.facts::jsonb ->> 'tax_type'<>'vat' THEN
+            RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_LINEAGE_INVALID';
+        END IF;
+        SELECT * INTO confirmation FROM zero_tax_period_confirmations
+         WHERE org_id=component.org_id AND id::text=confirmation_id_text;
+        IF confirmation.id IS NULL
+           OR confirmation.calculation_hash<>confirmation_hash
+           OR component.facts::jsonb ->> 'period_start'
+              IS DISTINCT FROM confirmation.start_date::text
+           OR component.facts::jsonb ->> 'period_end'
+              IS DISTINCT FROM confirmation.end_date::text
+           OR payment.posting_date<confirmation.adjustment_posting_date
+           OR (component.facts::jsonb ->> 'payment_date')::date
+              < confirmation.adjustment_posting_date
+           OR (confirmation.calculation::jsonb ->> 'vat_relief_fen')::bigint<>0
+           OR (confirmation.calculation::jsonb ->> 'surtax_total_fen')::bigint<>0 THEN
+            RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_LINEAGE_INVALID';
+        END IF;
+        PERFORM finance_assert_zero_tax_period_confirmation_0012(confirmation.id);
+        source_snapshots := confirmation.calculation::jsonb -> 'source_event_snapshots';
+    ELSE
+        SELECT * INTO period FROM tax_periods
+         WHERE org_id=component.org_id AND status='posted'
+           AND start_date=(component.facts::jsonb ->> 'period_start')::date
+           AND end_date=(component.facts::jsonb ->> 'period_end')::date;
+        IF period.id IS NULL
+           OR payment.posting_date<period.adjustment_posting_date
+           OR (component.facts::jsonb ->> 'payment_date')::date
+              < period.adjustment_posting_date THEN
+            RAISE EXCEPTION 'TAX_SETTLEMENT_PERIOD_LINEAGE_INVALID';
+        END IF;
+        IF component.facts->>'assessment_component_key' IS NOT NULL AND (
+            period.adjustment_event_id<>payment.id OR NOT EXISTS (
+                SELECT 1 FROM business_event_components assessment
+                 WHERE assessment.id=period.component_id AND assessment.event_id=payment.id
+                   AND assessment.key=component.facts->>'assessment_component_key'
+                   AND assessment.kind='tax_relief'
+                   AND period.calculation_hash=component.derived->>'tax_assessment_calculation_hash'
+            )
+        ) THEN RAISE EXCEPTION 'TAX_SETTLEMENT_PERIOD_LINEAGE_INVALID'; END IF;
+        source_snapshots := period.calculation::jsonb -> 'source_event_snapshots';
+    END IF;
+
+    IF EXISTS (
+        WITH expected AS (
+            SELECT source ->> 'event_id' AS event_id,
+                   source ->> 'component_id' AS component_id,
+                   (component.facts::jsonb ->> 'amount_fen')::bigint AS amount_fen
+              FROM jsonb_array_elements(
+                  source_snapshots
+              ) AS source
+             WHERE source->>'event_id'<>payment.id::text
+            UNION ALL
+            SELECT period.adjustment_event_id::text,
+                   adjustment.id::text,
+                   (component.facts::jsonb ->> 'amount_fen')::bigint
+              FROM business_event_components AS adjustment
+             WHERE confirmation_id_text IS NULL
+               AND adjustment.org_id=period.org_id
+               AND adjustment.event_id=period.adjustment_event_id
+               AND adjustment.id=period.component_id
+               AND adjustment.event_id<>payment.id
+               AND adjustment.kind='tax_relief'
+        ), actual AS (
+            SELECT dependency.parent_event_id::text AS event_id,
+                   dependency.parent_component_id::text AS component_id,
+                   dependency.amount_fen
+              FROM business_event_dependencies AS dependency
+             WHERE dependency.org_id=component.org_id
+               AND dependency.child_event_id=component.event_id
+               AND dependency.child_component_id=component.id
+               AND dependency.dependency_kind='component_source'
+        ), differences AS (
+            (SELECT * FROM expected EXCEPT ALL SELECT * FROM actual)
+            UNION ALL
+            (SELECT * FROM actual EXCEPT ALL SELECT * FROM expected)
+        )
+        SELECT 1 FROM differences
+    ) THEN
+        RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_SOURCE_MISMATCH';
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: finance_assert_open_item_settlement(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5036,7 +5314,7 @@ CREATE FUNCTION public.finance_assert_opening_correction_dependencies(target_org
                    AND successor.supersedes_id IS NOT NULL
                    AND batch.status = 'posted'
                    AND batch.reversal_of_batch_id IS NULL
-                   AND (batch.batch_kind <> 'regular' OR line.wage_tax_declaration_state = 'declared')
+                   AND (batch.batch_kind <> 'regular' OR line.wage_tax_scope = 'wage_income')
                    AND EXTRACT(YEAR FROM finance_payroll_tax_date_0017(batch.batch_kind, batch.payroll_period, batch.payment_date)) = successor.tax_year
                    AND EXTRACT(MONTH FROM finance_payroll_tax_date_0017(batch.batch_kind, batch.payroll_period, batch.payment_date)) > successor.through_month
                  LIMIT 1
@@ -5082,8 +5360,8 @@ CREATE FUNCTION public.finance_assert_payroll_batch_tax_state(target_batch_id uu
                       FROM payroll_lines AS line
                      WHERE line.org_id = target_batch.org_id
                        AND line.payroll_batch_id = target_batch.id
-                       AND CASE line.wage_tax_declaration_state
-                               WHEN 'declared' THEN 1 ELSE 0
+                       AND CASE line.wage_tax_scope
+                               WHEN 'wage_income' THEN 1 ELSE 0
                            END <> (
                            SELECT COUNT(*) FROM payroll_tax_state_slots AS slot
                             WHERE slot.org_id = target_batch.org_id
@@ -5131,6 +5409,192 @@ CREATE FUNCTION public.finance_assert_payroll_batch_tax_state(target_batch_id uu
             END IF;
         END;
         $$;
+
+
+--
+-- Name: finance_assert_payroll_component_amounts(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_payroll_component_amounts(target_component_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE batch_id uuid;
+DECLARE company_id uuid;
+BEGIN
+    SELECT b.id,b.org_id INTO batch_id,company_id FROM payroll_event_links l
+      JOIN payroll_batches b ON b.id=l.payroll_batch_id
+     WHERE l.component_id=target_component_id AND l.link_kind='payroll_accrual';
+    IF batch_id IS NULL THEN RAISE EXCEPTION 'PAYROLL_ACCRUAL_COMPONENT_MISMATCH'; END IF;
+    IF EXISTS (
+        WITH expected AS (
+            SELECT p.expense_role AS business_class,e.counterparty_id,
+                   sum(l.gross_salary_fen+l.employer_social_insurance_fen+
+                       l.employer_housing_fund_fen)::bigint AS debit_fen,0::bigint AS credit_fen
+              FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+              JOIN employee_payroll_profile_versions p ON p.id=l.employee_payroll_profile_version_id
+             WHERE l.payroll_batch_id=batch_id
+             GROUP BY p.expense_role,e.counterparty_id
+             HAVING sum(l.gross_salary_fen+l.employer_social_insurance_fen+l.employer_housing_fund_fen)>0
+            UNION ALL
+            SELECT totals.business_class,NULL::uuid,0::bigint,sum(totals.amount_fen)::bigint
+              FROM payroll_lines l CROSS JOIN LATERAL (VALUES
+                ('employee_salary_payable',l.gross_salary_fen),
+                ('employer_social_payable',l.employer_social_insurance_fen),
+                ('employer_housing_fund_payable',l.employer_housing_fund_fen)
+              ) totals(business_class,amount_fen)
+             WHERE l.payroll_batch_id=batch_id GROUP BY totals.business_class
+             HAVING sum(totals.amount_fen)>0
+        ), actual AS (
+            SELECT coalesce(a.business_class,a.system_role) AS business_class,l.counterparty_id,
+                   sum(l.debit_fen)::bigint AS debit_fen,sum(l.credit_fen)::bigint AS credit_fen
+              FROM voucher_lines l JOIN accounts a ON a.id=l.account_id
+             WHERE l.component_id=target_component_id
+             GROUP BY coalesce(a.business_class,a.system_role),l.counterparty_id
+        )
+        SELECT 1 FROM expected x FULL JOIN actual a ON a.business_class=x.business_class
+          AND a.counterparty_id IS NOT DISTINCT FROM x.counterparty_id
+         WHERE x.debit_fen IS DISTINCT FROM a.debit_fen OR x.credit_fen IS DISTINCT FROM a.credit_fen
+    ) THEN RAISE EXCEPTION 'PAYROLL_ACCRUAL_VOUCHER_AMOUNT_MISMATCH'; END IF;
+    IF EXISTS (
+        WITH employer AS (
+            SELECT value.category,value.insurance_kind,sum(value.amount_fen)::bigint AS amount_fen,
+                   NULL::text AS agency_code
+              FROM payroll_lines l CROSS JOIN LATERAL (
+                SELECT 'employer_social'::text AS category,'social_insurance'::text AS target_key,
+                       key AS insurance_kind,value::bigint AS amount_fen
+                  FROM jsonb_each_text(l.employer_social_insurance_items::jsonb)
+                UNION ALL
+                SELECT 'employer_housing','housing_fund',key,value::bigint
+                  FROM jsonb_each_text(l.employer_housing_fund_items::jsonb)
+              ) value
+             WHERE l.payroll_batch_id=batch_id
+             GROUP BY value.category,value.insurance_kind,value.target_key
+             HAVING sum(value.amount_fen)>0
+        ), expected AS (
+            SELECT 'salary:'||l.id::text AS salary_key,e.counterparty_id,'salary'::text AS category,
+                   NULL::text AS agency_code,NULL::text AS insurance_kind,l.gross_salary_fen AS amount_fen
+              FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
+             WHERE l.payroll_batch_id=batch_id AND l.gross_salary_fen>0
+            UNION ALL
+            SELECT NULL::text,NULL::uuid,x.category,x.agency_code,x.insurance_kind,x.amount_fen
+              FROM employer x
+        ), actual AS (
+            SELECT CASE WHEN i.payable_category='salary' THEN i.component_key END AS salary_key,
+                   i.counterparty_id,i.payable_category AS category,i.payable_agency_code AS agency_code,
+                   i.insurance_kind,i.original_amount_fen AS amount_fen
+              FROM open_items i WHERE i.source_component_id=target_component_id
+        ), differences AS (
+            (SELECT * FROM expected EXCEPT ALL SELECT * FROM actual)
+            UNION ALL
+            (SELECT * FROM actual EXCEPT ALL SELECT * FROM expected)
+        ) SELECT 1 FROM differences
+    ) THEN RAISE EXCEPTION 'PAYROLL_ACCRUAL_OPEN_ITEM_AMOUNT_MISMATCH'; END IF;
+END;
+$$;
+
+
+--
+-- Name: finance_assert_payroll_component_sources(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_assert_payroll_component_sources(target_component_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE c business_event_components%ROWTYPE;
+DECLARE b payroll_batches%ROWTYPE;
+DECLARE parent_component business_event_components%ROWTYPE;
+DECLARE parent_batch payroll_batches%ROWTYPE;
+DECLARE parent_line payroll_lines%ROWTYPE;
+DECLARE bonus_line payroll_lines%ROWTYPE;
+DECLARE parent_keys jsonb;
+DECLARE parent_key text;
+DECLARE expected_proofs jsonb := '[]'::jsonb;
+DECLARE parent_line_ids jsonb;
+DECLARE snapshot jsonb;
+DECLARE local_batch_ids uuid[] := ARRAY[]::uuid[];
+BEGIN
+    SELECT * INTO c FROM business_event_components WHERE id=target_component_id;
+    IF c.id IS NULL OR c.kind<>'payroll_accrual' THEN RETURN; END IF;
+    SELECT batch.* INTO b FROM payroll_event_links link
+      JOIN payroll_batches batch ON batch.id=link.payroll_batch_id AND batch.org_id=link.org_id
+     WHERE link.component_id=c.id AND link.link_kind='payroll_accrual';
+    IF b.id IS NULL OR c.facts->>'batch_id' IS DISTINCT FROM b.id::text
+       OR c.facts->>'calculation_hash' IS DISTINCT FROM b.calculation_hash
+       OR c.derived->>'payroll_batch_id' IS DISTINCT FROM b.id::text
+       OR c.derived->>'calculation_hash' IS DISTINCT FROM b.calculation_hash THEN
+        RAISE EXCEPTION 'PAYROLL_COMPONENT_CALCULATION_ORIGIN_INVALID';
+    END IF;
+    parent_keys := coalesce((c.facts->'regular_payroll_component_keys')::jsonb,'[]'::jsonb);
+    IF jsonb_typeof(parent_keys) IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
+    END IF;
+    IF jsonb_array_length(parent_keys) <> (
+        SELECT count(DISTINCT value) FROM jsonb_array_elements_text(parent_keys)
+    ) THEN RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID'; END IF;
+    IF jsonb_array_length(parent_keys)>0
+       AND (b.batch_kind<>'annual_bonus' OR b.tax_method IS DISTINCT FROM 'combined') THEN
+        RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
+    END IF;
+    FOR parent_key IN SELECT value FROM jsonb_array_elements_text(parent_keys)
+                     ORDER BY value COLLATE "C" LOOP
+        SELECT * INTO parent_component FROM business_event_components
+         WHERE org_id=c.org_id AND event_id=c.event_id AND key=parent_key;
+        IF parent_component.id IS NULL OR parent_component.kind<>'payroll_accrual'
+           OR parent_component.id=c.id THEN
+            RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
+        END IF;
+        SELECT batch.* INTO parent_batch FROM payroll_event_links link
+          JOIN payroll_batches batch ON batch.id=link.payroll_batch_id AND batch.org_id=link.org_id
+         WHERE link.component_id=parent_component.id AND link.link_kind='payroll_accrual';
+        IF parent_batch.id IS NULL OR parent_batch.batch_kind<>'regular'
+           OR parent_batch.business_event_id IS DISTINCT FROM c.event_id
+           OR parent_batch.id=ANY(local_batch_ids) THEN
+            RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
+        END IF;
+        SELECT jsonb_agg(wage.id::text ORDER BY wage.id::text COLLATE "C") INTO parent_line_ids
+          FROM payroll_lines bonus
+          JOIN payroll_lines wage ON wage.org_id=bonus.org_id
+           AND wage.payroll_batch_id=bonus.regular_payroll_batch_id
+           AND wage.employee_id=bonus.employee_id
+         WHERE bonus.org_id=c.org_id AND bonus.payroll_batch_id=b.id
+           AND bonus.regular_payroll_batch_id=parent_batch.id;
+        IF parent_line_ids IS NULL THEN
+            RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_UNUSED';
+        END IF;
+        local_batch_ids := array_append(local_batch_ids,parent_batch.id);
+        expected_proofs := expected_proofs || jsonb_build_array(jsonb_build_object(
+            'component_key',parent_key,'batch_id',parent_batch.id::text,
+            'calculation_hash',parent_batch.calculation_hash,'employee_line_ids',parent_line_ids
+        ));
+    END LOOP;
+    IF coalesce((c.derived->'local_regular_payroll_proofs')::jsonb,'[]'::jsonb)
+       IS DISTINCT FROM expected_proofs THEN
+        RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PROOF_MISMATCH';
+    END IF;
+    IF b.batch_kind='annual_bonus' AND b.tax_method='combined' THEN
+        FOR bonus_line IN SELECT * FROM payroll_lines
+                          WHERE org_id=c.org_id AND payroll_batch_id=b.id LOOP
+            SELECT * INTO parent_batch FROM payroll_batches
+             WHERE org_id=c.org_id AND id=bonus_line.regular_payroll_batch_id;
+            SELECT * INTO parent_line FROM payroll_lines
+             WHERE org_id=c.org_id AND payroll_batch_id=parent_batch.id
+               AND employee_id=bonus_line.employee_id;
+            SELECT value INTO snapshot
+              FROM jsonb_array_elements(b.calculation_input::jsonb->'employee_snapshots')
+             WHERE value->>'employee_id'=bonus_line.employee_id::text;
+            IF parent_batch.id IS NULL OR parent_line.id IS NULL OR snapshot IS NULL
+               OR snapshot->>'regular_payroll_batch_id' IS DISTINCT FROM parent_batch.id::text
+               OR snapshot->>'regular_payroll_line_id' IS DISTINCT FROM parent_line.id::text
+               OR snapshot->>'regular_payroll_calculation_hash'
+                    IS DISTINCT FROM parent_batch.calculation_hash
+               OR (parent_batch.business_event_id=c.event_id
+                   AND NOT parent_batch.id=ANY(local_batch_ids)) THEN
+                RAISE EXCEPTION 'PAYROLL_REGULAR_SNAPSHOT_ORIGIN_INVALID';
+            END IF;
+        END LOOP;
+    END IF;
+END;
+$$;
 
 
 --
@@ -5878,124 +6342,265 @@ CREATE FUNCTION public.finance_assert_profile_correction_dependencies(target_org
 
 
 --
--- Name: finance_assert_salary_actual_deduction_0020(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: finance_assert_purchase_component(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.finance_assert_component_salary_actual_deduction(target_component_id uuid) RETURNS void
+CREATE FUNCTION public.finance_assert_purchase_component(target_component_id uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE target business_events%ROWTYPE;
-DECLARE active_total bigint;
-DECLARE expected_total bigint;
-DECLARE target_component business_event_components%ROWTYPE;
+DECLARE c business_event_components%ROWTYPE;
+DECLARE e business_events%ROWTYPE;
+DECLARE parent business_event_components%ROWTYPE;
+DECLARE parent_event business_events%ROWTYPE;
+DECLARE obligation open_items%ROWTYPE;
+DECLARE reference jsonb;
+DECLARE source_ref jsonb;
+DECLARE role text;
+DECLARE expected_role text;
+DECLARE source_account uuid;
+DECLARE amount bigint;
+DECLARE total bigint := 0;
+DECLARE used bigint;
+DECLARE debit_total bigint;
+DECLARE credit_total bigint;
+DECLARE element text;
+DECLARE elements jsonb := '{"purchase_price_fen":0,"noncreditable_tax_fen":0,"directly_attributable_cost_fen":0}';
+DECLARE seen uuid[] := ARRAY[]::uuid[];
+DECLARE source_count integer := 0;
+DECLARE expected_entries jsonb := '[]';
+DECLARE actual_entries jsonb;
 BEGIN
-    SELECT * INTO target_component FROM business_event_components WHERE id=target_component_id;
-    IF NOT FOUND THEN RETURN; END IF;
-    SELECT * INTO target FROM business_events WHERE id=target_component.event_id;
-    IF target_component.kind <> 'salary_settlement' OR target.id IS NULL THEN
-        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_PAYMENT_EVENT_INVALID';
+    SELECT * INTO c FROM business_event_components WHERE id=target_component_id;
+    SELECT * INTO e FROM business_events WHERE id=c.event_id;
+    IF c.id IS NULL OR e.status NOT IN ('posted','reversed') THEN RETURN; END IF;
+    SELECT coalesce(sum(debit_fen),0),coalesce(sum(credit_fen),0)
+      INTO debit_total,credit_total FROM voucher_lines WHERE component_id=c.id;
+
+    IF c.kind IN ('supplier_advance','project_cost') THEN
+        amount := (c.facts->>'amount_fen')::bigint;
+        IF amount IS NULL OR amount<=0 OR (c.facts->>'business_date')::date IS NULL
+           OR (c.facts->>'business_date')::date>e.posting_date
+           OR (SELECT count(*) FROM open_items WHERE source_component_id=c.id)<>1
+           OR EXISTS(SELECT 1 FROM settlements WHERE payment_component_id=c.id) THEN
+            RAISE EXCEPTION 'PURCHASE_COST_OR_ADVANCE_FACTS_INVALID'; END IF;
+        SELECT * INTO obligation FROM open_items WHERE source_component_id=c.id;
+        IF obligation.original_amount_fen<>amount OR obligation.counterparty_id IS NOT NULL THEN
+            RAISE EXCEPTION 'PURCHASE_OPEN_ITEM_FACTS_MISMATCH'; END IF;
+        IF c.kind='supplier_advance' THEN
+            expected_role := 'prepayments';
+            IF credit_total<>0 OR obligation.item_type<>'receivable'
+               OR c.facts->>'purchase_purpose' IS NULL
+               OR c.facts->>'purchase_purpose' NOT IN
+                  ('goods_or_services','operating_expense','fixed_asset','intangible_asset')
+               OR (c.facts->>'payment_date')::date IS NULL
+               OR (c.facts->>'payment_date')::date > e.posting_date THEN
+                RAISE EXCEPTION 'SUPPLIER_ADVANCE_FACTS_INVALID'; END IF;
+            IF c.derived->>'cash_flow_category' IS DISTINCT FROM
+               (CASE c.facts->>'purchase_purpose' WHEN 'goods_or_services' THEN 'cash_flow_3'
+                    WHEN 'operating_expense' THEN 'cash_flow_6' ELSE 'cash_flow_12' END) THEN
+                RAISE EXCEPTION 'SUPPLIER_ADVANCE_CASH_FLOW_INVALID'; END IF;
+            IF (SELECT coalesce(sum(amount_fen),0) FROM component_cash_flow_allocations
+                 WHERE component_id=c.id)<>-amount
+               OR EXISTS(SELECT 1 FROM component_cash_flow_allocations WHERE component_id=c.id
+                   AND (category<>c.derived->>'cash_flow_category' OR amount_fen>=0)) THEN
+                RAISE EXCEPTION 'SUPPLIER_ADVANCE_CASH_FLOW_INVALID'; END IF;
+        ELSE
+            expected_role := CASE c.facts->>'project_nature'
+                WHEN 'purchased_intangible' THEN 'intangible_project_cost'
+                WHEN 'internal_development' THEN 'development_expenditure' END;
+            IF expected_role IS NULL OR credit_total<>amount OR obligation.item_type<>'payable'
+               OR obligation.due_date IS NOT NULL
+               OR c.facts->>'cost_element' IS NULL
+               OR c.facts->>'cost_element' NOT IN
+                  ('purchase_price','noncreditable_tax','directly_attributable_cost')
+               OR c.facts::jsonb->'rights_controlled' IS DISTINCT FROM 'true'::jsonb THEN
+                RAISE EXCEPTION 'PROJECT_COST_CAPITALIZATION_FACTS_REQUIRED'; END IF;
+            IF expected_role='development_expenditure' AND (
+                 c.facts->>'cost_element'='purchase_price'
+                 OR (c.facts::jsonb#>>'{development_conditions,conditions_met_date}')::date IS NULL
+                 OR (c.facts::jsonb#>>'{development_conditions,conditions_met_date}')::date>
+                    (c.facts->>'business_date')::date
+                 OR c.facts::jsonb#>'{development_conditions,technically_feasible}'
+                    IS DISTINCT FROM 'true'::jsonb
+                 OR c.facts::jsonb#>'{development_conditions,intention_to_complete_and_use}'
+                    IS DISTINCT FROM 'true'::jsonb
+                 OR c.facts::jsonb#>'{development_conditions,probable_economic_benefits}'
+                    IS DISTINCT FROM 'true'::jsonb
+                 OR c.facts::jsonb#>'{development_conditions,adequate_resources}'
+                    IS DISTINCT FROM 'true'::jsonb
+                 OR c.facts::jsonb#>'{development_conditions,reliably_measurable_cost}'
+                    IS DISTINCT FROM 'true'::jsonb
+            ) THEN RAISE EXCEPTION 'PROJECT_DEVELOPMENT_CAPITALIZATION_CONDITIONS_NOT_MET'; END IF;
+        END IF;
+        IF debit_total<>amount OR EXISTS (
+            SELECT 1 FROM voucher_lines l JOIN accounts a ON a.id=l.account_id
+             WHERE l.component_id=c.id AND (l.counterparty_id IS NOT NULL
+                OR (l.debit_fen>0 AND coalesce(a.business_class,a.system_role)<>expected_role)
+                OR (l.credit_fen>0 AND coalesce(a.business_class,a.system_role)<>'accounts_payable'))
+        ) OR NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id=obligation.account_id
+            AND coalesce(a.business_class,a.system_role)=CASE WHEN c.kind='supplier_advance'
+                THEN 'prepayments' ELSE 'accounts_payable' END) THEN
+            RAISE EXCEPTION 'PURCHASE_COMPONENT_ENTRY_MISMATCH'; END IF;
+        IF (SELECT coalesce(sum(CASE WHEN c.kind='supplier_advance'
+                                      THEN l.debit_fen ELSE l.credit_fen END),0)
+              FROM voucher_lines l WHERE l.component_id=c.id AND l.account_id=obligation.account_id
+                AND l.counterparty_id IS NULL)<>amount THEN
+            RAISE EXCEPTION 'PURCHASE_OPEN_ITEM_ACCOUNT_ORIGIN_MISMATCH'; END IF;
+        IF c.kind='project_cost' THEN
+            SELECT coalesce(sum((s->>'amount_fen')::bigint),0) INTO used
+              FROM business_event_components child JOIN business_events ce ON ce.id=child.event_id,
+                   LATERAL jsonb_array_elements(coalesce(child.facts::jsonb->'cost_sources','[]')) s
+             WHERE ce.status='posted' AND child.org_id=e.org_id
+               AND (s->>'component_id'=c.id::text OR
+                    (child.event_id=c.event_id AND s->>'component_key'=c.key));
+            IF (e.status='reversed' AND used>0) OR used>amount THEN
+                RAISE EXCEPTION 'PROJECT_COST_SOURCE_AMOUNT_EXCEEDED'; END IF;
+        END IF;
+        RETURN;
     END IF;
-    SELECT coalesce(sum(amount_fen) FILTER (WHERE reversed IS FALSE), 0)
-      INTO active_total
-      FROM payroll_salary_actual_deduction_allocations
-     WHERE org_id = target.org_id AND payment_component_id = target_component.id;
-    SELECT coalesce(NULLIF(target_component.derived->>'actual_salary_deduction_fen','')::bigint,0)
-      INTO expected_total;
-    IF active_total = 0 AND expected_total = 0 THEN RETURN; END IF;
-    IF target_component.id IS NULL OR target.status NOT IN ('posted','reversed') THEN
-        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_PAYMENT_EVENT_INVALID';
+
+    IF c.kind IN ('supplier_advance_application','supplier_advance_refund') THEN
+        IF c.kind='supplier_advance_refund' AND (
+            (c.facts->>'payment_date')::date IS NULL
+            OR (c.facts->>'payment_date')::date > e.posting_date) THEN
+            RAISE EXCEPTION 'SUPPLIER_ADVANCE_REFUND_FACTS_REQUIRED'; END IF;
+        FOR reference IN
+            SELECT value || '{"advance":true}' FROM
+                jsonb_array_elements(coalesce(c.facts::jsonb->'advances','[]'))
+            UNION ALL
+            SELECT value || '{"advance":false}' FROM
+                jsonb_array_elements(coalesce(c.facts::jsonb->'allocations','[]'))
+        LOOP
+            SELECT i.* INTO obligation FROM open_items i
+             JOIN business_event_components p ON p.id=i.source_component_id
+             WHERE i.org_id=e.org_id AND (
+                (reference->>'open_item_id' IS NOT NULL
+                     AND i.id::text=reference->>'open_item_id'
+                     AND reference->>'source_component_key' IS NULL)
+                OR (reference->>'open_item_id' IS NULL AND p.event_id=e.id
+                     AND p.key=reference->>'source_component_key'
+                     AND i.component_key=coalesce(reference->>'source_open_item_key','primary')));
+            IF obligation.id IS NULL OR obligation.id=ANY(seen) THEN
+                RAISE EXCEPTION 'SUPPLIER_ADVANCE_SETTLEMENT_SOURCE_INVALID'; END IF;
+            seen := array_append(seen,obligation.id);
+            SELECT * INTO parent FROM business_event_components
+             WHERE id=obligation.source_component_id;
+            SELECT * INTO parent_event FROM business_events WHERE id=parent.event_id;
+            SELECT coalesce(business_class,system_role) INTO role
+              FROM accounts WHERE id=obligation.account_id;
+            amount := (reference->>'amount_fen')::bigint;
+            IF amount IS NULL OR amount<=0 OR parent_event.posting_date>e.posting_date
+               OR (parent.event_id<>e.id AND (parent_event.status NOT IN ('posted','reversed')
+                   OR (e.status='posted' AND parent_event.status<>'posted')))
+               OR (reference->>'advance'='true' AND
+                   (parent.kind<>'supplier_advance' OR role<>'prepayments'
+                    OR obligation.item_type<>'receivable'))
+               OR (reference->>'advance'='false' AND
+                   (role<>'accounts_payable' OR obligation.item_type<>'payable'
+                    OR obligation.payable_category IS NOT NULL))
+               OR NOT EXISTS(SELECT 1 FROM settlements s WHERE s.payment_component_id=c.id
+                   AND s.open_item_id=obligation.id AND s.amount_fen=amount
+                   AND s.purpose=c.kind) THEN
+                RAISE EXCEPTION 'SUPPLIER_ADVANCE_SETTLEMENT_SOURCE_MISMATCH'; END IF;
+            expected_entries := expected_entries || jsonb_build_array(jsonb_build_object(
+                'account_id',obligation.account_id,
+                'debit',CASE WHEN reference->>'advance'='false' THEN amount ELSE 0 END,
+                'credit',CASE WHEN reference->>'advance'='true' THEN amount ELSE 0 END,
+                'party',obligation.counterparty_id));
+            source_count := source_count+1;
+        END LOOP;
+        IF source_count=0
+           OR jsonb_array_length(coalesce(c.facts::jsonb->'advances','[]'))=0
+           OR source_count<>(SELECT count(*) FROM settlements WHERE payment_component_id=c.id)
+           OR EXISTS(SELECT 1 FROM open_items WHERE source_component_id=c.id)
+           OR (c.kind='supplier_advance_application'
+               AND (debit_total<>credit_total OR debit_total=0))
+           OR (c.kind='supplier_advance_refund' AND (debit_total<>0 OR credit_total=0)) THEN
+            RAISE EXCEPTION 'SUPPLIER_ADVANCE_SETTLEMENT_TOTAL_MISMATCH'; END IF;
+    ELSE
+        FOR source_ref IN SELECT value FROM
+            jsonb_array_elements(coalesce(c.facts::jsonb->'cost_sources','[]')) LOOP
+            SELECT p.* INTO parent FROM business_event_components p WHERE p.org_id=e.org_id AND (
+                (source_ref->>'component_id' IS NOT NULL
+                     AND p.id::text=source_ref->>'component_id'
+                     AND source_ref->>'component_key' IS NULL)
+                OR (source_ref->>'component_id' IS NULL
+                     AND p.event_id=e.id AND p.key=source_ref->>'component_key')) FOR UPDATE;
+            IF parent.id IS NULL OR parent.id=ANY(seen) OR parent.kind<>'project_cost' THEN
+                RAISE EXCEPTION 'PROJECT_COST_SOURCE_INVALID'; END IF;
+            seen := array_append(seen,parent.id);
+            SELECT * INTO parent_event FROM business_events WHERE id=parent.event_id;
+            amount := (source_ref->>'amount_fen')::bigint;
+            IF amount IS NULL OR amount<=0 OR parent_event.posting_date>e.posting_date
+               OR parent_event.status NOT IN ('posted','reversed')
+               OR (e.status='posted' AND parent_event.status<>'posted') THEN
+                RAISE EXCEPTION 'PROJECT_COST_SOURCE_SCOPE_OR_DATE_INVALID'; END IF;
+            SELECT DISTINCT account_id INTO STRICT source_account FROM voucher_lines
+             WHERE component_id=parent.id AND debit_fen>0;
+            element := (parent.facts->>'cost_element') || '_fen';
+            elements := jsonb_set(elements,ARRAY[element],
+                to_jsonb((elements->>element)::bigint+amount));
+            IF parent.event_id<>e.id AND NOT EXISTS (
+                SELECT 1 FROM business_event_dependencies d
+                 WHERE d.parent_component_id=parent.id AND d.child_component_id=c.id
+                   AND d.amount_fen=amount) THEN
+                RAISE EXCEPTION 'PROJECT_COST_SOURCE_DEPENDENCY_REQUIRED'; END IF;
+            SELECT coalesce(sum((s->>'amount_fen')::bigint),0) INTO used
+              FROM business_event_components child JOIN business_events ce ON ce.id=child.event_id,
+                   LATERAL jsonb_array_elements(coalesce(child.facts::jsonb->'cost_sources','[]')) s
+             WHERE ce.status='posted' AND child.org_id=e.org_id
+               AND (s->>'component_id'=parent.id::text OR
+                    (child.event_id=parent.event_id AND s->>'component_key'=parent.key));
+            IF used>(parent.facts->>'amount_fen')::bigint THEN
+                RAISE EXCEPTION 'PROJECT_COST_SOURCE_AMOUNT_EXCEEDED'; END IF;
+            expected_entries := expected_entries || jsonb_build_array(jsonb_build_object(
+                'account_id',source_account,'debit',0,'credit',amount,'party',NULL));
+            total := total+amount;
+        END LOOP;
+        IF total=0 OR debit_total<>total OR credit_total<>total
+           OR EXISTS(SELECT 1 FROM open_items WHERE source_component_id=c.id)
+           OR EXISTS(SELECT 1 FROM settlements WHERE payment_component_id=c.id)
+           OR EXISTS(SELECT 1 FROM component_cash_flow_allocations WHERE component_id=c.id) THEN
+            RAISE EXCEPTION 'PROJECT_COST_TRANSFER_TOTAL_MISMATCH'; END IF;
+        IF c.kind='intangible_asset_acquisition' THEN
+            expected_role := 'intangible_asset_cost';
+            IF c.facts->>'settlement_method'<>'project_cost'
+               OR c.facts::jsonb->'cost_components' IS DISTINCT FROM elements
+               OR NOT EXISTS(SELECT 1 FROM intangible_assets a WHERE a.component_id=c.id
+                    AND a.cost_fen=total AND a.settlement_method='project_cost') THEN
+                RAISE EXCEPTION 'PROJECT_COST_ASSET_BREAKDOWN_MISMATCH'; END IF;
+        ELSE
+            expected_role := c.facts->>'expense_class';
+            IF expected_role IS NULL
+               OR expected_role NOT IN ('general_expense','sales_expense','service_cost') THEN
+                RAISE EXCEPTION 'PROJECT_COST_EXPENSE_FACTS_REQUIRED'; END IF;
+        END IF;
+        SELECT DISTINCT l.account_id INTO STRICT source_account
+          FROM voucher_lines l JOIN accounts a ON a.id=l.account_id
+         WHERE l.component_id=c.id AND l.debit_fen>0
+           AND coalesce(a.business_class,a.system_role)=expected_role;
+        expected_entries := expected_entries || jsonb_build_array(jsonb_build_object(
+            'account_id',source_account,'debit',total,'credit',0,'party',NULL));
     END IF;
-    IF target.status = 'posted' AND (active_total <= 0 OR active_total <> expected_total) THEN
-        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_EVENT_TOTAL_MISMATCH';
-    END IF;
-    IF target.status = 'posted' AND EXISTS (
-        SELECT 1
-          FROM payroll_salary_actual_deduction_allocations AS allocation
-          JOIN payroll_lines AS line
-            ON line.org_id = allocation.org_id AND line.id = allocation.payroll_line_id
-          JOIN payroll_batches AS batch
-            ON batch.org_id = line.org_id AND batch.id = line.payroll_batch_id
-          JOIN employee_payroll_profile_versions AS profile
-            ON profile.org_id = line.org_id
-           AND profile.employee_id = line.employee_id
-           AND profile.id = line.employee_payroll_profile_version_id
-         WHERE allocation.org_id = target.org_id
-           AND allocation.payment_component_id = target_component.id
-           AND allocation.reversed IS FALSE
-           AND (batch.status <> 'posted' OR allocation.expense_role <> profile.expense_role
-                OR NOT EXISTS (
-                    SELECT 1
-                      FROM settlements AS settlement
-                      JOIN open_items AS item
-                        ON item.org_id = settlement.org_id
-                       AND item.id = settlement.open_item_id
-                      JOIN employees AS employee
-                        ON employee.org_id = item.org_id
-                       AND employee.counterparty_id = item.counterparty_id
-                     WHERE settlement.org_id = allocation.org_id
-                       AND settlement.payment_component_id = allocation.payment_component_id
-                       AND settlement.reversed IS FALSE
-                       AND item.payable_category = 'salary'
-                       AND item.source_event_id = batch.business_event_id
-                       AND employee.id = line.employee_id
-                       AND settlement.amount_fen >= allocation.amount_fen
-                ))
-    ) THEN
-        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_SOURCE_MISMATCH';
-    END IF;
-    IF target.status = 'posted' AND EXISTS (
-        WITH allocation_total AS (
-            SELECT expense_role, sum(amount_fen)::bigint AS amount_fen
-              FROM payroll_salary_actual_deduction_allocations
-             WHERE org_id = target.org_id AND payment_component_id = target_component.id
-               AND reversed IS FALSE
-             GROUP BY expense_role
-        ), voucher_total AS (
-            SELECT coalesce(account.business_class,account.system_role) AS expense_role,
-                   sum(line.credit_fen)::bigint AS amount_fen
-              FROM vouchers AS voucher
-              JOIN voucher_lines AS line ON line.voucher_id = voucher.id
-              JOIN accounts AS account ON account.id = line.account_id
-             WHERE line.component_id = target_component.id
-               AND coalesce(account.business_class,account.system_role) IN (
-                   'payroll_management_expense','payroll_sales_expense','payroll_service_cost'
-               )
-             GROUP BY coalesce(account.business_class,account.system_role)
-        )
-        SELECT 1 FROM allocation_total
-        FULL JOIN voucher_total USING (expense_role)
-         WHERE coalesce(allocation_total.amount_fen, 0)
-               <> coalesce(voucher_total.amount_fen, 0)
-    ) THEN
-        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_VOUCHER_MISMATCH';
-    END IF;
-    IF target.status = 'reversed' AND EXISTS (
-        SELECT 1 FROM payroll_salary_actual_deduction_allocations AS allocation
-         WHERE allocation.org_id = target.org_id
-           AND allocation.payment_component_id = target_component.id
-           AND (allocation.reversed IS FALSE OR allocation.reversed_by_event_id IS NULL
-                OR NOT EXISTS (
-                    SELECT 1 FROM business_events AS reversal
-                     WHERE reversal.org_id = allocation.org_id
-                       AND reversal.id = allocation.reversed_by_event_id
-                       AND reversal.status = 'posted'
-                       AND EXISTS (SELECT 1 FROM business_event_components c
-                           WHERE c.event_id=reversal.id AND c.kind='reversal'
-                             AND c.facts->>'source_event_id'=target.id::text)
-                ))
-    ) THEN
-        RAISE EXCEPTION 'SALARY_ACTUAL_DEDUCTION_REVERSAL_MISMATCH';
-    END IF;
+    SELECT coalesce(jsonb_agg(jsonb_build_object('account_id',account_id,'debit',debit_fen,
+        'credit',credit_fen,'party',counterparty_id)),'[]') INTO actual_entries
+      FROM voucher_lines WHERE component_id=c.id;
+    IF EXISTS ((SELECT value FROM jsonb_array_elements(expected_entries)) EXCEPT ALL
+               (SELECT value FROM jsonb_array_elements(actual_entries)))
+       OR EXISTS ((SELECT value FROM jsonb_array_elements(actual_entries)) EXCEPT ALL
+                  (SELECT value FROM jsonb_array_elements(expected_entries))) THEN
+        RAISE EXCEPTION 'PURCHASE_COMPONENT_SOURCE_ENTRIES_MISMATCH'; END IF;
 END;
 $$;
 
 
 --
--- Name: finance_assert_settlement_reversal(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: finance_assert_salary_actual_deduction_0020(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.finance_assert_salary_actual_deduction_0020(target_event_id uuid)
-RETURNS void LANGUAGE plpgsql AS $$
+CREATE FUNCTION public.finance_assert_salary_actual_deduction_0020(target_event_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE component_id uuid;
 BEGIN
     FOR component_id IN
@@ -6010,6 +6615,10 @@ BEGIN
 END;
 $$;
 
+
+--
+-- Name: finance_assert_settlement_reversal(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
 
 CREATE FUNCTION public.finance_assert_settlement_reversal(target_settlement_id uuid) RETURNS void
     LANGUAGE plpgsql
@@ -6046,127 +6655,6 @@ CREATE FUNCTION public.finance_assert_settlement_reversal(target_settlement_id u
 --
 -- Name: finance_assert_tax_period(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
-
-CREATE FUNCTION public.finance_tax_component_account_id(target_org_id uuid, target_component_id uuid, target_business_class text) RETURNS uuid
-    LANGUAGE plpgsql STABLE
-    AS $$
-DECLARE account_ids uuid[];
-BEGIN
-    SELECT COALESCE(array_agg(DISTINCT account.id ORDER BY account.id), ARRAY[]::uuid[])
-      INTO account_ids
-      FROM voucher_lines AS line
-      JOIN accounts AS account
-        ON account.org_id = line.org_id AND account.id = line.account_id
-     WHERE line.org_id = target_org_id
-       AND line.component_id = target_component_id
-       AND COALESCE(account.business_class, account.system_role) = target_business_class;
-    IF cardinality(account_ids) > 1 THEN
-        RAISE EXCEPTION 'TAX_COMPONENT_ACCOUNT_SOURCE_AMBIGUOUS';
-    END IF;
-    RETURN account_ids[1];
-END;
-$$;
-
-
-CREATE FUNCTION public.finance_vat_source_account_id(target_org_id uuid, target_component_id uuid) RETURNS uuid
-    LANGUAGE plpgsql STABLE
-    AS $$
-DECLARE target_account_id uuid;
-DECLARE account_ids uuid[];
-DECLARE posted_transfer_count bigint;
-BEGIN
-    target_account_id := finance_tax_component_account_id(
-        target_org_id, target_component_id, 'vat_payable'
-    );
-    IF target_account_id IS NOT NULL THEN RETURN target_account_id; END IF;
-
-    IF EXISTS (
-        SELECT 1
-          FROM open_items AS item
-          JOIN deferred_output_vat_transfers AS transfer
-            ON transfer.org_id = item.org_id
-           AND transfer.source_open_item_id = item.id
-          JOIN business_events AS transfer_event
-            ON transfer_event.org_id = transfer.org_id
-           AND transfer_event.id = transfer.transfer_event_id
-          LEFT JOIN business_event_components AS payment_component
-            ON payment_component.org_id = transfer.org_id
-           AND payment_component.event_id = transfer.transfer_event_id
-           AND COALESCE(
-                payment_component.derived::jsonb -> 'deferred_vat_source_items',
-                '[]'::jsonb
-           ) @> jsonb_build_array(item.id::text)
-         WHERE item.org_id = target_org_id
-           AND item.source_component_id = target_component_id
-           AND transfer_event.status = 'posted'
-         GROUP BY transfer.id
-        HAVING count(payment_component.id) <> 1
-    ) THEN
-        RAISE EXCEPTION 'TAX_DEFERRED_VAT_TRANSFER_SOURCE_AMBIGUOUS';
-    END IF;
-
-    SELECT count(DISTINCT transfer.id),
-           COALESCE(array_agg(DISTINCT account.id ORDER BY account.id)
-               FILTER (WHERE account.id IS NOT NULL), ARRAY[]::uuid[])
-      INTO posted_transfer_count, account_ids
-      FROM open_items AS item
-      JOIN deferred_output_vat_transfers AS transfer
-        ON transfer.org_id = item.org_id
-       AND transfer.source_open_item_id = item.id
-      JOIN business_events AS transfer_event
-        ON transfer_event.org_id = transfer.org_id
-       AND transfer_event.id = transfer.transfer_event_id
-       AND transfer_event.status = 'posted'
-      JOIN business_event_components AS payment_component
-        ON payment_component.org_id = transfer.org_id
-       AND payment_component.event_id = transfer.transfer_event_id
-       AND COALESCE(
-            payment_component.derived::jsonb -> 'deferred_vat_source_items',
-            '[]'::jsonb
-       ) @> jsonb_build_array(item.id::text)
-      LEFT JOIN voucher_lines AS line
-        ON line.org_id = payment_component.org_id
-       AND line.component_id = payment_component.id
-      LEFT JOIN accounts AS account
-        ON account.org_id = line.org_id AND account.id = line.account_id
-       AND COALESCE(account.business_class, account.system_role) = 'vat_payable'
-     WHERE item.org_id = target_org_id
-       AND item.source_component_id = target_component_id;
-    IF posted_transfer_count > 0 AND cardinality(account_ids) = 0 THEN
-        RAISE EXCEPTION 'TAX_DEFERRED_VAT_TRANSFER_ACCOUNT_MISSING';
-    END IF;
-    IF cardinality(account_ids) > 1 THEN
-        RAISE EXCEPTION 'TAX_COMPONENT_ACCOUNT_SOURCE_AMBIGUOUS';
-    END IF;
-    IF cardinality(account_ids) = 1 THEN RETURN account_ids[1]; END IF;
-
-    target_account_id := finance_tax_component_account_id(
-        target_org_id, target_component_id, 'deferred_output_vat'
-    );
-    IF target_account_id IS NULL THEN
-        RAISE EXCEPTION 'TAX_COMPONENT_ACCOUNT_SOURCE_MISSING';
-    END IF;
-    RETURN target_account_id;
-END;
-$$;
-
-CREATE FUNCTION public.finance_tax_source_review_snapshots(target_org_id uuid, snapshots jsonb)
-RETURNS jsonb LANGUAGE sql STABLE AS $$
-    SELECT coalesce(jsonb_agg(jsonb_build_object(
-        'event_idempotency_key', event.idempotency_key,
-        'component_key', component.key,
-        'gross_fen', source->'gross_fen',
-        'net_fen', source->'net_fen',
-        'vat_fen', source->'vat_fen',
-        'exemption_eligible', source->'exemption_eligible'
-    ) ORDER BY event.idempotency_key COLLATE "C", component.key COLLATE "C"), '[]'::jsonb)
-      FROM jsonb_array_elements(snapshots) source
-      JOIN public.business_events event
-        ON event.org_id=target_org_id AND event.id=(source->>'event_id')::uuid
-      JOIN public.business_event_components component
-        ON component.org_id=event.org_id AND component.event_id=event.id
-       AND component.id=(source->>'component_id')::uuid;
-$$;
 
 CREATE FUNCTION public.finance_assert_tax_period(target_period_id uuid) RETURNS void
     LANGUAGE plpgsql
@@ -6886,147 +7374,6 @@ $_$;
 
 
 --
--- Name: finance_assert_no_adjustment_tax_settlement(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.finance_assert_no_adjustment_tax_settlement(target_component_id uuid) RETURNS void
-    LANGUAGE plpgsql
-    AS $$
-DECLARE component business_event_components%ROWTYPE;
-DECLARE payment business_events%ROWTYPE;
-DECLARE confirmation zero_tax_period_confirmations%ROWTYPE;
-DECLARE period tax_periods%ROWTYPE;
-DECLARE confirmation_id_text text;
-DECLARE confirmation_hash text;
-DECLARE source_snapshots jsonb;
-BEGIN
-    SELECT * INTO component FROM business_event_components WHERE id=target_component_id;
-    IF component.id IS NULL OR component.kind<>'tax_settlement' THEN RETURN; END IF;
-    SELECT * INTO payment FROM business_events
-     WHERE org_id=component.org_id AND id=component.event_id;
-    IF payment.status IS DISTINCT FROM 'posted' THEN RETURN; END IF;
-
-    confirmation_id_text := component.derived::jsonb ->> 'tax_confirmation_id';
-    confirmation_hash := component.derived::jsonb ->> 'tax_confirmation_hash';
-    IF component.facts::jsonb ->> 'tax_type' NOT IN ('vat', 'surtax') THEN RETURN; END IF;
-    IF component.facts::jsonb ->> 'settlement_kind' <> 'payment'
-       OR (confirmation_id_text IS NULL) <> (confirmation_hash IS NULL) THEN
-        RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_LINEAGE_INVALID';
-    END IF;
-    IF confirmation_id_text IS NOT NULL THEN
-        IF component.facts::jsonb ->> 'tax_type'<>'vat' THEN
-            RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_LINEAGE_INVALID';
-        END IF;
-        SELECT * INTO confirmation FROM zero_tax_period_confirmations
-         WHERE org_id=component.org_id AND id::text=confirmation_id_text;
-        IF confirmation.id IS NULL
-           OR confirmation.calculation_hash<>confirmation_hash
-           OR component.facts::jsonb ->> 'period_start'
-              IS DISTINCT FROM confirmation.start_date::text
-           OR component.facts::jsonb ->> 'period_end'
-              IS DISTINCT FROM confirmation.end_date::text
-           OR payment.posting_date<confirmation.adjustment_posting_date
-           OR (component.facts::jsonb ->> 'payment_date')::date
-              < confirmation.adjustment_posting_date
-           OR (confirmation.calculation::jsonb ->> 'vat_relief_fen')::bigint<>0
-           OR (confirmation.calculation::jsonb ->> 'surtax_total_fen')::bigint<>0 THEN
-            RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_LINEAGE_INVALID';
-        END IF;
-        PERFORM finance_assert_zero_tax_period_confirmation_0012(confirmation.id);
-        source_snapshots := confirmation.calculation::jsonb -> 'source_event_snapshots';
-    ELSE
-        SELECT * INTO period FROM tax_periods
-         WHERE org_id=component.org_id AND status='posted'
-           AND start_date=(component.facts::jsonb ->> 'period_start')::date
-           AND end_date=(component.facts::jsonb ->> 'period_end')::date;
-        IF period.id IS NULL
-           OR payment.posting_date<period.adjustment_posting_date
-           OR (component.facts::jsonb ->> 'payment_date')::date
-              < period.adjustment_posting_date THEN
-            RAISE EXCEPTION 'TAX_SETTLEMENT_PERIOD_LINEAGE_INVALID';
-        END IF;
-        IF component.facts->>'assessment_component_key' IS NOT NULL AND (
-            period.adjustment_event_id<>payment.id OR NOT EXISTS (
-                SELECT 1 FROM business_event_components assessment
-                 WHERE assessment.id=period.component_id AND assessment.event_id=payment.id
-                   AND assessment.key=component.facts->>'assessment_component_key'
-                   AND assessment.kind='tax_relief'
-                   AND period.calculation_hash=component.derived->>'tax_assessment_calculation_hash'
-            )
-        ) THEN RAISE EXCEPTION 'TAX_SETTLEMENT_PERIOD_LINEAGE_INVALID'; END IF;
-        source_snapshots := period.calculation::jsonb -> 'source_event_snapshots';
-    END IF;
-
-    IF EXISTS (
-        WITH expected AS (
-            SELECT source ->> 'event_id' AS event_id,
-                   source ->> 'component_id' AS component_id,
-                   (component.facts::jsonb ->> 'amount_fen')::bigint AS amount_fen
-              FROM jsonb_array_elements(
-                  source_snapshots
-              ) AS source
-             WHERE source->>'event_id'<>payment.id::text
-            UNION ALL
-            SELECT period.adjustment_event_id::text,
-                   adjustment.id::text,
-                   (component.facts::jsonb ->> 'amount_fen')::bigint
-              FROM business_event_components AS adjustment
-             WHERE confirmation_id_text IS NULL
-               AND adjustment.org_id=period.org_id
-               AND adjustment.event_id=period.adjustment_event_id
-               AND adjustment.id=period.component_id
-               AND adjustment.event_id<>payment.id
-               AND adjustment.kind='tax_relief'
-        ), actual AS (
-            SELECT dependency.parent_event_id::text AS event_id,
-                   dependency.parent_component_id::text AS component_id,
-                   dependency.amount_fen
-              FROM business_event_dependencies AS dependency
-             WHERE dependency.org_id=component.org_id
-               AND dependency.child_event_id=component.event_id
-               AND dependency.child_component_id=component.id
-               AND dependency.dependency_kind='component_source'
-        ), differences AS (
-            (SELECT * FROM expected EXCEPT ALL SELECT * FROM actual)
-            UNION ALL
-            (SELECT * FROM actual EXCEPT ALL SELECT * FROM expected)
-        )
-        SELECT 1 FROM differences
-    ) THEN
-        RAISE EXCEPTION 'TAX_SETTLEMENT_CONFIRMATION_SOURCE_MISMATCH';
-    END IF;
-END;
-$$;
-
-
---
--- Name: finance_no_adjustment_tax_payment_locks_date(uuid, date); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.finance_no_adjustment_tax_payment_locks_date(target_org_id uuid, target_date date) RETURNS boolean
-    LANGUAGE sql STABLE
-    AS $$
-        SELECT EXISTS (
-            SELECT 1
-              FROM business_event_components AS component
-              JOIN business_events AS payment
-                ON payment.org_id=component.org_id AND payment.id=component.event_id
-              JOIN zero_tax_period_confirmations AS confirmation
-                ON confirmation.org_id=component.org_id
-               AND confirmation.id::text=component.derived::jsonb ->> 'tax_confirmation_id'
-             WHERE component.org_id=target_org_id
-               AND component.kind='tax_settlement'
-               AND component.facts::jsonb ->> 'tax_type'='vat'
-               AND component.facts::jsonb ->> 'settlement_kind'='payment'
-               AND component.derived::jsonb ->> 'tax_confirmation_hash'
-                   =confirmation.calculation_hash
-               AND payment.status='posted'
-               AND target_date BETWEEN confirmation.start_date AND confirmation.end_date
-        );
-    $$;
-
-
---
 -- Name: finance_asset_role_amount(uuid, character varying, character varying); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7187,6 +7534,19 @@ CREATE FUNCTION public.finance_block_business_event_dependency_mutation() RETURN
             RAISE EXCEPTION 'BUSINESS_EVENT_DEPENDENCY_INVALID';
         END;
         $$;
+
+
+--
+-- Name: finance_block_business_metadata_mutation_0003(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_block_business_metadata_mutation_0003() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'BUSINESS_METADATA_HISTORY_APPEND_ONLY';
+END;
+$$;
 
 
 --
@@ -9189,6 +9549,148 @@ CREATE FUNCTION public.finance_guard_business_event_dependency_parent_reversal()
 
 
 --
+-- Name: finance_guard_business_metadata_insert_0003(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_guard_business_metadata_insert_0003() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE target_event business_events%ROWTYPE;
+DECLARE attribution_xmin xid;
+DECLARE configured text;
+DECLARE expected_version integer;
+DECLARE metadata_key text;
+DECLARE metadata_value jsonb;
+DECLARE maximum_length integer;
+BEGIN
+    configured := current_setting('finance.execution_attribution_id', true);
+    IF NEW.execution_attribution_id IS NULL OR configured IS NULL
+       OR configured <> NEW.execution_attribution_id::text THEN
+        RAISE EXCEPTION 'BUSINESS_METADATA_EXECUTION_ATTRIBUTION_REQUIRED';
+    END IF;
+    SELECT xmin INTO attribution_xmin FROM execution_attributions
+     WHERE org_id=NEW.org_id AND id=NEW.execution_attribution_id;
+    IF attribution_xmin IS NULL
+       OR pg_xact_status((attribution_xmin::text)::xid8) <> 'in progress' THEN
+        RAISE EXCEPTION 'BUSINESS_METADATA_EXECUTION_ATTRIBUTION_NOT_CURRENT';
+    END IF;
+    SELECT * INTO target_event FROM business_events
+     WHERE org_id=NEW.org_id AND id=NEW.event_id FOR UPDATE;
+    IF target_event.id IS NULL OR target_event.status NOT IN ('posted','reversed')
+       OR NOT EXISTS (SELECT 1 FROM business_event_components
+                       WHERE org_id=NEW.org_id AND event_id=NEW.event_id
+                         AND key=NEW.component_key)
+       OR jsonb_typeof(NEW.metadata_values::jsonb) IS DISTINCT FROM 'object'
+       OR NEW.request_hash !~ '^[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'BUSINESS_METADATA_SOURCE_OR_PAYLOAD_INVALID';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM jsonb_object_keys(NEW.metadata_values::jsonb) AS item(key)
+         WHERE item.key <> ALL (ARRAY[
+            'counterparty','beneficiary','handler','purpose','description',
+            'project_reference','contract_reference','acceptance_reference',
+            'obligation_reference','refund_reference','assessment_reference',
+            'declaration_reference','confirmation_note','capitalization_basis',
+            'reason','reason_code','asset_code','asset_name','contract_name',
+            'borrowing_code','rights_description','life_basis_explanation','due_date',
+            'advance_payment_date','withholding_agency_code','withholding_agency_name',
+            'other_right_type_description','interest_due_dates'
+         ])
+    ) THEN
+        RAISE EXCEPTION 'BUSINESS_METADATA_SOURCE_OR_PAYLOAD_INVALID';
+    END IF;
+    FOR metadata_key,maximum_length IN
+        SELECT * FROM (VALUES
+            ('purpose',2000),('description',2000),('project_reference',200),
+            ('contract_reference',500),('acceptance_reference',500),
+            ('obligation_reference',500),('refund_reference',500),
+            ('assessment_reference',500),('declaration_reference',500),
+            ('confirmation_note',2000),('capitalization_basis',2000),
+            ('reason',2000),('reason_code',100),('asset_code',100),
+            ('asset_name',200),('contract_name',200),('borrowing_code',100),
+            ('rights_description',2000),('life_basis_explanation',2000),
+            ('withholding_agency_code',100),('withholding_agency_name',200),
+            ('other_right_type_description',500)
+        ) AS text_field(key,maximum_length)
+    LOOP
+        metadata_value := NEW.metadata_values::jsonb->metadata_key;
+        IF metadata_value IS NOT NULL AND (
+            jsonb_typeof(metadata_value) IS DISTINCT FROM 'string'
+            OR length(metadata_value#>>'{}')>maximum_length
+        ) THEN
+            RAISE EXCEPTION 'BUSINESS_METADATA_SOURCE_OR_PAYLOAD_INVALID';
+        END IF;
+    END LOOP;
+    FOREACH metadata_key IN ARRAY ARRAY['due_date','advance_payment_date'] LOOP
+        metadata_value := NEW.metadata_values::jsonb->metadata_key;
+        IF metadata_value IS NOT NULL AND (
+            jsonb_typeof(metadata_value) IS DISTINCT FROM 'string'
+            OR to_char((metadata_value#>>'{}')::date,'YYYY-MM-DD')
+                IS DISTINCT FROM metadata_value#>>'{}'
+        ) THEN
+            RAISE EXCEPTION 'BUSINESS_METADATA_SOURCE_OR_PAYLOAD_INVALID';
+        END IF;
+    END LOOP;
+    metadata_value := NEW.metadata_values::jsonb->'interest_due_dates';
+    IF metadata_value IS NOT NULL AND (
+        jsonb_typeof(metadata_value) IS DISTINCT FROM 'array'
+        OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements(metadata_value) AS due(item)
+             WHERE jsonb_typeof(due.item) IS DISTINCT FROM 'string'
+                OR to_char((due.item#>>'{}')::date,'YYYY-MM-DD')
+                    IS DISTINCT FROM due.item#>>'{}'
+        )
+    ) THEN
+        RAISE EXCEPTION 'BUSINESS_METADATA_SOURCE_OR_PAYLOAD_INVALID';
+    END IF;
+    FOREACH metadata_key IN ARRAY ARRAY['counterparty','beneficiary','handler'] LOOP
+        metadata_value := NEW.metadata_values::jsonb->metadata_key;
+        IF metadata_value IS NOT NULL AND (
+            jsonb_typeof(metadata_value) IS DISTINCT FROM 'object'
+            OR EXISTS (
+                SELECT 1 FROM jsonb_object_keys(metadata_value) AS party_item(key)
+                 WHERE party_item.key <> ALL (ARRAY['id','kind','name','external_ref'])
+            )
+            OR (metadata_value ? 'id' AND (
+                jsonb_typeof(metadata_value->'id') IS DISTINCT FROM 'string'
+                OR metadata_value->>'id'
+                    !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+                OR NOT EXISTS (
+                    SELECT 1 FROM counterparties AS party
+                     WHERE party.org_id=NEW.org_id
+                       AND lower(party.id::text)=lower(metadata_value->>'id')
+                )
+            ))
+            OR (metadata_value ? 'kind' AND (
+                jsonb_typeof(metadata_value->'kind') IS DISTINCT FROM 'string'
+                OR metadata_value->>'kind' NOT IN (
+                    'customer','supplier','employee','owner','other')
+            ))
+            OR (metadata_value ? 'name' AND
+                jsonb_typeof(metadata_value->'name') IS DISTINCT FROM 'string')
+            OR (metadata_value ? 'external_ref' AND
+                jsonb_typeof(metadata_value->'external_ref') IS DISTINCT FROM 'string')
+            OR (NOT metadata_value ? 'id' AND (
+                NOT metadata_value ? 'kind' OR NOT metadata_value ? 'name'
+            ))
+        ) THEN
+            RAISE EXCEPTION 'BUSINESS_METADATA_COUNTERPARTY_NOT_IN_COMPANY';
+        END IF;
+    END LOOP;
+    SELECT coalesce(max(version),0)+1 INTO expected_version
+      FROM business_metadata_versions
+     WHERE event_id=NEW.event_id AND component_key=NEW.component_key;
+    IF NEW.version <> expected_version THEN
+        RAISE EXCEPTION 'BUSINESS_METADATA_VERSION_OUT_OF_SEQUENCE';
+    END IF;
+    RETURN NEW;
+EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
+    RAISE EXCEPTION 'BUSINESS_METADATA_SOURCE_OR_PAYLOAD_INVALID';
+END;
+$_$;
+
+
+--
 -- Name: finance_guard_close_bank_reconciliation_0015(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9375,7 +9877,10 @@ BEGIN
                                       AND parent_col.attnum = keys.parent_key
          WHERE fk.contype = 'f' AND parent_col.attname = 'id'
            AND snapshot ? parent.relname::text
-           AND child.relname NOT IN ('audit_logs','business_event_amendments','bank_transactions')
+           AND child.relname NOT IN (
+               'audit_logs','business_event_amendments','bank_transactions',
+               'business_metadata_versions'
+           )
     LOOP
         FOR dependent IN EXECUTE format(
             'SELECT to_jsonb(child) FROM public.%I child WHERE child.%I::text IN '
@@ -10751,6 +11256,33 @@ CREATE FUNCTION public.finance_module_role_amount_0014(target_voucher_id uuid, t
 
 
 --
+-- Name: finance_no_adjustment_tax_payment_locks_date(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_no_adjustment_tax_payment_locks_date(target_org_id uuid, target_date date) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+        SELECT EXISTS (
+            SELECT 1
+              FROM business_event_components AS component
+              JOIN business_events AS payment
+                ON payment.org_id=component.org_id AND payment.id=component.event_id
+              JOIN zero_tax_period_confirmations AS confirmation
+                ON confirmation.org_id=component.org_id
+               AND confirmation.id::text=component.derived::jsonb ->> 'tax_confirmation_id'
+             WHERE component.org_id=target_org_id
+               AND component.kind='tax_settlement'
+               AND component.facts::jsonb ->> 'tax_type'='vat'
+               AND component.facts::jsonb ->> 'settlement_kind'='payment'
+               AND component.derived::jsonb ->> 'tax_confirmation_hash'
+                   =confirmation.calculation_hash
+               AND payment.status='posted'
+               AND target_date BETWEEN confirmation.start_date AND confirmation.end_date
+        );
+    $$;
+
+
+--
 -- Name: finance_open_item_count_as_of_0011(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10874,6 +11406,55 @@ CREATE FUNCTION public.finance_tax_below_threshold_0003(rule_parameters jsonb, n
             RAISE EXCEPTION 'TAX_RULE_THRESHOLD_OPERATOR_INVALID';
         END;
         $$;
+
+
+--
+-- Name: finance_tax_component_account_id(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_tax_component_account_id(target_org_id uuid, target_component_id uuid, target_business_class text) RETURNS uuid
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE account_ids uuid[];
+BEGIN
+    SELECT COALESCE(array_agg(DISTINCT account.id ORDER BY account.id), ARRAY[]::uuid[])
+      INTO account_ids
+      FROM voucher_lines AS line
+      JOIN accounts AS account
+        ON account.org_id = line.org_id AND account.id = line.account_id
+     WHERE line.org_id = target_org_id
+       AND line.component_id = target_component_id
+       AND COALESCE(account.business_class, account.system_role) = target_business_class;
+    IF cardinality(account_ids) > 1 THEN
+        RAISE EXCEPTION 'TAX_COMPONENT_ACCOUNT_SOURCE_AMBIGUOUS';
+    END IF;
+    RETURN account_ids[1];
+END;
+$$;
+
+
+--
+-- Name: finance_tax_source_review_snapshots(uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_tax_source_review_snapshots(target_org_id uuid, snapshots jsonb) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
+        'event_idempotency_key', event.idempotency_key,
+        'component_key', component.key,
+        'gross_fen', source->'gross_fen',
+        'net_fen', source->'net_fen',
+        'vat_fen', source->'vat_fen',
+        'exemption_eligible', source->'exemption_eligible'
+    ) ORDER BY event.idempotency_key COLLATE "C", component.key COLLATE "C"), '[]'::jsonb)
+      FROM jsonb_array_elements(snapshots) source
+      JOIN public.business_events event
+        ON event.org_id=target_org_id AND event.id=(source->>'event_id')::uuid
+      JOIN public.business_event_components component
+        ON component.org_id=event.org_id AND component.event_id=event.id
+       AND component.id=(source->>'component_id')::uuid;
+$$;
 
 
 --
@@ -11246,6 +11827,25 @@ CREATE FUNCTION public.finance_validate_evidence_reference() RETURNS trigger
             RETURN NULL;
         END;
         $$;
+
+
+--
+-- Name: finance_validate_fact_precision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_validate_fact_precision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_TABLE_NAME='settlements' THEN
+        PERFORM finance_assert_fact_precision(NEW.payment_event_id);
+    ELSIF TG_TABLE_NAME='business_events' THEN
+        PERFORM finance_assert_fact_precision(NEW.id);
+    ELSE
+        PERFORM finance_assert_fact_precision(NEW.event_id);
+    END IF;
+    RETURN NEW;
+END $$;
 
 
 --
@@ -11667,20 +12267,6 @@ CREATE FUNCTION public.finance_validate_final_payroll_reversal_links_from_link()
             RETURN NULL;
         END;
         $$;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 --
@@ -12206,6 +12792,31 @@ BEGIN
         PERFORM finance_assert_labor_person_end_0013(
             coalesce(NEW.prior_labor_person_id, OLD.prior_labor_person_id)
         );
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: finance_validate_no_adjustment_tax_settlement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.finance_validate_no_adjustment_tax_settlement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_TABLE_NAME='business_events' THEN
+        PERFORM finance_assert_no_adjustment_tax_settlement(component.id)
+          FROM business_event_components AS component
+         WHERE component.event_id=COALESCE(NEW.id, OLD.id)
+           AND component.kind='tax_settlement';
+    ELSIF TG_TABLE_NAME='business_event_dependencies' THEN
+        PERFORM finance_assert_no_adjustment_tax_settlement(
+            COALESCE(NEW.child_component_id, OLD.child_component_id)
+        );
+    ELSE
+        PERFORM finance_assert_no_adjustment_tax_settlement(COALESCE(NEW.id, OLD.id));
     END IF;
     RETURN NULL;
 END;
@@ -13223,26 +13834,88 @@ $$;
 
 
 --
--- Name: finance_validate_no_adjustment_tax_settlement(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: finance_vat_source_account_id(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.finance_validate_no_adjustment_tax_settlement() RETURNS trigger
-    LANGUAGE plpgsql
+CREATE FUNCTION public.finance_vat_source_account_id(target_org_id uuid, target_component_id uuid) RETURNS uuid
+    LANGUAGE plpgsql STABLE
     AS $$
+DECLARE target_account_id uuid;
+DECLARE account_ids uuid[];
+DECLARE posted_transfer_count bigint;
 BEGIN
-    IF TG_TABLE_NAME='business_events' THEN
-        PERFORM finance_assert_no_adjustment_tax_settlement(component.id)
-          FROM business_event_components AS component
-         WHERE component.event_id=COALESCE(NEW.id, OLD.id)
-           AND component.kind='tax_settlement';
-    ELSIF TG_TABLE_NAME='business_event_dependencies' THEN
-        PERFORM finance_assert_no_adjustment_tax_settlement(
-            COALESCE(NEW.child_component_id, OLD.child_component_id)
-        );
-    ELSE
-        PERFORM finance_assert_no_adjustment_tax_settlement(COALESCE(NEW.id, OLD.id));
+    target_account_id := finance_tax_component_account_id(
+        target_org_id, target_component_id, 'vat_payable'
+    );
+    IF target_account_id IS NOT NULL THEN RETURN target_account_id; END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM open_items AS item
+          JOIN deferred_output_vat_transfers AS transfer
+            ON transfer.org_id = item.org_id
+           AND transfer.source_open_item_id = item.id
+          JOIN business_events AS transfer_event
+            ON transfer_event.org_id = transfer.org_id
+           AND transfer_event.id = transfer.transfer_event_id
+          LEFT JOIN business_event_components AS payment_component
+            ON payment_component.org_id = transfer.org_id
+           AND payment_component.event_id = transfer.transfer_event_id
+           AND COALESCE(
+                payment_component.derived::jsonb -> 'deferred_vat_source_items',
+                '[]'::jsonb
+           ) @> jsonb_build_array(item.id::text)
+         WHERE item.org_id = target_org_id
+           AND item.source_component_id = target_component_id
+           AND transfer_event.status = 'posted'
+         GROUP BY transfer.id
+        HAVING count(payment_component.id) <> 1
+    ) THEN
+        RAISE EXCEPTION 'TAX_DEFERRED_VAT_TRANSFER_SOURCE_AMBIGUOUS';
     END IF;
-    RETURN NULL;
+
+    SELECT count(DISTINCT transfer.id),
+           COALESCE(array_agg(DISTINCT account.id ORDER BY account.id)
+               FILTER (WHERE account.id IS NOT NULL), ARRAY[]::uuid[])
+      INTO posted_transfer_count, account_ids
+      FROM open_items AS item
+      JOIN deferred_output_vat_transfers AS transfer
+        ON transfer.org_id = item.org_id
+       AND transfer.source_open_item_id = item.id
+      JOIN business_events AS transfer_event
+        ON transfer_event.org_id = transfer.org_id
+       AND transfer_event.id = transfer.transfer_event_id
+       AND transfer_event.status = 'posted'
+      JOIN business_event_components AS payment_component
+        ON payment_component.org_id = transfer.org_id
+       AND payment_component.event_id = transfer.transfer_event_id
+       AND COALESCE(
+            payment_component.derived::jsonb -> 'deferred_vat_source_items',
+            '[]'::jsonb
+       ) @> jsonb_build_array(item.id::text)
+      LEFT JOIN voucher_lines AS line
+        ON line.org_id = payment_component.org_id
+       AND line.component_id = payment_component.id
+      LEFT JOIN accounts AS account
+        ON account.org_id = line.org_id AND account.id = line.account_id
+       AND COALESCE(account.business_class, account.system_role) = 'vat_payable'
+     WHERE item.org_id = target_org_id
+       AND item.source_component_id = target_component_id;
+    IF posted_transfer_count > 0 AND cardinality(account_ids) = 0 THEN
+        RAISE EXCEPTION 'TAX_DEFERRED_VAT_TRANSFER_ACCOUNT_MISSING';
+    END IF;
+    IF cardinality(account_ids) > 1 THEN
+        RAISE EXCEPTION 'TAX_COMPONENT_ACCOUNT_SOURCE_AMBIGUOUS';
+    END IF;
+    IF cardinality(account_ids) = 1 THEN RETURN account_ids[1]; END IF;
+
+    target_account_id := finance_tax_component_account_id(
+        target_org_id, target_component_id, 'deferred_output_vat'
+    );
+    IF target_account_id IS NULL THEN
+        RAISE EXCEPTION 'TAX_COMPONENT_ACCOUNT_SOURCE_MISSING';
+    END IF;
+    RETURN target_account_id;
 END;
 $$;
 
@@ -13890,7 +14563,7 @@ CREATE TABLE public.borrowing_payments (
     CONSTRAINT ck_borrowing_payment_accrual_shape CHECK (((((payment_kind)::text = 'interest'::text) AND (accrual_id IS NOT NULL)) OR (((payment_kind)::text = 'principal'::text) AND (accrual_id IS NULL)))),
     CONSTRAINT ck_borrowing_payment_amount CHECK (((amount_fen > 0) AND (amount_fen <= '9223372036854775807'::bigint))),
     CONSTRAINT ck_borrowing_payment_kind CHECK (((payment_kind)::text = ANY (ARRAY[('interest'::character varying)::text, ('principal'::character varying)::text]))),
-    CONSTRAINT ck_borrowing_payment_posting_date CHECK ((posting_date = payment_date)),
+    CONSTRAINT ck_borrowing_payment_posting_date CHECK ((posting_date >= payment_date)),
     CONSTRAINT ck_borrowing_payment_rule_text CHECK (((length(TRIM(BOTH FROM accounting_rule_version)) > 0) AND (length(TRIM(BOTH FROM accounting_rule_source_url)) > 0)))
 );
 
@@ -13903,7 +14576,7 @@ CREATE TABLE public.borrowings (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
     borrowing_code character varying(100) NOT NULL,
-    contract_name character varying(200) NOT NULL,
+    contract_name character varying(200),
     lender_id uuid NOT NULL,
     lender_is_licensed_financial_institution boolean NOT NULL,
     currency character varying(3) NOT NULL,
@@ -13913,17 +14586,17 @@ CREATE TABLE public.borrowings (
     posting_date date NOT NULL,
     annual_rate_percent numeric(9,6) NOT NULL,
     day_count_basis character varying(20) NOT NULL,
-    interest_due_dates json NOT NULL,
+    interest_due_dates json,
     capitalization_applicable boolean NOT NULL,
-    purpose_description text NOT NULL,
+    purpose_description text,
     single_drawdown boolean NOT NULL,
     fixed_rate boolean NOT NULL,
     simple_interest boolean NOT NULL,
     bullet_principal_at_maturity boolean NOT NULL,
-    allows_prepayment boolean NOT NULL,
-    allows_extension boolean NOT NULL,
-    has_penalty_interest boolean NOT NULL,
-    has_financing_fees boolean NOT NULL,
+    allows_prepayment boolean,
+    allows_extension boolean,
+    has_penalty_interest boolean,
+    has_financing_fees boolean,
     drawdown_event_id uuid NOT NULL,
     accounting_rule_version character varying(50) NOT NULL,
     accounting_rule_source_url text NOT NULL,
@@ -13933,12 +14606,11 @@ CREATE TABLE public.borrowings (
     CONSTRAINT ck_borrowing_currency CHECK (((currency)::text = 'CNY'::text)),
     CONSTRAINT ck_borrowing_dates CHECK (((drawdown_date < due_date) AND (posting_date = drawdown_date))),
     CONSTRAINT ck_borrowing_day_count_basis CHECK (((day_count_basis)::text = ANY (ARRAY[('actual_360'::character varying)::text, ('actual_365'::character varying)::text]))),
-    CONSTRAINT ck_borrowing_identity_text CHECK (((length(TRIM(BOTH FROM borrowing_code)) > 0) AND (length(TRIM(BOTH FROM contract_name)) > 0))),
+    CONSTRAINT ck_borrowing_identity_text CHECK ((length(TRIM(BOTH FROM borrowing_code)) > 0)),
     CONSTRAINT ck_borrowing_licensed_lender CHECK ((lender_is_licensed_financial_institution IS TRUE)),
     CONSTRAINT ck_borrowing_no_capitalization CHECK ((capitalization_applicable IS FALSE)),
-    CONSTRAINT ck_borrowing_phase_one_terms CHECK (((single_drawdown IS TRUE) AND (fixed_rate IS TRUE) AND (simple_interest IS TRUE) AND (bullet_principal_at_maturity IS TRUE) AND (allows_prepayment IS FALSE) AND (allows_extension IS FALSE) AND (has_penalty_interest IS FALSE) AND (has_financing_fees IS FALSE))),
+    CONSTRAINT ck_borrowing_phase_one_terms CHECK (((single_drawdown IS TRUE) AND (fixed_rate IS TRUE) AND (simple_interest IS TRUE) AND (bullet_principal_at_maturity IS TRUE))),
     CONSTRAINT ck_borrowing_principal CHECK (((principal_fen > 0) AND (principal_fen <= '9223372036854775807'::bigint))),
-    CONSTRAINT ck_borrowing_purpose CHECK ((length(TRIM(BOTH FROM purpose_description)) > 0)),
     CONSTRAINT ck_borrowing_rule_text CHECK (((length(TRIM(BOTH FROM accounting_rule_version)) > 0) AND (length(TRIM(BOTH FROM accounting_rule_source_url)) > 0)))
 );
 
@@ -14030,6 +14702,28 @@ CREATE TABLE public.business_events (
     execution_attribution_id uuid,
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_event_status CHECK (((status)::text = ANY (ARRAY[('draft'::character varying)::text, ('posted'::character varying)::text, ('needs_information'::character varying)::text, ('rejected'::character varying)::text, ('reversed'::character varying)::text, ('deleted'::character varying)::text])))
+);
+
+
+--
+-- Name: business_metadata_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.business_metadata_versions (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    component_key character varying(100) NOT NULL,
+    version integer NOT NULL,
+    metadata_values json NOT NULL,
+    idempotency_key character varying(350) NOT NULL,
+    request_hash character varying(64) NOT NULL,
+    execution_attribution_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_business_metadata_hash CHECK ((length((request_hash)::text) = 64)),
+    CONSTRAINT ck_business_metadata_hash_lower_hex CHECK (((request_hash)::text ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT ck_business_metadata_keys CHECK (((length(TRIM(BOTH FROM component_key)) > 0) AND (length(TRIM(BOTH FROM idempotency_key)) > 0))),
+    CONSTRAINT ck_business_metadata_version CHECK ((version > 0))
 );
 
 
@@ -14149,17 +14843,17 @@ CREATE TABLE public.enterprise_income_tax_quarter_confirmations (
     request_payload_hash character varying(64) NOT NULL,
     calculation_payload text NOT NULL,
     calculation_hash character varying(64) NOT NULL,
-    confirmation_note text NOT NULL,
+    confirmation_note text,
     evidence_references json NOT NULL,
     execution_attribution_id uuid,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    component_id uuid,
+    CONSTRAINT ck_cit_confirmation_component_pair CHECK (((business_event_id IS NULL) = (component_id IS NULL))),
     CONSTRAINT ck_enterprise_income_tax_confirmation_hash_lower_hex CHECK ((((request_payload_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((calculation_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT ck_enterprise_income_tax_confirmation_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
     CONSTRAINT ck_enterprise_income_tax_confirmation_payload CHECK (((length((idempotency_key)::text) >= 1) AND (length((idempotency_key)::text) <= 200) AND (length((request_payload_hash)::text) = 64) AND (length(calculation_payload) > 0) AND (length((calculation_hash)::text) = 64))),
     CONSTRAINT ck_enterprise_income_tax_confirmation_period CHECK (((calendar_year >= 1) AND (calendar_year <= 9999) AND ((calendar_quarter >= 1) AND (calendar_quarter <= 4)))),
     CONSTRAINT ck_enterprise_income_tax_confirmation_shape CHECK (((((treatment)::text = ANY (ARRAY[('not_applicable'::character varying)::text, ('zero'::character varying)::text])) AND (amount_fen = 0) AND (posting_date IS NULL) AND (business_event_id IS NULL)) OR (((treatment)::text = ANY (ARRAY[('accrue'::character varying)::text, ('reduce'::character varying)::text])) AND (amount_fen > 0) AND (posting_date IS NOT NULL) AND (business_event_id IS NOT NULL)))),
-    CONSTRAINT ck_enterprise_income_tax_confirmation_treatment CHECK (((treatment)::text = ANY (ARRAY[('not_applicable'::character varying)::text, ('zero'::character varying)::text, ('accrue'::character varying)::text, ('reduce'::character varying)::text]))),
-    component_id uuid
+    CONSTRAINT ck_enterprise_income_tax_confirmation_treatment CHECK (((treatment)::text = ANY (ARRAY[('not_applicable'::character varying)::text, ('zero'::character varying)::text, ('accrue'::character varying)::text, ('reduce'::character varying)::text])))
 );
 
 
@@ -14175,7 +14869,7 @@ CREATE TABLE public.enterprise_income_tax_results (
     revision integer NOT NULL,
     previous_result_id uuid,
     original_confirmation_id uuid,
-    declaration_date date NOT NULL,
+    declaration_date date,
     posting_date date NOT NULL,
     target_tax_fen bigint NOT NULL,
     contribution_fen bigint NOT NULL,
@@ -14188,9 +14882,10 @@ CREATE TABLE public.enterprise_income_tax_results (
     calculation json NOT NULL,
     execution_attribution_id uuid,
     created_at timestamp with time zone NOT NULL,
+    component_id uuid,
     CONSTRAINT ck_cit_result_annual_tax CHECK (((calendar_quarter <> 0) OR (target_tax_fen >= 0))),
-    CONSTRAINT ck_cit_result_period CHECK (((calendar_year >= 2013) AND ((calendar_quarter >= 0) AND (calendar_quarter <= 4)) AND (revision > 0))),
-    component_id uuid
+    CONSTRAINT ck_cit_result_component_pair CHECK (((business_event_id IS NULL) = (component_id IS NULL))),
+    CONSTRAINT ck_cit_result_period CHECK (((calendar_year >= 2013) AND ((calendar_quarter >= 0) AND (calendar_quarter <= 4)) AND (revision > 0)))
 );
 
 
@@ -14339,12 +15034,11 @@ CREATE TABLE public.financial_statement_classifications (
     supersedes_id uuid,
     idempotency_key character varying(200) NOT NULL,
     request_payload_hash character varying(64) NOT NULL,
-    confirmation_note text NOT NULL,
+    confirmation_note text,
     evidence_references json NOT NULL,
     execution_attribution_id uuid,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_financial_statement_classification_hash_lower_hex CHECK ((((allocation_hash)::text ~ '^[0-9a-f]{64}$'::text) AND ((request_payload_hash)::text ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT ck_financial_statement_classification_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
     CONSTRAINT ck_financial_statement_classification_parent_role CHECK (((parent_role)::text = ANY (ARRAY[('general_expense'::character varying)::text, ('sales_expense'::character varying)::text, ('finance_expense'::character varying)::text]))),
     CONSTRAINT ck_financial_statement_classification_payload CHECK (((length(allocation_payload) > 0) AND (length((allocation_hash)::text) = 64))),
     CONSTRAINT ck_financial_statement_classification_request CHECK (((length((idempotency_key)::text) >= 1) AND (length((idempotency_key)::text) <= 200) AND (length((request_payload_hash)::text) = 64)))
@@ -14362,12 +15056,11 @@ CREATE TABLE public.financial_statement_opening_balance_confirmations (
     treatment character varying(40) NOT NULL,
     idempotency_key character varying(200) NOT NULL,
     request_payload_hash character varying(64) NOT NULL,
-    confirmation_note text NOT NULL,
+    confirmation_note text,
     evidence_references json NOT NULL,
     execution_attribution_id uuid,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT ck_fs_opening_confirmation_hash_lower_hex CHECK (((request_payload_hash)::text ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT ck_fs_opening_confirmation_note CHECK (((length(TRIM(BOTH FROM confirmation_note)) >= 1) AND (length(TRIM(BOTH FROM confirmation_note)) <= 2000))),
     CONSTRAINT ck_fs_opening_confirmation_request CHECK (((length((idempotency_key)::text) >= 1) AND (length((idempotency_key)::text) <= 200) AND (length((request_payload_hash)::text) = 64))),
     CONSTRAINT ck_fs_opening_confirmation_treatment CHECK (((treatment)::text = 'zero_on_establishment'::text))
 );
@@ -14430,8 +15123,8 @@ CREATE TABLE public.fixed_asset_cost_sources (
     source_key character varying(200) NOT NULL,
     employee_id uuid NOT NULL,
     amount_fen bigint NOT NULL,
-    due_date date NOT NULL,
-    description character varying(500) NOT NULL,
+    due_date date,
+    description character varying(500),
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_fixed_asset_cost_source_amount CHECK ((amount_fen > 0)),
     CONSTRAINT ck_fixed_asset_cost_source_description CHECK ((length(TRIM(BOTH FROM description)) > 0)),
@@ -14555,17 +15248,17 @@ CREATE TABLE public.fixed_assets (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
     asset_code character varying(100) NOT NULL,
-    name character varying(200) NOT NULL,
+    name character varying(200),
     category character varying(30) NOT NULL,
     expected_use_over_one_year boolean NOT NULL,
     acquisition_date date NOT NULL,
     posting_date date NOT NULL,
-    purchase_price_fen bigint NOT NULL,
-    noncreditable_tax_fen bigint NOT NULL,
-    transport_and_handling_fen bigint NOT NULL,
-    installation_and_direct_cost_fen bigint NOT NULL,
+    purchase_price_fen bigint,
+    noncreditable_tax_fen bigint,
+    transport_and_handling_fen bigint,
+    installation_and_direct_cost_fen bigint,
     cost_fen bigint NOT NULL,
-    supplier_id uuid NOT NULL,
+    supplier_id uuid,
     reimbursing_employee_id uuid,
     settlement_method character varying(40) NOT NULL,
     payment_date date,
@@ -14576,11 +15269,11 @@ CREATE TABLE public.fixed_assets (
     created_at timestamp with time zone NOT NULL,
     component_id uuid,
     CONSTRAINT ck_fixed_asset_category CHECK (((category)::text = ANY (ARRAY[('production_equipment'::character varying)::text, ('tools_furniture'::character varying)::text, ('transport'::character varying)::text, ('electronic'::character varying)::text, ('other_movable_tangible'::character varying)::text]))),
-    CONSTRAINT ck_fixed_asset_cost_components_nonnegative CHECK (((purchase_price_fen >= 0) AND (noncreditable_tax_fen >= 0) AND (transport_and_handling_fen >= 0) AND (installation_and_direct_cost_fen >= 0))),
-    CONSTRAINT ck_fixed_asset_cost_components_total CHECK ((cost_fen = (((purchase_price_fen + noncreditable_tax_fen) + transport_and_handling_fen) + installation_and_direct_cost_fen))),
+    CONSTRAINT ck_fixed_asset_cost_components_nonnegative CHECK ((((purchase_price_fen IS NULL) OR (purchase_price_fen >= 0)) AND ((noncreditable_tax_fen IS NULL) OR (noncreditable_tax_fen >= 0)) AND ((transport_and_handling_fen IS NULL) OR (transport_and_handling_fen >= 0)) AND ((installation_and_direct_cost_fen IS NULL) OR (installation_and_direct_cost_fen >= 0)))),
+    CONSTRAINT ck_fixed_asset_cost_components_total CHECK ((((purchase_price_fen IS NULL) AND (noncreditable_tax_fen IS NULL) AND (transport_and_handling_fen IS NULL) AND (installation_and_direct_cost_fen IS NULL)) OR (cost_fen = (((COALESCE(purchase_price_fen, (0)::bigint) + COALESCE(noncreditable_tax_fen, (0)::bigint)) + COALESCE(transport_and_handling_fen, (0)::bigint)) + COALESCE(installation_and_direct_cost_fen, (0)::bigint))))),
     CONSTRAINT ck_fixed_asset_cost_positive CHECK ((cost_fen > 0)),
     CONSTRAINT ck_fixed_asset_expected_use CHECK ((expected_use_over_one_year IS TRUE)),
-    CONSTRAINT ck_fixed_asset_settlement_dates CHECK (((((settlement_method)::text = 'bank'::text) AND (payment_date IS NOT NULL) AND (due_date IS NULL) AND (reimbursing_employee_id IS NULL)) OR (((settlement_method)::text = 'payable'::text) AND (payment_date IS NULL) AND (due_date IS NOT NULL) AND (reimbursing_employee_id IS NULL)) OR (((settlement_method)::text = 'employee_payable'::text) AND (payment_date IS NULL) AND (due_date IS NOT NULL) AND (reimbursing_employee_id IS NOT NULL)) OR (((settlement_method)::text = 'allocated_employee_payables'::text) AND (payment_date IS NULL) AND (due_date IS NULL) AND (reimbursing_employee_id IS NULL)))),
+    CONSTRAINT ck_fixed_asset_settlement_dates CHECK (((((settlement_method)::text = 'bank'::text) AND (payment_date IS NOT NULL) AND (due_date IS NULL) AND (reimbursing_employee_id IS NULL)) OR (((settlement_method)::text = 'payable'::text) AND (payment_date IS NULL) AND (reimbursing_employee_id IS NULL)) OR (((settlement_method)::text = 'employee_payable'::text) AND (payment_date IS NULL) AND (reimbursing_employee_id IS NOT NULL)) OR (((settlement_method)::text = 'allocated_employee_payables'::text) AND (payment_date IS NULL) AND (due_date IS NULL) AND (reimbursing_employee_id IS NULL)))),
     CONSTRAINT ck_fixed_asset_settlement_method CHECK (((settlement_method)::text = ANY (ARRAY[('bank'::character varying)::text, ('payable'::character varying)::text, ('employee_payable'::character varying)::text, ('allocated_employee_payables'::character varying)::text])))
 );
 
@@ -14679,18 +15372,18 @@ CREATE TABLE public.intangible_assets (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
     asset_code character varying(100) NOT NULL,
-    name character varying(200) NOT NULL,
+    name character varying(200),
     category character varying(50) NOT NULL,
-    rights_description text NOT NULL,
+    rights_description text,
     other_right_type_description text,
     identifiability_basis text,
-    supplier_id uuid NOT NULL,
+    supplier_id uuid,
     acquisition_date date NOT NULL,
     available_for_use_date date NOT NULL,
     posting_date date NOT NULL,
-    purchase_price_fen bigint NOT NULL,
-    noncreditable_tax_fen bigint NOT NULL,
-    directly_attributable_cost_fen bigint NOT NULL,
+    purchase_price_fen bigint,
+    noncreditable_tax_fen bigint,
+    directly_attributable_cost_fen bigint,
     cost_fen bigint NOT NULL,
     settlement_method character varying(20) NOT NULL,
     payment_date date,
@@ -14698,7 +15391,7 @@ CREATE TABLE public.intangible_assets (
     benefit_area character varying(30) NOT NULL,
     life_basis character varying(30) NOT NULL,
     useful_life_months integer NOT NULL,
-    life_basis_explanation text NOT NULL,
+    life_basis_explanation text,
     is_available_for_use boolean NOT NULL,
     claims_creditable_input_vat boolean NOT NULL,
     acquisition_event_id uuid NOT NULL,
@@ -14711,18 +15404,16 @@ CREATE TABLE public.intangible_assets (
     CONSTRAINT ck_intangible_asset_available_for_use CHECK ((is_available_for_use IS TRUE)),
     CONSTRAINT ck_intangible_asset_benefit_area CHECK (((benefit_area)::text = ANY (ARRAY[('management'::character varying)::text, ('sales'::character varying)::text, ('service_delivery'::character varying)::text]))),
     CONSTRAINT ck_intangible_asset_category CHECK (((category)::text = ANY (ARRAY[('software'::character varying)::text, ('patent'::character varying)::text, ('trademark'::character varying)::text, ('copyright'::character varying)::text, ('non_patented_technology'::character varying)::text, ('other_identifiable_non_land'::character varying)::text]))),
-    CONSTRAINT ck_intangible_asset_cost_components_nonnegative CHECK (((purchase_price_fen >= 0) AND (noncreditable_tax_fen >= 0) AND (directly_attributable_cost_fen >= 0) AND (purchase_price_fen <= '9223372036854775807'::bigint) AND (noncreditable_tax_fen <= '9223372036854775807'::bigint) AND (directly_attributable_cost_fen <= '9223372036854775807'::bigint))),
-    CONSTRAINT ck_intangible_asset_cost_total CHECK (((cost_fen = ((purchase_price_fen + noncreditable_tax_fen) + directly_attributable_cost_fen)) AND (cost_fen > 0) AND (cost_fen <= '9223372036854775807'::bigint))),
-    CONSTRAINT ck_intangible_asset_identity_text CHECK (((length(TRIM(BOTH FROM asset_code)) > 0) AND (length(TRIM(BOTH FROM name)) > 0))),
+    CONSTRAINT ck_intangible_asset_cost_components_nonnegative CHECK ((((purchase_price_fen IS NULL) OR (purchase_price_fen >= 0)) AND ((noncreditable_tax_fen IS NULL) OR (noncreditable_tax_fen >= 0)) AND ((directly_attributable_cost_fen IS NULL) OR (directly_attributable_cost_fen >= 0)))),
+    CONSTRAINT ck_intangible_asset_cost_total CHECK (((cost_fen > 0) AND (cost_fen <= '9223372036854775807'::bigint) AND (((purchase_price_fen IS NULL) AND (noncreditable_tax_fen IS NULL) AND (directly_attributable_cost_fen IS NULL)) OR (cost_fen = ((COALESCE(purchase_price_fen, (0)::bigint) + COALESCE(noncreditable_tax_fen, (0)::bigint)) + COALESCE(directly_attributable_cost_fen, (0)::bigint)))))),
+    CONSTRAINT ck_intangible_asset_identity_text CHECK ((length(TRIM(BOTH FROM asset_code)) > 0)),
     CONSTRAINT ck_intangible_asset_life_and_nonzero_amortization CHECK (((useful_life_months > 0) AND (useful_life_months <= 119988) AND (cost_fen >= useful_life_months))),
     CONSTRAINT ck_intangible_asset_life_basis CHECK (((life_basis)::text = ANY (ARRAY[('legal_or_contractual'::character varying)::text, ('reliably_estimated'::character varying)::text, ('not_reliably_estimated'::character varying)::text]))),
-    CONSTRAINT ck_intangible_asset_life_explanation CHECK ((length(TRIM(BOTH FROM life_basis_explanation)) > 0)),
     CONSTRAINT ck_intangible_asset_no_creditable_vat CHECK ((claims_creditable_input_vat IS FALSE)),
-    CONSTRAINT ck_intangible_asset_other_identifiable CHECK (((((category)::text = 'other_identifiable_non_land'::text) AND (length(TRIM(BOTH FROM other_right_type_description)) > 0) AND (length(TRIM(BOTH FROM identifiability_basis)) > 0)) OR (((category)::text <> 'other_identifiable_non_land'::text) AND (other_right_type_description IS NULL) AND (identifiability_basis IS NULL)))),
-    CONSTRAINT ck_intangible_asset_rights CHECK ((length(TRIM(BOTH FROM rights_description)) > 0)),
+    CONSTRAINT ck_intangible_asset_other_identifiable CHECK (((((category)::text = 'other_identifiable_non_land'::text) AND (length(TRIM(BOTH FROM identifiability_basis)) > 0)) OR (((category)::text <> 'other_identifiable_non_land'::text) AND (other_right_type_description IS NULL) AND (identifiability_basis IS NULL)))),
     CONSTRAINT ck_intangible_asset_rule_text CHECK (((length(TRIM(BOTH FROM accounting_rule_version)) > 0) AND (length(TRIM(BOTH FROM accounting_rule_source_url)) > 0))),
-    CONSTRAINT ck_intangible_asset_settlement_dates CHECK (((((settlement_method)::text = 'bank'::text) AND (payment_date IS NOT NULL) AND (due_date IS NULL)) OR (((settlement_method)::text = 'payable'::text) AND (payment_date IS NULL) AND (due_date IS NOT NULL)))),
-    CONSTRAINT ck_intangible_asset_settlement_method CHECK (((settlement_method)::text = ANY (ARRAY[('bank'::character varying)::text, ('payable'::character varying)::text]))),
+    CONSTRAINT ck_intangible_asset_settlement_dates CHECK (((((settlement_method)::text = 'bank'::text) AND (payment_date IS NOT NULL) AND (due_date IS NULL)) OR (((settlement_method)::text = 'payable'::text) AND (payment_date IS NULL)) OR (((settlement_method)::text = 'project_cost'::text) AND (payment_date IS NULL) AND (due_date IS NULL)))),
+    CONSTRAINT ck_intangible_asset_settlement_method CHECK (((settlement_method)::text = ANY ((ARRAY['bank'::character varying, 'payable'::character varying, 'project_cost'::character varying])::text[]))),
     CONSTRAINT ck_intangible_asset_unreliable_life_minimum CHECK ((((life_basis)::text <> 'not_reliably_estimated'::text) OR (useful_life_months >= 120)))
 );
 
@@ -14771,7 +15462,7 @@ CREATE TABLE public.labor_external_declaration_confirmations (
     org_id uuid NOT NULL,
     labor_line_id uuid NOT NULL,
     declaration_date date NOT NULL,
-    external_declaration_reference character varying(200) NOT NULL,
+    external_declaration_reference character varying(200),
     idempotency_key character varying(200) NOT NULL,
     request_payload_hash character varying(64) NOT NULL,
     execution_attribution_id uuid,
@@ -14822,7 +15513,7 @@ CREATE TABLE public.labor_remuneration_batches (
     policy_snapshot json NOT NULL,
     business_date date NOT NULL,
     posting_date date NOT NULL,
-    planned_payment_date date NOT NULL,
+    planned_payment_date date,
     business_event_id uuid,
     confirmed_at timestamp with time zone,
     confirmation_note text,
@@ -14866,8 +15557,8 @@ CREATE TABLE public.labor_remuneration_lines (
     counterparty_id uuid NOT NULL,
     service_start_date date NOT NULL,
     service_end_date date NOT NULL,
-    fixed_fee_fen bigint NOT NULL,
-    commission_fen bigint NOT NULL,
+    fixed_fee_fen bigint,
+    commission_fen bigint,
     gross_remuneration_fen bigint NOT NULL,
     expense_role character varying(50) NOT NULL,
     tax_identity character varying(20) NOT NULL,
@@ -14879,15 +15570,14 @@ CREATE TABLE public.labor_remuneration_lines (
     quick_deduction_fen bigint NOT NULL,
     withholding_tax_fen bigint NOT NULL,
     net_payment_fen bigint NOT NULL,
-    external_declaration_status character varying(30) NOT NULL,
+    external_declaration_status character varying(30),
     external_declaration_reference character varying(200),
     calculation_trace json NOT NULL,
     CONSTRAINT ck_labor_line_calculation CHECK (((expense_deduction_fen >= 0) AND (taxable_income_fen >= 0) AND (withholding_tax_fen >= 0) AND (net_payment_fen >= 0) AND ((expense_deduction_fen + taxable_income_fen) = gross_remuneration_fen) AND (net_payment_fen = (gross_remuneration_fen - withholding_tax_fen)))),
     CONSTRAINT ck_labor_line_dates CHECK ((service_start_date <= service_end_date)),
-    CONSTRAINT ck_labor_line_declaration_reference CHECK (((((external_declaration_status)::text = 'confirmed'::text) AND (external_declaration_reference IS NOT NULL)) OR (((external_declaration_status)::text <> 'confirmed'::text) AND (external_declaration_reference IS NULL)))),
-    CONSTRAINT ck_labor_line_declaration_status CHECK (((external_declaration_status)::text = ANY (ARRAY[('not_due'::character varying)::text, ('pending'::character varying)::text, ('confirmed'::character varying)::text]))),
+    CONSTRAINT ck_labor_line_declaration_status CHECK (((external_declaration_status IS NULL) OR ((external_declaration_status)::text = ANY ((ARRAY['not_due'::character varying, 'pending'::character varying, 'confirmed'::character varying])::text[])))),
     CONSTRAINT ck_labor_line_expense_role CHECK (((expense_role)::text = ANY (ARRAY[('labor_management_expense'::character varying)::text, ('labor_sales_expense'::character varying)::text, ('labor_service_cost'::character varying)::text]))),
-    CONSTRAINT ck_labor_line_gross CHECK (((fixed_fee_fen >= 0) AND (commission_fen >= 0) AND (gross_remuneration_fen > 0) AND (gross_remuneration_fen = (fixed_fee_fen + commission_fen)))),
+    CONSTRAINT ck_labor_line_gross CHECK (((gross_remuneration_fen > 0) AND (((fixed_fee_fen IS NULL) AND (commission_fen IS NULL)) OR ((fixed_fee_fen IS NOT NULL) AND (commission_fen IS NOT NULL) AND (fixed_fee_fen >= 0) AND (commission_fen >= 0) AND (gross_remuneration_fen = (fixed_fee_fen + commission_fen)))))),
     CONSTRAINT ck_labor_line_grouping CHECK (((income_grouping)::text = ANY (ARRAY[('single_occurrence'::character varying)::text, ('continuous_monthly'::character varying)::text]))),
     CONSTRAINT ck_labor_line_not_student CHECK ((is_full_time_student IS FALSE)),
     CONSTRAINT ck_labor_line_resident CHECK (((tax_identity)::text = 'resident'::text))
@@ -14962,7 +15652,7 @@ CREATE TABLE public.labor_service_persons (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
     counterparty_id uuid NOT NULL,
-    person_code character varying(100) NOT NULL,
+    person_code character varying(100),
     name character varying(200) NOT NULL,
     relationship_start_date date NOT NULL,
     relationship_end_date date,
@@ -15083,7 +15773,7 @@ CREATE TABLE public.late_bank_evidence_actions (
 CREATE TABLE public.open_items (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
-    counterparty_id uuid NOT NULL,
+    counterparty_id uuid,
     source_event_id uuid NOT NULL,
     source_component_id uuid,
     component_key character varying(100),
@@ -15101,12 +15791,12 @@ CREATE TABLE public.open_items (
     CONSTRAINT ck_open_item_component_key CHECK ((((source_component_id IS NULL) AND (component_key IS NULL)) OR ((source_component_id IS NOT NULL) AND (component_key IS NOT NULL) AND (length(TRIM(BOTH FROM component_key)) > 0)))),
     CONSTRAINT ck_open_item_no_oversettlement CHECK ((settled_amount_fen <= original_amount_fen)),
     CONSTRAINT ck_open_item_original CHECK ((original_amount_fen > 0)),
-    CONSTRAINT ck_open_item_pass_through_metadata CHECK ((((payable_category IS NOT NULL) AND ((payable_category)::text = 'pass_through'::text) AND (pass_through_key IS NOT NULL) AND (pass_through_beneficiary_id IS NOT NULL)) OR (((payable_category IS NULL) OR ((payable_category)::text <> 'pass_through'::text)) AND (pass_through_key IS NULL) AND (pass_through_beneficiary_id IS NULL)))),
+    CONSTRAINT ck_open_item_pass_through_metadata CHECK ((((payable_category IS NOT NULL) AND ((payable_category)::text = 'pass_through'::text) AND (pass_through_key IS NOT NULL)) OR (((payable_category IS NULL) OR ((payable_category)::text <> 'pass_through'::text)) AND (pass_through_key IS NULL) AND (pass_through_beneficiary_id IS NULL)))),
     CONSTRAINT ck_open_item_payable_category CHECK (((payable_category IS NULL) OR (((item_type)::text = 'payable'::text) AND ((payable_category)::text = ANY (ARRAY[('salary'::character varying)::text, ('employer_social'::character varying)::text, ('withheld_employee_social'::character varying)::text, ('employer_housing'::character varying)::text, ('withheld_employee_housing'::character varying)::text, ('individual_income_tax'::character varying)::text, ('labor_remuneration'::character varying)::text, ('labor_individual_income_tax'::character varying)::text, ('pass_through'::character varying)::text]))))),
     CONSTRAINT ck_open_item_payable_metadata CHECK (((payable_category IS NOT NULL) OR ((payable_agency_code IS NULL) AND (insurance_kind IS NULL)))),
     CONSTRAINT ck_open_item_settled_positive CHECK ((settled_amount_fen >= 0)),
     CONSTRAINT ck_open_item_status CHECK (((status)::text = ANY (ARRAY[('open'::character varying)::text, ('partial'::character varying)::text, ('settled'::character varying)::text, ('reversed'::character varying)::text]))),
-    CONSTRAINT ck_open_item_statutory_payable_target CHECK ((((payable_category)::text <> ALL (ARRAY[('employer_social'::character varying)::text, ('withheld_employee_social'::character varying)::text, ('employer_housing'::character varying)::text, ('withheld_employee_housing'::character varying)::text])) OR ((payable_agency_code IS NOT NULL) AND (insurance_kind IS NOT NULL)))),
+    CONSTRAINT ck_open_item_statutory_payable_target CHECK ((((payable_category)::text <> ALL ((ARRAY['employer_social'::character varying, 'withheld_employee_social'::character varying, 'employer_housing'::character varying, 'withheld_employee_housing'::character varying])::text[])) OR (insurance_kind IS NOT NULL))),
     CONSTRAINT ck_open_item_type CHECK (((item_type)::text = ANY (ARRAY[('receivable'::character varying)::text, ('payable'::character varying)::text])))
 );
 
@@ -15178,7 +15868,7 @@ CREATE TABLE public.organization_profile_versions (
     execution_attribution_id uuid,
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_org_profile_accounting_standard CHECK (((accounting_standard)::text = 'small_enterprise'::text)),
-    CONSTRAINT ck_org_profile_confirmation_note CHECK ((length(TRIM(BOTH FROM confirmation_note)) > 0)),
+    CONSTRAINT ck_org_profile_confirmation_note CHECK ((length(confirmation_note) <= 2000)),
     CONSTRAINT ck_org_profile_filing_cycle CHECK (((filing_cycle)::text = ANY (ARRAY[('monthly'::character varying)::text, ('quarterly'::character varying)::text]))),
     CONSTRAINT ck_org_profile_jurisdiction CHECK (((jurisdiction)::text = 'CN'::text)),
     CONSTRAINT ck_org_profile_small_scale CHECK (((taxpayer_type)::text = 'small_scale'::text)),
@@ -15367,9 +16057,9 @@ CREATE TABLE public.payroll_contribution_actual_sets (
     idempotency_key character varying(200) NOT NULL,
     request_payload_hash character varying(64) NOT NULL,
     contribution_period character varying(7) NOT NULL,
-    declaration_date date NOT NULL,
-    reason_code character varying(40) NOT NULL,
-    reason_description text NOT NULL,
+    declaration_date date,
+    reason_code character varying(40),
+    reason_description text,
     execution_attribution_id uuid,
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_contribution_actual_set_period CHECK (((length((contribution_period)::text) = 7) AND (substr((contribution_period)::text, 5, 1) = '-'::text) AND ((substr((contribution_period)::text, 6, 2) >= '01'::text) AND (substr((contribution_period)::text, 6, 2) <= '12'::text)))),
@@ -15458,11 +16148,11 @@ CREATE TABLE public.payroll_contribution_supplements (
     event_id uuid NOT NULL,
     component_id uuid NOT NULL,
     employee_id uuid NOT NULL,
-    source_payroll_batch_id uuid NOT NULL,
+    source_payroll_batch_id uuid,
     contribution_period character varying(7) NOT NULL,
-    assessment_reference character varying(200) NOT NULL,
-    reason_code character varying(40) NOT NULL,
-    reason_description text NOT NULL,
+    assessment_reference character varying(200),
+    reason_code character varying(40),
+    reason_description text,
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT ck_contribution_supplement_period CHECK (((length((contribution_period)::text) = 7) AND (substr((contribution_period)::text, 5, 1) = '-'::text) AND ((substr((contribution_period)::text, 6, 2) >= '01'::text) AND (substr((contribution_period)::text, 6, 2) <= '12'::text)))),
     CONSTRAINT ck_contribution_supplement_reason CHECK (((reason_code)::text = ANY (ARRAY[('late_enrollment'::character varying)::text, ('missing_declaration'::character varying)::text, ('agency_assessment'::character varying)::text, ('documented_correction'::character varying)::text, ('other_documented'::character varying)::text])))
@@ -15524,8 +16214,8 @@ CREATE TABLE public.payroll_first_wage_tax_treatments (
     tax_year integer NOT NULL,
     first_wage_month integer NOT NULL,
     treatment_state character varying(20) NOT NULL,
-    declaration_date date NOT NULL,
-    confirmation_description text NOT NULL,
+    declaration_date date,
+    confirmation_description text,
     legal_basis_url character varying(1000) NOT NULL,
     supersedes_id uuid,
     execution_attribution_id uuid,
@@ -15547,7 +16237,7 @@ CREATE TABLE public.payroll_lines (
     regular_payroll_batch_id uuid,
     employee_id uuid NOT NULL,
     employee_payroll_profile_version_id uuid NOT NULL,
-    wage_tax_declaration_state character varying(20) NOT NULL,
+    wage_tax_scope character varying(20) NOT NULL,
     tax_reported_salary_fen bigint,
     tax_reporting_difference_reason text,
     special_additional_deduction_fen bigint NOT NULL,
@@ -15565,10 +16255,10 @@ CREATE TABLE public.payroll_lines (
     gross_salary_fen bigint NOT NULL,
     net_salary_fen bigint NOT NULL,
     calculation_trace json NOT NULL,
-    CONSTRAINT ck_payroll_line_gross_salary CHECK (((((wage_tax_declaration_state)::text = 'declared'::text) AND (tax_reported_salary_fen IS NOT NULL) AND (annual_bonus_fen = 0) AND (((gross_salary_fen = tax_reported_salary_fen) AND (tax_reporting_difference_reason IS NULL)) OR ((gross_salary_fen <> tax_reported_salary_fen) AND (tax_reporting_difference_reason IS NOT NULL) AND ((length(TRIM(BOTH FROM tax_reporting_difference_reason)) >= 1) AND (length(TRIM(BOTH FROM tax_reporting_difference_reason)) <= 2000))))) OR (((wage_tax_declaration_state)::text = 'not_declared'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen = 0) AND (gross_salary_fen = 0) AND (tax_reporting_difference_reason IS NULL)) OR (((wage_tax_declaration_state)::text = 'not_applicable'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen > 0) AND (gross_salary_fen = annual_bonus_fen) AND (tax_reporting_difference_reason IS NULL)))),
+    CONSTRAINT ck_payroll_line_gross_salary CHECK ((((((wage_tax_scope)::text = 'wage_income'::text) AND (tax_reported_salary_fen IS NOT NULL) AND (annual_bonus_fen = 0)) OR (((wage_tax_scope)::text = 'contributions_only'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen = 0) AND (gross_salary_fen = 0)) OR (((wage_tax_scope)::text = 'not_applicable'::text) AND (tax_reported_salary_fen IS NULL) AND (annual_bonus_fen > 0) AND (gross_salary_fen = annual_bonus_fen))) AND ((tax_reporting_difference_reason IS NULL) OR ((length(TRIM(BOTH FROM tax_reporting_difference_reason)) >= 1) AND (length(TRIM(BOTH FROM tax_reporting_difference_reason)) <= 2000))))),
     CONSTRAINT ck_payroll_line_net_salary CHECK (((net_salary_fen = (((gross_salary_fen - employee_social_insurance_fen) - employee_housing_fund_fen) - individual_income_tax_fen)) AND (net_salary_fen >= 0))),
     CONSTRAINT ck_payroll_line_nonnegative_amounts CHECK ((((tax_reported_salary_fen IS NULL) OR (tax_reported_salary_fen >= 0)) AND (special_additional_deduction_fen >= 0) AND (other_legal_deduction_fen >= 0) AND (annual_bonus_fen >= 0) AND (employee_social_insurance_fen >= 0) AND (employer_social_insurance_fen >= 0) AND (employee_housing_fund_fen >= 0) AND (employer_housing_fund_fen >= 0) AND (individual_income_tax_fen >= 0) AND (gross_salary_fen >= 0))),
-    CONSTRAINT ck_payroll_line_wage_tax_declaration_state CHECK (((wage_tax_declaration_state)::text = ANY (ARRAY[('declared'::character varying)::text, ('not_declared'::character varying)::text, ('not_applicable'::character varying)::text])))
+    CONSTRAINT ck_payroll_line_wage_tax_scope CHECK (((wage_tax_scope)::text = ANY ((ARRAY['wage_income'::character varying, 'contributions_only'::character varying, 'not_applicable'::character varying])::text[])))
 );
 
 
@@ -15838,14 +16528,14 @@ CREATE TABLE public.tax_periods (
     surtax_rule_id uuid NOT NULL,
     adjustment_event_id uuid NOT NULL,
     created_at timestamp with time zone NOT NULL,
+    component_id uuid NOT NULL,
     CONSTRAINT ck_tax_period_dates CHECK ((start_date <= end_date)),
     CONSTRAINT ck_tax_period_filing_cycle_snapshot CHECK (((filing_cycle_snapshot)::text = ANY (ARRAY[('monthly'::character varying)::text, ('quarterly'::character varying)::text]))),
     CONSTRAINT ck_tax_period_hash_length CHECK ((length((calculation_hash)::text) = 64)),
     CONSTRAINT ck_tax_period_hash_lower_hex CHECK (((calculation_hash)::text ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT ck_tax_period_hash_payload_nonempty CHECK ((length(calculation_hash_payload) > 0)),
     CONSTRAINT ck_tax_period_status CHECK (((status)::text = ANY (ARRAY[('posted'::character varying)::text, ('reversed'::character varying)::text]))),
-    CONSTRAINT ck_tax_period_urban_rate_snapshot CHECK ((urban_maintenance_rate_snapshot = ANY (ARRAY[0.07, 0.05, 0.01]))),
-    component_id uuid NOT NULL
+    CONSTRAINT ck_tax_period_urban_rate_snapshot CHECK ((urban_maintenance_rate_snapshot = ANY (ARRAY[0.07, 0.05, 0.01])))
 );
 
 
@@ -16305,6 +16995,14 @@ ALTER TABLE ONLY public.business_events
 
 
 --
+-- Name: business_metadata_versions business_metadata_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.business_metadata_versions
+    ADD CONSTRAINT business_metadata_versions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: component_cash_flow_allocations component_cash_flow_allocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16390,6 +17088,14 @@ ALTER TABLE ONLY public.event_evidence
 
 ALTER TABLE ONLY public.evidence
     ADD CONSTRAINT evidence_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tax_periods ex_tax_period_posted_range; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tax_periods
+    ADD CONSTRAINT ex_tax_period_posted_range EXCLUDE USING gist (org_id WITH =, daterange(start_date, end_date, '[]'::text) WITH &&) WHERE (((status)::text = 'posted'::text)) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -16590,7 +17296,6 @@ ALTER TABLE ONLY public.labor_external_declaration_evidence
 
 ALTER TABLE ONLY public.labor_remuneration_batch_evidence
     ADD CONSTRAINT labor_remuneration_batch_evidence_pkey PRIMARY KEY (org_id, batch_id, evidence_id);
-
 
 
 --
@@ -16823,7 +17528,6 @@ ALTER TABLE ONLY public.payroll_batch_evidence
 
 ALTER TABLE ONLY public.payroll_batch_version_sequences
     ADD CONSTRAINT payroll_batch_version_sequences_pkey PRIMARY KEY (org_id, batch_kind, payroll_period);
-
 
 
 --
@@ -17082,18 +17786,12 @@ ALTER TABLE ONLY public.tax_period_sources
     ADD CONSTRAINT tax_period_sources_pkey PRIMARY KEY (id);
 
 
-
 --
 -- Name: tax_periods tax_periods_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tax_periods
     ADD CONSTRAINT tax_periods_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.tax_periods
-    ADD CONSTRAINT ex_tax_period_posted_range EXCLUDE USING gist
-    (org_id WITH =, daterange(start_date, end_date, '[]') WITH &&)
-    WHERE (status = 'posted') DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -17374,6 +18072,38 @@ ALTER TABLE ONLY public.business_event_dependencies
 
 ALTER TABLE ONLY public.business_events
     ADD CONSTRAINT uq_business_event_org_id UNIQUE (org_id, id);
+
+
+--
+-- Name: business_metadata_versions uq_business_metadata_idempotency; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.business_metadata_versions
+    ADD CONSTRAINT uq_business_metadata_idempotency UNIQUE (org_id, idempotency_key);
+
+
+--
+-- Name: business_metadata_versions uq_business_metadata_version; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.business_metadata_versions
+    ADD CONSTRAINT uq_business_metadata_version UNIQUE (event_id, component_key, version);
+
+
+--
+-- Name: enterprise_income_tax_quarter_confirmations uq_cit_confirmation_component; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enterprise_income_tax_quarter_confirmations
+    ADD CONSTRAINT uq_cit_confirmation_component UNIQUE (component_id);
+
+
+--
+-- Name: enterprise_income_tax_results uq_cit_result_component; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enterprise_income_tax_results
+    ADD CONSTRAINT uq_cit_result_component UNIQUE (component_id);
 
 
 --
@@ -18377,6 +19107,14 @@ ALTER TABLE ONLY public.settlements
 
 
 --
+-- Name: tax_periods uq_tax_period_component; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tax_periods
+    ADD CONSTRAINT uq_tax_period_component UNIQUE (component_id);
+
+
+--
 -- Name: tax_periods uq_tax_period_org_id; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18783,6 +19521,13 @@ CREATE INDEX ix_business_events_org_id ON public.business_events USING btree (or
 --
 
 CREATE INDEX ix_business_events_posting_date ON public.business_events USING btree (posting_date);
+
+
+--
+-- Name: ix_business_metadata_event_component; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_business_metadata_event_component ON public.business_metadata_versions USING btree (org_id, event_id, component_key, version);
 
 
 --
@@ -19685,7 +20430,7 @@ CREATE UNIQUE INDEX uq_owner_period_confirmation_root ON public.owner_period_con
 -- Name: uq_payroll_event_link_payment_source; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX uq_payroll_event_link_payment_source ON public.payroll_event_links USING btree (org_id, component_id, link_kind, source_payment_event_id, source_open_item_id) WHERE ((source_payment_event_id IS NOT NULL) AND (source_open_item_id IS NOT NULL));
+CREATE UNIQUE INDEX uq_payroll_event_link_payment_source ON public.payroll_event_links USING btree (org_id, component_id, link_kind, payroll_batch_id, source_payment_event_id, source_open_item_id) WHERE ((source_payment_event_id IS NOT NULL) AND (source_open_item_id IS NOT NULL));
 
 
 --
@@ -20326,13 +21071,6 @@ CREATE CONSTRAINT TRIGGER business_event_dependency_invariant_deferred AFTER INS
 
 
 --
--- Name: business_event_dependencies no_adjustment_tax_settlement_dependency_invariant; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE CONSTRAINT TRIGGER no_adjustment_tax_settlement_dependency_invariant AFTER INSERT OR DELETE OR UPDATE ON public.business_event_dependencies DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_no_adjustment_tax_settlement();
-
-
---
 -- Name: business_event_dependencies business_event_dependency_parent_insert_lock; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20372,6 +21110,27 @@ CREATE TRIGGER business_events_execution_attribution_guard BEFORE INSERT OR UPDA
 --
 
 CREATE CONSTRAINT TRIGGER business_events_labor_invariant_deferred AFTER INSERT OR DELETE OR UPDATE ON public.business_events DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_labor_graph_0013();
+
+
+--
+-- Name: business_metadata_versions business_metadata_append_only_0003; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER business_metadata_append_only_0003 BEFORE DELETE OR UPDATE ON public.business_metadata_versions FOR EACH ROW EXECUTE FUNCTION public.finance_block_business_metadata_mutation_0003();
+
+
+--
+-- Name: business_metadata_versions business_metadata_execution_attribution_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER business_metadata_execution_attribution_guard BEFORE INSERT OR UPDATE ON public.business_metadata_versions FOR EACH ROW EXECUTE FUNCTION public.finance_guard_attributed_root_0014();
+
+
+--
+-- Name: business_metadata_versions business_metadata_insert_guard_0003; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER business_metadata_insert_guard_0003 BEFORE INSERT ON public.business_metadata_versions FOR EACH ROW EXECUTE FUNCTION public.finance_guard_business_metadata_insert_0003();
 
 
 --
@@ -20484,13 +21243,6 @@ CREATE CONSTRAINT TRIGGER component_settlement_valid AFTER INSERT OR DELETE OR U
 --
 
 CREATE CONSTRAINT TRIGGER component_valid AFTER INSERT OR DELETE OR UPDATE ON public.business_event_components DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_component_event();
-
-
---
--- Name: business_event_components no_adjustment_tax_settlement_component_invariant; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE CONSTRAINT TRIGGER no_adjustment_tax_settlement_component_invariant AFTER INSERT OR DELETE OR UPDATE ON public.business_event_components DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_no_adjustment_tax_settlement();
 
 
 --
@@ -20648,17 +21400,31 @@ CREATE TRIGGER external_obligation_execution_attribution_guard BEFORE INSERT OR 
 
 
 --
+-- Name: business_event_components fact_precision_component; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER fact_precision_component AFTER INSERT OR UPDATE ON public.business_event_components DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_fact_precision();
+
+
+--
+-- Name: business_events fact_precision_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER fact_precision_event AFTER INSERT OR UPDATE ON public.business_events DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_fact_precision();
+
+
+--
+-- Name: settlements fact_precision_settlement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER fact_precision_settlement AFTER INSERT OR UPDATE ON public.settlements DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_fact_precision();
+
+
+--
 -- Name: business_events final_business_event_invariant_deferred; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE CONSTRAINT TRIGGER final_business_event_invariant_deferred AFTER INSERT OR DELETE OR UPDATE ON public.business_events DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_final_business_event();
-
-
---
--- Name: business_events no_adjustment_tax_settlement_event_invariant; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE CONSTRAINT TRIGGER no_adjustment_tax_settlement_event_invariant AFTER INSERT OR DELETE OR UPDATE ON public.business_events DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_no_adjustment_tax_settlement();
 
 
 --
@@ -20778,20 +21544,6 @@ CREATE CONSTRAINT TRIGGER final_payroll_reversal_source_event_deferred AFTER INS
 --
 
 CREATE CONSTRAINT TRIGGER final_payroll_reversal_source_link_deferred AFTER INSERT OR DELETE OR UPDATE ON public.payroll_event_links DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_final_payroll_reversal_links_from_link();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 --
@@ -21597,6 +22349,27 @@ CREATE TRIGGER late_bank_evidence_actions_execution_attribution_guard BEFORE INS
 --
 
 CREATE TRIGGER late_bank_evidence_actions_immutable_0015 BEFORE DELETE OR UPDATE ON public.late_bank_evidence_actions FOR EACH ROW EXECUTE FUNCTION public.finance_guard_bank_audit_immutable_0015();
+
+
+--
+-- Name: business_event_components no_adjustment_tax_settlement_component_invariant; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER no_adjustment_tax_settlement_component_invariant AFTER INSERT OR DELETE OR UPDATE ON public.business_event_components DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_no_adjustment_tax_settlement();
+
+
+--
+-- Name: business_event_dependencies no_adjustment_tax_settlement_dependency_invariant; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER no_adjustment_tax_settlement_dependency_invariant AFTER INSERT OR DELETE OR UPDATE ON public.business_event_dependencies DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_no_adjustment_tax_settlement();
+
+
+--
+-- Name: business_events no_adjustment_tax_settlement_event_invariant; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER no_adjustment_tax_settlement_event_invariant AFTER INSERT OR DELETE OR UPDATE ON public.business_events DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.finance_validate_no_adjustment_tax_settlement();
 
 
 --
@@ -22798,6 +23571,22 @@ ALTER TABLE ONLY public.business_events
 
 
 --
+-- Name: business_metadata_versions fk_business_metadata_attribution; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.business_metadata_versions
+    ADD CONSTRAINT fk_business_metadata_attribution FOREIGN KEY (org_id, execution_attribution_id) REFERENCES public.execution_attributions(org_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: business_metadata_versions fk_business_metadata_event; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.business_metadata_versions
+    ADD CONSTRAINT fk_business_metadata_event FOREIGN KEY (org_id, event_id) REFERENCES public.business_events(org_id, id) ON DELETE RESTRICT;
+
+
+--
 -- Name: component_cash_flow_allocations fk_cash_flow_account; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22811,6 +23600,22 @@ ALTER TABLE ONLY public.component_cash_flow_allocations
 
 ALTER TABLE ONLY public.component_cash_flow_allocations
     ADD CONSTRAINT fk_cash_flow_component FOREIGN KEY (org_id, event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: enterprise_income_tax_quarter_confirmations fk_cit_confirmation_component; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enterprise_income_tax_quarter_confirmations
+    ADD CONSTRAINT fk_cit_confirmation_component FOREIGN KEY (org_id, business_event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
+
+
+--
+-- Name: enterprise_income_tax_results fk_cit_result_component; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.enterprise_income_tax_results
+    ADD CONSTRAINT fk_cit_result_component FOREIGN KEY (org_id, business_event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
 
 
 --
@@ -22918,6 +23723,14 @@ ALTER TABLE ONLY public.payroll_contribution_assessment_confirmations
 
 
 --
+-- Name: payroll_contribution_supplements fk_contribution_supplement_component; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payroll_contribution_supplements
+    ADD CONSTRAINT fk_contribution_supplement_component FOREIGN KEY (org_id, event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
+
+
+--
 -- Name: payroll_contribution_supplement_items fk_contribution_supplement_item_org_supplement; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22986,7 +23799,7 @@ ALTER TABLE ONLY public.business_event_dependencies
 --
 
 ALTER TABLE ONLY public.business_event_dependencies
-    ADD CONSTRAINT fk_dependency_parent_component FOREIGN KEY (org_id, parent_event_id, parent_component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED;
+    ADD CONSTRAINT fk_dependency_parent_component FOREIGN KEY (org_id, parent_event_id, parent_component_id) REFERENCES public.business_event_components(org_id, event_id, id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -24382,6 +25195,14 @@ ALTER TABLE ONLY public.settlements
 
 
 --
+-- Name: tax_periods fk_tax_period_component; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tax_periods
+    ADD CONSTRAINT fk_tax_period_component FOREIGN KEY (org_id, adjustment_event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
+
+
+--
 -- Name: tax_period_sources fk_tax_period_source_component; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24720,333 +25541,3 @@ ALTER TABLE ONLY public.vouchers
 --
 -- PostgreSQL database dump complete
 --
-
-ALTER TABLE ONLY public.payroll_contribution_supplements
-    ADD CONSTRAINT fk_contribution_supplement_component FOREIGN KEY (org_id, event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
-
-ALTER TABLE ONLY public.tax_periods
-    ADD CONSTRAINT uq_tax_period_component UNIQUE (component_id);
-ALTER TABLE ONLY public.tax_periods
-    ADD CONSTRAINT fk_tax_period_component FOREIGN KEY (org_id, adjustment_event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
-
-ALTER TABLE ONLY public.enterprise_income_tax_quarter_confirmations
-    ADD CONSTRAINT uq_cit_confirmation_component UNIQUE (component_id);
-ALTER TABLE ONLY public.enterprise_income_tax_quarter_confirmations
-    ADD CONSTRAINT fk_cit_confirmation_component FOREIGN KEY (org_id, business_event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
-ALTER TABLE ONLY public.enterprise_income_tax_quarter_confirmations
-    ADD CONSTRAINT ck_cit_confirmation_component_pair CHECK ((business_event_id IS NULL) = (component_id IS NULL));
-
-ALTER TABLE ONLY public.enterprise_income_tax_results
-    ADD CONSTRAINT uq_cit_result_component UNIQUE (component_id);
-ALTER TABLE ONLY public.enterprise_income_tax_results
-    ADD CONSTRAINT fk_cit_result_component FOREIGN KEY (org_id, business_event_id, component_id) REFERENCES public.business_event_components(org_id, event_id, id) ON DELETE RESTRICT;
-ALTER TABLE ONLY public.enterprise_income_tax_results
-    ADD CONSTRAINT ck_cit_result_component_pair CHECK ((business_event_id IS NULL) = (component_id IS NULL));
-
-CREATE FUNCTION public.finance_assert_payroll_component_amounts(target_component_id uuid) RETURNS void
-    LANGUAGE plpgsql AS $$
-DECLARE batch_id uuid;
-DECLARE company_id uuid;
-DECLARE targets jsonb;
-BEGIN
-    SELECT b.id,b.org_id,b.policy_snapshot::jsonb->'parameters'->'payment_targets'
-      INTO batch_id,company_id,targets FROM payroll_event_links l
-      JOIN payroll_batches b ON b.id=l.payroll_batch_id
-     WHERE l.component_id=target_component_id AND l.link_kind='payroll_accrual';
-    IF batch_id IS NULL THEN RAISE EXCEPTION 'PAYROLL_ACCRUAL_COMPONENT_MISMATCH'; END IF;
-    IF EXISTS (
-        WITH expected AS (
-            SELECT p.expense_role AS business_class,e.counterparty_id,
-                   sum(l.gross_salary_fen+l.employer_social_insurance_fen+
-                       l.employer_housing_fund_fen)::bigint AS debit_fen,0::bigint AS credit_fen
-              FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
-              JOIN employee_payroll_profile_versions p ON p.id=l.employee_payroll_profile_version_id
-             WHERE l.payroll_batch_id=batch_id
-             GROUP BY p.expense_role,e.counterparty_id
-             HAVING sum(l.gross_salary_fen+l.employer_social_insurance_fen+l.employer_housing_fund_fen)>0
-            UNION ALL
-            SELECT totals.business_class,NULL::uuid,0::bigint,sum(totals.amount_fen)::bigint
-              FROM payroll_lines l CROSS JOIN LATERAL (VALUES
-                ('employee_salary_payable',l.gross_salary_fen),
-                ('employer_social_payable',l.employer_social_insurance_fen),
-                ('employer_housing_fund_payable',l.employer_housing_fund_fen)
-              ) totals(business_class,amount_fen)
-             WHERE l.payroll_batch_id=batch_id GROUP BY totals.business_class
-             HAVING sum(totals.amount_fen)>0
-        ), actual AS (
-            SELECT coalesce(a.business_class,a.system_role) AS business_class,l.counterparty_id,
-                   sum(l.debit_fen)::bigint AS debit_fen,sum(l.credit_fen)::bigint AS credit_fen
-              FROM voucher_lines l JOIN accounts a ON a.id=l.account_id
-             WHERE l.component_id=target_component_id
-             GROUP BY coalesce(a.business_class,a.system_role),l.counterparty_id
-        )
-        SELECT 1 FROM expected x FULL JOIN actual a ON a.business_class=x.business_class
-          AND a.counterparty_id IS NOT DISTINCT FROM x.counterparty_id
-         WHERE x.debit_fen IS DISTINCT FROM a.debit_fen OR x.credit_fen IS DISTINCT FROM a.credit_fen
-    ) THEN RAISE EXCEPTION 'PAYROLL_ACCRUAL_VOUCHER_AMOUNT_MISMATCH'; END IF;
-    IF EXISTS (
-        WITH employer AS (
-            SELECT value.category,value.insurance_kind,sum(value.amount_fen)::bigint AS amount_fen,
-                   targets->value.target_key->>'agency_code' AS agency_code
-              FROM payroll_lines l CROSS JOIN LATERAL (
-                SELECT 'employer_social'::text AS category,'social_insurance'::text AS target_key,
-                       key AS insurance_kind,value::bigint AS amount_fen
-                  FROM jsonb_each_text(l.employer_social_insurance_items::jsonb)
-                UNION ALL
-                SELECT 'employer_housing','housing_fund',key,value::bigint
-                  FROM jsonb_each_text(l.employer_housing_fund_items::jsonb)
-              ) value
-             WHERE l.payroll_batch_id=batch_id
-             GROUP BY value.category,value.insurance_kind,value.target_key
-             HAVING sum(value.amount_fen)>0
-        ), expected AS (
-            SELECT 'salary:'||l.id::text AS salary_key,e.counterparty_id,'salary'::text AS category,
-                   NULL::text AS agency_code,NULL::text AS insurance_kind,l.gross_salary_fen AS amount_fen
-              FROM payroll_lines l JOIN employees e ON e.id=l.employee_id
-             WHERE l.payroll_batch_id=batch_id AND l.gross_salary_fen>0
-            UNION ALL
-            SELECT NULL::text,p.id,x.category,x.agency_code,x.insurance_kind,x.amount_fen
-              FROM employer x LEFT JOIN counterparties p ON p.org_id=company_id
-               AND p.kind='other' AND p.external_ref=x.agency_code
-        ), actual AS (
-            SELECT CASE WHEN i.payable_category='salary' THEN i.component_key END AS salary_key,
-                   i.counterparty_id,i.payable_category AS category,i.payable_agency_code AS agency_code,
-                   i.insurance_kind,i.original_amount_fen AS amount_fen
-              FROM open_items i WHERE i.source_component_id=target_component_id
-        ), differences AS (
-            (SELECT * FROM expected EXCEPT ALL SELECT * FROM actual)
-            UNION ALL
-            (SELECT * FROM actual EXCEPT ALL SELECT * FROM expected)
-        ) SELECT 1 FROM differences
-    ) THEN RAISE EXCEPTION 'PAYROLL_ACCRUAL_OPEN_ITEM_AMOUNT_MISMATCH'; END IF;
-END;
-$$;
-
--- Rebuild the reviewed source from immutable asset and activation facts.
-CREATE FUNCTION public.finance_assert_fixed_asset_activation_projection(target_component_id uuid)
-RETURNS text LANGUAGE plpgsql AS $$
-DECLARE c business_event_components%ROWTYPE;
-DECLARE asset fixed_assets%ROWTYPE;
-DECLARE activation fixed_asset_activations%ROWTYPE;
-DECLARE projection jsonb;
-DECLARE projection_hash text;
-BEGIN
-    SELECT * INTO c FROM business_event_components WHERE id=target_component_id;
-    SELECT * INTO activation FROM fixed_asset_activations
-     WHERE component_id=c.id AND org_id=c.org_id AND event_id=c.event_id;
-    SELECT * INTO asset FROM fixed_assets WHERE id=activation.asset_id AND org_id=c.org_id;
-    IF c.kind NOT IN ('fixed_asset_acquisition','fixed_asset_activation')
-       OR activation.id IS NULL OR asset.id IS NULL THEN
-        RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID';
-    END IF;
-    projection := jsonb_build_object(
-        'asset',jsonb_build_object(
-            'asset_code',asset.asset_code,'asset_name',asset.name,'category',asset.category,
-            'acquisition_date',to_char(asset.acquisition_date,'YYYY-MM-DD'),
-            'posting_date',to_char(asset.posting_date,'YYYY-MM-DD'),
-            'purchase_price_fen',asset.purchase_price_fen,
-            'noncreditable_tax_fen',asset.noncreditable_tax_fen,
-            'transport_and_handling_fen',asset.transport_and_handling_fen,
-            'installation_and_direct_cost_fen',asset.installation_and_direct_cost_fen,
-            'cost_fen',asset.cost_fen
-        ),
-        'activation',jsonb_build_object(
-            'in_service_date',to_char(activation.in_service_date,'YYYY-MM-DD'),
-            'posting_date',to_char(activation.posting_date,'YYYY-MM-DD'),
-            'depreciation_method',activation.depreciation_method,
-            'useful_life_months',activation.useful_life_months,
-            'residual_value_fen',activation.residual_value_fen,
-            'benefit_area',activation.benefit_area,
-            'depreciation_group_code',activation.depreciation_group_code,
-            'depreciation_rounding_policy',activation.depreciation_rounding_policy,
-            'accounting_rule_version',activation.accounting_rule_version,
-            'accounting_rule_source_url',activation.accounting_rule_source_url
-        )
-    );
-    projection_hash := encode(digest(convert_to(finance_canonical_jsonb(jsonb_build_object(
-        'command','finance_project_fixed_asset_activation','request','{}'::jsonb,
-        'calculation',projection
-    )),'UTF8'),'sha256'),'hex');
-    IF c.derived->>'asset_id' IS DISTINCT FROM asset.id::text
-       OR c.derived->>'activation_id' IS DISTINCT FROM activation.id::text
-       OR (c.derived->'activation_projection')::jsonb IS DISTINCT FROM projection
-       OR c.derived->>'activation_projection_hash' IS DISTINCT FROM projection_hash THEN
-        RAISE EXCEPTION 'FIXED_ASSET_ACTIVATION_PROJECTION_MISMATCH';
-    END IF;
-    RETURN projection_hash;
-END;
-$$;
-
--- Resolve same-event depreciation sources against their normalized activation.
-CREATE FUNCTION public.finance_assert_fixed_asset_component_sources(target_component_id uuid)
-RETURNS void LANGUAGE plpgsql AS $$
-DECLARE c business_event_components%ROWTYPE;
-DECLARE parent_component business_event_components%ROWTYPE;
-DECLARE activation fixed_asset_activations%ROWTYPE;
-DECLARE parent_keys jsonb;
-DECLARE parent_key text;
-DECLARE source_hash text;
-DECLARE expected_proofs jsonb := '[]'::jsonb;
-DECLARE local_activation_ids uuid[] := ARRAY[]::uuid[];
-BEGIN
-    SELECT * INTO c FROM business_event_components WHERE id=target_component_id;
-    IF c.id IS NULL OR c.kind NOT IN (
-        'fixed_asset_depreciation','fixed_asset_depreciation_batch'
-    ) THEN RETURN; END IF;
-    IF c.kind='fixed_asset_depreciation' THEN
-        parent_keys := CASE WHEN c.facts->>'activation_component_key' IS NOT NULL
-            THEN jsonb_build_array(c.facts->>'activation_component_key')
-            ELSE '[]'::jsonb END;
-    ELSE
-        parent_keys := coalesce((c.facts->'activation_component_keys')::jsonb,'[]'::jsonb);
-    END IF;
-    IF jsonb_typeof(parent_keys) IS DISTINCT FROM 'array' THEN
-        RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID';
-    END IF;
-    IF jsonb_array_length(parent_keys) <> (
-        SELECT count(DISTINCT value) FROM jsonb_array_elements_text(parent_keys)
-    ) THEN RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID'; END IF;
-    FOR parent_key IN SELECT value FROM jsonb_array_elements_text(parent_keys)
-                     ORDER BY value COLLATE "C" LOOP
-        SELECT * INTO parent_component FROM business_event_components
-         WHERE org_id=c.org_id AND event_id=c.event_id AND key=parent_key;
-        IF parent_component.id IS NULL OR parent_component.kind NOT IN (
-            'fixed_asset_acquisition','fixed_asset_activation'
-        ) OR parent_component.id=c.id THEN
-            RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_INVALID';
-        END IF;
-        SELECT * INTO activation FROM fixed_asset_activations
-         WHERE org_id=c.org_id AND event_id=c.event_id AND component_id=parent_component.id;
-        IF activation.id IS NULL OR activation.id=ANY(local_activation_ids)
-           OR NOT EXISTS (SELECT 1 FROM fixed_asset_depreciations
-                          WHERE component_id=c.id AND org_id=c.org_id
-                            AND activation_id=activation.id AND asset_id=activation.asset_id) THEN
-            RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_UNUSED';
-        END IF;
-        source_hash := finance_assert_fixed_asset_activation_projection(parent_component.id);
-        local_activation_ids := array_append(local_activation_ids,activation.id);
-        expected_proofs := expected_proofs || jsonb_build_array(jsonb_build_object(
-            'component_key',parent_key,'source_kind',parent_component.kind,
-            'activation_projection_hash',source_hash,
-            'asset_id',activation.asset_id::text,'activation_id',activation.id::text
-        ));
-    END LOOP;
-    IF coalesce((c.derived->'local_activation_proofs')::jsonb,'[]'::jsonb)
-       IS DISTINCT FROM expected_proofs THEN
-        RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_PROOF_MISMATCH';
-    END IF;
-    IF EXISTS (
-        SELECT 1 FROM fixed_asset_depreciations d
-          JOIN fixed_asset_activations a ON a.id=d.activation_id AND a.org_id=d.org_id
-         WHERE d.component_id=c.id AND a.event_id=c.event_id
-           AND NOT a.id=ANY(local_activation_ids)
-    ) THEN RAISE EXCEPTION 'FIXED_ASSET_LOCAL_ACTIVATION_SOURCE_MISSING'; END IF;
-    IF c.facts->>'calculation_hash' IS DISTINCT FROM c.derived->>'calculation_hash'
-       OR (c.kind='fixed_asset_depreciation' AND EXISTS (
-           SELECT 1 FROM fixed_asset_depreciations d WHERE d.component_id=c.id
-             AND d.calculation_hash IS DISTINCT FROM c.derived->>'calculation_hash'
-       )) OR (c.kind='fixed_asset_depreciation_batch' AND EXISTS (
-           SELECT 1 FROM fixed_asset_depreciation_batches b WHERE b.component_id=c.id
-             AND b.calculation_hash IS DISTINCT FROM c.derived->>'calculation_hash'
-       )) THEN RAISE EXCEPTION 'FIXED_ASSET_COMPONENT_CALCULATION_ORIGIN_INVALID'; END IF;
-END;
-$$;
-
--- Resolve combined-bonus wage sources by component and normalized employee line.
-CREATE FUNCTION public.finance_assert_payroll_component_sources(target_component_id uuid)
-RETURNS void LANGUAGE plpgsql AS $$
-DECLARE c business_event_components%ROWTYPE;
-DECLARE b payroll_batches%ROWTYPE;
-DECLARE parent_component business_event_components%ROWTYPE;
-DECLARE parent_batch payroll_batches%ROWTYPE;
-DECLARE parent_line payroll_lines%ROWTYPE;
-DECLARE bonus_line payroll_lines%ROWTYPE;
-DECLARE parent_keys jsonb;
-DECLARE parent_key text;
-DECLARE expected_proofs jsonb := '[]'::jsonb;
-DECLARE parent_line_ids jsonb;
-DECLARE snapshot jsonb;
-DECLARE local_batch_ids uuid[] := ARRAY[]::uuid[];
-BEGIN
-    SELECT * INTO c FROM business_event_components WHERE id=target_component_id;
-    IF c.id IS NULL OR c.kind<>'payroll_accrual' THEN RETURN; END IF;
-    SELECT batch.* INTO b FROM payroll_event_links link
-      JOIN payroll_batches batch ON batch.id=link.payroll_batch_id AND batch.org_id=link.org_id
-     WHERE link.component_id=c.id AND link.link_kind='payroll_accrual';
-    IF b.id IS NULL OR c.facts->>'batch_id' IS DISTINCT FROM b.id::text
-       OR c.facts->>'calculation_hash' IS DISTINCT FROM b.calculation_hash
-       OR c.derived->>'payroll_batch_id' IS DISTINCT FROM b.id::text
-       OR c.derived->>'calculation_hash' IS DISTINCT FROM b.calculation_hash THEN
-        RAISE EXCEPTION 'PAYROLL_COMPONENT_CALCULATION_ORIGIN_INVALID';
-    END IF;
-    parent_keys := coalesce((c.facts->'regular_payroll_component_keys')::jsonb,'[]'::jsonb);
-    IF jsonb_typeof(parent_keys) IS DISTINCT FROM 'array' THEN
-        RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
-    END IF;
-    IF jsonb_array_length(parent_keys) <> (
-        SELECT count(DISTINCT value) FROM jsonb_array_elements_text(parent_keys)
-    ) THEN RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID'; END IF;
-    IF jsonb_array_length(parent_keys)>0
-       AND (b.batch_kind<>'annual_bonus' OR b.tax_method IS DISTINCT FROM 'combined') THEN
-        RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
-    END IF;
-    FOR parent_key IN SELECT value FROM jsonb_array_elements_text(parent_keys)
-                     ORDER BY value COLLATE "C" LOOP
-        SELECT * INTO parent_component FROM business_event_components
-         WHERE org_id=c.org_id AND event_id=c.event_id AND key=parent_key;
-        IF parent_component.id IS NULL OR parent_component.kind<>'payroll_accrual'
-           OR parent_component.id=c.id THEN
-            RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
-        END IF;
-        SELECT batch.* INTO parent_batch FROM payroll_event_links link
-          JOIN payroll_batches batch ON batch.id=link.payroll_batch_id AND batch.org_id=link.org_id
-         WHERE link.component_id=parent_component.id AND link.link_kind='payroll_accrual';
-        IF parent_batch.id IS NULL OR parent_batch.batch_kind<>'regular'
-           OR parent_batch.business_event_id IS DISTINCT FROM c.event_id
-           OR parent_batch.id=ANY(local_batch_ids) THEN
-            RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_INVALID';
-        END IF;
-        SELECT jsonb_agg(wage.id::text ORDER BY wage.id::text COLLATE "C") INTO parent_line_ids
-          FROM payroll_lines bonus
-          JOIN payroll_lines wage ON wage.org_id=bonus.org_id
-           AND wage.payroll_batch_id=bonus.regular_payroll_batch_id
-           AND wage.employee_id=bonus.employee_id
-         WHERE bonus.org_id=c.org_id AND bonus.payroll_batch_id=b.id
-           AND bonus.regular_payroll_batch_id=parent_batch.id;
-        IF parent_line_ids IS NULL THEN
-            RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PARENT_UNUSED';
-        END IF;
-        local_batch_ids := array_append(local_batch_ids,parent_batch.id);
-        expected_proofs := expected_proofs || jsonb_build_array(jsonb_build_object(
-            'component_key',parent_key,'batch_id',parent_batch.id::text,
-            'calculation_hash',parent_batch.calculation_hash,'employee_line_ids',parent_line_ids
-        ));
-    END LOOP;
-    IF coalesce((c.derived->'local_regular_payroll_proofs')::jsonb,'[]'::jsonb)
-       IS DISTINCT FROM expected_proofs THEN
-        RAISE EXCEPTION 'PAYROLL_LOCAL_REGULAR_PROOF_MISMATCH';
-    END IF;
-    IF b.batch_kind='annual_bonus' AND b.tax_method='combined' THEN
-        FOR bonus_line IN SELECT * FROM payroll_lines
-                          WHERE org_id=c.org_id AND payroll_batch_id=b.id LOOP
-            SELECT * INTO parent_batch FROM payroll_batches
-             WHERE org_id=c.org_id AND id=bonus_line.regular_payroll_batch_id;
-            SELECT * INTO parent_line FROM payroll_lines
-             WHERE org_id=c.org_id AND payroll_batch_id=parent_batch.id
-               AND employee_id=bonus_line.employee_id;
-            SELECT value INTO snapshot
-              FROM jsonb_array_elements(b.calculation_input::jsonb->'employee_snapshots')
-             WHERE value->>'employee_id'=bonus_line.employee_id::text;
-            IF parent_batch.id IS NULL OR parent_line.id IS NULL OR snapshot IS NULL
-               OR snapshot->>'regular_payroll_batch_id' IS DISTINCT FROM parent_batch.id::text
-               OR snapshot->>'regular_payroll_line_id' IS DISTINCT FROM parent_line.id::text
-               OR snapshot->>'regular_payroll_calculation_hash'
-                    IS DISTINCT FROM parent_batch.calculation_hash
-               OR (parent_batch.business_event_id=c.event_id
-                   AND NOT parent_batch.id=ANY(local_batch_ids)) THEN
-                RAISE EXCEPTION 'PAYROLL_REGULAR_SNAPSHOT_ORIGIN_INVALID';
-            END IF;
-        END LOOP;
-    END IF;
-END;
-$$;

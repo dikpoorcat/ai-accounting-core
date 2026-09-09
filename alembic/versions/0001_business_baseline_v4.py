@@ -1,8 +1,8 @@
 """Create the flattened business-database schema from an empty database.
 
-Revision ID: 0001_business_baseline_v3
+Revision ID: 0001_business_baseline_v4
 Revises:
-Create Date: 2026-09-08
+Create Date: 2026-09-09
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0001_business_baseline_v3"
+revision = "0001_business_baseline_v4"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -255,7 +255,7 @@ def upgrade() -> None:
     bind = op.get_bind()
     existing_tables = set(sa.inspect(bind).get_table_names()) - {"alembic_version"}
     if existing_tables:
-        raise RuntimeError("BUSINESS_V3_REQUIRES_EMPTY_DATABASE")
+        raise RuntimeError("BUSINESS_V4_REQUIRES_EMPTY_DATABASE")
     existing_extensions: set[str] = set()
     if bind.dialect.name == "postgresql":
         existing_extensions = set(
@@ -303,6 +303,8 @@ def _drop_postgresql_objects(owned_extensions: set[str]) -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
+    if bind.scalar(sa.text("SELECT count(*) FROM organizations")):
+        raise RuntimeError("BUSINESS_BASELINE_DOWNGRADE_REQUIRES_EMPTY_DATABASE")
     owned_extensions: set[str] = set()
     if bind.dialect.name == "postgresql":
         owned_extensions = set(

@@ -20,17 +20,13 @@ environment_database_url = os.getenv("DATABASE_URL")
 if database_url_override:
     migration_database_url = database_url_override
 elif environment_database_url:
-    migration_database_url = get_settings().migration_database_url(
-        environment_database_url
-    )
+    migration_database_url = get_settings().migration_database_url(environment_database_url)
 elif configured_database_url != DEVELOPMENT_DATABASE_URL:
     # Programmatic callers (especially isolated migration and invariant tests)
     # deliberately replace alembic.ini's checked-in development placeholder.
     migration_database_url = configured_database_url
 else:
-    migration_database_url = get_settings().migration_database_url(
-        configured_database_url
-    )
+    migration_database_url = get_settings().migration_database_url(configured_database_url)
 config.set_main_option(
     "sqlalchemy.url",
     migration_database_url,
@@ -86,9 +82,7 @@ _IDENTITY_TABLES = {
 def _include_object_for_dialect(dialect_name: str, *, identity_split: bool = False):
     def include_object(_object, name, type_, _reflected, _compare_to):
         table_name = (
-            name
-            if type_ == "table"
-            else getattr(getattr(_object, "table", None), "name", None)
+            name if type_ == "table" else getattr(getattr(_object, "table", None), "name", None)
         )
         if table_name in _CATALOG_TABLES:
             return False
@@ -137,7 +131,7 @@ def run_migrations_online() -> None:
         if existing_tables - {"alembic_version"} and "alembic_version" not in existing_tables:
             # Reject unknown populated schemas before Alembic creates even its
             # own version table. Existing databases are read-only replay sources.
-            raise RuntimeError("BUSINESS_V3_REQUIRES_EMPTY_DATABASE")
+            raise RuntimeError("BUSINESS_V4_REQUIRES_EMPTY_DATABASE")
         identity_split = inspector.has_table(
             "organization_database_metadata"
         ) and not inspector.has_table("owner_accounts")

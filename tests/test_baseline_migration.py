@@ -8,13 +8,14 @@ import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from alembic.util import CommandError
 from sqlalchemy import create_engine, inspect
 from testcontainers.community.postgres import PostgresContainer
 
 from alembic import command
 
-BUSINESS_REVISION = "0001_business_baseline_v3"
-BUSINESS_HEAD = "0004_fact_precision"
+BUSINESS_REVISION = "0001_business_baseline_v4"
+BUSINESS_HEAD = BUSINESS_REVISION
 POSTGRES_IMAGE = (
     "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 )
@@ -138,9 +139,6 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         BUSINESS_HEAD,
-        "0003_essential_accounting",
-        "0002_purchase_projects",
-        BUSINESS_REVISION,
     ]
 
     command.upgrade(config, BUSINESS_REVISION)
@@ -150,8 +148,8 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     try:
         _assert_business_baseline(engine)
         command.check(config)
-        with pytest.raises(RuntimeError, match="FACT_PRECISION_FORWARD_ONLY"):
-            command.downgrade(config, "base")
+        command.downgrade(config, "base")
+        command.upgrade(config, "head")
         _assert_business_baseline(engine)
     finally:
         engine.dispose()
@@ -164,7 +162,7 @@ def test_unknown_database_is_rejected_without_even_creating_version_table(tmp_pa
         with engine.begin() as connection:
             connection.exec_driver_sql("CREATE TABLE unknown_business (id INTEGER PRIMARY KEY)")
             connection.exec_driver_sql("INSERT INTO unknown_business VALUES (1)")
-        with pytest.raises(RuntimeError, match="BUSINESS_V3_REQUIRES_EMPTY_DATABASE"):
+        with pytest.raises(RuntimeError, match="BUSINESS_V4_REQUIRES_EMPTY_DATABASE"):
             command.upgrade(_config(database_url), "head")
         assert set(inspect(engine).get_table_names()) == {"unknown_business"}
         with engine.connect() as connection:
@@ -173,13 +171,38 @@ def test_unknown_database_is_rejected_without_even_creating_version_table(tmp_pa
         engine.dispose()
 
 
-def test_purchase_forward_migration_seeds_existing_company_accounts(tmp_path):
+@pytest.mark.parametrize("old_revision", ["0001_business_baseline_v3", "0004_fact_precision"])
+def test_retired_revision_is_rejected_without_modifying_old_database(tmp_path, old_revision):
+    url = f"sqlite+pysqlite:///{(tmp_path / 'retired.db').as_posix()}"
+    engine = create_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32))")
+            connection.execute(
+                sa.text("INSERT INTO alembic_version VALUES (:revision)"),
+                {"revision": old_revision},
+            )
+            connection.exec_driver_sql("CREATE TABLE old_business (id INTEGER PRIMARY KEY)")
+            connection.exec_driver_sql("INSERT INTO old_business VALUES (1)")
+        with pytest.raises(CommandError, match="Can't locate revision"):
+            command.upgrade(_config(url), "head")
+        assert set(inspect(engine).get_table_names()) == {"alembic_version", "old_business"}
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == (
+                old_revision
+            )
+            assert connection.scalar(sa.text("SELECT id FROM old_business")) == 1
+    finally:
+        engine.dispose()
+
+
+def test_new_baseline_seeds_purchase_accounts_and_refuses_populated_downgrade(tmp_path):
     from sqlalchemy.orm import Session
 
     from ai_accounting.coa import seed_organization
     from ai_accounting.models import Account
 
-    url = f"sqlite+pysqlite:///{(tmp_path / 'existing-v3.db').as_posix()}"
+    url = f"sqlite+pysqlite:///{(tmp_path / 'baseline-v4.db').as_posix()}"
     config = _config(url)
     command.upgrade(config, BUSINESS_REVISION)
     engine = create_engine(url)
@@ -190,10 +213,6 @@ def test_purchase_forward_migration_seeds_existing_company_accounts(tmp_path):
                 session, name="迁移测试", taxpayer_identification_number="91330106MA1234567T"
             )
             org_id = org.id
-            # Reproduce v3 before these new business classes existed.
-            session.execute(
-                sa.delete(Account).where(Account.org_id == org_id, Account.system_role.in_(roles))
-            )
             session.commit()
         command.upgrade(config, "head")
         with Session(engine) as session:
@@ -203,6 +222,10 @@ def test_purchase_forward_migration_seeds_existing_company_accounts(tmp_path):
             assert {account.business_class for account in accounts} == roles
             assert len(accounts) == 3
         command.check(config)
+        with pytest.raises(
+            RuntimeError, match="BUSINESS_BASELINE_DOWNGRADE_REQUIRES_EMPTY_DATABASE"
+        ):
+            command.downgrade(config, "base")
     finally:
         engine.dispose()
 
@@ -227,7 +250,7 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                 connection.exec_driver_sql("DROP TABLE alembic_version")
                 connection.exec_driver_sql("CREATE TABLE unknown_business (id INTEGER PRIMARY KEY)")
                 connection.exec_driver_sql("INSERT INTO unknown_business VALUES (1)")
-            with pytest.raises(RuntimeError, match="BUSINESS_V3_REQUIRES_EMPTY_DATABASE"):
+            with pytest.raises(RuntimeError, match="BUSINESS_V4_REQUIRES_EMPTY_DATABASE"):
                 command.upgrade(config, "head")
             assert set(inspect(engine).get_table_names()) == {"unknown_business"}
             with engine.begin() as connection:
@@ -334,8 +357,8 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                 "finance_guard_late_bank_action_0015",
             }
             assert obsolete_unified_payout_runtime == 0
-            with pytest.raises(RuntimeError, match="FACT_PRECISION_FORWARD_ONLY"):
-                command.downgrade(config, "base")
+            command.downgrade(config, "base")
+            command.upgrade(config, "head")
             _assert_business_baseline(engine)
         finally:
             engine.dispose()
