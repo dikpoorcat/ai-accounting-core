@@ -3093,10 +3093,143 @@ def _default_state_path(package: Path) -> Path:
     return package.parent / f".{package.name}.replay-state.json"
 
 
+def _canonical_replay_sha256(value: Any) -> str:
+    payload = json.dumps(
+        _jsonable(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _resume_package_snapshot(package_root: Path) -> dict[str, Any]:
+    """Hash only package inputs that can affect preparation or completed writes."""
+
+    system = _load_json(package_root / "system.json")
+    preparation_companies: list[dict[str, Any]] = []
+    company_operations: dict[str, list[dict[str, str]]] = {}
+    company_operation_values: dict[str, list[dict[str, Any]]] = {}
+    for company in system["companies"]:
+        org_id = str(uuid.UUID(str(company["org_id"])))
+        directory = str(company["directory"])
+        descriptor = _load_json(package_root / directory / "company.json")
+        preparation_companies.append(
+            {
+                "org_id": org_id,
+                "directory": directory,
+                "display_name": company.get("display_name"),
+                "is_primary": bool(company.get("is_primary")),
+                "organization": descriptor.get("organization"),
+                "accounts": descriptor.get("accounts"),
+            }
+        )
+        operations = _read_jsonl(package_root / directory / "operations.jsonl")
+        company_operation_values[org_id] = operations
+        company_operations[org_id] = [
+            {
+                "key": str(operation.get("key", "")),
+                "sha256": _canonical_replay_sha256(operation),
+            }
+            for operation in operations
+        ]
+    preparation = {
+        "format_version": system.get("format_version"),
+        "baseline_revisions": system.get("baseline_revisions"),
+        "companies": preparation_companies,
+    }
+    return {
+        "preparation_sha256": _canonical_replay_sha256(preparation),
+        "company_operations": company_operations,
+        "company_operation_values": company_operation_values,
+    }
+
+
+def _reconcile_state_package_binding(
+    state: dict[str, Any],
+    *,
+    package_root: Path,
+    manifest_sha256: str,
+) -> bool:
+    """Accept a corrected package only when durable replay effects are unchanged."""
+
+    snapshot = _resume_package_snapshot(package_root)
+    previous_manifest = state.get("package_manifest_sha256")
+    manifest_changed = previous_manifest != manifest_sha256
+    changed = False
+    preparation_sha256 = state.get("package_preparation_sha256")
+    if preparation_sha256 is None:
+        if manifest_changed:
+            # Old states did not retain enough information to prove compatibility.
+            raise ReplayError("REPLAY_STATE_PACKAGE_MISMATCH")
+        state["package_preparation_sha256"] = snapshot["preparation_sha256"]
+        changed = True
+    elif preparation_sha256 != snapshot["preparation_sha256"]:
+        raise ReplayError("REPLAY_STATE_PACKAGE_PREPARATION_IMPACT")
+
+    operations_by_org = snapshot["company_operations"]
+    state_companies = {str(company["org_id"]): company for company in state["companies"]}
+    if set(state_companies) != set(operations_by_org):
+        raise ReplayError("REPLAY_STATE_PACKAGE_PREPARATION_IMPACT")
+    for org_id, company_state in state_companies.items():
+        current_operations = operations_by_org[org_id]
+        completed = [str(key) for key in company_state.get("completed_operations", [])]
+        if len(current_operations) < len(completed):
+            raise ReplayError("REPLAY_STATE_PACKAGE_COMPLETED_OPERATION_IMPACT")
+        stored_hashes = company_state.get("completed_operation_sha256")
+        if stored_hashes is None:
+            if manifest_changed and completed:
+                raise ReplayError("REPLAY_STATE_PACKAGE_MISMATCH")
+            stored_hashes = {}
+            company_state["completed_operation_sha256"] = stored_hashes
+            changed = True
+        for index, key in enumerate(completed):
+            current = current_operations[index]
+            if current["key"] != key:
+                raise ReplayError("REPLAY_STATE_PACKAGE_COMPLETED_OPERATION_IMPACT")
+            stored = stored_hashes.get(key)
+            if stored is None:
+                if manifest_changed:
+                    raise ReplayError("REPLAY_STATE_PACKAGE_MISMATCH")
+                stored_hashes[key] = current["sha256"]
+                changed = True
+            elif stored != current["sha256"]:
+                raise ReplayError("REPLAY_STATE_PACKAGE_COMPLETED_OPERATION_IMPACT")
+        if manifest_changed:
+            results = company_state.get("operation_results", {})
+            completed_set = set(completed)
+            for operation in snapshot["company_operation_values"][org_id]:
+                for value in _walk_package_values(operation):
+                    if not isinstance(value, Mapping) or value.get("$ref") != "operation_result":
+                        continue
+                    source_key = str(value["operation_key"])
+                    field = str(value["field"])
+                    if source_key in completed_set and field not in results.get(source_key, {}):
+                        raise ReplayError("REPLAY_STATE_PACKAGE_COMPLETED_RESULT_MISSING")
+        if state.get("phase") in {"replayed", "verified"} and len(current_operations) != len(
+            completed
+        ):
+            raise ReplayError("REPLAY_STATE_PACKAGE_PENDING_OPERATION_IMPACT")
+
+    if manifest_changed:
+        state.setdefault("package_manifest_history", []).append(
+            {
+                "previous_manifest_sha256": previous_manifest,
+                "replacement_manifest_sha256": manifest_sha256,
+                "accepted_at": datetime.now(UTC).isoformat(),
+                "decision": "preparation_and_completed_prefix_unchanged",
+            }
+        )
+        state["package_manifest_sha256"] = manifest_sha256
+        changed = True
+    return changed
+
+
 def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, Any]:
     verification = verify_package(package)
     package_root = package.resolve(strict=True)
     system = _load_json(package_root / "system.json")
+    resume_snapshot = _resume_package_snapshot(package_root)
     state_file = (state_path or _default_state_path(package_root)).resolve()
     if state_file.exists():
         raise ReplayError("REPLAY_STATE_ALREADY_EXISTS")
@@ -3186,6 +3319,7 @@ def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, An
                             "database_name": database_name,
                             "database_identity": str(database_identity),
                             "completed_operations": [],
+                            "completed_operation_sha256": {},
                             "operation_results": {},
                         }
                     )
@@ -3196,6 +3330,7 @@ def prepare_empty(package: Path, state_path: Path | None = None) -> dict[str, An
             "state_version": _STATE_VERSION,
             "phase": "prepared",
             "package_manifest_sha256": verification["manifest_sha256"],
+            "package_preparation_sha256": resume_snapshot["preparation_sha256"],
             "catalog_instance_id": str(catalog_id),
             "catalog_database": catalog_url.database,
             "primary_org_id": str(primary["org_id"]),
@@ -3520,8 +3655,12 @@ def _load_state(package: Path, state_path: Path | None) -> tuple[Path, dict[str,
     if state.get("state_version") != _STATE_VERSION:
         raise ReplayError("REPLAY_STATE_FORMAT_UNSUPPORTED")
     verification = verify_package(package)
-    if state.get("package_manifest_sha256") != verification["manifest_sha256"]:
-        raise ReplayError("REPLAY_STATE_PACKAGE_MISMATCH")
+    if _reconcile_state_package_binding(
+        state,
+        package_root=package,
+        manifest_sha256=verification["manifest_sha256"],
+    ):
+        _write_json(path, state)
     return path, state
 
 
@@ -4084,6 +4223,9 @@ def replay_system(package: Path, state_path: Path | None = None) -> dict[str, An
                     }
                 )
                 company_state["completed_operations"].append(key)
+                company_state.setdefault("completed_operation_sha256", {})[key] = (
+                    _canonical_replay_sha256(operation)
+                )
                 completed.add(key)
                 completed_total += 1
                 _write_json(state_file, state)

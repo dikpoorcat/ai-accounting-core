@@ -1,11 +1,71 @@
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.engine import make_url
 
 from ai_accounting import replay_cli
+
+
+def _resume_package(tmp_path, operations):
+    org_id = str(uuid.uuid4())
+    package = tmp_path / "package"
+    company = package / "companies" / org_id
+    company.mkdir(parents=True)
+    replay_cli._write_json(
+        package / "system.json",
+        {
+            "format_version": replay_cli._FORMAT_VERSION,
+            "baseline_revisions": {
+                "catalog": replay_cli._CATALOG_REVISION,
+                "business": replay_cli._BUSINESS_REVISION,
+            },
+            "companies": [
+                {
+                    "org_id": org_id,
+                    "directory": f"companies/{org_id}",
+                    "display_name": "测试公司",
+                    "is_primary": True,
+                }
+            ],
+        },
+    )
+    replay_cli._write_json(
+        company / "company.json",
+        {
+            "org_id": org_id,
+            "organization": {"name": "测试公司"},
+            "accounts": [{"code": "1001"}],
+        },
+    )
+    replay_cli._write_jsonl(company / "operations.jsonl", operations)
+    return package, org_id
+
+
+def _resume_state(package, org_id, completed):
+    snapshot = replay_cli._resume_package_snapshot(package)
+    operation_hashes = {
+        row["key"]: row["sha256"]
+        for row in snapshot["company_operations"][org_id]
+        if row["key"] in completed
+    }
+    return {
+        "phase": "replaying",
+        "package_manifest_sha256": "a" * 64,
+        "package_preparation_sha256": snapshot["preparation_sha256"],
+        "companies": [
+            {
+                "org_id": org_id,
+                "completed_operations": completed,
+                "completed_operation_sha256": operation_hashes,
+                "operation_results": {
+                    key: {"status": "posted", "event_id": str(uuid.uuid4())} for key in completed
+                },
+            }
+        ],
+    }
 
 
 def test_replay_distinguishes_baseline_identity_from_current_heads() -> None:
@@ -69,6 +129,154 @@ def test_manifest_covers_archived_nested_manifest(tmp_path) -> None:
         replay_cli._parse_manifest(package)
 
     assert error.value.code == "REPLAY_PACKAGE_MANIFEST_MISMATCH"
+
+
+def test_resume_accepts_correction_after_completed_prefix(tmp_path) -> None:
+    operations = [
+        {"key": "completed", "kind": "tool", "request": {"value": 1}},
+        {"key": "pending", "kind": "tool", "request": {"value": 2}},
+    ]
+    package, org_id = _resume_package(tmp_path, operations)
+    state = _resume_state(package, org_id, ["completed"])
+    replay_cli._write_jsonl(
+        package / "companies" / org_id / "operations.jsonl",
+        [operations[0], {"key": "pending", "kind": "tool", "request": {"value": 3}}],
+    )
+
+    changed = replay_cli._reconcile_state_package_binding(
+        state,
+        package_root=package,
+        manifest_sha256="b" * 64,
+    )
+
+    assert changed is True
+    assert state["package_manifest_sha256"] == "b" * 64
+    assert state["package_manifest_history"][-1]["decision"] == (
+        "preparation_and_completed_prefix_unchanged"
+    )
+
+
+def test_resume_rejects_correction_to_completed_operation(tmp_path) -> None:
+    operations = [
+        {"key": "completed", "kind": "tool", "request": {"value": 1}},
+        {"key": "pending", "kind": "tool", "request": {"value": 2}},
+    ]
+    package, org_id = _resume_package(tmp_path, operations)
+    state = _resume_state(package, org_id, ["completed"])
+    replay_cli._write_jsonl(
+        package / "companies" / org_id / "operations.jsonl",
+        [
+            {"key": "completed", "kind": "tool", "request": {"value": 9}},
+            operations[1],
+        ],
+    )
+
+    with pytest.raises(replay_cli.ReplayError) as error:
+        replay_cli._reconcile_state_package_binding(
+            state,
+            package_root=package,
+            manifest_sha256="b" * 64,
+        )
+
+    assert error.value.code == "REPLAY_STATE_PACKAGE_COMPLETED_OPERATION_IMPACT"
+
+
+def test_resume_rejects_new_reference_to_unsaved_completed_result(tmp_path) -> None:
+    operations = [
+        {"key": "completed", "kind": "tool", "request": {"value": 1}},
+        {"key": "pending", "kind": "tool", "request": {"value": 2}},
+    ]
+    package, org_id = _resume_package(tmp_path, operations)
+    state = _resume_state(package, org_id, ["completed"])
+    replay_cli._write_jsonl(
+        package / "companies" / org_id / "operations.jsonl",
+        [
+            operations[0],
+            {
+                "key": "pending",
+                "kind": "tool",
+                "request": {
+                    "value": {
+                        "$ref": "operation_result",
+                        "operation_key": "completed",
+                        "field": "data",
+                    }
+                },
+            },
+        ],
+    )
+
+    with pytest.raises(replay_cli.ReplayError) as error:
+        replay_cli._reconcile_state_package_binding(
+            state,
+            package_root=package,
+            manifest_sha256="b" * 64,
+        )
+
+    assert error.value.code == "REPLAY_STATE_PACKAGE_COMPLETED_RESULT_MISSING"
+
+
+def test_resume_rejects_correction_to_preparation_inputs(tmp_path) -> None:
+    package, org_id = _resume_package(
+        tmp_path, [{"key": "pending", "kind": "tool", "request": {"value": 1}}]
+    )
+    state = _resume_state(package, org_id, [])
+    company_file = package / "companies" / org_id / "company.json"
+    replay_cli._write_json(
+        company_file,
+        {
+            "org_id": org_id,
+            "organization": {"name": "已改变的公司"},
+            "accounts": [{"code": "1001"}],
+        },
+    )
+
+    with pytest.raises(replay_cli.ReplayError) as error:
+        replay_cli._reconcile_state_package_binding(
+            state,
+            package_root=package,
+            manifest_sha256="b" * 64,
+        )
+
+    assert error.value.code == "REPLAY_STATE_PACKAGE_PREPARATION_IMPACT"
+
+
+def test_resume_rejects_new_pending_operation_after_replay_completed(tmp_path) -> None:
+    operations = [{"key": "completed", "kind": "tool", "request": {"value": 1}}]
+    package, org_id = _resume_package(tmp_path, operations)
+    state = _resume_state(package, org_id, ["completed"])
+    state["phase"] = "replayed"
+    replay_cli._write_jsonl(
+        package / "companies" / org_id / "operations.jsonl",
+        [*operations, {"key": "new-pending", "kind": "tool", "request": {"value": 2}}],
+    )
+
+    with pytest.raises(replay_cli.ReplayError) as error:
+        replay_cli._reconcile_state_package_binding(
+            state,
+            package_root=package,
+            manifest_sha256="b" * 64,
+        )
+
+    assert error.value.code == "REPLAY_STATE_PACKAGE_PENDING_OPERATION_IMPACT"
+
+
+def test_resume_backfills_compatibility_metadata_for_unchanged_legacy_state(tmp_path) -> None:
+    operations = [{"key": "completed", "kind": "tool", "request": {"value": 1}}]
+    package, org_id = _resume_package(tmp_path, operations)
+    state = _resume_state(package, org_id, ["completed"])
+    state.pop("package_preparation_sha256")
+    state["companies"][0].pop("completed_operation_sha256")
+
+    changed = replay_cli._reconcile_state_package_binding(
+        state,
+        package_root=package,
+        manifest_sha256="a" * 64,
+    )
+
+    assert changed is True
+    assert state["package_preparation_sha256"]
+    assert state["companies"][0]["completed_operation_sha256"]["completed"]
 
 
 def test_operation_reference_must_resolve_to_an_earlier_operation() -> None:

@@ -27,6 +27,11 @@ def test_prepare_saves_resumable_state_before_requesting_window(tmp_path, monkey
     monkeypatch.setattr(replay_cli, "verify_package", lambda _: {"manifest_sha256": "a" * 64})
     monkeypatch.setattr(
         replay_cli,
+        "_resume_package_snapshot",
+        lambda _: {"preparation_sha256": "b" * 64, "company_operations": {}},
+    )
+    monkeypatch.setattr(
+        replay_cli,
         "_load_json",
         lambda path: system if path.name == "system.json" else descriptor,
     )
