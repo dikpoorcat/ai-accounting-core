@@ -197,7 +197,14 @@ def _write_json(path: Path, value: Any, *, compact: bool = False) -> None:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        for attempt in range(6):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.05 * (2**attempt))
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -1370,6 +1377,32 @@ def _event_workflow_request(
     return dict(value["request"])
 
 
+def _normalize_persisted_payroll_request(request: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(request)
+    raw_items = normalized.get("employee_items")
+    if not isinstance(raw_items, list):
+        return normalized
+    items: list[Any] = []
+    legacy_scopes = {
+        "declared": "wage_income",
+        "not_declared": "contributions_only",
+    }
+    for raw_item in raw_items:
+        if not isinstance(raw_item, Mapping):
+            items.append(raw_item)
+            continue
+        item = dict(raw_item)
+        legacy = item.pop("wage_tax_declaration_state", None)
+        if legacy is not None:
+            scope = legacy_scopes.get(str(legacy))
+            if scope is None or item.get("wage_tax_scope", scope) != scope:
+                raise ReplayError("REPLAY_SOURCE_PAYROLL_SCOPE_INVALID")
+            item["wage_tax_scope"] = scope
+        items.append(item)
+    normalized["employee_items"] = items
+    return normalized
+
+
 def _filter_request_for_tool(name: str, request: Mapping[str, Any]) -> dict[str, Any]:
     """Remove result-only fields that services append to persisted event facts."""
 
@@ -1379,7 +1412,10 @@ def _filter_request_for_tool(name: str, request: Mapping[str, Any]) -> dict[str,
     if tool is None:
         raise ReplayError(f"REPLAY_TOOL_NOT_ALLOWED:{name}")
     model = _tool_request_model(tool)
-    return {key: value for key, value in request.items() if key in model.model_fields}
+    filtered = {key: value for key, value in request.items() if key in model.model_fields}
+    if name == "finance_preview_payroll":
+        return _normalize_persisted_payroll_request(filtered)
+    return filtered
 
 
 def _composite_replay_request(
@@ -2524,6 +2560,7 @@ def _owner_control_operations(
     *,
     org_id: uuid.UUID,
     maps: dict[str, dict[str, Any]],
+    event_operations: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     operations: list[dict[str, Any]] = []
     period_rows = _query_rows(
@@ -2559,6 +2596,20 @@ def _owner_control_operations(
             and isinstance(plan.get("employee_items"), list)
             else None
         )
+        payroll_items, migrated_difference = _normalize_replayed_workforce_items(
+            payroll_items
+        )
+        evidence_references = _snapshot_evidence_refs(
+            row["evidence_snapshot"] or [], maps
+        )
+        if migrated_difference and not evidence_references:
+            evidence_references = _payroll_evidence_for_period(
+                event_operations, month
+            )
+            if not evidence_references:
+                raise ReplayError(
+                    "REPLAY_SOURCE_WORKFORCE_DIFFERENCE_EVIDENCE_MISSING"
+                )
         operations.append(
             {
                 "key": stable_key,
@@ -2568,9 +2619,7 @@ def _owner_control_operations(
                 "confirmation_state": row["confirmation_state"],
                 **({"regular_payroll_items": payroll_items} if payroll_items is not None else {}),
                 "confirmation_note": row["confirmation_note"],
-                "evidence_references": _snapshot_evidence_refs(
-                    row["evidence_snapshot"] or [], maps
-                ),
+                "evidence_references": evidence_references,
                 "idempotency_key": _replay_idempotency(stable_key),
             }
         )
@@ -2694,7 +2743,92 @@ def _owner_control_operations(
     return operations
 
 
-def _metadata_operations(session, org_id, maps):
+def _normalize_replayed_workforce_items(
+    items: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]] | None, bool]:
+    if items is None:
+        return None, False
+    normalized = [dict(item) for item in items]
+    migrated_difference = False
+    for item in normalized:
+        reported = item.get("tax_reported_salary_fen")
+        gross = item.get("accounting_gross_salary_fen")
+        effective_gross = reported if gross is None else gross
+        if (
+            item.get("wage_tax_scope", "wage_income") == "wage_income"
+            and reported is not None
+            and effective_gross != reported
+            and not str(item.get("tax_reporting_difference_reason") or "").strip()
+        ):
+            item["tax_reporting_difference_reason"] = (
+                "历史空库重放：源负责人复核快照未记录账税工资差异原因；"
+                "本次仅迁移已确认金额，并沿用对应工资批次证据。"
+            )
+            migrated_difference = True
+    return normalized, migrated_difference
+
+
+def _payroll_evidence_for_period(
+    event_operations: Sequence[Mapping[str, Any]], period_month: str
+) -> list[Any]:
+    evidence: list[Any] = []
+    seen: set[str] = set()
+    for operation in event_operations:
+        preparations = operation.get("preparations")
+        if not isinstance(preparations, list):
+            continue
+        for preparation in preparations:
+            if not isinstance(preparation, Mapping) or preparation.get(
+                "preview_tool"
+            ) != "finance_preview_payroll":
+                continue
+            request = preparation.get("preview_request")
+            if (
+                not isinstance(request, Mapping)
+                or request.get("batch_kind") != "regular"
+                or request.get("payroll_period") != period_month
+            ):
+                continue
+            for reference in request.get("evidence_references", []):
+                identity = json.dumps(_jsonable(reference), sort_keys=True)
+                if identity not in seen:
+                    seen.add(identity)
+                    evidence.append(reference)
+    return evidence
+
+
+def _target_initial_metadata_by_component(
+    event_operations: Sequence[Mapping[str, Any]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    initial: dict[tuple[str, str], dict[str, Any]] = {}
+    for operation in event_operations:
+        request = operation.get("request")
+        if not isinstance(request, Mapping) or not request.get("idempotency_key"):
+            continue
+        components = request.get("components")
+        if not isinstance(components, list):
+            continue
+        for component in components:
+            if not isinstance(component, Mapping) or not component.get("key"):
+                continue
+            raw_metadata = component.get("metadata")
+            values = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+            kind = str(component.get("kind", ""))
+            if kind == "enterprise_income_tax_result" and component.get("declaration_date"):
+                values.setdefault("declaration_date", str(component["declaration_date"]))
+            if (
+                kind == "debt_transfer"
+                or (kind == "expense" and component.get("payment_basis") == "person_advance")
+                or (kind == "refundable_deposit" and component.get("advanced_by"))
+            ) and component.get("payment_date"):
+                values.setdefault("advance_payment_date", str(component["payment_date"]))
+            values = {key: value for key, value in values.items() if value is not None}
+            if values:
+                initial[(str(request["idempotency_key"]), str(component["key"]))] = values
+    return initial
+
+
+def _metadata_operations(session, org_id, maps, event_operations):
     """Replay management history separately, after the accounting snapshot is closed."""
     from .models import BusinessEvent, BusinessMetadataVersion
 
@@ -2715,13 +2849,24 @@ def _metadata_operations(session, org_id, maps):
             BusinessMetadataVersion.version,
         )
     ).all()
-    previous = {}
+    target_initial = _target_initial_metadata_by_component(event_operations)
+    target_values: dict[tuple[Any, str], dict[str, Any]] = {}
+    target_versions: dict[tuple[Any, str], int] = {}
     operations = []
     for row, event_key in rows:
         identity = (row.event_id, row.component_key)
         values = _replace_stable_references(row.metadata_values, org_id=org_id, maps=maps)
-        patch = {key: None for key in previous.get(identity, {}) if key not in values} | values
-        previous[identity] = values
+        target_event_key = _replay_idempotency(_semantic_replay_key(event_key))
+        if identity not in target_values:
+            target_values[identity] = target_initial.get(
+                (target_event_key, str(row.component_key)), {}
+            )
+            target_versions[identity] = 1 if target_values[identity] else 0
+        if row.version == 1 and target_values[identity] == values:
+            continue
+        patch = {
+            key: None for key in target_values[identity] if key not in values
+        } | values
         key = f"metadata:{_semantic_replay_key(event_key)}:{row.component_key}:{row.version}"
         operations.append(
             {
@@ -2731,17 +2876,30 @@ def _metadata_operations(session, org_id, maps):
                 "request": {
                     "org_id": "${ORG_ID}",
                     "source": {
-                        "event_key": _replay_idempotency(_semantic_replay_key(event_key)),
+                        "event_key": target_event_key,
                         "component_key": row.component_key,
                     },
                     "metadata": patch,
-                    "expected_version": row.version - 1,
+                    "expected_version": target_versions[identity],
                     "idempotency_key": _replay_idempotency(key),
                 },
                 "allowed_statuses": ["updated"],
             }
         )
+        target_values[identity] = values
+        target_versions[identity] += 1
     return operations
+
+
+def _operation_replays_payroll(operation: Mapping[str, Any]) -> bool:
+    if operation.get("source_event_type") == "payroll_accrual":
+        return True
+    preparations = operation.get("preparations")
+    return isinstance(preparations, list) and any(
+        isinstance(preparation, Mapping)
+        and preparation.get("preview_tool") == "finance_preview_payroll"
+        for preparation in preparations
+    )
 
 
 def _export_company(
@@ -2851,7 +3009,7 @@ def _export_company(
         business_timeline = list(actual_buckets[-1])
         next_successor = 0
         for operation in typed_events:
-            if operation["source_event_type"] == "payroll_accrual":
+            if _operation_replays_payroll(operation):
                 posting_date = date.fromisoformat(str(operation["source_posting_date"]))
                 while (
                     next_successor < len(successors)
@@ -2890,9 +3048,14 @@ def _export_company(
                 if operation.get("tool") != "finance_confirm_enterprise_income_tax_quarter"
             ),
             *_bank_reconciliation_operations(session, org_id=org_id, maps=maps),
-            *_owner_control_operations(session, org_id=org_id, maps=maps),
+            *_owner_control_operations(
+                session,
+                org_id=org_id,
+                maps=maps,
+                event_operations=typed_events,
+            ),
             *_period_close_operations(session, org_id=org_id, maps=maps),
-            *_metadata_operations(session, org_id, maps),
+            *_metadata_operations(session, org_id, maps, typed_events),
         ]
         descriptor = {
             "format_version": _FORMAT_VERSION,
@@ -3514,6 +3677,32 @@ class _ReplayResolver:
         self.org_id = org_id
         self.results = results
 
+    def existing_calculation_hash(self, idempotency_key: str) -> str | None:
+        """Return the hash needed to re-confirm a write committed before checkpointing."""
+        from .models import BusinessEvent
+
+        with Session(self.engine) as session:
+            facts = session.scalar(
+                select(BusinessEvent.facts).where(
+                    BusinessEvent.org_id == self.org_id,
+                    BusinessEvent.idempotency_key == idempotency_key,
+                    BusinessEvent.status.in_({"posted", "reversed"}),
+                )
+            )
+        if not isinstance(facts, Mapping):
+            return None
+        result_data = facts.get("_result_data")
+        value = (
+            facts.get("calculation_hash")
+            or facts.get("_result_calculation_hash")
+            or (
+                result_data.get("calculation_hash")
+                if isinstance(result_data, Mapping)
+                else None
+            )
+        )
+        return str(value) if value else None
+
     def materialize(self, value: Any) -> Any:
         if value == "${ORG_ID}":
             return str(self.org_id)
@@ -3958,9 +4147,16 @@ def _preview_confirm(
 ) -> dict[str, Any]:
     preview_request = resolver.materialize(operation["preview_request"])
     preview = _call_tool(str(operation["preview_tool"]), preview_request)
+    preview_allowed = operation.get("allowed_preview_statuses", ["calculated"])
+    if str(preview.get("status")) not in preview_allowed:
+        recovered = _recover_confirmed_preview_operation(
+            operation, resolver, preview_request
+        )
+        if recovered is not None:
+            return recovered
     _require_status(
         preview,
-        operation.get("allowed_preview_statuses", ["calculated"]),
+        preview_allowed,
         operation_key=str(operation["key"]),
     )
     confirm_request = dict(preview_request)
@@ -3979,6 +4175,44 @@ def _preview_confirm(
             confirm_request[field_name] = preview[field_name]
     # Confirm models intentionally do not always repeat preview-only helper
     # fields. Pydantic's exact allowlist remains the final boundary.
+    confirm_request = {
+        key: value for key, value in confirm_request.items() if key in model.model_fields
+    }
+    confirmed = _call_tool(confirm_tool, confirm_request)
+    _require_status(
+        confirmed,
+        operation.get("allowed_confirm_statuses", ["posted"]),
+        operation_key=str(operation["key"]),
+    )
+    return confirmed
+
+
+def _recover_confirmed_preview_operation(
+    operation: Mapping[str, Any],
+    resolver: _ReplayResolver,
+    preview_request: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Recover when confirm committed but the replay checkpoint did not."""
+    persisted_confirm_request = resolver.materialize(
+        operation.get("confirm_request", {})
+    )
+    idempotency_key = persisted_confirm_request.get("idempotency_key")
+    if not idempotency_key:
+        return None
+    calculation_hash = resolver.existing_calculation_hash(str(idempotency_key))
+    if calculation_hash is None:
+        return None
+
+    confirm_request = dict(preview_request)
+    confirm_request.update(persisted_confirm_request)
+    confirm_request["calculation_hash"] = calculation_hash
+    confirm_tool = str(operation["confirm_tool"])
+    from . import mcp_server
+
+    tool = mcp_server.mcp._tool_manager.get_tool(confirm_tool)
+    if tool is None:
+        raise ReplayError(f"REPLAY_TOOL_NOT_ALLOWED:{confirm_tool}")
+    model = _tool_request_model(tool)
     confirm_request = {
         key: value for key, value in confirm_request.items() if key in model.model_fields
     }
@@ -4421,7 +4655,9 @@ def _replay_system_locked(
         for operation in operations:
             for value in _walk_package_values(operation):
                 if isinstance(value, Mapping) and value.get("$ref") == "operation_result":
-                    required_result_fields[str(value["operation_key"])].add(str(value["field"]))
+                    persisted_fields = required_result_fields.get(str(value["operation_key"]))
+                    if persisted_fields is not None:
+                        persisted_fields.add(str(value["field"]))
         company_state = next(item for item in state["companies"] if item["org_id"] == str(org_id))
         completed = set(company_state["completed_operations"])
         results = company_state["operation_results"]

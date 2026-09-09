@@ -25,6 +25,78 @@ def test_checkpoint_replacement_failure_preserves_previous_state(tmp_path, monke
     assert list(tmp_path.iterdir()) == [state_file]
 
 
+def test_checkpoint_retries_transient_windows_replacement_denial(tmp_path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    replay_cli._write_json(state_file, {"completed": ["first"]})
+    real_replace = replay_cli.os.replace
+    attempts = []
+    delays = []
+
+    def transient_replace(*args):
+        attempts.append(args)
+        if len(attempts) < 3:
+            raise PermissionError("simulated transient file lock")
+        real_replace(*args)
+
+    monkeypatch.setattr(replay_cli.os, "replace", transient_replace)
+    monkeypatch.setattr(replay_cli.time, "sleep", delays.append)
+
+    replay_cli._write_json(state_file, {"completed": ["first", "second"]}, compact=True)
+
+    assert len(attempts) == 3
+    assert delays == [0.05, 0.1]
+    assert replay_cli._load_json(state_file) == {"completed": ["first", "second"]}
+
+
+def test_preview_confirm_recovers_committed_result_after_checkpoint_failure(monkeypatch):
+    org_id = str(uuid.uuid4())
+    asset_id = str(uuid.uuid4())
+    operation = {
+        "key": "amortization",
+        "kind": "preview_confirm",
+        "preview_tool": "finance_preview_intangible_asset_amortization",
+        "preview_request": {
+            "org_id": org_id,
+            "asset_id": asset_id,
+            "amortization_period": "2025-01",
+            "posting_date": "2025-01-31",
+        },
+        "confirm_tool": "finance_confirm_intangible_asset_amortization",
+        "confirm_request": {
+            "idempotency_key": "amortization-confirm",
+            "confirmation_note": "confirmed",
+        },
+        "allowed_preview_statuses": ["calculated"],
+        "allowed_confirm_statuses": ["posted"],
+    }
+    resolver = SimpleNamespace(
+        materialize=lambda value: value,
+        existing_calculation_hash=lambda key: (
+            "stored-calculation-hash"
+            if key == "amortization-confirm"
+            else None
+        ),
+    )
+    calls = []
+
+    def call_tool(name, request):
+        calls.append((name, request))
+        if name == "finance_preview_intangible_asset_amortization":
+            return {
+                "status": "rejected",
+                "errors": ["INTANGIBLE_ASSET_AMORTIZATION_OUT_OF_SEQUENCE"],
+            }
+        return {"status": "posted", "event_id": "event-1", "idempotent_replay": True}
+
+    monkeypatch.setattr(replay_cli, "_call_tool", call_tool)
+
+    result = replay_cli._preview_confirm(operation, resolver)
+
+    assert result["idempotent_replay"] is True
+    assert calls[1][0] == "finance_confirm_intangible_asset_amortization"
+    assert calls[1][1]["calculation_hash"] == "stored-calculation-hash"
+
+
 def test_replay_lock_excludes_another_process_and_releases_after_failure(tmp_path):
     state_file = tmp_path / "state.json"
     code = (
@@ -111,6 +183,59 @@ def test_replay_checkpoints_progress_and_resumes_only_pending_operations(tmp_pat
     saved = replay_cli._load_json(state_file)
     assert saved["phase"] == "replayed"
     assert saved["last_run_timing"] == result["timing"]
+
+
+def test_replay_ignores_intra_operation_preparation_results_when_building_checkpoint(
+    tmp_path, monkeypatch
+):
+    operation = {
+        "key": "composite",
+        "kind": "composite_event",
+        "replay_key": "composite",
+        "preparations": [{"key": "preview", "preview_request": {}}],
+        "request": {
+            "batch_id": {
+                "$ref": "operation_result",
+                "operation_key": "preview",
+                "field": "batch_id",
+            }
+        },
+    }
+    package, org_id = _resume_package(tmp_path, [operation])
+    state = _resume_state(package, org_id, [])
+    state["companies"][0]["database_name"] = "isolated"
+    state_file = tmp_path / "state.json"
+    replay_cli._write_json(state_file, state)
+    monkeypatch.setattr(
+        replay_cli, "_load_state", lambda *_: (state_file, replay_cli._load_json(state_file))
+    )
+    monkeypatch.setattr(replay_cli, "_validate_replay_target", lambda *_: None)
+    monkeypatch.setattr(
+        replay_cli,
+        "get_settings",
+        lambda: SimpleNamespace(
+            finance_environment="development",
+            finance_migration_database_url="sqlite://",
+        ),
+    )
+    monkeypatch.setattr(
+        replay_cli, "create_engine", lambda *_: SimpleNamespace(dispose=lambda: None)
+    )
+    from ai_accounting import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_initialize_mcp_credential_store", lambda **_: None)
+    monkeypatch.setattr(replay_cli, "_call_tool", lambda *_: {"status": "ok"})
+    monkeypatch.setattr(
+        replay_cli,
+        "_execute_operation",
+        lambda *_args, **_kwargs: {"status": "posted", "event_id": "event-1"},
+    )
+
+    result = replay_cli.replay_system(package, state_file)
+
+    assert result["status"] == "replayed"
+    saved_results = replay_cli._load_json(state_file)["companies"][0]["operation_results"]
+    assert saved_results == {"composite": {"status": "posted", "event_id": "event-1"}}
 
 
 def _resume_package(tmp_path, operations):
@@ -644,6 +769,59 @@ def test_export_connection_forces_source_read_only(monkeypatch: pytest.MonkeyPat
     assert seen["isolation_level"] == "REPEATABLE READ"
 
 
+@pytest.mark.parametrize(
+    ("legacy", "scope"),
+    [("declared", "wage_income"), ("not_declared", "contributions_only")],
+)
+def test_export_normalizes_legacy_payroll_scope(legacy, scope):
+    request = replay_cli._normalize_persisted_payroll_request(
+        {
+            "employee_items": [
+                {
+                    "employee_id": "E01",
+                    "wage_tax_declaration_state": legacy,
+                }
+            ]
+        }
+    )
+
+    assert request["employee_items"] == [
+        {"employee_id": "E01", "wage_tax_scope": scope}
+    ]
+
+
+def test_export_rejects_conflicting_legacy_payroll_scope():
+    with pytest.raises(replay_cli.ReplayError, match="REPLAY_SOURCE_PAYROLL_SCOPE_INVALID"):
+        replay_cli._normalize_persisted_payroll_request(
+            {
+                "employee_items": [
+                    {
+                        "employee_id": "E01",
+                        "wage_tax_declaration_state": "declared",
+                        "wage_tax_scope": "contributions_only",
+                    }
+                ]
+            }
+        )
+
+
+def test_composite_payroll_event_triggers_policy_timeline_insertion():
+    assert replay_cli._operation_replays_payroll(
+        {
+            "source_event_type": "composite",
+            "preparations": [
+                {
+                    "key": "prepare:payroll",
+                    "preview_tool": "finance_preview_payroll",
+                }
+            ],
+        }
+    )
+    assert not replay_cli._operation_replays_payroll(
+        {"source_event_type": "composite", "preparations": []}
+    )
+
+
 def test_export_retains_confirmed_no_wage_plan_with_stable_employee_reference(monkeypatch):
     org_id, employee_id = uuid.uuid4(), uuid.uuid4()
     items = [{"employee_id": str(employee_id), "wage_tax_scope": "contributions_only"}]
@@ -692,6 +870,147 @@ def test_export_retains_confirmed_no_wage_plan_with_stable_employee_reference(mo
     assert operations[0]["regular_payroll_items"] == [
         {"employee_id": reference, "wage_tax_scope": "contributions_only"}
     ]
+
+
+def test_export_migrates_legacy_workforce_wage_difference_with_batch_evidence(monkeypatch):
+    org_id, employee_id = uuid.uuid4(), uuid.uuid4()
+    evidence_reference = {"$ref": "evidence", "sha256": "a" * 64}
+
+    def rows(_session, sql, **_parameters):
+        if "FROM owner_period_confirmations" not in sql:
+            return []
+        return [
+            {
+                "fact_type": "workforce_review",
+                "confirmation_state": "no_change",
+                "confirmation_note": "已确认",
+                "evidence_snapshot": [],
+                "calendar_year": 2026,
+                "calendar_month": 8,
+                "source_snapshot": {
+                    "regular_payroll_plan": {
+                        "employee_items": [
+                            {
+                                "employee_id": str(employee_id),
+                                "wage_tax_scope": "wage_income",
+                                "tax_reported_salary_fen": 0,
+                                "accounting_gross_salary_fen": 100,
+                                "tax_reporting_difference_reason": None,
+                            }
+                        ]
+                    }
+                },
+            }
+        ]
+
+    monkeypatch.setattr(replay_cli, "_query_rows", rows)
+    maps = {
+        key: {}
+        for key in (
+            "income_tax",
+            "evidence",
+            "bank",
+            "employee",
+            "open_item",
+            "component",
+            "asset",
+            "intangible",
+            "labor_person",
+            "borrowing",
+            "event",
+            "counterparty",
+        )
+    }
+    maps["employee"][str(employee_id)] = {
+        "$ref": "employee",
+        "employee_code": "E01",
+    }
+    event_operations = [
+        {
+            "preparations": [
+                {
+                    "preview_tool": "finance_preview_payroll",
+                    "preview_request": {
+                        "batch_kind": "regular",
+                        "payroll_period": "2026-08",
+                        "evidence_references": [evidence_reference],
+                    },
+                }
+            ]
+        }
+    ]
+
+    operations = replay_cli._owner_control_operations(
+        object(),
+        org_id=org_id,
+        maps=maps,
+        event_operations=event_operations,
+    )
+
+    assert operations[0]["evidence_references"] == [evidence_reference]
+    assert operations[0]["regular_payroll_items"][0][
+        "tax_reporting_difference_reason"
+    ].startswith("历史空库重放：")
+
+
+def test_metadata_replay_accounts_for_target_generated_initial_metadata():
+    org_id = uuid.uuid4()
+    event_id = uuid.uuid4()
+    source_event_key = "source-event"
+    target_event_key = replay_cli._replay_idempotency(
+        replay_cli._semantic_replay_key(source_event_key)
+    )
+    row = SimpleNamespace(
+        event_id=event_id,
+        component_key="primary",
+        version=1,
+        metadata_values={"description": "原管理说明"},
+    )
+    session = SimpleNamespace(
+        execute=lambda *_args, **_kwargs: SimpleNamespace(
+            all=lambda: [(row, source_event_key)]
+        )
+    )
+    event_operations = [
+        {
+            "request": {
+                "idempotency_key": target_event_key,
+                "components": [
+                    {
+                        "key": "primary",
+                        "kind": "expense",
+                        "payment_basis": "person_advance",
+                        "payment_date": "2026-01-02",
+                    }
+                ],
+            }
+        }
+    ]
+
+    maps = {
+        key: {}
+        for key in (
+            "income_tax",
+            "evidence",
+            "bank",
+            "employee",
+            "open_item",
+            "component",
+            "asset",
+            "intangible",
+            "labor_person",
+            "borrowing",
+            "event",
+            "counterparty",
+        )
+    }
+    operations = replay_cli._metadata_operations(session, org_id, maps, event_operations)
+
+    assert operations[0]["request"]["expected_version"] == 1
+    assert operations[0]["request"]["metadata"] == {
+        "advance_payment_date": None,
+        "description": "原管理说明",
+    }
 
 
 def test_export_repreviews_specialized_depreciation_batch():

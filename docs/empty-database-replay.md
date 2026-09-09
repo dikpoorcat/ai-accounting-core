@@ -163,6 +163,17 @@ stdout 仍只输出最终 JSON 结果。需要安静执行时加 `--quiet`。状
 
 重录通过后逐公司确认关账备份目录，调用 `finance_configure_close_backup` 和
 `finance_get_close_backup_configuration` 核验。源机备份路径只作为参考，不自动照搬。
+
+当前本机正式回放完成后，使用负责人已确认的以下公司专属目录：
+
+| 公司 | 关账备份目录 |
+| --- | --- |
+| 魂道（杭州）科技有限责任公司 | `D:\OneDrive\11、魂DAO\ai-accounting-company-backups` |
+| 屋舍心声（杭州）房地产经纪有限责任公司 | `D:\OneDrive\12、屋舍心声\ai-accounting-company-backups` |
+
+上述路径仅代表当前本机的负责人确认结果；切换主机、OneDrive 根目录或负责人另行变更位置时，
+必须重新确认并逐公司追加配置版本，不得把该表作为跨主机自动默认值。
+
 初始备份逐公司生成 `<统一社会信用代码>.finance-company.zip`，通过
 `finance-backup verify-portable` 后交付。原始来件和最新恢复依据继续保留；旧库及旧包的
 清理须明确指定范围，不作为回放命令的自动副作用。
