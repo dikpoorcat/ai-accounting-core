@@ -95,7 +95,17 @@ def test_new_account_and_two_expense_classes_share_one_voucher(
     assert sum(line.debit_fen for line in lines) == sum(line.credit_fen for line in lines) == 303
     assert {line.account.code for line in lines} == {"560209", "5601", "1001"}
     assert service.record(payload).event_id == result.event_id
-    changed = payload.model_copy(update={"description": "different facts"})
+    assert service.record(payload.model_copy(update={"description": "management summary"})).data[
+        "idempotent_replay"
+    ]
+    changed = payload.model_copy(
+        update={
+            "components": [
+                payload.components[0].model_copy(update={"amount_fen": 102}),
+                payload.components[1],
+            ]
+        }
+    )
     assert service.record(changed).errors == ["IDEMPOTENCY_KEY_PAYLOAD_MISMATCH"]
 
 
@@ -115,14 +125,14 @@ def test_missing_component_fact_rolls_back_entire_event(session, organization, s
 def test_create_and_settle_obligation_in_same_event(session, organization, sample_evidence):
     party = {"kind": "supplier", "name": "Supplier"}
     components = [
-        expense("purchase", 100, payment_basis="supplier_credit", counterparty=party),
+        expense("purchase", 100, payment_basis="supplier_credit", metadata={"counterparty": party}),
         {
             "key": "settle",
             "kind": "payable_settlement",
             "business_date": "2026-03-05",
             "payment_date": "2026-03-05",
-            "counterparty": party,
             "allocations": [{"source_component_key": "purchase", "amount_fen": 100}],
+            "metadata": {"counterparty": party},
         },
     ]
     result = ComponentService(session).record(
@@ -169,7 +179,7 @@ def test_configured_payable_detail_is_inherited_by_local_settlement(
             "purchase",
             100,
             payment_basis="supplier_credit",
-            counterparty=party,
+            metadata={"counterparty": party},
             account_selections={"accounts_payable": "220299"},
         ),
         {
@@ -177,8 +187,8 @@ def test_configured_payable_detail_is_inherited_by_local_settlement(
             "kind": "payable_settlement",
             "business_date": "2026-03-05",
             "payment_date": "2026-03-05",
-            "counterparty": party,
             "allocations": [{"source_component_key": "purchase", "amount_fen": 100}],
+            "metadata": {"counterparty": party},
         },
     ]
     result = service.record(
@@ -223,7 +233,7 @@ def test_advance_fulfillment_keeps_configured_source_balance_account(
     )
     day = "2026-03-05"
     party = {"kind": "customer", "name": "合同客户"}
-    common = {"business_date": day, "counterparty": party}
+    common = {"business_date": day, "metadata": {"counterparty": party}}
     result = service.record(
         RecordEventRequest(
             org_id=organization.id,
@@ -285,7 +295,7 @@ def test_taxed_advance_refund_reduces_its_component_tax_source(
         "business_date": day,
         "payment_date": day,
         "amount_fen": 10100,
-        "counterparty": {"kind": "customer", "name": "退款客户"},
+        "metadata": {"counterparty": {"kind": "customer", "name": "退款客户"}},
         "tax_obligation_date": day,
         "tax_facts": {
             "taxable": True,
@@ -341,7 +351,7 @@ def test_local_source_usage_survives_later_reference_and_rounding(
     common = {
         "business_date": day,
         "payment_date": day,
-        "counterparty": {"kind": "customer", "name": "分次结算客户"},
+        "metadata": {"counterparty": {"kind": "customer", "name": "分次结算客户"}},
         "tax_obligation_date": day,
         "tax_facts": {
             "taxable": True,
@@ -436,7 +446,7 @@ def test_credit_sale_cash_refund_uses_whole_plan_received_balance(
     common = {
         "business_date": day,
         "payment_date": day,
-        "counterparty": party,
+        "metadata": {"counterparty": party},
         "tax_obligation_date": day,
         "tax_facts": {
             "taxable": True,
@@ -471,8 +481,8 @@ def test_credit_sale_cash_refund_uses_whole_plan_received_balance(
                 "kind": "receivable_settlement",
                 "business_date": day,
                 "payment_date": day,
-                "counterparty": party,
                 "allocations": [{"source_component_key": "sale", "amount_fen": 10300}],
+                "metadata": {"counterparty": party},
             }
         )
     funding = [

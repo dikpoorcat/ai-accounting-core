@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import Engine, and_, func, select
 from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
+from .business_metadata import metadata_projection
 from .dashboard_common import (
     dashboard_session,
     list_dashboard_periods,
@@ -329,6 +330,7 @@ def _component_view(
     component: BusinessEventComponent,
     *,
     lines: list[dict[str, Any]],
+    management: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     component_lines = [line for line in lines if line["component_id"] == str(component.id)]
     debit_fen = sum(line["debit_fen"] for line in component_lines)
@@ -345,6 +347,7 @@ def _component_view(
         "amount_fen": max(debit_fen, credit_fen),
         "parties": sorted({line["party"] for line in component_lines if line["party"]}),
         "facts": facts,
+        "management": management or {"version": 0, "metadata": {}, "history": []},
         "derived": component.derived if isinstance(component.derived, dict) else {},
         "source_references": _source_references(facts, component.derived),
     }
@@ -407,7 +410,11 @@ def _load_vouchers(
         credit_fen = sum(line["credit_fen"] for line in lines)
         parties = sorted({line["party"] for line in lines if line["party"]})
         components = [
-            _component_view(component, lines=lines)
+            _component_view(
+                component,
+                lines=lines,
+                management=metadata_projection(session, org_id, component.event_id, component.key),
+            )
             for component in components_by_event.get(voucher.event_id, [])
         ]
         business_components = [item for item in components if item["kind"] != "funds"]
@@ -629,6 +636,8 @@ def _load_open_items(
             Counterparty.name,
             Counterparty.kind,
             source_reversal.posting_date,
+            BusinessEvent.idempotency_key,
+            BusinessEventComponent.key,
         )
         .join(
             BusinessEvent,
@@ -644,7 +653,7 @@ def _load_open_items(
                 BusinessEventComponent.id == OpenItem.source_component_id,
             ),
         )
-        .join(
+        .outerjoin(
             Counterparty,
             and_(
                 Counterparty.org_id == OpenItem.org_id, Counterparty.id == OpenItem.counterparty_id
@@ -699,6 +708,8 @@ def _load_open_items(
         party,
         party_kind,
         reversal_date,
+        event_key,
+        component_key,
     ) in rows:
         if reversal_date is not None and (as_of_date is None or reversal_date <= as_of_date):
             continue
@@ -713,23 +724,31 @@ def _load_open_items(
                 else "refundable_deposit_receivables"
                 if component_kind == "refundable_deposit"
                 else "customer_receivables"
-                if party_kind == "customer"
+                if component_kind == "service_sale"
                 else "other_receivables"
             )
         elif open_item.payable_category in {"labor_remuneration", "labor_individual_income_tax"}:
             category = "labor_payables"
+        elif open_item.payable_category == "pass_through":
+            category = "other_payables"
         elif open_item.payable_category is not None:
             category = "payroll_payables"
         elif party_kind == "employee":
             category = "employee_payables"
-        elif party_kind == "supplier":
+        elif component_kind in {
+            "expense",
+            "project_cost",
+            "fixed_asset_acquisition",
+            "intangible_asset_acquisition",
+        }:
             category = "supplier_payables"
         else:
             category = "other_payables"
         buckets[category].append(
             {
                 "voucher": voucher_number or "—",
-                "party": counterparties.get(open_item.counterparty_id, party),
+                "party": counterparties.get(open_item.counterparty_id, party)
+                or f"业务 {event_key}/{component_key}/{open_item.component_key}",
                 "description": description,
                 "status": "partial" if settled_fen else "open",
                 "outstanding_fen": outstanding_fen,

@@ -249,7 +249,9 @@ def test_draw_schema_requires_explicit_boundary_facts_and_strict_decimal() -> No
     request = DrawBorrowingRequest(org_id=uuid.uuid4(), idempotency_key="missing")
     required = {item.code: set(item.fields) for item in request.missing_information()}
     assert "term_facts.fixed_rate" in required["BORROWING_DRAW_FACTS_REQUIRED"]
-    assert "interest_due_dates" in required["BORROWING_DRAW_FACTS_REQUIRED"]
+    assert "interest_due_dates" not in required["BORROWING_DRAW_FACTS_REQUIRED"]
+    assert "borrowing_code" not in required["BORROWING_DRAW_FACTS_REQUIRED"]
+    assert "contract_name" not in required["BORROWING_DRAW_FACTS_REQUIRED"]
 
     payload = _draw_payload()
     payload["annual_rate_percent"] = 3.65
@@ -297,7 +299,7 @@ def test_required_borrowing_identity_text_is_trimmed_and_blank_is_rejected() -> 
             DrawBorrowingRequest.model_validate({**_draw_payload(), "lender": lender})
 
 
-def test_due_dates_are_strict_and_complete_and_day_count_is_finite() -> None:
+def test_optional_due_dates_are_strict_and_bounded_and_day_count_is_finite() -> None:
     assert {item.value for item in BorrowingDayCountBasis} == {"actual_360", "actual_365"}
     payload = _draw_payload()
     payload["interest_due_dates"] = ["2027-02-28", "2027-02-28"]
@@ -306,8 +308,7 @@ def test_due_dates_are_strict_and_complete_and_day_count_is_finite() -> None:
 
     payload = _draw_payload()
     payload["interest_due_dates"] = ["2026-08-28"]
-    with pytest.raises(ValidationError):
-        DrawBorrowingRequest.model_validate(payload)
+    assert DrawBorrowingRequest.model_validate(payload).interest_due_dates == [date(2026, 8, 28)]
 
     for invalid_rate in ("NaN", "Infinity", "-Infinity"):
         payload = _draw_payload()

@@ -151,11 +151,11 @@ def _record_source_protocol_facts(engine: Engine, evidence_path: Path) -> uuid.U
                         "key": "consulting",
                         "kind": "expense",
                         "business_date": "2026-03-05",
-                        "amount_fen": 1_200,
+                        "amount_fen": 1200,
                         "expense_class": "general_expense",
                         "account_code": "560299",
                         "payment_basis": "supplier_credit",
-                        "counterparty": supplier,
+                        "metadata": {"counterparty": supplier},
                     },
                     {
                         "key": "supplies",
@@ -164,7 +164,7 @@ def _record_source_protocol_facts(engine: Engine, evidence_path: Path) -> uuid.U
                         "amount_fen": 800,
                         "expense_class": "general_expense",
                         "payment_basis": "supplier_credit",
-                        "counterparty": supplier,
+                        "metadata": {"counterparty": supplier},
                     },
                 ],
             )
@@ -193,14 +193,11 @@ def _record_source_protocol_facts(engine: Engine, evidence_path: Path) -> uuid.U
                         "kind": "payable_settlement",
                         "business_date": "2026-03-08",
                         "payment_date": "2026-03-08",
-                        "counterparty": supplier,
                         "allocations": [
-                            {
-                                "open_item_id": item.id,
-                                "amount_fen": item.original_amount_fen,
-                            }
+                            {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
                             for item in source_items
                         ],
+                        "metadata": {"counterparty": supplier},
                     },
                     {
                         "key": "bank_fee",
@@ -219,9 +216,9 @@ def _record_source_protocol_facts(engine: Engine, evidence_path: Path) -> uuid.U
                         "account_code": "1001",
                         "direction": "payment",
                         "payment_date": "2026-03-08",
-                        "amount_fen": 2_100,
+                        "amount_fen": 2100,
                         "allocations": [
-                            {"component_key": "pay_supplier", "amount_fen": 2_000},
+                            {"component_key": "pay_supplier", "amount_fen": 2000},
                             {"component_key": "bank_fee", "amount_fen": 100},
                         ],
                     }
@@ -337,6 +334,19 @@ def test_new_component_protocol_replays_to_empty_postgres_with_stable_open_item_
                 target_session.commit()
 
                 def authenticated_component_call(tool_name: str, request: dict) -> dict:
+                    if tool_name == "finance_update_business_metadata":
+                        from ai_accounting.business_metadata import (
+                            UpdateBusinessMetadataRequest,
+                            update_business_metadata,
+                        )
+
+                        with target_authority.attributed_call(target_session, tool_name=tool_name):
+                            result = update_business_metadata(
+                                target_session,
+                                UpdateBusinessMetadataRequest.model_validate(request),
+                            )
+                        target_session.commit()
+                        return result
                     typed_request = RecordEventRequest.model_validate(request)
                     if tool_name == "finance_preview_event":
                         with target_authority.attributed_call(
@@ -373,6 +383,19 @@ def test_new_component_protocol_replays_to_empty_postgres_with_stable_open_item_
                         "status": result["status"],
                         "event_id": result["event_id"],
                     }
+
+                metadata_operations = [
+                    o for o in operations if o.get("tool") == "finance_update_business_metadata"
+                ]
+                assert metadata_operations
+                for operation in metadata_operations:
+                    result = replay_cli._execute_operation(
+                        operation, package_company_dir=company_dir, resolver=resolver
+                    )
+                    assert result["status"] == "updated"
+                    assert replay_cli._execute_operation(
+                        operation, package_company_dir=company_dir, resolver=resolver
+                    )["idempotent_replay"]
 
                 voucher_count = target_session.scalar(select(func.count()).select_from(Voucher))
                 event_count = target_session.scalar(
@@ -479,7 +502,7 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                                     "tax_reported_salary_fen": 1_000_000,
                                     "special_additional_deduction_fen": 0,
                                     "other_legal_deduction_fen": 0,
-                                }
+                                },
                             ],
                         }
                     )
@@ -543,8 +566,8 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                                 "batch_id": bonus.batch_id,
                                 "calculation_hash": bonus.calculation_hash,
                                 "regular_payroll_component_keys": ["payroll"],
-                                "confirmation_note": "组合确认合并计税奖金",
                                 "evidence_references": [source_evidence_id],
+                                "metadata": {"confirmation_note": "组合确认合并计税奖金"},
                             },
                             {
                                 "key": "payroll",
@@ -552,8 +575,8 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                                 "business_date": "2026-03-05",
                                 "batch_id": multi_regular.batch_id,
                                 "calculation_hash": multi_regular.calculation_hash,
-                                "confirmation_note": "组合确认两位员工正常工资",
                                 "evidence_references": [source_evidence_id],
+                                "metadata": {"confirmation_note": "组合确认两位员工正常工资"},
                             },
                             _accruals(payroll, payroll_proof, labor, labor_proof)[1],
                             {
@@ -561,16 +584,14 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                                 "kind": "salary_settlement",
                                 "business_date": "2026-03-05",
                                 "payment_date": "2026-03-05",
-                                "amount_fen": 839_500,
-                                "allocations": [{**salary_source, "amount_fen": 1_000_000}],
+                                "amount_fen": 839500,
+                                "allocations": [{**salary_source, "amount_fen": 1000000}],
                                 "withholding_allocations": [
                                     {
                                         **salary_source,
-                                        "employee_social_insurance_items": {"pension": 80_000},
-                                        "employee_housing_fund_items": {
-                                            "housing_fund": 70_000
-                                        },
-                                        "individual_income_tax_fen": 10_500,
+                                        "employee_social_insurance_items": {"pension": 80000},
+                                        "employee_housing_fund_items": {"housing_fund": 70000},
+                                        "individual_income_tax_fen": 10500,
                                     }
                                 ],
                             },
@@ -581,10 +602,12 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                                 "payment_date": "2026-03-05",
                                 "source_component_key": "labor-accrual",
                                 "source_open_item_key": str(labor_line.id),
-                                "amount_fen": 500_000,
+                                "amount_fen": 500000,
                                 "settlement_mode": "net_after_withholding",
-                                "withholding_agency_code": "TAX-LABOR-01",
-                                "withholding_agency_name": "测试税务局",
+                                "metadata": {
+                                    "withholding_agency_code": "TAX-LABOR-01",
+                                    "withholding_agency_name": "测试税务局",
+                                },
                             },
                         ],
                         "funds": [
@@ -593,10 +616,10 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                                 "account_code": "1001",
                                 "direction": "payment",
                                 "payment_date": "2026-03-05",
-                                "amount_fen": 1_259_500,
+                                "amount_fen": 1259500,
                                 "allocations": [
-                                    {"component_key": "salary", "amount_fen": 839_500},
-                                    {"component_key": "labor", "amount_fen": 420_000},
+                                    {"component_key": "salary", "amount_fen": 839500},
+                                    {"component_key": "labor", "amount_fen": 420000},
                                 ],
                             }
                         ],
@@ -623,9 +646,7 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                                 "direction": "receipt",
                                 "payment_date": "2026-03-31",
                                 "amount_fen": 101,
-                                "allocations": [
-                                    {"component_key": "sale", "amount_fen": 101}
-                                ],
+                                "allocations": [{"component_key": "sale", "amount_fen": 101}],
                                 "bank_transaction_references": [],
                             }
                         ],
@@ -656,9 +677,7 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
                 for row in events
                 if row["idempotency_key"] == "calculated-accrual-replay-source"
             )
-            operation = replay_cli._event_operation(
-                session, event, org_id=source_org_id, maps=maps
-            )
+            operation = replay_cli._event_operation(session, event, org_id=source_org_id, maps=maps)
             tax_event = next(
                 row for row in events if row["idempotency_key"] == "calculated-tax-replay-source"
             )
@@ -677,12 +696,11 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
         assert preparation_keys.index(regular_preparation) < preparation_keys.index(
             bonus_preparation
         )
-        bonus_preview_items = operation["preparations"][
-            preparation_keys.index(bonus_preparation)
-        ]["preview_request"]["employee_items"]
+        bonus_preview_items = operation["preparations"][preparation_keys.index(bonus_preparation)][
+            "preview_request"
+        ]["employee_items"]
         assert {
-            item["regular_payroll_batch_id"]["operation_key"]
-            for item in bonus_preview_items
+            item["regular_payroll_batch_id"]["operation_key"] for item in bonus_preview_items
         } == {regular_preparation}
         bonus_component = next(
             item for item in operation["request"]["components"] if item["key"] == "bonus"
@@ -703,9 +721,7 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
             org_id=str(source_org_id),
         )
         misordered = json.loads(json.dumps(replay_cli._jsonable(operation)))
-        misordered["preparations"].sort(
-            key=lambda item: item["key"] != bonus_preparation
-        )
+        misordered["preparations"].sort(key=lambda item: item["key"] != bonus_preparation)
         with pytest.raises(
             replay_cli.ReplayError,
             match="REPLAY_PACKAGE_OPERATION_REFERENCE_MISSING",
@@ -818,13 +834,17 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
             )
             assert (
                 source_session.scalar(
-                    select(func.count()).select_from(PayrollBatch).where(
+                    select(func.count())
+                    .select_from(PayrollBatch)
+                    .where(
                         PayrollBatch.org_id == source_org_id,
                         PayrollBatch.status == "posted",
                     )
                 )
                 == target_session.scalar(
-                    select(func.count()).select_from(PayrollBatch).where(
+                    select(func.count())
+                    .select_from(PayrollBatch)
+                    .where(
                         PayrollBatch.org_id == target_org_id,
                         PayrollBatch.status == "posted",
                     )
@@ -872,13 +892,17 @@ def test_calculated_accrual_components_repreview_with_new_batch_and_line_ids() -
             )
             assert (
                 source_session.scalar(
-                    select(func.count()).select_from(LaborRemunerationBatch).where(
+                    select(func.count())
+                    .select_from(LaborRemunerationBatch)
+                    .where(
                         LaborRemunerationBatch.org_id == source_org_id,
                         LaborRemunerationBatch.status == "posted",
                     )
                 )
                 == target_session.scalar(
-                    select(func.count()).select_from(LaborRemunerationBatch).where(
+                    select(func.count())
+                    .select_from(LaborRemunerationBatch)
+                    .where(
                         LaborRemunerationBatch.org_id == target_org_id,
                         LaborRemunerationBatch.status == "posted",
                     )
@@ -998,7 +1022,7 @@ def test_combined_bonus_replay_prepares_two_regular_parents_before_one_formal_ev
                                 "batch_id": bonus.batch_id,
                                 "calculation_hash": bonus.calculation_hash,
                                 "regular_payroll_component_keys": ["regular-1", "regular-2"],
-                                "confirmation_note": "组合确认双来源奖金",
+                                "metadata": {"confirmation_note": "组合确认双来源奖金"},
                             },
                             {
                                 "key": "regular-2",
@@ -1006,7 +1030,7 @@ def test_combined_bonus_replay_prepares_two_regular_parents_before_one_formal_ev
                                 "business_date": "2026-03-05",
                                 "batch_id": regular_two.batch_id,
                                 "calculation_hash": regular_two.calculation_hash,
-                                "confirmation_note": "组合确认正常工资二",
+                                "metadata": {"confirmation_note": "组合确认正常工资二"},
                             },
                             {
                                 "key": "regular-1",
@@ -1014,7 +1038,7 @@ def test_combined_bonus_replay_prepares_two_regular_parents_before_one_formal_ev
                                 "business_date": "2026-03-05",
                                 "batch_id": regular_one.batch_id,
                                 "calculation_hash": regular_one.calculation_hash,
-                                "confirmation_note": "组合确认正常工资一",
+                                "metadata": {"confirmation_note": "组合确认正常工资一"},
                             },
                         ],
                     }
@@ -1058,8 +1082,7 @@ def test_combined_bonus_replay_prepares_two_regular_parents_before_one_formal_ev
             "two-parent-bonus-source:prepare:regular-2",
         }
         assert all(
-            preparation_keys.index(key) < preparation_keys.index(bonus_key)
-            for key in parent_keys
+            preparation_keys.index(key) < preparation_keys.index(bonus_key) for key in parent_keys
         )
         bonus_preparation = next(
             item for item in operation["preparations"] if item["key"] == bonus_key
@@ -1167,11 +1190,8 @@ def test_local_ready_asset_depreciation_replays_with_new_source_proof(
             "key": "first-depreciation",
             "kind": depreciation_kind,
             "business_date": "2026-03-01",
-            "facts": {
-                "depreciation_period": "2026-03",
-                "calculation_hash": "0" * 64,
-                "confirmation_note": "确认同笔启用来源及首月折旧",
-            },
+            "facts": {"depreciation_period": "2026-03", "calculation_hash": "0" * 64},
+            "metadata": {"confirmation_note": "确认同笔启用来源及首月折旧"},
         }
         if depreciation_kind == "fixed_asset_depreciation":
             depreciation_component["activation_component_key"] = "ready-equipment"
@@ -1185,8 +1205,6 @@ def test_local_ready_asset_depreciation_replays_with_new_source_proof(
                 "posting_date": "2026-03-31",
                 "description": "补录已启用设备并计提首月折旧",
                 "evidence_references": [source_evidence_id],
-                # Deliberately reverse the public array order. The component
-                # dependency must still compile acquisition before depreciation.
                 "components": [
                     depreciation_component,
                     {
@@ -1194,19 +1212,15 @@ def test_local_ready_asset_depreciation_replays_with_new_source_proof(
                         "kind": "fixed_asset_acquisition",
                         "business_date": "2026-02-15",
                         "facts": {
-                            "asset_code": "FA-LOCAL-REPLAY",
-                            "asset_name": "补录测试设备",
                             "category": "production_equipment",
                             "expected_use_over_one_year": True,
                             "cost_components": {
-                                "purchase_price_fen": 120_000,
+                                "purchase_price_fen": 120000,
                                 "noncreditable_tax_fen": 0,
                                 "transport_and_handling_fen": 0,
                                 "installation_and_direct_cost_fen": 0,
                             },
-                            "supplier": {"kind": "supplier", "name": "回放设备供应商"},
                             "settlement_method": "payable",
-                            "due_date": "2026-04-30",
                             "claims_creditable_input_vat": False,
                             "ready_for_use": {
                                 "in_service_date": "2026-02-15",
@@ -1214,6 +1228,13 @@ def test_local_ready_asset_depreciation_replays_with_new_source_proof(
                                 "residual_value_fen": 0,
                                 "benefit_area": "management",
                             },
+                            "cost_fen": sum([120000, 0, 0, 0]),
+                        },
+                        "metadata": {
+                            "asset_code": "FA-LOCAL-REPLAY",
+                            "asset_name": "补录测试设备",
+                            "counterparty": {"kind": "supplier", "name": "回放设备供应商"},
+                            "due_date": "2026-04-30",
                         },
                     },
                 ],
@@ -1277,6 +1298,7 @@ def test_local_ready_asset_depreciation_replays_with_new_source_proof(
         )
 
         with Session(target_engine) as session:
+
             def routed_call(tool_name: str, raw_request: dict) -> dict:
                 typed = RecordEventRequest.model_validate(raw_request)
                 if tool_name == "finance_preview_event":

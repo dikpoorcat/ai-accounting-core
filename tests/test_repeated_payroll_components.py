@@ -17,13 +17,21 @@ from ai_accounting.models import (
     Evidence,
     OpenItem,
     Organization,
+    PayrollBatch,
     PayrollEventLink,
+    PayrollLine,
     PayrollSalaryActualDeductionAllocation,
+    PayrollWithholdingEntitlement,
     PayrollWithholdingPaymentAllocation,
     Settlement,
     Voucher,
 )
-from ai_accounting.schemas import BankTransactionReference, ReverseEventRequest
+from ai_accounting.schemas import (
+    BankTransactionReference,
+    ConfirmPayrollRequest,
+    PreviewPayrollRequest,
+    ReverseEventRequest,
+)
 from ai_accounting.service import FinanceService
 
 
@@ -139,9 +147,7 @@ def _formal_counts(session: Session) -> tuple[int, int, int, int, int, int, int]
         session.scalar(select(func.count()).select_from(OpenItem)),
         session.scalar(select(func.count()).select_from(Settlement)),
         session.scalar(select(func.count()).select_from(PayrollEventLink)),
-        session.scalar(
-            select(func.count()).select_from(PayrollWithholdingPaymentAllocation)
-        ),
+        session.scalar(select(func.count()).select_from(PayrollWithholdingPaymentAllocation)),
     )
 
 
@@ -171,9 +177,7 @@ def _post_two_salary_components(session, organization, evidence, payroll_event, 
                 "funds": [
                     request.funds[0].model_copy(
                         update={
-                            "bank_transaction_references": [
-                                BankTransactionReference(id=bank.id)
-                            ]
+                            "bank_transaction_references": [BankTransactionReference(id=bank.id)]
                         }
                     )
                 ]
@@ -228,10 +232,7 @@ def _post_two_statutory_components(
                     "kind": "payable_settlement",
                     "business_date": "2026-03-05",
                     "payment_date": "2026-03-05",
-                    "counterparty": {"id": source.counterparty_id},
-                    "allocations": [
-                        {"open_item_id": source.id, "amount_fen": amount_each}
-                    ],
+                    "allocations": [{"open_item_id": source.id, "amount_fen": amount_each}],
                 }
                 for key in ("statutory-1", "statutory-2")
             ],
@@ -313,14 +314,17 @@ def test_repeated_salary_and_statutory_components_post_and_reverse_as_one_plan(
         )
     )
     assert [item.key for item in salary_components] == ["salary-1", "salary-2"]
-    assert len(
-        session.scalars(
-            select(PayrollEventLink).where(
-                PayrollEventLink.event_id == salary.event_id,
-                PayrollEventLink.link_kind == "salary_payment",
-            )
-        ).all()
-    ) == 2
+    assert (
+        len(
+            session.scalars(
+                select(PayrollEventLink).where(
+                    PayrollEventLink.event_id == salary.event_id,
+                    PayrollEventLink.link_kind == "salary_payment",
+                )
+            ).all()
+        )
+        == 2
+    )
     assert salary_source.status == "settled"
 
     before_over_settlement = _formal_counts(session)
@@ -416,9 +420,189 @@ def test_repeated_salary_components_validate_projected_plan_before_formal_writes
 
 
 @pytest.mark.postgres
-def test_postgres_repeated_salary_components_commit_with_real_attribution_and_bank_import() -> (
-    None
-):
+def test_postgres_local_salary_tax_payment_links_every_source_payroll_batch() -> None:
+    with authenticated_business_database("multi_batch_local_salary_tax") as (
+        engine,
+        org_id,
+        evidence_id,
+        authority,
+    ):
+        with Session(engine) as session:
+            organization, march_batch, march_line, evidence, march_event = confirmed_payroll(
+                session,
+                org_id,
+                evidence_id,
+                authority,
+                key="multi-batch-local-tax",
+            )
+            service = FinanceService(session)
+            with authority.attributed_call(session, tool_name="finance_preview_payroll"):
+                april_preview = service.preview_payroll(
+                    PreviewPayrollRequest.model_validate(
+                        {
+                            "org_id": org_id,
+                            "idempotency_key": "multi-batch-local-tax-april-preview",
+                            "batch_kind": "regular",
+                            "payroll_period": "2026-04",
+                            "posting_date": "2026-04-30",
+                            "evidence_references": [evidence_id],
+                            "employee_items": [
+                                {
+                                    "employee_id": march_line.employee_id,
+                                    "tax_reported_salary_fen": 1_000_000,
+                                    "special_additional_deduction_fen": 0,
+                                    "other_legal_deduction_fen": 0,
+                                }
+                            ],
+                        }
+                    )
+                )
+            assert april_preview.status == "calculated", april_preview.errors
+            with authority.attributed_call(session, tool_name="finance_confirm_payroll"):
+                april = service.confirm_payroll(
+                    ConfirmPayrollRequest(
+                        org_id=org_id,
+                        batch_id=april_preview.batch_id,
+                        calculation_hash=april_preview.calculation_hash,
+                        idempotency_key="multi-batch-local-tax-april-confirm",
+                    )
+                )
+            assert april.status == "posted", april.errors
+            session.commit()
+
+            april_batch = session.get(PayrollBatch, april.batch_id)
+            april_line = session.scalar(
+                select(PayrollLine).where(PayrollLine.payroll_batch_id == april.batch_id)
+            )
+            salary_items = list(
+                session.scalars(
+                    select(OpenItem)
+                    .where(
+                        OpenItem.source_event_id.in_([march_event.id, april.event_id]),
+                        OpenItem.payable_category == "salary",
+                    )
+                    .order_by(OpenItem.id)
+                )
+            )
+            lines = {
+                march_event.id: march_line,
+                april.event_id: april_line,
+            }
+            withholding_allocations = []
+            cash_fen = 0
+            tax_fen = 0
+            for item in salary_items:
+                line = lines[item.source_event_id]
+                entitlements = list(
+                    session.scalars(
+                        select(PayrollWithholdingEntitlement).where(
+                            PayrollWithholdingEntitlement.payroll_line_id == line.id
+                        )
+                    )
+                )
+                social = {
+                    row.insurance_kind: row.amount_fen
+                    for row in entitlements
+                    if row.contribution_group == "employee_social_insurance"
+                }
+                housing = {
+                    row.insurance_kind: row.amount_fen
+                    for row in entitlements
+                    if row.contribution_group == "employee_housing_fund"
+                }
+                line_tax = sum(
+                    row.amount_fen
+                    for row in entitlements
+                    if row.contribution_group == "individual_income_tax"
+                )
+                tax_fen += line_tax
+                cash_fen += item.original_amount_fen - sum(social.values()) - sum(
+                    housing.values()
+                ) - line_tax
+                withholding_allocations.append(
+                    {
+                        "open_item_id": item.id,
+                        "employee_social_insurance_items": social,
+                        "employee_housing_fund_items": housing,
+                        "individual_income_tax_fen": line_tax,
+                    }
+                )
+
+            request = RecordEventRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "idempotency_key": "multi-batch-local-salary-and-tax-payment",
+                    "posting_date": "2026-05-05",
+                    "evidence_references": [evidence_id],
+                    "components": [
+                        {
+                            "key": "salary",
+                            "kind": "salary_settlement",
+                            "business_date": "2026-05-05",
+                            "payment_date": "2026-05-05",
+                            "amount_fen": cash_fen,
+                            "allocations": [
+                                {
+                                    "open_item_id": item.id,
+                                    "amount_fen": item.original_amount_fen,
+                                }
+                                for item in salary_items
+                            ],
+                            "withholding_allocations": withholding_allocations,
+                        },
+                        {
+                            "key": "salary-tax",
+                            "kind": "payable_settlement",
+                            "business_date": "2026-05-05",
+                            "payment_date": "2026-05-05",
+                            "allocations": [
+                                {
+                                    "source_component_key": "salary",
+                                    "source_open_item_key": "individual_income_tax.tax",
+                                    "amount_fen": tax_fen,
+                                }
+                            ],
+                        },
+                    ],
+                    "funds": [
+                        {
+                            "key": "cash",
+                            "account_code": "1001",
+                            "direction": "payment",
+                            "payment_date": "2026-05-05",
+                            "amount_fen": cash_fen + tax_fen,
+                            "allocations": [
+                                {"component_key": "salary", "amount_fen": cash_fen},
+                                {"component_key": "salary-tax", "amount_fen": tax_fen},
+                            ],
+                        }
+                    ],
+                }
+            )
+            result = _record(session, request, authority)
+            assert result.status == "posted", result
+            session.commit()
+
+            expected_batch_ids = {march_batch.id, april_batch.id}
+            links = list(
+                session.scalars(
+                    select(PayrollEventLink).where(PayrollEventLink.event_id == result.event_id)
+                )
+            )
+            assert {
+                link.payroll_batch_id
+                for link in links
+                if link.link_kind == "salary_payment"
+            } == expected_batch_ids
+            assert {
+                link.payroll_batch_id
+                for link in links
+                if link.link_kind == "statutory_payment"
+            } == expected_batch_ids
+
+
+@pytest.mark.postgres
+def test_postgres_repeated_salary_components_commit_with_real_attribution_and_bank_import() -> None:
     with authenticated_business_database("repeated_payroll") as (
         engine,
         org_id,
@@ -453,14 +637,17 @@ def test_postgres_repeated_salary_components_commit_with_real_attribution_and_ba
             )
             session.commit()
             assert source.status == "settled"
-            assert len(
-                session.scalars(
-                    select(BusinessEventComponent).where(
-                        BusinessEventComponent.event_id == result.event_id,
-                        BusinessEventComponent.kind == "salary_settlement",
-                    )
-                ).all()
-            ) == 2
+            assert (
+                len(
+                    session.scalars(
+                        select(BusinessEventComponent).where(
+                            BusinessEventComponent.event_id == result.event_id,
+                            BusinessEventComponent.kind == "salary_settlement",
+                        )
+                    ).all()
+                )
+                == 2
+            )
             statutory_source, statutory = _post_two_statutory_components(
                 session,
                 organization,
@@ -490,20 +677,26 @@ def test_postgres_repeated_salary_components_commit_with_real_attribution_and_ba
             assert salary_reversal.status == "posted", salary_reversal.errors
             session.commit()
             assert source.status == "open"
-            assert len(
-                session.scalars(
-                    select(PayrollEventLink).where(
-                        PayrollEventLink.event_id == result.event_id,
-                        PayrollEventLink.link_kind == "salary_payment",
-                    )
-                ).all()
-            ) == 2
+            assert (
+                len(
+                    session.scalars(
+                        select(PayrollEventLink).where(
+                            PayrollEventLink.event_id == result.event_id,
+                            PayrollEventLink.link_kind == "salary_payment",
+                        )
+                    ).all()
+                )
+                == 2
+            )
 
 
 @pytest.mark.postgres
 def test_repeated_salary_actual_deductions_belong_to_each_component():
     with authenticated_business_database("repeated_salary_deductions") as (
-        engine, org_id, evidence_id, authority
+        engine,
+        org_id,
+        evidence_id,
+        authority,
     ):
         with Session(engine) as session:
             organization, _, _, evidence, payroll_event = confirmed_payroll(
@@ -512,7 +705,10 @@ def test_repeated_salary_actual_deductions_belong_to_each_component():
             session.commit()
             source = _salary_source(session, payroll_event.id)
             payload = _salary_request(
-                organization, evidence, source, key="repeated-actual-deductions",
+                organization,
+                evidence,
+                source,
+                key="repeated-actual-deductions",
                 parts=[(500_000, 40_000, 35_000, 0), (500_000, 40_000, 35_000, 10_500)],
             ).model_dump(mode="json")
             for component, fund_allocation, deduction in zip(
@@ -527,11 +723,13 @@ def test_repeated_salary_actual_deductions_belong_to_each_component():
             result = _record(session, RecordEventRequest.model_validate(payload), authority)
             assert result.status == "posted", result
             session.commit()
-            assert sorted(session.scalars(
-                select(PayrollSalaryActualDeductionAllocation.amount_fen).where(
-                    PayrollSalaryActualDeductionAllocation.payment_event_id == result.event_id
+            assert sorted(
+                session.scalars(
+                    select(PayrollSalaryActualDeductionAllocation.amount_fen).where(
+                        PayrollSalaryActualDeductionAllocation.payment_event_id == result.event_id
+                    )
                 )
-            )) == [100, 200]
+            ) == [100, 200]
             reversal = _reverse(
                 session, organization, result.event_id, "reverse-actual-deductions", authority
             )

@@ -129,12 +129,12 @@ def _sale_component(
         "business_date": day,
         "payment_date": day,
         "amount_fen": amount_fen,
-        "counterparty": {"kind": "customer", "name": f"customer-{key}"},
         "recognition_basis": "immediate",
         "fulfillment_date": day,
         "tax_obligation_date": day,
         "tax_facts": _tax_facts(invoice_type),
         "account_selections": {"vat_payable": account_code},
+        "metadata": {"counterparty": {"kind": "customer", "name": f"customer-{key}"}},
     }
 
 
@@ -504,10 +504,12 @@ def test_postgres_full_vat_payment_keeps_signed_refund_source_line(postgres_engi
                         "business_date": refund_day,
                         "payment_date": refund_day,
                         "tax_obligation_date": refund_day,
-                        "amount_fen": 10_100,
-                        "counterparty": {"kind": "customer", "name": "customer-original"},
+                        "amount_fen": 10100,
                         "source": {"component_id": source_component.id},
                         "tax_facts": _tax_facts("special"),
+                        "metadata": {
+                            "counterparty": {"kind": "customer", "name": "customer-original"}
+                        },
                     }
                 ],
                 "funds": [
@@ -516,8 +518,8 @@ def test_postgres_full_vat_payment_keeps_signed_refund_source_line(postgres_engi
                         "account_code": "1001",
                         "direction": "payment",
                         "payment_date": refund_day,
-                        "amount_fen": 10_100,
-                        "allocations": [{"component_key": "refund", "amount_fen": 10_100}],
+                        "amount_fen": 10100,
+                        "allocations": [{"component_key": "refund", "amount_fen": 10100}],
                     }
                 ],
             }
@@ -608,16 +610,13 @@ def test_postgres_deferred_vat_source_resolves_eventual_configured_detail(postgr
                         "key": "sale",
                         "kind": "service_sale",
                         "business_date": "2026-01-05",
-                        "amount_fen": 10_100,
-                        "counterparty": customer,
+                        "amount_fen": 10100,
                         "recognition_basis": "credit",
                         "fulfillment_date": "2026-01-05",
                         "tax_obligation_date": "2026-03-05",
-                        "tax_facts": {
-                            **_tax_facts("ordinary"),
-                            "tax_due_on_event": False,
-                        },
+                        "tax_facts": {**_tax_facts("ordinary"), "tax_due_on_event": False},
                         "account_selections": {"deferred_output_vat": "222109"},
+                        "metadata": {"counterparty": customer},
                     }
                 ],
             }
@@ -648,9 +647,9 @@ def test_postgres_deferred_vat_source_resolves_eventual_configured_detail(postgr
                         "kind": "receivable_settlement",
                         "business_date": "2026-03-05",
                         "payment_date": "2026-03-05",
-                        "counterparty": customer,
-                        "allocations": [{"open_item_id": item.id, "amount_fen": 10_100}],
+                        "allocations": [{"open_item_id": item.id, "amount_fen": 10100}],
                         "account_selections": {"vat_payable": "222119"},
+                        "metadata": {"counterparty": customer},
                     }
                 ],
                 "funds": [
@@ -659,8 +658,8 @@ def test_postgres_deferred_vat_source_resolves_eventual_configured_detail(postgr
                         "account_code": "1001",
                         "direction": "receipt",
                         "payment_date": "2026-03-05",
-                        "amount_fen": 10_100,
-                        "allocations": [{"component_key": "receipt", "amount_fen": 10_100}],
+                        "amount_fen": 10100,
+                        "allocations": [{"component_key": "receipt", "amount_fen": 10100}],
                     }
                 ],
             }

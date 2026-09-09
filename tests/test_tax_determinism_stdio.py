@@ -160,10 +160,6 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
                                     "fulfillment_date": "2026-01-15",
                                     "tax_obligation_date": "2026-01-15",
                                     "amount_fen": 10100,
-                                    "counterparty": {
-                                        "kind": "customer",
-                                        "name": "税务 STDIO 客户",
-                                    },
                                     "recognition_basis": "credit",
                                     "tax_facts": {
                                         "taxable": True,
@@ -171,6 +167,12 @@ def test_tax_stdio_schema_and_persisted_snapshot_chain_uses_new_client_session(
                                         "invoice_type": "special",
                                         "waive_exemption": False,
                                         "tax_due_on_event": True,
+                                    },
+                                    "metadata": {
+                                        "counterparty": {
+                                            "kind": "customer",
+                                            "name": "税务 STDIO 客户",
+                                        }
                                     },
                                 }
                             ],

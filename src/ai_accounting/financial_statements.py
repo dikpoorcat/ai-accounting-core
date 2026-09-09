@@ -396,6 +396,13 @@ def _requirement(
 class FinancialStatementService(FinanceService):
     """Calculate reports from immutable ledger facts and confirm bounded supporting facts."""
 
+    @staticmethod
+    def _request_payload_hash(request: Any) -> str:
+        """Exclude the optional management note from accounting idempotency."""
+
+        payload = request.model_dump(mode="json", exclude={"confirmation_note"})
+        return FinanceService._canonical_payload_hash(payload)
+
     def period_close_requirements(
         self,
         org_id: uuid.UUID,
@@ -1076,7 +1083,7 @@ class FinancialStatementService(FinanceService):
                         "quarter": request.quarter,
                         "treatment": request.treatment.value,
                         "amount_fen": request.amount_fen,
-                        "confirmation_note": request.confirmation_note,
+                        "metadata": {"confirmation_note": request.confirmation_note},
                     }
                 ],
             }

@@ -35,7 +35,7 @@ def _expense_request(org_id: object, *, key: str) -> RecordEventRequest:
                     "amount_fen": 100,
                     "expense_class": "general_expense",
                     "payment_basis": "supplier_credit",
-                    "counterparty": {"kind": "supplier", "name": "R3 测试供应商"},
+                    "metadata": {"counterparty": {"kind": "supplier", "name": "R3 测试供应商"}},
                 }
             ],
         }

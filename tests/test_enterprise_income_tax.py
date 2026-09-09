@@ -326,12 +326,22 @@ def test_local_result_can_be_settled_by_two_later_siblings(session, organization
     preview = service.preview(result_facts)
     assert preview["status"] == "calculated", preview
     result_component = result_facts.model_dump(
-        exclude={"org_id", "posting_date", "evidence_references"}
+        exclude={
+            "org_id",
+            "posting_date",
+            "evidence_references",
+            "declaration_reference",
+            "confirmation_note",
+        }
     ) | {
         "key": "result",
         "kind": "enterprise_income_tax_result",
         "business_date": result_facts.declaration_date,
         "calculation_hash": preview["calculation_hash"],
+        "metadata": {
+            "declaration_reference": result_facts.declaration_reference,
+            "confirmation_note": result_facts.confirmation_note,
+        },
     }
     request = RecordEventRequest.model_validate(
         {

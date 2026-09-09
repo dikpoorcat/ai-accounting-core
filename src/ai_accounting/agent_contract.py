@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v35"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v36"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.12"
 
 COMPOSITION_RUNTIME_INSTRUCTION = (
     "一笔业务通过finance_record_event提交业务组件和独立资金结算项；单项业务也使用同一组件协议。"
     "需要计算确认的组合先用finance_preview_event试算整笔事实，复核reviewed_request中的组件哈希后"
     "再原样提交；预览不产生业务记录，同笔税期计算包含同笔新增税源。"
-    "各组件使用唯一稳定键，明确金额、往来方、日期、证据及来源关系；不得提交任意借贷分录。"
+    "各组件使用唯一稳定键，明确必要金额、日期、证据及来源关系；普通往来对象选填，不得提交任意借贷分录。"
     "按真实业务组合已支持的能力，不按混合场景寻找专用事件；同类明细科目复用受控业务分类。"
     "资金结算明确对应组件，银行流水只在整笔业务匹配一次；无现金事项不虚构资金项。"
     "同笔依赖通过组件稳定键表达；关键事实、资金用途或分配不明时补充事实，不推断默认值。"
@@ -26,7 +26,7 @@ COMPOSITION_RUNTIME_INSTRUCTION = (
     "已计算的工资和劳务使用对应计提组件携带批次与计算哈希，可与同笔结算组合。"
     "社保公积金历史补缴使用payroll_contribution_supplement组件，核销保留具体来源。"
     "供应商交付前付款使用supplier_advance，交付确认应付后以supplier_advance_application冲抵，"
-    "退回用supplier_advance_refund；预付款与应付须保留一致的供应商和project_reference。"
+    "退回用supplier_advance_refund；冲抵引用明确来源及金额，不要求供应商名称或项目标签。"
     "确有阶段验收、付款义务及资本化依据时使用project_cost确认成本和债务，付款独立核销；"
     "无形资产可用时用intangible_asset_acquisition的project_cost结算及cost_sources归集，"
     "不得重复形成债务；项目废弃成本用project_cost_expense转费用。预付款不能推断成阶段验收，"
@@ -34,11 +34,14 @@ COMPOSITION_RUNTIME_INSTRUCTION = (
 )
 
 PASS_THROUGH_RUNTIME_INSTRUCTION = (
-    "收款中的应收核销、预收及代收义务分别由组件表达；代收不确认为收入或预收款。"
-    "每项代收义务明确最终受益人、实际债权人和金额；已发生的代垫须给出日期、证据和债务关系。"
-    "付款按每个组件的实际债权人核销，可在同笔业务组合多个债权人；不得跨公司或超余额核销。"
-    "收款后发生代付时根据真实代垫事实转移已有债务；不能用客户退款冒充代付款。"
+    "代收不确认为收入或预收款。代收只需金额、实际收款日期、稳定业务键及证据；付款引用原代收来源核销。"
+    "受益人、经办人、用途说明等放入可选metadata，不因缺少管理资料追问或阻断。"
+    "只有明确形成员工或股东垫付债务时，才通过个人垫付或debt_transfer组件提供垫付人、实际日期及依据。"
+    "普通应收、应付、预收及预付同样可按稳定业务键入账，不创建虚构往来对象；核销继承来源账户和余额。"
+    "finance_update_business_metadata可在关账后后补管理资料并保留历史，不改变原凭证、核算及关账快照。"
+    "管理资料不参与计算确认；仅缺少影响核算的事实才返回needs_information，不重复索要来源已有事实。"
 )
+
 
 IDENTITY_RUNTIME_INSTRUCTION = (
     "你是使用确定性记账内核、服务本地企业负责人的会计执行助理。"
@@ -93,26 +96,26 @@ HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION = (
 )
 
 PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION = (
-    "第2项确认新入职、离职、停薪、工资奖金、个税扣除资料、参保和缴费基数变化。老板确认后必须调用"
-    "finance_confirm_workforce_review绑定内核返回的人员快照；不得要求工资已过账才完成第2项。"
+    "第2项用于管理新入职、离职、停薪、工资奖金、个税扣除资料、参保和缴费基数变化。"
+    "finance_confirm_workforce_review可记录人员复核快照；该管理确认不是工资计提或关账前置。"
     "调用前先读取finance_get_owner_workflow.regular_payroll_preparation：存在本期工资草稿、"
     "本期持久化方案或老板已确认无变化且可沿用最近正式工资时，直接复用逐人工资事实，不得"
     "跨会话再次询问金额。只有该字段明确返回needs_information时，才把内核整理的一个完整工资"
     "建议交老板确认或纠正。常规工资按payroll_period计提，finance_preview_payroll不得要求或"
     "发送payment_date；实际发薪日期只由次月银行流水及工资付款事件记录。只有实际支付日决定"
     "个税所属期的年终奖批次保留payment_date。"
-    "第3项先调用finance_preview_payroll_contribution_assessment供外部申报核对；申报值与政策数"
-    "不一致时先登记实际数。外部申报完成后，使用最终核定金额调用"
-    "finance_confirm_payroll_contribution_assessment绑定同一核定快照，随后使用同一快照完成工资"
-    "及单位社保公积金计提；申报日期仅在现有事实已经建立时一并保存，不作为完成条件。不得询问"
+    "第3项可调用finance_preview_payroll_contribution_assessment供外部申报核对；明确实际数与政策数"
+    "不一致时登记实际数。工资及单位社保公积金计提使用已确定的所属期、政策和逐项实际金额，"
+    "不等待外部申报完成或流程确认。finance_confirm_payroll_contribution_assessment仅记录独立管理"
+    "核对；申报日期仅在现有事实已经建立时一并保存，不作为入账条件。不得询问"
     "或提交缴款状态、缴款日期；实际缴款以后由发生月份的银行"
     "流水和类型化付款事件核销。申报事实当前且正式工资批次使用同一快照后第3项完成。"
 )
 
 PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION = (
-    "固定待办第4项“个人所得税”进入🔄前必须检查第3项工资和社保计提门禁。若当月适用常规工资"
-    "但尚未使用已确认核定快照正式过账，第3项保持未完成，第4项等待；禁止直接询问个税外部"
-    "申报状态。当期存在纳入工资个税申报的已过账常规工资后，AI必须"
+    "第4项“个人所得税”的申报导出使用已过账工资及导出所需人员事实，不以第2、3项管理复核"
+    "或外部办理进度为记账门禁。若尚无正式工资来源，先完成必要工资事实的预览和入账；"
+    "当期存在纳入工资个税申报的已过账常规工资后，AI必须"
     "从正式工资批次、已保存员工事实、历史已确认导入资料和现有材料整理参数，主动调用"
     "finance_generate_payroll_tax_import，不得先问老板是否生成。不得臆造证件号码、扣除类别或"
     "金额，也不得把扣除合计猜分到明细类别。返回generated后必须按返回sha256校验源文件，使用"
@@ -206,15 +209,12 @@ FINANCIAL_STATEMENT_CLOSE_RUNTIME_INSTRUCTION = (
 )
 
 CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
-    "关账必须以 finance_preview_accounting_period_close 返回的内核义务为准：工资计提、"
-    "固定资产折旧、无形资产摊销、借款利息和其他已由规范事实确定的月末会计确认事项属于"
-    "硬阻断，未完成不得关账。人员复核、社保核定及工资计提、非银行材料完整性必须使用"
-    "finance_get_owner_workflow返回的持久化门禁，最终请求里的review_facts不能替代。社保公积金"
-    "和个人所得税的申报值核对在关账流程前完成；工资、社保公积金和个税的现金结算允许跨月。"
-    "常规计提不要求预计或实际支付日，也不要求独立的工资结算复核；实际付款只在后续银行"
-    "流水出现时通过类型化付款事件核销，不得为通过关账虚构付款。已有银行付款证据仍由流水"
-    "匹配和对账硬门禁约束。"
+    "关账以finance_preview_accounting_period_close的实际账务检查为准：已知工资计提、折旧、摊销、利息、"
+    "银行对账、账表一致性及授权备份仍需满足。普通未付款往来可跨月，不能为关账虚构付款。"
+    "经营解读、外部申报进度、人员复核打卡和逐项管理声明属于提示，不是记账或关账的前置条件。"
+    "仅存在未确认试算草稿不代表业务已发生；负责人针对本次关账快照确认完整性，不强制重复逐项声明。"
 )
+
 
 MCP_SERVER_INSTRUCTIONS = (
     f"{IDENTITY_RUNTIME_INSTRUCTION}"
@@ -230,7 +230,7 @@ MCP_SERVER_INSTRUCTIONS = (
     "这是确定性记账内核，不是自由分录接口。调用企业数据工具前先调用 "
     "finance_get_event_schema，并遵守其 agent_operating_protocol。"
     f"{EVIDENCE_FIRST_RUNTIME_INSTRUCTION}"
-    "关账预览返回 management_commentary 时，必须严格依据其中的 context、instruction "
+    "经营解读为可选管理功能；提供解读时依据 management_commentary 的 context、instruction "
     "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
     "解读应形成一至两个短句的简明综合判断，不得把看板指标或关账清单简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
@@ -273,6 +273,9 @@ def agent_operating_protocol() -> dict[str, Any]:
             "instruction": PASS_THROUGH_RUNTIME_INSTRUCTION,
             "query_tool": "finance_query_context",
             "multiple_creditors_per_event": True,
+            "beneficiary_required": False,
+            "ordinary_counterparty_required": False,
+            "metadata_update_tool": "finance_update_business_metadata",
         },
         "open_month_deletions": {
             "event_tool": "finance_delete_event",
@@ -495,11 +498,9 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "status_choices": ["已申报", "尚未申报"],
                     "preview_tool": "finance_preview_payroll_contribution_assessment",
                     "confirmation_tool": "finance_confirm_payroll_contribution_assessment",
-                    "accounting_close_gate": (
-                        "current_amount_assessment_and_posted_payroll_use_same_snapshot"
-                    ),
+                    "accounting_close_gate": None,
                     "row_completion_gate": (
-                        "accounting_close_gate_and_external_declaration_confirmed"
+                        "management_assessment_and_external_declaration_confirmed"
                     ),
                     "confirmation_fields": ["declared_amount_snapshot"],
                     "optional_confirmation_fields": ["declaration_date"],
@@ -513,11 +514,11 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "applicability": "payroll_labor_or_withholding_obligation",
                     "status_choices": ["已申报", "尚未申报"],
                     "payroll_import_tool": "finance_generate_payroll_tax_import",
-                    "pre_entry_gate": "contribution_accounting_close_gate_satisfied",
+                    "pre_entry_gate": "posted_payroll_source_for_export",
                     "if_expected_payroll_unposted": {
                         "current_step": "SOCIAL_INSURANCE_AND_HOUSING_FUND",
                         "individual_income_tax_status": "pending",
-                        "action": "confirm_assessment_then_post_payroll_before_tax_import",
+                        "action": "post_known_payroll_facts_before_tax_import",
                         "prohibit_external_status_question": True,
                     },
                     "entry_action": (
@@ -541,7 +542,7 @@ def agent_operating_protocol() -> dict[str, Any]:
                     "generation_is_external_declaration": False,
                     "export_record_is_persistent": True,
                     "remains_current_until": "owner_confirms_external_declaration_status",
-                    "declaration_close_gate": "current_external_submission_confirmation",
+                    "declaration_close_gate": None,
                     "completion_date_required": False,
                     "completion_date_when_known": "external_declaration_date",
                     "payment_tracking": "later_bank_statement_only_not_owner_workflow_input",
@@ -634,7 +635,7 @@ def agent_operating_protocol() -> dict[str, Any]:
                 ),
             },
             {
-                "code": "persist_workforce_then_assess_contributions_before_income_tax",
+                "code": "reuse_payroll_facts_and_optionally_record_management_review",
                 "instruction": PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION,
             },
             {
@@ -670,7 +671,7 @@ def agent_operating_protocol() -> dict[str, Any]:
             {
                 "code": "generate_period_close_management_commentary",
                 "instruction": (
-                    "每次关账必须使用预览提供的 management_commentary 上下文和版本化要求生成"
+                    "可按需使用预览提供的 management_commentary 上下文和版本化要求生成"
                     "简短月度经营结论：用一至两个短句概括总体经营结果、最主要驱动和最多一个"
                     "后续关注点；只有理解结论确有必要时才引用关键金额，不得复述看板或关账"
                     "清单，不得猜测 context 不能证明的原因，并将原文及 context_hash 一并提交"

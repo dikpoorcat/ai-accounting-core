@@ -196,6 +196,21 @@ def test_payroll_line_database_reconciles_gross_and_net_salary(
             net_salary_fen=99_999,
         )
     )
+    session.flush()
+
+    third_employee = _employee(session, organization, "E-003")
+    third_profile = _profile(session, third_employee)
+    session.add(
+        PayrollLine(
+            org_id=organization.id,
+            payroll_batch_id=batch.id,
+            employee_id=third_employee.id,
+            employee_payroll_profile_version_id=third_profile.id,
+            tax_reported_salary_fen=100_000,
+            gross_salary_fen=100_000,
+            net_salary_fen=99_999,
+        )
+    )
     with pytest.raises(IntegrityError):
         session.flush()
 
@@ -251,7 +266,7 @@ def test_internal_posting_plan_creates_multiple_categorized_open_items(
         "withheld_employee_social",
     ]
 
-    with pytest.raises(ValueError, match="requires agency code and insurance kind"):
+    with pytest.raises(ValueError, match="requires insurance kind"):
         OpenItemPlan(
             counterparty_id=agency.id,
             item_type="payable",

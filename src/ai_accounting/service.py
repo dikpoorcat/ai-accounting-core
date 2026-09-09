@@ -155,13 +155,33 @@ class FinanceService:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def _preview_request_payload_hash(self, request: PreviewPayrollRequest) -> str:
-        return self._canonical_payload_hash(request.model_dump(mode="json"))
+        return self._canonical_payload_hash(
+            request.model_dump(
+                mode="json",
+                exclude={
+                    "employee_items": {"__all__": {"tax_reporting_difference_reason"}}
+                },
+            )
+        )
 
     @staticmethod
     def _request_payload_hash(request: Any) -> str:
         """Hash only caller-supplied business facts, before service derivation."""
         payload = request.model_dump(mode="json")
+        if isinstance(request, ReverseEventRequest):
+            payload.pop("reason", None)
         return FinanceService._canonical_payload_hash(payload)
+
+    def _validate_posting_bank_account(self, org_id, code, settlement_date):
+        from .coa import account_business_class, get_account_by_code
+
+        account = get_account_by_code(self.session, org_id, code)
+        if not account.active or account_business_class(account) not in {
+            "bank",
+            "payment_platform_funds",
+        }:
+            raise ValueError("INVALID_POSTING_BANK_ACCOUNT")
+        return account
 
     def _validate_bank_account(
         self, org_id: uuid.UUID, account_code: str, settlement_date: date
@@ -650,7 +670,7 @@ class FinanceService:
         if not set(actual_deduction_by_item).issubset(allocation_by_item):
             raise ValueError("salary actual deduction must belong to a salary allocation")
 
-        batch: PayrollBatch | None = None
+        batch_ids: set[uuid.UUID] = set()
         cash_total = 0
         social_total = 0
         housing_total = 0
@@ -685,6 +705,7 @@ class FinanceService:
                 select(PayrollEventLink).where(
                     PayrollEventLink.org_id == org_id,
                     PayrollEventLink.event_id == open_item.source_event_id,
+                    PayrollEventLink.component_id == open_item.source_component_id,
                     PayrollEventLink.link_kind == "payroll_accrual",
                 )
             )
@@ -698,9 +719,7 @@ class FinanceService:
             )
             if source_batch is None:
                 raise ValueError("salary payroll origin is not available in this organization")
-            if batch is not None and batch.id != source_batch.id:
-                raise ValueError("one salary payment must allocate salary from one payroll batch")
-            batch = source_batch
+            batch_ids.add(source_batch.id)
             line = self.session.scalar(
                 select(PayrollLine)
                 .join(Employee, Employee.id == PayrollLine.employee_id)
@@ -783,6 +802,7 @@ class FinanceService:
             serialised_allocations.append(
                 {
                     "open_item_id": str(open_item_id),
+                    "payroll_batch_id": str(source_batch.id),
                     "payroll_line_id": str(line.id),
                     "employee_social_insurance_items": social,
                     "employee_housing_fund_items": housing,
@@ -794,13 +814,13 @@ class FinanceService:
             withholding_allocations.extend(
                 [*social_allocations, *housing_allocations, *tax_allocations]
             )
-        if batch is None or cash_total != request.amount_fen:
+        if not batch_ids or cash_total != request.amount_fen:
             raise ValueError(
                 "salary cash payment must equal gross allocations less explicit "
                 "withholdings and actual salary deductions"
             )
         return {
-            "payroll_batch_id": str(batch.id),
+            "payroll_batch_ids": sorted(str(batch_id) for batch_id in batch_ids),
             "gross_salary_fen": sum(allocation_by_item.values()),
             "employee_social_insurance_fen": social_total,
             "employee_housing_fund_fen": housing_total,
@@ -888,14 +908,10 @@ class FinanceService:
     def _salary_withholding_open_item_plans(
         self, org_id: uuid.UUID, payment_date: date, derived: dict[str, Any]
     ) -> list[OpenItemPlan]:
-        batch = self.session.get(PayrollBatch, uuid.UUID(derived["payroll_batch_id"]))
-        if batch is None:
-            raise ValueError("payroll batch not found for salary withholding")
-        targets = self._payment_targets(batch.policy_snapshot.get("parameters", {}))
         plans: list[OpenItemPlan] = []
-        for field_name, category, target_key in (
-            ("employee_social_insurance_items", "withheld_employee_social", "social_insurance"),
-            ("employee_housing_fund_items", "withheld_employee_housing", "housing_fund"),
+        for field_name, category in (
+            ("employee_social_insurance_items", "withheld_employee_social"),
+            ("employee_housing_fund_items", "withheld_employee_housing"),
         ):
             components: dict[str, int] = {}
             for allocation in derived["salary_withholding_allocations"]:
@@ -903,37 +919,27 @@ class FinanceService:
                     components[code] = components.get(code, 0) + int(amount)
             if not components:
                 continue
-            target = targets.get(target_key)
-            if target is None:
-                raise ValueError(f"missing statutory payment target for {target_key}")
-            agency = self._agency_counterparty(org_id, target)
             for insurance_kind, amount in components.items():
                 if amount:
                     plans.append(
                         OpenItemPlan(
-                            counterparty_id=agency.id,
+                            counterparty_id=None,
                             item_type="payable",
                             original_amount_fen=amount,
-                            due_date=payment_date,
+                            due_date=None,
                             payable_category=category,
-                            payable_agency_code=target["agency_code"],
                             insurance_kind=insurance_kind,
                         )
                     )
         tax_amount = int(derived["individual_income_tax_fen"])
         if tax_amount:
-            target = targets.get("individual_income_tax")
-            if target is None:
-                raise ValueError("missing statutory payment target for individual_income_tax")
-            agency = self._agency_counterparty(org_id, target)
             plans.append(
                 OpenItemPlan(
-                    counterparty_id=agency.id,
+                    counterparty_id=None,
                     item_type="payable",
                     original_amount_fen=tax_amount,
-                    due_date=payment_date,
+                    due_date=None,
                     payable_category="individual_income_tax",
-                    payable_agency_code=target["agency_code"],
                 )
             )
         return plans
@@ -1093,7 +1099,7 @@ class FinanceService:
             "original_amount_fen": item.original_amount_fen,
             "settled_amount_fen": item.settled_amount_fen,
             "status": item.status,
-            "counterparty_id": str(item.counterparty_id),
+            "counterparty_id": str(item.counterparty_id) if item.counterparty_id else None,
             "payable_category": item.payable_category,
             "pass_through_key": item.pass_through_key,
             "pass_through_beneficiary_id": str(item.pass_through_beneficiary_id)
@@ -1411,7 +1417,6 @@ class FinanceService:
             # URL/version fallbacks and binary floating-point rates.
             candidate = PayrollPolicyVersion(**self._payroll_policy_values(request))
             self._calculator_policies(candidate)
-            self._payment_targets(candidate.parameters)
         except CalculationValidationError as exc:
             return {"status": "rejected", "errors": [f"{exc.code}:{exc}"]}
         except ValidationError:
@@ -1698,7 +1703,9 @@ class FinanceService:
     ) -> dict[str, Any]:
         """Register the evidenced employee-year treatment without changing employment dates."""
 
-        payload_hash = self._request_payload_hash(request)
+        payload_hash = self._canonical_payload_hash(
+            request.model_dump(mode="json", exclude={"confirmation_description"})
+        )
         existing = self.session.scalar(
             select(PayrollFirstWageTaxTreatment).where(
                 PayrollFirstWageTaxTreatment.org_id == request.org_id,
@@ -1794,7 +1801,7 @@ class FinanceService:
             first_wage_month=request.first_wage_month,
             treatment_state=request.treatment_state.value,
             declaration_date=request.declaration_date,
-            confirmation_description=request.confirmation_description,
+            confirmation_description=request.confirmation_description or None,
             legal_basis_url=self.FIRST_WAGE_TAX_TREATMENT_SOURCE_URL,
             supersedes_id=predecessor.id if predecessor is not None else None,
         )
@@ -1890,7 +1897,9 @@ class FinanceService:
     ) -> dict[str, Any]:
         """Persist sparse, evidenced actual amounts without mutating company policy."""
 
-        payload_hash = self._request_payload_hash(request)
+        payload_hash = self._canonical_payload_hash(
+            request.model_dump(mode="json", exclude={"reason_code", "reason_description"})
+        )
         existing_set = self.session.scalar(
             select(PayrollContributionActualSet).where(
                 PayrollContributionActualSet.org_id == request.org_id,
@@ -2031,7 +2040,7 @@ class FinanceService:
             contribution_period=request.contribution_period,
             declaration_date=request.declaration_date,
             reason_code=request.reason_code,
-            reason_description=request.reason_description,
+            reason_description=request.reason_description or None,
         )
         try:
             with self.session.begin_nested():
@@ -2108,22 +2117,41 @@ class FinanceService:
 
         facts = request.model_dump(
             mode="json",
-            exclude={"org_id", "idempotency_key", "posting_date", "evidence_references"},
+            exclude={
+                "org_id",
+                "idempotency_key",
+                "posting_date",
+                "evidence_references",
+                "due_date",
+                "assessment_reference",
+                "reason_code",
+                "reason_description",
+            },
         )
+        metadata = {
+            key: value
+            for key, value in {
+                "due_date": request.due_date,
+                "assessment_reference": request.assessment_reference,
+                "reason_code": request.reason_code,
+                "reason": request.reason_description or None,
+            }.items()
+            if value is not None
+        }
         result = ComponentService(self.session).record(
             RecordEventRequest.model_validate(
                 {
                     "org_id": request.org_id,
                     "idempotency_key": request.idempotency_key,
                     "posting_date": request.posting_date,
-                    "description": f"{request.contribution_period} 社保公积金历史补缴确认："
-                    f"{request.reason_description}",
+                    "description": "",
                     "evidence_references": request.evidence_references,
                     "components": [
                         {
                             "key": "supplement",
                             "kind": "payroll_contribution_supplement",
                             "business_date": request.posting_date,
+                            "metadata": metadata,
                             **facts,
                         }
                     ],
@@ -2372,7 +2400,11 @@ class FinanceService:
                         "business_date": batch.posting_date,
                         "batch_id": batch.id,
                         "calculation_hash": request.calculation_hash,
-                        "confirmation_note": request.confirmation_note,
+                        "metadata": (
+                            {"confirmation_note": request.confirmation_note}
+                            if request.confirmation_note
+                            else {}
+                        ),
                         "evidence_references": evidence_ids,
                     }
                 ],
@@ -2713,7 +2745,7 @@ class FinanceService:
             batch.status = "posted"
             batch.business_event_id = event.id
             batch.confirmed_by = None
-            batch.confirmation_note = component.confirmation_note
+            batch.confirmation_note = None
             batch.confirmed_at = datetime.now(UTC)
             if (
                 batch.batch_kind == PayrollBatchKind.ANNUAL_BONUS.value
@@ -3220,7 +3252,7 @@ class FinanceService:
                 {
                     "id": str(item.id),
                     "source_event_id": str(item.source_event_id),
-                    "counterparty_id": str(item.counterparty_id),
+                    "counterparty_id": str(item.counterparty_id) if item.counterparty_id else None,
                     "item_type": item.item_type,
                     "payable_category": item.payable_category,
                     "payable_agency_code": item.payable_agency_code,
@@ -3567,12 +3599,6 @@ class FinanceService:
         # the calculator when a payment crosses a policy year.
         contribution_parameters = deepcopy(contribution_policy_record.parameters)
         tax_parameters = deepcopy(tax_policy_record.parameters)
-        merged_payment_targets = {
-            **self._payment_targets(contribution_parameters),
-            "individual_income_tax": self._payment_targets(tax_parameters).get(
-                "individual_income_tax", {}
-            ),
-        }
         snapshot_parameters = {
             "contribution_rules": deepcopy(contribution_parameters.get("contribution_rules", [])),
             "employee_contribution_shortfall_treatment": contribution_parameters.get(
@@ -3580,7 +3606,6 @@ class FinanceService:
             ),
             "income_tax": deepcopy(tax_parameters["income_tax"]),
             "annual_bonus": deepcopy(tax_parameters.get("annual_bonus")),
-            "payment_targets": merged_payment_targets,
         }
         policy_snapshot = {
             "id": str(tax_policy_record.id),
@@ -3865,7 +3890,6 @@ class FinanceService:
                         "wage_tax_declaration_state": "declared",
                         "accounting_gross_salary_fen": payroll_input.gross_salary_fen,
                         "tax_reported_salary_fen": payroll_input.tax_reported_salary_fen,
-                        "tax_reporting_difference_reason": (item.tax_reporting_difference_reason),
                         "tax_withholding_start_date": (
                             employee.tax_withholding_start_date.isoformat()
                         ),
@@ -4112,31 +4136,28 @@ class FinanceService:
                 )
         if missing:
             return {"missing": missing, "scenarios": scenarios}
-        payment_targets = merged_payment_targets
-        absent_payment_targets = [
-            key
-            for key in ("social_insurance", "housing_fund", "individual_income_tax")
-            if key not in payment_targets
-        ]
-        if absent_payment_targets:
-            return {
-                "missing": [
-                    {
-                        "code": "statutory_payment_targets",
-                        "message": "payroll policy is missing statutory payment targets",
-                        "fields": [f"payment_targets.{key}" for key in absent_payment_targets],
-                    }
-                ],
-                "scenarios": scenarios,
-            }
         calculation_input = {
-            "request": request.model_dump(mode="json"),
+            "request": request.model_dump(
+                mode="json",
+                exclude={
+                    "description": True,
+                    "employee_items": {"__all__": {"tax_reporting_difference_reason"}},
+                },
+            ),
             "employee_snapshots": input_snapshots,
         }
+        accounting_lines = [
+            {
+                key: value
+                for key, value in prepared.items()
+                if key != "tax_reporting_difference_reason"
+            }
+            for prepared in prepared_lines
+        ]
         hash_payload = {
             "calculation_input": calculation_input,
             "policy_snapshot": policy_snapshot,
-            "lines": prepared_lines,
+            "lines": accounting_lines,
             "actual_item_ids": sorted(actual_item_ids, key=str),
             "first_wage_treatment_ids": sorted(first_wage_treatment_ids, key=str),
         }
@@ -4966,7 +4987,6 @@ class FinanceService:
                     "difference_fen": (
                         result.gross_salary_fen - (item.tax_reported_salary_fen or 0)
                     ),
-                    "difference_reason": item.tax_reporting_difference_reason,
                 },
             },
             {"step": "tax_state_after", "values": self._tax_state_dict(tax_state)},
@@ -5201,21 +5221,14 @@ class FinanceService:
         ):
             if totals[total_key]:
                 entries.append(Entry(account_role=role, credit_fen=totals[total_key]))
-        targets = self._payment_targets(batch.policy_snapshot.get("parameters", {}))
         for (category, insurance_kind), amount in statutory_amounts.items():
-            target_key = "social_insurance" if "social" in category else "housing_fund"
-            target = targets.get(target_key)
-            if target is None:
-                raise ValueError(f"missing statutory payment target for {target_key}")
-            agency = self._agency_counterparty(batch.org_id, target)
             plans.append(
                 OpenItemPlan(
-                    counterparty_id=agency.id,
+                    counterparty_id=None,
                     item_type="payable",
                     original_amount_fen=amount,
                     due_date=None,
                     payable_category=category,
-                    payable_agency_code=target["agency_code"],
                     insurance_kind=insurance_kind,
                 )
             )
@@ -5280,89 +5293,6 @@ class FinanceService:
                     )
                 )
         self.session.flush()
-
-    @staticmethod
-    def _payment_targets(parameters: dict[str, Any]) -> dict[str, dict[str, str]]:
-        raw = parameters.get("payment_targets")
-        if not isinstance(raw, dict):
-            raise CalculationValidationError(
-                "INVALID_POLICY_PARAMETERS", "payment_targets must be an object"
-            )
-        targets: dict[str, dict[str, str]] = {}
-        for key in ("social_insurance", "housing_fund", "individual_income_tax"):
-            value = raw.get(key)
-            if (
-                not isinstance(value, dict)
-                or not value.get("agency_code")
-                or not value.get("agency_name")
-            ):
-                raise CalculationValidationError(
-                    "INVALID_POLICY_PARAMETERS",
-                    f"payment_targets.{key} requires agency_code and agency_name",
-                )
-            targets[key] = {
-                "agency_code": str(value["agency_code"]),
-                "agency_name": str(value["agency_name"]),
-            }
-        return targets
-
-    def _agency_counterparty(self, org_id: uuid.UUID, target: dict[str, str]) -> Counterparty:
-        agency_code = target["agency_code"]
-        legacy_name = f"法定缴费机构 {target['agency_name']}"
-        coded_name = f"{legacy_name} [{agency_code}]"
-        agencies = self.session.scalars(
-            select(Counterparty).where(
-                Counterparty.org_id == org_id,
-                Counterparty.kind == "other",
-                Counterparty.external_ref == agency_code,
-            )
-        ).all()
-        if len(agencies) > 1:
-            raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT")
-        if agencies:
-            if agencies[0].name not in {legacy_name, coded_name}:
-                raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT")
-            return agencies[0]
-
-        legacy = self.session.scalar(
-            select(Counterparty).where(
-                Counterparty.org_id == org_id,
-                Counterparty.kind == "other",
-                Counterparty.name == legacy_name,
-            )
-        )
-        if legacy is not None and legacy.external_ref == agency_code:
-            return legacy
-
-        name = coded_name
-        statement = select(Counterparty).where(
-            Counterparty.org_id == org_id,
-            Counterparty.kind == "other",
-            Counterparty.name == name,
-        )
-        agency = self.session.scalar(statement)
-        if agency is None:
-            # All payroll writers call this inside their transaction savepoint.
-            # The nested savepoint makes the first shared statutory-agency
-            # creation race replayable instead of poisoning the outer payroll
-            # confirmation with uq_counterparty_identity.
-            try:
-                with self.session.begin_nested():
-                    agency = Counterparty(
-                        org_id=org_id,
-                        kind="other",
-                        name=name,
-                        external_ref=agency_code,
-                    )
-                    self.session.add(agency)
-                    self.session.flush()
-            except IntegrityError:
-                agency = self.session.scalar(statement)
-                if agency is None:
-                    raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT") from None
-        if agency.external_ref != agency_code:
-            raise ValueError("PAYROLL_AGENCY_COUNTERPARTY_CONFLICT")
-        return agency
 
     def _payroll_result_for_batch(
         self, batch: PayrollBatch, *, idempotent_replay: bool = False
@@ -5867,7 +5797,6 @@ class FinanceService:
                     "original_calculation_hash": original_batch.calculation_hash,
                     "reversal_event_id": str(reversal_event.id),
                     "reversal_event_idempotency_key": request.idempotency_key,
-                    "reason": request.reason,
                     "posting_date": request.posting_date.isoformat(),
                 }
             },
@@ -6286,7 +6215,6 @@ class FinanceService:
             description=f"冲正 {original.id}: {request.reason}",
             facts={
                 "original_event_id": str(original.id),
-                "reason": request.reason,
                 "reversal": True,
                 "payroll_batch_ids": [str(batch.id) for batch in payroll_batches],
             },

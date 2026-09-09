@@ -32,19 +32,16 @@ def _evidence(session, organization, key: str) -> Evidence:
 
 def _acquisition_component(*, ready: bool, asset_code: str = "LOCAL-FA-001") -> dict:
     facts = {
-        "asset_code": asset_code,
-        "asset_name": "本期补录设备",
         "category": "electronic",
         "expected_use_over_one_year": True,
+        "cost_fen": 120_000,
         "cost_components": {
             "purchase_price_fen": 120_000,
             "noncreditable_tax_fen": 0,
             "transport_and_handling_fen": 0,
             "installation_and_direct_cost_fen": 0,
         },
-        "supplier": {"kind": "supplier", "name": "本地资产供应商"},
         "settlement_method": "payable",
-        "due_date": "2026-03-31",
         "claims_creditable_input_vat": False,
     }
     if ready:
@@ -59,6 +56,12 @@ def _acquisition_component(*, ready: bool, asset_code: str = "LOCAL-FA-001") -> 
         "kind": "fixed_asset_acquisition",
         "business_date": "2026-01-10",
         "facts": facts,
+        "metadata": {
+            "asset_code": asset_code,
+            "asset_name": "本期补录设备",
+            "counterparty": {"kind": "supplier", "name": "本地资产供应商"},
+            "due_date": "2026-03-31",
+        },
     }
 
 
@@ -113,7 +116,7 @@ def test_ready_acquisition_and_first_depreciation_post_from_one_preview(session,
             select(BusinessEventComponent).where(BusinessEventComponent.event_id == posted.event_id)
         )
     }
-    assert components["asset"].facts["asset_code"] == "LOCAL-FA-001"
+    assert "asset_code" not in components["asset"].facts
     proof = components["depreciation"].derived["local_activation_proofs"][0]
     assert proof == {
         "component_key": "asset",
@@ -137,7 +140,7 @@ def test_local_activation_can_feed_monthly_depreciation_batch(session, organizat
     )
     acquired = ComponentService(session).record(acquisition)
     assert acquired.status == "posted", acquired
-    asset = session.scalar(select(FixedAsset).where(FixedAsset.asset_code == "LOCAL-FA-002"))
+    asset = session.scalar(select(FixedAsset))
     request = RecordEventRequest.model_validate(
         {
             "org_id": organization.id,
@@ -202,6 +205,7 @@ def test_changed_local_activation_facts_reject_stale_review_without_rows(session
     assert preview.status == "calculated", preview
     reviewed = preview.data["reviewed_request"]
     asset = next(c for c in reviewed["components"] if c["key"] == "asset")
+    asset["facts"]["cost_fen"] += 1
     asset["facts"]["cost_components"]["purchase_price_fen"] += 1
 
     rejected = ComponentService(session).record(RecordEventRequest.model_validate(reviewed))

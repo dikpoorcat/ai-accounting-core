@@ -70,24 +70,24 @@ def _tax_source_request(organization, evidence, *, key, invoice_type):
                     "kind": "service_sale",
                     "business_date": day,
                     "payment_date": day,
-                    "amount_fen": 10_100,
-                    "counterparty": customer,
+                    "amount_fen": 10100,
                     "recognition_basis": "immediate",
                     "fulfillment_date": day,
                     "tax_obligation_date": day,
                     "tax_facts": tax_facts,
                     "account_selections": {"vat_payable": "222111"},
+                    "metadata": {"counterparty": customer},
                 },
                 {
                     "key": "advance-b",
                     "kind": "customer_advance",
                     "business_date": day,
                     "payment_date": day,
-                    "amount_fen": 20_200,
-                    "counterparty": customer,
+                    "amount_fen": 20200,
                     "tax_obligation_date": day,
                     "tax_facts": tax_facts,
                     "account_selections": {"vat_payable": "222112"},
+                    "metadata": {"counterparty": customer},
                 },
             ],
             "funds": [
@@ -96,10 +96,10 @@ def _tax_source_request(organization, evidence, *, key, invoice_type):
                     "account_code": "1001",
                     "direction": "receipt",
                     "payment_date": day,
-                    "amount_fen": 30_300,
+                    "amount_fen": 30300,
                     "allocations": [
-                        {"component_key": "sale-a", "amount_fen": 10_100},
-                        {"component_key": "advance-b", "amount_fen": 20_200},
+                        {"component_key": "sale-a", "amount_fen": 10100},
+                        {"component_key": "advance-b", "amount_fen": 20200},
                     ],
                 }
             ],
@@ -350,8 +350,7 @@ def test_deferred_vat_transfer_keeps_source_and_selected_payable_details(
                         "key": "sale",
                         "kind": "service_sale",
                         "business_date": "2026-01-05",
-                        "amount_fen": 10_100,
-                        "counterparty": customer,
+                        "amount_fen": 10100,
                         "recognition_basis": "credit",
                         "fulfillment_date": "2026-01-05",
                         "tax_obligation_date": "2026-03-05",
@@ -363,6 +362,7 @@ def test_deferred_vat_transfer_keeps_source_and_selected_payable_details(
                             "tax_due_on_event": False,
                         },
                         "account_selections": {"deferred_output_vat": "222109"},
+                        "metadata": {"counterparty": customer},
                     }
                 ],
             }
@@ -385,9 +385,9 @@ def test_deferred_vat_transfer_keeps_source_and_selected_payable_details(
                         "kind": "receivable_settlement",
                         "business_date": "2026-03-05",
                         "payment_date": "2026-03-05",
-                        "counterparty": customer,
-                        "allocations": [{"open_item_id": item.id, "amount_fen": 10_100}],
+                        "allocations": [{"open_item_id": item.id, "amount_fen": 10100}],
                         "account_selections": {"vat_payable": "222119"},
+                        "metadata": {"counterparty": customer},
                     }
                 ],
                 "funds": [
@@ -396,8 +396,8 @@ def test_deferred_vat_transfer_keeps_source_and_selected_payable_details(
                         "account_code": "1001",
                         "direction": "receipt",
                         "payment_date": "2026-03-05",
-                        "amount_fen": 10_100,
-                        "allocations": [{"component_key": "receipt", "amount_fen": 10_100}],
+                        "amount_fen": 10100,
+                        "allocations": [{"component_key": "receipt", "amount_fen": 10100}],
                     }
                 ],
             }

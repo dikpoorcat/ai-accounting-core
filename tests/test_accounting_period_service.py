@@ -16,6 +16,10 @@ from ai_accounting.accounting_period_schemas import (
     PreviewAccountingPeriodCloseRequest,
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
+from ai_accounting.accounting_periods import (
+    close_calculation_hash,
+    close_calculation_payload,
+)
 from ai_accounting.database import Base
 from ai_accounting.financial_statement_schemas import (
     ConfirmEnterpriseIncomeTaxQuarterRequest,
@@ -73,6 +77,85 @@ def _organization_and_evidence(session: Session) -> tuple[Organization, Evidence
     session.add(evidence)
     session.flush()
     return organization, evidence
+
+
+def test_close_hash_uses_accounting_facts_and_ignores_management_and_command_audit() -> None:
+    org_id = uuid.uuid4()
+    period_id = uuid.uuid4()
+    source = {
+        "id": str(uuid.uuid4()),
+        "event_id": str(uuid.uuid4()),
+        "voucher_number": "202603-0001",
+        "posting_date": "2026-03-31",
+        "description": "初始管理说明",
+        "event_type": "composite",
+        "event_status_at_close": "posted",
+        "accounting_facts_hash_at_close": "a" * 64,
+        "request_payload_hash_at_close": "b" * 64,
+        "debit_fen": 100,
+        "credit_fen": 100,
+        "line_snapshot": [
+            {
+                "id": str(uuid.uuid4()),
+                "line_number": 1,
+                "account_id": str(uuid.uuid4()),
+                "counterparty_id": None,
+                "account_code": "1001",
+                "debit_fen": 100,
+                "credit_fen": 0,
+                "memo": "初始行说明",
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "line_number": 2,
+                "account_id": str(uuid.uuid4()),
+                "counterparty_id": None,
+                "account_code": "6001",
+                "debit_fen": 0,
+                "credit_fen": 100,
+                "memo": "初始行说明",
+            },
+        ],
+    }
+
+    def calculation_hash(voucher_source: dict[str, object]) -> str:
+        payload = close_calculation_payload(
+            org_id=str(org_id),
+            period_id=str(period_id),
+            calendar_year=2026,
+            calendar_month=3,
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 31),
+            closing_date=date(2026, 3, 31),
+            previous_close_hash=None,
+            system_checks=[],
+            review_counts={},
+            voucher_sources=AccountingPeriodService._accounting_voucher_sources(
+                [voucher_source]
+            ),
+            account_totals=[],
+            module_checks={},
+            warnings=[],
+        )
+        return close_calculation_hash(payload)
+
+    baseline = calculation_hash(source)
+    management_changed = {
+        **source,
+        "description": "后补管理说明",
+        "request_payload_hash_at_close": "c" * 64,
+        "line_snapshot": [
+            {**line, "memo": "更正原因或管理行说明"}
+            for line in source["line_snapshot"]
+        ],
+    }
+    accounting_changed = {
+        **management_changed,
+        "accounting_facts_hash_at_close": "d" * 64,
+    }
+
+    assert calculation_hash(management_changed) == baseline
+    assert calculation_hash(accounting_changed) != baseline
 
 
 class _WarningRows:
@@ -582,7 +665,7 @@ def test_pending_late_bank_warning_continues_each_later_month_and_direct_reversa
     assert reversed_counts["pending_late_bank_transactions"] == 1
 
 
-def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> None:
+def test_preview_review_management_is_optional_for_close() -> None:
     session = _session()
     organization, evidence = _organization_and_evidence(session)
     session.add(
@@ -703,7 +786,7 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     assert "不得在计提时索要或虚构支付日" in checklist["ai_instruction"]
     assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
     commentary_prompt = checklist["management_commentary"]
-    assert commentary_prompt["required_for_close"] is True
+    assert commentary_prompt["required_for_close"] is False
     assert (
         commentary_prompt["prompt_version"] == "period_close_management_commentary_v2"
     )
@@ -715,34 +798,8 @@ def test_preview_is_read_only_and_confirmation_requires_all_review_facts() -> No
     )
     assert any("最多点出一个" in item for item in commentary_prompt["success_criteria"])
     assert "不得用看板指标拼接文本代替分析" in checklist["ai_instruction"]
-    assert missing.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
-    assert missing.missing_information[0].fields[:2] == [
-        "management_commentary_context_hash",
-        "management_commentary",
-    ]
-    assert (
-        "review_facts.voucher_completeness_reviewed"
-        in missing.missing_information[0].fields
-    )
-    action = session.get(AccountingPeriodAction, missing.action_id)
-    assert action is not None
-    assert action.input_facts == {}
-    assert action.missing_information == [
-        "management_commentary_context_hash",
-        "management_commentary",
-        "review_facts.voucher_completeness_reviewed",
-        "review_facts.bank_reconciliation_reviewed",
-        "review_facts.open_items_reviewed",
-        "review_facts.payroll_and_statutory_items_reviewed",
-        "review_facts.tax_items_reviewed",
-        "review_facts.asset_and_borrowing_schedules_reviewed",
-    ]
-    assert action.errors == [
-        {
-            "code": "ACCOUNTING_PERIOD_CLOSE_CONFIRMATION_REQUIRED",
-            "field_paths": action.missing_information,
-        }
-    ]
+    assert missing.status is not AccountingPeriodResultStatus.NEEDS_INFORMATION
+    assert not missing.missing_information
 
 
 def test_quarterly_tax_filing_is_not_asked_before_quarter_end() -> None:

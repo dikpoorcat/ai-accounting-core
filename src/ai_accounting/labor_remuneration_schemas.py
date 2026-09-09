@@ -65,7 +65,7 @@ class RegisterLaborServicePersonRequest(BaseModel):
     def missing_fields(self) -> list[str]:
         fields = [
             name
-            for name in ("person_code", "name", "relationship_start_date", "status")
+            for name in ("name", "relationship_start_date", "status")
             if getattr(self, name) is None
         ]
         if not self.evidence_references:
@@ -108,13 +108,6 @@ class LaborRemunerationItemFacts(BaseModel):
             and self.service_end_date < self.service_start_date
         ):
             raise ValueError("service_end_date must not precede service_start_date")
-        if (
-            self.external_declaration_status == "confirmed"
-            and not self.external_declaration_reference
-        ):
-            raise ValueError("confirmed declaration status requires a reference")
-        if self.external_declaration_status != "confirmed" and self.external_declaration_reference:
-            raise ValueError("declaration reference is only accepted for confirmed status")
         return self
 
     def missing_fields(self, index: int) -> list[str]:
@@ -130,7 +123,6 @@ class LaborRemunerationItemFacts(BaseModel):
                 "tax_identity",
                 "income_grouping",
                 "is_full_time_student",
-                "external_declaration_status",
             )
             if getattr(self, name) is None
         ]
@@ -157,7 +149,6 @@ class PreviewLaborRemunerationBatchRequest(BaseModel):
                 "remuneration_period",
                 "business_date",
                 "posting_date",
-                "planned_payment_date",
             )
             if getattr(self, name) is None
         ]
@@ -177,7 +168,7 @@ class ConfirmLaborRemunerationBatchRequest(BaseModel):
     batch_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=200)
     calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str = Field(default="", max_length=2000)
 
 
 class ConfirmLaborExternalDeclarationRequest(BaseModel):
@@ -186,7 +177,7 @@ class ConfirmLaborExternalDeclarationRequest(BaseModel):
     org_id: uuid.UUID
     labor_line_id: uuid.UUID
     declaration_date: date
-    external_declaration_reference: str = Field(min_length=1, max_length=200)
+    external_declaration_reference: str | None = Field(default=None, min_length=1, max_length=200)
     idempotency_key: str = Field(min_length=1, max_length=200)
     evidence_references: list[uuid.UUID] = Field(min_length=1, max_length=100)
 

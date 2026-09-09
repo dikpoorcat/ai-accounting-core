@@ -12,7 +12,7 @@ from copy import deepcopy
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, create_model, field_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from .borrowing_schemas import ConfirmBorrowingInterestRequest, DrawBorrowingRequest
 from .intangible_asset_schemas import (
@@ -25,7 +25,9 @@ from .schemas import (
     ActivateFixedAssetRequest,
     ConfirmFixedAssetDepreciationBatchRequest,
     ConfirmFixedAssetDepreciationRequest,
+    CounterpartyRef,
     DisposeFixedAssetRequest,
+    PositiveFen,
 )
 
 _PARENT_FIELDS = {
@@ -44,14 +46,53 @@ _PARENT_FIELDS = {
     "drawdown_date",
     "disposal_date",
     "retirement_date",
+    "confirmation_note",
+}
+
+_MANAGEMENT_FIELDS_BY_REQUEST: dict[type[BaseModel], set[str]] = {
+    AcquireFixedAssetRequest: {"asset_code", "asset_name", "supplier", "due_date"},
+    AcquireIntangibleAssetRequest: {
+        "asset_code",
+        "asset_name",
+        "rights_description",
+        "other_right_type_description",
+        "supplier",
+        "due_date",
+        "life_basis_explanation",
+    },
+    DrawBorrowingRequest: {
+        "borrowing_code",
+        "contract_name",
+        "purpose_description",
+        "interest_due_dates",
+    },
+}
+
+
+class FixedAssetEmployeeCostSourceFacts(BaseModel):
+    """Accounting identity and amount for one employee-funded cost source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_key: str = Field(min_length=1, max_length=200)
+    amount_fen: PositiveFen
+    reimbursing_employee: CounterpartyRef
+
+
+_FIELD_OVERRIDES_BY_REQUEST: dict[type[BaseModel], dict[str, Any]] = {
+    AcquireFixedAssetRequest: {
+        "employee_cost_sources": list[FixedAssetEmployeeCostSourceFacts],
+    },
 }
 
 
 def _facts_model(name: str, request_type: type[BaseModel]) -> type[BaseModel]:
+    excluded = _PARENT_FIELDS | _MANAGEMENT_FIELDS_BY_REQUEST.get(request_type, set())
+    overrides = _FIELD_OVERRIDES_BY_REQUEST.get(request_type, {})
     fields = {
-        key: (field.annotation, deepcopy(field))
+        key: (overrides.get(key, field.annotation), deepcopy(field))
         for key, field in request_type.model_fields.items()
-        if key not in _PARENT_FIELDS
+        if key not in excluded
     }
     validators = {}
     for key, decorator in request_type.__pydantic_decorators__.field_validators.items():

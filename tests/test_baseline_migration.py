@@ -14,7 +14,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 
 BUSINESS_REVISION = "0001_business_baseline_v3"
-BUSINESS_HEAD = "0002_purchase_projects"
+BUSINESS_HEAD = "0003_essential_accounting"
 POSTGRES_IMAGE = (
     "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 )
@@ -138,6 +138,7 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
         BUSINESS_HEAD,
+        "0002_purchase_projects",
         BUSINESS_REVISION,
     ]
 
@@ -148,7 +149,7 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     try:
         _assert_business_baseline(engine)
         command.check(config)
-        with pytest.raises(RuntimeError, match="PURCHASE_PROJECTS_FORWARD_ONLY"):
+        with pytest.raises(RuntimeError, match="ESSENTIAL_ACCOUNTING_FORWARD_ONLY"):
             command.downgrade(config, "base")
         _assert_business_baseline(engine)
     finally:
@@ -307,7 +308,9 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                     )
                 )
             assert "regular_payroll_plan_v1" in function_body
-            assert "source_snapshot_hash" in function_body
+            assert "line_snapshot" in function_body
+            assert "request_payload_hash_at_close" in function_body
+            assert "ACCOUNTING_PERIOD_SNAPSHOT_IMMUTABLE" in function_body
             assert "payroll_source_hash" not in function_body
             assert "UNSUPPORTED_BUSINESS_COMPONENT_KIND" in component_guard
             assert "FIXED_ASSET_COMPONENT_FACTS_MISMATCH" in component_guard
@@ -330,7 +333,7 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                 "finance_guard_late_bank_action_0015",
             }
             assert obsolete_unified_payout_runtime == 0
-            with pytest.raises(RuntimeError, match="PURCHASE_PROJECTS_FORWARD_ONLY"):
+            with pytest.raises(RuntimeError, match="ESSENTIAL_ACCOUNTING_FORWARD_ONLY"):
                 command.downgrade(config, "base")
             _assert_business_baseline(engine)
         finally:

@@ -25,10 +25,10 @@ class IntangibleAssetCalculationError(ValueError):
 
 @dataclass(frozen=True)
 class AcquisitionCostResult:
-    purchase_price_fen: int
-    noncreditable_tax_fen: int
-    directly_attributable_cost_fen: int
     cost_fen: int
+    purchase_price_fen: int | None
+    noncreditable_tax_fen: int | None
+    directly_attributable_cost_fen: int | None
 
 
 @dataclass(frozen=True)
@@ -64,30 +64,28 @@ def _require_fen(value: object, field: str, *, positive: bool = False) -> int:
 
 def calculate_acquisition_cost(
     *,
-    purchase_price_fen: int,
-    noncreditable_tax_fen: int,
-    directly_attributable_cost_fen: int,
+    cost_fen: int,
+    purchase_price_fen: int | None = None,
+    noncreditable_tax_fen: int | None = None,
+    directly_attributable_cost_fen: int | None = None,
 ) -> AcquisitionCostResult:
-    components = {
-        "purchase_price_fen": _require_fen(purchase_price_fen, "purchase_price_fen"),
-        "noncreditable_tax_fen": _require_fen(
-            noncreditable_tax_fen, "noncreditable_tax_fen"
-        ),
-        "directly_attributable_cost_fen": _require_fen(
-            directly_attributable_cost_fen, "directly_attributable_cost_fen"
-        ),
+    total = _require_fen(cost_fen, "cost_fen", positive=True)
+    supplied = {
+        "purchase_price_fen": purchase_price_fen,
+        "noncreditable_tax_fen": noncreditable_tax_fen,
+        "directly_attributable_cost_fen": directly_attributable_cost_fen,
     }
-    cost_fen = sum(components.values())
-    if cost_fen > MAX_FEN:
+    components = {
+        name: None if value is None else _require_fen(value, name)
+        for name, value in supplied.items()
+    }
+    stated = [value for value in components.values() if value is not None]
+    if stated and sum(stated) != total:
         raise IntangibleAssetCalculationError(
-            "INTANGIBLE_ASSET_COST_OUT_OF_RANGE",
-            "acquisition cost exceeds signed 64-bit integer fen",
+            "INTANGIBLE_ASSET_COST_COMPONENTS_TOTAL_MISMATCH",
+            "provided cost components must sum exactly to cost_fen",
         )
-    if cost_fen <= 0:
-        raise IntangibleAssetCalculationError(
-            "INTANGIBLE_ASSET_COST_MUST_BE_POSITIVE", "cost_fen must be positive"
-        )
-    return AcquisitionCostResult(**components, cost_fen=cost_fen)
+    return AcquisitionCostResult(cost_fen=total, **components)
 
 
 def calculate_straight_line_amortization(

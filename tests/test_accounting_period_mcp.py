@@ -106,7 +106,7 @@ def test_accounting_period_tools_publish_strict_typed_contracts() -> None:
     assert tools["finance_get_accounting_periods"].annotations.readOnlyHint is True
 
     discovery = mcp_server.finance_get_event_schema()
-    assert discovery["protocol_version"] == "business-components-v1"
+    assert discovery["protocol_version"] == "business-components-v2"
     assert "reverse_event_schema" in discovery
 
 
@@ -619,8 +619,7 @@ def test_mcp_posting_uses_china_current_date_boundary(
                             "fulfillment_date": value,
                             "payment_date": value,
                             "tax_obligation_date": value,
-                            "amount_fen": 101_000,
-                            "counterparty": {"kind": "customer", "name": "MCP期间客户"},
+                            "amount_fen": 101000,
                             "recognition_basis": "immediate",
                             "tax_facts": {
                                 "taxable": True,
@@ -628,6 +627,9 @@ def test_mcp_posting_uses_china_current_date_boundary(
                                 "invoice_type": "ordinary",
                                 "waive_exemption": False,
                                 "tax_due_on_event": True,
+                            },
+                            "metadata": {
+                                "counterparty": {"kind": "customer", "name": "MCP期间客户"}
                             },
                         }
                     ],
@@ -637,8 +639,8 @@ def test_mcp_posting_uses_china_current_date_boundary(
                             "account_code": "1002",
                             "direction": "receipt",
                             "payment_date": value,
-                            "amount_fen": 101_000,
-                            "allocations": [{"component_key": "sale", "amount_fen": 101_000}],
+                            "amount_fen": 101000,
+                            "allocations": [{"component_key": "sale", "amount_fen": 101000}],
                         }
                     ],
                 }

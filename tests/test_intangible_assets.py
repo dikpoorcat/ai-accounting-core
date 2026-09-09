@@ -22,6 +22,7 @@ from ai_accounting.intangible_assets import (
 
 def test_acquisition_cost_is_strict_integer_fen() -> None:
     result = calculate_acquisition_cost(
+        cost_fen=13_000,
         purchase_price_fen=12_000,
         noncreditable_tax_fen=360,
         directly_attributable_cost_fen=640,
@@ -31,6 +32,7 @@ def test_acquisition_cost_is_strict_integer_fen() -> None:
     for bad in (True, 1.0, "1", -1):
         with pytest.raises(IntangibleAssetCalculationError) as exc:
             calculate_acquisition_cost(
+                cost_fen=1,
                 purchase_price_fen=bad,  # type: ignore[arg-type]
                 noncreditable_tax_fen=0,
                 directly_attributable_cost_fen=0,
@@ -38,11 +40,7 @@ def test_acquisition_cost_is_strict_integer_fen() -> None:
         assert exc.value.code == "INVALID_FEN"
 
     with pytest.raises(IntangibleAssetCalculationError) as exc:
-        calculate_acquisition_cost(
-            purchase_price_fen=MAX_FEN,
-            noncreditable_tax_fen=1,
-            directly_attributable_cost_fen=0,
-        )
+        calculate_acquisition_cost(cost_fen=MAX_FEN + 1)
     assert exc.value.code == "INTANGIBLE_ASSET_COST_OUT_OF_RANGE"
 
 
@@ -121,12 +119,9 @@ def test_acquisition_schema_keeps_missing_treatment_facts_explicit() -> None:
         org_id=uuid.uuid4(), idempotency_key="intangible-missing"
     )
     requirements = {item.code: item.fields for item in request.missing_information()}
-    assert "INTANGIBLE_ASSET_COST_COMPONENTS_REQUIRED" in requirements
+    assert "INTANGIBLE_ASSET_COST_REQUIRED" in requirements
     assert "is_available_for_use" in requirements["INTANGIBLE_ASSET_POLICY_FACTS_REQUIRED"]
-    assert (
-        "claims_creditable_input_vat"
-        in requirements["INTANGIBLE_ASSET_POLICY_FACTS_REQUIRED"]
-    )
+    assert "claims_creditable_input_vat" in requirements["INTANGIBLE_ASSET_POLICY_FACTS_REQUIRED"]
 
     with pytest.raises(ValidationError):
         AcquireIntangibleAssetRequest.model_validate(

@@ -438,18 +438,6 @@ class AccountingPeriodService:
                 missing=missing,
                 period_id=request.period_id,
             )
-        false_fields = request.review_facts.false_fields()
-        if false_fields:
-            return self._failure_action(
-                request.org_id,
-                "period_close",
-                request.idempotency_key,
-                payload_hash,
-                AccountingPeriodResultStatus.REJECTED,
-                errors=["ACCOUNTING_PERIOD_REVIEW_INCOMPLETE"],
-                field_paths=[f"review_facts.{field}" for field in false_fields],
-                period_id=request.period_id,
-            )
         if (
             self._owner_close_approval_required(request.org_id)
             and request.owner_approval_id is None
@@ -705,7 +693,8 @@ class AccountingPeriodService:
                 period_id=period.id,
             )
         if (
-            snapshot["management_commentary_context_hash"]
+            request.management_commentary is not None
+            and snapshot["management_commentary_context_hash"]
             != request.management_commentary_context_hash
         ):
             return self._failure_action(
@@ -773,17 +762,18 @@ class AccountingPeriodService:
         )
         self.session.add(close)
         self.session.flush()
-        self.session.add(
-            AccountingPeriodCloseCommentary(
-                org_id=request.org_id,
-                close_id=close.id,
-                commentary=request.management_commentary,
-                prompt_version=MANAGEMENT_COMMENTARY_PROMPT_VERSION,
-                context_payload=snapshot["management_commentary_context"],
-                context_hash=snapshot["management_commentary_context_hash"],
-                generation_method="close_ai_agent",
+        if request.management_commentary is not None:
+            self.session.add(
+                AccountingPeriodCloseCommentary(
+                    org_id=request.org_id,
+                    close_id=close.id,
+                    commentary=request.management_commentary,
+                    prompt_version=MANAGEMENT_COMMENTARY_PROMPT_VERSION,
+                    context_payload=snapshot["management_commentary_context"],
+                    context_hash=snapshot["management_commentary_context_hash"],
+                    generation_method="close_ai_agent",
+                )
             )
-        )
         self.session.add_all(
             [
                 AccountingPeriodCloseSource(
@@ -1063,22 +1053,6 @@ class AccountingPeriodService:
         owner_workflow_close_gates = OwnerWorkflowService(
             self.session, current_date=self._today()
         ).close_gate_snapshot(request.org_id, period)
-        if owner_workflow_close_gates["enforced_for_period"]:
-            workflow_gate_codes = {
-                "workforce_review": "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT",
-                "contribution_accounting": ("ACCOUNTING_PERIOD_CONTRIBUTION_ASSESSMENT_CURRENT"),
-                "individual_income_tax_declaration": ("ACCOUNTING_PERIOD_IIT_DECLARATION_CURRENT"),
-                "non_bank_materials": ("ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT"),
-            }
-            for gate_name, code in workflow_gate_codes.items():
-                gate = owner_workflow_close_gates["gates"][gate_name]
-                self._add_check(
-                    checks,
-                    blockers,
-                    code,
-                    bool(gate["satisfied"]),
-                    0 if gate["satisfied"] else 1,
-                )
         account_totals = self._account_totals(request.org_id, period)
         bank_reconciliations, bank_reconciliation_issues = self._current_bank_reconciliations(
             request.org_id, period
@@ -1110,7 +1084,7 @@ class AccountingPeriodService:
         management_commentary_context = self._management_commentary_context(period)
         management_commentary_context_hash = canonical_sha256(management_commentary_context)
         assistant_review_checklist["management_commentary"] = {
-            "required_for_close": True,
+            "required_for_close": False,
             "prompt_version": MANAGEMENT_COMMENTARY_PROMPT_VERSION,
             "context_hash": management_commentary_context_hash,
             "context": management_commentary_context,
@@ -1140,8 +1114,8 @@ class AccountingPeriodService:
             ),
         }
         assistant_review_checklist["ai_instruction"] += (
-            "完成逐项月末复核后，AI 必须按 management_commentary 的 instruction、"
-            "success_criteria 和 context 生成经营解读，并在确认关账时原样提交 commentary "
+            "经营解读为可选管理信息，可按 management_commentary 的 instruction、"
+            "success_criteria 和 context 生成经营解读，提交时附 commentary "
             "及 context_hash；不得用看板指标拼接文本代替分析。"
         )
         previous = prior[-1] if prior else None
@@ -1164,7 +1138,7 @@ class AccountingPeriodService:
             previous_close_hash=previous_close_hash,
             system_checks=self._immutable_system_checks(checks),
             review_counts=review_counts,
-            voucher_sources=sources,
+            voucher_sources=self._accounting_voucher_sources(sources),
             account_totals=account_totals,
             module_checks=self._immutable_module_checks(module_checks),
             warnings=warnings,
@@ -1192,7 +1166,6 @@ class AccountingPeriodService:
             },
         }
         payload["financial_statement_requirements"] = financial_statement_requirement_data
-        payload["owner_workflow_close_gates"] = owner_workflow_close_gates
         calculation_hash = close_calculation_hash(payload)
         return {
             "payload": payload,
@@ -2454,6 +2427,7 @@ class AccountingPeriodService:
                     "description": voucher.description,
                     "event_type": event.event_type,
                     "event_status_at_close": event.status,
+                    "accounting_facts_hash_at_close": canonical_sha256(event.facts),
                     "request_payload_hash_at_close": (
                         self.session.scalar(
                             select(BusinessEventAmendment.request_hash)
@@ -2499,6 +2473,24 @@ class AccountingPeriodService:
         )
         return sources, sorted(set(issues))
 
+    @staticmethod
+    def _accounting_voucher_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Project voucher accounting state without management or command audit text."""
+
+        projected = []
+        for source in sources:
+            accounting_source = {
+                key: value
+                for key, value in source.items()
+                if key not in {"description", "request_payload_hash_at_close"}
+            }
+            accounting_source["line_snapshot"] = [
+                {key: value for key, value in line.items() if key != "memo"}
+                for line in source["line_snapshot"]
+            ]
+            projected.append(accounting_source)
+        return projected
+
     def _account_totals(self, org_id: uuid.UUID, period: AccountingPeriod) -> list[dict[str, Any]]:
         rows = self.session.execute(
             select(
@@ -2543,19 +2535,6 @@ class AccountingPeriodService:
         intangible_missing = self._intangible_due_missing(org_id, period)
         borrowing_missing = self._borrowing_due_missing(org_id, period)
         payroll_settlements = self._payroll_settlement_counts_as_of(org_id, period.end_date)
-        unfinished_payroll = (
-            self.session.scalar(
-                select(func.count())
-                .select_from(PayrollBatch)
-                .where(
-                    PayrollBatch.org_id == org_id,
-                    PayrollBatch.payroll_period
-                    == f"{period.calendar_year:04d}-{period.calendar_month:02d}",
-                    PayrollBatch.status.not_in(("posted", "reversed", "superseded")),
-                )
-            )
-            or 0
-        )
         active_employee_ids = set(
             self.session.scalars(
                 select(Employee.id).where(
@@ -2590,7 +2569,7 @@ class AccountingPeriodService:
         missing_payroll_employees = len(
             active_employee_ids - posted_regular_payroll_employee_ids - no_payroll_employee_ids
         )
-        payroll_pending = max(int(unfinished_payroll), missing_payroll_employees)
+        payroll_pending = missing_payroll_employees
         unfinished_labor_batches = (
             self.session.scalar(
                 select(func.count())
@@ -2646,9 +2625,9 @@ class AccountingPeriodService:
             "labor_remuneration": {
                 "code": "ACCOUNTING_PERIOD_LABOR_REMUNERATION_PENDING",
                 "count": unfinished_labor,
-                "blocking": unfinished_labor > 0,
-                "enforcement": "hard_blocker",
-                "obligation": "known_labor_remuneration_workflow",
+                "blocking": False,
+                "enforcement": "management_notice",
+                "obligation": "unconfirmed_labor_calculation",
             },
         }
 
@@ -2849,14 +2828,12 @@ class AccountingPeriodService:
         ).all()
         missing = 0
         for borrowing in borrowings:
-            expected_due_dates = sorted(
-                date.fromisoformat(item)
-                for item in borrowing.interest_due_dates
-                if date.fromisoformat(item) <= period.end_date
-            )
-            actual_due_dates = list(
-                self.session.scalars(
-                    select(BorrowingInterestAccrual.period_end)
+            target = min(period.end_date, borrowing.due_date)
+            accruals = list(
+                self.session.execute(
+                    select(
+                        BorrowingInterestAccrual.period_start, BorrowingInterestAccrual.period_end
+                    )
                     .join(
                         BusinessEvent,
                         BusinessEvent.id == BorrowingInterestAccrual.event_id,
@@ -2864,13 +2841,18 @@ class AccountingPeriodService:
                     .where(
                         BorrowingInterestAccrual.org_id == org_id,
                         BorrowingInterestAccrual.borrowing_id == borrowing.id,
-                        BorrowingInterestAccrual.period_end <= period.end_date,
+                        BorrowingInterestAccrual.period_end <= target,
                         BusinessEvent.status == "posted",
                     )
-                    .order_by(BorrowingInterestAccrual.period_end)
+                    .order_by(BorrowingInterestAccrual.period_start)
                 ).all()
             )
-            if actual_due_dates != expected_due_dates:
+            covered = borrowing.drawdown_date
+            for start, end in accruals:
+                if start != covered:
+                    break
+                covered = end
+            if covered != target:
                 missing += 1
         return missing
 
@@ -3254,6 +3236,8 @@ class AccountingPeriodService:
     def _attach_evidence(
         self, action_id: uuid.UUID, org_id: uuid.UUID, evidence_ids: list[uuid.UUID]
     ) -> None:
+        if not evidence_ids:
+            return
         self.session.execute(
             accounting_period_action_evidence.insert(),
             [

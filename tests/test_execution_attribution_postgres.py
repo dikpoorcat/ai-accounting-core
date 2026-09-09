@@ -40,6 +40,7 @@ PASSWORD_HASH = (
     "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
 )
 
+
 def _protect_current_windows_user_only(path: Path) -> None:
     import win32api
     import win32con
@@ -215,9 +216,7 @@ def test_postgres_current_transaction_attribution_and_direct_sql_guards() -> Non
             first = _insert_evidence(
                 connection, org_id=org_id, attribution_id=attribution_id, suffix="b"
             )
-            _insert_evidence(
-                connection, org_id=org_id, attribution_id=attribution_id, suffix="c"
-            )
+            _insert_evidence(connection, org_id=org_id, attribution_id=attribution_id, suffix="c")
             workflow_export_id = _insert_workflow_export(
                 connection, org_id=org_id, attribution_id=attribution_id, suffix="a"
             )
@@ -368,15 +367,21 @@ def test_postgres_attribution_and_revocation_share_owner_then_session_lock_order
                 attribution_id = write_future.result(timeout=20)
                 contender_future.result(timeout=20)
             with business_engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text("SELECT count(*) FROM execution_attributions WHERE id = :id"),
-                    {"id": attribution_id},
-                ) == 1
+                assert (
+                    connection.scalar(
+                        sa.text("SELECT count(*) FROM execution_attributions WHERE id = :id"),
+                        {"id": attribution_id},
+                    )
+                    == 1
+                )
             with catalog_engine.connect() as connection:
-                assert connection.scalar(
-                    sa.text("SELECT revoked_at IS NOT NULL FROM owner_sessions WHERE id = :id"),
-                    {"id": context.owner_session_id},
-                ) is True
+                assert (
+                    connection.scalar(
+                        sa.text("SELECT revoked_at IS NOT NULL FROM owner_sessions WHERE id = :id"),
+                        {"id": context.owner_session_id},
+                    )
+                    is True
+                )
         finally:
             catalog_engine.dispose()
 
@@ -393,9 +398,7 @@ def test_postgres_authenticated_mcp_rejected_posted_and_replay_attribution(
             _env_file=None,
             finance_environment="development",
             database_url=authority.catalog_url,
-            finance_company_database_url=business_engine.url.render_as_string(
-                hide_password=False
-            ),
+            finance_company_database_url=business_engine.url.render_as_string(hide_password=False),
             finance_migration_database_url=business_engine.url.render_as_string(
                 hide_password=False
             ),
@@ -473,9 +476,11 @@ def test_postgres_authenticated_mcp_rejected_posted_and_replay_attribution(
                             "amount_fen": 100,
                             "expense_class": "general_expense",
                             "payment_basis": "supplier_credit",
-                            "counterparty": {
-                                "kind": "supplier",
-                                "name": "PostgreSQL 试算供应商",
+                            "metadata": {
+                                "counterparty": {
+                                    "kind": "supplier",
+                                    "name": "PostgreSQL 试算供应商",
+                                }
                             },
                         }
                     ],
@@ -483,19 +488,22 @@ def test_postgres_authenticated_mcp_rejected_posted_and_replay_attribution(
             )
             previewed = preview_tool.fn(request=preview_request)
             assert previewed["status"] == "calculated", previewed
-            assert previewed["data"]["reviewed_request"] == preview_request.model_dump(
-                mode="json"
-            )
+            assert previewed["data"]["reviewed_request"] == preview_request.model_dump(mode="json")
             with Session(business_engine) as session:
-                assert tuple(
-                    session.query(model).count()
-                    for model in (BusinessEvent, Voucher, ExecutionAttribution)
-                ) == before_preview
+                assert (
+                    tuple(
+                        session.query(model).count()
+                        for model in (BusinessEvent, Voucher, ExecutionAttribution)
+                    )
+                    == before_preview
+                )
 
             with Session(business_engine) as session:
-                attributions = session.query(ExecutionAttribution).order_by(
-                    ExecutionAttribution.created_at, ExecutionAttribution.id
-                ).all()
+                attributions = (
+                    session.query(ExecutionAttribution)
+                    .order_by(ExecutionAttribution.created_at, ExecutionAttribution.id)
+                    .all()
+                )
                 assert len(attributions) == 4
                 assert [item.tool_name for item in attributions[-3:]] == [
                     "finance_record_event",
@@ -630,14 +638,17 @@ mcp_server.main()
                     )
                 ).one()
                 assert attribution.tool_name == "finance_register_evidence"
-                assert connection.scalar(
-                    sa.text(
-                        "SELECT count(*) FROM evidence "
-                        "WHERE original_name = 'real-stdio.txt' "
-                        "AND execution_attribution_id = :attribution_id"
-                    ),
-                    {"attribution_id": attribution.id},
-                ) == 1
+                assert (
+                    connection.scalar(
+                        sa.text(
+                            "SELECT count(*) FROM evidence "
+                            "WHERE original_name = 'real-stdio.txt' "
+                            "AND execution_attribution_id = :attribution_id"
+                        ),
+                        {"attribution_id": attribution.id},
+                    )
+                    == 1
+                )
         finally:
             if previous is None:
                 store.delete_session_token()

@@ -1,8 +1,8 @@
 # 组件式代收代付
 
-运行契约 `accounting_execution_assistant_v34`，业务空库基线 `0001_business_baseline_v3`。
+运行协议 `business-components-v2`，业务库执行至前向迁移 `0003_essential_accounting`。
 代收与应收核销、预收和其他业务采用相同 `finance_record_event` 组件协议，银行或现金收付
-统一放在 `funds`。代收是对已明确债权人的义务，不形成收入或预收款。
+统一放在 `funds`。代收确认代收代付负债，不形成收入或预收款；不必先登记受益人或债权人。
 
 ## 一笔收款包含多个业务用途
 
@@ -20,20 +20,12 @@
       "key": "commission",
       "kind": "receivable_settlement",
       "business_date": "2026-08-09",
-      "payment_date": "2026-08-09",
-      "counterparty": {"id": "<客户UUID>"},
       "allocations": [{"open_item_id": "<原佣金应收UUID>", "amount_fen": 9657350}]
     },
     {
-      "key": "beneficiary-1",
+      "key": "collection-1",
       "kind": "pass_through",
-      "business_date": "2026-08-09",
-      "payment_date": "2026-08-09",
-      "amount_fen": 2342650,
-      "beneficiary": {"id": "<最终受益人UUID>"},
-      "creditor": {"id": "<实际债权人UUID>"},
-      "creditor_basis": "beneficiary",
-      "purpose": "有证据确认的代收款用途"
+      "amount_fen": 2342650
     }
   ],
   "funds": [{
@@ -44,26 +36,28 @@
     "amount_fen": 12000000,
     "allocations": [
       {"component_key": "commission", "amount_fen": 9657350},
-      {"component_key": "beneficiary-1", "amount_fen": 2342650}
+      {"component_key": "collection-1", "amount_fen": 2342650}
     ],
     "bank_transaction_references": [{"id": "<整笔120000元流水UUID>"}]
   }]
 }
 ```
 
-更多受益人或债权人各有独立 `pass_through` 组件；明确预收款另有 `customer_advance` 组件。
+不同代收业务使用独立稳定组件键；明确预收款另有 `customer_advance` 组件。
 每个组件键唯一，资金分配总和必须精确等于真实收款。未说明的余款返回 `needs_information`。
 不能把未知余款默认成预收，也不能通过调整收入、税额或往来余额凑平。
 
-若收款前已由他人代垫，组件明确 `creditor_basis=advance_reimbursement`、
-`advance_payment_date`、`advance_evidence_ids`，并以实际代垫人为 `creditor`。
-最终受益人和当前债权人是不同业务事实，不能互相替代。
+用途、受益人、经办人和管理日期可以放入 `metadata`，也可以关账后通过
+`finance_update_business_metadata` 后补。缺这些资料不追问、不阻断。
+只有明确“个人先行垫付并形成公司对个人的债务”时，才用个人垫付或债务转换业务，
+提供实际垫付人、日期及依据；不能仅因管理信息里出现人名就推断发生债务转换。
 
 ## 付款和债务转移
 
 直接支付使用 `payable_settlement` 组件，以 `allocations` 精确引用代收应付款。
-同笔允许多个债权人，各自使用独立组件，与费用、其他应付结算共同分配到实际 `funds`。
-内核逐组件检查公司、债权人、来源类型和剩余余额，不限制整笔只能有一个债权人。
+可用原入账幂等键 `source_event_key`、`source_component_key`、`source_open_item_key`
+精确引用，也可使用已有开放项UUID。普通核销允许多来源、多对象，与费用、其他应付结算
+共同分配到实际 `funds`；检查公司、来源类型和剩余余额，不要求重填来源对象。
 
 收款后员工或股东代付，使用 `debt_transfer` 提交实际 `payer`、代付日期、证据及已偿债务
 `allocations`，由原债权人转为对代垫人的应付。归还时按新应付来源使用

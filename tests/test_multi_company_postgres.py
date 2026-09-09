@@ -360,12 +360,14 @@ def test_two_company_databases_isolate_identical_ids_and_idempotency_keys(
                                                     "kind": "expense",
                                                     "business_date": "2026-08-01",
                                                     "expense_class": "general_expense",
-                                                    "counterparty": {
-                                                        "kind": "supplier",
-                                                        "name": "Shared supplier name",
-                                                    },
-                                                    "amount_fen": 10_000,
+                                                    "amount_fen": 10000,
                                                     "payment_basis": "supplier_credit",
+                                                    "metadata": {
+                                                        "counterparty": {
+                                                            "kind": "supplier",
+                                                            "name": "Shared supplier name",
+                                                        }
+                                                    },
                                                 }
                                             ],
                                         }

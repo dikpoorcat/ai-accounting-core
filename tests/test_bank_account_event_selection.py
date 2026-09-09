@@ -45,6 +45,7 @@ def _confirm_scope(session: Session, organization: Organization, *additional_cod
                 category="asset",
                 normal_side="debit",
                 active=True,
+                business_class="bank",
                 requires_bank_reconciliation=True,
                 bank_reconciliation_start_date=date(2020, 1, 1),
                 bank_reconciliation_configured_at=configured_at,
@@ -93,7 +94,6 @@ def _cash_sale(
                     "fulfillment_date": "2026-08-08",
                     "payment_date": "2026-08-08",
                     "amount_fen": 100,
-                    "counterparty": {"kind": "customer", "name": "资金账户客户"},
                     "recognition_basis": "immediate",
                     "tax_facts": {
                         "taxable": False,
@@ -102,6 +102,7 @@ def _cash_sale(
                         "waive_exemption": False,
                         "tax_due_on_event": False,
                     },
+                    "metadata": {"counterparty": {"kind": "customer", "name": "资金账户客户"}},
                 }
             ],
             "funds": [
@@ -162,7 +163,7 @@ def test_funds_allocations_must_equal_the_exact_real_movement() -> None:
         )
 
 
-def test_unconfirmed_scope_returns_needs_information_without_any_write(
+def test_unconfirmed_scope_does_not_block_an_explicit_valid_bank_account(
     session: Session, organization: Organization, evidence: Evidence
 ) -> None:
     set_committed_value(organization, "bank_reconciliation_scope_current_action_id", None)
@@ -170,11 +171,9 @@ def test_unconfirmed_scope_returns_needs_information_without_any_write(
     result = FinanceService(session).record_event(
         _cash_sale(organization, evidence, key="scope-required", account_code="1002")
     )
-    assert result.status == "needs_information"
-    assert result.event_id is None
-    assert result.missing_information == ["bank_reconciliation_scope_confirmation"]
-    assert session.scalar(select(func.count()).select_from(BusinessEvent)) == 0
-    assert session.scalar(select(func.count()).select_from(Voucher)) == 0
+    assert result.status == "posted", result
+    assert session.scalar(select(func.count()).select_from(BusinessEvent)) == 1
+    assert session.scalar(select(func.count()).select_from(Voucher)) == 1
 
 
 def test_selected_bank_account_is_frozen_by_idempotent_composition(

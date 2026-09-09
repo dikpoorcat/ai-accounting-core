@@ -45,7 +45,6 @@ def test_tiny_vat_no_adjustment_confirmation_can_settle_without_fake_voucher(ses
                         "business_date": "2026-03-05",
                         "payment_date": "2026-03-05",
                         "amount_fen": 51,
-                        "counterparty": {"kind": "customer", "name": "tiny-customer"},
                         "recognition_basis": "immediate",
                         "fulfillment_date": "2026-03-05",
                         "tax_obligation_date": "2026-03-05",
@@ -56,6 +55,7 @@ def test_tiny_vat_no_adjustment_confirmation_can_settle_without_fake_voucher(ses
                             "waive_exemption": False,
                             "tax_due_on_event": True,
                         },
+                        "metadata": {"counterparty": {"kind": "customer", "name": "tiny-customer"}},
                     }
                 ],
                 "funds": [

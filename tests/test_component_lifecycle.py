@@ -17,6 +17,7 @@ from ai_accounting.service import FinanceService
 
 sample_evidence = _sample_evidence_fixture
 
+
 def test_whole_component_amend_keeps_voucher_and_identity(session, organization, sample_evidence):
     service = ComponentService(session)
     original = request(organization, sample_evidence, [expense("travel", 100), expense("fee", 20)])
@@ -26,35 +27,40 @@ def test_whole_component_amend_keeps_voucher_and_identity(session, organization,
     replacement = request(
         organization, sample_evidence, [expense("fee", 30), expense("travel", 200)]
     )
-    amended = EventAmendmentService(session).amend(
-        AmendEventRequest(
-            org_id=organization.id,
-            event_id=result.event_id,
-            idempotency_key="amend-components",
-            expected_facts_hash=result.data["facts_hash"],
-            reason="核对原始票据",
-            replacement=replacement,
-        )
+    amendment = AmendEventRequest(
+        org_id=organization.id,
+        event_id=result.event_id,
+        idempotency_key="amend-components",
+        expected_facts_hash=result.data["facts_hash"],
+        reason="核对原始票据",
+        replacement=replacement,
     )
+    amended = EventAmendmentService(session).amend(amendment)
     assert amended["status"] == "posted", amended
     voucher = session.scalar(select(Voucher))
     assert voucher.voucher_number == result.voucher_number
     assert voucher.id == result.voucher_id
     assert {c.key: c.id for c in session.scalars(select(BusinessEventComponent))} == ids
     assert session.scalar(select(func.count()).select_from(BusinessEvent)) == 1
+    different_metadata = replacement.model_copy(deep=True)
+    different_metadata.components[0].metadata.purpose = "management only"
+    retry = EventAmendmentService(session).amend(
+        amendment.model_copy(update={"replacement": different_metadata})
+    )
+    assert retry["status"] == "posted" and retry["idempotent_replay"], retry
 
 
 def test_reverse_entire_event_including_local_settlement(session, organization, sample_evidence):
     party = {"kind": "supplier", "name": "Supplier"}
     components = [
-        expense("purchase", 100, payment_basis="supplier_credit", counterparty=party),
+        expense("purchase", 100, payment_basis="supplier_credit", metadata={"counterparty": party}),
         {
             "key": "settle",
             "kind": "payable_settlement",
             "business_date": "2026-03-05",
             "payment_date": "2026-03-05",
-            "counterparty": party,
             "allocations": [{"source_component_key": "purchase", "amount_fen": 100}],
+            "metadata": {"counterparty": party},
         },
     ]
     result = ComponentService(session).record(
@@ -67,10 +73,25 @@ def test_reverse_entire_event_including_local_settlement(session, organization, 
             event_id=result.event_id,
             posting_date="2026-03-06",
             idempotency_key="reverse-components",
-            reason="业务整笔撤销",
         )
     )
     assert reversed_result.status == "posted", reversed_result
+    reversal = session.get(BusinessEvent, reversed_result.event_id)
+    assert "reason" not in reversal.facts
+    assert (
+        FinanceService(session)
+        .reverse_event(
+            ReverseEventRequest(
+                org_id=organization.id,
+                event_id=result.event_id,
+                posting_date="2026-03-06",
+                idempotency_key="reverse-components",
+                reason="optional audit explanation",
+            )
+        )
+        .event_id
+        == reversed_result.event_id
+    )
     assert session.scalar(select(OpenItem)).status == "reversed"
     assert session.scalar(select(OpenItem)).settled_amount_fen == 0
     assert session.scalar(select(Settlement)).reversed is True
@@ -105,7 +126,6 @@ def test_delete_whole_component_event(session, organization, sample_evidence):
             event_id=result.event_id,
             idempotency_key="delete-components",
             expected_facts_hash=result.data["facts_hash"],
-            reason="重复登记",
         )
     )
     assert deleted["status"] == "deleted", deleted

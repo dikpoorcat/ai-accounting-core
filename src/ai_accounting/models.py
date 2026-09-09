@@ -1160,7 +1160,7 @@ class PayrollFirstWageTaxTreatment(Base):
     first_wage_month: Mapped[int] = mapped_column(Integer, nullable=False)
     treatment_state: Mapped[str] = mapped_column(String(20), nullable=False)
     declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
-    confirmation_description: Mapped[str] = mapped_column(Text, nullable=False)
+    confirmation_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     legal_basis_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, unique=True)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -1269,8 +1269,8 @@ class PayrollContributionActualSet(Base):
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     contribution_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
     declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
-    reason_code: Mapped[str] = mapped_column(String(40), nullable=False)
-    reason_description: Mapped[str] = mapped_column(Text, nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    reason_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -1933,18 +1933,23 @@ class PayrollContributionSupplement(Base):
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     component_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     employee_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    source_payroll_batch_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    source_payroll_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True, index=True
+    )
     contribution_period: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
-    assessment_reference: Mapped[str] = mapped_column(String(200), nullable=False)
-    reason_code: Mapped[str] = mapped_column(String(40), nullable=False)
-    reason_description: Mapped[str] = mapped_column(Text, nullable=False)
+    assessment_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    reason_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
         ForeignKeyConstraint(
             ["org_id", "event_id", "component_id"],
-            ["business_event_components.org_id", "business_event_components.event_id",
-             "business_event_components.id"],
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
             name="fk_contribution_supplement_component",
             ondelete="RESTRICT",
         ),
@@ -2296,19 +2301,15 @@ class PayrollLine(Base):
         ),
         CheckConstraint(
             "((wage_tax_declaration_state = 'declared' AND "
-            "tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0 AND "
-            "((gross_salary_fen = tax_reported_salary_fen AND "
-            "tax_reporting_difference_reason IS NULL) OR "
-            "(gross_salary_fen <> tax_reported_salary_fen AND "
-            "tax_reporting_difference_reason IS NOT NULL AND "
-            "length(trim(tax_reporting_difference_reason)) BETWEEN 1 AND 2000))) OR "
+            "tax_reported_salary_fen IS NOT NULL AND annual_bonus_fen = 0) OR "
             "(wage_tax_declaration_state = 'not_declared' AND "
             "tax_reported_salary_fen IS NULL AND annual_bonus_fen = 0 AND "
-            "gross_salary_fen = 0 AND tax_reporting_difference_reason IS NULL) OR "
+            "gross_salary_fen = 0) OR "
             "(wage_tax_declaration_state = 'not_applicable' AND "
             "tax_reported_salary_fen IS NULL AND annual_bonus_fen > 0 AND "
-            "gross_salary_fen = annual_bonus_fen AND "
-            "tax_reporting_difference_reason IS NULL))",
+            "gross_salary_fen = annual_bonus_fen)) AND "
+            "(tax_reporting_difference_reason IS NULL OR "
+            "length(trim(tax_reporting_difference_reason)) BETWEEN 1 AND 2000)",
             name="ck_payroll_line_gross_salary",
         ),
         CheckConstraint(
@@ -3095,17 +3096,17 @@ class FixedAsset(Base):
         Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
     asset_code: Mapped[str] = mapped_column(String(100))
-    name: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     category: Mapped[str] = mapped_column(String(30))
     expected_use_over_one_year: Mapped[bool] = mapped_column()
     acquisition_date: Mapped[date] = mapped_column(Date)
     posting_date: Mapped[date] = mapped_column(Date)
-    purchase_price_fen: Mapped[int] = mapped_column(BigInteger)
-    noncreditable_tax_fen: Mapped[int] = mapped_column(BigInteger, default=0)
-    transport_and_handling_fen: Mapped[int] = mapped_column(BigInteger, default=0)
-    installation_and_direct_cost_fen: Mapped[int] = mapped_column(BigInteger, default=0)
+    purchase_price_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    noncreditable_tax_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    transport_and_handling_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    installation_and_direct_cost_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     cost_fen: Mapped[int] = mapped_column(BigInteger)
-    supplier_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     reimbursing_employee_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     settlement_method: Mapped[str] = mapped_column(String(40))
     payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -3156,15 +3157,22 @@ class FixedAsset(Base):
         ),
         CheckConstraint("expected_use_over_one_year IS TRUE", name="ck_fixed_asset_expected_use"),
         CheckConstraint(
-            "purchase_price_fen >= 0 AND noncreditable_tax_fen >= 0 "
-            "AND transport_and_handling_fen >= 0 "
-            "AND installation_and_direct_cost_fen >= 0",
+            "(purchase_price_fen IS NULL OR purchase_price_fen >= 0) "
+            "AND (noncreditable_tax_fen IS NULL OR noncreditable_tax_fen >= 0) "
+            "AND (transport_and_handling_fen IS NULL OR transport_and_handling_fen >= 0) "
+            "AND (installation_and_direct_cost_fen IS NULL "
+            "OR installation_and_direct_cost_fen >= 0)",
             name="ck_fixed_asset_cost_components_nonnegative",
         ),
         CheckConstraint("cost_fen > 0", name="ck_fixed_asset_cost_positive"),
         CheckConstraint(
-            "cost_fen = purchase_price_fen + noncreditable_tax_fen "
-            "+ transport_and_handling_fen + installation_and_direct_cost_fen",
+            "(purchase_price_fen IS NULL AND noncreditable_tax_fen IS NULL "
+            "AND transport_and_handling_fen IS NULL "
+            "AND installation_and_direct_cost_fen IS NULL) OR "
+            "cost_fen = COALESCE(purchase_price_fen, 0) "
+            "+ COALESCE(noncreditable_tax_fen, 0) "
+            "+ COALESCE(transport_and_handling_fen, 0) "
+            "+ COALESCE(installation_and_direct_cost_fen, 0)",
             name="ck_fixed_asset_cost_components_total",
         ),
         CheckConstraint(
@@ -3175,10 +3183,10 @@ class FixedAsset(Base):
         CheckConstraint(
             "(settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL "
             "AND reimbursing_employee_id IS NULL) OR "
-            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL "
+            "(settlement_method = 'payable' AND payment_date IS NULL "
             "AND reimbursing_employee_id IS NULL) OR "
             "(settlement_method = 'employee_payable' AND payment_date IS NULL "
-            "AND due_date IS NOT NULL AND reimbursing_employee_id IS NOT NULL) OR "
+            "AND reimbursing_employee_id IS NOT NULL) OR "
             "(settlement_method = 'allocated_employee_payables' "
             "AND payment_date IS NULL AND due_date IS NULL "
             "AND reimbursing_employee_id IS NULL)",
@@ -3198,8 +3206,8 @@ class FixedAssetCostSource(Base):
     source_key: Mapped[str] = mapped_column(String(200))
     employee_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     amount_fen: Mapped[int] = mapped_column(BigInteger)
-    due_date: Mapped[date] = mapped_column(Date)
-    description: Mapped[str] = mapped_column(String(500))
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
@@ -3566,18 +3574,18 @@ class IntangibleAsset(Base):
         Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
     asset_code: Mapped[str] = mapped_column(String(100))
-    name: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     category: Mapped[str] = mapped_column(String(50))
-    rights_description: Mapped[str] = mapped_column(Text)
+    rights_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     other_right_type_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     identifiability_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
-    supplier_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     acquisition_date: Mapped[date] = mapped_column(Date)
     available_for_use_date: Mapped[date] = mapped_column(Date)
     posting_date: Mapped[date] = mapped_column(Date)
-    purchase_price_fen: Mapped[int] = mapped_column(BigInteger)
-    noncreditable_tax_fen: Mapped[int] = mapped_column(BigInteger)
-    directly_attributable_cost_fen: Mapped[int] = mapped_column(BigInteger)
+    purchase_price_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    noncreditable_tax_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    directly_attributable_cost_fen: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     cost_fen: Mapped[int] = mapped_column(BigInteger)
     settlement_method: Mapped[str] = mapped_column(String(20))
     payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -3585,7 +3593,7 @@ class IntangibleAsset(Base):
     benefit_area: Mapped[str] = mapped_column(String(30))
     life_basis: Mapped[str] = mapped_column(String(30))
     useful_life_months: Mapped[int] = mapped_column(Integer)
-    life_basis_explanation: Mapped[str] = mapped_column(Text)
+    life_basis_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_available_for_use: Mapped[bool] = mapped_column()
     claims_creditable_input_vat: Mapped[bool] = mapped_column()
     acquisition_event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
@@ -3627,13 +3635,11 @@ class IntangibleAsset(Base):
             name="ck_intangible_asset_category",
         ),
         CheckConstraint(
-            "length(trim(asset_code)) > 0 AND length(trim(name)) > 0",
+            "length(trim(asset_code)) > 0",
             name="ck_intangible_asset_identity_text",
         ),
-        CheckConstraint("length(trim(rights_description)) > 0", name="ck_intangible_asset_rights"),
         CheckConstraint(
             "(category = 'other_identifiable_non_land' "
-            "AND length(trim(other_right_type_description)) > 0 "
             "AND length(trim(identifiability_basis)) > 0) OR "
             "(category <> 'other_identifiable_non_land' "
             "AND other_right_type_description IS NULL AND identifiability_basis IS NULL)",
@@ -3656,16 +3662,21 @@ class IntangibleAsset(Base):
             name="ck_intangible_asset_acquisition_month",
         ).ddl_if(dialect="sqlite"),
         CheckConstraint(
-            "purchase_price_fen >= 0 AND noncreditable_tax_fen >= 0 "
-            "AND directly_attributable_cost_fen >= 0 "
-            "AND purchase_price_fen <= 9223372036854775807 "
-            "AND noncreditable_tax_fen <= 9223372036854775807 "
-            "AND directly_attributable_cost_fen <= 9223372036854775807",
+            "(purchase_price_fen IS NULL OR (purchase_price_fen >= 0 "
+            "AND purchase_price_fen <= 9223372036854775807)) "
+            "AND (noncreditable_tax_fen IS NULL OR (noncreditable_tax_fen >= 0 "
+            "AND noncreditable_tax_fen <= 9223372036854775807)) "
+            "AND (directly_attributable_cost_fen IS NULL OR "
+            "(directly_attributable_cost_fen >= 0 "
+            "AND directly_attributable_cost_fen <= 9223372036854775807))",
             name="ck_intangible_asset_cost_components_nonnegative",
         ),
         CheckConstraint(
-            "cost_fen = purchase_price_fen + noncreditable_tax_fen "
-            "+ directly_attributable_cost_fen AND cost_fen > 0 "
+            "((purchase_price_fen IS NULL AND noncreditable_tax_fen IS NULL "
+            "AND directly_attributable_cost_fen IS NULL) OR "
+            "cost_fen = COALESCE(purchase_price_fen, 0) "
+            "+ COALESCE(noncreditable_tax_fen, 0) "
+            "+ COALESCE(directly_attributable_cost_fen, 0)) AND cost_fen > 0 "
             "AND cost_fen <= 9223372036854775807",
             name="ck_intangible_asset_cost_total",
         ),
@@ -3675,7 +3686,7 @@ class IntangibleAsset(Base):
         ),
         CheckConstraint(
             "(settlement_method = 'bank' AND payment_date IS NOT NULL AND due_date IS NULL) OR "
-            "(settlement_method = 'payable' AND payment_date IS NULL AND due_date IS NOT NULL) OR "
+            "(settlement_method = 'payable' AND payment_date IS NULL) OR "
             "(settlement_method = 'project_cost' AND payment_date IS NULL AND due_date IS NULL)",
             name="ck_intangible_asset_settlement_dates",
         ),
@@ -3695,10 +3706,6 @@ class IntangibleAsset(Base):
         CheckConstraint(
             "life_basis <> 'not_reliably_estimated' OR useful_life_months >= 120",
             name="ck_intangible_asset_unreliable_life_minimum",
-        ),
-        CheckConstraint(
-            "length(trim(life_basis_explanation)) > 0",
-            name="ck_intangible_asset_life_explanation",
         ),
         CheckConstraint(
             "length(trim(accounting_rule_version)) > 0 "
@@ -3887,7 +3894,7 @@ class Borrowing(Base):
         Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
     borrowing_code: Mapped[str] = mapped_column(String(100))
-    contract_name: Mapped[str] = mapped_column(String(200))
+    contract_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     lender_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     lender_is_licensed_financial_institution: Mapped[bool] = mapped_column()
     currency: Mapped[str] = mapped_column(String(3))
@@ -3897,17 +3904,17 @@ class Borrowing(Base):
     posting_date: Mapped[date] = mapped_column(Date)
     annual_rate_percent: Mapped[Decimal] = mapped_column(Numeric(9, 6))
     day_count_basis: Mapped[str] = mapped_column(String(20))
-    interest_due_dates: Mapped[list[str]] = mapped_column(JSON)
+    interest_due_dates: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     capitalization_applicable: Mapped[bool] = mapped_column()
-    purpose_description: Mapped[str] = mapped_column(Text)
+    purpose_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     single_drawdown: Mapped[bool] = mapped_column()
     fixed_rate: Mapped[bool] = mapped_column()
     simple_interest: Mapped[bool] = mapped_column()
     bullet_principal_at_maturity: Mapped[bool] = mapped_column()
-    allows_prepayment: Mapped[bool] = mapped_column()
-    allows_extension: Mapped[bool] = mapped_column()
-    has_penalty_interest: Mapped[bool] = mapped_column()
-    has_financing_fees: Mapped[bool] = mapped_column()
+    allows_prepayment: Mapped[bool | None] = mapped_column(nullable=True)
+    allows_extension: Mapped[bool | None] = mapped_column(nullable=True)
+    has_penalty_interest: Mapped[bool | None] = mapped_column(nullable=True)
+    has_financing_fees: Mapped[bool | None] = mapped_column(nullable=True)
     drawdown_event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     accounting_rule_version: Mapped[str] = mapped_column(String(50))
     accounting_rule_source_url: Mapped[str] = mapped_column(Text)
@@ -3942,7 +3949,7 @@ class Borrowing(Base):
         UniqueConstraint("org_id", "borrowing_code", name="uq_borrowing_org_code"),
         UniqueConstraint("component_id", name="uq_borrowing_component"),
         CheckConstraint(
-            "length(trim(borrowing_code)) > 0 AND length(trim(contract_name)) > 0",
+            "length(trim(borrowing_code)) > 0",
             name="ck_borrowing_identity_text",
         ),
         CheckConstraint(
@@ -3971,7 +3978,6 @@ class Borrowing(Base):
             "capitalization_applicable IS FALSE",
             name="ck_borrowing_no_capitalization",
         ),
-        CheckConstraint("length(trim(purpose_description)) > 0", name="ck_borrowing_purpose"),
         CheckConstraint(
             "length(trim(accounting_rule_version)) > 0 "
             "AND length(trim(accounting_rule_source_url)) > 0",
@@ -3979,9 +3985,7 @@ class Borrowing(Base):
         ),
         CheckConstraint(
             "single_drawdown IS TRUE AND fixed_rate IS TRUE AND simple_interest IS TRUE "
-            "AND bullet_principal_at_maturity IS TRUE AND allows_prepayment IS FALSE "
-            "AND allows_extension IS FALSE AND has_penalty_interest IS FALSE "
-            "AND has_financing_fees IS FALSE",
+            "AND bullet_principal_at_maturity IS TRUE",
             name="ck_borrowing_phase_one_terms",
         ),
     )
@@ -4784,9 +4788,13 @@ class TaxPeriod(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["org_id", "adjustment_event_id", "component_id"],
-            ["business_event_components.org_id", "business_event_components.event_id",
-             "business_event_components.id"],
-            name="fk_tax_period_component", ondelete="RESTRICT",
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_tax_period_component",
+            ondelete="RESTRICT",
         ),
         UniqueConstraint("component_id", name="uq_tax_period_component"),
         UniqueConstraint("org_id", "id", name="uq_tax_period_org_id"),
@@ -4853,7 +4861,7 @@ class LaborServicePerson(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     counterparty_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    person_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    person_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     relationship_start_date: Mapped[date] = mapped_column(Date, nullable=False)
     relationship_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -5003,7 +5011,7 @@ class LaborRemunerationBatch(Base):
     policy_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     posting_date: Mapped[date] = mapped_column(Date, nullable=False)
-    planned_payment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    planned_payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     business_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -5068,7 +5076,7 @@ class LaborRemunerationLine(Base):
     quick_deduction_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     withholding_tax_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
     net_payment_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    external_declaration_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    external_declaration_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     external_declaration_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
     calculation_trace: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
@@ -5118,15 +5126,9 @@ class LaborRemunerationLine(Base):
             name="ck_labor_line_calculation",
         ),
         CheckConstraint(
+            "external_declaration_status IS NULL OR "
             "external_declaration_status IN ('not_due','pending','confirmed')",
             name="ck_labor_line_declaration_status",
-        ),
-        CheckConstraint(
-            "(external_declaration_status = 'confirmed' "
-            "AND external_declaration_reference IS NOT NULL) OR "
-            "(external_declaration_status <> 'confirmed' "
-            "AND external_declaration_reference IS NULL)",
-            name="ck_labor_line_declaration_reference",
         ),
     )
 
@@ -5164,7 +5166,7 @@ class LaborExternalDeclarationConfirmation(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     labor_line_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     declaration_date: Mapped[date] = mapped_column(Date, nullable=False)
-    external_declaration_reference: Mapped[str] = mapped_column(String(200), nullable=False)
+    external_declaration_reference: Mapped[str | None] = mapped_column(String(200), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -5413,7 +5415,7 @@ class FinancialStatementClassification(Base):
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_references: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -5472,10 +5474,6 @@ class FinancialStatementClassification(Base):
             name="ck_financial_statement_classification_request",
         ),
         CheckConstraint(
-            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
-            name="ck_financial_statement_classification_note",
-        ),
-        CheckConstraint(
             "allocation_hash ~ '^[0-9a-f]{64}$' AND request_payload_hash ~ '^[0-9a-f]{64}$'",
             name="ck_financial_statement_classification_hash_lower_hex",
         ).ddl_if(dialect="postgresql"),
@@ -5493,7 +5491,7 @@ class FinancialStatementOpeningBalanceConfirmation(Base):
     treatment: Mapped[str] = mapped_column(String(40), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_references: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -5532,10 +5530,6 @@ class FinancialStatementOpeningBalanceConfirmation(Base):
             name="ck_fs_opening_confirmation_request",
         ),
         CheckConstraint(
-            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
-            name="ck_fs_opening_confirmation_note",
-        ),
-        CheckConstraint(
             "request_payload_hash ~ '^[0-9a-f]{64}$'",
             name="ck_fs_opening_confirmation_hash_lower_hex",
         ).ddl_if(dialect="postgresql"),
@@ -5559,7 +5553,7 @@ class EnterpriseIncomeTaxQuarterConfirmation(Base):
     request_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     calculation_payload: Mapped[str] = mapped_column(Text, nullable=False)
     calculation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    confirmation_note: Mapped[str] = mapped_column(Text, nullable=False)
+    confirmation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_references: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -5571,13 +5565,19 @@ class EnterpriseIncomeTaxQuarterConfirmation(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["org_id", "business_event_id", "component_id"],
-            ["business_event_components.org_id", "business_event_components.event_id",
-             "business_event_components.id"],
-            name="fk_cit_confirmation_component", ondelete="RESTRICT",
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_cit_confirmation_component",
+            ondelete="RESTRICT",
         ),
         UniqueConstraint("component_id", name="uq_cit_confirmation_component"),
-        CheckConstraint("(business_event_id IS NULL) = (component_id IS NULL)",
-                        name="ck_cit_confirmation_component_pair"),
+        CheckConstraint(
+            "(business_event_id IS NULL) = (component_id IS NULL)",
+            name="ck_cit_confirmation_component_pair",
+        ),
         ForeignKeyConstraint(
             ["org_id"],
             ["organizations.id"],
@@ -5628,10 +5628,6 @@ class EnterpriseIncomeTaxQuarterConfirmation(Base):
             "AND length(request_payload_hash) = 64 "
             "AND length(calculation_payload) > 0 AND length(calculation_hash) = 64",
             name="ck_enterprise_income_tax_confirmation_payload",
-        ),
-        CheckConstraint(
-            "length(trim(confirmation_note)) BETWEEN 1 AND 2000",
-            name="ck_enterprise_income_tax_confirmation_note",
         ),
         CheckConstraint(
             "request_payload_hash ~ '^[0-9a-f]{64}$' AND calculation_hash ~ '^[0-9a-f]{64}$'",
@@ -6623,8 +6619,8 @@ class OpenItem(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
-    counterparty_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("counterparties.id", ondelete="RESTRICT"), index=True
+    counterparty_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("counterparties.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     source_event_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("business_events.id", ondelete="RESTRICT")
@@ -6682,8 +6678,7 @@ class OpenItem(Base):
         ),
         CheckConstraint(
             "(payable_category IS NOT NULL AND payable_category = 'pass_through' "
-            "AND pass_through_key IS NOT NULL "
-            "AND pass_through_beneficiary_id IS NOT NULL) OR "
+            "AND pass_through_key IS NOT NULL) OR "
             "((payable_category IS NULL OR payable_category <> 'pass_through') "
             "AND pass_through_key IS NULL AND pass_through_beneficiary_id IS NULL)",
             name="ck_open_item_pass_through_metadata",
@@ -6726,7 +6721,7 @@ class OpenItem(Base):
             "payable_category NOT IN "
             "('employer_social','withheld_employee_social','employer_housing',"
             "'withheld_employee_housing') OR "
-            "(payable_agency_code IS NOT NULL AND insurance_kind IS NOT NULL)",
+            "insurance_kind IS NOT NULL",
             name="ck_open_item_statutory_payable_target",
         ),
     )
@@ -6963,13 +6958,19 @@ class EnterpriseIncomeTaxResult(Base):
     __table_args__ = (
         ForeignKeyConstraint(
             ["org_id", "business_event_id", "component_id"],
-            ["business_event_components.org_id", "business_event_components.event_id",
-             "business_event_components.id"],
-            name="fk_cit_result_component", ondelete="RESTRICT",
+            [
+                "business_event_components.org_id",
+                "business_event_components.event_id",
+                "business_event_components.id",
+            ],
+            name="fk_cit_result_component",
+            ondelete="RESTRICT",
         ),
         UniqueConstraint("component_id", name="uq_cit_result_component"),
-        CheckConstraint("(business_event_id IS NULL) = (component_id IS NULL)",
-                        name="ck_cit_result_component_pair"),
+        CheckConstraint(
+            "(business_event_id IS NULL) = (component_id IS NULL)",
+            name="ck_cit_result_component_pair",
+        ),
         UniqueConstraint("org_id", "id", name="uq_cit_result_org_id"),
         UniqueConstraint("org_id", "idempotency_key", name="uq_cit_result_key"),
         UniqueConstraint(
@@ -7332,6 +7333,7 @@ Index(
     PayrollEventLink.org_id,
     PayrollEventLink.component_id,
     PayrollEventLink.link_kind,
+    PayrollEventLink.payroll_batch_id,
     PayrollEventLink.source_payment_event_id,
     PayrollEventLink.source_open_item_id,
     unique=True,
@@ -7380,3 +7382,67 @@ Index(
     PayrollBatch.payroll_period,
     PayrollBatch.status,
 )
+
+
+class BusinessMetadataVersion(Base):
+    """Append-only management history, bound to the stable component key."""
+
+    __tablename__ = "business_metadata_versions"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    component_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    execution_attribution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    metadata_values: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(350), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "execution_attribution_id"],
+            ["execution_attributions.org_id", "execution_attributions.id"],
+            ondelete="RESTRICT",
+            name="fk_business_metadata_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "event_id"],
+            ["business_events.org_id", "business_events.id"],
+            ondelete="RESTRICT",
+            name="fk_business_metadata_event",
+        ),
+        UniqueConstraint(
+            "event_id", "component_key", "version", name="uq_business_metadata_version"
+        ),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_business_metadata_idempotency"),
+        CheckConstraint("version > 0", name="ck_business_metadata_version"),
+        CheckConstraint(
+            "length(trim(component_key)) > 0 AND length(trim(idempotency_key)) > 0",
+            name="ck_business_metadata_keys",
+        ),
+        CheckConstraint("length(request_hash) = 64", name="ck_business_metadata_hash"),
+        CheckConstraint(
+            "request_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_business_metadata_hash_lower_hex",
+        ).ddl_if(dialect="postgresql"),
+        Index(
+            "ix_business_metadata_event_component",
+            "org_id",
+            "event_id",
+            "component_key",
+            "version",
+        ),
+    )
+
+
+_ATTRIBUTED_ROOT_TYPES += (BusinessMetadataVersion,)
+
+
+@event.listens_for(Session, "before_flush")
+def _enforce_business_metadata_append_only(session, _flush_context, _instances):
+    for row in [*session.dirty, *session.deleted]:
+        if isinstance(row, BusinessMetadataVersion) and (
+            row in session.deleted or session.is_modified(row)
+        ):
+            raise ValueError("BUSINESS_METADATA_APPEND_ONLY")

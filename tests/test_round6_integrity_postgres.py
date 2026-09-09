@@ -820,10 +820,8 @@ def test_r6_005_cross_period_statutory_components_commit_with_scoped_sources(
                         "kind": "payable_settlement",
                         "business_date": "2026-04-06",
                         "payment_date": "2026-04-06",
-                        "counterparty": {"id": item.counterparty_id},
-                        "allocations": [
-                            {"open_item_id": item.id, "amount_fen": amount}
-                        ],
+                        "allocations": [{"open_item_id": item.id, "amount_fen": amount}],
+                        "metadata": {"counterparty": {"id": item.counterparty_id}},
                     }
                     for index, (item, amount) in enumerate(zip(source_items, amounts, strict=True))
                 ],
@@ -834,9 +832,7 @@ def test_r6_005_cross_period_statutory_components_commit_with_scoped_sources(
                         "direction": "payment",
                         "payment_date": "2026-04-06",
                         "amount_fen": amount,
-                        "allocations": [
-                            {"component_key": f"tax-{index}", "amount_fen": amount}
-                        ],
+                        "allocations": [{"component_key": f"tax-{index}", "amount_fen": amount}],
                         "bank_transaction_references": [{"id": bank.id}],
                     }
                     for index, (bank, amount) in enumerate(zip(banks, amounts, strict=True))

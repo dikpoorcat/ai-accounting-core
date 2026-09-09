@@ -35,19 +35,10 @@ pytestmark = [pytest.mark.postgres, pytest.mark.postgres_current]
 
 def _acquisition_facts(*, ready: bool) -> dict:
     facts = {
-        "asset_code": "FA-LOCAL-001",
-        "asset_name": "延迟登记设备",
         "category": "electronic",
         "expected_use_over_one_year": True,
-        "cost_components": {
-            "purchase_price_fen": 130_000,
-            "noncreditable_tax_fen": 0,
-            "transport_and_handling_fen": 0,
-            "installation_and_direct_cost_fen": 0,
-        },
-        "supplier": {"kind": "supplier", "name": "延迟登记设备供应商"},
+        "cost_fen": 130_000,
         "settlement_method": "payable",
-        "due_date": "2026-03-31",
         "claims_creditable_input_vat": False,
     }
     if ready:
@@ -58,6 +49,15 @@ def _acquisition_facts(*, ready: bool) -> dict:
             "benefit_area": "management",
         }
     return facts
+
+
+def _acquisition_metadata() -> dict:
+    return {
+        "asset_code": "FA-LOCAL-001",
+        "asset_name": "延迟登记设备",
+        "counterparty": {"kind": "supplier", "name": "延迟登记设备供应商"},
+        "due_date": "2026-03-31",
+    }
 
 
 def _ready_acquisition_with_depreciation(org_id, evidence_id, *, key):
@@ -77,8 +77,8 @@ def _ready_acquisition_with_depreciation(org_id, evidence_id, *, key):
                         "asset_id": None,
                         "depreciation_period": "2026-02",
                         "calculation_hash": None,
-                        "confirmation_note": "确认首个应计折旧月",
                     },
+                    "metadata": {"confirmation_note": "确认首个应计折旧月"},
                     "evidence_references": [evidence_id],
                 },
                 {
@@ -86,6 +86,7 @@ def _ready_acquisition_with_depreciation(org_id, evidence_id, *, key):
                     "kind": "fixed_asset_acquisition",
                     "business_date": "2026-01-15",
                     "facts": _acquisition_facts(ready=True),
+                    "metadata": _acquisition_metadata(),
                     "evidence_references": [evidence_id],
                 },
             ],
@@ -109,8 +110,8 @@ def _activation_with_depreciation_batch(org_id, evidence_id, asset_id, *, key):
                     "facts": {
                         "depreciation_period": "2026-02",
                         "calculation_hash": None,
-                        "confirmation_note": "确认单项资产首月批量折旧",
                     },
+                    "metadata": {"confirmation_note": "确认单项资产首月批量折旧"},
                     "evidence_references": [evidence_id],
                 },
                 {
@@ -141,17 +142,13 @@ def _component_ids(session, event_id):
     return {
         component.key: component.id
         for component in session.scalars(
-            select(BusinessEventComponent).where(
-                BusinessEventComponent.event_id == event_id
-            )
+            select(BusinessEventComponent).where(BusinessEventComponent.event_id == event_id)
         )
     }
 
 
 def _source_graph_ids(session, event_id):
-    asset = session.scalar(
-        select(FixedAsset).where(FixedAsset.acquisition_event_id == event_id)
-    )
+    asset = session.scalar(select(FixedAsset).where(FixedAsset.acquisition_event_id == event_id))
     activation = session.scalar(
         select(FixedAssetActivation).where(FixedAssetActivation.event_id == event_id)
     )
@@ -221,13 +218,9 @@ def test_ready_acquisition_and_first_depreciation_amend_then_delete_atomically()
             replacement_payload["idempotency_key"] = "local-ready-asset-replacement"
             replacement_payload["description"] = "调整设备成本并重算首月折旧"
             acquisition_payload = next(
-                item
-                for item in replacement_payload["components"]
-                if item["key"] == "acquisition"
+                item for item in replacement_payload["components"] if item["key"] == "acquisition"
             )
-            acquisition_payload["facts"]["cost_components"][
-                "purchase_price_fen"
-            ] = 143_000
+            acquisition_payload["facts"]["cost_fen"] = 143_000
             replacement = RecordEventRequest.model_validate(replacement_payload)
             with authority.attributed_call(session, tool_name="finance_amend_event"):
                 amended = EventAmendmentService(session).amend(
@@ -268,9 +261,7 @@ def test_ready_acquisition_and_first_depreciation_amend_then_delete_atomically()
                 (OpenItem, OpenItem.source_event_id == posted.event_id),
                 (Voucher, Voucher.event_id == posted.event_id),
             ):
-                assert session.scalar(
-                    select(func.count()).select_from(model).where(predicate)
-                ) == 0
+                assert session.scalar(select(func.count()).select_from(model).where(predicate)) == 0
 
 
 def test_local_activation_single_asset_batch_reverse_waits_for_external_depreciation():
@@ -291,9 +282,7 @@ def test_local_activation_single_asset_batch_reverse_waits_for_external_deprecia
                     **_acquisition_facts(ready=False),
                 }
             )
-            with authority.attributed_call(
-                session, tool_name="finance_acquire_fixed_asset"
-            ):
+            with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
                 acquired = FixedAssetService(session).acquire_fixed_asset(acquisition)
             assert acquired.status == "posted", acquired
             session.commit()
@@ -306,26 +295,20 @@ def test_local_activation_single_asset_batch_reverse_waits_for_external_deprecia
             )
             reviewed, preview = _preview_reviewed(session, authority, request)
             batch_preview = next(
-                item
-                for item in preview.data["components"]
-                if item["key"] == "depreciation-batch"
+                item for item in preview.data["components"] if item["key"] == "depreciation-batch"
             )
             assert batch_preview["derived"]["asset_count"] == 1
-            assert session.scalar(
-                select(func.count()).select_from(FixedAssetActivation)
-            ) == 0
-            assert session.scalar(
-                select(func.count()).select_from(FixedAssetDepreciationBatch)
-            ) == 0
+            assert session.scalar(select(func.count()).select_from(FixedAssetActivation)) == 0
+            assert (
+                session.scalar(select(func.count()).select_from(FixedAssetDepreciationBatch)) == 0
+            )
 
             with authority.attributed_call(session, tool_name="finance_record_event"):
                 posted = ComponentService(session).record(reviewed)
             assert posted.status == "posted", posted
             session.commit()
             source_activation = session.scalar(
-                select(FixedAssetActivation).where(
-                    FixedAssetActivation.event_id == posted.event_id
-                )
+                select(FixedAssetActivation).where(FixedAssetActivation.event_id == posted.event_id)
             )
             source_batch = session.scalar(
                 select(FixedAssetDepreciationBatch).where(
@@ -441,12 +424,15 @@ def test_postgres_rejects_forged_local_activation_proof_atomically(monkeypatch):
                     session.commit()
                 session.rollback()
 
-            assert session.scalar(
-                select(BusinessEvent.id).where(
-                    BusinessEvent.org_id == org_id,
-                    BusinessEvent.idempotency_key == "forged-local-asset-proof",
+            assert (
+                session.scalar(
+                    select(BusinessEvent.id).where(
+                        BusinessEvent.org_id == org_id,
+                        BusinessEvent.idempotency_key == "forged-local-asset-proof",
+                    )
                 )
-            ) is None
+                is None
+            )
             for model in (
                 BusinessEventComponent,
                 FixedAsset,

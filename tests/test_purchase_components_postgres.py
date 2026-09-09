@@ -206,7 +206,6 @@ def test_purchase_sources_replay_with_new_ids_in_empty_postgres(monkeypatch):
                                 "supplier_advance_application",
                                 "apply",
                                 "2022-11-30",
-                                counterparty=PARTY,
                                 advances=[
                                     {
                                         "open_item_id": item(
@@ -218,6 +217,7 @@ def test_purchase_sources_replay_with_new_ids_in_empty_postgres(monkeypatch):
                                 allocations=[
                                     {"source_component_key": "last", "amount_fen": 800000}
                                 ],
+                                metadata={"counterparty": PARTY},
                             ),
                         ],
                     ),

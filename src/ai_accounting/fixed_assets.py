@@ -33,11 +33,11 @@ class FixedAssetCalculationError(ValueError):
 
 @dataclass(frozen=True)
 class AcquisitionCostResult:
-    purchase_price_fen: int
-    noncreditable_tax_fen: int
-    transport_and_handling_fen: int
-    installation_and_direct_cost_fen: int
     cost_fen: int
+    purchase_price_fen: int | None
+    noncreditable_tax_fen: int | None
+    transport_and_handling_fen: int | None
+    installation_and_direct_cost_fen: int | None
 
 
 @dataclass(frozen=True)
@@ -98,29 +98,32 @@ def _require_fen(value: object, field: str, *, positive: bool = False) -> int:
 
 def calculate_acquisition_cost(
     *,
-    purchase_price_fen: int,
-    noncreditable_tax_fen: int,
-    transport_and_handling_fen: int,
-    installation_and_direct_cost_fen: int,
+    cost_fen: int,
+    purchase_price_fen: int | None = None,
+    noncreditable_tax_fen: int | None = None,
+    transport_and_handling_fen: int | None = None,
+    installation_and_direct_cost_fen: int | None = None,
 ) -> AcquisitionCostResult:
-    """Add the only capitalisable Phase-1 cost components in integer fen."""
+    """Validate an explicit total and any available capitalisable breakdown."""
 
-    components = {
-        "purchase_price_fen": _require_fen(purchase_price_fen, "purchase_price_fen"),
-        "noncreditable_tax_fen": _require_fen(noncreditable_tax_fen, "noncreditable_tax_fen"),
-        "transport_and_handling_fen": _require_fen(
-            transport_and_handling_fen, "transport_and_handling_fen"
-        ),
-        "installation_and_direct_cost_fen": _require_fen(
-            installation_and_direct_cost_fen, "installation_and_direct_cost_fen"
-        ),
+    total = _require_fen(cost_fen, "cost_fen", positive=True)
+    supplied = {
+        "purchase_price_fen": purchase_price_fen,
+        "noncreditable_tax_fen": noncreditable_tax_fen,
+        "transport_and_handling_fen": transport_and_handling_fen,
+        "installation_and_direct_cost_fen": installation_and_direct_cost_fen,
     }
-    cost_fen = sum(components.values())
-    if cost_fen <= 0:
+    components = {
+        name: None if value is None else _require_fen(value, name)
+        for name, value in supplied.items()
+    }
+    stated = [value for value in components.values() if value is not None]
+    if stated and sum(stated) != total:
         raise FixedAssetCalculationError(
-            "FIXED_ASSET_COST_MUST_BE_POSITIVE", "cost_fen must be positive"
+            "FIXED_ASSET_COST_COMPONENTS_TOTAL_MISMATCH",
+            "provided cost components must sum exactly to cost_fen",
         )
-    return AcquisitionCostResult(**components, cost_fen=cost_fen)
+    return AcquisitionCostResult(cost_fen=total, **components)
 
 
 def calculate_straight_line_depreciation(

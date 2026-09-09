@@ -1,8 +1,15 @@
 # 组合式记账
 
 `finance_record_event` 的一笔请求由公司、记账日期、幂等键、`components` 和 `funds`
-组成。单项业务也使用此协议。业务组件保留稳定 `key`、类型化事实、业务日期、往来方、
+组成。单项业务也使用此协议。业务组件保留稳定 `key`、类型化事实、必要业务日期、
 证据及来源；资金项单独描述真实收付、账户、日期和分配。所有金额都是整数分。
+协议版本为 `business-components-v2`。普通往来对象不必填，客户／供应商标签不决定业务分类；
+名称、用途、编号、普通到期日和说明放入类型化 `metadata`，不生成虚构对象。
+
+资金项唯一确定的收付款日期直接复用；履约日期有独立意义时仍单独保留。同一组件不能
+用多个不同资金日期推断一个发生日期，应按实际收付拆为组件后在同笔组合。
+幂等校验使用解析后的核算事实：等价的稳定来源与 UUID 引用、显式或复用的同一日期，
+以及管理资料或可选摘要的变化，不会生成第二笔业务。重试不会更新管理资料，后补使用专用入口。
 
 用 `finance_get_event_schema` 发现组件；传入 `component_type` 可查看对应模型。
 工资、劳务、折旧、摊销、借款利息和税务的计算与预览确认保留各自的业务规则，正式凭证
@@ -34,7 +41,8 @@
 来源顺序或首月折旧计算。
 
 历史社保公积金补缴使用 `payroll_contribution_supplement`，保留所属员工、缴费所属期、
-核定单、具体险种和个人部分承担方式；其来源可指向既有工资组件或同笔工资计提。
+具体险种和个人部分承担方式；核定单编号、说明和机构名称是可选管理信息。
+其来源可指向既有工资组件或同笔工资计提；明确的补缴事实不重复要求历史工资编号。
 同笔支付用 `employer_social.<险种>`、`withheld_employee_social.<险种>` 等开放项键引用
 补缴义务。不同政策、月份或收款机构本身不构成整笔组合限制，各来源仍须满足自己的
 政策、日期、往来方和余额条件。
@@ -58,14 +66,17 @@
 ## 来源、资金与原子性
 
 - 已有往来用 `open_item_id` 引用；同笔新建的往来用 `source_component_key` 和
-  `source_open_item_key` 引用。其他业务来源使用稳定组件引用。
+  `source_open_item_key` 引用。跨事件也可用原入账 `source_event_key`（幂等键）、
+  `source_component_key`、`source_open_item_key`；修改后原入账键保持稳定。
+  其他业务来源使用 `event_key`＋`component_key` 或 `component_id`。
 - `depends_on` 表达明确的同笔依赖；未知键、循环依赖、同一组件内重复引用同一核销来源和
   余额不足都会拒绝。同一往来可分别由抵扣、付款等组件处理，整笔合计不能超过可用余额。
 - 每个资金项的分配合计必须等于真实收付金额，整笔计划也必须借贷平衡。
 - 一项核销涉及不同现金流分类、且分配到多个资金账户时，用资金分配中的
   `source_allocations` 明确各账户承担哪些来源金额；内核不按比例猜分配。
 - 银行引用可以暂缺；一旦提供，流水必须来自受控导入，且账户、方向、日期、金额完全
-  匹配。每条流水在整笔事务中只匹配一次。
+  匹配。每条流水在整笔事务中只匹配一次。已明确有效资金账户即可记账，对账范围确认
+  服务对账与关账完整性，不是普通入账门禁。
 - 业务规则允许的双向资金，如资产处置回款及清理费，分别核对真实收入和支出。
 
 组件先生成内部计划，包括分录、开放项、核销、领域记录和现金流归属。统一提交器锁定
@@ -92,3 +103,40 @@
 业务库从空库基线 `0001_business_baseline_v3` 初始化，目录库仍为独立的
 `0001_catalog_baseline_v2`。本次基线替换后，结构变化继续使用前向迁移。
 旧试用库只读保留，重录流程及交付状态见 [空库回放手册](empty-database-replay.md)。
+
+## 管理资料与会计事实
+
+代收最小事实是金额、实际收款日期、稳定组件键和证据。例如：
+
+```json
+{
+  "org_id": "公司UUID",
+  "idempotency_key": "receipt-001",
+  "posting_date": "2026-03-05",
+  "evidence_references": ["证据UUID"],
+  "components": [{"key": "collection", "kind": "pass_through", "amount_fen": 100000}],
+  "funds": [{"key": "money", "account_code": "1001", "direction": "receipt",
+    "payment_date": "2026-03-05", "amount_fen": 100000,
+    "allocations": [{"component_key": "collection", "amount_fen": 100000}]}]
+}
+```
+
+后续付款的 `payable_settlement.allocations` 可以直接使用
+`{"source_event_key":"receipt-001","source_component_key":"collection","amount_fen":40000}`。
+无需再填对象、科目或受益人。只有明确形成个人垫付债务的业务才使用 `payer`、垫付日期及依据。
+
+`finance_update_business_metadata` 接收 `org_id`、`source={event_key,component_key}`、
+`metadata`、`expected_version`、`idempotency_key`。例如 `metadata={"purpose":"后补用途"}`。
+省略字段保留原值，显式 `null` 清除管理值。首次无资料的版本为 0；每次更新追加一个版本，
+同幂等键重试返回原结果，过期版本拒绝。对象 ID 必须属于同公司。
+
+管理资料可在关账后后补。更新不会重新计算会计事实、税额、现金流或子账，不改变凭证、
+账务哈希和关账快照。当前组件的 `management` 与原 `facts` 分开查询；
+`finance_get_event.event.management_history` 还保留整笔修改或删除前的稳定组件资料。
+普通对象后补只改变管理展示；债务转移、员工归属及计税条件变化必须用业务更正。
+可选凭证摘要是原凭证的展示快照，不参与组件计算哈希；后补说明使用管理资料入口。
+整笔修改、删除和冲正的审计说明可省略；来源、预期事实版本、期间和依赖校验仍保留。
+关账计算使用当前会计事实及分录金额；管理说明与更正命令的审计摘要只保留在展示记录中。
+
+数据库通过前向迁移 `0003_essential_accounting` 安装这些约束，不回写正式基线。
+逐规则处理和验证范围见 [必要事实审查清单](essential-accounting-review.md)。

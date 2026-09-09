@@ -33,8 +33,8 @@ def _labor_accrual(key, batch, evidence_id):
         "business_date": "2026-03-05",
         "batch_id": batch.batch_id,
         "calculation_hash": batch.calculation_hash,
-        "confirmation_note": f"确认重复劳务批次 {key}",
         "evidence_references": [evidence_id],
+        "metadata": {"confirmation_note": f"确认重复劳务批次 {key}"},
     }
 
 
@@ -47,8 +47,10 @@ def _labor_settlement(key, source, line):
         "source_open_item_key": str(line.id),
         "amount_fen": line.gross_remuneration_fen,
         "settlement_mode": "net_after_withholding",
-        "withholding_agency_code": "TAX-LABOR-REPEATED",
-        "withholding_agency_name": "重复劳务组件测试税务局",
+        "metadata": {
+            "withholding_agency_code": "TAX-LABOR-REPEATED",
+            "withholding_agency_name": "重复劳务组件测试税务局",
+        },
     }
     if isinstance(source, str):
         facts["source_component_key"] = source
@@ -111,8 +113,7 @@ def test_repeated_labor_components_keep_exact_source_ownership(same_event):
                 batches = {"labor-one": first_batch, "labor-two": second_batch}
                 lines = {"labor-one": first_line, "labor-two": second_line}
                 accruals = [
-                    _labor_accrual(key, batch, evidence_id)
-                    for key, batch in batches.items()
+                    _labor_accrual(key, batch, evidence_id) for key, batch in batches.items()
                 ]
 
                 if same_event:
@@ -198,8 +199,7 @@ def test_repeated_labor_components_keep_exact_source_ownership(same_event):
                 )
                 settlement = session.scalar(
                     select(Settlement).where(
-                        Settlement.payment_component_id
-                        == payment_components[f"pay-{key}"].id
+                        Settlement.payment_component_id == payment_components[f"pay-{key}"].id
                     )
                 )
                 assert source_item.status == "settled"

@@ -51,6 +51,12 @@ from .borrowing_schemas import (
     DrawBorrowingRequest,
     PreviewBorrowingInterestRequest,
 )
+from .business_metadata import (
+    UpdateBusinessMetadataRequest,
+    event_metadata_projection,
+    metadata_projection,
+    update_business_metadata,
+)
 from .close_backup import CloseBackupError, CloseBackupRuntime, CloseBackupService
 from .company_router import CompanyRoutingError, assert_runtime_role
 from .company_router import router as company_router
@@ -369,7 +375,8 @@ def _secure_registered_data_tools() -> None:
 
     for tool in mcp._tool_manager.list_tools():
         if tool.name in {
-            "finance_get_event_schema", "finance_request_owner_security_window",
+            "finance_get_event_schema",
+            "finance_request_owner_security_window",
             "finance_get_owner_security_window_status",
         }:
             continue
@@ -1011,6 +1018,16 @@ def finance_confirm_organization_establishment(
         return _invalid(exc)
 
 
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_update_business_metadata(request: UpdateBusinessMetadataRequest) -> dict[str, Any]:
+    """按稳定业务引用后补管理资料，保留历史，不重算凭证；已关账业务同样适用。"""
+    try:
+        with SessionLocal.begin() as session:
+            return update_business_metadata(session, request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
 @mcp.tool(annotations=READ_ONLY)
 def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any]:
     """发现可复用业务组件、资金分配及领域计算工具。"""
@@ -1027,7 +1044,7 @@ def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any
         selected = {"$ref": reference, "$defs": schema["$defs"]}
     return {
         "status": "ok",
-        "protocol_version": "business-components-v1",
+        "protocol_version": "business-components-v2",
         "component_types": COMPONENT_TYPES,
         "selected_component_type": component_type,
         "component_schema": selected,
@@ -1056,6 +1073,9 @@ def finance_get_event_schema(component_type: str | None = None) -> dict[str, Any
         "amend_event_schema": mcp._tool_manager.get_tool("finance_amend_event").parameters,
         "delete_event_schema": mcp._tool_manager.get_tool("finance_delete_event").parameters,
         "reverse_event_schema": mcp._tool_manager.get_tool("finance_reverse_event").parameters,
+        "update_metadata_schema": mcp._tool_manager.get_tool(
+            "finance_update_business_metadata"
+        ).parameters,
         "agent_operating_protocol": agent_operating_protocol(),
         "rules": {
             "amount_unit": "fen",
@@ -1771,7 +1791,7 @@ def finance_query_context(
             "open_items": [
                 {
                     "id": str(item.id),
-                    "counterparty_id": str(item.counterparty_id),
+                    "counterparty_id": str(item.counterparty_id) if item.counterparty_id else None,
                     "type": item.item_type,
                     "original_amount_fen": item.original_amount_fen,
                     "settled_amount_fen": item.settled_amount_fen,
@@ -1951,8 +1971,11 @@ def finance_request_accounting_period_close_approval_window(
         except IdentityError as exc:
             return _rejected_identity(exc.code)
         if isinstance(window, dict):
-            return {**window, "period_id": str(request.period_id),
-                    "calculation_hash": request.calculation_hash}
+            return {
+                **window,
+                "period_id": str(request.period_id),
+                "calculation_hash": request.calculation_hash,
+            }
         if not window:
             return _rejected_identity("IDENTITY_CLOSE_APPROVAL_WINDOW_UNAVAILABLE")
         return {
@@ -2605,6 +2628,7 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                 "event_status": event.status,
                 "description": event.description,
                 "facts": event.facts,
+                "management_history": event_metadata_projection(session, event.org_id, event.id),
                 "business_date": event.business_date.isoformat(),
                 "fulfillment_date": (
                     event.fulfillment_date.isoformat() if event.fulfillment_date else None
@@ -2628,6 +2652,13 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                     "kind": component.kind,
                     "facts": component.facts,
                     "derived": component.derived,
+                    "business_reference": {
+                        "event_key": event.idempotency_key,
+                        "component_key": component.key,
+                    },
+                    "management": metadata_projection(
+                        session, event.org_id, event.id, component.key
+                    ),
                     **(
                         {"project_cost_balance": cost_balances[str(component.id)]}
                         if str(component.id) in cost_balances

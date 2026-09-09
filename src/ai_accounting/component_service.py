@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .business_metadata import metadata_projection, save_initial_metadata, validate_metadata
 from .coa import (
     account_business_class,
     get_account_by_code,
@@ -52,7 +53,7 @@ from .schemas import FinanceResult, ResultStatus
 from .tax import active_tax_rule, calculate_tax_period, split_tax_inclusive
 from .tax_accounts import deferred_vat_transfer_entries, tax_settlement_entries
 
-RULE_VERSION = "business-components-v1"
+RULE_VERSION = "business-components-v2"
 EXPENSE_CLASSES = frozenset(
     {
         "service_cost",
@@ -105,6 +106,111 @@ class ComponentService:
         self.request: RecordEventRequest
         self.previewing = False
 
+    def prepare_request(self, request):
+        """Resolve explicit business references and reuse authoritative fund dates."""
+        from pydantic import BaseModel
+
+        from .component_schemas import ObligationAllocation, SourceReference
+        from .schemas import SalaryActualDeductionAllocation, SalaryWithholdingAllocation
+
+        obligation_types = (
+            ObligationAllocation,
+            SalaryActualDeductionAllocation,
+            SalaryWithholdingAllocation,
+        )
+
+        def resolve(value):
+            if isinstance(value, (SourceReference, *obligation_types)):
+                obligation = isinstance(value, obligation_types)
+                event_key = value.source_event_key if obligation else value.event_key
+                if event_key:
+                    component_key = (
+                        value.source_component_key if obligation else value.component_key
+                    )
+                    source = self.session.scalar(
+                        select(BusinessEventComponent)
+                        .join(
+                            BusinessEvent,
+                            BusinessEvent.id == BusinessEventComponent.event_id,
+                        )
+                        .where(
+                            BusinessEvent.org_id == request.org_id,
+                            BusinessEvent.idempotency_key == event_key,
+                            BusinessEventComponent.key == component_key,
+                        )
+                    )
+                    if source is None:
+                        raise ValueError("SOURCE_BUSINESS_REFERENCE_NOT_FOUND")
+                    if obligation:
+                        item = self.session.scalar(
+                            select(OpenItem).where(
+                                OpenItem.source_component_id == source.id,
+                                OpenItem.component_key == value.source_open_item_key,
+                            )
+                        )
+                        if item is None:
+                            raise ValueError("SOURCE_OBLIGATION_REFERENCE_NOT_FOUND")
+                        return value.model_copy(
+                            update={
+                                "open_item_id": item.id,
+                                "source_component_key": None,
+                                "source_event_key": None,
+                                "source_open_item_key": "primary",
+                            }
+                        )
+                    return value.model_copy(
+                        update={"component_id": source.id, "component_key": None, "event_key": None}
+                    )
+                if obligation and value.open_item_id is not None:
+                    # Once the UUID uniquely identifies the obligation, the
+                    # business-key selector is redundant in the normalized facts.
+                    return value.model_copy(update={"source_open_item_key": "primary"})
+            if isinstance(value, BaseModel):
+                return value.model_copy(
+                    update={
+                        name: resolve(getattr(value, name))
+                        for name in type(value).model_fields
+                        if name != "metadata"
+                    }
+                )
+            if isinstance(value, list):
+                return [resolve(item) for item in value]
+            return value
+
+        resolved = resolve(request)
+        for c in resolved.components:
+            validate_metadata(self.session, request.org_id, c.metadata)
+            dates = {
+                f.payment_date
+                for f in resolved.funds
+                if any(a.component_key == c.key for a in f.allocations)
+            }
+            if len(dates) > 1:
+                raise ValueError("COMPONENT_MULTIPLE_PAYMENT_DATES_REQUIRES_SPLIT")
+            if c.payment_date is None and len(dates) == 1:
+                c.payment_date = next(iter(dates))
+            if c.business_date is None:
+                if getattr(c, "fulfillment_date", None):
+                    c.business_date = c.fulfillment_date
+                elif dates:
+                    c.business_date = next(iter(dates))
+                elif c.kind in {
+                    "payable_settlement",
+                    "receivable_settlement",
+                    "supplier_advance_application",
+                    "project_cost_expense",
+                }:
+                    c.business_date = request.posting_date
+                else:
+                    raise MissingFacts([f"components.{c.key}.business_date"])
+        return resolved
+
+    @staticmethod
+    def accounting_request(request):
+        return request.model_dump(
+            mode="json", exclude={"description": True, "components": {"__all__": {"metadata"}}}
+        )
+
     def record(self, request: RecordEventRequest) -> FinanceResult:
         self.previewing = False
         self.request = request
@@ -120,7 +226,9 @@ class ComponentService:
                 )
                 if organization is None:
                     raise ValueError("ORGANIZATION_NOT_FOUND")
-                digest = payload_hash(request.model_dump(mode="json"))
+                request = self.prepare_request(request)
+                self.request = request
+                digest = payload_hash(self.accounting_request(request))
                 existing = self.session.scalar(
                     select(BusinessEvent).where(
                         BusinessEvent.org_id == request.org_id,
@@ -150,7 +258,7 @@ class ComponentService:
                     event_type="composite",
                     status="draft",
                     description=request.description,
-                    facts=request.model_dump(mode="json"),
+                    facts=self.accounting_request(request),
                     business_date=min(c.business_date for c in request.components),
                     posting_date=request.posting_date,
                     rule_version=RULE_VERSION,
@@ -169,6 +277,9 @@ class ComponentService:
                     posting_date=request.posting_date,
                     description=request.description,
                 )
+                for component in request.components:
+                    save_initial_metadata(self.session, event, component)
+                self.session.flush()
                 self.session.expire(event, ["vouchers"])
                 return self.result(event)
         except MissingFacts as exc:
@@ -193,6 +304,8 @@ class ComponentService:
             organization = self.session.get(Organization, request.org_id)
             if organization is None:
                 raise ValueError("ORGANIZATION_NOT_FOUND")
+            request = self.prepare_request(request)
+            self.request = request
             if error := posting_period_error_code(
                 self.session, request.org_id, request.posting_date
             ):
@@ -209,11 +322,11 @@ class ComponentService:
                 self.session,
                 org_id=request.org_id,
                 idempotency_key=f"preview:{uuid.uuid4()}",
-                request_payload_hash=payload_hash(request.model_dump(mode="json")),
+                request_payload_hash=payload_hash(self.accounting_request(request)),
                 event_type="composite",
                 status="draft",
                 description=request.description,
-                facts=request.model_dump(mode="json"),
+                facts=self.accounting_request(request),
                 business_date=min(component.business_date for component in request.components),
                 posting_date=request.posting_date,
                 rule_version=RULE_VERSION,
@@ -269,7 +382,7 @@ class ComponentService:
                     "components": components,
                     "confirmation_hashes": confirmation_hashes,
                     "reviewed_request": reviewed,
-                    "facts_hash": payload_hash(request.model_dump(mode="json")),
+                    "facts_hash": payload_hash(self.accounting_request(request)),
                 },
             )
         except MissingFacts as exc:
@@ -330,8 +443,7 @@ class ComponentService:
                 if deps - self.plans.keys():
                     continue
                 plan = self.select_accounts(component, self.compile(component))
-                if component.project_reference is not None:
-                    plan.facts["project_reference"] = component.project_reference
+                plan.facts.pop("metadata", None)
                 self.plans[component.key] = plan
                 pending.remove(component)
                 progress = True
@@ -367,7 +479,19 @@ class ComponentService:
             data={
                 "original_status": event.status,
                 "components": [
-                    {"id": str(c.id), "key": c.key, "kind": c.kind, "derived": c.derived}
+                    {
+                        "id": str(c.id),
+                        "key": c.key,
+                        "kind": c.kind,
+                        "derived": c.derived,
+                        "business_reference": {
+                            "event_key": event.idempotency_key,
+                            "component_key": c.key,
+                        },
+                        "management": metadata_projection(
+                            self.session, event.org_id, event.id, c.key
+                        ),
+                    }
                     for c in components
                 ],
                 "created_open_items": [
@@ -409,7 +533,7 @@ class ComponentService:
         plan = ComponentPostingPlan(
             key=c.key,
             kind=c.kind,
-            facts=c.model_dump(mode="json"),
+            facts=c.model_dump(mode="json", exclude={"metadata"}),
             entries=entries,
             derived=values,
             rule_version=values.get("tax_rule_version", RULE_VERSION),
@@ -455,7 +579,7 @@ class ComponentService:
                     business_date=c.business_date,
                     payment_date=c.payment_date,
                     evidence_references=list(self.evidence_ids),
-                    description=c.description,
+                    description="",
                 )
                 return plan
             except DomainFactsRequired as exc:
@@ -482,7 +606,7 @@ class ComponentService:
                     business_date=c.business_date,
                     payment_date=c.payment_date,
                     evidence_references=list(self.evidence_ids),
-                    description=c.description,
+                    description="",
                     activation_plans=activation_plans,
                     require_confirmation=not self.previewing,
                 )
@@ -503,7 +627,7 @@ class ComponentService:
                 business_date=c.business_date,
                 payment_date=c.payment_date,
                 evidence_references=list(self.evidence_ids),
-                description=c.description,
+                description="",
                 activation_component_key=c.activation_component_key,
                 activation_plan=self.plans.get(c.activation_component_key),
                 require_confirmation=not self.previewing,
@@ -664,13 +788,15 @@ class ComponentService:
             c.expense_class,
             account_code=c.account_code,
         )
-        party = self.party(c.counterparty)
+        if c.payer is not None and c.payment_basis != "person_advance":
+            raise ValueError("PAYER_REQUIRES_PERSON_ADVANCE")
+        party = self.party(c.payer)
         entries = [
             Entry(
                 account_code=account.code,
                 debit_fen=c.amount_fen,
                 counterparty_id=party.id if party else None,
-                memo=c.description,
+                memo="",
             )
         ]
         items = []
@@ -680,18 +806,24 @@ class ComponentService:
             "amount_fen": c.amount_fen,
         }
         if c.payment_basis != "immediate":
-            self.need(c, "counterparty")
             role = "accounts_payable"
             if c.payment_basis == "person_advance":
+                self.need(c, "payer", "payment_date")
                 if party.kind not in {"employee", "owner"}:
                     raise ValueError("PERSON_ADVANCE_REQUIRES_EMPLOYEE_OR_OWNER")
                 role = "employee_payable" if party.kind == "employee" else "owner_payable"
             entries.append(
-                Entry(account_role=role, credit_fen=c.amount_fen, counterparty_id=party.id)
+                Entry(
+                    account_role=role,
+                    credit_fen=c.amount_fen,
+                    counterparty_id=party.id if party else None,
+                )
             )
             items.append(
                 OpenItemPlan(
-                    counterparty_id=party.id, item_type="payable", original_amount_fen=c.amount_fen
+                    counterparty_id=party.id if party else None,
+                    item_type="payable",
+                    original_amount_fen=c.amount_fen,
                 )
             )
             derived["open_item_accounts"] = {"primary": role}
@@ -788,12 +920,11 @@ class ComponentService:
         )
 
     def compile_service_sale(self, c) -> ComponentPostingPlan:
-        self.need(c, "counterparty", "recognition_basis", "fulfillment_date")
+        self.need(c, "recognition_basis", "fulfillment_date")
         if c.fulfillment_date > self.request.posting_date:
             raise ValueError("SERVICE_NOT_FULFILLED_AT_POSTING")
-        party = self.party(c.counterparty)
         net, vat, derived = self.sales_split(c, allow_deferred=c.recognition_basis == "credit")
-        entries = [Entry(account_role="service_revenue", credit_fen=net, counterparty_id=party.id)]
+        entries = [Entry(account_role="service_revenue", credit_fen=net, counterparty_id=None)]
         if vat:
             entries.append(
                 Entry(
@@ -810,12 +941,12 @@ class ComponentService:
                 Entry(
                     account_role="accounts_receivable",
                     debit_fen=c.amount_fen,
-                    counterparty_id=party.id,
+                    counterparty_id=None,
                 ),
             )
             items.append(
                 OpenItemPlan(
-                    counterparty_id=party.id,
+                    counterparty_id=None,
                     item_type="receivable",
                     original_amount_fen=c.amount_fen,
                 )
@@ -824,10 +955,9 @@ class ComponentService:
         return self.plan(c, entries, derived=derived, open_items=items, cash_line=1)
 
     def compile_customer_advance(self, c) -> ComponentPostingPlan:
-        self.need(c, "counterparty", "tax_facts")
+        self.need(c, "tax_facts")
         if c.tax_facts.tax_due_on_event is None:
             raise MissingFacts([f"components.{c.key}.tax_facts.tax_due_on_event"])
-        party = self.party(c.counterparty)
         if c.tax_facts.tax_due_on_event:
             net, vat, derived = self.sales_split(c)
         else:
@@ -839,9 +969,7 @@ class ComponentService:
                 "tax_previously_accrued": c.tax_facts.tax_due_on_event,
             }
         )
-        entries = [
-            Entry(account_role="contract_liability", credit_fen=net, counterparty_id=party.id)
-        ]
+        entries = [Entry(account_role="contract_liability", credit_fen=net, counterparty_id=None)]
         if vat:
             entries.append(Entry(account_role="vat_payable", credit_fen=vat))
         return self.plan(c, entries, derived=derived, cash_line=1)
@@ -954,21 +1082,19 @@ class ComponentService:
         return effect
 
     def compile_service_fulfillment(self, c) -> ComponentPostingPlan:
-        self.need(c, "counterparty", "fulfillment_date")
+        self.need(c, "fulfillment_date")
         if c.fulfillment_date > self.request.posting_date:
             raise ValueError("SERVICE_NOT_FULFILLED_AT_POSTING")
         facts, source, source_event = self.source(c, {"customer_advance"})
-        self.check_source_party(c, facts)
         used_fen = self.source_usage(c, source["advance_fen"])
-        party = self.party(c.counterparty)
         if source["tax_previously_accrued"]:
             net, _ = self.source_tax_split(facts, c.amount_fen, used_fen)
             vat, derived = 0, {}
         else:
             net, vat, derived = self.sales_split(c)
         entries = [
-            Entry(account_role="contract_liability", debit_fen=net + vat, counterparty_id=party.id),
-            Entry(account_role="service_revenue", credit_fen=net, counterparty_id=party.id),
+            Entry(account_role="contract_liability", debit_fen=net + vat, counterparty_id=None),
+            Entry(account_role="service_revenue", credit_fen=net, counterparty_id=None),
         ]
         if vat:
             entries.append(Entry(account_role="vat_payable", credit_fen=vat))
@@ -981,24 +1107,12 @@ class ComponentService:
             effects=[self.source_dependency(source_event, c.source.component_id, c.amount_fen)],
         )
 
-    def check_source_party(self, c, facts: dict) -> None:
-        from .schemas import CounterpartyRef
-
-        original = facts.get("counterparty")
-        if (
-            original is not None
-            and self.party(CounterpartyRef.model_validate(original)).id
-            != self.party(c.counterparty).id
-        ):
-            raise ValueError("SOURCE_COMPONENT_COUNTERPARTY_MISMATCH")
-
     def compile_customer_refund(self, c) -> ComponentPostingPlan:
-        self.need(c, "counterparty", "payment_date")
+        self.need(c, "payment_date")
         facts, source, source_event = self.source(
             c,
             {"customer_advance"} if c.refund_kind == "advance" else {"service_sale"},
         )
-        self.check_source_party(c, facts)
         used_fen = self.source_usage(c, source["amount_fen"])
         if c.refund_kind == "sale_return" or source.get("tax_previously_accrued"):
             self.need(c, "tax_facts")
@@ -1009,7 +1123,6 @@ class ComponentService:
                 for field in ("taxable", "rate_percent", "invoice_type", "waive_exemption")
             ):
                 raise ValueError("REFUND_MUST_USE_SOURCE_TAX_FACTS")
-        party = self.party(c.counterparty)
         if c.refund_kind == "advance":
             if source.get("tax_previously_accrued"):
                 net, vat, derived = self.sales_split(c)
@@ -1028,7 +1141,7 @@ class ComponentService:
             k: -v if k in {"taxable_gross_fen", "net_sales_fen", "vat_fen"} else v
             for k, v in derived.items()
         }
-        entries = [Entry(account_role=role, debit_fen=net, counterparty_id=party.id)]
+        entries = [Entry(account_role=role, debit_fen=net, counterparty_id=None)]
         if vat:
             entries.append(Entry(account_role="vat_payable", debit_fen=vat))
         derived["source_used_fen"] = c.amount_fen
@@ -1081,15 +1194,12 @@ class ComponentService:
     def settlement_plans(self, c, *, transfer: bool = False):
         entries, settlements, cash_parts = [], [], []
         expected = "receivable" if c.kind == "receivable_settlement" else "payable"
-        supplied_party = self.party(getattr(c, "counterparty", None))
         for a in c.allocations:
             item, facts, derived, key = self.obligation(a)
             if facts.get("kind") == "supplier_advance":
                 raise ValueError("SUPPLIER_ADVANCE_REQUIRES_TYPED_APPLICATION_OR_REFUND")
             if item.item_type != expected:
                 raise ValueError("OPEN_ITEM_DIRECTION_MISMATCH")
-            if supplied_party and supplied_party.id != item.counterparty_id:
-                raise ValueError("OPEN_ITEM_COUNTERPARTY_MISMATCH")
             if item.payable_category in {
                 "salary",
                 "labor_remuneration",
@@ -1148,7 +1258,7 @@ class ComponentService:
         return entries, settlements, cash_parts
 
     def compile_receivable_settlement(self, c) -> ComponentPostingPlan:
-        self.need(c, "counterparty", "payment_date")
+        self.need(c, "payment_date")
         entries, settlements, parts = self.settlement_plans(c)
         effects = []
         for a in c.allocations:
@@ -1219,24 +1329,24 @@ class ComponentService:
         )
 
     def compile_payable_settlement(self, c) -> ComponentPostingPlan:
-        self.need(c, "counterparty", "payment_date")
+        self.need(c, "payment_date")
         entries, settlements, parts = self.settlement_plans(c)
         from .models import PayrollEventLink
 
         effects = []
         for allocation in c.allocations:
-            item, _, source_derived, _ = self.obligation(allocation)
+            item, source_facts, source_derived, _ = self.obligation(allocation)
             if (
                 item.payable_category not in PAYABLE_ROLES
                 or item.payable_category == "pass_through"
             ):
                 continue
             if allocation.source_component_key:
-                batch_ids = (
-                    {uuid.UUID(source_derived["payroll_batch_id"])}
-                    if source_derived.get("payroll_batch_id")
-                    else set()
-                )
+                batch_ids = {
+                    uuid.UUID(value) for value in source_derived.get("payroll_batch_ids", [])
+                }
+                if source_derived.get("payroll_batch_id"):
+                    batch_ids.add(uuid.UUID(source_derived["payroll_batch_id"]))
             else:
                 batch_ids = set(
                     self.session.scalars(
@@ -1248,6 +1358,8 @@ class ComponentService:
                     )
                 )
             if not batch_ids:
+                if source_facts.get("kind") == "payroll_contribution_supplement":
+                    continue
                 raise ValueError("STATUTORY_OBLIGATION_PAYROLL_LINK_REQUIRED")
 
             def link_payroll(
@@ -1288,36 +1400,17 @@ class ComponentService:
         )
 
     def compile_pass_through(self, c) -> ComponentPostingPlan:
-        self.need(c, "beneficiary", "creditor", "creditor_basis", "purpose", "payment_date")
-        beneficiary, creditor = self.party(c.beneficiary), self.party(c.creditor)
-        if c.creditor_basis == "beneficiary" and beneficiary.id != creditor.id:
-            raise ValueError("PASS_THROUGH_CREDITOR_MUST_BE_BENEFICIARY")
-        if c.creditor_basis == "advance_reimbursement":
-            self.need(c, "advance_payment_date")
-            if not c.advance_evidence_ids:
-                raise MissingFacts([f"components.{c.key}.advance_evidence_ids"])
-            if c.advance_payment_date > c.payment_date:
-                raise ValueError("PASS_THROUGH_ADVANCE_DATE_AFTER_RECEIPT")
-            if not set(c.advance_evidence_ids).issubset(self.evidence_ids):
-                raise ValueError("PASS_THROUGH_ADVANCE_EVIDENCE_NOT_ATTACHED")
+        self.need(c, "payment_date")
         return self.plan(
             c,
-            [
-                Entry(
-                    account_role="pass_through_payable",
-                    credit_fen=c.amount_fen,
-                    counterparty_id=creditor.id,
-                    memo=c.purpose,
-                )
-            ],
+            [Entry(account_role="pass_through_payable", credit_fen=c.amount_fen)],
             open_items=[
                 OpenItemPlan(
-                    counterparty_id=creditor.id,
+                    counterparty_id=None,
                     item_type="payable",
                     original_amount_fen=c.amount_fen,
                     payable_category="pass_through",
                     pass_through_key=c.key,
-                    pass_through_beneficiary_id=beneficiary.id,
                 )
             ],
             derived={
@@ -1367,18 +1460,17 @@ class ComponentService:
         )
 
     def compile_refundable_deposit(self, c) -> ComponentPostingPlan:
-        self.need(c, "holder", "payment_date")
-        holder = self.party(c.holder)
+        self.need(c, "payment_date")
         entries = [
             Entry(
                 account_role="employee_receivable",
                 debit_fen=c.amount_fen,
-                counterparty_id=holder.id,
+                counterparty_id=None,
             )
         ]
         items = [
             OpenItemPlan(
-                counterparty_id=holder.id, item_type="receivable", original_amount_fen=c.amount_fen
+                counterparty_id=None, item_type="receivable", original_amount_fen=c.amount_fen
             )
         ]
         roles = {"primary": "employee_receivable"}
@@ -1428,7 +1520,6 @@ class ComponentService:
 
     def compile_other_income(self, c) -> ComponentPostingPlan:
         self.need(c, "income_kind", "payment_date")
-        party = self.party(c.counterparty)
         role = "finance_expense" if c.income_kind == "bank_interest" else "tax_relief_income"
         return self.plan(
             c,
@@ -1436,7 +1527,7 @@ class ComponentService:
                 Entry(
                     account_role=role,
                     credit_fen=c.amount_fen,
-                    counterparty_id=party.id if party else None,
+                    counterparty_id=None,
                 )
             ],
             cash_line=2,
@@ -1457,8 +1548,6 @@ class ComponentService:
 
     def compile_managed_account_return(self, c) -> ComponentPostingPlan:
         self.need(c, "expense_class", "payment_date")
-        if not c.description.strip():
-            raise MissingFacts([f"components.{c.key}.description"])
         return self.plan(
             c,
             [Entry(account_role=c.expense_class, credit_fen=c.amount_fen)],
@@ -1795,16 +1884,17 @@ class ComponentService:
                 for p in self.request.components
                 if p.kind == "borrowing_interest_payment" and p.borrowing_id == c.borrowing_id
             },
-            facts=c.model_dump(mode="json"),
+            facts=c.model_dump(mode="json", exclude={"metadata"}),
         )
 
     def compile_labor_settlement(self, c) -> ComponentPostingPlan:
         from .domain_components import compile_labor_payment
 
         self.need(c, "payment_date")
-        if c.settlement_mode == "net_after_withholding":
-            self.need(c, "withholding_agency_code", "withholding_agency_name")
-        elif not c.withholding_exception_evidence_ids:
+        if (
+            c.settlement_mode == "gross_paid_without_withholding"
+            and not c.withholding_exception_evidence_ids
+        ):
             raise MissingFacts([f"components.{c.key}.withholding_exception_evidence_ids"])
         return compile_labor_payment(
             self.session,
@@ -1817,11 +1907,9 @@ class ComponentService:
             pending_event_id=self.event.id,
             amount_fen=c.amount_fen,
             settlement_mode=c.settlement_mode,
-            withholding_agency_code=c.withholding_agency_code,
-            withholding_agency_name=c.withholding_agency_name,
             withholding_exception_evidence_ids=c.withholding_exception_evidence_ids,
             evidence_ids=list(self.evidence_ids),
-            facts=c.model_dump(mode="json"),
+            facts=c.model_dump(mode="json", exclude={"metadata"}),
         )
 
     def compile_labor_tax_settlement(self, c) -> ComponentPostingPlan:
@@ -1837,7 +1925,7 @@ class ComponentService:
             source_plan=self.plans.get(c.source_component_key),
             pending_event_id=self.event.id,
             amount_fen=c.amount_fen,
-            facts=c.model_dump(mode="json"),
+            facts=c.model_dump(mode="json", exclude={"metadata"}),
         )
 
     def compile_salary_settlement(self, c) -> ComponentPostingPlan:
@@ -1896,9 +1984,7 @@ class ComponentService:
             account = get_account_by_code(self.session, self.request.org_id, funds.account_code)
             cash = account_business_class(account) == "cash"
             if not cash:
-                if not self.common._bank_reconciliation_scope_is_confirmed(organization):
-                    raise MissingFacts(["bank_reconciliation_scope_confirmation"])
-                self.common._validate_bank_account(
+                self.common._validate_posting_bank_account(
                     self.request.org_id, account.code, funds.payment_date
                 )
             elif funds.bank_transaction_references:

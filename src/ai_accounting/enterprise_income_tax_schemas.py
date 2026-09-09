@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
 class IncomeTaxSourceAllocation(BaseModel):
@@ -33,20 +33,13 @@ class PreviewEnterpriseIncomeTaxResultRequest(BaseModel):
     original_confirmation_id: uuid.UUID | None = None
     declaration_date: date
     posting_date: date
-    declaration_reference: str = Field(min_length=1, max_length=200)
+    declaration_reference: str | None = Field(default=None, min_length=1, max_length=200)
     amount_basis: Literal["quarter", "year_to_date", "annual", "adjustment_notice"]
     declared_tax_fen: StrictInt | None = Field(default=None, ge=0)
     adjustment_fen: StrictInt | None = None
     previously_recognized_fen: StrictInt | None = None
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str = Field(default="", max_length=2000)
     evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
-
-    @field_validator("declaration_reference", "confirmation_note")
-    @classmethod
-    def nonblank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("text must not be blank")
-        return value.strip()
 
     @model_validator(mode="after")
     def valid_shape(self) -> PreviewEnterpriseIncomeTaxResultRequest:

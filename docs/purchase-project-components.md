@@ -1,20 +1,21 @@
 # 供应商预付款与项目成本
 
-业务库先执行前向迁移 `0002_purchase_projects`；目录库保持独立的 v2 基线。
+业务库执行至前向迁移 `0003_essential_accounting`；目录库保持独立的 v2 基线。
 所有新增组件使用 `finance_preview_event` / `finance_record_event`，金额为整数分，
 正式写入仍只有统一提交器。缺少关键事实返回 `needs_information`。
 
 ## 交付前预付款
 
-- `supplier_advance`：明确 `counterparty`、`project_reference`、`contract_reference`、
-  `purchase_purpose`、`amount_fen`、业务日期及付款日期；`funds` 承担真实支出。
+- `supplier_advance`：明确 `purchase_purpose`、`amount_fen`、证据和稳定组件键；
+  `funds` 提供实际付款日期与支出。对象、项目号、合同号和用途文本放入可选 `metadata`。
 - `supplier_advance_application`：`advances` 引用预付款，`allocations` 引用真实供应商应付，
   两侧合计相等。来源用 `open_item_id` 或同笔 `source_component_key`，允许部分及多次冲抵。
-- `supplier_advance_refund`：以 `advances` 引用可退余额，并填写 `refund_reference`、付款日期
-  （实际退款到账日期）和收款资金项。
+- `supplier_advance_refund`：以 `advances` 引用可退余额，资金项提供实际退款到账日期；
+  退款说明及编号可选。
 
-来源必须属于同公司、同供应商及相同 `project_reference`。不同供应商或项目用多个组件
-表达；这不是整笔业务的组合限制。科目继承原来源，整笔累计消耗不能超过来源余额。
+来源必须属于同公司，账户、方向和业务来源有效；不比较对象及项目标签。
+科目继承原来源，整笔累计消耗不能超过来源余额。标签变化本身不构成债务转移；
+实际不同主体之间权利义务变化必须通过对应业务组件表达。
 冲抵不提供资金项，不再次归属现金流；退款沿用原预付款的现金流分类。
 预付款不能通过普通应收核销或核销未来应付绕过来源规则。
 
@@ -32,8 +33,7 @@
 `project_cost` 同时确认阶段成本及供应商应付。付款继续使用 `payable_settlement`，也可组合
 预付款冲抵。必须明确：
 
-- `project_reference`、供应商、阶段业务日期、`due_date`；
-- `acceptance_reference`、`obligation_reference`、`rights_controlled`、`capitalization_basis`；
+- 已确认阶段成果的业务日期、金额、`rights_controlled` 和证据；
 - `project_nature`：外购成果 `purchased_intangible`，或自行开发 `internal_development`；
 - `cost_element`：购价 `purchase_price`、不可抵扣税费 `noncreditable_tax`、直接归属成本
   `directly_attributable_cost`。需要多个构成时用多个组件，不能把税额重复加入两项成本。
@@ -47,14 +47,17 @@
 
 达到预定可用状态后，`intangible_asset_acquisition` 使用 `settlement_method=project_cost`。
 组件顶层 `cost_sources` 列出 `component_id` 或同笔 `component_key`，以及本次结转金额。
-资产 `cost_components` 必须与所有来源的本次成本构成完全相等。不能提供新的付款或到期日。
+总成本与 `cost_components` 由明确来源及本次分配金额生成，无需重复填写；
+若同时提供总成本或分解项，则必须与来源相符。无来源直接购置使用明确 `cost_fen`，
+成本分解选填，提供时合计必须相等；不强制无关分项填零。
 
-来源可以跨期、跨供应商和明细账户，必须属于相同项目，累计消耗不得超额。此时只结转已有
-成本，不再新建应付或现金流。资产卡片、摊销、报废复用原机制；卡片供应商为资产交付方，
-各阶段实际债权人和来源证据仍独立保留。
+来源可以跨期及明细账户，不依赖管理项目标签，累计消耗不得超额。此时只结转已有
+成本，不再新建应付或现金流。资产卡片、摊销、报废复用原机制，来源证据独立保留。
+阶段验收编号、付款义务编号、合同号、普通应付到期日、资本化说明均为可选管理信息，
+阶段成果是否实际确认及资产确认条件仍是核算事实。
 
 `finance_get_event` 对阶段成本返回 `project_cost_balance`：确认金额、已消耗金额和当前可用
-金额。项目取消或部分成果废弃时，以 `project_cost_expense` 明确来源、费用分类与原因。
+金额。项目取消或部分成果废弃时，以 `project_cost_expense` 明确来源和费用分类，原因说明可选。
 已转费用的组件不能重新作为资产来源。
 
 未关账修改或删除通过整笔生命周期处理；有效下游依赖会阻止改写来源。已关账通过关联

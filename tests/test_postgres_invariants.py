@@ -84,7 +84,7 @@ def test_postgres_rejects_unbalanced_and_mutated_posted_vouchers():
                             "amount_fen": 100,
                             "expense_class": "general_expense",
                             "payment_basis": "supplier_credit",
-                            "counterparty": {"kind": "supplier", "name": "Supplier"},
+                            "metadata": {"counterparty": {"kind": "supplier", "name": "Supplier"}},
                         }
                     ],
                 }

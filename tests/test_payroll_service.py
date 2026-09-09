@@ -502,7 +502,7 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
             closing_date=period.end_date,
         )
     )
-    assert "ACCOUNTING_PERIOD_IIT_DECLARATION_CURRENT" in close_before_iit.data["blocker_codes"]
+    assert "ACCOUNTING_PERIOD_IIT_DECLARATION_CURRENT" not in close_before_iit.data["blocker_codes"]
     iit_step = next(
         item for item in result["steps"] if item["code"] == "INDIVIDUAL_INCOME_TAX_WITHHOLDING"
     )
@@ -1091,7 +1091,6 @@ def payment_request(
             "kind": "payable_settlement",
             "business_date": "2026-03-05",
             "payment_date": "2026-03-05",
-            "counterparty": {"id": source.counterparty_id},
             "allocations": allocations,
         }
     return RecordEventRequest.model_validate(
@@ -1258,31 +1257,44 @@ def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
     session.add(evidence)
     session.flush()
     service = FinanceService(session)
-    preview = service.preview_payroll(
-        PreviewPayrollRequest.model_validate(
-            {
-                "org_id": organization.id,
-                "idempotency_key": "wage-tax-difference-preview",
-                "batch_kind": "regular",
-                "payroll_period": "2026-03",
-                "posting_date": "2026-03-05",
-                "payment_date": "2026-03-05",
-                "evidence_references": [evidence.id],
-                "employee_items": [
+    request = PreviewPayrollRequest.model_validate(
+        {
+            "org_id": organization.id,
+            "idempotency_key": "wage-tax-difference-preview",
+            "batch_kind": "regular",
+            "payroll_period": "2026-03",
+            "posting_date": "2026-03-05",
+            "payment_date": "2026-03-05",
+            "evidence_references": [evidence.id],
+            "employee_items": [
                     {
                         "employee_id": employee_id,
                         "tax_reported_salary_fen": 500_000,
                         "accounting_gross_salary_fen": 150_000,
-                        "tax_reporting_difference_reason": (
-                            "历史申报数不形成实际工资债务；账务工资按个人缴费扣款确认。"
-                        ),
                         "special_additional_deduction_fen": 0,
                         "other_legal_deduction_fen": 0,
                     }
-                ],
-            }
-        )
+            ],
+        }
     )
+    request_with_reason = request.model_copy(
+        update={
+            "employee_items": [
+                request.employee_items[0].model_copy(
+                    update={"tax_reporting_difference_reason": "负责人管理说明"}
+                )
+            ]
+        }
+    )
+    without_reason = service._calculate_payroll(request)
+    with_reason = service._calculate_payroll(request_with_reason)
+    assert with_reason["calculation_hash"] == without_reason["calculation_hash"]
+    assert (
+        service._preview_request_payload_hash(request)
+        == service._preview_request_payload_hash(request_with_reason)
+    )
+
+    preview = service.preview_payroll(request)
     assert preview.status == "calculated", preview.model_dump(mode="json")
     assert preview.data["summary"] == {
         "gross_salary_fen": 150_000,
@@ -1294,6 +1306,7 @@ def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
     line_payload = preview.data["lines"][0]
     assert line_payload["tax_reported_salary_fen"] == 500_000
     assert line_payload["gross_salary_fen"] == 150_000
+    assert line_payload["tax_reporting_difference_reason"] is None
     reconciliation = next(
         entry
         for entry in line_payload["trace"]
@@ -1303,10 +1316,12 @@ def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
         "accounting_gross_salary_fen": 150_000,
         "tax_reported_salary_fen": 500_000,
         "difference_fen": -350_000,
-        "difference_reason": "历史申报数不形成实际工资债务；账务工资按个人缴费扣款确认。",
     }
     tax_state = next(entry for entry in line_payload["trace"] if entry["step"] == "tax_state_after")
     assert tax_state["values"]["cumulative_income_fen"] == 500_000
+    replay = service.preview_payroll(request_with_reason)
+    assert replay.calculation_hash == preview.calculation_hash
+    assert replay.data["idempotent_replay"] is True
 
     confirmed = service.confirm_payroll(
         ConfirmPayrollRequest(
@@ -1320,7 +1335,7 @@ def test_evidenced_accounting_wage_can_differ_from_tax_reported_salary(
     assert_balanced(session, confirmed.voucher_id)
 
 
-def test_wage_reporting_difference_requires_reason_and_evidence() -> None:
+def test_wage_reporting_difference_requires_evidence_but_not_management_reason() -> None:
     base = {
         "org_id": uuid.uuid4(),
         "idempotency_key": "wage-tax-difference-validation",
@@ -1338,16 +1353,13 @@ def test_wage_reporting_difference_requires_reason_and_evidence() -> None:
             }
         ],
     }
-    with pytest.raises(ValueError, match="tax_reporting_difference_reason"):
-        PreviewPayrollRequest.model_validate(base)
-
-    base["employee_items"][0]["tax_reporting_difference_reason"] = "负责人确认差异"
     with pytest.raises(ValueError, match="evidence_references"):
         PreviewPayrollRequest.model_validate(base)
 
     base["evidence_references"] = [uuid.uuid4()]
     validated = PreviewPayrollRequest.model_validate(base)
     assert validated.employee_items[0].accounting_gross_salary_fen == 150_000
+    assert validated.employee_items[0].tax_reporting_difference_reason is None
 
 
 def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
@@ -1750,7 +1762,6 @@ def test_social_insurance_payment_can_separate_evidenced_late_fee(
     )
     session.add(evidence)
     session.flush()
-    counterparty_id = social_items[0].counterparty_id
     common = {
         "org_id": organization.id,
         "posting_date": "2026-03-05",
@@ -1761,7 +1772,6 @@ def test_social_insurance_payment_can_separate_evidenced_late_fee(
                 "kind": "payable_settlement",
                 "business_date": "2026-03-05",
                 "payment_date": "2026-03-05",
-                "counterparty": {"id": counterparty_id},
                 "allocations": [
                     {"open_item_id": item.id, "amount_fen": item.original_amount_fen}
                     for item in social_items

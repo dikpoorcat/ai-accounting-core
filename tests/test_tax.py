@@ -89,13 +89,15 @@ def add_taxable_event(
                     "fulfillment_date": "2026-03-31",
                     "tax_obligation_date": "2026-03-31",
                     "recognition_basis": "immediate",
-                    "counterparty": {"kind": "customer", "name": "Threshold customer"},
                     "tax_facts": {
                         "taxable": True,
                         "rate_percent": "1",
                         "invoice_type": "ordinary" if exemption_eligible else "special",
                         "waive_exemption": False,
                         "tax_due_on_event": True,
+                    },
+                    "metadata": {
+                        "counterparty": {"kind": "customer", "name": "Threshold customer"}
                     },
                 }
             ],

@@ -199,6 +199,7 @@ def test_fixed_asset_stdio_full_lifecycle_uses_isolated_database(
                             "expected_use_over_one_year": True,
                             "purchase_date": "2026-01-02",
                             "posting_date": "2026-01-02",
+                            "cost_fen": 1_050_000,
                             "cost_components": {
                                 "purchase_price_fen": 1_000_000,
                                 "noncreditable_tax_fen": 30_000,

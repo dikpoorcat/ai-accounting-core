@@ -72,9 +72,9 @@ def _sale_request(
                     "payment_date": business_date,
                     "tax_obligation_date": business_date,
                     "amount_fen": gross_fen,
-                    "counterparty": {"kind": "customer", "name": "税务硬化客户"},
                     "recognition_basis": "immediate",
                     "tax_facts": _explicit_tax_facts(),
+                    "metadata": {"counterparty": {"kind": "customer", "name": "税务硬化客户"}},
                 }
             ],
             "funds": [
@@ -206,6 +206,7 @@ def _active_asset(
                 "expected_use_over_one_year": True,
                 "purchase_date": "2026-01-02",
                 "posting_date": "2026-01-02",
+                "cost_fen": 1_000_000,
                 "cost_components": {
                     "purchase_price_fen": 1_000_000,
                     "noncreditable_tax_fen": 0,

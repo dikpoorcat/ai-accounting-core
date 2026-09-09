@@ -33,14 +33,6 @@ def _need(service, c, *fields):
         raise ValueError("PURCHASE_BUSINESS_REFERENCE_MUST_NOT_BE_BLANK")
 
 
-def _supplier(service, c):
-    _need(service, c, "counterparty", "project_reference")
-    party = service.party(c.counterparty)
-    if party.kind != "supplier":
-        raise ValueError("PURCHASE_REQUIRES_SUPPLIER")
-    return party
-
-
 def _date(service, c, *, payment=False):
     if c.business_date > service.request.posting_date:
         raise ValueError("PURCHASE_BUSINESS_DATE_IN_FUTURE")
@@ -51,15 +43,14 @@ def _date(service, c, *, payment=False):
 
 
 def compile_supplier_advance(service, c):
-    _need(service, c, "purchase_purpose", "contract_reference")
-    party = _supplier(service, c)
+    _need(service, c, "purchase_purpose")
     _date(service, c, payment=True)
     return service.plan(
         c,
-        [Entry(account_role="prepayments", debit_fen=c.amount_fen, counterparty_id=party.id)],
+        [Entry(account_role="prepayments", debit_fen=c.amount_fen, counterparty_id=None)],
         open_items=[
             OpenItemPlan(
-                counterparty_id=party.id,
+                counterparty_id=None,
                 item_type="receivable",
                 original_amount_fen=c.amount_fen,
                 account_role="prepayments",
@@ -75,7 +66,6 @@ def compile_supplier_advance(service, c):
 
 
 def _settle_sources(service, c, allocations, *, advance):
-    party = _supplier(service, c)
     entries, settlements, parts = [], [], []
     seen = set()
     for a in allocations:
@@ -85,10 +75,8 @@ def _settle_sources(service, c, allocations, *, advance):
         seen.add(identity)
         item, facts, derived, key = service.obligation(a)
         expected = "receivable" if advance else "payable"
-        if item.counterparty_id != party.id or item.item_type != expected:
+        if item.item_type != expected:
             raise ValueError("PURCHASE_SETTLEMENT_SUPPLIER_OR_DIRECTION_MISMATCH")
-        if facts.get("project_reference") != c.project_reference:
-            raise ValueError("PURCHASE_SETTLEMENT_PROJECT_MISMATCH")
         role, code = service.obligation_account(item, derived, key)
         account = (
             get_account_by_role(service.session, service.request.org_id, role)
@@ -106,7 +94,7 @@ def _settle_sources(service, c, allocations, *, advance):
         entries.append(
             Entry(
                 account_code=account.code,
-                counterparty_id=party.id,
+                counterparty_id=item.counterparty_id,
                 debit_fen=0 if advance else a.amount_fen,
                 credit_fen=a.amount_fen if advance else 0,
             )
@@ -116,7 +104,7 @@ def _settle_sources(service, c, allocations, *, advance):
                 amount_fen=a.amount_fen,
                 purpose=c.kind,
                 expected_item_type=expected,
-                counterparty_id=party.id,
+                counterparty_id=item.counterparty_id,
                 open_item_id=a.open_item_id,
                 source_component_key=a.source_component_key,
                 source_open_item_key=a.source_open_item_key,
@@ -149,7 +137,6 @@ def compile_supplier_advance_application(service, c):
 
 
 def compile_supplier_advance_refund(service, c):
-    _need(service, c, "refund_reference")
     _date(service, c, payment=True)
     entries, settlements, parts = _settle_sources(service, c, c.advances, advance=True)
     return service.plan(
@@ -166,16 +153,9 @@ def compile_project_cost(service, c):
         c,
         "project_nature",
         "cost_element",
-        "acceptance_reference",
-        "obligation_reference",
         "rights_controlled",
-        "capitalization_basis",
-        "due_date",
     )
-    party = _supplier(service, c)
     _date(service, c)
-    if c.due_date < c.business_date:
-        raise ValueError("PROJECT_COST_DUE_DATE_PRECEDES_ACCEPTANCE")
     if not c.rights_controlled:
         raise ValueError("PROJECT_COST_REQUIRES_CONTROLLED_STAGE_RESULT")
     if c.project_nature == "internal_development":
@@ -201,17 +181,14 @@ def compile_project_cost(service, c):
     return service.plan(
         c,
         [
-            Entry(account_role=role, debit_fen=c.amount_fen, counterparty_id=party.id),
-            Entry(
-                account_role="accounts_payable", credit_fen=c.amount_fen, counterparty_id=party.id
-            ),
+            Entry(account_role=role, debit_fen=c.amount_fen, counterparty_id=None),
+            Entry(account_role="accounts_payable", credit_fen=c.amount_fen, counterparty_id=None),
         ],
         open_items=[
             OpenItemPlan(
-                counterparty_id=party.id,
+                counterparty_id=None,
                 item_type="payable",
                 original_amount_fen=c.amount_fen,
-                due_date=c.due_date,
                 account_role="accounts_payable",
             )
         ],
@@ -252,7 +229,6 @@ def project_cost_balances(session, org_id, components):
                 used[identity] += source["amount_fen"]
     return {
         identity: {
-            "project_reference": c.facts["project_reference"],
             "recognized_fen": c.facts["amount_fen"],
             "consumed_fen": used[identity],
             "available_fen": c.facts["amount_fen"] - used[identity]
@@ -265,7 +241,6 @@ def project_cost_balances(session, org_id, components):
 
 def project_cost_sources(service, c):
     """Consume only explicit eligible cost sources; lock and count all active uses."""
-    _need(service, c, "project_reference")
     _date(service, c)
     entries, effects, uses = [], [], []
     totals = {
@@ -292,8 +267,6 @@ def project_cost_sources(service, c):
         if identity in seen:
             raise ValueError("DUPLICATE_PROJECT_COST_SOURCE")
         seen.add(identity)
-        if facts.get("project_reference") != c.project_reference:
-            raise ValueError("PROJECT_COST_SOURCE_PROJECT_MISMATCH")
         if allocation.component_id:
             rows = service.session.scalars(
                 select(VoucherLine).where(
@@ -343,7 +316,7 @@ def project_cost_sources(service, c):
 
 
 def compile_project_cost_expense(service, c):
-    _need(service, c, "expense_class", "reason")
+    _need(service, c, "expense_class")
     credits, effects, uses, totals = project_cost_sources(service, c)
     return service.plan(
         c,
@@ -356,17 +329,36 @@ def compile_project_cost_expense(service, c):
 def compile_intangible_asset_acquisition(service, c):
     from .component_service import MissingFacts
 
+    facts = c.facts
+    source_plan = None
+    if getattr(facts, "settlement_method", None) == "project_cost":
+        if not c.cost_sources:
+            raise MissingFacts([f"components.{c.key}.cost_sources"])
+        source_plan = project_cost_sources(service, c)
+        totals = source_plan[3]
+        total = sum(totals.values())
+        if facts.cost_fen is not None and facts.cost_fen != total:
+            raise ValueError("INTANGIBLE_ASSET_PROJECT_COST_TOTAL_MISMATCH")
+        if facts.cost_components is not None:
+            for name, amount in facts.cost_components.model_dump().items():
+                if amount is not None and amount != totals[name]:
+                    raise ValueError("INTANGIBLE_ASSET_PROJECT_COST_BREAKDOWN_MISMATCH")
+        from .intangible_asset_schemas import IntangibleAssetCostComponents
+
+        facts = facts.model_copy(
+            update={"cost_fen": total, "cost_components": IntangibleAssetCostComponents(**totals)}
+        )
     try:
         request = domain_request(
             c.kind,
-            c.facts,
+            facts,
             org_id=service.request.org_id,
             key=c.key,
             posting_date=service.request.posting_date,
             business_date=c.business_date,
             payment_date=c.payment_date,
             evidence_references=list(service.evidence_ids),
-            description=c.description,
+            description="",
         )
     except DomainFactsRequired as exc:
         raise MissingFacts([f"components.{c.key}.facts.{f}" for f in exc.fields]) from exc
@@ -374,11 +366,7 @@ def compile_intangible_asset_acquisition(service, c):
         if c.cost_sources:
             raise ValueError("PROJECT_COST_SOURCES_REQUIRE_PROJECT_COST_SETTLEMENT")
         return IntangibleAssetService(service.session).compile_acquisition(request, key=c.key)
-    if not c.cost_sources:
-        raise MissingFacts([f"components.{c.key}.cost_sources"])
-    credits, effects, uses, totals = project_cost_sources(service, c)
-    if request.cost_components.model_dump() != totals:
-        raise ValueError("INTANGIBLE_ASSET_PROJECT_COST_BREAKDOWN_MISMATCH")
+    credits, effects, uses, totals = source_plan
     plan = IntangibleAssetService(service.session).compile_acquisition(
         request, key=c.key, project_cost_entries=credits
     )

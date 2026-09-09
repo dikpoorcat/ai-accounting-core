@@ -21,6 +21,7 @@ from test_payroll_service import (
 from ai_accounting.coa import seed_organization
 from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.models import (
+    AuditLog,
     BusinessEvent,
     Evidence,
     OpenItem,
@@ -422,7 +423,9 @@ def test_r2_013_preview_persists_organization_bound_evidence_for_draft_and_poste
             confirmation_note="different payload",
         )
     )
-    assert confirm_mismatch.errors == ["PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert confirm_mismatch.status == "posted"
+    assert confirm_mismatch.event_id == confirmed.event_id
+    assert confirm_mismatch.data["idempotent_replay"] is True
     event = session.get(BusinessEvent, confirmed.event_id)
     assert event is not None and [item.id for item in event.evidence] == [evidence.id]
     posted_lifecycle = FinanceService(session).get_payroll_batch(organization.id, preview.batch_id)[
@@ -643,12 +646,12 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
             org_id=organization.id,
             event_id=first.event_id,
             idempotency_key="reverse-partial-salary-one",
-            reason=reversal_event.facts["reason"],
+            reason="回归测试冲正",
             posting_date=date(2026, 3, 6),
         )
     )
     assert reversal_replay.event_id == reversed_result.event_id
-    reversal_mismatch = service.reverse_event(
+    reversal_reason_change = service.reverse_event(
         ReverseEventRequest(
             org_id=organization.id,
             event_id=first.event_id,
@@ -657,7 +660,17 @@ def test_pay_002_and_pay_007_partial_salary_deductions_are_persisted_without_vat
             posting_date=date(2026, 3, 6),
         )
     )
-    assert reversal_mismatch.errors == ["PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert reversal_reason_change.status == "posted"
+    assert reversal_reason_change.event_id == reversed_result.event_id
+    assert reversal_reason_change.data["idempotent_replay"] is True
+    reversal_audit = session.scalar(
+        select(AuditLog).where(
+            AuditLog.event_id == reversed_result.event_id,
+            AuditLog.action == "event_reversed",
+        )
+    )
+    assert reversal_audit is not None
+    assert reversal_audit.details["reason"] == "回归测试冲正"
     assert (
         session.scalar(
             select(PayrollWithholdingPaymentAllocation.reversed).where(

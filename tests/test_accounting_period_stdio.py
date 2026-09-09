@@ -298,11 +298,7 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                                 "business_date": "2026-06-30",
                                 "fulfillment_date": "2026-06-30",
                                 "tax_obligation_date": "2026-06-30",
-                                "amount_fen": 101_000,
-                                "counterparty": {
-                                    "kind": "customer",
-                                    "name": "期间测试客户",
-                                },
+                                "amount_fen": 101000,
                                 "recognition_basis": "credit",
                                 "tax_facts": {
                                     "taxable": True,
@@ -310,6 +306,9 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                                     "invoice_type": "ordinary",
                                     "waive_exemption": False,
                                     "tax_due_on_event": True,
+                                },
+                                "metadata": {
+                                    "counterparty": {"kind": "customer", "name": "期间测试客户"}
                                 },
                             }
                         ],
@@ -329,8 +328,7 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                             "business_date": "2026-07-15",
                             "fulfillment_date": "2026-07-15",
                             "tax_obligation_date": "2026-07-15",
-                            "amount_fen": 101_000,
-                            "counterparty": {"kind": "customer", "name": "期间测试客户"},
+                            "amount_fen": 101000,
                             "recognition_basis": "credit",
                             "tax_facts": {
                                 "taxable": True,
@@ -338,6 +336,9 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                                 "invoice_type": "ordinary",
                                 "waive_exemption": False,
                                 "tax_due_on_event": True,
+                            },
+                            "metadata": {
+                                "counterparty": {"kind": "customer", "name": "期间测试客户"}
                             },
                         }
                     ],
@@ -353,6 +354,7 @@ def test_accounting_period_real_stdio_closes_and_corrects_in_next_open_month(
                     "expected_use_over_one_year": True,
                     "purchase_date": "2026-07-10",
                     "posting_date": "2026-07-10",
+                    "cost_fen": 103_000,
                     "cost_components": {
                         "purchase_price_fen": 100_000,
                         "noncreditable_tax_fen": 3_000,
@@ -774,8 +776,7 @@ def test_real_stdio_uses_china_current_date_for_posting_boundary(tmp_path: Path)
                                 "business_date": posting_date,
                                 "fulfillment_date": posting_date,
                                 "tax_obligation_date": posting_date,
-                                "amount_fen": 101_000,
-                                "counterparty": {"kind": "customer", "name": "日期边界客户"},
+                                "amount_fen": 101000,
                                 "recognition_basis": "credit",
                                 "tax_facts": {
                                     "taxable": True,
@@ -783,6 +784,9 @@ def test_real_stdio_uses_china_current_date_for_posting_boundary(tmp_path: Path)
                                     "invoice_type": "ordinary",
                                     "waive_exemption": False,
                                     "tax_due_on_event": True,
+                                },
+                                "metadata": {
+                                    "counterparty": {"kind": "customer", "name": "日期边界客户"}
                                 },
                             }
                         ],

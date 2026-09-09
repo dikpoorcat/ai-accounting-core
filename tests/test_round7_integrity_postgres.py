@@ -386,9 +386,7 @@ def _regular_statutory_sources(
     key: str,
 ) -> tuple[object, dict[str, list[OpenItem]]]:
     payment_date = date.fromisoformat(f"{payroll_period}-05")
-    _prepare_bank(
-        session, organization, _runtime_for(session), booking_date=payment_date
-    )
+    _prepare_bank(session, organization, _runtime_for(session), booking_date=payment_date)
     preview = _preview_regular(
         session,
         org_id=organization.id,
@@ -533,10 +531,8 @@ def _stage_direct_statutory_payment(
                     "kind": "payable_settlement",
                     "business_date": "2026-07-06",
                     "payment_date": "2026-07-06",
-                    "counterparty": {"id": item.counterparty_id},
-                    "allocations": [
-                        {"open_item_id": item.id, "amount_fen": amount}
-                    ],
+                    "allocations": [{"open_item_id": item.id, "amount_fen": amount}],
+                    "metadata": {"counterparty": {"id": item.counterparty_id}},
                 }
                 for index, (item, amount) in enumerate(zip(source_items, amounts, strict=True))
             ],
@@ -547,9 +543,7 @@ def _stage_direct_statutory_payment(
                     "direction": "payment",
                     "payment_date": "2026-07-06",
                     "amount_fen": amount,
-                    "allocations": [
-                        {"component_key": f"statutory-{index}", "amount_fen": amount}
-                    ],
+                    "allocations": [{"component_key": f"statutory-{index}", "amount_fen": amount}],
                     "bank_transaction_references": [{"id": bank.id}],
                 }
                 for index, (bank, amount) in enumerate(zip(banks, amounts, strict=True))
@@ -1147,9 +1141,7 @@ def test_r7_002_iit_components_keep_distinct_payment_tax_months_at_commit(
             payroll_period="2026-03",
             key="r7-iit-regular",
         )
-        _prepare_bank(
-            session, organization, postgres_engine, booking_date=date(2026, 4, 5)
-        )
+        _prepare_bank(session, organization, postgres_engine, booking_date=date(2026, 4, 5))
         bonus_preview = _preview_separate_bonus(
             session,
             org_id=organization.id,

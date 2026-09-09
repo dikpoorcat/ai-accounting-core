@@ -39,9 +39,7 @@ class AccountingPeriodReviewFacts(BaseModel):
     bank_reconciliation_reviewed: StrictBool | None = None
     open_items_reviewed: StrictBool | None = None
     payroll_and_statutory_items_reviewed: StrictBool | None = None
-    # Backward-compatible input only.  Regular payroll/statutory cash settlement
-    # is learned from later bank activity and is no longer a prior-month close
-    # review fact.
+    # Optional management checklist; these flags do not authorize or gate close.
     payroll_settlements_reviewed: StrictBool | None = None
     tax_items_reviewed: StrictBool | None = None
     asset_and_borrowing_schedules_reviewed: StrictBool | None = None
@@ -88,18 +86,12 @@ class GenerateAccountingPeriodRequest(BaseModel):
         return value
 
     def missing_information(self) -> list[AccountingPeriodInformationRequirement]:
-        fields = [
-            name for name in ("idempotency_key", "confirmation_note") if getattr(self, name) is None
-        ]
-        if not self.evidence_references:
-            fields.append("evidence_references")
+        fields = ["idempotency_key"] if self.idempotency_key is None else []
         return (
             [
                 AccountingPeriodInformationRequirement(
                     code="ACCOUNTING_PERIOD_GENERATION_CONFIRMATION_REQUIRED",
-                    message=(
-                        "idempotency key, note, and at least one evidence reference are required"
-                    ),
+                    message=("an idempotency key is required to generate periods"),
                     fields=fields,
                 )
             ]
@@ -175,23 +167,16 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
             name
             for name in (
                 "calculation_hash",
-                "management_commentary_context_hash",
-                "management_commentary",
                 "idempotency_key",
-                "confirmation_note",
             )
             if getattr(self, name) is None
         ]
-        fields.extend(f"review_facts.{name}" for name in self.review_facts.missing_fields())
-        if not self.evidence_references:
-            fields.append("evidence_references")
         return (
             [
                 AccountingPeriodInformationRequirement(
                     code="ACCOUNTING_PERIOD_CLOSE_CONFIRMATION_REQUIRED",
                     message=(
-                        "preview and commentary context hashes, AI management commentary, "
-                        "idempotency key, all review declarations, note and evidence are required"
+                        "the exact accounting preview hash and an idempotency key are required"
                     ),
                     fields=fields,
                 )
@@ -228,8 +213,3 @@ class AccountingPeriodResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
     trace: list[dict[str, Any]] = Field(default_factory=list)
     data: dict[str, Any] = Field(default_factory=dict)
-
-
-# Compatibility alias for an unshipped pre-DEC-008 draft name.  New public
-# MCP and STDIO contracts expose only the singular request/tool spelling.
-GenerateAccountingPeriodsRequest = GenerateAccountingPeriodRequest

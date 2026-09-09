@@ -130,6 +130,21 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                   <span>{{ component.key }} · {{ component.kind }}</span>
                   <span v-if="component.description">{{ component.description }}</span>
                   <span v-if="component.parties.length">往来：{{ component.parties.join("、") }}</span>
+                  <span v-if="component.management?.version">
+                    当前管理资料 · 第 {{ component.management.version }} 版
+                    <template v-if="component.management.display_names?.counterparty">
+                      · 往来对象：{{ component.management.display_names.counterparty }}
+                    </template>
+                    <template v-if="component.management.display_names?.beneficiary">
+                      · 受益人：{{ component.management.display_names.beneficiary }}
+                    </template>
+                    <template v-if="component.management.metadata.purpose">
+                      · 用途：{{ component.management.metadata.purpose }}
+                    </template>
+                    <template v-if="component.management.metadata.description">
+                      · 说明：{{ component.management.metadata.description }}
+                    </template>
+                  </span>
                   <span v-if="component.source_references.length">
                     来源：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
                   </span>

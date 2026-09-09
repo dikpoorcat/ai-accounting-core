@@ -60,7 +60,7 @@ class AmendEventRequest(BaseModel):
     event_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=200)
     expected_facts_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str = Field(min_length=1, max_length=1000)
+    reason: str = Field(default="", max_length=1000)
     replacement: ReplacementFacts
 
     @model_validator(mode="after")
@@ -77,7 +77,7 @@ class DeleteEventRequest(BaseModel):
     event_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=200)
     expected_facts_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str = Field(min_length=1, max_length=1000)
+    reason: str = Field(default="", max_length=1000)
 
 
 class WithdrawBankImportRequest(BaseModel):
@@ -87,4 +87,4 @@ class WithdrawBankImportRequest(BaseModel):
     action_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=200)
     expected_calculation_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str = Field(min_length=1, max_length=1000)
+    reason: str = Field(default="", max_length=1000)

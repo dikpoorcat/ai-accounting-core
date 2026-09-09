@@ -83,6 +83,29 @@ FIXED_ASSET_EVENT_TYPES = {
     "fixed_asset_depreciation_batch",
     "fixed_asset_disposal",
 }
+FIXED_ASSET_ACQUISITION_MANAGEMENT_FIELDS = {
+    "asset_code",
+    "asset_name",
+    "supplier",
+    "due_date",
+    "description",
+}
+
+
+def _fixed_asset_request_facts(request: Any) -> dict[str, Any]:
+    """Return immutable accounting facts without management annotations."""
+
+    excluded = (
+        FIXED_ASSET_ACQUISITION_MANAGEMENT_FIELDS
+        if isinstance(request, AcquireFixedAssetRequest)
+        else {"description"}
+    )
+    facts = request.model_dump(mode="json", exclude=excluded)
+    if isinstance(request, AcquireFixedAssetRequest):
+        for source in facts.get("employee_cost_sources", []):
+            source.pop("due_date", None)
+            source.pop("description", None)
+    return facts
 
 
 class _FixedAssetDecision(ValueError):
@@ -289,7 +312,7 @@ class FixedAssetService(FinanceService):
                         "employee_id": str(item.employee_id),
                         "open_item_id": str(item.open_item_id),
                         "amount_fen": item.amount_fen,
-                        "due_date": item.due_date.isoformat(),
+                        "due_date": item.due_date.isoformat() if item.due_date else None,
                         "description": item.description,
                     }
                     for item in cost_sources
@@ -411,40 +434,6 @@ class FixedAssetService(FinanceService):
         if existing is not None:
             return self._fixed_asset_existing_result(existing, payload_hash)
 
-        bank_settled = (
-            isinstance(request, AcquireFixedAssetRequest)
-            and request.settlement_method is not None
-            and request.settlement_method.value == "bank"
-        ) or (
-            isinstance(request, DisposeFixedAssetRequest)
-            and (
-                (
-                    request.settlement_method is not None
-                    and request.settlement_method.value == "bank"
-                )
-                or bool(request.clearance_cost_fen)
-            )
-        )
-        if bank_settled and not self._bank_reconciliation_scope_is_confirmed(
-            self.session.get(Organization, request.org_id)
-        ):
-            requirement = FixedAssetInformationRequirement(
-                code="BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
-                message="owner-confirmed bank reconciliation scope is required",
-                fields=["bank_reconciliation_scope_confirmation"],
-            )
-            return FixedAssetResult(
-                status=FixedAssetResultStatus.NEEDS_INFORMATION,
-                missing_information=[requirement],
-                trace=[
-                    {
-                        "stage": "validation",
-                        "status": "needs_information",
-                        "code": requirement.code,
-                    }
-                ],
-            )
-
         missing = request.missing_information()
         if missing:
             return self._store_fixed_asset_nonposted(
@@ -529,23 +518,37 @@ class FixedAssetService(FinanceService):
             self._reject("MODULE_NOT_ENABLED:fixed_asset_short_term_item")
         if request.claims_creditable_input_vat is not False:
             self._reject("MODULE_NOT_ENABLED:fixed_asset_creditable_input_vat")
+        from .event_amendments import component_fact_identity
+
+        asset_id = component_fact_identity(self.session, "fixed_assets", key)
+        asset_code = f"FA-{asset_id.hex}"
         if self.session.scalar(
             select(FixedAsset.id).where(
                 FixedAsset.org_id == request.org_id,
-                FixedAsset.asset_code == request.asset_code,
+                FixedAsset.asset_code == asset_code,
+                FixedAsset.id != asset_id,
             )
         ):
             self._reject("FIXED_ASSET_CODE_ALREADY_EXISTS")
 
         components = request.cost_components
         cost = calculate_acquisition_cost(
-            purchase_price_fen=components.purchase_price_fen,
-            noncreditable_tax_fen=components.noncreditable_tax_fen,
-            transport_and_handling_fen=components.transport_and_handling_fen,
-            installation_and_direct_cost_fen=components.installation_and_direct_cost_fen,
+            cost_fen=request.cost_fen,
+            purchase_price_fen=(components.purchase_price_fen if components else None),
+            noncreditable_tax_fen=(components.noncreditable_tax_fen if components else None),
+            transport_and_handling_fen=(
+                components.transport_and_handling_fen if components else None
+            ),
+            installation_and_direct_cost_fen=(
+                components.installation_and_direct_cost_fen if components else None
+            ),
         )
-        supplier = self._resolve_fixed_asset_counterparty(
-            request.org_id, request.supplier, required_kind="supplier"
+        supplier = (
+            self._resolve_fixed_asset_counterparty(
+                request.org_id, request.supplier, required_kind="supplier"
+            )
+            if request.supplier is not None
+            else None
         )
         settlement_method = request.settlement_method.value
         reimbursing_employee = None
@@ -581,9 +584,6 @@ class FixedAssetService(FinanceService):
                 benefit_area=ready.benefit_area.value,
             )
         self._validate_fixed_asset_evidence(request.org_id, request.evidence_references)
-        from .event_amendments import component_fact_identity
-
-        asset_id = component_fact_identity(self.session, "fixed_assets", key)
         activation_id = (
             component_fact_identity(self.session, "fixed_asset_activations", key)
             if request.ready_for_use is not None
@@ -594,8 +594,6 @@ class FixedAssetService(FinanceService):
         if request.ready_for_use is not None:
             activation_projection = self._local_activation_projection(
                 asset={
-                    "asset_code": request.asset_code,
-                    "asset_name": request.asset_name,
                     "category": request.category.value,
                     "acquisition_date": request.purchase_date.isoformat(),
                     "posting_date": request.posting_date.isoformat(),
@@ -634,11 +632,15 @@ class FixedAssetService(FinanceService):
             party = reimbursing_employee if reimbursing_employee is not None else supplier
             role = "employee_payable" if reimbursing_employee is not None else "accounts_payable"
             entries.append(
-                Entry(account_role=role, credit_fen=cost.cost_fen, counterparty_id=party.id)
+                Entry(
+                    account_role=role,
+                    credit_fen=cost.cost_fen,
+                    counterparty_id=party.id if party is not None else None,
+                )
             )
             open_items.append(
                 OpenItemPlan(
-                    counterparty_id=party.id,
+                    counterparty_id=party.id if party is not None else None,
                     item_type="payable",
                     original_amount_fen=cost.cost_fen,
                     due_date=request.due_date,
@@ -670,7 +672,7 @@ class FixedAssetService(FinanceService):
                 id=asset_id,
                 component_id=component.id,
                 org_id=request.org_id,
-                asset_code=request.asset_code,
+                asset_code=asset_code,
                 name=request.asset_name,
                 category=request.category.value,
                 expected_use_over_one_year=True,
@@ -681,7 +683,7 @@ class FixedAssetService(FinanceService):
                 transport_and_handling_fen=cost.transport_and_handling_fen,
                 installation_and_direct_cost_fen=cost.installation_and_direct_cost_fen,
                 cost_fen=cost.cost_fen,
-                supplier_id=supplier.id,
+                supplier_id=supplier.id if supplier is not None else None,
                 reimbursing_employee_id=(
                     reimbursing_employee.id if reimbursing_employee is not None else None
                 ),
@@ -744,10 +746,11 @@ class FixedAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="fixed_asset_acquisition",
-            facts=request.model_dump(mode="json"),
+            facts=_fixed_asset_request_facts(request),
             rule_version=SMALL_ENTERPRISE_FIXED_ASSET_RULE_VERSION,
             derived={
                 "asset_id": str(asset_id),
+                "asset_code": asset_code,
                 "cost_fen": cost.cost_fen,
                 "state": "active" if activation_id else "acquired",
                 "activation_id": str(activation_id) if activation_id else None,
@@ -778,7 +781,7 @@ class FixedAssetService(FinanceService):
         self._attach_evidence(event, request.evidence_references)
         components = [plan]
         if request.settlement_method.value == "bank":
-            self._validate_bank_account(
+            self._validate_posting_bank_account(
                 request.org_id, request.bank_account_code, request.payment_date
             )
             components.append(
@@ -813,7 +816,7 @@ class FixedAssetService(FinanceService):
             event=event,
             components=components,
             posting_date=request.posting_date,
-            description=request.description or f"购置固定资产 {request.asset_code}",
+            description=request.description or "购置固定资产",
         )
         return self._posted_result(
             uuid.UUID(plan.derived["asset_id"]), event, voucher, data=plan.derived
@@ -858,8 +861,6 @@ class FixedAssetService(FinanceService):
         activation_id = component_fact_identity(self.session, "fixed_asset_activations", key)
         activation_projection = self._local_activation_projection(
             asset={
-                "asset_code": asset.asset_code,
-                "asset_name": asset.name,
                 "category": asset.category,
                 "acquisition_date": asset.acquisition_date.isoformat(),
                 "posting_date": asset.posting_date.isoformat(),
@@ -908,7 +909,7 @@ class FixedAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="fixed_asset_activation",
-            facts=request.model_dump(mode="json"),
+            facts=_fixed_asset_request_facts(request),
             derived={
                 "asset_id": str(asset.id),
                 "activation_id": str(activation_id),
@@ -1050,8 +1051,8 @@ class FixedAssetService(FinanceService):
             asset = SimpleNamespace(
                 id=asset_uuid,
                 org_id=org_id,
-                asset_code=asset_values["asset_code"],
-                name=asset_values["asset_name"],
+                asset_code=asset_values.get("asset_code") or f"component:{component_key}",
+                name=asset_values.get("asset_name"),
                 category=asset_values["category"],
                 acquisition_date=date.fromisoformat(asset_values["acquisition_date"]),
                 posting_date=date.fromisoformat(asset_values["posting_date"]),
@@ -1387,7 +1388,7 @@ class FixedAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="fixed_asset_depreciation",
-            facts=request.model_dump(mode="json"),
+            facts=_fixed_asset_request_facts(request),
             derived={
                 **snapshot["data"],
                 "asset_id": str(asset.id),
@@ -1709,7 +1710,7 @@ class FixedAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="fixed_asset_depreciation_batch",
-            facts=request.model_dump(mode="json"),
+            facts=_fixed_asset_request_facts(request),
             derived={
                 **snapshot["data"],
                 "batch_id": str(batch_id),
@@ -1914,7 +1915,7 @@ class FixedAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="fixed_asset_disposal",
-            facts=request.model_dump(mode="json"),
+            facts=_fixed_asset_request_facts(request),
             derived={
                 "asset_id": str(asset.id),
                 "accumulated_depreciation_fen": accumulated,
@@ -1972,7 +1973,7 @@ class FixedAssetService(FinanceService):
         self._attach_evidence(event, request.evidence_references)
         incoming, outgoing = plan.derived["cash_inflow_fen"], plan.derived["cash_outflow_fen"]
         if incoming or outgoing:
-            self._validate_bank_account(
+            self._validate_posting_bank_account(
                 request.org_id, request.bank_account_code, request.disposal_date
             )
         try:
@@ -2035,8 +2036,9 @@ class FixedAssetService(FinanceService):
         return self._posted_result(request.asset_id, event, voucher, data=plan.derived)
 
     def _fixed_asset_request_hash(self, command: str, request: Any) -> str:
+        facts = _fixed_asset_request_facts(request)
         return self._canonical_payload_hash(
-            {"command": command, "request": request.model_dump(mode="json")}
+            {"command": command, "request": facts}
         )
 
     def _fixed_asset_idempotent_event(
@@ -2102,7 +2104,7 @@ class FixedAssetService(FinanceService):
         }[command]
         business_date, posting_date = self._request_business_and_posting_dates(request)
         trace = [{"stage": "validation", "status": status.value, "command": command}]
-        facts = request.model_dump(mode="json")
+        facts = _fixed_asset_request_facts(request)
         facts["_command"] = command
         facts["_decision"] = {
             "missing": [item.model_dump(mode="json") for item in missing],
@@ -2165,7 +2167,7 @@ class FixedAssetService(FinanceService):
         payment_date: date | None = None,
         tax_obligation_date: date | None = None,
     ) -> BusinessEvent:
-        facts = request.model_dump(mode="json")
+        facts = _fixed_asset_request_facts(request)
         facts["_command"] = command
         return build_business_event(
             self.session,

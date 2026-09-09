@@ -15,7 +15,6 @@ from ai_accounting.models import (
     BankTransactionMatch,
     BusinessEvent,
     BusinessEventComponent,
-    Counterparty,
     OpenItem,
     Organization,
     PayrollBatch,
@@ -43,15 +42,6 @@ def _scenario(session, organization, batch, evidence, authority=None):
             PayrollEventLink.link_kind == "payroll_accrual",
         )
     )
-    agency = session.get(
-        Counterparty,
-        session.scalar(
-            select(OpenItem.counterparty_id).where(
-                OpenItem.source_component_id == source.id,
-                OpenItem.payable_category == "employer_social",
-            )
-        ),
-    )
     day = date(2026, 4, 30)
     bank = None
     if authority:
@@ -69,10 +59,6 @@ def _scenario(session, organization, batch, evidence, authority=None):
             "business_date": day,
             "employee_id": employee_id,
             "contribution_period": "2026-03",
-            "due_date": day,
-            "assessment_reference": key,
-            "reason_code": "agency_assessment",
-            "reason_description": "已取得补缴核定单",
             "source": {"component_id": source.id},
             "items": [
                 {
@@ -84,14 +70,13 @@ def _scenario(session, organization, batch, evidence, authority=None):
                 }
             ],
         }
-        for key, employer in [("assessment-a", 30), ("assessment-b", 50)]
+        for key, employer in [("assessment-a", 40), ("assessment-b", 40)]
     ]
     payment = {
         "key": "pay",
         "kind": "payable_settlement",
         "business_date": day,
         "payment_date": day,
-        "counterparty": {"id": agency.id},
         "allocations": [
             {
                 "source_component_key": c["key"],
@@ -140,15 +125,6 @@ def _scenario(session, organization, batch, evidence, authority=None):
             ],
         }
     )
-    before = session.scalar(select(func.count()).select_from(BusinessEvent))
-    bad = request.model_dump(mode="json")
-    bad["components"][1]["assessment_reference"] = "assessment-a"
-    with call("finance_record_event"):
-        failed = FinanceService(session).record_event(RecordEventRequest.model_validate(bad))
-    assert failed.errors == ["CONTRIBUTION_SUPPLEMENT_ASSESSMENT_ALREADY_RECORDED"]
-    assert session.scalar(select(func.count()).select_from(BusinessEvent)) == before
-    assert session.scalar(select(func.count()).select_from(PayrollContributionSupplement)) == 0
-
     with call("finance_record_event"):
         result = FinanceService(session).record_event(request)
     assert result.status == "posted", result.model_dump(mode="json")
@@ -221,8 +197,6 @@ def _scenario(session, organization, batch, evidence, authority=None):
     removable["idempotency_key"] = "removable-supplements"
     removable["components"] = removable["components"][:2]
     removable["funds"] = []
-    for component in removable["components"]:
-        component["assessment_reference"] += "-removable"
     with call("finance_record_event"):
         posted = FinanceService(session).record_event(RecordEventRequest.model_validate(removable))
     assert posted.status == "posted", posted.model_dump(mode="json")

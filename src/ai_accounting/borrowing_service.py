@@ -57,6 +57,13 @@ BORROWING_EVENT_TYPES = {
     "borrowing_interest_payment",
     "borrowing_principal_repayment",
 }
+BORROWING_DRAWDOWN_MANAGEMENT_FIELDS = {
+    "borrowing_code",
+    "contract_name",
+    "purpose_description",
+    "interest_due_dates",
+    "description",
+}
 
 
 class _BorrowingDecision(ValueError):
@@ -222,29 +229,6 @@ class BorrowingService(FinanceService):
         existing = self._idempotent_event(request.org_id, request.idempotency_key)
         if existing is not None:
             return self._existing_result(existing, payload_hash)
-        bank_settlement_commands = {
-            "finance_draw_borrowing",
-        }
-        if command in bank_settlement_commands and not self._bank_reconciliation_scope_is_confirmed(
-            self.session.get(Organization, request.org_id)
-        ):
-            return self._result(
-                BorrowingResultStatus.NEEDS_INFORMATION,
-                missing=[
-                    BorrowingInformationRequirement(
-                        code="BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
-                        message="owner-confirmed bank reconciliation scope is required",
-                        fields=["bank_reconciliation_scope_confirmation"],
-                    )
-                ],
-                trace=[
-                    {
-                        "stage": "validation",
-                        "status": "needs_information",
-                        "code": "BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
-                    }
-                ],
-            )
         missing = request.missing_information()
         if missing:
             return self._store_nonposted_safely(
@@ -301,16 +285,20 @@ class BorrowingService(FinanceService):
             self._reject("BORROWING_CAPITALIZATION_NOT_ENABLED")
         if request.annual_rate_percent <= 0 or request.annual_rate_percent > 100:
             self._reject("BORROWING_UNSUPPORTED_TERMS")
+        from .event_amendments import component_fact_identity
+
+        borrowing_id = component_fact_identity(self.session, "borrowings", key)
+        borrowing_code = f"BR-{borrowing_id.hex}"
         if self.session.scalar(
             select(Borrowing.id).where(
                 Borrowing.org_id == request.org_id,
-                Borrowing.borrowing_code == request.borrowing_code,
+                Borrowing.borrowing_code == borrowing_code,
+                Borrowing.id != borrowing_id,
             )
         ):
             self._reject("BORROWING_CODE_ALREADY_EXISTS")
         lender = self._resolve_lender(request.org_id, request.lender)
         self._validate_evidence(request.org_id, request.evidence_references)
-        borrowing_id = uuid.uuid4()
         role = self._borrowing_role(request.drawdown_date, request.due_date)
 
         def persist(session, event, component):
@@ -318,7 +306,7 @@ class BorrowingService(FinanceService):
                 component_id=component.id,
                 id=borrowing_id,
                 org_id=request.org_id,
-                borrowing_code=request.borrowing_code,
+                borrowing_code=borrowing_code,
                 contract_name=request.contract_name,
                 lender_id=lender.id,
                 lender_is_licensed_financial_institution=True,
@@ -329,7 +317,11 @@ class BorrowingService(FinanceService):
                 posting_date=request.posting_date,
                 annual_rate_percent=request.annual_rate_percent,
                 day_count_basis=request.day_count_basis.value,
-                interest_due_dates=[d.isoformat() for d in request.interest_due_dates],
+                interest_due_dates=(
+                    [d.isoformat() for d in request.interest_due_dates]
+                    if request.interest_due_dates is not None
+                    else None
+                ),
                 capitalization_applicable=False,
                 purpose_description=request.purpose_description,
                 single_drawdown=request.term_facts.single_drawdown,
@@ -349,10 +341,13 @@ class BorrowingService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="borrowing_drawdown",
-            facts=request.model_dump(mode="json"),
+            facts=request.model_dump(
+                mode="json", exclude=BORROWING_DRAWDOWN_MANAGEMENT_FIELDS
+            ),
             rule_version=SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION,
             derived={
                 "borrowing_id": str(borrowing_id),
+                "borrowing_code": borrowing_code,
                 "cash_inflow_fen": request.principal_fen,
                 "cash_flow_category": "cash_flow_14",
                 "accounting_rule_source_url": ACCOUNTING_RULE_SOURCE_URL,
@@ -363,7 +358,7 @@ class BorrowingService(FinanceService):
 
     def _draw_write(self, request: DrawBorrowingRequest) -> BorrowingResult:
         plan = self.compile_draw(request, key="domain")
-        self._validate_bank_account(
+        self._validate_posting_bank_account(
             request.org_id, request.bank_account_code, request.drawdown_date
         )
         event = self._new_event(
@@ -400,7 +395,7 @@ class BorrowingService(FinanceService):
             event=event,
             components=[plan, funds],
             posting_date=request.posting_date,
-            description=request.description or f"借款放款 {request.borrowing_code}",
+            description=request.description or "借款放款",
         )
         return self._posted(uuid.UUID(plan.derived["borrowing_id"]), event, voucher)
 
@@ -422,15 +417,10 @@ class BorrowingService(FinanceService):
             self._reject("BORROWING_PRINCIPAL_NOT_REPAYABLE")
         accruals = self._active_accruals(borrowing.id, lock=lock)
         expected_start = borrowing.drawdown_date if not accruals else accruals[-1].period_end
-        due_dates = [
-            date.fromisoformat(value) if isinstance(value, str) else value
-            for value in borrowing.interest_due_dates
-        ]
-        due_index = len(accruals)
+        sequence_no = len(accruals) + 1
         if (
-            due_index >= len(due_dates)
-            or request.period_start != expected_start
-            or request.period_end != due_dates[due_index]
+            request.period_start != expected_start
+            or request.period_end > borrowing.due_date
         ):
             self._reject("BORROWING_INTEREST_OUT_OF_SEQUENCE")
         calculation = calculate_simple_interest(
@@ -450,10 +440,9 @@ class BorrowingService(FinanceService):
             "borrowing_id": str(borrowing.id),
             "drawdown_event_id": str(borrowing.drawdown_event_id),
             "due_date": borrowing.due_date.isoformat(),
-            "interest_due_dates": [item.isoformat() for item in due_dates],
             "day_count_basis": borrowing.day_count_basis,
             "prior_active_accrual_event_ids": [str(row.event_id) for row in accruals],
-            "sequence_no": due_index + 1,
+            "sequence_no": sequence_no,
             "accounting_rule_version": borrowing.accounting_rule_version,
             "accounting_rule_source_url": borrowing.accounting_rule_source_url,
         }
@@ -592,7 +581,12 @@ class BorrowingService(FinanceService):
         *,
         payment_date: date | None = None,
     ) -> BusinessEvent:
-        facts = request.model_dump(mode="json")
+        excluded = (
+            BORROWING_DRAWDOWN_MANAGEMENT_FIELDS
+            if isinstance(request, DrawBorrowingRequest)
+            else set()
+        )
+        facts = request.model_dump(mode="json", exclude=excluded)
         facts["_command"] = command
         facts["accounting_rule_version"] = SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION
         facts["accounting_rule_source_url"] = ACCOUNTING_RULE_SOURCE_URL
@@ -850,8 +844,13 @@ class BorrowingService(FinanceService):
 
     @staticmethod
     def _borrowing_request_hash(command: str, request: Any) -> str:
+        excluded = (
+            BORROWING_DRAWDOWN_MANAGEMENT_FIELDS
+            if isinstance(request, DrawBorrowingRequest)
+            else set()
+        )
         return FinanceService._canonical_payload_hash(
-            {"command": command, "request": request.model_dump(mode="json")}
+            {"command": command, "request": request.model_dump(mode="json", exclude=excluded)}
         )
 
     @staticmethod

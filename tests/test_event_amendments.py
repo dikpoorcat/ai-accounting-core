@@ -105,8 +105,12 @@ def test_failed_amendment_leaves_original_intact(session, organization, failure,
                 "components": [
                     request.components[0].model_copy(
                         update={
-                            "counterparty": request.components[0].counterparty.model_copy(
-                                update={"id": uuid.uuid4()}
+                            "metadata": request.components[0].metadata.model_copy(
+                                update={
+                                    "counterparty": request.components[
+                                        0
+                                    ].metadata.counterparty.model_copy(update={"id": uuid.uuid4()})
+                                }
                             )
                         }
                     )
@@ -142,7 +146,7 @@ def test_asset_acquisition_amendment_replaces_projection_and_recalculates_cost(
     assert source.status == "posted", source
     replacement = request.model_copy(
         update={
-            "asset_name": "核对后的名称",
+            "cost_fen": 100_000 if kind == "fixed" else 51_000,
             "cost_components": request.cost_components.model_copy(
                 update={"purchase_price_fen": 50_000}
             ),
@@ -153,7 +157,8 @@ def test_asset_acquisition_amendment_replaces_projection_and_recalculates_cost(
     current_asset = session.scalar(
         select(model).where(model.acquisition_event_id == source.event_id)
     )
-    assert current_asset is not None and current_asset.name == "核对后的名称"
+    assert current_asset is not None
+    assert current_asset.cost_fen == (100_000 if kind == "fixed" else 51_000)
     assert result["voucher_id"] == str(source.voucher_id)
     assert session.scalar(select(func.count()).select_from(Voucher)) == 1
 

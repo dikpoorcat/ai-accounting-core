@@ -1020,10 +1020,10 @@ def test_r5_008_stdio_postgresql_full_payroll_lifecycle_and_salary_bank_reuse(
                                             "kind": "payable_settlement",
                                             "business_date": "2026-03-07",
                                             "payment_date": "2026-03-07",
-                                            "counterparty": {
-                                                "id": next(iter(counterparty_ids))
-                                            },
                                             "allocations": allocations,
+                                            "metadata": {
+                                                "counterparty": {"id": next(iter(counterparty_ids))}
+                                            },
                                         }
                                     ],
                                     "funds": [

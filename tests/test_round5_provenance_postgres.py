@@ -642,8 +642,8 @@ def _multi_statutory_request(
             "kind": "payable_settlement",
             "business_date": payment_date,
             "payment_date": payment_date,
-            "counterparty": {"id": item.counterparty_id},
             "allocations": [{"open_item_id": item.id, "amount_fen": item.original_amount_fen}],
+            "metadata": {"counterparty": {"id": item.counterparty_id}},
         }
         for index, item in enumerate(items, 1)
     ]

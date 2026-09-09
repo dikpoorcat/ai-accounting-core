@@ -54,8 +54,7 @@ def _sale_request(
                     "business_date": business_date,
                     "fulfillment_date": business_date,
                     "tax_obligation_date": business_date,
-                    "amount_fen": 10_100,
-                    "counterparty": {"kind": "customer", "name": "税务测试客户"},
+                    "amount_fen": 10100,
                     "recognition_basis": "credit",
                     "tax_facts": {
                         "taxable": True,
@@ -64,6 +63,7 @@ def _sale_request(
                         "waive_exemption": False,
                         "tax_due_on_event": True,
                     },
+                    "metadata": {"counterparty": {"kind": "customer", "name": "税务测试客户"}},
                 }
             ],
         }
@@ -831,6 +831,7 @@ def test_tax_determinism_commit_guards_and_concurrency() -> None:
                                     "expected_use_over_one_year": True,
                                     "purchase_date": "2026-04-02",
                                     "posting_date": "2026-04-02",
+                                    "cost_fen": 1_050_000,
                                     "cost_components": {
                                         "purchase_price_fen": 1_000_000,
                                         "noncreditable_tax_fen": 30_000,

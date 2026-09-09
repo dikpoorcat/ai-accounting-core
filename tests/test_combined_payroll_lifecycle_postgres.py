@@ -29,9 +29,7 @@ from ai_accounting.schemas import PreviewPayrollRequest, ReverseEventRequest
 from ai_accounting.service import FinanceService
 
 
-def _preview_regular(
-    session, org_id, employee_id, evidence_id, *, key, payroll_period="2026-03"
-):
+def _preview_regular(session, org_id, employee_id, evidence_id, *, key, payroll_period="2026-03"):
     posting_date = f"{payroll_period}-05"
     result = FinanceService(session).preview_payroll(
         PreviewPayrollRequest.model_validate(
@@ -57,9 +55,7 @@ def _preview_regular(
     return result
 
 
-def _preview_combined_bonus(
-    session, org_id, employee_id, evidence_id, regular, *, key
-):
+def _preview_combined_bonus(session, org_id, employee_id, evidence_id, regular, *, key):
     result = FinanceService(session).preview_payroll(
         PreviewPayrollRequest.model_validate(
             {
@@ -99,8 +95,8 @@ def _combined_request(org_id, evidence_id, regular, bonus, *, key):
                     "business_date": "2026-03-05",
                     "batch_id": regular.batch_id,
                     "calculation_hash": regular.calculation_hash,
-                    "confirmation_note": "确认月度工资",
                     "evidence_references": [evidence_id],
+                    "metadata": {"confirmation_note": "确认月度工资"},
                 },
                 {
                     "key": "bonus",
@@ -109,8 +105,8 @@ def _combined_request(org_id, evidence_id, regular, bonus, *, key):
                     "batch_id": bonus.batch_id,
                     "calculation_hash": bonus.calculation_hash,
                     "regular_payroll_component_keys": ["regular"],
-                    "confirmation_note": "确认并入综合所得年终奖",
                     "evidence_references": [evidence_id],
+                    "metadata": {"confirmation_note": "确认并入综合所得年终奖"},
                 },
             ],
         }
@@ -119,9 +115,7 @@ def _combined_request(org_id, evidence_id, regular, bonus, *, key):
 
 def _calculated_pair(session, org_id, employee_id, evidence_id, *, key):
     regular = _preview_regular(session, org_id, employee_id, evidence_id, key=key)
-    bonus = _preview_combined_bonus(
-        session, org_id, employee_id, evidence_id, regular, key=key
-    )
+    bonus = _preview_combined_bonus(session, org_id, employee_id, evidence_id, regular, key=key)
     return regular, bonus
 
 
@@ -129,9 +123,7 @@ def _component_ids(session, event_id):
     return {
         component.key: component.id
         for component in session.scalars(
-            select(BusinessEventComponent).where(
-                BusinessEventComponent.event_id == event_id
-            )
+            select(BusinessEventComponent).where(BusinessEventComponent.event_id == event_id)
         )
     }
 
@@ -178,9 +170,7 @@ def test_combined_payroll_whole_amend_and_delete_preserve_then_remove_graph():
             regular_line_ids = sorted(
                 str(line_id)
                 for line_id in session.scalars(
-                    select(PayrollLine.id).where(
-                        PayrollLine.payroll_batch_id == regular.batch_id
-                    )
+                    select(PayrollLine.id).where(PayrollLine.payroll_batch_id == regular.batch_id)
                 )
             )
             bonus_component = session.get(BusinessEventComponent, component_ids["bonus"])
@@ -253,33 +243,45 @@ def test_combined_payroll_whole_amend_and_delete_preserve_then_remove_graph():
             session.commit()
 
             assert session.get(BusinessEvent, posted.event_id).status == "deleted"
-            assert session.scalar(
-                select(func.count()).select_from(PayrollBatch).where(PayrollBatch.id.in_(batch_ids))
-            ) == 0
-            assert session.scalar(
-                select(func.count())
-                .select_from(PayrollTaxStateSlot)
-                .where(PayrollTaxStateSlot.regular_batch_id == regular.batch_id)
-            ) == 0
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(PayrollBatch)
+                    .where(PayrollBatch.id.in_(batch_ids))
+                )
+                == 0
+            )
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(PayrollTaxStateSlot)
+                    .where(PayrollTaxStateSlot.regular_batch_id == regular.batch_id)
+                )
+                == 0
+            )
             for model, predicate in (
                 (BusinessEventComponent, BusinessEventComponent.event_id == posted.event_id),
                 (PayrollEventLink, PayrollEventLink.event_id == posted.event_id),
                 (OpenItem, OpenItem.source_event_id == posted.event_id),
                 (Voucher, Voucher.event_id == posted.event_id),
             ):
-                assert session.scalar(
-                    select(func.count()).select_from(model).where(predicate)
-                ) == 0
-            assert session.scalar(
-                select(func.count())
-                .select_from(PayrollWithholdingEntitlement)
-                .where(PayrollWithholdingEntitlement.payroll_line_id.in_(payroll_line_ids))
-            ) == 0
-            assert session.scalar(
-                select(func.count())
-                .select_from(PayrollLine)
-                .where(PayrollLine.id.in_(payroll_line_ids))
-            ) == 0
+                assert session.scalar(select(func.count()).select_from(model).where(predicate)) == 0
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(PayrollWithholdingEntitlement)
+                    .where(PayrollWithholdingEntitlement.payroll_line_id.in_(payroll_line_ids))
+                )
+                == 0
+            )
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(PayrollLine)
+                    .where(PayrollLine.id.in_(payroll_line_ids))
+                )
+                == 0
+            )
 
 
 @pytest.mark.postgres
@@ -372,14 +374,12 @@ def test_combined_payroll_whole_reverse_respects_only_external_later_dependencie
             session.commit()
 
             source_ids = {regular.batch_id, bonus.batch_id}
-            assert {
-                session.get(PayrollBatch, batch_id).status for batch_id in source_ids
-            } == {"reversed"}
+            assert {session.get(PayrollBatch, batch_id).status for batch_id in source_ids} == {
+                "reversed"
+            }
             reversal_batches = list(
                 session.scalars(
-                    select(PayrollBatch).where(
-                        PayrollBatch.reversal_of_batch_id.in_(source_ids)
-                    )
+                    select(PayrollBatch).where(PayrollBatch.reversal_of_batch_id.in_(source_ids))
                 )
             )
             assert {batch.reversal_of_batch_id for batch in reversal_batches} == source_ids
@@ -388,11 +388,14 @@ def test_combined_payroll_whole_reverse_respects_only_external_later_dependencie
             }
             assert {batch.status for batch in reversal_batches} == {"posted"}
             assert len(_component_ids(session, reversed_combined.event_id)) == 2
-            assert session.scalar(
-                select(func.count()).select_from(PayrollTaxStateSlot).where(
-                    PayrollTaxStateSlot.employee_id == employee_id
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(PayrollTaxStateSlot)
+                    .where(PayrollTaxStateSlot.employee_id == employee_id)
                 )
-            ) == 0
+                == 0
+            )
 
 
 @pytest.mark.postgres
@@ -425,16 +428,14 @@ def test_postgres_rejects_forged_combined_payroll_parent_proof_atomically(monkey
                 if component.key != "bonus":
                     return plan, evidence_ids
                 proofs = [
-                    dict(proof)
-                    for proof in plan.derived.get("local_regular_payroll_proofs", [])
+                    dict(proof) for proof in plan.derived.get("local_regular_payroll_proofs", [])
                 ]
                 assert len(proofs) == 1
                 proofs[0]["calculation_hash"] = "0" * 64
                 return (
                     replace(
                         plan,
-                        derived=plan.derived
-                        | {"local_regular_payroll_proofs": proofs},
+                        derived=plan.derived | {"local_regular_payroll_proofs": proofs},
                     ),
                     evidence_ids,
                 )
@@ -461,36 +462,41 @@ def test_postgres_rejects_forged_combined_payroll_parent_proof_atomically(monkey
                     session.commit()
                 session.rollback()
 
-            assert session.scalar(
-                select(BusinessEvent.id).where(
-                    BusinessEvent.org_id == org_id,
-                    BusinessEvent.idempotency_key == "forged-combined-payroll-proof",
+            assert (
+                session.scalar(
+                    select(BusinessEvent.id).where(
+                        BusinessEvent.org_id == org_id,
+                        BusinessEvent.idempotency_key == "forged-combined-payroll-proof",
+                    )
                 )
-            ) is None
+                is None
+            )
             assert {
                 batch.id: (batch.status, batch.business_event_id)
                 for batch in session.scalars(
                     select(PayrollBatch).where(PayrollBatch.id.in_(batch_ids))
                 )
             } == {batch_id: ("calculated", None) for batch_id in batch_ids}
-            assert session.scalar(
-                select(func.count())
-                .select_from(PayrollWithholdingEntitlement)
-                .where(
-                    PayrollWithholdingEntitlement.payroll_line_id.in_(payroll_line_ids)
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(PayrollWithholdingEntitlement)
+                    .where(PayrollWithholdingEntitlement.payroll_line_id.in_(payroll_line_ids))
                 )
-            ) == 0
+                == 0
+            )
             for model, predicate in (
                 (BusinessEventComponent, BusinessEventComponent.event_id == forged.event_id),
                 (PayrollEventLink, PayrollEventLink.event_id == forged.event_id),
                 (OpenItem, OpenItem.source_event_id == forged.event_id),
                 (Voucher, Voucher.event_id == forged.event_id),
             ):
-                assert session.scalar(
-                    select(func.count()).select_from(model).where(predicate)
-                ) == 0
-            assert session.scalar(
-                select(func.count()).select_from(PayrollTaxStateSlot).where(
-                    PayrollTaxStateSlot.employee_id == employee_id
+                assert session.scalar(select(func.count()).select_from(model).where(predicate)) == 0
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(PayrollTaxStateSlot)
+                    .where(PayrollTaxStateSlot.employee_id == employee_id)
                 )
-            ) == 0
+                == 0
+            )

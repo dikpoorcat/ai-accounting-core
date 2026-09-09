@@ -85,19 +85,16 @@ def test_asset_plans_share_parent_and_only_create_subledgers_at_commit(session, 
         "fixed_asset_acquisition",
         FixedAssetAcquisitionFacts.model_validate(
             {
-                "asset_code": "FA-C",
-                "asset_name": "设备",
                 "category": "production_equipment",
                 "expected_use_over_one_year": True,
+                "cost_fen": 100000,
                 "cost_components": {
                     "purchase_price_fen": 100000,
                     "noncreditable_tax_fen": 0,
                     "transport_and_handling_fen": 0,
                     "installation_and_direct_cost_fen": 0,
                 },
-                "supplier": {"kind": "supplier", "name": "设备商"},
                 "settlement_method": "payable",
-                "due_date": "2026-02-02",
                 "claims_creditable_input_vat": False,
             }
         ),
@@ -111,23 +108,18 @@ def test_asset_plans_share_parent_and_only_create_subledgers_at_commit(session, 
         "intangible_asset_acquisition",
         IntangibleAssetAcquisitionFacts.model_validate(
             {
-                "asset_code": "IA-C",
-                "asset_name": "软件",
                 "category": "software",
-                "rights_description": "十二个月许可",
                 "available_for_use_date": day,
+                "cost_fen": 12000,
                 "cost_components": {
                     "purchase_price_fen": 12000,
                     "noncreditable_tax_fen": 0,
                     "directly_attributable_cost_fen": 0,
                 },
-                "supplier": {"kind": "supplier", "name": "软件商"},
                 "settlement_method": "payable",
-                "due_date": "2026-02-02",
                 "benefit_area": "management",
                 "life_basis": "legal_or_contractual",
                 "useful_life_months": 12,
-                "life_basis_explanation": "合同许可十二个月",
                 "is_available_for_use": True,
                 "claims_creditable_input_vat": False,
             }
@@ -166,8 +158,6 @@ def test_borrowing_interest_and_principal_compile_in_either_order(
     draw_day, due_day = date(2026, 1, 1), date(2026, 1, 31)
     facts = BorrowingDrawdownFacts.model_validate(
         {
-            "borrowing_code": "LOAN-C",
-            "contract_name": "短期借款",
             "lender": {"name": "银行"},
             "lender_is_licensed_financial_institution": True,
             "currency": "CNY",
@@ -175,9 +165,7 @@ def test_borrowing_interest_and_principal_compile_in_either_order(
             "due_date": due_day,
             "annual_rate_percent": "3.65",
             "day_count_basis": "actual_365",
-            "interest_due_dates": [due_day],
             "capitalization_applicable": False,
-            "purpose_description": "经营周转",
             "term_facts": {
                 "single_drawdown": True,
                 "fixed_rate": True,

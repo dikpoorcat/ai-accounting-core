@@ -339,7 +339,6 @@ def _prepare_calculated_q1(
             treatment=EnterpriseIncomeTaxTreatment.ZERO,
             amount_fen=0,
             idempotency_key="cit-q1-zero",
-            confirmation_note="本季度明确确认所得税费用为零",
             evidence_references=[evidence.id],
         )
     )
@@ -401,11 +400,12 @@ def test_new_company_partial_first_year_uses_explicit_zero_opening_confirmation(
         establishment_date=date(2026, 8, 31),
         treatment="zero_on_establishment",
         idempotency_key="opening-zero-on-establishment",
-        confirmation_note="依据营业执照确认公司于2026年8月成立，成立时点期初余额为零。",
         evidence_references=[evidence.id],
     )
     opening = service.confirm_opening_balance(opening_request)
-    replay = service.confirm_opening_balance(opening_request)
+    replay = service.confirm_opening_balance(
+        opening_request.model_copy(update={"confirmation_note": "后补管理说明"})
+    )
     assert opening.status is FinancialStatementResultStatus.POSTED
     assert replay.opening_balance_confirmation_id == opening.opening_balance_confirmation_id
     assert replay.data["idempotent_replay"] is True
@@ -827,11 +827,12 @@ def test_classification_is_append_only_and_idempotent(
         voucher_line_id=line.id,
         allocations=[{"detail_code": "management_other", "amount_fen": 1_000}],
         idempotency_key="classification-v1",
-        confirmation_note="首次分类",
         evidence_references=[evidence.id],
     )
     first = service.confirm_classification(request)
-    replay = service.confirm_classification(request)
+    replay = service.confirm_classification(
+        request.model_copy(update={"confirmation_note": "后补管理说明"})
+    )
     assert first.status is FinancialStatementResultStatus.POSTED
     assert replay.classification_id == first.classification_id
     assert replay.data["idempotent_replay"] is True
@@ -870,20 +871,25 @@ def test_income_tax_accrual_and_reduction_are_controlled_entries(
     _open_quarter(session, organization)
     evidence = _evidence(session, organization, "income-tax.txt")
     service = FinancialStatementService(session)
-    accrued = service.confirm_enterprise_income_tax(
-        ConfirmEnterpriseIncomeTaxQuarterRequest(
-            org_id=organization.id,
-            year=2026,
-            quarter=1,
-            treatment=EnterpriseIncomeTaxTreatment.ACCRUE,
-            amount_fen=2_000,
-            posting_date=date(2026, 3, 31),
-            idempotency_key="cit-accrue",
-            confirmation_note="确认本季度所得税费用",
-            evidence_references=[evidence.id],
-        )
+    accrual_request = ConfirmEnterpriseIncomeTaxQuarterRequest(
+        org_id=organization.id,
+        year=2026,
+        quarter=1,
+        treatment=EnterpriseIncomeTaxTreatment.ACCRUE,
+        amount_fen=2_000,
+        posting_date=date(2026, 3, 31),
+        idempotency_key="cit-accrue",
+        evidence_references=[evidence.id],
+    )
+    accrued = service.confirm_enterprise_income_tax(accrual_request)
+    accrued_replay = service.confirm_enterprise_income_tax(
+        accrual_request.model_copy(update={"confirmation_note": "后补管理说明"})
     )
     assert accrued.status is FinancialStatementResultStatus.POSTED
+    assert accrued_replay.enterprise_income_tax_confirmation_id == (
+        accrued.enterprise_income_tax_confirmation_id
+    )
+    assert accrued_replay.data["idempotent_replay"] is True
     assert accrued.event_id is not None
     lines = list(
         session.scalars(select(VoucherLine).where(VoucherLine.voucher_id == accrued.voucher_id))

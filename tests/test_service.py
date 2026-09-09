@@ -71,7 +71,7 @@ def sale_request(
         "business_date": "2026-08-08",
         "payment_date": "2026-08-08" if event_type == "service_cash_sale" else None,
         "amount_fen": amount_fen,
-        "counterparty": {"kind": "customer", "name": "甲客户"},
+        "metadata": {"counterparty": {"kind": "customer", "name": "甲客户"}},
         "recognition_basis": "immediate" if event_type == "service_cash_sale" else "credit",
         "fulfillment_date": "2026-08-08",
         "tax_obligation_date": "2026-08-08",
@@ -132,7 +132,6 @@ def receivable_request(
                     "kind": "receivable_settlement",
                     "business_date": day,
                     "payment_date": day,
-                    "counterparty": {"id": item.counterparty_id},
                     "allocations": [{"open_item_id": item.id, "amount_fen": amount_fen}],
                 }
             ],
@@ -181,7 +180,7 @@ def test_unclassified_receipt_never_credits_receivable(
                     "business_date": "2026-08-08",
                     "payment_date": "2026-08-08",
                     "amount_fen": 29_849_401,
-                    "counterparty": {"kind": "customer", "name": "未知客户"},
+                    "metadata": {"counterparty": {"kind": "customer", "name": "未知客户"}},
                 }
             ],
             "funds": [
@@ -423,7 +422,7 @@ def test_customer_advance_cannot_be_fulfilled_twice(
                         "payment_date": "2026-08-01",
                         "tax_obligation_date": "2026-08-01",
                         "amount_fen": 101_000,
-                        "counterparty": {"kind": "customer", "name": "乙客户"},
+                        "metadata": {"counterparty": {"kind": "customer", "name": "乙客户"}},
                         "tax_facts": {
                             "taxable": True,
                             "rate_percent": "1",
@@ -465,7 +464,7 @@ def test_customer_advance_cannot_be_fulfilled_twice(
                         "business_date": "2026-08-10",
                         "fulfillment_date": "2026-08-10",
                         "amount_fen": amount,
-                        "counterparty": {"kind": "customer", "name": "乙客户"},
+                        "metadata": {"counterparty": {"kind": "customer", "name": "乙客户"}},
                         "source": {"component_id": source_component_id},
                         "tax_obligation_date": "2026-08-01",
                         "tax_facts": {

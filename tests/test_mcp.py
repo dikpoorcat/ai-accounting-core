@@ -59,6 +59,7 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_confirm_historical_obligation_completion",
         "finance_confirm_organization_establishment",
         "finance_get_event_schema",
+        "finance_update_business_metadata",
         "finance_list_companies",
         "finance_create_company",
         "finance_get_close_backup_configuration",
@@ -221,12 +222,10 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     schema = mcp_server.finance_get_event_schema()
     protocol = schema["agent_operating_protocol"]
 
-    assert schema["protocol_version"] == "business-components-v1"
+    assert schema["protocol_version"] == "business-components-v2"
     assert {
         key: value for key, value in schema["preview_event_schema"].items() if key != "title"
-    } == {
-        key: value for key, value in schema["record_event_schema"].items() if key != "title"
-    }
+    } == {key: value for key, value in schema["record_event_schema"].items() if key != "title"}
     assert protocol["composed_accounting"]["preview_tool"] == "finance_preview_event"
     preview_tool = mcp._tool_manager.get_tool("finance_preview_event")
     assert preview_tool.annotations.readOnlyHint is True
@@ -370,9 +369,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         for step in protocol["owner_workflow"]["steps"]
         if step["code"] == "SOCIAL_INSURANCE_AND_HOUSING_FUND"
     )
-    assert contribution_step["accounting_close_gate"] == (
-        "current_amount_assessment_and_posted_payroll_use_same_snapshot"
-    )
+    assert contribution_step["accounting_close_gate"] is None
     assert contribution_step["status_choices"] == ["已申报", "尚未申报"]
     assert contribution_step["confirmation_fields"] == ["declared_amount_snapshot"]
     assert contribution_step["optional_confirmation_fields"] == ["declaration_date"]
@@ -397,7 +394,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert individual_income_tax_step["if_expected_payroll_unposted"] == {
         "current_step": "SOCIAL_INSURANCE_AND_HOUSING_FUND",
         "individual_income_tax_status": "pending",
-        "action": "confirm_assessment_then_post_payroll_before_tax_import",
+        "action": "post_known_payroll_facts_before_tax_import",
         "prohibit_external_status_question": True,
     }
     assert individual_income_tax_step["desktop_delivery"] == {
@@ -412,9 +409,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert individual_income_tax_step["generation_is_external_declaration"] is False
     assert individual_income_tax_step["export_record_is_persistent"] is True
     assert individual_income_tax_step["status_choices"] == ["已申报", "尚未申报"]
-    assert individual_income_tax_step["declaration_close_gate"] == (
-        "current_external_submission_confirmation"
-    )
+    assert individual_income_tax_step["declaration_close_gate"] is None
     assert individual_income_tax_step["completion_date_required"] is False
     assert individual_income_tax_step["completion_date_when_known"] == ("external_declaration_date")
     assert individual_income_tax_step["obligation_scope"] == "selected_accounting_period_only"
@@ -448,7 +443,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "persist_historical_obligation_cutoffs",
         "identify_material_unknowns",
         "propose_best_supported_treatment",
-        "persist_workforce_then_assess_contributions_before_income_tax",
+        "reuse_payroll_facts_and_optionally_record_management_review",
         "separate_contribution_policy_actual_and_cash",
         "settle_person_paid_existing_payables_without_new_expense",
         "apply_first_wage_tax_treatment_only_with_evidence",
@@ -475,8 +470,8 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert OWNER_WORKFLOW_RUNTIME_INSTRUCTION in mcp.instructions
     assert PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION in mcp.instructions
     assert PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION in mcp.instructions
-    assert "不得要求工资已过账才完成第2项" in mcp.instructions
-    assert "禁止直接询问个税外部申报状态" in mcp.instructions
+    assert "该管理确认不是工资计提或关账前置" in mcp.instructions
+    assert "不等待外部申报完成或流程确认" in mcp.instructions
     assert "不得先问老板是否生成" in mcp.instructions
     assert "当前用户桌面已知目录" in mcp.instructions
     assert CONFIRMATION_RUNTIME_INSTRUCTION in mcp.instructions
@@ -486,7 +481,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "一至两个短句的简明综合判断" in mcp.instructions
     assert "不得把看板指标或关账清单简单拼接" in mcp.instructions
     assert "存在阻断时必须先补事实再关账" in mcp.instructions
-    assert "不要求独立的工资结算复核" in mcp.instructions
+    assert "不强制重复逐项声明" in mcp.instructions
     assert "finance_request_accounting_period_close_approval_window" in mcp.instructions
     assert "finance_get_accounting_period_close_approval" in mcp.instructions
     assert "AI 记账内核 - 关账密码确认" in mcp.instructions

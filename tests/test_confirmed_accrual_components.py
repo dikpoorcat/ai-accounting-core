@@ -104,8 +104,8 @@ def _accruals(payroll, payroll_proof, labor, labor_proof):
             "business_date": "2026-03-05",
             "batch_id": payroll.batch_id,
             "calculation_hash": payroll.calculation_hash,
-            "confirmation_note": "组合确认工资",
             "evidence_references": [payroll_proof.id],
+            "metadata": {"confirmation_note": "组合确认工资"},
         },
         {
             "key": "labor-accrual",
@@ -113,8 +113,8 @@ def _accruals(payroll, payroll_proof, labor, labor_proof):
             "business_date": "2026-03-05",
             "batch_id": labor.batch_id,
             "calculation_hash": labor.calculation_hash,
-            "confirmation_note": "组合确认劳务",
             "evidence_references": [labor_proof.id],
+            "metadata": {"confirmation_note": "组合确认劳务"},
         },
     ]
 
@@ -209,10 +209,12 @@ def test_same_event_accruals_are_explicit_local_settlement_sources(session, orga
             "payment_date": "2026-03-05",
             "source_component_key": "labor-accrual",
             "source_open_item_key": str(labor_line.id),
-            "amount_fen": 500_000,
+            "amount_fen": 500000,
             "settlement_mode": "net_after_withholding",
-            "withholding_agency_code": "TAX-LABOR-01",
-            "withholding_agency_name": "测试税务局",
+            "metadata": {
+                "withholding_agency_code": "TAX-LABOR-01",
+                "withholding_agency_name": "测试税务局",
+            },
         },
     ]
     request = RecordEventRequest.model_validate(
@@ -400,8 +402,8 @@ def test_amendment_cannot_take_accrual_batch_from_another_event(
                         "amount_fen": 100,
                         "expense_class": "general_expense",
                         "payment_basis": "supplier_credit",
-                        "counterparty": {"kind": "supplier", "name": "独立供应商"},
                         "evidence_references": [payroll_proof.id],
+                        "metadata": {"counterparty": {"kind": "supplier", "name": "独立供应商"}},
                     }
                 ],
             }
@@ -474,8 +476,8 @@ def test_repeated_labor_accrual_components_reverse_every_owned_batch(session, or
             "business_date": "2026-03-05",
             "batch_id": item.batch_id,
             "calculation_hash": item.calculation_hash,
-            "confirmation_note": "确认重复劳务批次",
             "evidence_references": [proof.id],
+            "metadata": {"confirmation_note": "确认重复劳务批次"},
         }
         for key, item in (("labor-one", first), ("labor-two", second))
     ]
@@ -546,14 +548,14 @@ def test_mixed_accrual_components_commit_in_real_postgres():
                                     "kind": "salary_settlement",
                                     "business_date": "2026-03-05",
                                     "payment_date": "2026-03-05",
-                                    "amount_fen": 839_500,
-                                    "allocations": [{**salary_source, "amount_fen": 1_000_000}],
+                                    "amount_fen": 839500,
+                                    "allocations": [{**salary_source, "amount_fen": 1000000}],
                                     "withholding_allocations": [
                                         {
                                             **salary_source,
-                                            "employee_social_insurance_items": {"pension": 80_000},
-                                            "employee_housing_fund_items": {"housing_fund": 70_000},
-                                            "individual_income_tax_fen": 10_500,
+                                            "employee_social_insurance_items": {"pension": 80000},
+                                            "employee_housing_fund_items": {"housing_fund": 70000},
+                                            "individual_income_tax_fen": 10500,
                                         }
                                     ],
                                 },
@@ -564,10 +566,12 @@ def test_mixed_accrual_components_commit_in_real_postgres():
                                     "payment_date": "2026-03-05",
                                     "source_component_key": "labor-accrual",
                                     "source_open_item_key": str(labor_line.id),
-                                    "amount_fen": 500_000,
+                                    "amount_fen": 500000,
                                     "settlement_mode": "net_after_withholding",
-                                    "withholding_agency_code": "TAX-LABOR-01",
-                                    "withholding_agency_name": "测试税务局",
+                                    "metadata": {
+                                        "withholding_agency_code": "TAX-LABOR-01",
+                                        "withholding_agency_name": "测试税务局",
+                                    },
                                 },
                             ],
                             "funds": [
@@ -576,16 +580,10 @@ def test_mixed_accrual_components_commit_in_real_postgres():
                                     "account_code": "1001",
                                     "direction": "payment",
                                     "payment_date": "2026-03-05",
-                                    "amount_fen": 1_259_500,
+                                    "amount_fen": 1259500,
                                     "allocations": [
-                                        {
-                                            "component_key": "salary",
-                                            "amount_fen": 839_500,
-                                        },
-                                        {
-                                            "component_key": "labor",
-                                            "amount_fen": 420_000,
-                                        },
+                                        {"component_key": "salary", "amount_fen": 839500},
+                                        {"component_key": "labor", "amount_fen": 420000},
                                     ],
                                 }
                             ],

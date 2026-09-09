@@ -65,6 +65,7 @@ _POSTGRESQL_ONLY_CHECK_CONSTRAINTS = {
     "ck_financial_statement_classification_hash_lower_hex",
     "ck_enterprise_income_tax_confirmation_hash_lower_hex",
     "ck_period_close_commentary_context_hash_lower_hex",
+    "ck_business_metadata_hash_lower_hex",
 }
 
 _CATALOG_TABLES = {

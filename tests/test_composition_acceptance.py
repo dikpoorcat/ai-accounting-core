@@ -150,7 +150,6 @@ def test_salary_labor_and_both_withholding_taxes_share_projected_state(
     from test_payroll_service import preview_and_confirm
 
     from ai_accounting.models import (
-        Counterparty,
         LaborWithholdingTaxPaymentAllocation,
         PayrollEventLink,
     )
@@ -162,23 +161,6 @@ def test_salary_labor_and_both_withholding_taxes_share_projected_state(
         )
     )
     labor_item = _labor_accrual(session, organization, sample_evidence, key="local-withholding")
-    # Both domains must share the authoritative agency identity.
-    tax_agency = Counterparty(
-        org_id=organization.id,
-        kind="other",
-        name="法定缴费机构 税务局 [TAX-01]",
-        external_ref="TAX-01",
-    )
-    existing_agency = session.scalar(
-        select(Counterparty).where(
-            Counterparty.org_id == organization.id, Counterparty.external_ref == "TAX-01"
-        )
-    )
-    if existing_agency is None:
-        session.add(tax_agency)
-        session.flush()
-    else:
-        tax_agency = existing_agency
     common = {"business_date": "2026-03-05", "payment_date": "2026-03-05"}
     from ai_accounting.component_schemas import ConfigureAccountRequest
 
@@ -209,14 +191,11 @@ def test_salary_labor_and_both_withholding_taxes_share_projected_state(
     }
     labor = _labor_component(labor_item)
     labor.update(
-        withholding_agency_code="TAX-01",
-        withholding_agency_name="税务局",
         account_selections={"individual_income_tax_payable": "222199"},
     )
     salary_tax = {
         "key": "salary-tax",
         "kind": "payable_settlement",
-        "counterparty": {"id": tax_agency.id},
         "allocations": [
             {
                 "source_component_key": "salary",
@@ -260,7 +239,7 @@ def test_salary_labor_and_both_withholding_taxes_share_projected_state(
     )
     assert len(tax_items) == 2 and all(item.status == "settled" for item in tax_items)
     assert {str(item.account_id) for item in tax_items} == {configured_tax["account_id"]}
-    assert {item.counterparty_id for item in tax_items} == {tax_agency.id}
+    assert all(item.counterparty_id is None for item in tax_items)
     assert session.scalar(select(LaborWithholdingTaxPaymentAllocation)).amount_fen == 80000
     assert set(
         session.scalars(
@@ -290,7 +269,12 @@ def test_multiple_expenses_obligation_and_fee_share_one_commit(
 ):
     supplier = {"kind": "supplier", "name": "组合供应商"}
     components = [
-        expense("old-purchase", 700, payment_basis="supplier_credit", counterparty=supplier),
+        expense(
+            "old-purchase",
+            700,
+            payment_basis="supplier_credit",
+            metadata={"counterparty": supplier},
+        ),
         expense("travel", 110),
         expense("marketing", 230, "sales_expense"),
         expense("fee", 9, "finance_expense", expense_nature="bank_service_fee"),
@@ -299,8 +283,8 @@ def test_multiple_expenses_obligation_and_fee_share_one_commit(
             "kind": "payable_settlement",
             "business_date": "2026-03-05",
             "payment_date": "2026-03-05",
-            "counterparty": supplier,
             "allocations": [{"source_component_key": "old-purchase", "amount_fen": 700}],
+            "metadata": {"counterparty": supplier},
         },
     ]
     result = ComponentService(session).record(
@@ -338,7 +322,6 @@ def test_receivable_advance_and_multiple_creditors_keep_separate_origins(
                 "key": "sale",
                 "kind": "service_sale",
                 "amount_fen": 1000,
-                "counterparty": customer,
                 "recognition_basis": "credit",
                 "fulfillment_date": day,
                 "tax_facts": {
@@ -348,32 +331,34 @@ def test_receivable_advance_and_multiple_creditors_keep_separate_origins(
                     "tax_due_on_event": False,
                 },
                 **common,
+                "metadata": {"counterparty": customer},
             },
             {
                 "key": "ar",
                 "kind": "receivable_settlement",
-                "counterparty": customer,
                 "allocations": [{"source_component_key": "sale", "amount_fen": 1000}],
                 **common,
+                "metadata": {"counterparty": customer},
             },
             {
                 "key": "advance",
                 "kind": "customer_advance",
                 "amount_fen": 500,
-                "counterparty": customer,
                 "tax_facts": {"tax_due_on_event": False},
                 **common,
+                "metadata": {"counterparty": customer},
             },
             *[
                 {
                     "key": key,
                     "kind": "pass_through",
                     "amount_fen": amount,
-                    "beneficiary": party,
-                    "creditor": party,
-                    "creditor_basis": "beneficiary",
-                    "purpose": "客户委托代收",
                     **common,
+                    "metadata": {
+                        "beneficiary": party,
+                        "counterparty": party,
+                        "purpose": "客户委托代收",
+                    },
                 }
                 for key, amount, party in [
                     ("agency-a", 200, creditor_a),
@@ -404,7 +389,13 @@ def test_receivable_advance_and_multiple_creditors_keep_separate_origins(
     assert result.status == "posted", result
     items = list(session.scalars(select(OpenItem)))
     creditors = [item for item in items if item.payable_category == "pass_through"]
-    assert len({item.counterparty_id for item in creditors}) == 2
+    assert len({item.source_component_id for item in creditors}) == 2
+    assert all(item.counterparty_id is None for item in creditors)
+    assert {
+        c["management"]["metadata"]["counterparty"]["name"]
+        for c in result.data["components"]
+        if c["kind"] == "pass_through"
+    } == {creditor_a["name"], creditor_b["name"]}
     assert sorted(item.original_amount_fen for item in creditors) == [200, 300]
     flows = defaultdict(int)
     for row in session.scalars(select(ComponentCashFlowAllocation)):
@@ -430,9 +421,14 @@ def test_debt_transfer_preserves_each_cash_flow_origin_for_later_reimbursement(
                     100,
                     "service_cost",
                     payment_basis="supplier_credit",
-                    counterparty=supplier,
+                    metadata={"counterparty": supplier},
                 ),
-                expense("office", 200, payment_basis="supplier_credit", counterparty=supplier),
+                expense(
+                    "office",
+                    200,
+                    payment_basis="supplier_credit",
+                    metadata={"counterparty": supplier},
+                ),
                 {
                     "key": "person",
                     "kind": "debt_transfer",
@@ -456,10 +452,10 @@ def test_debt_transfer_preserves_each_cash_flow_origin_for_later_reimbursement(
         "kind": "payable_settlement",
         "business_date": day,
         "payment_date": day,
-        "counterparty": owner,
         "allocations": [
             {"open_item_id": item.id, "amount_fen": item.original_amount_fen} for item in items
         ],
+        "metadata": {"counterparty": owner},
     }
     result = ComponentService(session).record(
         request(
@@ -487,22 +483,24 @@ def test_reserve_offset_and_cash_can_share_one_obligation_with_atomic_total_cap(
     day = {"business_date": "2026-03-05", "payment_date": "2026-03-05"}
     components = [
         expense("paid-cost", 50),
-        expense("reserve", 100, payment_basis="supplier_credit", counterparty=supplier),
+        expense(
+            "reserve", 100, payment_basis="supplier_credit", metadata={"counterparty": supplier}
+        ),
         {
             "key": "offset",
             "kind": "expense_reserve_settlement",
             "amount_fen": 50,
             "source": {"component_key": "paid-cost"},
-            "counterparty": supplier,
             "allocations": [{"source_component_key": "reserve", "amount_fen": 50}],
             **day,
+            "metadata": {"counterparty": supplier},
         },
         {
             "key": "cash",
             "kind": "payable_settlement",
-            "counterparty": supplier,
             "allocations": [{"source_component_key": "reserve", "amount_fen": cash_amount}],
             **day,
+            "metadata": {"counterparty": supplier},
         },
     ]
     result = ComponentService(session).record(

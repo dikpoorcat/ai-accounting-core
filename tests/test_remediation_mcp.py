@@ -274,10 +274,11 @@ def test_r2_007_record_reverse_and_policy_contracts_are_real_and_strict() -> Non
     assert {"org_id", "idempotency_key", "posting_date", "components"} <= set(
         record_request["required"]
     )
-    assert {"org_id", "event_id", "idempotency_key", "reason", "posting_date"} == set(
+    assert {"org_id", "event_id", "idempotency_key", "posting_date"} == set(
         reverse_request["required"]
     )
-    assert {"contribution_rules", "income_tax", "payment_targets"} <= set(parameters["required"])
+    assert {"contribution_rules", "income_tax"} <= set(parameters["required"])
+    assert "payment_targets" not in parameters["required"]
     assert "effective_from" in income_tax["required"]
     assert "effective_from" in annual_bonus["required"]
     assert mcp_server.finance_get_event_schema()["record_event_schema"] == record_schema

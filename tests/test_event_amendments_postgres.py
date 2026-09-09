@@ -310,10 +310,12 @@ def banked_checks(engine, authority, evidence_id, tmp_path):
                                     "business_date": day,
                                     "payment_date": day,
                                     "source_open_item_id": item.id,
-                                    "amount_fen": 500_000,
+                                    "amount_fen": 500000,
                                     "settlement_mode": "net_after_withholding",
-                                    "withholding_agency_code": "tax-office",
-                                    "withholding_agency_name": "Tax office",
+                                    "metadata": {
+                                        "withholding_agency_code": "tax-office",
+                                        "withholding_agency_name": "Tax office",
+                                    },
                                 }
                             ],
                             "funds": [
@@ -322,12 +324,9 @@ def banked_checks(engine, authority, evidence_id, tmp_path):
                                     "account_code": "1002",
                                     "direction": "payment",
                                     "payment_date": day,
-                                    "amount_fen": 420_000,
+                                    "amount_fen": 420000,
                                     "allocations": [
-                                        {
-                                            "component_key": "labor",
-                                            "amount_fen": 420_000,
-                                        }
+                                        {"component_key": "labor", "amount_fen": 420000}
                                     ],
                                     "bank_transaction_references": [{"id": bank.id}],
                                 }

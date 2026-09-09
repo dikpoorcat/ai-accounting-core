@@ -36,12 +36,16 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
                     "depends_on",
                     "account_selections",
                     "source",
+                    "metadata",
                 }
             ),
             "org_id": org_id,
             "idempotency_key": compiler.request.idempotency_key,
             "posting_date": compiler.request.posting_date,
             "evidence_references": list(compiler.evidence_ids),
+            "due_date": None,
+            "assessment_reference": None,
+            "reason_description": "",
         }
     )
     employee = service._employee_for_org(org_id, request.employee_id)
@@ -81,27 +85,10 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
         batch_id = uuid.UUID(source.derived["payroll_batch_id"])
         candidates = [session.get(PayrollBatch, batch_id)]
     else:
-        candidates = list(
-            session.scalars(
-                select(PayrollBatch)
-                .join(PayrollLine, PayrollLine.payroll_batch_id == PayrollBatch.id)
-                .where(
-                    PayrollBatch.org_id == org_id,
-                    PayrollBatch.batch_kind == "regular",
-                    PayrollBatch.payroll_period == request.contribution_period,
-                    PayrollBatch.status == "posted",
-                    PayrollLine.employee_id == employee.id,
-                )
-                .order_by(PayrollBatch.id)
-                .with_for_update()
-            )
-        )
-    if len(candidates) != 1:
-        raise MissingFacts([f"components.{component.key}.unique_source_payroll_batch"])
-    batch = candidates[0]
-    if (
-        batch is None
-        or batch.org_id != org_id
+        candidates = []
+    batch = candidates[0] if candidates else None
+    if batch is not None and (
+        batch.org_id != org_id
         or batch.batch_kind != "regular"
         or batch.payroll_period != request.contribution_period
         or (not local_key and batch.status != "posted")
@@ -113,7 +100,7 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
         is None
     ):
         raise ValueError("CONTRIBUTION_SUPPLEMENT_PAYROLL_SOURCE_INVALID")
-    if not local_key and source_component_id is None:
+    if batch is not None and not local_key and source_component_id is None:
         source_component_id = session.scalar(
             select(PayrollEventLink.component_id).where(
                 PayrollEventLink.payroll_batch_id == batch.id,
@@ -121,22 +108,7 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
                 PayrollEventLink.link_kind == "payroll_accrual",
             )
         )
-    if session.scalar(
-        select(PayrollContributionSupplement.id).where(
-            PayrollContributionSupplement.org_id == org_id,
-            PayrollContributionSupplement.employee_id == employee.id,
-            PayrollContributionSupplement.assessment_reference == request.assessment_reference,
-        )
-    ) or any(
-        p.kind == component.kind
-        and p.facts["employee_id"] == str(employee.id)
-        and p.facts["assessment_reference"] == request.assessment_reference
-        for p in compiler.plans.values()
-    ):
-        raise ValueError("CONTRIBUTION_SUPPLEMENT_ASSESSMENT_ALREADY_RECORDED")
-
     entries, obligations = [], []
-    targets = service._payment_targets(policy.parameters)
     for item in request.items:
         social = item.contribution_group.value == "social_insurance"
         employer_role = "employer_social_payable" if social else "employer_housing_fund_payable"
@@ -147,8 +119,6 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
         )
         employer_category = "employer_social" if social else "employer_housing"
         withheld_category = "withheld_employee_social" if social else "withheld_employee_housing"
-        target = targets["social_insurance" if social else "housing_fund"]
-        agency = service._agency_counterparty(org_id, target)
         employer = item.employer_amount_fen + (
             item.employee_amount_fen if item.employee_amount_treatment == "employer_borne" else 0
         )
@@ -174,18 +144,17 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
                         debit_fen=amount,
                         counterparty_id=employee.counterparty_id,
                     ),
-                    Entry(account_role=role, credit_fen=amount, counterparty_id=agency.id),
+                    Entry(account_role=role, credit_fen=amount),
                 ]
             )
             obligations.append(
                 OpenItemPlan(
                     key=f"{category}.{item.insurance_kind}",
-                    counterparty_id=agency.id,
+                    counterparty_id=None,
                     item_type="payable",
                     original_amount_fen=amount,
-                    due_date=request.due_date,
+                    due_date=None,
                     payable_category=category,
-                    payable_agency_code=target["agency_code"],
                     insurance_kind=item.insurance_kind,
                     account_role=role,
                 )
@@ -197,7 +166,7 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
                     counterparty_id=employee.counterparty_id,
                     item_type="receivable",
                     original_amount_fen=employee_amount,
-                    due_date=request.due_date,
+                    due_date=None,
                     account_role="employee_receivable",
                 )
             )
@@ -211,11 +180,11 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
             event_id=event.id,
             component_id=persisted.id,
             employee_id=employee.id,
-            source_payroll_batch_id=batch.id,
+            source_payroll_batch_id=batch.id if batch is not None else None,
             contribution_period=request.contribution_period,
             assessment_reference=request.assessment_reference,
             reason_code=request.reason_code,
-            reason_description=request.reason_description,
+            reason_description=request.reason_description or None,
         )
         session.add(supplement)
         session.flush()
@@ -225,30 +194,31 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
             )
             for item in request.items
         )
-        session.add(
-            PayrollEventLink(
-                org_id=org_id,
-                event_id=event.id,
-                component_id=persisted.id,
-                payroll_batch_id=batch.id,
-                link_kind="contribution_supplement",
-            )
-        )
-        parent_component = source_component_id
-        parent_event = batch.business_event_id
-        if local_key:
-            parent = session.scalar(
-                select(BusinessEventComponent).where(
-                    BusinessEventComponent.event_id == event.id,
-                    BusinessEventComponent.key == local_key,
+        if batch is not None:
+            session.add(
+                PayrollEventLink(
+                    org_id=org_id,
+                    event_id=event.id,
+                    component_id=persisted.id,
+                    payroll_batch_id=batch.id,
+                    link_kind="contribution_supplement",
                 )
             )
-            parent_component, parent_event = parent.id, event.id
-        compiler.source_dependency(
-            parent_event,
-            parent_component,
-            sum(item.employee_amount_fen + item.employer_amount_fen for item in request.items),
-        )(session, event, persisted)
+            parent_component = source_component_id
+            parent_event = batch.business_event_id
+            if local_key:
+                parent = session.scalar(
+                    select(BusinessEventComponent).where(
+                        BusinessEventComponent.event_id == event.id,
+                        BusinessEventComponent.key == local_key,
+                    )
+                )
+                parent_component, parent_event = parent.id, event.id
+            compiler.source_dependency(
+                parent_event,
+                parent_component,
+                sum(item.employee_amount_fen + item.employer_amount_fen for item in request.items),
+            )(session, event, persisted)
 
     return ComponentPostingPlan(
         key=component.key,
@@ -259,8 +229,10 @@ def compile_payroll_supplement(compiler, component) -> ComponentPostingPlan:
         effects=[apply],
         rule_version=policy.version,
         derived={
-            "payroll_batch_id": str(batch.id),
+            "payroll_batch_id": str(batch.id) if batch is not None else None,
             "supplement_id": str(supplement_id),
             "policy_version_id": str(policy.id),
+            "employee_id": str(employee.id),
+            "contribution_period": request.contribution_period,
         },
     )

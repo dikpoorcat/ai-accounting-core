@@ -55,8 +55,7 @@ def _sale_request(
                     "business_date": business_date,
                     "fulfillment_date": business_date,
                     "tax_obligation_date": business_date,
-                    "amount_fen": 10_100,
-                    "counterparty": {"kind": "customer", "name": "税务测试客户"},
+                    "amount_fen": 10100,
                     "recognition_basis": "credit",
                     "tax_facts": {
                         "taxable": True,
@@ -65,6 +64,7 @@ def _sale_request(
                         "waive_exemption": False,
                         "tax_due_on_event": True,
                     },
+                    "metadata": {"counterparty": {"kind": "customer", "name": "税务测试客户"}},
                 }
             ],
         }

@@ -96,9 +96,7 @@ def _business(
                     organization,
                     registry_database_name=engine.url.database,
                 ) as authority:
-                    with authority.attributed_call(
-                        session, tool_name="finance_register_evidence"
-                    ):
+                    with authority.attributed_call(session, tool_name="finance_register_evidence"):
                         evidence = Evidence(
                             org_id=organization.id,
                             sha256=uuid.uuid5(organization.id, name).hex * 2,
@@ -212,9 +210,7 @@ def _confirm_zero_reconciliation(
     service = BankStatementService(session, current_date=date.max)
     preview = service.preview_bank_reconciliation(request)
     assert preview.status == "calculated", (preview.errors, preview.missing_information)
-    with authority.attributed_call(
-        session, tool_name="finance_confirm_bank_reconciliation"
-    ):
+    with authority.attributed_call(session, tool_name="finance_confirm_bank_reconciliation"):
         result = service.confirm_bank_reconciliation(
             ConfirmBankReconciliationRequest.model_validate(
                 request.model_dump()
@@ -294,9 +290,9 @@ def _close_july(
             ConfirmAccountingPeriodCloseRequest(
                 **request.model_dump(),
                 calculation_hash=preview.calculation_hash,
-                management_commentary_context_hash=preview.data[
-                    "assistant_review_checklist"
-                ]["management_commentary"]["context_hash"],
+                management_commentary_context_hash=preview.data["assistant_review_checklist"][
+                    "management_commentary"
+                ]["context_hash"],
                 management_commentary="七月无经营业务，银行范围和余额已完成核对。",
                 owner_approval_id=approval_id,
                 idempotency_key=f"late-bank-close-{org_id}",
@@ -337,17 +333,19 @@ def test_postgres_scope_confirmation_is_attributed_complete_and_sealed() -> None
                 organization.bank_reconciliation_scope_current_action_id,
             )
             assert action is not None and action.execution_attribution_id is not None
-            edges = list(session.scalars(
-                sa.select(BankReconciliationScopeActionEvidence).where(
-                    BankReconciliationScopeActionEvidence.action_id == action.id
+            edges = list(
+                session.scalars(
+                    sa.select(BankReconciliationScopeActionEvidence).where(
+                        BankReconciliationScopeActionEvidence.action_id == action.id
+                    )
                 )
-            ))
+            )
             assert [(edge.evidence_id, edge.evidence_sha256_at_action) for edge in edges] == [
                 (evidence_id, session.get(Evidence, evidence_id).sha256)
             ]
-            account = session.scalar(sa.select(Account).where(
-                Account.org_id == org_id, Account.code == "1002"
-            ))
+            account = session.scalar(
+                sa.select(Account).where(Account.org_id == org_id, Account.code == "1002")
+            )
             assert account is not None
             assert account.requires_bank_reconciliation is True
             assert account.bank_reconciliation_start_date == date(2026, 7, 1)
@@ -375,17 +373,27 @@ def test_postgres_scope_confirmation_supports_explicit_zero_accounts() -> None:
                 organization.bank_reconciliation_scope_current_action_id,
             )
             assert action is not None and action.scope_snapshot == []
-            assert session.scalar(sa.select(sa.func.count()).select_from(Account).where(
-                Account.org_id == org_id,
-                Account.requires_bank_reconciliation.is_(True),
-            )) == 0
+            assert (
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(Account)
+                    .where(
+                        Account.org_id == org_id,
+                        Account.requires_bank_reconciliation.is_(True),
+                    )
+                )
+                == 0
+            )
 
 
 def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path: Path) -> None:
     del tmp_path
-    with _business(
-        "scope-backdated", accounting_period_control_enabled=True
-    ) as (engine, org_id, evidence_id, authority):
+    with _business("scope-backdated", accounting_period_control_enabled=True) as (
+        engine,
+        org_id,
+        evidence_id,
+        authority,
+    ):
         with Session(engine) as session:
             july_id = _generate_period(
                 session, authority, org_id=org_id, evidence_id=evidence_id, month="2026-07"
@@ -417,11 +425,13 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path: Pa
                 authority,
                 org_id=org_id,
                 evidence_id=evidence_id,
-                accounts=[{
-                    "bank_account_code": "1002",
-                    "account_name": "银行存款",
-                    "start_date": "2026-07-01",
-                }],
+                accounts=[
+                    {
+                        "bank_account_code": "1002",
+                        "account_name": "银行存款",
+                        "start_date": "2026-07-01",
+                    }
+                ],
                 key="scope-backdated-change",
                 action_type="scope_change",
                 previous_action_id=previous_action_id,
@@ -430,9 +440,9 @@ def test_postgres_backdated_scope_history_preserves_old_close_bytes(tmp_path: Pa
             close = session.get(AccountingPeriodClose, close_id)
             assert close.calculation_hash == original_hash
             assert close.calculation_payload == original_payload
-            account = session.scalar(sa.select(Account).where(
-                Account.org_id == org_id, Account.code == "1002"
-            ))
+            account = session.scalar(
+                sa.select(Account).where(Account.org_id == org_id, Account.code == "1002")
+            )
             assert account.bank_reconciliation_start_date == date(2026, 7, 1)
 
 
@@ -456,67 +466,91 @@ def test_postgres_formal_csv_cash_bank_transfer_and_reversal(tmp_path: Path) -> 
                 key="cash-bank-transfer",
                 booking_date=date(2026, 8, 10),
             )
-            request = RecordEventRequest.model_validate({
-                "org_id": org_id,
-                "idempotency_key": "cash-bank-transfer",
-                "posting_date": "2026-08-10",
-                "evidence_references": [evidence_id],
-                "components": [{
-                    "key": "transfer", "kind": "funds_transfer",
-                    "business_date": "2026-08-10", "amount_fen": 200,
-                }],
-                "funds": [
-                    {
-                        "key": "cash", "account_code": "1001", "direction": "payment",
-                        "payment_date": "2026-08-10", "amount_fen": 200,
-                        "allocations": [{"component_key": "transfer", "amount_fen": 200}],
-                    },
-                    {
-                        "key": "bank", "account_code": "1002", "direction": "receipt",
-                        "payment_date": "2026-08-10", "amount_fen": 200,
-                        "allocations": [{"component_key": "transfer", "amount_fen": 200}],
-                        "bank_transaction_references": [{"id": bank.id}],
-                    },
-                ],
-            })
+            request = RecordEventRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "idempotency_key": "cash-bank-transfer",
+                    "posting_date": "2026-08-10",
+                    "evidence_references": [evidence_id],
+                    "components": [
+                        {
+                            "key": "transfer",
+                            "kind": "funds_transfer",
+                            "business_date": "2026-08-10",
+                            "amount_fen": 200,
+                        }
+                    ],
+                    "funds": [
+                        {
+                            "key": "cash",
+                            "account_code": "1001",
+                            "direction": "payment",
+                            "payment_date": "2026-08-10",
+                            "amount_fen": 200,
+                            "allocations": [{"component_key": "transfer", "amount_fen": 200}],
+                        },
+                        {
+                            "key": "bank",
+                            "account_code": "1002",
+                            "direction": "receipt",
+                            "payment_date": "2026-08-10",
+                            "amount_fen": 200,
+                            "allocations": [{"component_key": "transfer", "amount_fen": 200}],
+                            "bank_transaction_references": [{"id": bank.id}],
+                        },
+                    ],
+                }
+            )
             with authority.attributed_call(session, tool_name="finance_record_event"):
                 posted = ComponentService(session).record(request)
             assert posted.status == "posted", posted.errors
             session.commit()
             event_id = posted.event_id
-            rows = session.execute(sa.select(
-                Account.code, VoucherLine.debit_fen, VoucherLine.credit_fen
-            ).join(VoucherLine, VoucherLine.account_id == Account.id).join(
-                Voucher, Voucher.id == VoucherLine.voucher_id
-            ).where(Voucher.event_id == event_id).order_by(VoucherLine.line_number)).all()
+            rows = session.execute(
+                sa.select(Account.code, VoucherLine.debit_fen, VoucherLine.credit_fen)
+                .join(VoucherLine, VoucherLine.account_id == Account.id)
+                .join(Voucher, Voucher.id == VoucherLine.voucher_id)
+                .where(Voucher.event_id == event_id)
+                .order_by(VoucherLine.line_number)
+            ).all()
             assert rows == [("1001", 0, 200), ("1002", 200, 0)]
             assert bank.matched_event_id == event_id
             with authority.attributed_call(session, tool_name="finance_reverse_event"):
-                reversed_result = FinanceService(session).reverse_event(ReverseEventRequest(
-                    org_id=org_id,
-                    event_id=event_id,
-                    idempotency_key="reverse-cash-bank-transfer",
-                    reason="撤销现金存入银行",
-                    posting_date=date(2026, 8, 11),
-                ))
+                reversed_result = FinanceService(session).reverse_event(
+                    ReverseEventRequest(
+                        org_id=org_id,
+                        event_id=event_id,
+                        idempotency_key="reverse-cash-bank-transfer",
+                        reason="撤销现金存入银行",
+                        posting_date=date(2026, 8, 11),
+                    )
+                )
             assert reversed_result.status == "posted", reversed_result.errors
             session.commit()
             session.refresh(bank)
             assert session.get(BusinessEvent, event_id).status == "reversed"
             assert bank.matched_event_id is None
-            assert session.scalar(sa.select(sa.func.count()).select_from(
-                BankTransactionMatch
-            ).where(
-                BankTransactionMatch.event_id == event_id,
-                BankTransactionMatch.invalidated_at.is_(None),
-            )) == 0
+            assert (
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(BankTransactionMatch)
+                    .where(
+                        BankTransactionMatch.event_id == event_id,
+                        BankTransactionMatch.invalidated_at.is_(None),
+                    )
+                )
+                == 0
+            )
 
 
 def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path: Path) -> None:
     del tmp_path
-    with _business(
-        "late-reconciliation", accounting_period_control_enabled=True
-    ) as (engine, org_id, evidence_id, authority):
+    with _business("late-reconciliation", accounting_period_control_enabled=True) as (
+        engine,
+        org_id,
+        evidence_id,
+        authority,
+    ):
         with Session(engine) as session:
             july_id = _generate_period(
                 session, authority, org_id=org_id, evidence_id=evidence_id, month="2026-07"
@@ -562,31 +596,46 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path: Path) -
             assert bank.original_close_id == close_id
             close_hash = session.get(AccountingPeriodClose, close_id).calculation_hash
             assert bank.original_close_hash == close_hash
-            event_request = RecordEventRequest.model_validate({
-                "org_id": org_id,
-                "idempotency_key": "late-omitted-sale-result",
-                "posting_date": "2026-08-08",
-                "evidence_references": [evidence_id],
-                "components": [{
-                    "key": "sale", "kind": "service_sale",
-                    "business_date": "2026-08-08",
-                    "fulfillment_date": "2026-08-08",
-                    "payment_date": "2026-07-20",
-                    "amount_fen": 500,
-                    "counterparty": {"kind": "customer", "name": "迟到流水客户"},
-                    "recognition_basis": "immediate",
-                    "tax_facts": {
-                        "taxable": False, "rate_percent": "0", "invoice_type": "none",
-                        "waive_exemption": False, "tax_due_on_event": False,
-                    },
-                }],
-                "funds": [{
-                    "key": "receipt", "account_code": "1002", "direction": "receipt",
-                "payment_date": "2026-07-20", "amount_fen": 500,
-                "allocations": [{"component_key": "sale", "amount_fen": 500}],
-                "bank_transaction_references": [{"id": bank.id}],
-                }],
-            })
+            event_request = RecordEventRequest.model_validate(
+                {
+                    "org_id": org_id,
+                    "idempotency_key": "late-omitted-sale-result",
+                    "posting_date": "2026-08-08",
+                    "evidence_references": [evidence_id],
+                    "components": [
+                        {
+                            "key": "sale",
+                            "kind": "service_sale",
+                            "business_date": "2026-08-08",
+                            "fulfillment_date": "2026-08-08",
+                            "payment_date": "2026-07-20",
+                            "amount_fen": 500,
+                            "recognition_basis": "immediate",
+                            "tax_facts": {
+                                "taxable": False,
+                                "rate_percent": "0",
+                                "invoice_type": "none",
+                                "waive_exemption": False,
+                                "tax_due_on_event": False,
+                            },
+                            "metadata": {
+                                "counterparty": {"kind": "customer", "name": "迟到流水客户"}
+                            },
+                        }
+                    ],
+                    "funds": [
+                        {
+                            "key": "receipt",
+                            "account_code": "1002",
+                            "direction": "receipt",
+                            "payment_date": "2026-07-20",
+                            "amount_fen": 500,
+                            "allocations": [{"component_key": "sale", "amount_fen": 500}],
+                            "bank_transaction_references": [{"id": bank.id}],
+                        }
+                    ],
+                }
+            )
             with authority.attributed_call(session, tool_name="finance_record_event"):
                 event = ComponentService(session).record(event_request)
             assert event.status == "posted", (event.errors, event.missing_information, event.data)
@@ -603,12 +652,11 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path: Path) -
             )
             preview = service.preview_late_bank_evidence(late_request)
             assert preview.status == "calculated", preview.errors
-            with authority.attributed_call(
-                session, tool_name="finance_confirm_late_bank_evidence"
-            ):
+            with authority.attributed_call(session, tool_name="finance_confirm_late_bank_evidence"):
                 handled = service.confirm_late_bank_evidence(
                     ConfirmLateBankEvidenceRequest.model_validate(
-                        late_request.model_dump() | {
+                        late_request.model_dump()
+                        | {
                             "calculation_hash": preview.calculation_hash,
                             "idempotency_key": "late-july-omitted-action",
                         }
@@ -623,9 +671,7 @@ def test_postgres_late_reconciliation_and_2026_2_current_state(tmp_path: Path) -
 
 
 def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path: Path) -> None:
-    with _business("bank-import-concurrency") as (
-        engine, org_id, evidence_id, authority
-    ):
+    with _business("bank-import-concurrency") as (engine, org_id, evidence_id, authority):
         with Session(engine) as session:
             organization = session.get(Organization, org_id)
             assert organization is not None
@@ -685,15 +731,25 @@ def test_postgres_same_source_row_concurrency_has_one_transaction(tmp_path: Path
         assert {status for status, _ in results} == {"posted"}
         assert len({action_id for _, action_id in results}) == 1
         with Session(engine) as session:
-            assert session.scalar(sa.select(sa.func.count()).select_from(
-                BankTransaction
-            ).where(
-                BankTransaction.org_id == org_id,
-                BankTransaction.external_id == "SAME-ROW",
-            )) == 1
-            assert session.scalar(sa.select(sa.func.count()).select_from(
-                BankStatementImportAction
-            ).where(
-                BankStatementImportAction.org_id == org_id,
-                BankStatementImportAction.idempotency_key == "same-row-concurrent-import",
-            )) == 1
+            assert (
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(BankTransaction)
+                    .where(
+                        BankTransaction.org_id == org_id,
+                        BankTransaction.external_id == "SAME-ROW",
+                    )
+                )
+                == 1
+            )
+            assert (
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(BankStatementImportAction)
+                    .where(
+                        BankStatementImportAction.org_id == org_id,
+                        BankStatementImportAction.idempotency_key == "same-row-concurrent-import",
+                    )
+                )
+                == 1
+            )

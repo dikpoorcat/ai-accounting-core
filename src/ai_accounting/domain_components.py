@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 from .borrowing_service import ACCOUNTING_RULE_SOURCE_URL, BorrowingService
 from .borrowings import SMALL_ENTERPRISE_BORROWINGS_RULE_VERSION
 from .domain_action_schemas import domain_request
-from .labor_remuneration_service import LaborRemunerationService
 from .ledger import ComponentPostingPlan, Entry, OpenItemPlan, SettlementPlan
 from .models import (
     Account,
@@ -249,7 +248,6 @@ def compile_borrowing_payment(
         effects=[persist],
     )
 
-
 def _active_source(
     session: Session,
     org_id: uuid.UUID,
@@ -291,8 +289,6 @@ def compile_labor_payment(
     amount_fen: int,
     payment_date: date,
     settlement_mode: str,
-    withholding_agency_code: str | None = None,
-    withholding_agency_name: str | None = None,
     evidence_ids: list[uuid.UUID] | None = None,
     withholding_exception_evidence_ids: list[uuid.UUID] | None = None,
     facts: dict[str, Any] | None = None,
@@ -369,8 +365,6 @@ def compile_labor_payment(
         raise ValueError("LABOR_WITHHOLDING_ENTITLEMENT_MISMATCH")
     exceptions = withholding_exception_evidence_ids or []
     if settlement_mode == "net_after_withholding":
-        if not withholding_agency_code or not withholding_agency_name:
-            raise ValueError("LABOR_WITHHOLDING_AGENCY_REQUIRED")
         if exceptions:
             raise ValueError("LABOR_UNWITHHELD_EVIDENCE_WITHOUT_EXCEPTION")
         tax_fen = entitlement.amount_fen
@@ -402,18 +396,15 @@ def compile_labor_payment(
         entries.append(Entry(account_role="individual_income_tax_payable", credit_fen=tax_fen))
     open_items = []
     if tax_fen:
-        service = LaborRemunerationService(session)
-        agency = service._agency(org_id, withholding_agency_code, withholding_agency_name)
         open_items.append(
             OpenItemPlan(
                 key="withholding_tax",
-                counterparty_id=agency.id,
+                counterparty_id=None,
                 account_role="individual_income_tax_payable",
                 item_type="payable",
                 original_amount_fen=tax_fen,
-                due_date=service._following_month_day_15(payment_date),
+                due_date=None,
                 payable_category="labor_individual_income_tax",
-                payable_agency_code=withholding_agency_code,
             )
         )
 

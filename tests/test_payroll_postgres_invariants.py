@@ -48,17 +48,18 @@ pytestmark = [
 @pytest.fixture(scope="module")
 def payroll_context() -> Iterator[dict[str, Any]]:
     """One genuine catalog authority confirms the payroll used by every guard test."""
-    with authenticated_business_database(
-        "finance_company", name="PostgreSQL 工资不变量"
-    ) as (engine, org_id, evidence_id, authority):
+    with authenticated_business_database("finance_company", name="PostgreSQL 工资不变量") as (
+        engine,
+        org_id,
+        evidence_id,
+        authority,
+    ):
         with Session(engine) as session:
             _, batch, line, evidence, event = confirmed_payroll(
                 session, org_id, evidence_id, authority, key="payroll-invariants"
             )
             session.commit()
-            voucher_id = session.scalar(
-                sa.select(Voucher.id).where(Voucher.event_id == event.id)
-            )
+            voucher_id = session.scalar(sa.select(Voucher.id).where(Voucher.event_id == event.id))
             assert voucher_id is not None
             yield {
                 "engine": engine,
@@ -72,9 +73,7 @@ def payroll_context() -> Iterator[dict[str, Any]]:
             }
 
 
-def _post_settlement(
-    context: dict[str, Any], *, key: str, categories: set[str]
-) -> uuid.UUID:
+def _post_settlement(context: dict[str, Any], *, key: str, categories: set[str]) -> uuid.UUID:
     with Session(context["engine"]) as session:
         items = list(
             session.scalars(
@@ -91,8 +90,7 @@ def _post_settlement(
             entitlements = list(
                 session.scalars(
                     sa.select(PayrollWithholdingEntitlement).where(
-                        PayrollWithholdingEntitlement.payroll_line_id
-                        == context["line_id"],
+                        PayrollWithholdingEntitlement.payroll_line_id == context["line_id"],
                         PayrollWithholdingEntitlement.amount_fen > 0,
                     )
                 )
@@ -120,12 +118,14 @@ def _post_settlement(
                 "payment_date": "2026-03-07",
                 "amount_fen": cash_total,
                 "allocations": [{"open_item_id": items[0].id, "amount_fen": total}],
-                "withholding_allocations": [{
-                    "open_item_id": items[0].id,
-                    "employee_social_insurance_items": social,
-                    "employee_housing_fund_items": housing,
-                    "individual_income_tax_fen": income_tax,
-                }],
+                "withholding_allocations": [
+                    {
+                        "open_item_id": items[0].id,
+                        "employee_social_insurance_items": social,
+                        "employee_housing_fund_items": housing,
+                        "individual_income_tax_fen": income_tax,
+                    }
+                ],
             }
             total = cash_total
         else:
@@ -134,14 +134,14 @@ def _post_settlement(
                 "kind": "payable_settlement",
                 "business_date": "2026-03-07",
                 "payment_date": "2026-03-07",
-                "counterparty": {"id": items[0].counterparty_id},
                 "allocations": [
                     {
                         "open_item_id": item.id,
-                        "amount_fen": item.original_amount_fen-item.settled_amount_fen,
+                        "amount_fen": item.original_amount_fen - item.settled_amount_fen,
                     }
                     for item in items
                 ],
+                "metadata": {"counterparty": {"id": items[0].counterparty_id}},
             }
         request = RecordEventRequest.model_validate(
             {
@@ -150,19 +150,19 @@ def _post_settlement(
                 "posting_date": "2026-03-07",
                 "evidence_references": [context["evidence_id"]],
                 "components": [component],
-                "funds": [{
-                    "key": "cash",
-                    "account_code": "1001",
-                    "direction": "payment",
-                    "payment_date": "2026-03-07",
-                    "amount_fen": total,
-                    "allocations": [{"component_key": "settlement", "amount_fen": total}],
-                }],
+                "funds": [
+                    {
+                        "key": "cash",
+                        "account_code": "1001",
+                        "direction": "payment",
+                        "payment_date": "2026-03-07",
+                        "amount_fen": total,
+                        "allocations": [{"component_key": "settlement", "amount_fen": total}],
+                    }
+                ],
             }
         )
-        with context["authority"].attributed_call(
-            session, tool_name="finance_record_event"
-        ):
+        with context["authority"].attributed_call(session, tool_name="finance_record_event"):
             result = ComponentService(session).record(request)
         assert result.status == "posted", result.errors
         session.commit()
@@ -202,9 +202,11 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
         batch = session.get(PayrollBatch, payroll_context["batch_id"])
         event = session.get(BusinessEvent, payroll_context["event_id"])
         assert batch is not None and event is not None
-        links = list(session.scalars(sa.select(PayrollEventLink).where(
-            PayrollEventLink.payroll_batch_id == batch.id
-        )))
+        links = list(
+            session.scalars(
+                sa.select(PayrollEventLink).where(PayrollEventLink.payroll_batch_id == batch.id)
+            )
+        )
         assert batch.org_id == event.org_id == org_id
         assert batch.status == event.status == "posted"
         assert batch.business_event_id == event.id
@@ -213,28 +215,30 @@ def test_pay_015_organization_links_and_final_shape_are_database_enforced(
         }
         assert all(link.component_id is not None for link in links)
     with Session(engine) as session:
-        policy_id = session.scalar(sa.select(PayrollPolicyVersion.id).where(
-            PayrollPolicyVersion.org_id == org_id
-        ))
+        policy_id = session.scalar(
+            sa.select(PayrollPolicyVersion.id).where(PayrollPolicyVersion.org_id == org_id)
+        )
         with payroll_context["authority"].attributed_call(
             session, tool_name="finance_negative_final_shape"
         ) as attribution:
-            session.add(PayrollBatch(
-                org_id=org_id,
-                idempotency_key="payroll-incomplete-final",
-                batch_kind="regular",
-                payroll_period="2026-04",
-                version=1,
-                status="posted",
-                calculation_hash="e" * 64,
-                request_payload_hash="f" * 64,
-                calculation_input={},
-                calculation_trace=[],
-                policy_snapshot={},
-                policy_version_id=policy_id,
-                posting_date=date(2026, 4, 30),
-                execution_attribution_id=attribution.id,
-            ))
+            session.add(
+                PayrollBatch(
+                    org_id=org_id,
+                    idempotency_key="payroll-incomplete-final",
+                    batch_kind="regular",
+                    payroll_period="2026-04",
+                    version=1,
+                    status="posted",
+                    calculation_hash="e" * 64,
+                    request_payload_hash="f" * 64,
+                    calculation_input={},
+                    calculation_trace=[],
+                    policy_snapshot={},
+                    policy_version_id=policy_id,
+                    posting_date=date(2026, 4, 30),
+                    execution_attribution_id=attribution.id,
+                )
+            )
             with pytest.raises(DBAPIError, match="FINAL_PAYROLL_BATCH_COMPONENT_ORIGIN_INVALID"):
                 session.commit()
 
@@ -243,8 +247,11 @@ def test_pay_016_final_voucher_lines_reject_insert_update_and_delete(
     payroll_context: dict[str, Any],
 ) -> None:
     engine, voucher_id = payroll_context["engine"], payroll_context["voucher_id"]
-    query = (sa.select(VoucherLine).where(VoucherLine.voucher_id == voucher_id)
-             .order_by(VoucherLine.line_number))
+    query = (
+        sa.select(VoucherLine)
+        .where(VoucherLine.voucher_id == voucher_id)
+        .order_by(VoucherLine.line_number)
+    )
     with Session(engine) as session:
         line = session.scalar(query)
         assert line is not None
@@ -260,14 +267,16 @@ def test_pay_016_final_voucher_lines_reject_insert_update_and_delete(
     with Session(engine) as session:
         line = session.scalar(query)
         assert line is not None
-        session.add(VoucherLine(
-            org_id=line.org_id,
-            voucher_id=line.voucher_id,
-            component_id=line.component_id,
-            line_number=99,
-            account_id=line.account_id,
-            debit_fen=1,
-        ))
+        session.add(
+            VoucherLine(
+                org_id=line.org_id,
+                voucher_id=line.voucher_id,
+                component_id=line.component_id,
+                line_number=99,
+                account_id=line.account_id,
+                debit_fen=1,
+            )
+        )
         with pytest.raises(DBAPIError, match="final voucher"):
             session.flush()
 
@@ -290,12 +299,14 @@ def test_pay_017_open_item_settlement_conservation_and_org_links(
     with Session(engine) as session:
         item = session.scalar(item_query)
         assert item is not None
-        session.add(Settlement(
-            org_id=uuid.uuid4(),
-            open_item_id=item.id,
-            payment_event_id=payroll_context["event_id"],
-            amount_fen=1,
-        ))
+        session.add(
+            Settlement(
+                org_id=uuid.uuid4(),
+                open_item_id=item.id,
+                payment_event_id=payroll_context["event_id"],
+                amount_fen=1,
+            )
+        )
         with pytest.raises(IntegrityError):
             session.flush()
 
@@ -356,9 +367,7 @@ def test_r3_003_posted_withholding_entitlements_and_allocations_are_append_only(
             session.flush()
     with Session(engine) as session:
         settlement = session.scalar(
-            sa.select(Settlement).where(
-                Settlement.payment_event_id != payroll_context["event_id"]
-            )
+            sa.select(Settlement).where(Settlement.payment_event_id != payroll_context["event_id"])
         )
         assert settlement is not None
         settlement.amount_fen += 1
@@ -374,41 +383,47 @@ def test_r3_004_final_event_state_requires_draft_and_keeps_refund_original_poste
         with authority.attributed_call(
             session, tool_name="finance_negative_event_state"
         ) as attribution:
-            session.add(BusinessEvent(
-                org_id=payroll_context["org_id"],
-                idempotency_key="direct-reversed-event",
-                event_type="reversal",
-                status="reversed",
-                description="invalid final insert",
-                facts={},
-                business_date=date(2026, 3, 1),
-                posting_date=date(2026, 3, 1),
-                rule_trace=[],
-                execution_attribution_id=attribution.id,
-            ))
+            session.add(
+                BusinessEvent(
+                    org_id=payroll_context["org_id"],
+                    idempotency_key="direct-reversed-event",
+                    event_type="reversal",
+                    status="reversed",
+                    description="invalid final insert",
+                    facts={},
+                    business_date=date(2026, 3, 1),
+                    posting_date=date(2026, 3, 1),
+                    rule_trace=[],
+                    execution_attribution_id=attribution.id,
+                )
+            )
             with pytest.raises(DBAPIError, match="created as draft"):
                 session.flush()
     salary_event_id = payroll_context["salary_event_id"]
     with Session(engine) as session:
         with authority.attributed_call(session, tool_name="finance_reverse_event"):
-            statutory_reversal = FinanceService(session).reverse_event(ReverseEventRequest(
-                org_id=payroll_context["org_id"],
-                event_id=payroll_context["statutory_event_id"],
-                idempotency_key="payroll-statutory-payment-reversal",
-                reason="reverse typed statutory settlement before its salary source",
-                posting_date=date(2026, 3, 8),
-            ))
+            statutory_reversal = FinanceService(session).reverse_event(
+                ReverseEventRequest(
+                    org_id=payroll_context["org_id"],
+                    event_id=payroll_context["statutory_event_id"],
+                    idempotency_key="payroll-statutory-payment-reversal",
+                    reason="reverse typed statutory settlement before its salary source",
+                    posting_date=date(2026, 3, 8),
+                )
+            )
         assert statutory_reversal.status == "posted", statutory_reversal.errors
         session.commit()
     with Session(engine) as session:
         with authority.attributed_call(session, tool_name="finance_reverse_event"):
-            reversal = FinanceService(session).reverse_event(ReverseEventRequest(
-                org_id=payroll_context["org_id"],
-                event_id=salary_event_id,
-                idempotency_key="payroll-salary-payment-reversal",
-                reason="reverse typed salary settlement",
-                posting_date=date(2026, 3, 8),
-            ))
+            reversal = FinanceService(session).reverse_event(
+                ReverseEventRequest(
+                    org_id=payroll_context["org_id"],
+                    event_id=salary_event_id,
+                    idempotency_key="payroll-salary-payment-reversal",
+                    reason="reverse typed salary settlement",
+                    posting_date=date(2026, 3, 8),
+                )
+            )
         assert reversal.status == "posted", reversal.errors
         session.commit()
         accrual = session.get(BusinessEvent, payroll_context["event_id"])
@@ -424,32 +439,38 @@ def test_r3_002_tax_state_slot_rejects_cross_employee_and_arbitrary_mutation(
     org_id = payroll_context["org_id"]
     with Session(engine) as session:
         with authority.attributed_call(session, tool_name="finance_register_employee"):
-            second = FinanceService(session).register_employee(RegisterEmployeeRequest(
-                org_id=org_id,
-                employee_code="payroll-tax-slot-second",
-                name="第二名员工",
-                employment_start_date=date(2026, 3, 1),
-                tax_withholding_start_date=date(2026, 3, 1),
-                status="active",
-            ))
+            second = FinanceService(session).register_employee(
+                RegisterEmployeeRequest(
+                    org_id=org_id,
+                    employee_code="payroll-tax-slot-second",
+                    name="第二名员工",
+                    employment_start_date=date(2026, 3, 1),
+                    tax_withholding_start_date=date(2026, 3, 1),
+                    status="active",
+                )
+            )
         assert second["status"] == "registered"
         second_id = uuid.UUID(second["employee_id"])
         session.commit()
     with Session(engine) as session:
-        session.add(PayrollTaxStateSlot(
-            org_id=org_id,
-            employee_id=second_id,
-            tax_year=2026,
-            tax_month=8,
-            regular_batch_id=payroll_context["batch_id"],
-            final_batch_id=payroll_context["batch_id"],
-        ))
+        session.add(
+            PayrollTaxStateSlot(
+                org_id=org_id,
+                employee_id=second_id,
+                tax_year=2026,
+                tax_month=8,
+                regular_batch_id=payroll_context["batch_id"],
+                final_batch_id=payroll_context["batch_id"],
+            )
+        )
         with pytest.raises(DBAPIError, match="same-employee regular payroll"):
             session.commit()
     with Session(engine) as session:
-        slot = session.scalar(sa.select(PayrollTaxStateSlot).where(
-            PayrollTaxStateSlot.regular_batch_id == payroll_context["batch_id"]
-        ))
+        slot = session.scalar(
+            sa.select(PayrollTaxStateSlot).where(
+                PayrollTaxStateSlot.regular_batch_id == payroll_context["batch_id"]
+            )
+        )
         assert slot is not None
         slot.tax_month = 8
         with pytest.raises(DBAPIError, match="identity and regular batch are immutable"):
@@ -478,12 +499,14 @@ def test_r2_006_voucher_line_composite_organization_foreign_keys(
 ) -> None:
     with Session(payroll_context["engine"]) as session:
         binding = session.get(OrganizationDatabaseMetadata, 1)
-        component = session.scalar(sa.select(BusinessEventComponent).where(
-            BusinessEventComponent.event_id == payroll_context["event_id"]
-        ))
-        line = session.scalar(sa.select(VoucherLine).where(
-            VoucherLine.voucher_id == payroll_context["voucher_id"]
-        ))
+        component = session.scalar(
+            sa.select(BusinessEventComponent).where(
+                BusinessEventComponent.event_id == payroll_context["event_id"]
+            )
+        )
+        line = session.scalar(
+            sa.select(VoucherLine).where(VoucherLine.voucher_id == payroll_context["voucher_id"])
+        )
         assert binding is not None and binding.org_id == payroll_context["org_id"]
         assert component is not None and line is not None
         assert component.org_id == line.org_id == payroll_context["org_id"]
@@ -515,13 +538,15 @@ def test_r2_006_voucher_line_composite_organization_foreign_keys(
             )
             session.add(draft_voucher)
             session.flush()
-        session.add(VoucherLine(
-            org_id=uuid.uuid4(),
-            voucher_id=draft_voucher.id,
-            line_number=100,
-            account_id=line.account_id,
-            debit_fen=1,
-        ))
+        session.add(
+            VoucherLine(
+                org_id=uuid.uuid4(),
+                voucher_id=draft_voucher.id,
+                line_number=100,
+                account_id=line.account_id,
+                debit_fen=1,
+            )
+        )
         with pytest.raises(IntegrityError):
             session.flush()
 
@@ -534,14 +559,16 @@ def test_r2_010_explicit_version_successors_allow_only_their_own_overlap(
     with Session(engine) as session:
         service = FinanceService(session)
         with authority.attributed_call(session, tool_name="finance_register_employee"):
-            employee = service.register_employee(RegisterEmployeeRequest(
-                org_id=org_id,
-                employee_code="payroll-version-successor",
-                name="版本继任测试员工",
-                employment_start_date=date(2026, 4, 1),
-                tax_withholding_start_date=date(2026, 4, 1),
-                status="active",
-            ))
+            employee = service.register_employee(
+                RegisterEmployeeRequest(
+                    org_id=org_id,
+                    employee_code="payroll-version-successor",
+                    name="版本继任测试员工",
+                    employment_start_date=date(2026, 4, 1),
+                    tax_withholding_start_date=date(2026, 4, 1),
+                    status="active",
+                )
+            )
         assert employee["status"] == "registered", employee
         employee_id = uuid.UUID(employee["employee_id"])
         with authority.attributed_call(
@@ -613,19 +640,19 @@ def test_r2_010_explicit_version_successors_allow_only_their_own_overlap(
         with authority.attributed_call(
             session, tool_name="finance_negative_profile_overlap"
         ) as attribution:
-            session.add(EmployeePayrollProfileVersion(
-                org_id=org_id,
-                employee_id=employee_id,
-                effective_from=profile.effective_from,
-                expense_role=profile.expense_role,
-                social_insurance_base_fen=profile.social_insurance_base_fen,
-                housing_fund_base_fen=profile.housing_fund_base_fen,
-                social_insurance_participating=True,
-                housing_fund_participating=True,
-                resident_employee=True,
-                execution_attribution_id=attribution.id,
-            ))
-            with pytest.raises(
-                DBAPIError, match="NON_ANCESTOR_OVERLAP|explicit supersession"
-            ):
+            session.add(
+                EmployeePayrollProfileVersion(
+                    org_id=org_id,
+                    employee_id=employee_id,
+                    effective_from=profile.effective_from,
+                    expense_role=profile.expense_role,
+                    social_insurance_base_fen=profile.social_insurance_base_fen,
+                    housing_fund_base_fen=profile.housing_fund_base_fen,
+                    social_insurance_participating=True,
+                    housing_fund_participating=True,
+                    resident_employee=True,
+                    execution_attribution_id=attribution.id,
+                )
+            )
+            with pytest.raises(DBAPIError, match="NON_ANCESTOR_OVERLAP|explicit supersession"):
                 session.commit()

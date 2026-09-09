@@ -97,6 +97,7 @@ def _request(
             "acquisition_date": "2026-01-02",
             "available_for_use_date": "2026-01-02",
             "posting_date": "2026-01-02",
+            "cost_fen": 12_000,
             "cost_components": {
                 "purchase_price_fen": 11_000,
                 "noncreditable_tax_fen": 500,
@@ -115,22 +116,17 @@ def _request(
     )
 
 
-def test_bank_acquisition_requires_confirmed_scope_without_business_write(
+def test_bank_acquisition_uses_valid_account_without_reconciliation_scope_gate(
     session: Session, organization: Organization
 ) -> None:
     evidence = _evidence(session, organization, "scope-intangible")
-    bank = BankTransaction(
-        org_id=organization.id,
-        bank_account_code="1002",
-        fingerprint=("scope-intangible-bank" * 64)[:64],
-        booking_date=date(2026, 1, 2),
+    bank = import_test_bank_transaction(
+        session,
+        organization,
         amount_fen=-12_000,
-        currency="CNY",
-        memo="scope intangible",
-        source_sha256=("scope-intangible-source" * 64)[:64],
+        booking_date=date(2026, 1, 2),
+        key="scope-intangible-bank",
     )
-    session.add(bank)
-    session.flush()
     payload = _request(
         organization,
         evidence,
@@ -153,13 +149,11 @@ def test_bank_acquisition_requires_confirmed_scope_without_business_write(
         AcquireIntangibleAssetRequest.model_validate(payload)
     )
 
-    assert result.status == "needs_information"
-    assert result.event_id is None
-    assert result.missing_information[0].fields == ["bank_reconciliation_scope_confirmation"]
-    assert session.scalars(select(BusinessEvent)).all() == []
-    assert session.scalars(select(IntangibleAsset)).all() == []
-    assert session.scalars(select(Counterparty)).all() == []
-    assert bank.matched_event_id is None
+    assert result.status == "posted", result.errors
+    assert result.event_id is not None
+    assert session.scalars(select(IntangibleAsset)).all()
+    assert session.scalars(select(Counterparty)).all()
+    assert bank.matched_event_id == result.event_id
 
 
 def _assert_balanced(session: Session, voucher_id: object) -> None:
@@ -229,7 +223,8 @@ def test_acquisition_is_normalized_balanced_and_payload_idempotent(
     changed = service.acquire_intangible_asset(
         request.model_copy(update={"asset_name": "换载荷名称"})
     )
-    assert changed.errors == ["INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert changed.event_id == posted.event_id
+    assert changed.errors == []
 
 
 def test_missing_readiness_and_unsupported_workflows_are_stable(
@@ -244,8 +239,8 @@ def test_missing_readiness_and_unsupported_workflows_are_stable(
     missing = service.acquire_intangible_asset(missing_request)
     assert missing.status == "needs_information"
     assert {item.code for item in missing.missing_information} >= {
-        "INTANGIBLE_ASSET_IDENTITY_REQUIRED",
-        "INTANGIBLE_ASSET_COST_COMPONENTS_REQUIRED",
+        "INTANGIBLE_ASSET_CATEGORY_REQUIRED",
+        "INTANGIBLE_ASSET_COST_REQUIRED",
         "INTANGIBLE_ASSET_EVIDENCE_REQUIRED",
     }
     missing_replay = service.acquire_intangible_asset(missing_request)
@@ -254,7 +249,8 @@ def test_missing_readiness_and_unsupported_workflows_are_stable(
     missing_mismatch = service.acquire_intangible_asset(
         missing_request.model_copy(update={"asset_name": "不同载荷"})
     )
-    assert missing_mismatch.errors == ["INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert missing_mismatch.event_id == missing.event_id
+    assert missing_mismatch.errors == []
 
     not_ready = service.acquire_intangible_asset(
         _request(
@@ -282,7 +278,8 @@ def test_missing_readiness_and_unsupported_workflows_are_stable(
             asset_code="IA-NOT-READY-CHANGED",
         ).model_copy(update={"is_available_for_use": False})
     )
-    assert not_ready_mismatch.errors == ["INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert not_ready_mismatch.event_id == not_ready.event_id
+    assert not_ready_mismatch.errors == ["INTANGIBLE_ASSET_NOT_READY_WORKFLOW_NOT_ENABLED"]
     creditable = service.acquire_intangible_asset(
         _request(
             organization,
@@ -492,13 +489,8 @@ def test_supplier_identity_cost_sum_and_calendar_bounds_are_strict(
     )
     range_request = range_request.model_copy(
         update={
-            "cost_components": range_request.cost_components.model_copy(
-                update={
-                    "purchase_price_fen": 2**63 - 1,
-                    "noncreditable_tax_fen": 1,
-                    "directly_attributable_cost_fen": 0,
-                }
-            )
+            "cost_fen": 2**63,
+            "cost_components": None,
         }
     )
     range_result = service.acquire_intangible_asset(range_request)
@@ -776,7 +768,7 @@ def test_amortization_hash_sequence_retirement_and_reverse_order(
             asset_code="IA-LIFECYCLE",
         )
     )
-    assert non_reusable.errors == ["INTANGIBLE_ASSET_CODE_ALREADY_EXISTS"]
+    assert non_reusable.status == "posted"
 
 
 def test_service_amortization_is_continuous_and_final_month_closes_to_zero(
@@ -793,9 +785,10 @@ def test_service_amortization_is_continuous_and_final_month_closes_to_zero(
     )
     request = request.model_copy(
         update={
+            "cost_fen": 12_005,
             "cost_components": request.cost_components.model_copy(
                 update={"purchase_price_fen": 11_005}
-            )
+            ),
         }
     )
     acquired = service.acquire_intangible_asset(request)

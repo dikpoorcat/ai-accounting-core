@@ -129,8 +129,7 @@ def _sale(
                     "business_date": business_date,
                     "fulfillment_date": business_date,
                     "tax_obligation_date": business_date,
-                    "amount_fen": 101_000,
-                    "counterparty": {"kind": "customer", "name": "期间测试客户"},
+                    "amount_fen": 101000,
                     "recognition_basis": "credit",
                     "tax_facts": {
                         "taxable": True,
@@ -139,6 +138,7 @@ def _sale(
                         "waive_exemption": False,
                         "tax_due_on_event": True,
                     },
+                    "metadata": {"counterparty": {"kind": "customer", "name": "期间测试客户"}},
                 }
             ],
         }
@@ -166,16 +166,16 @@ def _mixed_expense(
                     "amount_fen": travel_fen,
                     "expense_class": "general_expense",
                     "payment_basis": "supplier_credit",
-                    "counterparty": {"kind": "supplier", "name": "组合业务供应商甲"},
+                    "metadata": {"counterparty": {"kind": "supplier", "name": "组合业务供应商甲"}},
                 },
                 {
                     "key": "selling",
                     "kind": "expense",
                     "business_date": "2026-07-20",
-                    "amount_fen": 10_000,
+                    "amount_fen": 10000,
                     "expense_class": "sales_expense",
                     "payment_basis": "supplier_credit",
-                    "counterparty": {"kind": "supplier", "name": "组合业务供应商乙"},
+                    "metadata": {"counterparty": {"kind": "supplier", "name": "组合业务供应商乙"}},
                 },
             ],
         }
@@ -352,7 +352,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                 ) as attribution:
                     session.execute(
                         sa.text(
-                        """
+                            """
                         INSERT INTO payroll_policy_versions (
                             id, org_id, region, supersedes_id, effective_from,
                             effective_to, version, source_url, parameters,
@@ -447,7 +447,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                         event_id, voucher_id = uuid.uuid4(), uuid.uuid4()
                         session.execute(
                             sa.text(
-                            """
+                                """
                             INSERT INTO business_events (
                                 id, org_id, idempotency_key, request_payload_hash,
                                 event_type, status, description, facts, business_date,
@@ -472,7 +472,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
                         )
                         session.execute(
                             sa.text(
-                            """
+                                """
                             INSERT INTO vouchers (
                                 id, org_id, event_id, voucher_number, posting_date,
                                 description, status, reversal_of_voucher_id, posted_at
@@ -847,8 +847,7 @@ def test_postgres_period_close_snapshot_and_direct_sql_guards(
             engine.dispose()
 
 
-def test_postgres_close_vs_close_is_linearized(
-) -> None:
+def test_postgres_close_vs_close_is_linearized() -> None:
     with isolated_postgres_url("finance_company") as database_url:
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -983,8 +982,7 @@ def test_postgres_close_vs_close_is_linearized(
             engine.dispose()
 
 
-def test_postgres_close_vs_post_is_linearized(
-) -> None:
+def test_postgres_close_vs_post_is_linearized() -> None:
     with isolated_postgres_url("finance_company") as database_url:
         command.upgrade(_config(database_url), "head")
         engine = sa.create_engine(database_url)
@@ -1251,9 +1249,7 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
 
             with pytest.raises(DBAPIError, match="ACCOUNTING_PERIOD_SNAPSHOT_IMMUTABLE"):
                 with Session(engine) as session:
-                    with authority.attributed_call(
-                        session, tool_name="finance_negative_tamper"
-                    ):
+                    with authority.attributed_call(session, tool_name="finance_negative_tamper"):
                         session.execute(
                             sa.text(
                                 "UPDATE accounting_period_actions "
@@ -1269,8 +1265,7 @@ def test_postgres_period_generation_concurrency_and_payload_identity() -> None:
             engine.dispose()
 
 
-def test_postgres_owner_close_vs_raw_payroll_is_linearized(
-) -> None:
+def test_postgres_owner_close_vs_raw_payroll_is_linearized() -> None:
     """Keep the owner-mode close race separate from legacy multi-org guards."""
 
     with isolated_postgres_url("finance_company") as database_url:
@@ -1313,7 +1308,7 @@ def test_postgres_owner_close_vs_raw_payroll_is_linearized(
                 ) as attribution:
                     session.execute(
                         sa.text(
-                        """
+                            """
                         INSERT INTO payroll_policy_versions (
                             id, org_id, region, supersedes_id, effective_from,
                             effective_to, version, source_url, parameters,
@@ -1478,9 +1473,7 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                     organization,
                     registry_database_name=engine.url.database,
                 ) as authority:
-                    with authority.attributed_call(
-                        session, tool_name="finance_register_evidence"
-                    ):
+                    with authority.attributed_call(session, tool_name="finance_register_evidence"):
                         evidence = Evidence(
                             org_id=organization.id,
                             sha256="e" * 64,
@@ -1521,11 +1514,12 @@ def test_postgres_payroll_dependency_and_generation_writes_are_serialized() -> N
                     with ThreadPoolExecutor(max_workers=2) as executor:
                         results = list(executor.map(generate, ("2026-05", "2026-07")))
                     assert [status for status, _ in results].count("posted") == 1
-                    assert [
-                        errors for status, errors in results if status == "rejected"
-                    ] == [["ACCOUNTING_PERIOD_GENERATION_OUT_OF_SEQUENCE"]]
-                    assert session.scalar(
-                        sa.select(sa.func.count()).select_from(AccountingPeriod)
-                    ) == 1
+                    assert [errors for status, errors in results if status == "rejected"] == [
+                        ["ACCOUNTING_PERIOD_GENERATION_OUT_OF_SEQUENCE"]
+                    ]
+                    assert (
+                        session.scalar(sa.select(sa.func.count()).select_from(AccountingPeriod))
+                        == 1
+                    )
         finally:
             engine.dispose()

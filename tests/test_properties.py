@@ -88,10 +88,6 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
                             "business_date": "2026-08-01",
                             "fulfillment_date": "2026-08-01",
                             "amount_fen": original,
-                            "counterparty": {
-                                "kind": "customer",
-                                "name": "性质测试客户",
-                            },
                             "recognition_basis": "credit",
                             "tax_facts": {
                                 "taxable": False,
@@ -99,6 +95,9 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
                                 "invoice_type": "none",
                                 "waive_exemption": False,
                                 "tax_due_on_event": False,
+                            },
+                            "metadata": {
+                                "counterparty": {"kind": "customer", "name": "性质测试客户"}
                             },
                         }
                     ],
@@ -120,11 +119,10 @@ def test_random_valid_receivable_sequences_preserve_open_item_conservation(
                                 "kind": "receivable_settlement",
                                 "business_date": "2026-08-02",
                                 "payment_date": "2026-08-02",
-                                "counterparty": {
-                                    "kind": "customer",
-                                    "name": "性质测试客户",
-                                },
                                 "allocations": [{"open_item_id": item.id, "amount_fen": payment}],
+                                "metadata": {
+                                    "counterparty": {"kind": "customer", "name": "性质测试客户"}
+                                },
                             }
                         ],
                         funds=[

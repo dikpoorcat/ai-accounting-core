@@ -675,7 +675,7 @@ class OwnerWorkflowService:
         return {
             "version": OWNER_WORKFLOW_CLOSE_GATE_VERSION,
             "effective_from": OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM.isoformat(),
-            "enforced_for_period": period.start_date >= OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM,
+            "enforced_for_period": False,
             "snapshot_hash": canonical_sha256(
                 {
                     "version": OWNER_WORKFLOW_CLOSE_GATE_VERSION,
@@ -782,7 +782,7 @@ class OwnerWorkflowService:
         return {
             "version": OWNER_WORKFLOW_CLOSE_GATE_VERSION,
             "effective_from": OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM.isoformat(),
-            "enforced_for_period": period.start_date >= OWNER_WORKFLOW_CLOSE_GATE_EFFECTIVE_FROM,
+            "enforced_for_period": False,
             "terminal_for_monthly_workflow": True,
             "terminal_proof": terminal_proof,
             "snapshot_hash": canonical_sha256(

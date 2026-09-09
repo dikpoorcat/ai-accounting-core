@@ -56,8 +56,8 @@ def _expense_request(org_id: object, *, key: str, evidence_id: object) -> Record
                     "amount_fen": 100,
                     "expense_class": "general_expense",
                     "payment_basis": "supplier_credit",
-                    "counterparty": {"kind": "supplier", "name": "R4 测试供应商"},
                     "evidence_references": [evidence_id],
+                    "metadata": {"counterparty": {"kind": "supplier", "name": "R4 测试供应商"}},
                 }
             ],
         }

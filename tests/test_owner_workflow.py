@@ -125,6 +125,7 @@ def test_typed_owner_confirmations_survive_new_service_and_stale_on_upstream_cha
     period = _generate_august_period(session, organization)
     workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
     gates = workflow.close_gate_snapshot(organization.id, period)
+    assert gates["enforced_for_period"] is False
     initial_close = AccountingPeriodService(
         session, current_date=date(2026, 9, 2)
     ).preview_accounting_period_close(
@@ -137,10 +138,9 @@ def test_typed_owner_confirmations_survive_new_service_and_stale_on_upstream_cha
     assert {
         "ACCOUNTING_PERIOD_WORKFORCE_REVIEW_CURRENT",
         "ACCOUNTING_PERIOD_NON_BANK_MATERIAL_COMPLETENESS_CURRENT",
-    } <= set(initial_close.data["blocker_codes"])
+    }.isdisjoint(initial_close.data["blocker_codes"])
     assert (
-        initial_close.data["calculation"]["owner_workflow_close_gates"]["snapshot_hash"]
-        == gates["snapshot_hash"]
+        initial_close.data["owner_workflow_close_gates"]["snapshot_hash"] == gates["snapshot_hash"]
     )
 
     workforce = workflow.confirm_workforce_review(
@@ -255,8 +255,7 @@ def test_annual_obligations_remain_overdue_until_typed_confirmation(
         ]
     ]
     assert all(
-        target in before["confirmation_targets"]
-        for target in annual_eit["confirmation_targets"]
+        target in before["confirmation_targets"] for target in annual_eit["confirmation_targets"]
     )
 
     obligation = annual_eit["obligation"]

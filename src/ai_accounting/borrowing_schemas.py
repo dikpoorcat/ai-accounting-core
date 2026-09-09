@@ -96,7 +96,7 @@ class BorrowingLenderReference(BaseModel):
 
 
 class BorrowingTermFacts(BaseModel):
-    """Explicit Phase-1 boundary facts; no missing term is inferred."""
+    """Current calculation facts plus optional future contract features."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -110,7 +110,16 @@ class BorrowingTermFacts(BaseModel):
     has_financing_fees: StrictBool | None = None
 
     def missing_fields(self) -> list[str]:
-        return [name for name in type(self).model_fields if getattr(self, name) is None]
+        return [
+            name
+            for name in (
+                "single_drawdown",
+                "fixed_rate",
+                "simple_interest",
+                "bullet_principal_at_maturity",
+            )
+            if getattr(self, name) is None
+        ]
 
     def is_phase_one_supported(self) -> bool:
         return (
@@ -118,10 +127,6 @@ class BorrowingTermFacts(BaseModel):
             and self.fixed_rate is True
             and self.simple_interest is True
             and self.bullet_principal_at_maturity is True
-            and self.allows_prepayment is False
-            and self.allows_extension is False
-            and self.has_penalty_interest is False
-            and self.has_financing_fees is False
         )
 
 
@@ -169,7 +174,7 @@ class DrawBorrowingRequest(BaseModel):
         if isinstance(value, str):
             value = value.strip()
             if not value:
-                raise ValueError("required borrowing text must not be blank")
+                raise ValueError("borrowing management text must not be blank")
         return value
 
     @field_validator("annual_rate_percent", mode="before")
@@ -185,21 +190,19 @@ class DrawBorrowingRequest(BaseModel):
             raise ValueError("drawdown posting_date must equal drawdown_date")
         if self.interest_due_dates is not None and self.drawdown_date and self.due_date:
             if not self.interest_due_dates:
-                raise ValueError("interest_due_dates must not be empty")
+                raise ValueError("when provided, interest_due_dates must not be empty")
             if self.interest_due_dates != sorted(set(self.interest_due_dates)):
                 raise ValueError("interest_due_dates must be strictly ascending without duplicates")
             if self.interest_due_dates[0] <= self.drawdown_date:
                 raise ValueError("first interest due date must follow drawdown date")
-            if self.interest_due_dates[-1] != self.due_date:
-                raise ValueError("last interest due date must equal due_date")
+            if self.interest_due_dates[-1] > self.due_date:
+                raise ValueError("interest due dates must not follow borrowing maturity")
         return self
 
     def missing_information(self) -> list[BorrowingInformationRequirement]:
         fields = [
             name
             for name in (
-                "borrowing_code",
-                "contract_name",
                 "lender",
                 "lender_is_licensed_financial_institution",
                 "currency",
@@ -209,9 +212,7 @@ class DrawBorrowingRequest(BaseModel):
                 "posting_date",
                 "annual_rate_percent",
                 "day_count_basis",
-                "interest_due_dates",
                 "capitalization_applicable",
-                "purpose_description",
             )
             if getattr(self, name) is None
         ]
@@ -224,8 +225,8 @@ class DrawBorrowingRequest(BaseModel):
                 BorrowingInformationRequirement(
                     code="BORROWING_DRAW_FACTS_REQUIRED",
                     message=(
-                        "complete lender, contract, rate, due-date, capitalization, "
-                        "and term facts are required"
+                        "lender, principal, maturity, rate, capitalization, and current "
+                        "calculation terms are required"
                     ),
                     fields=fields,
                 )

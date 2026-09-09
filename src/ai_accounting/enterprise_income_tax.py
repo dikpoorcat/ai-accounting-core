@@ -204,7 +204,7 @@ class EnterpriseIncomeTaxService:
                     "previous_result_id": str(row.previous_result_id)
                     if row.previous_result_id
                     else None,
-                    "declaration_reference": row.input_facts["declaration_reference"],
+                    "declaration_reference": row.input_facts.get("declaration_reference"),
                     "evidence_references": row.input_facts["evidence_references"],
                     "rule": row.calculation["rule"],
                 }
@@ -369,7 +369,9 @@ class EnterpriseIncomeTaxService:
             )
         )
         calculation = {
-            "input": request.model_dump(mode="json"),
+            "input": request.model_dump(
+                mode="json", exclude={"declaration_reference", "confirmation_note"}
+            ),
             "state": data,
             "rule": RULE,
             "previously_recognized_fen": before,
@@ -401,7 +403,9 @@ class EnterpriseIncomeTaxService:
         from .component_service import ComponentService
 
         lock_income_tax(self.session, request.org_id)
-        payload = request.model_dump(mode="json")
+        payload = request.model_dump(
+            mode="json", exclude={"declaration_reference", "confirmation_note"}
+        )
         existing = self.session.scalar(
             select(EnterpriseIncomeTaxResult).where(
                 EnterpriseIncomeTaxResult.org_id == request.org_id,
@@ -468,7 +472,14 @@ class EnterpriseIncomeTaxService:
                 )
 
         component = request.model_dump(
-            exclude={"org_id", "posting_date", "evidence_references", "idempotency_key"}
+            exclude={
+                "org_id",
+                "posting_date",
+                "evidence_references",
+                "idempotency_key",
+                "declaration_reference",
+                "confirmation_note",
+            }
         ) | {
             "key": "result",
             "kind": "enterprise_income_tax_result",
@@ -552,7 +563,7 @@ class EnterpriseIncomeTaxService:
         self.attach_payment(
             event,
             allocations,
-            request.model_dump(mode="json"),
+            request.model_dump(mode="json", exclude={"metadata"}),
             f"component:{component.id}",
             component_id=component.id,
         )

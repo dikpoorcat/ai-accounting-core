@@ -163,7 +163,28 @@ def compile_salary_settlement(
         )
     derived = service.derive_salary_settlement(org_id, component)
     derived["salary_withholding_allocations"] = derived["allocations"]
-    derived["cash_flow_category"] = "cash_flow_4"
+    allocation_details = {
+        uuid.UUID(row["open_item_id"]): row for row in derived["allocations"]
+    }
+    cash_flow_parts = []
+    for allocation in component.allocations:
+        details = allocation_details[allocation.open_item_id]
+        cash_amount = (
+            allocation.amount_fen
+            - sum(details["employee_social_insurance_items"].values())
+            - sum(details["employee_housing_fund_items"].values())
+            - details["individual_income_tax_fen"]
+            - details["actual_salary_deduction_fen"]
+        )
+        if cash_amount:
+            cash_flow_parts.append(
+                {
+                    "category": "cash_flow_4",
+                    "amount_fen": cash_amount,
+                    "source": allocation.model_dump(mode="json", exclude={"amount_fen"}),
+                }
+            )
+    derived["cash_flow_parts"] = cash_flow_parts
     derived["payment_date"] = component.payment_date.isoformat()
     entries, settlements = [], []
     for allocation in component.allocations:
@@ -223,12 +244,17 @@ def compile_salary_settlement(
     def apply(session, event, persisted):
         service._record_payroll_withholding_allocations(event, derived, component_id=persisted.id)
         for allocation in component.allocations:
+            source = next(
+                row
+                for row in derived["allocations"]
+                if row["open_item_id"] == str(allocation.open_item_id)
+            )
             session.add(
                 PayrollEventLink(
                     org_id=org_id,
                     event_id=event.id,
                     component_id=persisted.id,
-                    payroll_batch_id=uuid.UUID(derived["payroll_batch_id"]),
+                    payroll_batch_id=uuid.UUID(source["payroll_batch_id"]),
                     source_open_item_id=allocation.open_item_id,
                     link_kind="salary_payment",
                 )
@@ -240,7 +266,7 @@ def compile_salary_settlement(
         facts=component.model_dump(mode="json"),
         entries=entries,
         derived=derived,
-        rule_version="salary-settlement-components-v1",
+        rule_version="salary-settlement-components-v2",
         open_items=named_items,
         settlements=settlements,
         effects=[apply],
@@ -265,7 +291,7 @@ def _compile_local_salary_settlement(
     if not set(deduction_by_source).issubset(allocation_by_source):
         raise ValueError("salary actual deduction must belong to a salary allocation")
 
-    batch_id = None
+    batch_ids: set[str] = set()
     cash_total = social_total = housing_total = tax_total = actual_total = 0
     serialised = []
     withholding_rows = []
@@ -290,9 +316,7 @@ def _compile_local_salary_settlement(
         if item_plan is None or source is None:
             raise ValueError("salary open item has no matching payroll line")
         current_batch = plan.derived["payroll_batch_id"]
-        if batch_id is not None and batch_id != current_batch:
-            raise ValueError("one salary payment must allocate salary from one payroll batch")
-        batch_id = current_batch
+        batch_ids.add(current_batch)
         if allocation.amount_fen > item_plan.original_amount_fen:
             raise ValueError("allocation exceeds local salary amount")
         entitlements = [
@@ -341,6 +365,7 @@ def _compile_local_salary_settlement(
             "source_component_key": source_key,
             "source_open_item_key": open_item_key,
             "open_item_id": None,
+            "payroll_batch_id": current_batch,
             "payroll_line_id": line_id,
             "employee_social_insurance_items": social,
             "employee_housing_fund_items": housing,
@@ -379,13 +404,13 @@ def _compile_local_salary_settlement(
                 source_open_item_key=open_item_key,
             )
         )
-    if batch_id is None or cash_total != component.amount_fen:
+    if not batch_ids or cash_total != component.amount_fen:
         raise ValueError(
             "salary cash payment must equal gross allocations less explicit "
             "withholdings and actual salary deductions"
         )
     derived = {
-        "payroll_batch_id": batch_id,
+        "payroll_batch_ids": sorted(batch_ids),
         "gross_salary_fen": sum(item.amount_fen for item in component.allocations),
         "employee_social_insurance_fen": social_total,
         "employee_housing_fund_fen": housing_total,
@@ -463,7 +488,7 @@ def _compile_local_salary_settlement(
                     org_id=org_id,
                     event_id=event.id,
                     component_id=persisted.id,
-                    payroll_batch_id=uuid.UUID(batch_id),
+                    payroll_batch_id=uuid.UUID(row["payroll_batch_id"]),
                     source_open_item_id=uuid.UUID(row["open_item_id"]),
                     link_kind="salary_payment",
                 )
@@ -475,7 +500,7 @@ def _compile_local_salary_settlement(
         facts=component.model_dump(mode="json"),
         entries=entries,
         derived=derived,
-        rule_version="salary-settlement-components-v1",
+        rule_version="salary-settlement-components-v2",
         open_items=named_items,
         settlements=settlements,
         effects=[apply],

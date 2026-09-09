@@ -219,6 +219,7 @@ def test_postgres_rate_hash_identity_immutability_and_nonposted_concurrency() ->
                             "acquisition_date": "2026-01-02",
                             "available_for_use_date": "2026-01-02",
                             "posting_date": "2026-01-02",
+                            "cost_fen": 12_000,
                             "cost_components": {
                                 "purchase_price_fen": 11_000,
                                 "noncreditable_tax_fen": 500,

@@ -80,27 +80,28 @@ def _acquire_payable(
     with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
         result = FixedAssetService(session).acquire_fixed_asset(
             AcquireFixedAssetRequest.model_validate(
-            {
-                "org_id": org_id,
-                "idempotency_key": f"{key}-acquire",
-                "asset_code": f"FA-{key}",
-                "asset_name": "生产设备",
-                "category": "production_equipment",
-                "expected_use_over_one_year": True,
-                "purchase_date": "2026-01-02",
-                "posting_date": "2026-01-02",
-                "cost_components": {
-                    "purchase_price_fen": 1_000_000,
-                    "noncreditable_tax_fen": 30_000,
-                    "transport_and_handling_fen": 10_000,
-                    "installation_and_direct_cost_fen": 10_000,
-                },
-                "supplier": {"kind": "supplier", "name": f"供应商-{key}"},
-                "settlement_method": "payable",
-                "due_date": "2026-02-02",
-                "evidence_references": [evidence_id],
-                "claims_creditable_input_vat": False,
-            }
+                {
+                    "org_id": org_id,
+                    "idempotency_key": f"{key}-acquire",
+                    "asset_code": f"FA-{key}",
+                    "asset_name": "生产设备",
+                    "category": "production_equipment",
+                    "expected_use_over_one_year": True,
+                    "purchase_date": "2026-01-02",
+                    "posting_date": "2026-01-02",
+                    "cost_fen": 1_050_000,
+                    "cost_components": {
+                        "purchase_price_fen": 1_000_000,
+                        "noncreditable_tax_fen": 30_000,
+                        "transport_and_handling_fen": 10_000,
+                        "installation_and_direct_cost_fen": 10_000,
+                    },
+                    "supplier": {"kind": "supplier", "name": f"供应商-{key}"},
+                    "settlement_method": "payable",
+                    "due_date": "2026-02-02",
+                    "evidence_references": [evidence_id],
+                    "claims_creditable_input_vat": False,
+                }
             )
         )
     assert result.status == "posted", result.errors
@@ -118,17 +119,17 @@ def _activate(
     with authority.attributed_call(session, tool_name="finance_activate_fixed_asset"):
         result = FixedAssetService(session).activate_fixed_asset(
             ActivateFixedAssetRequest.model_validate(
-            {
-                "org_id": asset.org_id,
-                "asset_id": asset.id,
-                "idempotency_key": f"{key}-activate",
-                "activation_date": "2026-01-10",
-                "posting_date": "2026-01-10",
-                "useful_life_months": 13,
-                "residual_value_fen": 10_000,
-                "benefit_area": "management",
-                "evidence_references": [evidence_id],
-            }
+                {
+                    "org_id": asset.org_id,
+                    "asset_id": asset.id,
+                    "idempotency_key": f"{key}-activate",
+                    "activation_date": "2026-01-10",
+                    "posting_date": "2026-01-10",
+                    "useful_life_months": 13,
+                    "residual_value_fen": 10_000,
+                    "benefit_area": "management",
+                    "evidence_references": [evidence_id],
+                }
             )
         )
     assert result.status == "posted", result.errors
@@ -372,32 +373,33 @@ def test_postgres_monthly_depreciation_batch_is_one_final_voucher(
                 with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
                     second = FixedAssetService(session).acquire_fixed_asset(
                         AcquireFixedAssetRequest.model_validate(
-                        {
-                            "org_id": first.org_id,
-                            "idempotency_key": "batch-pg-second-acquire",
-                            "asset_code": "FA-BATCH-PG-002",
-                            "asset_name": "第二项设备",
-                            "category": "electronic",
-                            "expected_use_over_one_year": True,
-                            "purchase_date": "2026-01-02",
-                            "posting_date": "2026-01-02",
-                            "cost_components": {
-                                "purchase_price_fen": 100_006,
-                                "noncreditable_tax_fen": 0,
-                                "transport_and_handling_fen": 0,
-                                "installation_and_direct_cost_fen": 0,
-                            },
-                            "supplier": {"kind": "supplier", "name": "第二供应商"},
-                            "settlement_method": "payable",
-                            "due_date": "2026-02-02",
-                            "evidence_references": [evidence.id],
-                            "claims_creditable_input_vat": False,
-                            "ready_for_use": {
-                                "in_service_date": "2026-01-02",
-                                "useful_life_months": 13,
-                                "residual_value_fen": 0,
-                                "benefit_area": "management",
-                            },
+                            {
+                                "org_id": first.org_id,
+                                "idempotency_key": "batch-pg-second-acquire",
+                                "asset_code": "FA-BATCH-PG-002",
+                                "asset_name": "第二项设备",
+                                "category": "electronic",
+                                "expected_use_over_one_year": True,
+                                "purchase_date": "2026-01-02",
+                                "posting_date": "2026-01-02",
+                                "cost_fen": 100_006,
+                                "cost_components": {
+                                    "purchase_price_fen": 100_006,
+                                    "noncreditable_tax_fen": 0,
+                                    "transport_and_handling_fen": 0,
+                                    "installation_and_direct_cost_fen": 0,
+                                },
+                                "supplier": {"kind": "supplier", "name": "第二供应商"},
+                                "settlement_method": "payable",
+                                "due_date": "2026-02-02",
+                                "evidence_references": [evidence.id],
+                                "claims_creditable_input_vat": False,
+                                "ready_for_use": {
+                                    "in_service_date": "2026-01-02",
+                                    "useful_life_months": 13,
+                                    "residual_value_fen": 0,
+                                    "benefit_area": "management",
+                                },
                             }
                         )
                     )
@@ -488,32 +490,33 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                 with authority.attributed_call(session, tool_name="finance_acquire_fixed_asset"):
                     direct = FixedAssetService(session).acquire_fixed_asset(
                         AcquireFixedAssetRequest.model_validate(
-                        {
-                            "org_id": asset.org_id,
-                            "idempotency_key": "direct-ready-acquisition",
-                            "asset_code": "FA-direct-ready",
-                            "asset_name": "已交付设备",
-                            "category": "electronic",
-                            "expected_use_over_one_year": True,
-                            "purchase_date": "2026-01-02",
-                            "posting_date": "2026-01-02",
-                            "cost_components": {
-                                "purchase_price_fen": 120_000,
-                                "noncreditable_tax_fen": 0,
-                                "transport_and_handling_fen": 0,
-                                "installation_and_direct_cost_fen": 0,
-                            },
-                            "supplier": {"kind": "supplier", "name": "直接交付供应商"},
-                            "settlement_method": "payable",
-                            "due_date": "2026-02-28",
-                            "evidence_references": [evidence.id],
-                            "claims_creditable_input_vat": False,
-                            "ready_for_use": {
-                                "in_service_date": "2026-01-02",
-                                "useful_life_months": 13,
-                                "residual_value_fen": 10_000,
-                                "benefit_area": "management",
-                            },
+                            {
+                                "org_id": asset.org_id,
+                                "idempotency_key": "direct-ready-acquisition",
+                                "asset_code": "FA-direct-ready",
+                                "asset_name": "已交付设备",
+                                "category": "electronic",
+                                "expected_use_over_one_year": True,
+                                "purchase_date": "2026-01-02",
+                                "posting_date": "2026-01-02",
+                                "cost_fen": 120_000,
+                                "cost_components": {
+                                    "purchase_price_fen": 120_000,
+                                    "noncreditable_tax_fen": 0,
+                                    "transport_and_handling_fen": 0,
+                                    "installation_and_direct_cost_fen": 0,
+                                },
+                                "supplier": {"kind": "supplier", "name": "直接交付供应商"},
+                                "settlement_method": "payable",
+                                "due_date": "2026-02-28",
+                                "evidence_references": [evidence.id],
+                                "claims_creditable_input_vat": False,
+                                "ready_for_use": {
+                                    "in_service_date": "2026-01-02",
+                                    "useful_life_months": 13,
+                                    "residual_value_fen": 10_000,
+                                    "benefit_area": "management",
+                                },
                             }
                         )
                     )
@@ -577,13 +580,10 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                                         "kind": "payable_settlement",
                                         "business_date": "2026-02-02",
                                         "payment_date": "2026-02-02",
-                                        "counterparty": {"id": item.counterparty_id},
                                         "allocations": [
-                                            {
-                                                "open_item_id": item.id,
-                                                "amount_fen": asset.cost_fen,
-                                            }
+                                            {"open_item_id": item.id, "amount_fen": asset.cost_fen}
                                         ],
+                                        "metadata": {"counterparty": {"id": item.counterparty_id}},
                                     }
                                 ],
                                 "funds": [
@@ -618,6 +618,7 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                                 "expected_use_over_one_year": True,
                                 "purchase_date": "2026-02-02",
                                 "posting_date": "2026-02-02",
+                                "cost_fen": 50_000,
                                 "cost_components": {
                                     "purchase_price_fen": 50_000,
                                     "noncreditable_tax_fen": 0,
@@ -665,10 +666,12 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                                         "kind": "payable_settlement",
                                         "business_date": "2026-02-03",
                                         "payment_date": "2026-02-03",
-                                        "counterparty": {"id": employee_counterparty.id},
                                         "allocations": [
-                                            {"open_item_id": employee_item.id, "amount_fen": 50_000}
+                                            {"open_item_id": employee_item.id, "amount_fen": 50000}
                                         ],
+                                        "metadata": {
+                                            "counterparty": {"id": employee_counterparty.id}
+                                        },
                                     }
                                 ],
                                 "funds": [
@@ -677,12 +680,9 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                                         "account_code": "1001",
                                         "direction": "payment",
                                         "payment_date": "2026-02-03",
-                                        "amount_fen": 50_000,
+                                        "amount_fen": 50000,
                                         "allocations": [
-                                            {
-                                                "component_key": "settlement",
-                                                "amount_fen": 50_000,
-                                            }
+                                            {"component_key": "settlement", "amount_fen": 50000}
                                         ],
                                     }
                                 ],
@@ -732,9 +732,7 @@ def test_postgres_fixed_asset_reverse_edges_and_normal_settlement(
                 )
                 with authority.attributed_call(session, tool_name="finance_negative_tamper"):
                     direct_asset.cost_fen += 1
-                    with pytest.raises(
-                        DBAPIError, match="final fixed-asset facts are immutable"
-                    ):
+                    with pytest.raises(DBAPIError, match="final fixed-asset facts are immutable"):
                         session.commit()
 
         finally:
@@ -746,9 +744,12 @@ def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del monkeypatch
-    with authenticated_business_database(
-        "fixed_asset_lifecycle", name="PG 固定资产生命周期"
-    ) as (engine, org_id, evidence_id, authority):
+    with authenticated_business_database("fixed_asset_lifecycle", name="PG 固定资产生命周期") as (
+        engine,
+        org_id,
+        evidence_id,
+        authority,
+    ):
         with Session(engine) as session:
             asset, _ = _acquire_payable(session, org_id, evidence_id, authority, "skip")
             _activate(session, asset, evidence_id, authority, "skip")
@@ -830,9 +831,7 @@ def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
         def dispose_concurrently(index: int) -> tuple[str, list[str]]:
             with Session(engine) as session:
                 barrier.wait(timeout=5)
-                with authority.attributed_call(
-                    session, tool_name="finance_dispose_fixed_asset"
-                ):
+                with authority.attributed_call(session, tool_name="finance_dispose_fixed_asset"):
                     result = FixedAssetService(session).dispose_fixed_asset(
                         DisposeFixedAssetRequest.model_validate(
                             {
@@ -858,19 +857,20 @@ def test_postgres_fixed_asset_lifecycle_rejects_skip_overage_and_wrong_month(
             ["FIXED_ASSET_ALREADY_DISPOSED"]
         ) == 1
         with Session(engine) as session:
-            assert session.scalar(
-                sa.select(sa.func.count())
-                .select_from(FixedAssetDisposal)
-                .join(BusinessEvent, BusinessEvent.id == FixedAssetDisposal.event_id)
-                .where(
-                    FixedAssetDisposal.asset_id == concurrent_asset_id,
-                    BusinessEvent.status == "posted",
+            assert (
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(FixedAssetDisposal)
+                    .join(BusinessEvent, BusinessEvent.id == FixedAssetDisposal.event_id)
+                    .where(
+                        FixedAssetDisposal.asset_id == concurrent_asset_id,
+                        BusinessEvent.status == "posted",
+                    )
                 )
-            ) == 1
-
-            tax_asset, _ = _acquire_payable(
-                session, org_id, evidence_id, authority, "tax-rule"
+                == 1
             )
+
+            tax_asset, _ = _acquire_payable(session, org_id, evidence_id, authority, "tax-rule")
             _activate(session, tax_asset, evidence_id, authority, "tax-rule")
             with authority.attributed_call(session, tool_name="finance_dispose_fixed_asset"):
                 before_effective = FixedAssetService(session).dispose_fixed_asset(

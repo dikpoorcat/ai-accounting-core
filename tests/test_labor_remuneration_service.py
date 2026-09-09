@@ -151,7 +151,7 @@ def test_labor_batch_requires_tax_grouping_dates_role_identity_and_evidence(
     assert "remuneration_period" in fields
     assert "business_date" in fields
     assert "posting_date" in fields
-    assert "planned_payment_date" in fields
+    assert "planned_payment_date" not in fields
     assert "items" in fields
     assert "evidence_references" in fields
 
@@ -322,7 +322,9 @@ def test_fixed_fee_and_commission_are_preserved_through_hash_confirm_and_zero_ta
     assert confirm_replay.status.value == "posted"
     assert confirm_replay.event_id == confirmed.event_id
     assert confirm_replay.data["idempotent_replay"] is True
-    assert confirm_payload_mismatch.errors == ["LABOR_CONFIRM_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert confirm_payload_mismatch.status.value == "posted"
+    assert confirm_payload_mismatch.event_id == confirmed.event_id
+    assert confirm_payload_mismatch.data["idempotent_replay"] is True
 
     line = session.scalar(
         select(LaborRemunerationLine).where(LaborRemunerationLine.batch_id == preview.batch_id)
@@ -400,7 +402,10 @@ def test_preview_idempotency_rejects_payload_mismatch(session, organization) -> 
     second = service.preview_batch(PreviewLaborRemunerationBatchRequest(**changed))
 
     assert first.status.value == "calculated"
-    assert second.errors == ["LABOR_BATCH_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert second.status.value == "calculated"
+    assert second.batch_id == first.batch_id
+    assert second.calculation_hash == first.calculation_hash
+    assert second.data["idempotent_replay"] is True
 
 
 def test_labor_batch_rejects_cross_organization_person_and_evidence(session, organization) -> None:
@@ -650,10 +655,7 @@ def _labor_component(
         "amount_fen": item.original_amount_fen,
         "settlement_mode": mode,
         **(
-            {
-                "withholding_agency_code": "TAX-LABOR-01",
-                "withholding_agency_name": "测试税务局",
-            }
+            {}
             if mode == "net_after_withholding"
             else {
                 "withholding_exception_evidence_ids": [evidence.id],

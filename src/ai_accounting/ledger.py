@@ -81,7 +81,7 @@ class Entry:
 class OpenItemPlan:
     """An internal-only receivable/payable created by a deterministic posting plan."""
 
-    counterparty_id: uuid.UUID
+    counterparty_id: uuid.UUID | None
     item_type: str
     original_amount_fen: int
     due_date: date | None = None
@@ -122,9 +122,9 @@ class OpenItemPlan:
         }:
             raise ValueError(f"unsupported payable category: {self.payable_category}")
         if self.payable_category == "pass_through" and (
-            not self.pass_through_key or self.pass_through_beneficiary_id is None
+            not self.pass_through_key
         ):
-            raise ValueError("pass through payable requires creditor and beneficiary facts")
+            raise ValueError("pass through payable requires its stable business key")
         if self.payable_category != "pass_through" and (
             self.pass_through_key is not None or self.pass_through_beneficiary_id is not None
         ):
@@ -134,8 +134,8 @@ class OpenItemPlan:
             "withheld_employee_social",
             "employer_housing",
             "withheld_employee_housing",
-        } and (self.payable_agency_code is None or self.insurance_kind is None):
-            raise ValueError("statutory payable requires agency code and insurance kind")
+        } and self.insurance_kind is None:
+            raise ValueError("statutory payable requires insurance kind")
 
 
 def create_open_items(
@@ -192,7 +192,7 @@ class SettlementPlan:
     amount_fen: int
     purpose: str
     expected_item_type: str
-    counterparty_id: uuid.UUID
+    counterparty_id: uuid.UUID | None
     open_item_id: uuid.UUID | None = None
     source_component_key: str | None = None
     source_open_item_key: str = "primary"
@@ -564,7 +564,7 @@ def _snapshot_component_plan(
                 {
                     "key": item.component_key,
                     "account_id": str(item.account_id),
-                    "counterparty_id": str(item.counterparty_id),
+                    "counterparty_id": str(item.counterparty_id) if item.counterparty_id else None,
                     "item_type": item.item_type,
                     "amount_fen": item.original_amount_fen,
                 }

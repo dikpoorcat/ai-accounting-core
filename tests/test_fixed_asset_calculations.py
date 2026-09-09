@@ -21,6 +21,7 @@ from ai_accounting.fixed_assets import (
 
 def test_acquisition_cost_is_exact_sum_of_the_only_supported_components() -> None:
     result = calculate_acquisition_cost(
+        cost_fen=105_000,
         purchase_price_fen=100_000,
         noncreditable_tax_fen=3_000,
         transport_and_handling_fen=500,
@@ -35,6 +36,7 @@ def test_acquisition_cost_is_exact_sum_of_the_only_supported_components() -> Non
 def test_acquisition_cost_rejects_non_integer_or_negative_fen(invalid: object) -> None:
     with pytest.raises(FixedAssetCalculationError) as error:
         calculate_acquisition_cost(
+            cost_fen=100,
             purchase_price_fen=100,
             noncreditable_tax_fen=0,
             transport_and_handling_fen=0,

@@ -156,7 +156,6 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                     voucher_line_id=expense_line.id,
                     allocations=[{"detail_code": "management_other", "amount_fen": 1_000}],
                     idempotency_key="postgres-classification",
-                    confirmation_note="明确分类为其他管理费用",
                     evidence_references=[evidence.id],
                 )
                 with authority.attributed_call(
@@ -171,7 +170,6 @@ def test_postgres_quarterly_statement_facts_are_idempotent_immutable_and_read_on
                     treatment=EnterpriseIncomeTaxTreatment.ZERO,
                     amount_fen=0,
                     idempotency_key="postgres-income-tax-zero",
-                    confirmation_note="明确确认第一季度企业所得税费用为零",
                     evidence_references=[evidence.id],
                 )
                 with authority.attributed_call(

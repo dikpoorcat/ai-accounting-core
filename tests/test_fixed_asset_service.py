@@ -101,6 +101,7 @@ def _acquisition_request(
             "expected_use_over_one_year": True,
             "purchase_date": "2026-01-02",
             "posting_date": "2026-01-02",
+            "cost_fen": 1_050_000,
             "cost_components": {
                 "purchase_price_fen": 1_000_000,
                 "noncreditable_tax_fen": 30_000,
@@ -116,7 +117,7 @@ def _acquisition_request(
     )
 
 
-def test_bank_acquisition_requires_confirmed_scope_without_business_write(
+def test_bank_acquisition_uses_valid_account_without_reconciliation_scope_gate(
     session: Session, organization: Organization
 ) -> None:
     evidence = _evidence(session, organization, "scope-fixed")
@@ -146,14 +147,12 @@ def test_bank_acquisition_requires_confirmed_scope_without_business_write(
         AcquireFixedAssetRequest.model_validate(payload)
     )
 
-    assert result.status == "needs_information"
-    assert result.event_id is None
-    assert result.missing_information[0].fields == ["bank_reconciliation_scope_confirmation"]
-    assert session.scalars(select(BusinessEvent)).all() == []
-    assert session.scalars(select(FixedAsset)).all() == []
-    assert session.scalars(select(Voucher)).all() == []
-    assert session.scalars(select(BankTransactionMatch)).all() == []
-    assert bank.matched_event_id is None
+    assert result.status == "posted"
+    assert result.event_id is not None
+    assert session.scalars(select(FixedAsset)).all()
+    assert session.scalars(select(Voucher)).all()
+    assert session.scalars(select(BankTransactionMatch)).all()
+    assert bank.matched_event_id == result.event_id
 
 
 def _assert_balanced(session: Session, voucher_id: object) -> None:
@@ -246,7 +245,8 @@ def test_acquire_and_activate_fixed_asset_are_normalized_balanced_and_idempotent
     assert reloaded_replay.data["cost_fen"] == 1_050_000
     changed = request.model_copy(update={"asset_name": "另一名称"})
     conflict = service.acquire_fixed_asset(changed)
-    assert conflict.errors == ["FIXED_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert conflict.event_id == acquired.event_id
+    assert conflict.errors == []
 
     activation_evidence = _evidence(session, organization, "b")
     activated = service.activate_fixed_asset(
@@ -370,8 +370,8 @@ def test_fixed_asset_missing_facts_and_invalid_depreciation_policy_are_stable(
     )
     assert missing.status == "needs_information"
     assert {item.code for item in missing.missing_information} >= {
-        "FIXED_ASSET_IDENTITY_REQUIRED",
-        "FIXED_ASSET_COST_COMPONENTS_REQUIRED",
+        "FIXED_ASSET_CATEGORY_REQUIRED",
+        "FIXED_ASSET_COST_REQUIRED",
         "FIXED_ASSET_EVIDENCE_REQUIRED",
     }
 
@@ -617,7 +617,7 @@ def test_settled_acquisition_payable_uses_common_reversal_dependency_error(
                         "kind": "payable_settlement",
                         "business_date": "2026-02-02",
                         "payment_date": "2026-02-02",
-                        "counterparty": {"id": payable.counterparty_id},
+                        "metadata": {"counterparty": {"id": payable.counterparty_id}},
                         "allocations": [
                             {
                                 "open_item_id": payable.id,
@@ -742,6 +742,7 @@ def test_monthly_depreciation_batch_keeps_two_details_and_one_summary_voucher(
     second_payload.update(
         {
             "asset_code": "FA-BATCH-002",
+            "cost_fen": 100_006,
             "asset_name": "第二项测试设备",
             "cost_components": {
                 "purchase_price_fen": 100_006,
@@ -769,7 +770,10 @@ def test_monthly_depreciation_batch_keeps_two_details_and_one_summary_voucher(
 
     assert preview.status == "calculated", preview.errors
     assert preview.data["asset_count"] == 2
-    assert [item["current_depreciation_fen"] for item in preview.data["items"]] == [80_000, 7_693]
+    assert sorted(item["current_depreciation_fen"] for item in preview.data["items"]) == [
+        7_693,
+        80_000,
+    ]
     assert preview.data["total_amount_fen"] == 87_693
     confirmed = service.confirm_fixed_asset_depreciation_batch(
         ConfirmFixedAssetDepreciationBatchRequest(
@@ -1136,6 +1140,7 @@ def test_grouped_depreciation_rounds_book_card_before_component_allocation(
         payload.update(
             {
                 "asset_code": asset_code,
+                "cost_fen": 995,
                 "cost_components": {
                     "purchase_price_fen": 995,
                     "noncreditable_tax_fen": 0,
@@ -1169,7 +1174,7 @@ def test_grouped_depreciation_rounds_book_card_before_component_allocation(
     ]
     previews = [service.preview_fixed_asset_depreciation(item) for item in preview_requests]
 
-    assert [item.data["depreciation_fen"] for item in previews] == [77, 76]
+    assert sorted(item.data["depreciation_fen"] for item in previews) == [76, 77]
     assert sum(item.data["depreciation_fen"] for item in previews) == 153
     assert all(
         item.data["depreciation_group"]["group_base_monthly_fen"] == 153 for item in previews
@@ -1194,6 +1199,7 @@ def test_grouped_depreciation_rounds_book_card_before_component_allocation(
     locked_payload.update(
         {
             "asset_code": "FA-GROUP-C",
+            "cost_fen": 995,
             "cost_components": {
                 "purchase_price_fen": 995,
                 "noncreditable_tax_fen": 0,
@@ -1305,7 +1311,12 @@ def test_fixed_asset_sale_respects_tax_period_date_lock_but_retirement_does_not(
                         "payment_date": "2026-01-15",
                         "tax_obligation_date": "2026-01-15",
                         "amount_fen": 1_010_000,
-                        "counterparty": {"kind": "customer", "name": "税期锁定来源客户"},
+                        "metadata": {
+                            "counterparty": {
+                                "kind": "customer",
+                                "name": "税期锁定来源客户",
+                            }
+                        },
                         "recognition_basis": "immediate",
                         "tax_facts": {
                             "taxable": True,

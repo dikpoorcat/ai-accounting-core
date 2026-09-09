@@ -237,6 +237,7 @@ def test_acquisition_mcp_handler_posts_to_an_isolated_sqlite_database(
                     "expected_use_over_one_year": True,
                     "purchase_date": "2026-01-01",
                     "posting_date": "2026-01-01",
+                    "cost_fen": 103_000,
                     "cost_components": {
                         "purchase_price_fen": 100_000,
                         "noncreditable_tax_fen": 3_000,
@@ -254,7 +255,7 @@ def test_acquisition_mcp_handler_posts_to_an_isolated_sqlite_database(
 
         assert response["status"] == "posted"
         with factory() as session:
-            asset = session.scalar(select(FixedAsset).where(FixedAsset.asset_code == "MCP-FA-001"))
+            asset = session.get(FixedAsset, uuid.UUID(response["asset_id"]))
             assert asset is not None
             assert asset.cost_fen == 103_000
     finally:
@@ -301,6 +302,7 @@ def test_ready_for_use_acquisition_posts_one_voucher_and_starts_depreciation_nex
                     "expected_use_over_one_year": True,
                     "purchase_date": "2026-02-09",
                     "posting_date": "2026-02-09",
+                    "cost_fen": 120_000,
                     "cost_components": {
                         "purchase_price_fen": 120_000,
                         "noncreditable_tax_fen": 0,
@@ -408,6 +410,7 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
                     "expected_use_over_one_year": True,
                     "purchase_date": "2026-01-02",
                     "posting_date": "2026-01-02",
+                    "cost_fen": 103_000,
                     "cost_components": {
                         "purchase_price_fen": 100_000,
                         "noncreditable_tax_fen": 3_000,
@@ -454,15 +457,17 @@ def test_fixed_asset_sale_mcp_returns_tax_period_source_lock_from_sqlite(
                             "fulfillment_date": "2026-01-15",
                             "payment_date": "2026-01-15",
                             "tax_obligation_date": "2026-01-15",
-                            "amount_fen": 101_000,
+                            "amount_fen": 101000,
                             "recognition_basis": "credit",
-                            "counterparty": {"kind": "customer", "name": "MCP tax customer"},
                             "tax_facts": {
                                 "taxable": True,
                                 "rate_percent": "1",
                                 "invoice_type": "special",
                                 "waive_exemption": False,
                                 "tax_due_on_event": True,
+                            },
+                            "metadata": {
+                                "counterparty": {"kind": "customer", "name": "MCP tax customer"}
                             },
                         }
                     ],

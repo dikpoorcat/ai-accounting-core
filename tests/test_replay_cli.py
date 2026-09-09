@@ -10,7 +10,7 @@ from ai_accounting import replay_cli
 
 def test_replay_distinguishes_baseline_identity_from_current_heads() -> None:
     assert replay_cli._BUSINESS_REVISION == "0001_business_baseline_v3"
-    assert replay_cli._current_schema_revision(catalog=False) == "0002_purchase_projects"
+    assert replay_cli._current_schema_revision(catalog=False) == "0003_essential_accounting"
     assert replay_cli._current_schema_revision(catalog=True) == "0001_catalog_baseline_v2"
 
 
@@ -159,9 +159,7 @@ def test_replay_requires_login_before_mutating_state(
     )
 
     monkeypatch.setattr(replay_cli, "_validate_replay_target", lambda *_: None)
-    monkeypatch.setattr(
-        replay_cli, "_request_replay_security", lambda *_: {"status": "starting"}
-    )
+    monkeypatch.setattr(replay_cli, "_request_replay_security", lambda *_: {"status": "starting"})
     result = replay_cli.replay_system(package, state_file)
     assert result["status"] == "waiting_for_owner"
     assert result["error_code"] == "REPLAY_AUTHENTICATION_REQUIRED"

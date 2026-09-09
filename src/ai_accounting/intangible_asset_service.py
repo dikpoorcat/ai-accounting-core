@@ -61,6 +61,25 @@ INTANGIBLE_ASSET_EVENT_TYPES = {
     "intangible_asset_amortization",
     "intangible_asset_retirement",
 }
+INTANGIBLE_ASSET_ACQUISITION_MANAGEMENT_FIELDS = {
+    "asset_code",
+    "asset_name",
+    "rights_description",
+    "other_right_type_description",
+    "supplier",
+    "due_date",
+    "life_basis_explanation",
+    "description",
+}
+
+
+def _intangible_asset_request_facts(request: Any) -> dict[str, Any]:
+    excluded = (
+        INTANGIBLE_ASSET_ACQUISITION_MANAGEMENT_FIELDS
+        if isinstance(request, AcquireIntangibleAssetRequest)
+        else {"description"}
+    )
+    return request.model_dump(mode="json", exclude=excluded)
 
 
 class _IntangibleAssetDecision(ValueError):
@@ -267,30 +286,6 @@ class IntangibleAssetService(FinanceService):
         existing = self._idempotent_event(request.org_id, request.idempotency_key)
         if existing is not None:
             return self._existing_result(existing, payload_hash)
-        if (
-            isinstance(request, AcquireIntangibleAssetRequest)
-            and request.settlement_method is not None
-            and request.settlement_method.value == "bank"
-            and not self._bank_reconciliation_scope_is_confirmed(
-                self.session.get(Organization, request.org_id)
-            )
-        ):
-            requirement = IntangibleAssetInformationRequirement(
-                code="BANK_RECONCILIATION_SCOPE_CONFIRMATION_REQUIRED",
-                message="owner-confirmed bank reconciliation scope is required",
-                fields=["bank_reconciliation_scope_confirmation"],
-            )
-            return IntangibleAssetResult(
-                status=IntangibleAssetResultStatus.NEEDS_INFORMATION,
-                missing_information=[requirement],
-                trace=[
-                    {
-                        "stage": "validation",
-                        "status": "needs_information",
-                        "code": requirement.code,
-                    }
-                ],
-            )
         if missing := request.missing_information():
             return self._persist_nonposted_decision(
                 command,
@@ -386,8 +381,9 @@ class IntangibleAssetService(FinanceService):
             self._reject("INTANGIBLE_ASSET_NOT_READY_WORKFLOW_NOT_ENABLED")
         if request.claims_creditable_input_vat is not False:
             self._reject("INTANGIBLE_ASSET_CREDITABLE_INPUT_VAT_NOT_ENABLED")
-        if request.category.value == "other_identifiable_non_land" and (
-            not request.other_right_type_description or not request.identifiability_basis
+        if (
+            request.category.value == "other_identifiable_non_land"
+            and not request.identifiability_basis
         ):
             self._reject("INTANGIBLE_ASSET_OTHER_RIGHT_FACTS_REQUIRED")
         if self._month_start(request.acquisition_date) != self._month_start(
@@ -396,18 +392,26 @@ class IntangibleAssetService(FinanceService):
             self._reject("INTANGIBLE_ASSET_ACQUISITION_DATES_INVALID")
         if request.available_for_use_date < request.acquisition_date:
             self._reject("INTANGIBLE_ASSET_ACQUISITION_DATES_INVALID")
+        from .event_amendments import component_fact_identity
+
+        asset_id = component_fact_identity(self.session, "intangible_assets", key)
+        asset_code = f"IA-{asset_id.hex}"
         if self.session.scalar(
             select(IntangibleAsset.id).where(
                 IntangibleAsset.org_id == request.org_id,
-                IntangibleAsset.asset_code == request.asset_code,
+                IntangibleAsset.asset_code == asset_code,
+                IntangibleAsset.id != asset_id,
             )
         ):
             self._reject("INTANGIBLE_ASSET_CODE_ALREADY_EXISTS")
         components = request.cost_components
         calculation = calculate_acquisition_cost(
-            purchase_price_fen=components.purchase_price_fen,
-            noncreditable_tax_fen=components.noncreditable_tax_fen,
-            directly_attributable_cost_fen=components.directly_attributable_cost_fen,
+            cost_fen=request.cost_fen,
+            purchase_price_fen=(components.purchase_price_fen if components else None),
+            noncreditable_tax_fen=(components.noncreditable_tax_fen if components else None),
+            directly_attributable_cost_fen=(
+                components.directly_attributable_cost_fen if components else None
+            ),
         )
         if calculation.cost_fen < request.useful_life_months:
             self._reject("INTANGIBLE_ASSET_INVALID_AMORTIZATION_POLICY")
@@ -420,16 +424,15 @@ class IntangibleAssetService(FinanceService):
             self._month_start(request.available_for_use_date),
             request.useful_life_months - 1,
         )
-        supplier = self._resolve_supplier(request.org_id, request.supplier)
+        supplier = (
+            self._resolve_supplier(request.org_id, request.supplier)
+            if request.supplier is not None
+            else None
+        )
         settlement = request.settlement_method.value
         if (settlement == "project_cost") != bool(project_cost_entries):
             self._reject("INTANGIBLE_ASSET_PROJECT_COST_SOURCES_REQUIRED")
-        if settlement == "project_cost" and request.due_date is not None:
-            self._reject("PROJECT_COST_TRANSFER_FORBIDS_NEW_PAYABLE")
-        if settlement == "bank":
-            if request.due_date is not None:
-                self._reject("INTANGIBLE_ASSET_BANK_SETTLEMENT_FORBIDS_DUE_DATE")
-        else:
+        if settlement != "bank":
             if (
                 request.payment_date is not None
                 or request.bank_account_code is not None
@@ -437,7 +440,6 @@ class IntangibleAssetService(FinanceService):
             ):
                 self._reject("INTANGIBLE_ASSET_PAYABLE_FORBIDS_BANK_FACTS")
         self._validate_evidence(request.org_id, request.evidence_references)
-        asset_id = uuid.uuid4()
         entries = [Entry(account_role="intangible_asset_cost", debit_fen=calculation.cost_fen)]
         open_items = []
         if project_cost_entries:
@@ -452,12 +454,12 @@ class IntangibleAssetService(FinanceService):
                 Entry(
                     account_role="accounts_payable",
                     credit_fen=calculation.cost_fen,
-                    counterparty_id=supplier.id,
+                    counterparty_id=supplier.id if supplier is not None else None,
                 )
             )
             open_items.append(
                 OpenItemPlan(
-                    counterparty_id=supplier.id,
+                    counterparty_id=supplier.id if supplier is not None else None,
                     item_type="payable",
                     original_amount_fen=calculation.cost_fen,
                     due_date=request.due_date,
@@ -470,13 +472,13 @@ class IntangibleAssetService(FinanceService):
                 id=asset_id,
                 component_id=component.id,
                 org_id=request.org_id,
-                asset_code=request.asset_code,
+                asset_code=asset_code,
                 name=request.asset_name,
                 category=request.category.value,
                 rights_description=request.rights_description,
                 other_right_type_description=request.other_right_type_description,
                 identifiability_basis=request.identifiability_basis,
-                supplier_id=supplier.id,
+                supplier_id=supplier.id if supplier is not None else None,
                 acquisition_date=request.acquisition_date,
                 available_for_use_date=request.available_for_use_date,
                 posting_date=request.posting_date,
@@ -503,10 +505,11 @@ class IntangibleAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="intangible_asset_acquisition",
-            facts=request.model_dump(mode="json"),
+            facts=_intangible_asset_request_facts(request),
             rule_version=SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION,
             derived={
                 "asset_id": str(asset_id),
+                "asset_code": asset_code,
                 "cost_fen": calculation.cost_fen,
                 "residual_value_fen": 0,
                 "useful_life_months": request.useful_life_months,
@@ -540,7 +543,7 @@ class IntangibleAssetService(FinanceService):
         self._attach_evidence(event, request.evidence_references)
         components = [plan]
         if request.settlement_method.value == "bank":
-            self._validate_bank_account(
+            self._validate_posting_bank_account(
                 request.org_id, request.bank_account_code, request.payment_date
             )
             components.append(
@@ -573,7 +576,7 @@ class IntangibleAssetService(FinanceService):
             event=event,
             components=components,
             posting_date=request.posting_date,
-            description=request.description or f"取得无形资产 {request.asset_code}",
+            description=request.description or "取得无形资产",
         )
         return self._posted_result(
             uuid.UUID(plan.derived["asset_id"]), event, voucher, data=plan.derived
@@ -719,7 +722,7 @@ class IntangibleAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="intangible_asset_amortization",
-            facts=request.model_dump(mode="json"),
+            facts=_intangible_asset_request_facts(request),
             derived={
                 **snapshot["data"],
                 "asset_id": str(asset.id),
@@ -810,7 +813,7 @@ class IntangibleAssetService(FinanceService):
         return ComponentPostingPlan(
             key=key,
             kind="intangible_asset_retirement",
-            facts=request.model_dump(mode="json"),
+            facts=_intangible_asset_request_facts(request),
             derived={
                 "asset_id": str(asset.id),
                 "accumulated_amortization_fen": accumulated,
@@ -867,7 +870,7 @@ class IntangibleAssetService(FinanceService):
 
     def _intangible_request_hash(self, command: str, request: Any) -> str:
         return self._canonical_payload_hash(
-            {"command": command, "request": request.model_dump(mode="json")}
+            {"command": command, "request": _intangible_asset_request_facts(request)}
         )
 
     def _idempotent_event(self, org_id: uuid.UUID, idempotency_key: str) -> BusinessEvent | None:
@@ -929,7 +932,7 @@ class IntangibleAssetService(FinanceService):
         }[command]
         business_date, posting_date = self._request_dates(request)
         trace = [{"stage": "validation", "status": status.value, "command": command}]
-        facts = request.model_dump(mode="json")
+        facts = _intangible_asset_request_facts(request)
         facts["_command"] = command
         facts["_decision"] = {
             "missing": [item.model_dump(mode="json") for item in missing],
@@ -989,7 +992,7 @@ class IntangibleAssetService(FinanceService):
         trace: list[dict[str, Any]],
         payment_date: date | None = None,
     ) -> BusinessEvent:
-        facts = request.model_dump(mode="json")
+        facts = _intangible_asset_request_facts(request)
         facts["_command"] = command
         facts["accounting_rule_version"] = SMALL_ENTERPRISE_INTANGIBLE_ASSET_RULE_VERSION
         facts["accounting_rule_source_url"] = ACCOUNTING_RULE_SOURCE_URL

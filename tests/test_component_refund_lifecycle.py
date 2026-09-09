@@ -13,6 +13,7 @@ from ai_accounting.service import FinanceService
 
 sample_evidence = _sample_evidence_fixture
 
+
 def exercise_refund_receipt_dependencies(session, organization, evidence, authority=None):
     def attributed(tool):
         return authority.attributed_call(session, tool_name=tool) if authority else nullcontext()
@@ -61,11 +62,11 @@ def exercise_refund_receipt_dependencies(session, organization, evidence, author
                 "key": "sale",
                 "kind": "service_sale",
                 "amount_fen": 100,
-                "counterparty": party,
                 "recognition_basis": "credit",
                 "fulfillment_date": day,
                 "tax_facts": tax,
                 **dates,
+                "metadata": {"counterparty": party},
             },
         )
     )
@@ -80,9 +81,9 @@ def exercise_refund_receipt_dependencies(session, organization, evidence, author
             {
                 "key": "receipt",
                 "kind": "receivable_settlement",
-                "counterparty": party,
                 "allocations": [{"open_item_id": item.id, "amount_fen": 50}],
                 **dates,
+                "metadata": {"counterparty": party},
             },
             "receipt",
             50,
@@ -96,10 +97,10 @@ def exercise_refund_receipt_dependencies(session, organization, evidence, author
                 "kind": "customer_refund",
                 "refund_kind": "sale_return",
                 "amount_fen": 75,
-                "counterparty": party,
                 "source": {"component_id": source.id},
                 "tax_facts": tax,
                 **dates,
+                "metadata": {"counterparty": party},
             },
             "payment",
             75,

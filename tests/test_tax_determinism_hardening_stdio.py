@@ -118,6 +118,7 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                                 "expected_use_over_one_year": True,
                                 "purchase_date": "2026-01-02",
                                 "posting_date": "2026-01-02",
+                                "cost_fen": 1_000_000,
                                 "cost_components": {
                                     "purchase_price_fen": 1_000_000,
                                     "noncreditable_tax_fen": 0,
@@ -173,10 +174,6 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                                     "fulfillment_date": "2026-01-15",
                                     "tax_obligation_date": "2026-01-15",
                                     "amount_fen": 10100,
-                                    "counterparty": {
-                                        "kind": "customer",
-                                        "name": "税务硬化 STDIO 客户",
-                                    },
                                     "recognition_basis": "credit",
                                     "tax_facts": {
                                         "taxable": True,
@@ -184,6 +181,12 @@ def test_hardening_codes_and_fixed_asset_source_lock_over_real_stdio(tmp_path: P
                                         "invoice_type": "special",
                                         "waive_exemption": False,
                                         "tax_due_on_event": True,
+                                    },
+                                    "metadata": {
+                                        "counterparty": {
+                                            "kind": "customer",
+                                            "name": "税务硬化 STDIO 客户",
+                                        }
                                     },
                                 }
                             ],

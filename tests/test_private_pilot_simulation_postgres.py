@@ -450,9 +450,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                     organization,
                     registry_database_name=engine.url.database,
                 ) as authority:
-                    with authority.attributed_call(
-                        session, tool_name="finance_register_evidence"
-                    ):
+                    with authority.attributed_call(session, tool_name="finance_register_evidence"):
                         evidence = _evidence(session, organization, "pilot-evidence")
                     session.commit()
                     evidence_id = evidence.id
@@ -501,11 +499,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                                     "business_date": "2026-03-05",
                                     "fulfillment_date": "2026-03-05",
                                     "tax_obligation_date": "2026-03-05",
-                                    "amount_fen": 101_000,
-                                    "counterparty": {
-                                        "kind": "customer",
-                                        "name": "虚构试用客户",
-                                    },
+                                    "amount_fen": 101000,
                                     "recognition_basis": "credit",
                                     "tax_facts": {
                                         "taxable": True,
@@ -513,6 +507,9 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                                         "invoice_type": "ordinary",
                                         "waive_exemption": False,
                                         "tax_due_on_event": True,
+                                    },
+                                    "metadata": {
+                                        "counterparty": {"kind": "customer", "name": "虚构试用客户"}
                                     },
                                 }
                             ],
@@ -527,10 +524,10 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                         org_id=org_id,
                         employee_code="FICTIONAL-E-001",
                         name="虚构试用员工",
-                            employment_start_date=date(2026, 3, 1),
-                            employment_end_date=date(2026, 3, 31),
-                            tax_withholding_start_date=date(2026, 3, 1),
-                            status="active",
+                        employment_start_date=date(2026, 3, 1),
+                        employment_end_date=date(2026, 3, 31),
+                        tax_withholding_start_date=date(2026, 3, 1),
+                        status="active",
                     )
                 )
                 employee_id = uuid.UUID(employee["employee_id"])
@@ -606,6 +603,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                             "expected_use_over_one_year": True,
                             "purchase_date": "2026-03-10",
                             "posting_date": "2026-03-10",
+                            "cost_fen": 1_000_000,
                             "cost_components": {
                                 "purchase_price_fen": 1_000_000,
                                 "noncreditable_tax_fen": 0,
@@ -651,6 +649,7 @@ def test_private_pilot_fictional_five_month_rehearsal_on_ephemeral_postgresql17(
                             "acquisition_date": "2026-03-10",
                             "available_for_use_date": "2026-03-10",
                             "posting_date": "2026-03-10",
+                            "cost_fen": 120_000,
                             "cost_components": {
                                 "purchase_price_fen": 120_000,
                                 "noncreditable_tax_fen": 0,

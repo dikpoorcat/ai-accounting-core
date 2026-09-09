@@ -35,6 +35,7 @@ def _acquisition_payload() -> dict[str, object]:
         "expected_use_over_one_year": True,
         "purchase_date": "2026-01-10",
         "posting_date": "2026-01-10",
+        "cost_fen": 103_000,
         "cost_components": {
             "purchase_price_fen": 100_000,
             "noncreditable_tax_fen": 3_000,
@@ -83,19 +84,14 @@ def test_acquisition_schema_requires_explicit_facts_without_defaulting_treatment
 
     requirements = {item.code: set(item.fields) for item in request.missing_information()}
 
-    assert requirements["FIXED_ASSET_IDENTITY_REQUIRED"] == {"asset_code", "asset_name", "category"}
-    assert requirements["FIXED_ASSET_COST_COMPONENTS_REQUIRED"] == {
-        "cost_components.purchase_price_fen",
-        "cost_components.noncreditable_tax_fen",
-        "cost_components.transport_and_handling_fen",
-        "cost_components.installation_and_direct_cost_fen",
-    }
+    assert requirements["FIXED_ASSET_CATEGORY_REQUIRED"] == {"category"}
+    assert requirements["FIXED_ASSET_COST_REQUIRED"] == {"cost_fen"}
     assert requirements["FIXED_ASSET_INPUT_VAT_TREATMENT_REQUIRED"] == {
         "claims_creditable_input_vat"
     }
 
 
-def test_bank_acquisition_requires_payment_and_account_but_payable_requires_due_date() -> None:
+def test_bank_acquisition_requires_payment_and_account_but_payable_due_date_is_optional() -> None:
     bank_payload = _acquisition_payload()
     bank_payload.pop("payment_date")
     bank_payload["bank_transaction_references"] = []
@@ -110,7 +106,7 @@ def test_bank_acquisition_requires_payment_and_account_but_payable_requires_due_
     payable_payload.pop("bank_account_code")
     payable_payload["bank_transaction_references"] = []
     payable = AcquireFixedAssetRequest.model_validate(payable_payload)
-    assert "FIXED_ASSET_DUE_DATE_REQUIRED" in {item.code for item in payable.missing_information()}
+    assert payable.missing_information() == []
 
 
 def test_ready_for_use_allows_same_month_confirmation_but_not_cross_month_backdating() -> None:

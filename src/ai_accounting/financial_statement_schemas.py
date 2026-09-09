@@ -85,12 +85,14 @@ class ConfirmFinancialStatementClassificationRequest(BaseModel):
     )
     supersedes_classification_id: uuid.UUID | None = None
     idempotency_key: str = Field(min_length=1, max_length=200)
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str | None = Field(default=None, min_length=1, max_length=2000)
     evidence_references: list[uuid.UUID] = Field(default_factory=list, max_length=100)
 
     @field_validator("idempotency_key", "confirmation_note")
     @classmethod
-    def strip_required_text(cls, value: str) -> str:
+    def strip_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("text must not be blank")
@@ -106,12 +108,14 @@ class ConfirmFinancialStatementOpeningBalanceRequest(BaseModel):
     establishment_date: date
     treatment: FinancialStatementOpeningBalanceTreatment
     idempotency_key: str = Field(min_length=1, max_length=200)
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str | None = Field(default=None, min_length=1, max_length=2000)
     evidence_references: list[uuid.UUID] = Field(min_length=1, max_length=100)
 
     @field_validator("idempotency_key", "confirmation_note")
     @classmethod
-    def strip_opening_balance_text(cls, value: str) -> str:
+    def strip_opening_balance_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("text must not be blank")
@@ -128,12 +132,14 @@ class ConfirmEnterpriseIncomeTaxQuarterRequest(BaseModel):
     amount_fen: StrictInt = Field(ge=0)
     posting_date: date | None = None
     idempotency_key: str = Field(min_length=1, max_length=200)
-    confirmation_note: str = Field(min_length=1, max_length=2000)
+    confirmation_note: str | None = Field(default=None, min_length=1, max_length=2000)
     evidence_references: list[uuid.UUID] = Field(min_length=1, max_length=100)
 
     @field_validator("idempotency_key", "confirmation_note")
     @classmethod
-    def strip_required_text(cls, value: str) -> str:
+    def strip_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("text must not be blank")

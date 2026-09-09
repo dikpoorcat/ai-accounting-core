@@ -140,7 +140,12 @@ def _dependencies(
 ) -> list[dict]:
     blockers = []
     for table in m.Base.metadata.sorted_tables:
-        if table.name in {"audit_logs", "business_event_amendments", "bank_transactions"}:
+        if table.name in {
+            "audit_logs",
+            "business_event_amendments",
+            "bank_transactions",
+            "business_metadata_versions",
+        }:
             continue
         conditions = []
         for fk in table.foreign_keys:
@@ -185,9 +190,7 @@ def _dependencies(
     return blockers
 
 
-def component_fact_identity(
-    session: Session, table_name: str, component_key: str
-) -> uuid.UUID:
+def component_fact_identity(session: Session, table_name: str, component_key: str) -> uuid.UUID:
     """Allocate a planned identity, retaining the fact owned by a replaced component."""
     context = session.info.get("event_amendment")
     if context is not None:
@@ -198,9 +201,7 @@ def component_fact_identity(
             if row["key"] == component_key
         }
         candidates = [
-            row
-            for row in tables.get(table_name, [])
-            if row.get("component_id") in component_ids
+            row for row in tables.get(table_name, []) if row.get("component_id") in component_ids
         ]
         if len(candidates) > 1:
             raise ValueError("AMENDMENT_COMPONENT_FACT_IDENTITY_AMBIGUOUS")
@@ -281,7 +282,14 @@ class EventAmendmentService:
         session = self.session
         lock_income_tax(session, request.org_id)
         deleting = isinstance(request, DeleteEventRequest)
-        request_hash = canonical_sha256(request.model_dump(mode="json"))
+        command = request.model_dump(mode="json")
+        if not deleting:
+            from .component_schemas import RecordEventRequest
+            from .component_service import ComponentService
+
+            if isinstance(request.replacement, RecordEventRequest):
+                command["replacement"] = ComponentService.accounting_request(request.replacement)
+        request_hash = canonical_sha256(command)
         existing = session.scalar(
             select(m.BusinessEventAmendment).where(
                 m.BusinessEventAmendment.org_id == request.org_id,
@@ -322,8 +330,7 @@ class EventAmendmentService:
                         component.batch_id
                         for component in request.replacement.components
                         if component.kind == "payroll_accrual"
-                        and component.batch_id
-                        in {row["id"] for row in before["payroll_batches"]}
+                        and component.batch_id in {row["id"] for row in before["payroll_batches"]}
                     },
                     "labor": {
                         component.batch_id

@@ -77,8 +77,7 @@ def _cash_sale_request(
                     "fulfillment_date": "2026-08-08",
                     "payment_date": "2026-08-08",
                     "tax_obligation_date": "2026-08-08",
-                    "amount_fen": 101_000,
-                    "counterparty": {"kind": "customer", "name": "期间控制客户"},
+                    "amount_fen": 101000,
                     "recognition_basis": "immediate",
                     "tax_facts": {
                         "taxable": True,
@@ -87,6 +86,7 @@ def _cash_sale_request(
                         "waive_exemption": False,
                         "tax_due_on_event": True,
                     },
+                    "metadata": {"counterparty": {"kind": "customer", "name": "期间控制客户"}},
                 }
             ],
             "funds": [
@@ -95,8 +95,8 @@ def _cash_sale_request(
                     "account_code": "1002",
                     "direction": "receipt",
                     "payment_date": "2026-08-08",
-                    "amount_fen": 101_000,
-                    "allocations": [{"component_key": "sale", "amount_fen": 101_000}],
+                    "amount_fen": 101000,
+                    "allocations": [{"component_key": "sale", "amount_fen": 101000}],
                 }
             ],
         }
@@ -159,9 +159,9 @@ def _customer_receipt_request(organization: Organization, evidence: Evidence) ->
                     "kind": "customer_advance",
                     "business_date": "2026-08-01",
                     "payment_date": "2026-08-01",
-                    "counterparty": {"kind": "customer", "name": "期间依赖客户"},
-                    "amount_fen": 120_000,
+                    "amount_fen": 120000,
                     "tax_facts": {"tax_due_on_event": False},
+                    "metadata": {"counterparty": {"kind": "customer", "name": "期间依赖客户"}},
                 }
             ],
             "funds": [
@@ -170,8 +170,8 @@ def _customer_receipt_request(organization: Organization, evidence: Evidence) ->
                     "account_code": "1002",
                     "direction": "receipt",
                     "payment_date": "2026-08-01",
-                    "amount_fen": 120_000,
-                    "allocations": [{"component_key": "advance", "amount_fen": 120_000}],
+                    "amount_fen": 120000,
+                    "allocations": [{"component_key": "advance", "amount_fen": 120000}],
                 }
             ],
         }
@@ -194,8 +194,7 @@ def _fulfillment_request(
                     "business_date": "2026-08-02",
                     "fulfillment_date": "2026-08-02",
                     "tax_obligation_date": "2026-08-02",
-                    "counterparty": {"kind": "customer", "name": "期间依赖客户"},
-                    "amount_fen": 70_000,
+                    "amount_fen": 70000,
                     "source": {"component_id": parent_component_id},
                     "tax_facts": {
                         "taxable": True,
@@ -204,6 +203,7 @@ def _fulfillment_request(
                         "waive_exemption": False,
                         "tax_due_on_event": True,
                     },
+                    "metadata": {"counterparty": {"kind": "customer", "name": "期间依赖客户"}},
                 }
             ],
         }
@@ -225,10 +225,10 @@ def _advance_refund_request(
                     "kind": "customer_refund",
                     "business_date": "2026-08-03",
                     "payment_date": "2026-08-03",
-                    "counterparty": {"kind": "customer", "name": "期间依赖客户"},
-                    "amount_fen": 50_000,
+                    "amount_fen": 50000,
                     "source": {"component_id": parent_component_id},
                     "refund_kind": "advance",
+                    "metadata": {"counterparty": {"kind": "customer", "name": "期间依赖客户"}},
                 }
             ],
             "funds": [
@@ -237,8 +237,8 @@ def _advance_refund_request(
                     "account_code": "1002",
                     "direction": "payment",
                     "payment_date": "2026-08-03",
-                    "amount_fen": 50_000,
-                    "allocations": [{"component_key": "refund", "amount_fen": 50_000}],
+                    "amount_fen": 50000,
+                    "allocations": [{"component_key": "refund", "amount_fen": 50000}],
                 }
             ],
         }

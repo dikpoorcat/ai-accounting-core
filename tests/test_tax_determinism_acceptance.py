@@ -55,9 +55,9 @@ def _sale_payload(
                 "payment_date": business_date,
                 "tax_obligation_date": business_date,
                 "amount_fen": gross_fen,
-                "counterparty": {"kind": "customer", "name": "税务验收客户"},
                 "recognition_basis": "immediate",
                 "tax_facts": tax_facts,
+                "metadata": {"counterparty": {"kind": "customer", "name": "税务验收客户"}},
             }
         ],
         "funds": [
@@ -213,10 +213,10 @@ def test_expense_account_role_is_required_only_for_expense_events(
                 "kind": "expense",
                 "business_date": date(2026, 1, 15),
                 "payment_date": date(2026, 1, 15),
-                "amount_fen": 1_000,
+                "amount_fen": 1000,
                 "expense_class": None,
                 "payment_basis": payment_basis,
-                "counterparty": counterparty,
+                "metadata": {"counterparty": counterparty},
             }
         ],
     }

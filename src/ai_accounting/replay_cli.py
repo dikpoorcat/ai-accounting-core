@@ -45,7 +45,7 @@ from .models import (
 )
 
 _ROOT = Path(__file__).resolve().parents[2]
-_FORMAT_VERSION = "ai-accounting-composition-replay-v2"
+_FORMAT_VERSION = "ai-accounting-composition-replay-v3"
 _BUSINESS_REVISION = "0001_business_baseline_v3"
 _CATALOG_REVISION = "0001_catalog_baseline_v2"
 
@@ -62,7 +62,7 @@ def _current_schema_revision(*, catalog: bool) -> str:
 
 
 _MANIFEST = "MANIFEST.sha256"
-_STATE_VERSION = "ai-accounting-composition-replay-state-v2"
+_STATE_VERSION = "ai-accounting-composition-replay-state-v3"
 _HEX_64 = frozenset("0123456789abcdef")
 _UUID_TEXT = re.compile(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _SENSITIVE_TABLES = frozenset(
@@ -265,9 +265,7 @@ _REFERENCE_FIELDS: dict[str, frozenset[str]] = {
     "event": frozenset({"replay_key"}),
     "component": frozenset({"source_replay_key", "component_key"}),
     "component_open_item": frozenset({"source_replay_key", "component_key", "open_item_key"}),
-    "component_income_tax": frozenset(
-        {"source_replay_key", "component_key", "result_kind"}
-    ),
+    "component_income_tax": frozenset({"source_replay_key", "component_key", "result_kind"}),
     "prepared_line_key": frozenset({"operation_key", "identity_code", "line_kind"}),
     "open_item": frozenset(
         {
@@ -411,8 +409,10 @@ def _verify_operation_references(
                 target_key = value.get("replay_key") or value.get("source_replay_key")
             if target_key is not None:
                 target_position = positions.get(str(target_key))
-                if target_position is None or target_position > index or (
-                    target_position == index and str(target_key) not in preparation_keys
+                if (
+                    target_position is None
+                    or target_position > index
+                    or (target_position == index and str(target_key) not in preparation_keys)
                 ):
                     raise ReplayError("REPLAY_PACKAGE_OPERATION_REFERENCE_MISSING")
 
@@ -615,7 +615,7 @@ def _stable_maps(session: Session, org_id: uuid.UUID) -> dict[str, dict[str, Any
           FROM open_items AS item
           JOIN business_events AS event
             ON event.org_id=item.org_id AND event.id=item.source_event_id
-          JOIN counterparties AS counterparty
+          LEFT JOIN counterparties AS counterparty
             ON counterparty.org_id=item.org_id AND counterparty.id=item.counterparty_id
          WHERE item.org_id=:org_id
         """,
@@ -1254,6 +1254,7 @@ def _composite_replay_request(
     """Replace frozen calculated component identities with replay-time previews."""
 
     raw_request = dict(event["facts"] or {})
+    raw_request["description"] = event.get("description", "")
     request = _replace_stable_references(raw_request, org_id=org_id, maps=maps)
     components = request.get("components")
     raw_components = raw_request.get("components")
@@ -1371,8 +1372,7 @@ def _composite_replay_request(
             if used_parent_keys != {str(value) for value in regular_component_keys}:
                 raise ReplayError("REPLAY_SOURCE_PAYROLL_DEPENDENCY_INVALID")
             preparation["depends_on"] = [
-                f"{replay_key}:prepare:{component_key}"
-                for component_key in regular_component_keys
+                f"{replay_key}:prepare:{component_key}" for component_key in regular_component_keys
             ]
         preparations_by_component[key] = preparation
         preparation_dependencies[key] = dependencies
@@ -1691,7 +1691,7 @@ def _open_item_projection(
           FROM open_items AS item
           JOIN business_events AS event
             ON event.org_id=item.org_id AND event.id=item.source_event_id
-          JOIN counterparties AS counterparty
+          LEFT JOIN counterparties AS counterparty
             ON counterparty.org_id=item.org_id AND counterparty.id=item.counterparty_id
          WHERE item.org_id=:org_id AND item.status IN ('open','partial')
          ORDER BY event.idempotency_key, item.item_type, item.original_amount_fen,
@@ -2240,12 +2240,8 @@ def _income_tax_event_inventory(
             "enterprise_income_tax_assessment",
             "enterprise_income_tax_result",
         } and not any(
-            c.get("kind")
-            in {"enterprise_income_tax_assessment", "enterprise_income_tax_result"}
-            or (
-                c.get("kind") == "tax_settlement"
-                and c.get("tax_type") == "enterprise_income_tax"
-            )
+            c.get("kind") in {"enterprise_income_tax_assessment", "enterprise_income_tax_result"}
+            or (c.get("kind") == "tax_settlement" and c.get("tax_type") == "enterprise_income_tax")
             for c in components
         ):
             continue
@@ -2549,6 +2545,56 @@ def _owner_control_operations(
     return operations
 
 
+def _metadata_operations(session, org_id, maps):
+    """Replay management history separately, after the accounting snapshot is closed."""
+    from .models import BusinessEvent, BusinessMetadataVersion
+
+    rows = session.execute(
+        select(BusinessMetadataVersion, BusinessEvent.idempotency_key)
+        .join(
+            BusinessEvent,
+            BusinessEvent.id == BusinessMetadataVersion.event_id,
+        )
+        .where(
+            BusinessMetadataVersion.org_id == org_id,
+            BusinessEvent.status == "posted",
+            BusinessEvent.reversed_by_event_id.is_(None),
+        )
+        .order_by(
+            BusinessMetadataVersion.event_id,
+            BusinessMetadataVersion.component_key,
+            BusinessMetadataVersion.version,
+        )
+    ).all()
+    previous = {}
+    operations = []
+    for row, event_key in rows:
+        identity = (row.event_id, row.component_key)
+        values = _replace_stable_references(row.metadata_values, org_id=org_id, maps=maps)
+        patch = {key: None for key in previous.get(identity, {}) if key not in values} | values
+        previous[identity] = values
+        key = f"metadata:{_semantic_replay_key(event_key)}:{row.component_key}:{row.version}"
+        operations.append(
+            {
+                "key": key,
+                "kind": "tool",
+                "tool": "finance_update_business_metadata",
+                "request": {
+                    "org_id": "${ORG_ID}",
+                    "source": {
+                        "event_key": _replay_idempotency(_semantic_replay_key(event_key)),
+                        "component_key": row.component_key,
+                    },
+                    "metadata": patch,
+                    "expected_version": row.version - 1,
+                    "idempotency_key": _replay_idempotency(key),
+                },
+                "allowed_statuses": ["updated"],
+            }
+        )
+    return operations
+
+
 def _export_company(
     *,
     engine: sa.Engine,
@@ -2696,6 +2742,7 @@ def _export_company(
             *_bank_reconciliation_operations(session, org_id=org_id, maps=maps),
             *_owner_control_operations(session, org_id=org_id, maps=maps),
             *_period_close_operations(session, org_id=org_id, maps=maps),
+            *_metadata_operations(session, org_id, maps),
         ]
         descriptor = {
             "format_version": _FORMAT_VERSION,
@@ -3205,8 +3252,7 @@ class _ReplayResolver:
                 if line_kind == "payroll":
                     identity_id = session.scalar(
                         text(
-                            "SELECT id FROM employees WHERE org_id=:org_id "
-                            "AND employee_code=:code"
+                            "SELECT id FROM employees WHERE org_id=:org_id AND employee_code=:code"
                         ),
                         {"org_id": self.org_id, "code": value["identity_code"]},
                     )
@@ -3223,11 +3269,7 @@ class _ReplayResolver:
                 else:
                     raise ReplayError("REPLAY_PREPARED_LINE_KIND_INVALID")
             match = next(
-                (
-                    item
-                    for item in lines
-                    if str(item.get(identity_field)) == str(identity_id)
-                ),
+                (item for item in lines if str(item.get(identity_field)) == str(identity_id)),
                 None,
             )
             if match is None or not match.get("id"):
@@ -3943,12 +3985,11 @@ def _request_replay_security(state: Mapping[str, Any], settings) -> dict[str, An
         operations = OwnerSecurityOperations(settings=settings, factory=sessionmaker(engine))
         return OwnerSecurityWindowLauncher(operations=operations).request(request)
     except IdentityError as exc:
-        return {
-            "status": "failed", "error_code": exc.code, "next_action": "request_window_again"
-        }
+        return {"status": "failed", "error_code": exc.code, "next_action": "request_window_again"}
     except Exception:
         return {
-            "status": "failed", "error_code": "OWNER_SECURITY_WINDOW_UNAVAILABLE",
+            "status": "failed",
+            "error_code": "OWNER_SECURITY_WINDOW_UNAVAILABLE",
             "next_action": "request_window_again",
         }
     finally:
@@ -3970,7 +4011,8 @@ def replay_system(package: Path, state_path: Path | None = None) -> dict[str, An
         security = _request_replay_security(state, settings)
         return {
             "status": "blocked" if security.get("status") == "failed" else "waiting_for_owner",
-            "error_code": "REPLAY_AUTHENTICATION_REQUIRED", "state_file": str(state_file),
+            "error_code": "REPLAY_AUTHENTICATION_REQUIRED",
+            "state_file": str(state_file),
             "owner_security_window": security,
         }
     system = _load_json(package_root / "system.json")

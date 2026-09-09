@@ -56,9 +56,7 @@ def test_component_projection_keeps_facts_derived_parties_and_sources() -> None:
         facts={
             "description": "清偿两项应付款",
             "depends_on": ["expense"],
-            "allocations": [
-                {"open_item_id": str(uuid4()), "source_component_key": "expense"}
-            ],
+            "allocations": [{"open_item_id": str(uuid4()), "source_component_key": "expense"}],
         },
         derived={"settled_fen": 5000},
     )

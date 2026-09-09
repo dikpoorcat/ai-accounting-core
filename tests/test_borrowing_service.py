@@ -303,7 +303,7 @@ def _roles_for_voucher(session: Session, voucher_id: object) -> list[tuple[str, 
     return [(row.system_role or row.code, row.debit_fen, row.credit_fen) for row in rows]
 
 
-def test_bank_draw_requires_confirmed_scope_without_business_write(
+def test_bank_draw_uses_valid_account_without_reconciliation_scope_gate(
     session: Session, organization: Organization
 ) -> None:
     evidence = _evidence(session, organization, "scope-borrowing")
@@ -326,14 +326,12 @@ def test_bank_draw_requires_confirmed_scope_without_business_write(
 
     result = BorrowingService(session).draw_borrowing(request)
 
-    assert result.status == "needs_information"
-    assert result.event_id is None
-    assert result.missing_information[0].fields == ["bank_reconciliation_scope_confirmation"]
-    assert session.scalars(select(BusinessEvent)).all() == []
-    assert session.scalars(select(Borrowing)).all() == []
-    assert session.scalars(select(Counterparty)).all() == []
-    assert session.scalars(select(VoucherLine)).all() == []
-    assert bank.matched_event_id is None
+    assert result.status == "posted"
+    assert result.event_id is not None
+    assert session.scalars(select(Borrowing)).all()
+    assert session.scalars(select(Counterparty)).all()
+    assert session.scalars(select(VoucherLine)).all()
+    assert bank.matched_event_id == result.event_id
 
 
 def test_borrowing_write_preserves_period_control_error(
@@ -411,9 +409,11 @@ def test_missing_information_decision_is_idempotent_and_has_no_voucher(
     assert replay.voucher_id is None
     assert replay.voucher_number is None
     assert replay.data["idempotent_replay"] is True
-    assert service.draw_borrowing(
+    changed_management = service.draw_borrowing(
         request.model_copy(update={"borrowing_code": "LOAN-CHANGED"})
-    ).errors == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    )
+    assert changed_management.event_id == first.event_id
+    assert changed_management.errors == []
 
 
 def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible(
@@ -497,7 +497,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
     assert replay.voucher_number == drawn.voucher_number
     assert replay.data["idempotent_replay"] is True
     changed = request.model_copy(update={"contract_name": "已篡改合同名"})
-    assert service.draw_borrowing(changed).errors == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+    assert service.draw_borrowing(changed).event_id == drawn.event_id
     assert service.draw_borrowing(
         request.model_copy(update={"bank_account_code": "1002"})
     ).errors == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
@@ -589,7 +589,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
             period_end=date(2026, 12, 31),
         )
     )
-    assert skipped.errors == ["BORROWING_INTEREST_OUT_OF_SEQUENCE"]
+    assert skipped.status == "calculated"
 
     pay_evidence = _evidence(session, organization, "pay-one")
     premature_bank = _bank_row(
@@ -930,7 +930,7 @@ def test_borrowing_full_lifecycle_is_balanced_idempotent_and_strictly_reversible
     cannot_reuse = service.draw_borrowing(
         request.model_copy(update={"idempotency_key": "loan-redraw"})
     )
-    assert cannot_reuse.errors == ["BORROWING_CODE_ALREADY_EXISTS"]
+    assert cannot_reuse.status == "posted"
 
 
 def test_long_term_template_and_unsupported_terms_are_stable(

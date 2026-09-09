@@ -60,25 +60,13 @@ class IntangibleAssetResultStatus(StrEnum):
 
 
 class IntangibleAssetCostComponents(BaseModel):
-    """Finite capitalisable cost components, each stated in integer fen."""
+    """Optional breakdown of an explicitly stated acquisition cost."""
 
     model_config = ConfigDict(extra="forbid")
 
     purchase_price_fen: IntangibleFen | None = None
     noncreditable_tax_fen: IntangibleFen | None = None
     directly_attributable_cost_fen: IntangibleFen | None = None
-
-    def missing_fields(self) -> list[str]:
-        return [
-            field_name
-            for field_name in (
-                "purchase_price_fen",
-                "noncreditable_tax_fen",
-                "directly_attributable_cost_fen",
-            )
-            if getattr(self, field_name) is None
-        ]
-
 
 class IntangibleAssetInformationRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -137,9 +125,8 @@ class AcquireIntangibleAssetRequest(BaseModel):
     acquisition_date: date | None = None
     available_for_use_date: date | None = None
     posting_date: date | None = None
-    cost_components: IntangibleAssetCostComponents = Field(
-        default_factory=IntangibleAssetCostComponents
-    )
+    cost_fen: Annotated[StrictInt, Field(gt=0, le=MAX_FEN)] | None = None
+    cost_components: IntangibleAssetCostComponents | None = None
     settlement_method: IntangibleAssetAcquisitionSettlement | None = None
     bank_account_code: str | None = Field(default=None, min_length=1, max_length=30)
     payment_date: date | None = None
@@ -179,8 +166,6 @@ class AcquireIntangibleAssetRequest(BaseModel):
             and self.posting_date < self.acquisition_date
         ):
             raise ValueError("posting_date must not precede acquisition_date")
-        if self.due_date and self.acquisition_date and self.due_date < self.acquisition_date:
-            raise ValueError("due_date must not precede acquisition_date")
         if (
             self.category is not None
             and self.category is not IntangibleAssetCategory.OTHER_IDENTIFIABLE_NON_LAND
@@ -197,36 +182,33 @@ class AcquireIntangibleAssetRequest(BaseModel):
             self.bank_account_code is not None or self.bank_transaction_references
         ):
             raise ValueError("a supplier-payable acquisition must not include bank facts")
+        if self.cost_components is not None and self.cost_fen is not None:
+            supplied = [
+                value
+                for value in self.cost_components.model_dump().values()
+                if value is not None
+            ]
+            if supplied and sum(supplied) != self.cost_fen:
+                raise ValueError("provided cost components must sum exactly to cost_fen")
         return self
 
     def missing_information(self) -> list[IntangibleAssetInformationRequirement]:
         missing: list[IntangibleAssetInformationRequirement] = []
-        identity = [
-            field_name
-            for field_name in ("asset_code", "asset_name", "category", "rights_description")
-            if getattr(self, field_name) is None
-        ]
-        if identity:
+        if self.category is None:
             missing.append(
                 IntangibleAssetInformationRequirement(
-                    code="INTANGIBLE_ASSET_IDENTITY_REQUIRED",
-                    message=(
-                        "asset code, name, supported category, and rights description are required"
-                    ),
-                    fields=identity,
+                    code="INTANGIBLE_ASSET_CATEGORY_REQUIRED",
+                    message="the accounting intangible-asset category is required",
+                    fields=["category"],
                 )
             )
         if self.category is IntangibleAssetCategory.OTHER_IDENTIFIABLE_NON_LAND:
-            fields = [
-                field_name
-                for field_name in ("other_right_type_description", "identifiability_basis")
-                if getattr(self, field_name) is None
-            ]
+            fields = ["identifiability_basis"] if self.identifiability_basis is None else []
             if fields:
                 missing.append(
                     IntangibleAssetInformationRequirement(
                         code="INTANGIBLE_ASSET_OTHER_RIGHT_FACTS_REQUIRED",
-                        message="other rights require their type and identifiability basis",
+                        message="other rights require an explicit identifiability basis",
                         fields=fields,
                     )
                 )
@@ -243,23 +225,21 @@ class AcquireIntangibleAssetRequest(BaseModel):
                     fields=dates,
                 )
             )
-        if fields := self.cost_components.missing_fields():
+        if self.cost_fen is None:
             missing.append(
                 IntangibleAssetInformationRequirement(
-                    code="INTANGIBLE_ASSET_COST_COMPONENTS_REQUIRED",
-                    message="every acquisition cost component must be stated, including zero",
-                    fields=[f"cost_components.{item}" for item in fields],
+                    code="INTANGIBLE_ASSET_COST_REQUIRED",
+                    message="the total capitalisable acquisition cost is required",
+                    fields=["cost_fen"],
                 )
             )
         required = [
             field_name
             for field_name in (
-                "supplier",
                 "settlement_method",
                 "benefit_area",
                 "life_basis",
                 "useful_life_months",
-                "life_basis_explanation",
                 "is_available_for_use",
                 "claims_creditable_input_vat",
             )
@@ -270,7 +250,7 @@ class AcquireIntangibleAssetRequest(BaseModel):
                 IntangibleAssetInformationRequirement(
                     code="INTANGIBLE_ASSET_POLICY_FACTS_REQUIRED",
                     message=(
-                        "supplier, settlement, readiness, life, VAT, and benefit facts are required"
+                        "settlement, readiness, life, VAT, and benefit facts are required"
                     ),
                     fields=required,
                 )
@@ -289,17 +269,6 @@ class AcquireIntangibleAssetRequest(BaseModel):
                         fields=fields,
                     )
                 )
-        elif (
-            self.settlement_method is IntangibleAssetAcquisitionSettlement.PAYABLE
-            and self.due_date is None
-        ):
-            missing.append(
-                IntangibleAssetInformationRequirement(
-                    code="INTANGIBLE_ASSET_DUE_DATE_REQUIRED",
-                    message="supplier-payable settlement requires its due date",
-                    fields=["due_date"],
-                )
-            )
         if not self.evidence_references:
             missing.append(
                 IntangibleAssetInformationRequirement(

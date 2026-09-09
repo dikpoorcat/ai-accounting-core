@@ -145,6 +145,22 @@ class LaborRemunerationService:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _accounting_batch_request(request: PreviewLaborRemunerationBatchRequest) -> dict[str, Any]:
+        return request.model_dump(
+            mode="json",
+            exclude={
+                "description": True,
+                "planned_payment_date": True,
+                "items": {
+                    "__all__": {
+                        "external_declaration_status",
+                        "external_declaration_reference",
+                    }
+                },
+            },
+        )
+
+    @staticmethod
     def _requirement(fields: list[str]) -> LaborResult:
         return LaborResult(
             status=LaborResultStatus.NEEDS_INFORMATION,
@@ -242,7 +258,7 @@ class LaborRemunerationService:
         missing = request.missing_fields()
         if missing:
             return self._requirement(missing)
-        payload_hash = self._hash(request.model_dump(mode="json"))
+        payload_hash = self._hash(request.model_dump(mode="json", exclude={"person_code"}))
         try:
             with self.session.begin_nested():
                 self._organization(request.org_id)
@@ -257,14 +273,15 @@ class LaborRemunerationService:
                         return self._rejected("LABOR_PERSON_IDEMPOTENCY_PAYLOAD_MISMATCH")
                     return self._result_for_person(existing, replay=True)
                 self._evidence(request.org_id, request.evidence_references)
-                code_conflict = self.session.scalar(
-                    select(LaborServicePerson.id).where(
-                        LaborServicePerson.org_id == request.org_id,
-                        LaborServicePerson.person_code == request.person_code,
+                if request.person_code is not None:
+                    code_conflict = self.session.scalar(
+                        select(LaborServicePerson.id).where(
+                            LaborServicePerson.org_id == request.org_id,
+                            LaborServicePerson.person_code == request.person_code,
+                        )
                     )
-                )
-                if code_conflict is not None:
-                    return self._rejected("LABOR_PERSON_CODE_ALREADY_EXISTS")
+                    if code_conflict is not None:
+                        return self._rejected("LABOR_PERSON_CODE_ALREADY_EXISTS")
                 counterparty = self.session.scalar(
                     select(Counterparty).where(
                         Counterparty.org_id == request.org_id,
@@ -282,10 +299,6 @@ class LaborRemunerationService:
                 )
                 self.session.add(counterparty)
                 self.session.flush()
-                if self.session.scalar(
-                    select(Employee.id).where(Employee.counterparty_id == counterparty.id)
-                ):
-                    return self._rejected("LABOR_PERSON_MUST_NOT_BE_AN_EMPLOYEE")
                 person = LaborServicePerson(
                     org_id=request.org_id,
                     counterparty_id=counterparty.id,
@@ -433,8 +446,8 @@ class LaborRemunerationService:
     def _derive_batch(
         self, request: PreviewLaborRemunerationBatchRequest
     ) -> tuple[LaborRemunerationTaxPolicyVersion, dict[str, Any], list[dict[str, Any]]]:
-        assert request.planned_payment_date is not None
-        policy = self._active_policy(request.planned_payment_date)
+        assert request.business_date is not None
+        policy = self._active_policy(request.business_date)
         policy_snapshot = self._policy_snapshot(policy)
         self._evidence(request.org_id, request.evidence_references)
         derived_lines: list[dict[str, Any]] = []
@@ -452,13 +465,6 @@ class LaborRemunerationService:
             )
             if person is None:
                 raise ValueError("LABOR_PERSON_NOT_FOUND_OR_ORGANIZATION_MISMATCH")
-            if self.session.scalar(
-                select(Employee.id).where(
-                    Employee.org_id == request.org_id,
-                    Employee.counterparty_id == person.counterparty_id,
-                )
-            ):
-                raise ValueError("LABOR_PERSON_MUST_NOT_BE_AN_EMPLOYEE")
             assert item.service_start_date is not None and item.service_end_date is not None
             if item.service_start_date < person.relationship_start_date:
                 raise ValueError("LABOR_SERVICE_OUTSIDE_RELATIONSHIP_PERIOD")
@@ -467,14 +473,32 @@ class LaborRemunerationService:
                 and item.service_end_date > person.relationship_end_date
             ):
                 raise ValueError("LABOR_SERVICE_OUTSIDE_RELATIONSHIP_PERIOD")
+            linked_employees = list(
+                self.session.scalars(
+                    select(Employee).where(
+                        Employee.org_id == request.org_id,
+                        (
+                            (Employee.prior_labor_person_id == person.id)
+                            | (Employee.counterparty_id == person.counterparty_id)
+                        ),
+                    )
+                )
+            )
+            if any(
+                item.service_end_date >= employee.employment_start_date
+                and (
+                    employee.employment_end_date is None
+                    or item.service_start_date <= employee.employment_end_date
+                )
+                for employee in linked_employees
+            ):
+                raise ValueError("LABOR_SERVICE_OVERLAPS_EMPLOYEE_PAYROLL_PERIOD")
             if item.tax_identity == "nonresident":
                 raise ValueError("NONRESIDENT_LABOR_REMUNERATION_NOT_SUPPORTED")
             if item.is_full_time_student is True:
                 raise ValueError("STUDENT_INTERNSHIP_WITHHOLDING_METHOD_NOT_SUPPORTED")
             if item.tax_identity != "resident" or item.is_full_time_student is not False:
                 raise ValueError("LABOR_TAX_IDENTITY_IS_NOT_SUPPORTED")
-            if item.external_declaration_status == "confirmed":
-                raise ValueError("LABOR_EXTERNAL_DECLARATION_MUST_USE_CONFIRMATION_ACTION")
             assert item.fixed_fee_fen is not None and item.commission_fen is not None
             gross = item.fixed_fee_fen + item.commission_fen
             calculation = calculate_resident_labor_withholding(gross, policy.parameters)
@@ -497,8 +521,9 @@ class LaborRemunerationService:
                     "calculation_trace": calculation["trace"],
                 }
             )
+        accounting_request = self._accounting_batch_request(request)
         calculation_input = {
-            "request": request.model_dump(mode="json"),
+            "request": accounting_request,
             "policy": policy_snapshot,
             "lines": derived_lines,
         }
@@ -508,7 +533,7 @@ class LaborRemunerationService:
         missing = request.missing_fields()
         if missing:
             return self._requirement(missing)
-        payload_hash = self._hash(request.model_dump(mode="json"))
+        payload_hash = self._hash(self._accounting_batch_request(request))
         try:
             with self.session.begin_nested():
                 self._organization(request.org_id)
@@ -639,7 +664,11 @@ class LaborRemunerationService:
                 "remuneration_period": batch.remuneration_period,
                 "business_date": batch.business_date.isoformat(),
                 "posting_date": batch.posting_date.isoformat(),
-                "planned_payment_date": batch.planned_payment_date.isoformat(),
+                "planned_payment_date": (
+                    batch.planned_payment_date.isoformat()
+                    if batch.planned_payment_date
+                    else None
+                ),
                 "policy_snapshot": batch.policy_snapshot,
                 "totals": {
                     "fixed_fee_fen": sum(line.fixed_fee_fen for line in lines),
@@ -763,7 +792,7 @@ class LaborRemunerationService:
                     counterparty_id=line.counterparty_id,
                     item_type="payable",
                     original_amount_fen=line.gross_remuneration_fen,
-                    due_date=batch.planned_payment_date,
+                    due_date=None,
                     payable_category="labor_remuneration",
                     key=str(line.id),
                     account_role="labor_remuneration_payable",
@@ -805,7 +834,7 @@ class LaborRemunerationService:
             )
             batch.status = "posted"
             batch.business_event_id = event.id
-            batch.confirmation_note = component.confirmation_note
+            batch.confirmation_note = None
             batch.confirmed_at = datetime.now(UTC)
             session.add(
                 AuditLog(
@@ -859,7 +888,7 @@ class LaborRemunerationService:
                 "org_id": request.org_id,
                 "idempotency_key": request.idempotency_key,
                 "posting_date": batch.posting_date,
-                "description": batch.calculation_input["request"]["description"],
+                "description": "",
                 "components": [
                     {
                         "key": "labor_remuneration_accrual",
@@ -867,7 +896,11 @@ class LaborRemunerationService:
                         "business_date": batch.business_date,
                         "batch_id": batch.id,
                         "calculation_hash": request.calculation_hash,
-                        "confirmation_note": request.confirmation_note,
+                        "metadata": (
+                            {"confirmation_note": request.confirmation_note}
+                            if request.confirmation_note
+                            else {}
+                        ),
                         "evidence_references": evidence_ids,
                     }
                 ],
@@ -900,21 +933,14 @@ class LaborRemunerationService:
         except ValueError as exc:
             return self._rejected(str(exc))
 
-    @staticmethod
-    def _following_month_day_15(payment_date: date) -> date:
-        if payment_date.month == 12:
-            return date(payment_date.year + 1, 1, 15)
-        return date(payment_date.year, payment_date.month + 1, 15)
-
-    def _agency(self, org_id: uuid.UUID, code: str, name: str) -> Counterparty:
-        return self.finance._agency_counterparty(org_id, {"agency_code": code, "agency_name": name})
-
     def confirm_external_declaration(
         self, request: ConfirmLaborExternalDeclarationRequest
     ) -> LaborResult:
         """Append evidence of external filing without rewriting the accrual snapshot."""
 
-        request_hash = self._hash(request.model_dump(mode="json"))
+        request_hash = self._hash(
+            request.model_dump(mode="json", exclude={"external_declaration_reference"})
+        )
         try:
             with self.session.begin_nested():
                 self._organization(request.org_id)

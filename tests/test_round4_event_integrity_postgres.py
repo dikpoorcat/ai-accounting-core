@@ -338,9 +338,8 @@ def _post_expense_event(
                             "amount_fen": 100,
                             "expense_class": "general_expense",
                             "payment_basis": "supplier_credit",
-                            "counterparty": {
-                                "kind": "supplier",
-                                "name": "R4 测试供应商",
+                            "metadata": {
+                                "counterparty": {"kind": "supplier", "name": "R4 测试供应商"}
                             },
                         }
                     ],

@@ -103,14 +103,16 @@ def test_postgres_whole_component_amend_delete_and_reverse_are_atomic():
 
             party = {"kind": "supplier", "name": "Local source supplier"}
             components = [
-                expense("credit", 100, payment_basis="supplier_credit", counterparty=party),
+                expense(
+                    "credit", 100, payment_basis="supplier_credit", metadata={"counterparty": party}
+                ),
                 {
                     "key": "settle",
                     "kind": "payable_settlement",
                     "business_date": "2026-03-05",
                     "payment_date": "2026-03-05",
-                    "counterparty": party,
                     "allocations": [{"source_component_key": "credit", "amount_fen": 100}],
+                    "metadata": {"counterparty": party},
                 },
             ]
             with authority.attributed_call(session, tool_name="finance_record_event"):

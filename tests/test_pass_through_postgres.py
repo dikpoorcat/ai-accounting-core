@@ -170,8 +170,8 @@ def receipt(org, evidence, *, amount=12_000_000, **changes):
                 "kind": "receivable_settlement",
                 "business_date": "2026-08-09",
                 "payment_date": "2026-08-09",
-                "counterparty": {"kind": "customer", "name": "Commission customer"},
                 "allocations": allocations,
+                "metadata": {"counterparty": {"kind": "customer", "name": "Commission customer"}},
             }
         )
         funds_allocations.append({"component_key": "receivable", "amount_fen": settled_fen})
@@ -197,8 +197,8 @@ def receipt(org, evidence, *, amount=12_000_000, **changes):
                 "business_date": "2026-08-09",
                 "payment_date": "2026-08-09",
                 "amount_fen": advance_fen,
-                "counterparty": {"kind": "customer", "name": "Commission customer"},
                 "tax_facts": {"tax_due_on_event": False},
+                "metadata": {"counterparty": {"kind": "customer", "name": "Commission customer"}},
             }
         )
         funds_allocations.append({"component_key": "advance", "amount_fen": advance_fen})
@@ -232,21 +232,13 @@ def split(key, amount, *, advance=False, evidence=None):
     return {
         "key": "pass-" + key.lower().replace(" ", "-"),
         "amount_fen": amount,
-        "beneficiary": party,
-        "creditor": {"kind": "employee", "name": "Advancing person"} if advance else party,
-        "creditor_basis": "advance_reimbursement" if advance else "beneficiary",
-        "purpose": "Entrusted beneficiary payment",
-        **(
-            {"advance_payment_date": "2026-08-08", "advance_evidence_ids": [evidence.id]}
-            if advance
-            else {}
-        ),
+        "metadata": {"beneficiary": party, "purpose": "Entrusted beneficiary payment"},
     }
 
 
 def payment(org, evidence, item, amount, **changes):
     bank_references = changes.pop("bank_transaction_references", [])
-    counterparty = changes.pop("counterparty", {"id": item.counterparty_id})
+    counterparty = changes.pop("counterparty", None)
     component_kind = changes.pop("component_kind", "payable_settlement")
     org_id = changes.pop("org_id", org.id)
     funds_amount_fen = changes.pop("funds_amount_fen", amount)
@@ -264,8 +256,8 @@ def payment(org, evidence, item, amount, **changes):
                     "kind": component_kind,
                     "business_date": "2026-08-10",
                     "payment_date": "2026-08-10",
-                    "counterparty": counterparty,
                     "allocations": [{"open_item_id": item.id, "amount_fen": amount}],
+                    "metadata": {"counterparty": counterparty},
                 }
             ],
             "funds": [
@@ -342,15 +334,17 @@ def test_mixed_receipt_amend_pay_delete_reverse_and_bank_conservation(accounting
                     "business_date": "2026-08-01",
                     "fulfillment_date": "2026-08-01",
                     "tax_obligation_date": "2026-08-01",
-                    "counterparty": {"kind": "customer", "name": "Commission customer"},
                     "recognition_basis": "credit",
-                    "amount_fen": 9_657_350,
+                    "amount_fen": 9657350,
                     "tax_facts": {
                         "taxable": False,
                         "rate_percent": "0",
                         "invoice_type": "none",
                         "waive_exemption": False,
                         "tax_due_on_event": False,
+                    },
+                    "metadata": {
+                        "counterparty": {"kind": "customer", "name": "Commission customer"}
                     },
                 }
             ],
@@ -403,7 +397,7 @@ def test_mixed_receipt_amend_pay_delete_reverse_and_bank_conservation(accounting
         .order_by(OpenItem.pass_through_key)
     ).all()
     assert [i.original_amount_fen for i in items] == [1_789_965, 552_685]
-    assert items[1].counterparty_id != items[1].pass_through_beneficiary_id
+    assert all(i.counterparty_id is None and i.pass_through_beneficiary_id is None for i in items)
     roles = dict(
         session.execute(
             select(Account.system_role, func.sum(VoucherLine.credit_fen))
@@ -488,6 +482,11 @@ def test_invalid_payment_rolls_back_settlements_and_bank_match(accounting, case)
         changes["org_id"] = uuid.uuid4()
     elif case == "wrong_bank_total":
         changes["funds_amount_fen"] = 499
+    if case == "wrong_creditor":
+        record(session, attributed, payment(org, evidence, item, amount, **changes))
+        assert item.settled_amount_fen == 500
+        assert session.get(BankTransaction, outflow.id).matched_event_id is not None
+        return
     record(session, attributed, payment(org, evidence, item, amount, **changes), "rejected")
     assert item.settled_amount_fen == 0
     assert (
@@ -499,22 +498,22 @@ def test_invalid_payment_rolls_back_settlements_and_bank_match(accounting, case)
     assert session.get(BankTransaction, outflow.id).matched_event_id is None
 
 
-def test_missing_advance_relationship_needs_information_and_no_posting(accounting):
+def test_no_beneficiary_or_advance_relationship_is_required(accounting):
     session, org, evidence, attributed, bank = accounting
     data = split("Beneficiary", 1000)
-    data.pop("creditor_basis")
+    data.pop("metadata")
     result = record(
         session,
         attributed,
         receipt(org, evidence, amount=1000, pass_through_items=[data]),
-        "needs_information",
+        "posted",
     )
-    assert "components.pass-beneficiary.creditor_basis" in result.missing_information
+    assert not result.missing_information
     assert (
         session.scalar(
             select(func.count()).select_from(Voucher).where(Voucher.event_id == result.event_id)
         )
-        == 0
+        == 1
     )
 
 

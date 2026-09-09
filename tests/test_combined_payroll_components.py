@@ -149,20 +149,22 @@ def _combined_event_request(organization, evidence, regular, *bonuses):
             "business_date": "2026-03-05",
             "batch_id": regular.batch_id,
             "calculation_hash": regular.calculation_hash,
-            "confirmation_note": "同事件确认常规工资",
+            "metadata": {"confirmation_note": "同事件确认常规工资"},
         }
     ]
     components.extend(
-        {
-            "key": f"bonus-{index}",
-            "kind": "payroll_accrual",
-            "business_date": "2026-03-05",
-            "batch_id": bonus.batch_id,
-            "calculation_hash": bonus.calculation_hash,
-            "regular_payroll_component_keys": ["regular"],
-            "confirmation_note": "同事件确认并入工资计税的年终奖",
-        }
-        for index, bonus in enumerate(bonuses, 1)
+        (
+            {
+                "key": f"bonus-{index}",
+                "kind": "payroll_accrual",
+                "business_date": "2026-03-05",
+                "batch_id": bonus.batch_id,
+                "calculation_hash": bonus.calculation_hash,
+                "regular_payroll_component_keys": ["regular"],
+                "metadata": {"confirmation_note": "同事件确认并入工资计税的年终奖"},
+            }
+            for index, bonus in enumerate(bonuses, 1)
+        )
     )
     # Put the dependent first to prove the typed local key, rather than array order,
     # controls compilation.

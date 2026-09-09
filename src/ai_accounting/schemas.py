@@ -135,6 +135,7 @@ class SalaryWithholdingAllocation(BaseModel):
 
     open_item_id: uuid.UUID | None = None
     source_component_key: str | None = None
+    source_event_key: str | None = Field(default=None, min_length=1, max_length=200)
     source_open_item_key: str = "primary"
     employee_social_insurance_items: dict[str, Fen] = Field(default_factory=dict)
     employee_housing_fund_items: dict[str, Fen] = Field(default_factory=dict)
@@ -143,7 +144,9 @@ class SalaryWithholdingAllocation(BaseModel):
     @model_validator(mode="after")
     def component_amounts_are_nonnegative(self) -> SalaryWithholdingAllocation:
         if (self.open_item_id is None) == (self.source_component_key is None):
-            raise ValueError("provide exactly one posted or local salary obligation")
+            raise ValueError("provide exactly one posted or business-referenced salary obligation")
+        if self.source_event_key is not None and self.source_component_key is None:
+            raise ValueError("source_event_key requires source_component_key")
         components = [
             *self.employee_social_insurance_items.values(),
             *self.employee_housing_fund_items.values(),
@@ -169,13 +172,16 @@ class SalaryActualDeductionAllocation(BaseModel):
 
     open_item_id: uuid.UUID | None = None
     source_component_key: str | None = None
+    source_event_key: str | None = Field(default=None, min_length=1, max_length=200)
     source_open_item_key: str = "primary"
     amount_fen: PositiveFen
 
     @model_validator(mode="after")
     def one_salary_source(self) -> SalaryActualDeductionAllocation:
         if (self.open_item_id is None) == (self.source_component_key is None):
-            raise ValueError("provide exactly one posted or local salary obligation")
+            raise ValueError("provide exactly one posted or business-referenced salary obligation")
+        if self.source_event_key is not None and self.source_component_key is None:
+            raise ValueError("source_event_key requires source_component_key")
         return self
 
 
@@ -222,7 +228,7 @@ class PayrollEmployeeItem(BaseModel):
         title="账务应发工资",
         description=(
             "账务上实际形成的应发工资。省略时与报税工资相同；如与报税工资不同，"
-            "必须同时提供差异原因和工资批次证据。"
+            "必须提供工资批次证据。"
         ),
     )
     tax_reporting_difference_reason: str | None = Field(
@@ -230,7 +236,7 @@ class PayrollEmployeeItem(BaseModel):
         min_length=1,
         max_length=2000,
         title="账税工资差异原因",
-        description="仅在账务应发工资与报税工资不一致时填写的负责人确认事实。",
+        description="可选的管理说明，不参与工资计算或入账判断。",
     )
     special_additional_deduction_fen: Fen = 0
     other_legal_deduction_fen: Fen = 0
@@ -269,7 +275,7 @@ class RegisterPayrollFirstWageTaxTreatmentRequest(BaseModel):
     first_wage_month: int = Field(ge=1, le=12)
     treatment_state: PayrollFirstWageTaxTreatmentState
     declaration_date: date
-    confirmation_description: str = Field(min_length=1, max_length=2000)
+    confirmation_description: str = Field(default="", max_length=2000)
     evidence_references: list[uuid.UUID] = Field(min_length=1)
     supersedes_treatment_id: uuid.UUID | None = None
 
@@ -314,15 +320,18 @@ class RegisterPayrollContributionActualRequest(BaseModel):
     employee_id: uuid.UUID
     contribution_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     declaration_date: date
-    reason_code: Literal[
-        "late_enrollment",
-        "missing_declaration",
-        "partial_declaration",
-        "agency_assessment",
-        "documented_correction",
-        "other_documented",
-    ]
-    reason_description: str = Field(min_length=1, max_length=2000)
+    reason_code: (
+        Literal[
+            "late_enrollment",
+            "missing_declaration",
+            "partial_declaration",
+            "agency_assessment",
+            "documented_correction",
+            "other_documented",
+        ]
+        | None
+    ) = None
+    reason_description: str = Field(default="", max_length=2000)
     items: list[PayrollContributionActualItem] = Field(min_length=1)
     evidence_references: list[uuid.UUID] = Field(min_length=1)
     supersedes_actual_ids: list[uuid.UUID] = Field(default_factory=list)
@@ -365,16 +374,19 @@ class RecordPayrollContributionSupplementRequest(BaseModel):
     employee_id: uuid.UUID
     contribution_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     posting_date: date
-    due_date: date
-    assessment_reference: str = Field(min_length=1, max_length=200)
-    reason_code: Literal[
-        "late_enrollment",
-        "missing_declaration",
-        "agency_assessment",
-        "documented_correction",
-        "other_documented",
-    ]
-    reason_description: str = Field(min_length=1, max_length=2000)
+    due_date: date | None = None
+    assessment_reference: str | None = Field(default=None, min_length=1, max_length=200)
+    reason_code: (
+        Literal[
+            "late_enrollment",
+            "missing_declaration",
+            "agency_assessment",
+            "documented_correction",
+            "other_documented",
+        ]
+        | None
+    ) = None
+    reason_description: str = Field(default="", max_length=2000)
     items: list[PayrollContributionSupplementItem] = Field(min_length=1)
     evidence_references: list[uuid.UUID] = Field(min_length=1)
 
@@ -385,7 +397,7 @@ class RecordPayrollContributionSupplementRequest(BaseModel):
             raise ValueError("items must contain each contribution group and insurance kind once")
         if len(self.evidence_references) != len(set(self.evidence_references)):
             raise ValueError("evidence_references must not contain duplicates")
-        if self.due_date < self.posting_date:
+        if self.due_date is not None and self.due_date < self.posting_date:
             raise ValueError("due_date must not precede posting_date")
         contribution_year = int(self.contribution_period[:4])
         contribution_month = int(self.contribution_period[5:])
@@ -561,7 +573,7 @@ class PayrollPolicyParameters(BaseModel):
     employee_contribution_shortfall_treatment: Literal["reject", "employer_borne"] = "reject"
     income_tax: IncomeTaxParameters
     annual_bonus: AnnualBonusParameters | None = None
-    payment_targets: PayrollPaymentTargetsParameters
+    payment_targets: PayrollPaymentTargetsParameters | None = None
 
 
 class RegisterPayrollPolicyVersionRequest(BaseModel):
@@ -658,14 +670,10 @@ class PreviewPayrollRequest(BaseModel):
                     )
                 if (
                     item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.NOT_DECLARED
-                    and (
-                        item.accounting_gross_salary_fen not in {None, 0}
-                        or item.tax_reporting_difference_reason is not None
-                    )
+                    and item.accounting_gross_salary_fen not in {None, 0}
                 ):
                     raise ValueError(
-                        "not_declared regular payroll cannot include accounting wage-tax "
-                        "difference facts"
+                        "not_declared regular payroll cannot include accounting gross salary"
                     )
                 if (
                     item.wage_tax_declaration_state == PayrollWageTaxDeclarationState.DECLARED
@@ -677,18 +685,6 @@ class PreviewPayrollRequest(BaseModel):
                         else item.tax_reported_salary_fen
                     )
                     differs = accounting_gross != item.tax_reported_salary_fen
-                    if differs and not (
-                        item.tax_reporting_difference_reason
-                        and item.tax_reporting_difference_reason.strip()
-                    ):
-                        raise ValueError(
-                            "tax_reporting_difference_reason is required when accounting gross "
-                            "salary differs from tax-reported salary"
-                        )
-                    if not differs and item.tax_reporting_difference_reason is not None:
-                        raise ValueError(
-                            "tax_reporting_difference_reason requires a wage reporting difference"
-                        )
                     if differs and not self.evidence_references:
                         raise ValueError(
                             "evidence_references are required for a wage reporting difference"
@@ -712,7 +708,6 @@ class PreviewPayrollRequest(BaseModel):
             if any(
                 item.tax_reported_salary_fen is not None
                 or item.accounting_gross_salary_fen is not None
-                or item.tax_reporting_difference_reason is not None
                 or item.special_additional_deduction_fen
                 or item.other_legal_deduction_fen
                 or item.tax_relief_fen
@@ -912,7 +907,7 @@ class FixedAssetDisposalSettlementKind(StrEnum):
 
 
 class FixedAssetCostComponents(BaseModel):
-    """The finite Phase-1 capitalisable acquisition-cost facts, all in fen."""
+    """Optional breakdown of an explicitly stated acquisition cost."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -920,18 +915,6 @@ class FixedAssetCostComponents(BaseModel):
     noncreditable_tax_fen: Fen | None = None
     transport_and_handling_fen: Fen | None = None
     installation_and_direct_cost_fen: Fen | None = None
-
-    def missing_fields(self) -> list[str]:
-        return [
-            field_name
-            for field_name in (
-                "purchase_price_fen",
-                "noncreditable_tax_fen",
-                "transport_and_handling_fen",
-                "installation_and_direct_cost_fen",
-            )
-            if getattr(self, field_name) is None
-        ]
 
 
 class FixedAssetInformationRequirement(BaseModel):
@@ -952,8 +935,8 @@ class FixedAssetEmployeeCostSource(BaseModel):
     source_key: str = Field(min_length=1, max_length=200)
     amount_fen: PositiveFen
     reimbursing_employee: CounterpartyRef
-    due_date: date
-    description: str = Field(min_length=1, max_length=500)
+    due_date: date | None = None
+    description: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class FixedAssetReadyForUseFacts(BaseModel):
@@ -1001,7 +984,8 @@ class AcquireFixedAssetRequest(BaseModel):
     expected_use_over_one_year: StrictBool | None = None
     purchase_date: date | None = None
     posting_date: date | None = None
-    cost_components: FixedAssetCostComponents = Field(default_factory=FixedAssetCostComponents)
+    cost_fen: PositiveFen | None = None
+    cost_components: FixedAssetCostComponents | None = None
     supplier: CounterpartyRef | None = None
     reimbursing_employee: CounterpartyRef | None = None
     employee_cost_sources: list[FixedAssetEmployeeCostSource] = Field(
@@ -1021,8 +1005,6 @@ class AcquireFixedAssetRequest(BaseModel):
     def dates_are_ordered(self) -> AcquireFixedAssetRequest:
         if self.posting_date and self.purchase_date and self.posting_date < self.purchase_date:
             raise ValueError("posting_date must not precede purchase_date")
-        if self.due_date and self.purchase_date and self.due_date < self.purchase_date:
-            raise ValueError("due_date must not precede purchase_date")
         if self.ready_for_use is not None:
             if (
                 self.purchase_date
@@ -1066,31 +1048,30 @@ class AcquireFixedAssetRequest(BaseModel):
             self.settlement_method
             is FixedAssetAcquisitionSettlementKind.ALLOCATED_EMPLOYEE_PAYABLES
         ):
-            if self.due_date is not None:
-                raise ValueError("allocated employee payables use each cost source due_date")
             source_keys = [item.source_key for item in self.employee_cost_sources]
             if len(source_keys) != len(set(source_keys)):
                 raise ValueError("employee cost source keys must be unique")
-            component_values = self.cost_components.model_dump().values()
-            if all(value is not None for value in component_values) and sum(
-                int(value) for value in component_values
-            ) != sum(item.amount_fen for item in self.employee_cost_sources):
+            if (
+                self.cost_fen is not None
+                and sum(item.amount_fen for item in self.employee_cost_sources) != self.cost_fen
+            ):
                 raise ValueError("employee cost source amounts must equal asset cost")
+        if self.cost_components is not None and self.cost_fen is not None:
+            supplied = [
+                value for value in self.cost_components.model_dump().values() if value is not None
+            ]
+            if supplied and sum(supplied) != self.cost_fen:
+                raise ValueError("provided cost components must sum exactly to cost_fen")
         return self
 
     def missing_information(self) -> list[FixedAssetInformationRequirement]:
         missing: list[FixedAssetInformationRequirement] = []
-        identity = [
-            field_name
-            for field_name in ("asset_code", "asset_name", "category")
-            if getattr(self, field_name) is None
-        ]
-        if identity:
+        if self.category is None:
             missing.append(
                 FixedAssetInformationRequirement(
-                    code="FIXED_ASSET_IDENTITY_REQUIRED",
-                    message="asset code, name, and supported category are required",
-                    fields=identity,
+                    code="FIXED_ASSET_CATEGORY_REQUIRED",
+                    message="the accounting asset category is required",
+                    fields=["category"],
                 )
             )
         if self.expected_use_over_one_year is None:
@@ -1122,20 +1103,12 @@ class AcquireFixedAssetRequest(BaseModel):
                     fields=dates,
                 )
             )
-        if cost_fields := self.cost_components.missing_fields():
+        if self.cost_fen is None:
             missing.append(
                 FixedAssetInformationRequirement(
-                    code="FIXED_ASSET_COST_COMPONENTS_REQUIRED",
-                    message="every capitalisable cost component must be stated, including zero",
-                    fields=[f"cost_components.{item}" for item in cost_fields],
-                )
-            )
-        if self.supplier is None:
-            missing.append(
-                FixedAssetInformationRequirement(
-                    code="FIXED_ASSET_SUPPLIER_REQUIRED",
-                    message="supplier identity is required",
-                    fields=["supplier"],
+                    code="FIXED_ASSET_COST_REQUIRED",
+                    message="the total capitalisable acquisition cost is required",
+                    fields=["cost_fen"],
                 )
             )
         if self.settlement_method is None:
@@ -1172,14 +1145,6 @@ class AcquireFixedAssetRequest(BaseModel):
                         fields=["reimbursing_employee"],
                     )
                 )
-            if self.due_date is None:
-                missing.append(
-                    FixedAssetInformationRequirement(
-                        code="FIXED_ASSET_DUE_DATE_REQUIRED",
-                        message="an employee-payable acquisition requires its due date",
-                        fields=["due_date"],
-                    )
-                )
         elif (
             self.settlement_method
             is FixedAssetAcquisitionSettlementKind.ALLOCATED_EMPLOYEE_PAYABLES
@@ -1195,14 +1160,6 @@ class AcquireFixedAssetRequest(BaseModel):
                         fields=["employee_cost_sources"],
                     )
                 )
-        elif self.due_date is None:
-            missing.append(
-                FixedAssetInformationRequirement(
-                    code="FIXED_ASSET_DUE_DATE_REQUIRED",
-                    message="a supplier-payable acquisition requires its due date",
-                    fields=["due_date"],
-                )
-            )
         if not self.evidence_references:
             missing.append(
                 FixedAssetInformationRequirement(
@@ -1727,5 +1684,5 @@ class ReverseEventRequest(BaseModel):
     org_id: uuid.UUID
     event_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=200)
-    reason: str = Field(min_length=1, max_length=1000)
+    reason: str = Field(default="", max_length=1000)
     posting_date: date

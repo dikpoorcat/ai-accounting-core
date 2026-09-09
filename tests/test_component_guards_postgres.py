@@ -193,15 +193,15 @@ def test_authenticated_components_cover_composition_idempotency_and_rollback(
                     "purchase",
                     300,
                     payment_basis="supplier_credit",
-                    counterparty=party,
+                    metadata={"counterparty": party},
                 ),
                 {
                     "key": "settle",
                     "kind": "payable_settlement",
                     "business_date": "2026-03-05",
                     "payment_date": "2026-03-05",
-                    "counterparty": party,
                     "allocations": [{"source_component_key": "purchase", "amount_fen": 300}],
+                    "metadata": {"counterparty": party},
                 },
             ],
             key="postgres-local-create-settle",
@@ -225,8 +225,8 @@ def test_authenticated_components_cover_composition_idempotency_and_rollback(
                     "kind": "payable_settlement",
                     "business_date": "2026-03-05",
                     "payment_date": "2026-03-05",
-                    "counterparty": party,
                     "allocations": [{"open_item_id": str(item.id), "amount_fen": 300}],
+                    "metadata": {"counterparty": party},
                 }
             ],
             key="postgres-duplicate-settlement",
@@ -382,18 +382,14 @@ def test_same_event_borrowing_accrual_interest_and_principal_is_guarded_by_origi
                     "kind": "borrowing_drawdown",
                     "business_date": draw_day,
                     "facts": {
-                        "borrowing_code": "PG-LOAN-COMPONENT",
-                        "contract_name": "PostgreSQL component loan",
                         "lender": {"name": "Component bank"},
                         "lender_is_licensed_financial_institution": True,
                         "currency": "CNY",
-                        "principal_fen": 1_000_000,
-                        "due_date": due_day,
+                        "principal_fen": 1000000,
                         "annual_rate_percent": "3.65",
                         "day_count_basis": "actual_365",
-                        "interest_due_dates": [due_day],
                         "capitalization_applicable": False,
-                        "purpose_description": "working capital",
+                        "due_date": due_day,
                         "term_facts": {
                             "single_drawdown": True,
                             "fixed_rate": True,
@@ -405,6 +401,12 @@ def test_same_event_borrowing_accrual_interest_and_principal_is_guarded_by_origi
                             "has_financing_fees": False,
                         },
                     },
+                    "metadata": {
+                        "borrowing_code": "PG-LOAN-COMPONENT",
+                        "contract_name": "PostgreSQL component loan",
+                        "interest_due_dates": [due_day],
+                        "purpose": "working capital",
+                    },
                 }
             ],
             "funds": [
@@ -413,8 +415,8 @@ def test_same_event_borrowing_accrual_interest_and_principal_is_guarded_by_origi
                     "account_code": "1001",
                     "direction": "receipt",
                     "payment_date": draw_day,
-                    "amount_fen": 1_000_000,
-                    "allocations": [{"component_key": "loan", "amount_fen": 1_000_000}],
+                    "amount_fen": 1000000,
+                    "allocations": [{"component_key": "loan", "amount_fen": 1000000}],
                 }
             ],
         }
@@ -426,7 +428,7 @@ def test_same_event_borrowing_accrual_interest_and_principal_is_guarded_by_origi
         assert posted.status == "posted", posted
         session.commit()
         borrowing = session.scalar(
-            sa.select(Borrowing).where(Borrowing.borrowing_code == "PG-LOAN-COMPONENT")
+            sa.select(Borrowing).where(Borrowing.drawdown_event_id == posted.event_id)
         )
         preview = BorrowingService(session).preview_borrowing_interest(
             PreviewBorrowingInterestRequest(

@@ -249,6 +249,7 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                     "acquisition_date": "2026-01-02",
                     "available_for_use_date": "2026-01-02",
                     "posting_date": "2026-01-02",
+                    "cost_fen": 12_000,
                     "cost_components": {
                         "purchase_price_fen": 11_000,
                         "noncreditable_tax_fen": 500,
@@ -276,14 +277,13 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 )
                 assert replayed_acquisition["event_id"] == acquired["event_id"]
                 assert replayed_acquisition["data"]["idempotent_replay"] is True
-                mismatched_acquisition = await call(
+                management_only_acquisition_retry = await call(
                     client,
                     "finance_acquire_intangible_asset",
                     {"request": {**intangible_request, "asset_name": "篡改的名称"}},
                 )
-                assert mismatched_acquisition["errors"] == [
-                    "INTANGIBLE_ASSET_IDEMPOTENCY_PAYLOAD_MISMATCH"
-                ]
+                assert management_only_acquisition_retry["event_id"] == acquired["event_id"]
+                assert management_only_acquisition_retry["data"]["idempotent_replay"] is True
 
                 amortization_facts = {
                     "org_id": str(org_id),
@@ -375,12 +375,13 @@ def test_intangible_and_borrowing_stdio_full_lifecycles_use_isolated_database(
                 )
                 assert replayed_draw["event_id"] == drawn["event_id"]
                 assert replayed_draw["data"]["idempotent_replay"] is True
-                mismatched_draw = await call(
+                management_only_draw_retry = await call(
                     client,
                     "finance_draw_borrowing",
                     {"request": {**drawing_request, "contract_name": "篡改的借款合同"}},
                 )
-                assert mismatched_draw["errors"] == ["BORROWING_IDEMPOTENCY_PAYLOAD_MISMATCH"]
+                assert management_only_draw_retry["event_id"] == drawn["event_id"]
+                assert management_only_draw_retry["data"]["idempotent_replay"] is True
 
                 first_period = {
                     "org_id": str(org_id),

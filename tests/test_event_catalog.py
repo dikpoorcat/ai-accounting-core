@@ -109,10 +109,10 @@ def test_payable_purchase_and_supplier_payment_preserve_balance_and_idempotency(
                     "key": "purchase",
                     "kind": "expense",
                     "business_date": "2026-08-01",
-                    "amount_fen": 30_000,
+                    "amount_fen": 30000,
                     "expense_class": "general_expense",
                     "payment_basis": "supplier_credit",
-                    "counterparty": supplier,
+                    "metadata": {"counterparty": supplier},
                 }
             ],
         )
@@ -132,11 +132,11 @@ def test_payable_purchase_and_supplier_payment_preserve_balance_and_idempotency(
                 "kind": "payable_settlement",
                 "business_date": "2026-08-02",
                 "payment_date": "2026-08-02",
-                "counterparty": supplier,
-                "allocations": [{"open_item_id": item.id, "amount_fen": 30_000}],
+                "allocations": [{"open_item_id": item.id, "amount_fen": 30000}],
+                "metadata": {"counterparty": supplier},
             }
         ],
-        funds=[payment_funds("bank", 30_000, ("settlement", 30_000))],
+        funds=[payment_funds("bank", 30000, ("settlement", 30000))],
     )
     payment = service.record_event(payload)
     replay = service.record_event(payload)
@@ -163,7 +163,7 @@ def test_multiple_expenses_payable_and_bank_fee_share_one_atomic_voucher(
                     "kind": "expense",
                     "business_date": "2026-08-02",
                     "payment_date": "2026-08-02",
-                    "amount_fen": 1_000,
+                    "amount_fen": 1000,
                     "expense_class": "general_expense",
                     "payment_basis": "immediate",
                 },
@@ -171,10 +171,10 @@ def test_multiple_expenses_payable_and_bank_fee_share_one_atomic_voucher(
                     "key": "credit-purchase",
                     "kind": "expense",
                     "business_date": "2026-08-02",
-                    "amount_fen": 4_000,
+                    "amount_fen": 4000,
                     "expense_class": "sales_expense",
                     "payment_basis": "supplier_credit",
-                    "counterparty": supplier,
+                    "metadata": {"counterparty": supplier},
                 },
                 {
                     "key": "fee",
@@ -255,8 +255,7 @@ def test_ar_advance_and_multiple_pass_through_creditors_compose_in_one_event(
                     "kind": "service_sale",
                     "business_date": "2026-08-02",
                     "fulfillment_date": "2026-08-02",
-                    "amount_fen": 10_100,
-                    "counterparty": customer,
+                    "amount_fen": 10100,
                     "recognition_basis": "credit",
                     "tax_obligation_date": "2026-08-02",
                     "tax_facts": {
@@ -266,37 +265,40 @@ def test_ar_advance_and_multiple_pass_through_creditors_compose_in_one_event(
                         "waive_exemption": False,
                         "tax_due_on_event": True,
                     },
+                    "metadata": {"counterparty": customer},
                 },
                 {
                     "key": "advance",
                     "kind": "customer_advance",
                     "business_date": "2026-08-02",
                     "payment_date": "2026-08-02",
-                    "amount_fen": 5_000,
-                    "counterparty": customer,
+                    "amount_fen": 5000,
                     "tax_facts": {"tax_due_on_event": False},
+                    "metadata": {"counterparty": customer},
                 },
                 {
                     "key": "pass-a",
                     "kind": "pass_through",
                     "business_date": "2026-08-02",
                     "payment_date": "2026-08-02",
-                    "amount_fen": 2_000,
-                    "beneficiary": {"kind": "other", "name": "受益方甲"},
-                    "creditor": {"kind": "other", "name": "受益方甲"},
-                    "creditor_basis": "beneficiary",
-                    "purpose": "代收甲款项",
+                    "amount_fen": 2000,
+                    "metadata": {
+                        "beneficiary": {"kind": "other", "name": "受益方甲"},
+                        "counterparty": {"kind": "other", "name": "受益方甲"},
+                        "purpose": "代收甲款项",
+                    },
                 },
                 {
                     "key": "pass-b",
                     "kind": "pass_through",
                     "business_date": "2026-08-02",
                     "payment_date": "2026-08-02",
-                    "amount_fen": 3_000,
-                    "beneficiary": {"kind": "other", "name": "受益方乙"},
-                    "creditor": {"kind": "other", "name": "受益方乙"},
-                    "creditor_basis": "beneficiary",
-                    "purpose": "代收乙款项",
+                    "amount_fen": 3000,
+                    "metadata": {
+                        "beneficiary": {"kind": "other", "name": "受益方乙"},
+                        "counterparty": {"kind": "other", "name": "受益方乙"},
+                        "purpose": "代收乙款项",
+                    },
                 },
             ],
             funds=[
@@ -305,11 +307,11 @@ def test_ar_advance_and_multiple_pass_through_creditors_compose_in_one_event(
                     "account_code": "1002",
                     "direction": "receipt",
                     "payment_date": "2026-08-02",
-                    "amount_fen": 10_000,
+                    "amount_fen": 10000,
                     "allocations": [
-                        {"component_key": "advance", "amount_fen": 5_000},
-                        {"component_key": "pass-a", "amount_fen": 2_000},
-                        {"component_key": "pass-b", "amount_fen": 3_000},
+                        {"component_key": "advance", "amount_fen": 5000},
+                        {"component_key": "pass-a", "amount_fen": 2000},
+                        {"component_key": "pass-b", "amount_fen": 3000},
                     ],
                 }
             ],
@@ -344,9 +346,9 @@ def test_person_debt_transfer_and_cash_settlement_keep_source_lineage(
                     "amount_fen": amount,
                     "expense_class": "general_expense",
                     "payment_basis": "supplier_credit",
-                    "counterparty": supplier,
+                    "metadata": {"counterparty": supplier},
                 }
-                for key, amount in (("claim-a", 25_000), ("claim-b", 35_000))
+                for key, amount in (("claim-a", 25000), ("claim-b", 35000))
             ],
         )
     )
@@ -393,16 +395,11 @@ def test_person_debt_transfer_and_cash_settlement_keep_source_lineage(
                     "kind": "payable_settlement",
                     "business_date": "2026-08-02",
                     "payment_date": "2026-08-02",
-                    "counterparty": employee,
-                    "allocations": [{"open_item_id": person_item.id, "amount_fen": 60_000}],
+                    "allocations": [{"open_item_id": person_item.id, "amount_fen": 60000}],
+                    "metadata": {"counterparty": employee},
                 }
             ],
-            funds=[
-                {
-                    **payment_funds("cash", 60_000, ("settlement", 60_000)),
-                    "account_code": "1001",
-                }
-            ],
+            funds=[{**payment_funds("cash", 60000, ("settlement", 60000)), "account_code": "1001"}],
         )
     )
     assert paid.status == "posted", paid.errors
@@ -435,9 +432,9 @@ def test_advance_refund_cannot_exceed_unused_source_component(
                     "kind": "customer_advance",
                     "business_date": "2026-08-01",
                     "payment_date": "2026-08-01",
-                    "amount_fen": 50_000,
-                    "counterparty": customer,
+                    "amount_fen": 50000,
                     "tax_facts": {"tax_due_on_event": False},
+                    "metadata": {"counterparty": customer},
                 }
             ],
             funds=[
@@ -446,8 +443,8 @@ def test_advance_refund_cannot_exceed_unused_source_component(
                     "account_code": "1002",
                     "direction": "receipt",
                     "payment_date": "2026-08-01",
-                    "amount_fen": 50_000,
-                    "allocations": [{"component_key": "advance", "amount_fen": 50_000}],
+                    "amount_fen": 50000,
+                    "allocations": [{"component_key": "advance", "amount_fen": 50000}],
                 }
             ],
         )
@@ -470,9 +467,9 @@ def test_advance_refund_cannot_exceed_unused_source_component(
                         "business_date": "2026-08-02",
                         "payment_date": "2026-08-02",
                         "amount_fen": amount,
-                        "counterparty": customer,
                         "source": {"component_id": source_component_id},
                         "refund_kind": "advance",
+                        "metadata": {"counterparty": customer},
                     }
                 ],
                 funds=[payment_funds("payment", amount, ("refund", amount))],

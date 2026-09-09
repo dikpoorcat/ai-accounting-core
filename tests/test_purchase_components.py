@@ -18,7 +18,13 @@ PROJECT = "contract-ui-2022"
 
 
 def facts(kind, key, day, **values):
-    return {"kind": kind, "key": key, "business_date": day, "project_reference": PROJECT, **values}
+    return {
+        "kind": kind,
+        "key": key,
+        "business_date": day,
+        "metadata": {"project_reference": PROJECT},
+        **values,
+    }
 
 
 def advance(day="2022-09-21", amount=800000, **values):
@@ -27,11 +33,10 @@ def advance(day="2022-09-21", amount=800000, **values):
         "advance",
         day,
         payment_date=day,
-        counterparty=PARTY,
         amount_fen=amount,
         purchase_purpose="intangible_asset",
-        contract_reference="signed-contract-2022",
         **values,
+        metadata={"counterparty": PARTY, "contract_reference": "signed-contract-2022"},
     )
 
 
@@ -41,15 +46,17 @@ def stage(key="stage", day="2022-09-21", amount=800000, **values):
         key,
         day,
         amount_fen=amount,
-        counterparty=PARTY,
         project_nature="purchased_intangible",
         cost_element="purchase_price",
-        acceptance_reference=f"acceptance-{key}",
-        obligation_reference=f"invoice-{key}",
         rights_controlled=True,
-        capitalization_basis="合同阶段成果已验收，权利已取得，直接构成软件成本",
-        due_date=day,
         **values,
+        metadata={
+            "counterparty": PARTY,
+            "acceptance_reference": f"acceptance-{key}",
+            "obligation_reference": f"invoice-{key}",
+            "capitalization_basis": "合同阶段成果已验收，权利已取得，直接构成软件成本",
+            "due_date": day,
+        },
     )
 
 
@@ -59,24 +66,20 @@ def asset(method="payable", sources=None, code="UI-2022", amount=1600000):
         "asset",
         "2022-11-30",
         cost_sources=sources or [],
+        metadata={"asset_code": code, "asset_name": "UI design rights", "counterparty": PARTY},
         facts={
-            "asset_code": code,
-            "asset_name": "UI design rights",
             "category": "software",
-            "rights_description": "永久独占使用权",
-            "supplier": PARTY,
             "available_for_use_date": "2022-11-30",
+            "cost_fen": amount,
             "cost_components": {
                 "purchase_price_fen": amount,
                 "noncreditable_tax_fen": 0,
                 "directly_attributable_cost_fen": 0,
             },
             "settlement_method": method,
-            "due_date": "2022-11-30" if method == "payable" else None,
             "benefit_area": "management",
             "life_basis": "reliably_estimated",
             "useful_life_months": 60,
-            "life_basis_explanation": "预计使用五年",
             "is_available_for_use": True,
             "claims_creditable_input_vat": False,
         },
@@ -113,9 +116,9 @@ def payment(key, day, source, amount):
         "payable_settlement",
         key,
         day,
-        counterparty=PARTY,
         payment_date=day,
         allocations=[{**source, "amount_fen": amount}],
+        metadata={"counterparty": PARTY},
     )
 
 
@@ -148,9 +151,9 @@ def test_advance_cross_month_asset_application_tail_and_reversal(
         "supplier_advance_application",
         "apply",
         "2022-11-30",
-        counterparty=PARTY,
         advances=[{"open_item_id": prepaid.id, "amount_fen": 800000}],
         allocations=[{"source_component_key": "asset", "amount_fen": 800000}],
+        metadata={"counterparty": PARTY},
     )
     final_req = request(
         organization,
@@ -245,17 +248,14 @@ def test_stage_payables_paid_then_asset_consumes_cost_without_new_debt(
 
 
 @pytest.mark.parametrize(
-    "change,expected",
+    "change",
     [
-        ({"project_reference": "wrong"}, "PURCHASE_SETTLEMENT_PROJECT_MISMATCH"),
-        (
-            {"counterparty": {"kind": "supplier", "name": "Wrong supplier"}},
-            "PURCHASE_SETTLEMENT_SUPPLIER_OR_DIRECTION_MISMATCH",
-        ),
+        {"project_reference": "different"},
+        {"counterparty": {"kind": "supplier", "name": "Display supplier"}},
     ],
 )
-def test_refund_source_scope_and_atomicity(
-    session, organization, sample_evidence, change, expected
+def test_refund_uses_source_regardless_of_management_labels(
+    session, organization, sample_evidence, change
 ):
     first = record(
         session,
@@ -273,12 +273,11 @@ def test_refund_source_scope_and_atomicity(
         "supplier_advance_refund",
         "refund",
         "2022-09-22",
-        counterparty=PARTY,
         payment_date="2022-09-22",
-        refund_reference="cancellation",
         advances=[{"open_item_id": prepaid.id, "amount_fen": 200000}],
+        metadata={"counterparty": PARTY, "refund_reference": "cancellation"},
     )
-    refund.update(change)
+    refund["metadata"].update(change)
     rejected = ComponentService(session).record(
         request(
             organization,
@@ -290,9 +289,9 @@ def test_refund_source_scope_and_atomicity(
             receipt=True,
         )
     )
-    assert rejected.errors == [expected]
-    assert prepaid.settled_amount_fen == 0
-    assert session.scalar(select(func.count()).select_from(BusinessEvent)) == 1
+    assert rejected.status == "posted", rejected
+    assert prepaid.settled_amount_fen == 200000
+    assert session.scalar(select(func.count()).select_from(BusinessEvent)) == 2
 
 
 def test_partial_refund_amend_delete_restores_exact_balance(session, organization, sample_evidence):
@@ -312,10 +311,9 @@ def test_partial_refund_amend_delete_restores_exact_balance(session, organizatio
         "supplier_advance_refund",
         "refund",
         "2022-09-22",
-        counterparty=PARTY,
         payment_date="2022-09-22",
-        refund_reference="partial-cancellation",
         advances=[{"open_item_id": prepaid.id, "amount_fen": 200000}],
+        metadata={"counterparty": PARTY, "refund_reference": "partial-cancellation"},
     )
     posted = record(
         session,
@@ -364,9 +362,7 @@ def test_partial_refund_amend_delete_restores_exact_balance(session, organizatio
     assert prepaid.settled_amount_fen == 0
 
 
-@pytest.mark.parametrize(
-    "field", ["rights_controlled", "acceptance_reference", "capitalization_basis"]
-)
+@pytest.mark.parametrize("field", ["rights_controlled", "project_nature", "cost_element"])
 def test_stage_missing_facts_is_not_inferred(session, organization, sample_evidence, field):
     c = stage()
     c[field] = None
@@ -416,7 +412,7 @@ def test_configured_project_cost_account_survives_transfer_and_abandonment(
                     "2022-10-01",
                     cost_sources=[source],
                     expense_class="general_expense",
-                    reason="部分阶段成果废弃，不再形成资产",
+                    metadata={"reason": "部分阶段成果废弃，不再形成资产"},
                 )
             ],
         ),
@@ -461,10 +457,9 @@ def test_advance_balance_contention_and_future_sources_roll_back(
             "supplier_advance_refund",
             key,
             "2022-09-22",
-            counterparty=PARTY,
             payment_date="2022-09-22",
-            refund_reference="partial-cancellation",
             advances=[{"open_item_id": prepaid.id, "amount_fen": 500000}],
+            metadata={"counterparty": PARTY, "refund_reference": "partial-cancellation"},
         )
         for key in ("one", "two")
     ]
@@ -495,7 +490,6 @@ def test_advance_balance_contention_and_future_sources_roll_back(
                     "supplier_advance_application",
                     "apply",
                     "2022-09-21",
-                    counterparty=PARTY,
                     advances=[{"open_item_id": prepaid.id, "amount_fen": 800000}],
                     allocations=[
                         {
@@ -503,6 +497,7 @@ def test_advance_balance_contention_and_future_sources_roll_back(
                             "amount_fen": 800000,
                         }
                     ],
+                    metadata={"counterparty": PARTY},
                 )
             ],
         )
@@ -570,7 +565,7 @@ def test_project_cost_balances_release_on_delete_and_reject_expense_sources(
                     "2022-10-01",
                     cost_sources=[source],
                     expense_class="general_expense",
-                    reason="阶段成果废弃",
+                    metadata={"reason": "阶段成果废弃"},
                 )
             ],
         ),
@@ -715,7 +710,6 @@ def test_get_event_exposes_remaining_project_cost(
     result = mcp_server.finance_get_event(str(organization.id), str(posted.event_id))
     assert result["status"] == "ok"
     assert result["components"][0]["project_cost_balance"] == {
-        "project_reference": PROJECT,
         "recognized_fen": 800000,
         "consumed_fen": 0,
         "available_fen": 800000,

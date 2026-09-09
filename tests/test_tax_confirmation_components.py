@@ -23,7 +23,6 @@ def _sale(key: str, day: date, amount_fen: int, *, invoice_type: str = "special"
         "kind": "service_sale",
         "business_date": day,
         "amount_fen": amount_fen,
-        "counterparty": {"kind": "customer", "name": "组合税务客户"},
         "recognition_basis": "immediate",
         "fulfillment_date": day,
         "tax_obligation_date": day,
@@ -34,6 +33,7 @@ def _sale(key: str, day: date, amount_fen: int, *, invoice_type: str = "special"
             "waive_exemption": invoice_type == "special",
             "tax_due_on_event": True,
         },
+        "metadata": {"counterparty": {"kind": "customer", "name": "组合税务客户"}},
     }
 
 

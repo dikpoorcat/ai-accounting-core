@@ -14,10 +14,7 @@ from .enterprise_income_tax_schemas import (
     ConfirmEnterpriseIncomeTaxResultRequest,
     PreviewEnterpriseIncomeTaxResultRequest,
 )
-from .financial_statement_schemas import (
-    ConfirmEnterpriseIncomeTaxQuarterRequest,
-    EnterpriseIncomeTaxTreatment,
-)
+from .financial_statement_schemas import EnterpriseIncomeTaxTreatment
 from .financial_statements import (
     ACCOUNTING_RULE_SOURCE_URL,
     ACCOUNTING_RULE_VERSION,
@@ -45,7 +42,7 @@ from .tax_accounts import vat_relief_entries
 
 
 def _component_payload(compiler, component) -> dict:
-    return component.model_dump(mode="json")
+    return component.model_dump(mode="json", exclude={"metadata"})
 
 
 def _request_evidence(compiler, component) -> list[uuid.UUID]:
@@ -343,18 +340,18 @@ def compile_enterprise_income_tax_assessment(compiler, component) -> ComponentPo
     calculation_payload, calculation_hash = _hash(calculation)
     facts = _component_payload(compiler, component)
     evidence_ids = _request_evidence(compiler, component)
-    specialized = ConfirmEnterpriseIncomeTaxQuarterRequest(
-        org_id=request.org_id,
-        year=component.year,
-        quarter=component.quarter,
-        treatment=component.treatment,
-        amount_fen=component.amount_fen,
-        posting_date=request.posting_date,
-        idempotency_key=request.idempotency_key,
-        confirmation_note=component.confirmation_note,
-        evidence_references=evidence_ids,
+    request_hash = digest(
+        {
+            "org_id": str(request.org_id),
+            "year": component.year,
+            "quarter": component.quarter,
+            "treatment": component.treatment,
+            "amount_fen": component.amount_fen,
+            "posting_date": request.posting_date.isoformat(),
+            "idempotency_key": request.idempotency_key,
+            "evidence_references": [str(item) for item in evidence_ids],
+        }
     )
-    request_hash = digest(specialized.model_dump(mode="json"))
     evidence = [str(item) for item in evidence_ids]
 
     def persist(session, event: BusinessEvent, materialized: BusinessEventComponent) -> None:
@@ -375,7 +372,7 @@ def compile_enterprise_income_tax_assessment(compiler, component) -> ComponentPo
             request_payload_hash=request_hash,
             calculation_payload=calculation_payload,
             calculation_hash=calculation_hash,
-            confirmation_note=component.confirmation_note,
+            confirmation_note=None,
             evidence_references=evidence,
             execution_attribution_id=event.execution_attribution_id,
         )
@@ -434,6 +431,7 @@ def compile_enterprise_income_tax_result(compiler, component) -> ComponentPostin
                 "description",
                 "depends_on",
                 "account_selections",
+                "metadata",
                 "calculation_hash",
                 "evidence_references",
             }
@@ -479,7 +477,9 @@ def compile_enterprise_income_tax_result(compiler, component) -> ComponentPostin
             "idempotency_key": request.idempotency_key,
         }
     )
-    input_facts = specialized.model_dump(mode="json")
+    input_facts = specialized.model_dump(
+        mode="json", exclude={"declaration_reference", "confirmation_note"}
+    )
     request_hash = digest(input_facts)
 
     def persist(session, event: BusinessEvent, materialized: BusinessEventComponent) -> None:

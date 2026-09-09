@@ -20,6 +20,17 @@ export interface BriefComponent {
   description: string;
   amount_fen: string;
   parties: string[];
+  management: {
+    version: number;
+    display_names?: { counterparty?: string; beneficiary?: string; handler?: string };
+    metadata: {
+      purpose?: string;
+      description?: string;
+      counterparty?: { name?: string };
+      beneficiary?: { name?: string };
+    };
+    history: Array<{ version: number; created_at: string; metadata: Record<string, unknown> }>;
+  };
   facts: Record<string, unknown>;
   derived: Record<string, unknown>;
   source_references: Array<{ type: string; value: string }>;
