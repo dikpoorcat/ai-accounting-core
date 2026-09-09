@@ -50,7 +50,7 @@ from .models import (
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FORMAT_VERSION = "ai-accounting-composition-replay-v3"
-_BUSINESS_REVISION = "0002_atomic_corrections"
+_BUSINESS_REVISION = "0005_payroll_provenance"
 _CATALOG_REVISION = "0001_catalog_baseline_v2"
 
 
@@ -2929,6 +2929,9 @@ def _export_company(
         # The just-retired chain remains a read-only export source for v4 replay.
         if revision not in {
             _current_schema_revision(catalog=False),
+            "0004_payroll_dependency_scope",
+            "0003_payroll_correction_uses",
+            "0002_atomic_corrections",
             "0001_business_baseline_v4",
             "0004_fact_precision",
         }:

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .config import Settings, get_settings
 from .database import SessionLocal, make_engine, make_session_factory
 from .models import CatalogMetadata, CompanyRegistry, OrganizationDatabaseMetadata
+from .schema_readiness import require_current_schema
 
 _DATABASE_NAME = re.compile(r"(?:finance|finance_company_[0-9a-f]{32})\Z")
 
@@ -81,6 +82,8 @@ class CompanyDatabaseRouter:
         with self._lock:
             cached = self._engines.get(registry.org_id)
             if cached is not None and cached[0] == registry.database_identity:
+                with cached[1].connect() as connection:
+                    require_current_schema(connection)
                 return cached[1]
             if cached is not None:
                 cached[1].dispose()
@@ -88,10 +91,15 @@ class CompanyDatabaseRouter:
                 hide_password=False
             )
             engine = make_engine(database_url)
-            if self.settings.finance_environment == "production":
+            try:
                 with engine.connect() as connection:
-                    assert_runtime_role(connection)
-            self._verify_database_binding(engine, registry)
+                    require_current_schema(connection)
+                    if self.settings.finance_environment == "production":
+                        assert_runtime_role(connection)
+                self._verify_database_binding(engine, registry)
+            except Exception:
+                engine.dispose()
+                raise
             self._engines[registry.org_id] = (registry.database_identity, engine)
             return engine
 

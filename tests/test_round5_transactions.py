@@ -167,7 +167,7 @@ def _assert_correction_blocked(result: dict[str, object], batch_id: uuid.UUID) -
     assert result["data"] == {
         "correction_status": "blocked_by_final_facts",
         "blocking_batch_ids": [str(batch_id)],
-        "activation_condition": "reverse_blocking_batches_then_rebuild_payroll",
+        "activation_condition": "resolve_blocking_facts_through_typed_correction",
     }
 
 

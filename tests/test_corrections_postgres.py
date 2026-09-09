@@ -19,6 +19,85 @@ from ai_accounting.models import BusinessEvent, PayrollBatch, Voucher
 from ai_accounting.schemas import RegisterPayrollContributionActualRequest
 
 
+def test_existing_first_wage_uses_can_be_rebuilt_without_mutating_source():
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    from ai_accounting.models import PayrollFirstWageTaxTreatmentUse
+    from ai_accounting.schemas import (
+        PreviewPayrollRequest,
+        RegisterPayrollFirstWageTaxTreatmentRequest,
+    )
+
+    with authenticated_business_database("existing_first_wage_use") as (
+        engine, org_id, evidence_id, owner
+    ):
+        with Session(engine) as session:
+            _, batch, line, _, source = confirmed_payroll(session, org_id, evidence_id, owner)
+            source_id, batch_id = source.id, batch.id
+            voucher_number = session.scalar(select(Voucher.voucher_number).where(
+                Voucher.event_id == source_id
+            ))
+            session.commit()
+            treatment = PreviewCorrectionRequest(org_id=org_id, source_changes=[
+                RegisterPayrollFirstWageTaxTreatmentRequest(
+                    org_id=org_id, employee_id=line.employee_id, tax_year=2026,
+                    first_wage_month=3, treatment_state="eligible",
+                    evidence_references=[evidence_id], idempotency_key="first-wage-source",
+                )
+            ])
+            with owner.attributed_call(session, tool_name="finance_preview_correction"):
+                first = CorrectionService(session).preview(treatment)
+            assert first["status"] == "calculated", first
+            with owner.attributed_call(session, tool_name="finance_confirm_correction"):
+                first_result = CorrectionService(session).confirm(ConfirmCorrectionRequest(
+                    **treatment.model_dump(), calculation_hash=first["calculation_hash"],
+                    idempotency_key="first-source-confirm",
+                ))
+            assert first_result["status"] == "posted", first_result
+            session.commit()
+            source = session.get(BusinessEvent, source_id)
+            replacement = PreviewPayrollRequest.model_validate(
+                session.get(PayrollBatch, batch_id).calculation_input["request"]
+            )
+            replacement.employee_items[0].tax_reported_salary_fen = 900000
+            replacement.employee_items[0].accounting_gross_salary_fen = 900000
+            request = PreviewCorrectionRequest(org_id=org_id, event_replacements=[{
+                "event_id": source_id, "expected_facts_hash": canonical_sha256(source.facts),
+                "replacement": replacement,
+            }])
+            original_use = session.scalar(select(PayrollFirstWageTaxTreatmentUse).where(
+                PayrollFirstWageTaxTreatmentUse.payroll_batch_id == batch_id
+            ))
+            assert original_use is not None
+            treatment_id = original_use.treatment_id
+            for table in (
+                "payroll_first_wage_tax_treatments", "payroll_first_wage_tax_treatment_evidence",
+                "payroll_first_wage_tax_treatment_uses",
+            ):
+                with pytest.raises(DBAPIError, match="PAYROLL_FIRST_WAGE_TAX_FACT_IMMUTABLE"):
+                    with session.begin_nested():
+                        session.execute(
+                            text(f"DELETE FROM {table} WHERE org_id=:org"), {"org": org_id}
+                        )
+            with owner.attributed_call(session, tool_name="finance_preview_correction"):
+                preview = CorrectionService(session).preview(request)
+            assert preview["status"] == "calculated", preview
+            with owner.attributed_call(session, tool_name="finance_confirm_correction"):
+                result = CorrectionService(session).confirm(ConfirmCorrectionRequest(
+                    **request.model_dump(), calculation_hash=preview["calculation_hash"],
+                    idempotency_key="correct-existing-source-use",
+                ))
+            assert result["status"] == "posted", result
+            session.commit()
+            assert session.scalar(select(Voucher.voucher_number).where(
+                Voucher.event_id == source_id
+            )) == voucher_number
+            assert session.scalar(select(PayrollFirstWageTaxTreatmentUse.treatment_id).where(
+                PayrollFirstWageTaxTreatmentUse.payroll_batch_id == batch_id
+            )) == treatment_id
+
+
 def test_postgres_linked_payment_keeps_bank_match_once(tmp_path):
     from ai_accounting.bank_statement_schemas import (
         ConfirmBankStatementFileImportRequest,
@@ -384,7 +463,9 @@ def test_postgres_source_correction_and_reasonless_delete(monkeypatch, combined_
                 resolver,
             )
             assert replayed["idempotent_replay"] is True
-            history = replay_cli._correction_history(session, org_id, "0002_atomic_corrections")
+            history = replay_cli._correction_history(
+                session, org_id, "0005_payroll_provenance"
+            )
             assert len(history["corrections"]) == 1
             assert len(history["event_amendments"]) == (2 if combined_bonus else 1)
             assert {str(row["correction_id"]) for row in history["event_amendments"]} == {

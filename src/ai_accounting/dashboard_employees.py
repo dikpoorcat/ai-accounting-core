@@ -649,7 +649,6 @@ def _load_personal_labor_cost(
             select(LaborRemunerationEventLink, BusinessEventComponent, BusinessEvent)
             .join(
                 BusinessEventComponent,
-                BusinessEventAmendment,
                 and_(
                     BusinessEventComponent.org_id == LaborRemunerationEventLink.org_id,
                     BusinessEventComponent.event_id == LaborRemunerationEventLink.event_id,

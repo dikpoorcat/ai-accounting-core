@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v40"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v42"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.14"
 
 FACT_RESOLUTION_RUNTIME_INSTRUCTION = (
@@ -24,6 +24,13 @@ FACT_RESOLUTION_RUNTIME_INSTRUCTION = (
 )
 
 CORRECTION_RUNTIME_INSTRUCTION = (
+    "工资数据库失败按data.failure_kind处理：concurrency_conflict才允许重新读取后重试，"
+    "business_dependency须核对来源及受影响工资，technical_failure须保留diagnostic_id交开发排障。"
+    "PAYROLL_INTERNAL_DATABASE_ERROR不是工资事实缺失，PAYROLL_SOURCE_DEPENDENCY_CONFLICT不代表真实并发；"
+    "同一约束重复失败不得继续盲目重试或用删除、冲正绕过。"
+    "DATABASE_SCHEMA_UPGRADE_REQUIRED、DATABASE_SCHEMA_UNSUPPORTED或DATABASE_SCHEMA_MISMATCH表示部署不一致，"
+    "不是核算事实缺失；核对database_schema中的当前及所需版本，由开发部署流程处理。"
+    "不得反复重试业务写入、重建公司、猜测原事实版本或用冲正绕过；恢复后重新读取原事件，再预览和确认更正。"
     "更正已入账业务前，先读取finance_get_event取得当前事实和facts_hash，并通过内核核对原业务所属期间状态及后续依赖。"
     "未关账且可直接修改的业务必须使用finance_amend_event，不得用finance_reverse_event冲正后重记替代直接修改。"
     "提交完整类型化replacement、expected_facts_hash和新幂等键，保留原凭证编号及完整审计历史。"

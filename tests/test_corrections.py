@@ -35,7 +35,11 @@ def test_database_failure_excludes_sql_parameters_and_unsafe_messages(caplog):
     original = Exception("private SQL and values")
     original.sqlstate = "P0001"
     original.diag = SimpleNamespace(
-        constraint_name="private SQL and values", message_primary="ACCOUNTING_PERIOD_private SQL"
+        constraint_name="private SQL and values", message_primary="ACCOUNTING_PERIOD_private SQL",
+        context=(
+            "SQL statement private SQL and values\n"
+            "PL/pgSQL function finance_first_wage_tax_fact_immutable_0024() line 3 at RAISE"
+        ),
     )
     result = database_failure(
         DBAPIError("private statement", {"secret": "private value"}, original)
@@ -44,6 +48,10 @@ def test_database_failure_excludes_sql_parameters_and_unsafe_messages(caplog):
     assert result["data"]["diagnostic_id"]
     assert "private" not in str(result) + caplog.text
     assert result["data"]["next_action"] == "inspect_failure"
+    assert result["data"]["diagnostic"]["function"] == (
+        "finance_first_wage_tax_fact_immutable_0024"
+    )
+    assert result["data"]["diagnostic"]["line"] == 3
 
 
 def test_intervening_source_version_requires_new_preview(session, organization):

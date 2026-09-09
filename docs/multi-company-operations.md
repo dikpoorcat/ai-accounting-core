@@ -40,6 +40,12 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 和验证。完整执行顺序及拒绝边界见[双基线空库回放手册](empty-database-replay.md)。未登记的旧副本
 库不属于回放范围，不自动删除。
 
+基线发布后的前向迁移仍须部署到每个已登记业务库，例如 v4 →
+`0002_atomic_corrections`；这条有效链允许保留业务数据升级，不要求重新回放。
+更新代码后先执行 `finance-company check-schema`，检查目录和各公司是否达到各自 head。
+运行端不为未升级的库隐藏新审计字段或保留旧执行路径；详细恢复步骤见
+[本机数据库版本检查](windows-local-operations.md#代码更新后的数据库版本检查)。
+
 ## 公司生命周期
 
 登录后 AI 使用以下 MCP 工具：

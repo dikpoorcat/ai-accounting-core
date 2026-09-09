@@ -39,6 +39,7 @@ def installed_repo(tmp_path: Path) -> Path:
         (tmp_path / name).mkdir(parents=True)
     for name in (
         ".venv/Scripts/finance-dashboard.exe",
+        ".venv/Scripts/python.exe",
         "src/ai_accounting/static/dashboard/index.html",
         "DockerDesktop/Docker Desktop.exe",
     ):
@@ -62,6 +63,7 @@ def installed_repo(tmp_path: Path) -> Path:
         ("cold", None),
         ("missing", "POSTGRES_CONTAINER_MISSING"),
         ("unhealthy", "POSTGRES_START_FAILED"),
+        ("schema_outdated", "DATABASE_DEPLOYMENT_NOT_READY"),
         ("remote", "DOCKER_CONTEXT_NOT_LOCAL"),
         ("override", "DOCKER_CONTEXT_OVERRIDDEN"),
     ],
@@ -72,6 +74,14 @@ $ErrorActionPreference = "Stop"
 $env:DOCKER_HOST = $null
 $env:DOCKER_CONTEXT = $null
 $global:infoCalls = 0
+$schemaCheckerPath = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+Set-Item -LiteralPath "Function:$schemaCheckerPath" -Value {
+    if (($args -join ' ') -ne '-m ai_accounting.company_cli check-schema') {
+        throw 'UNEXPECTED_SCHEMA_COMMAND'
+    }
+    Write-Output 'SCHEMA_CHECKED_READ_ONLY'
+    $global:LASTEXITCODE = [int]($scenario -eq 'schema_outdated')
+}
 function Get-Command {
     param($Name, $ErrorAction)
     [pscustomobject]@{Source = (Join-Path $PSScriptRoot 'DockerDesktop/resources/bin/docker.exe')}
@@ -116,11 +126,14 @@ try {
         assert result.returncode == 1, output
         assert error_code in output
         assert "DASHBOARD:" not in output
-        if scenario != "unhealthy":
+        if scenario not in {"unhealthy", "schema_outdated"}:
             assert "EXISTING_CONTAINER_STARTED" not in output
+        if scenario == "schema_outdated":
+            assert "SCHEMA_CHECKED_READ_ONLY" in output
     else:
         assert result.returncode == 0, output
         assert "EXISTING_CONTAINER_STARTED" in output
+        assert "SCHEMA_CHECKED_READ_ONLY" in output
         assert "DASHBOARD:8877 ENSURE:True OPEN:True" in output
         assert ("DESKTOP_STARTED:Hidden" in output) == (scenario == "cold")
 

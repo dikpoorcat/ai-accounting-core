@@ -89,7 +89,7 @@ class AmendmentRejected(ValueError):
         super().__init__(str(result.get("errors", [])))
 
 
-def database_failure(exc: DBAPIError) -> dict:
+def database_failure(exc: DBAPIError, *, operation: str = "CORRECTION") -> dict:
     """Expose bounded classifications, never SQL, parameters or inferred missing facts."""
     from .service import FinanceService
 
@@ -100,19 +100,45 @@ def database_failure(exc: DBAPIError) -> dict:
         if constraint and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,99}", constraint)
         else None
     )
-    if sqlstate in {"40001", "40P01", "55P03", "23505"}:
-        code, category = "CORRECTION_CONCURRENT_WRITE_CONFLICT", "concurrency_conflict"
+    # Older guards have prose messages, so their public guard code is absent.
+    # Keep a bounded function/line locator, never the SQL or parameters in CONTEXT.
+    context = getattr(getattr(getattr(exc, "orig", None), "diag", None), "context", None)
+    location = re.search(
+        r"PL/pgSQL function (finance_[A-Za-z0-9_]{1,90})\([^\n]*?\) line ([0-9]{1,6})",
+        context if isinstance(context, str) else "",
+    )
+    function = location.group(1) if location else None
+    line = int(location.group(2)) if location else None
+    payroll_unique_races = {
+        "uq_payroll_batch_idempotency",
+        "uq_payroll_batch_calculation_hash",
+        "uq_payroll_batch_version",
+        "uq_payroll_tax_state_slot",
+        "uq_event_org_idempotency",
+        "uq_voucher_number",
+    }
+    if sqlstate in {"40001", "40P01", "55P03"} or (
+        sqlstate == "23505"
+        and (operation == "CORRECTION" or constraint in payroll_unique_races)
+    ):
+        code, category = f"{operation}_CONCURRENT_WRITE_CONFLICT", "concurrency_conflict"
+    elif operation == "PAYROLL" and FinanceService._is_round6_final_dependency_error(exc):
+        code, category = "PAYROLL_SOURCE_DEPENDENCY_CONFLICT", "business_dependency"
     elif sqlstate == "P0001" and guard and guard.startswith("ACCOUNTING_PERIOD_"):
         code, category = guard, "business_constraint"
     else:
-        code, category = "CORRECTION_INTERNAL_DATABASE_ERROR", "technical_failure"
+        code, category = f"{operation}_INTERNAL_DATABASE_ERROR", "technical_failure"
     diagnostic_id = uuid.uuid4().hex
     logging.getLogger(__name__).warning(
-        "Correction database failure diagnostic=%s sqlstate=%s constraint=%s guard=%s",
+        "%s database failure diagnostic=%s sqlstate=%s constraint=%s guard=%s "
+        "function=%s line=%s",
+        operation,
         diagnostic_id,
         sqlstate,
         constraint,
         guard,
+        function,
+        line,
     )
     return {
         "status": "rejected",
@@ -124,10 +150,13 @@ def database_failure(exc: DBAPIError) -> dict:
                 "sqlstate": sqlstate,
                 "constraint": constraint,
                 "guard": guard,
+                "function": function,
+                "line": line,
             },
-            "next_action": "retry_after_reload"
-            if category == "concurrency_conflict"
-            else "inspect_failure",
+            "next_action": {
+                "concurrency_conflict": "retry_after_reload",
+                "business_dependency": "finance_preview_correction",
+            }.get(category, "inspect_failure"),
         },
     }
 

@@ -156,6 +156,7 @@ from .owner_workflow_schemas import (
     GetOwnerWorkflowRequest,
     PreviewPayrollContributionAssessmentRequest,
 )
+from .schema_readiness import DatabaseSchemaError, require_current_schema
 from .schemas import (
     AcquireFixedAssetRequest,
     ActivateFixedAssetRequest,
@@ -409,6 +410,13 @@ def _secure_registered_data_tools() -> None:
             environment = settings.finance_environment
             session_token: SecretStr | None = None
             with _begin_mcp_transaction() as session:
+                # SQLite is the model-only development fixture. Every deployed
+                # PostgreSQL database must match this process's migration head.
+                if isinstance(session, Session) and session.get_bind().dialect.name == "postgresql":
+                    try:
+                        require_current_schema(session.connection(), catalog=multi_company_enabled)
+                    except DatabaseSchemaError as exc:
+                        return exc.result()
                 if multi_company_enabled:
                     session.info["catalog_mode"] = True
                 owner_account = session.scalar(select(OwnerAccount).limit(1))
@@ -429,6 +437,8 @@ def _secure_registered_data_tools() -> None:
                                 for_write=False,
                             )
                             factory = company_router.factory_for(registry)
+                        except DatabaseSchemaError as exc:
+                            return exc.result()
                         except CompanyRoutingError as exc:
                             return _rejected_identity(exc.code)
                         catalog_marker = _ACTIVE_CATALOG_SESSION.set(session)
@@ -497,6 +507,8 @@ def _secure_registered_data_tools() -> None:
                                 for_write=_is_write,
                             )
                             factory = company_router.factory_for(registry)
+                        except DatabaseSchemaError as exc:
+                            return exc.result()
                         except CompanyRoutingError as exc:
                             return _rejected_identity(exc.code)
                         close_backup_service: CloseBackupService | None = None
@@ -626,6 +638,9 @@ def _database_error_code(exc: SQLAlchemyError) -> str:
     sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
     sqlite_errorcode = getattr(original, "sqlite_errorcode", None)
 
+    if sqlstate in {"42703", "42P01"}:
+        return "DATABASE_SCHEMA_MISMATCH"
+
     if isinstance(exc, IntegrityError):
         if sqlstate == "23505" or sqlite_errorcode in {1555, 2067}:
             return "UNIQUE_CONFLICT"
@@ -640,6 +655,8 @@ def _database_error_code(exc: SQLAlchemyError) -> str:
 
 
 def _invalid(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, DatabaseSchemaError):
+        return exc.result()
     if isinstance(exc, ValidationError):
         errors = [
             {
@@ -652,6 +669,31 @@ def _invalid(exc: Exception) -> dict[str, Any]:
         return {"status": "rejected", "errors": errors}
     if isinstance(exc, SQLAlchemyError):
         error_code = _database_error_code(exc)
+        if error_code in {"DATABASE_SCHEMA_MISMATCH", "DATABASE_OPERATION_FAILED"}:
+            original = getattr(exc, "orig", None)
+            raw_state = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+            sqlstate = (
+                raw_state
+                if isinstance(raw_state, str) and len(raw_state) == 5 and raw_state.isalnum()
+                else None
+            )
+            diagnostic_id = uuid.uuid4().hex
+            logger.warning(
+                "MCP database request failed code=%s diagnostic=%s sqlstate=%s",
+                error_code, diagnostic_id, sqlstate,
+            )
+            return {
+                "status": "rejected",
+                "errors": [error_code],
+                "data": {
+                    "failure_kind": "technical_failure",
+                    "diagnostic_id": diagnostic_id,
+                    "diagnostic": {"sqlstate": sqlstate},
+                    "next_action": "inspect_database_deployment"
+                    if error_code == "DATABASE_SCHEMA_MISMATCH"
+                    else "inspect_failure",
+                },
+            }
         logger.warning("MCP database request failed with %s", error_code)
         return {"status": "rejected", "errors": [error_code]}
     if isinstance(exc, OSError):

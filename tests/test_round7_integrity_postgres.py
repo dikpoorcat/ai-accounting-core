@@ -677,6 +677,25 @@ def test_r7_001_reversed_direct_batch_keeps_cumulative_downstream_blocked_at_com
         )
         session.commit()
 
+    # The historical reversed predecessors must protect old consumers, but
+    # cannot prohibit a new calculation that uses the corrected sources.
+    with _session(postgres_engine) as session:
+        rebuilt = _preview_regular(
+            session,
+            org_id=ids["org_id"],
+            employee_id=ids["employee_id"],
+            payroll_period="2026-03",
+            key="r7-corrected-source-new-calculation",
+        )
+        confirmed = _confirm(
+            session,
+            org_id=ids["org_id"],
+            preview=rebuilt,
+            key="r7-corrected-source-new-confirm",
+        )
+        assert confirmed.status == "posted", confirmed.errors
+        session.commit()
+
 
 def test_r7_007_combined_enters_cumulative_closure(
     postgres_engine: object,

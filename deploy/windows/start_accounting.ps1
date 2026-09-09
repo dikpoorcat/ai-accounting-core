@@ -13,8 +13,10 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 $composeFile = Join-Path $repositoryRoot "docker-compose.yml"
 $dashboardLauncher = Join-Path $repositoryRoot ".venv\Scripts\finance-dashboard.exe"
+$schemaChecker = Join-Path $repositoryRoot ".venv\Scripts\python.exe"
 
-if (-not (Test-Path -LiteralPath $dashboardLauncher -PathType Leaf)) {
+if (-not (Test-Path -LiteralPath $dashboardLauncher -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $schemaChecker -PathType Leaf)) {
     throw "ACCOUNTING_NOT_INSTALLED: 缺少仓库虚拟环境中的看板程序，请先完成本地安装。"
 }
 if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot "src\ai_accounting\static\dashboard\index.html"))) {
@@ -74,6 +76,16 @@ Write-Host "正在启动已有 PostgreSQL 容器并等待健康检查……"
 & docker compose -f $composeFile start --wait --wait-timeout $TimeoutSeconds postgres
 if ($LASTEXITCODE -ne 0) {
     throw "POSTGRES_START_FAILED: PostgreSQL 未就绪，请检查本仓库 postgres 容器日志。"
+}
+
+Push-Location -LiteralPath $repositoryRoot
+try {
+    & $schemaChecker -m ai_accounting.company_cli check-schema
+    if ($LASTEXITCODE -ne 0) {
+        throw "DATABASE_DEPLOYMENT_NOT_READY: 数据库版本检查未通过，请处理检查结果；未自动迁移或打开登录窗口。"
+    }
+} finally {
+    Pop-Location
 }
 
 & (Join-Path $PSScriptRoot "restart_dashboard.ps1") -Port $Port -EnsureRunning -OpenBrowser:$OpenBrowser

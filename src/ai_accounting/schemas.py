@@ -471,7 +471,7 @@ class RegisterEmployeePayrollProfileVersionRequest(BaseModel):
     resident_employee: bool | None = Field(
         default=None,
         title="居民个人",
-        description="仅在工资薪金个税申报时必需；只处理社保且本月未申报工资时可暂缺。",
+        description="工资所得个税计算时必需；只处理社保且本月无工资所得时可暂缺。",
     )
     supersedes_profile_version_id: uuid.UUID | None = None
 
@@ -615,7 +615,7 @@ class RegisterPayrollOpeningStateRequest(BaseModel):
     cumulative_tax_withheld_fen: Fen
     # The physical opening-state key is immutable.  A later through-month can
     # supersede an unused import; corrections after dependent payroll exist are
-    # rejected and must be reversed/rebuilt.
+    # rejected with the affected payroll scope for typed correction review.
     supersedes_opening_state_id: uuid.UUID | None = None
 
 

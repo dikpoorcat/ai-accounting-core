@@ -611,7 +611,11 @@ def test_r6_001_public_correction_and_confirmation_are_serialized_by_persistent_
                 "PAYROLL_VERSION_CORRECTION_BLOCKED_BY_FINAL_FACTS"
             ]
         else:
-            assert confirmation_result.errors == ["PAYROLL_CONCURRENT_WRITE_CONFLICT"]
+            assert confirmation_result.errors in (
+                ["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
+                ["PAYROLL_SOURCE_DEPENDENCY_CONFLICT"],
+                ["STALE_PAYROLL_CALCULATION"],
+            )
 
 
 def test_r6_001_direct_update_cannot_move_a_draft_successor_over_final_profile_facts(

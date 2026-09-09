@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import sys
 import uuid
 from collections.abc import Sequence
@@ -47,6 +48,7 @@ from .path_security import (
     read_regular_file_in_root,
     write_new_regular_file_in_root,
 )
+from .schema_readiness import schema_state
 from .windows_backup import WindowsCurrentUserOnlyAclVerifier
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -70,8 +72,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     import_company.add_argument("--backup-root", type=Path, required=True)
     import_company.add_argument("--backup-directory", type=Path, required=True)
     import_company.add_argument("--pg-bin-dir", type=Path, required=True)
+    check_schema = commands.add_parser(
+        "check-schema", help="read deployed catalog/company revisions without changing databases"
+    )
+    check_schema.add_argument("--org-id", type=uuid.UUID)
     try:
         args = parser.parse_args(argv)
+        if args.command == "check-schema":
+            result = _check_schema(org_id=args.org_id)
+            print(json.dumps(result, ensure_ascii=False))
+            if result["status"] != "ok":
+                raise SystemExit(1)
+            return
         if args.command == "import-company":
             _import_company(args)
     except (BackupError, CompanyCliError, IdentityError) as exc:
@@ -80,6 +92,49 @@ def main(argv: Sequence[str] | None = None) -> None:
     except Exception:
         print("COMPANY_LOCAL_COMMAND_FAILED", file=sys.stderr)
         raise SystemExit(1) from None
+
+
+def _check_schema(*, org_id: uuid.UUID | None = None) -> dict:
+    """Deployment preflight: no owner login, migration credentials, DDL or business writes."""
+    settings = get_settings()
+    routing = CompanyDatabaseRouter(settings)
+    catalog_engine = create_engine(settings.runtime_database_url())
+    states = []
+    try:
+        with Session(catalog_engine) as session:
+            if catalog_engine.dialect.name == "postgresql":
+                session.execute(text("SET TRANSACTION READ ONLY"))
+            if not settings.multi_company_enabled:
+                states.append(schema_state(session.connection()))
+            else:
+                state = schema_state(session.connection(), catalog=True)
+                states.append(state)
+                if state["ready"]:
+                    query = select(CompanyRegistry).where(
+                        CompanyRegistry.status.in_(["active", "archived"])
+                    ).order_by(CompanyRegistry.org_id)
+                    if org_id is not None:
+                        query = query.where(CompanyRegistry.org_id == org_id)
+                    registries = session.scalars(query).all()
+                    if org_id is not None and not registries:
+                        raise CompanyCliError("ORGANIZATION_NOT_FOUND")
+                    for registry in registries:
+                        business_engine = create_engine(routing.company_url(registry.database_name))
+                        try:
+                            with business_engine.connect() as connection:
+                                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+                                states.append({
+                                    **schema_state(connection),
+                                    "org_id": str(registry.org_id),
+                                })
+                        finally:
+                            business_engine.dispose()
+    finally:
+        catalog_engine.dispose()
+    return {
+        "status": "ok" if all(state["ready"] for state in states) else "rejected",
+        "databases": states,
+    }
 
 
 class _MigrationPasswordStore:

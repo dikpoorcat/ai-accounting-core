@@ -18,10 +18,40 @@
 `-TimeoutSeconds` 设置 Docker Engine 和容器各自的就绪等待时间（默认 120 秒）。
 日常启动只启动已有容器，不安装依赖、初始化或迁移数据库，也不重建容器或数据卷。
 缺少已有容器时按首次安装或恢复流程处理，不用新空库掩盖故障。
+容器健康后，脚本会先只读检查目录库和已登记公司的数据库版本；检查失败时停止后续启动，
+输出当前及所需版本，不打开登录窗口，也不自动升级。
 
 MCP 使用仓库 `.codex/config.toml` 中的 STDIO 配置，由 Codex 管理。当前会话无法调用工具时，
 使用宿主可用的重连功能；若仍不可用，重新打开本项目会话后再说“启动”。不要另开后台
 `finance-mcp` 进程。看板首页响应成功仅证明页面可用，不能代替 MCP 和登录验证。
+
+## 代码更新后的数据库版本检查
+
+更新代码不等于已更新数据库。运行检查无需负责人密码，也不会修改业务：
+
+```powershell
+.\.venv\Scripts\python.exe -m ai_accounting.company_cli check-schema
+# 也可只检查目录及指定公司：
+.\.venv\Scripts\python.exe -m ai_accounting.company_cli check-schema --org-id <公司UUID>
+```
+
+输出每个数据库的 `actual_revisions`、`required_revision`、`ready` 和 `upgrade_available`；
+任一库未就绪时命令退出码为 1。业务库和目录库分别从各自正式迁移树取得 head。
+MCP 和看板仍在每次路由时独立检查，不能以曾经启动成功代替本次检查。
+
+- `DATABASE_SCHEMA_UPGRADE_REQUIRED`：已识别的当前迁移链上存在待执行前向迁移。
+  例如业务 v4 → `0002_atomic_corrections`。按部署授权停止对应服务、保存并验证升级前备份，
+  使用迁移账户对目录登记的每个目标业务库执行现有 Alembic 前向迁移；这不是空库回放。
+  目录库仍使用 `0001_catalog_baseline_v2`，不能把业务迁移施加到目录库。
+- `DATABASE_SCHEMA_UNSUPPORTED`：未初始化、退役链、未知 revision 或多 head。先核实部署，
+  不能自动建库、stamp 或尝试把非空旧库升级到新基线。
+- `DATABASE_SCHEMA_MISMATCH`：实际查询遇到缺表／缺列。核对上述检查及安全诊断编号；
+  即使版本号看似正确也不能跳过审计查询或直接补列掩盖结构偏差。
+
+迁移后重新运行检查、重启看板并重新连接 Codex 管理的 MCP，再验证已存在的
+`finance_get_event` 可读取原事实、`facts_hash`、凭证及审计；最后才恢复预览—确认更正。
+逐公司比对迁移前后的原业务事实、凭证编号、账务金额、审计和关账快照。
+升级数据库结构不代表已经完成工资更正，也不授权自动撤销旧冲正或重录真实业务。
 
 ## 负责人安全窗口
 

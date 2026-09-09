@@ -1442,9 +1442,6 @@ def test_unreported_wage_line_posts_only_company_borne_social_without_tax_slot(
                     {
                         "employee_id": employee_id,
                         "wage_tax_scope": "contributions_only",
-                        "tax_reported_salary_fen": None,
-                        "special_additional_deduction_fen": 0,
-                        "other_legal_deduction_fen": 0,
                     }
                 ],
             }

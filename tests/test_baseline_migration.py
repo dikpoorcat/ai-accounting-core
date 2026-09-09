@@ -15,7 +15,7 @@ from testcontainers.community.postgres import PostgresContainer
 from alembic import command
 
 BUSINESS_REVISION = "0001_business_baseline_v4"
-BUSINESS_HEAD = "0002_atomic_corrections"
+BUSINESS_HEAD = "0005_payroll_provenance"
 POSTGRES_IMAGE = (
     "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193"  # noqa: E501
 )
@@ -26,6 +26,12 @@ def _config(database_url: str) -> Config:
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     config.attributes["database_url_override"] = database_url
     return config
+
+
+def test_revision_identifiers_fit_alembic_version_column() -> None:
+    for filename in ("alembic.ini", "catalog_alembic.ini"):
+        scripts = ScriptDirectory.from_config(Config(filename))
+        assert all(len(revision.revision) <= 32 for revision in scripts.walk_revisions())
 
 
 def _assert_business_baseline(engine: sa.Engine) -> None:
@@ -138,7 +144,11 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
 
     assert scripts.get_heads() == [BUSINESS_HEAD]
     assert [revision.revision for revision in scripts.walk_revisions()] == [
-        BUSINESS_HEAD, BUSINESS_REVISION,
+        BUSINESS_HEAD,
+        "0004_payroll_dependency_scope",
+        "0003_payroll_correction_uses",
+        "0002_atomic_corrections",
+        BUSINESS_REVISION,
     ]
 
     command.upgrade(config, BUSINESS_REVISION)
@@ -148,7 +158,7 @@ def test_sqlite_business_baseline_upgrade_downgrade_upgrade(tmp_path) -> None:
     try:
         _assert_business_baseline(engine)
         command.check(config)
-        with pytest.raises(RuntimeError, match="atomic correction history cannot be discarded"):
+        with pytest.raises(RuntimeError, match="payroll provenance protection"):
             command.downgrade(config, "base")
     finally:
         engine.dispose()
@@ -222,7 +232,7 @@ def test_new_baseline_seeds_purchase_accounts_and_refuses_populated_downgrade(tm
             assert len(accounts) == 3
         command.check(config)
         with pytest.raises(
-            RuntimeError, match="atomic correction history cannot be discarded"
+            RuntimeError, match="payroll provenance protection"
         ):
             command.downgrade(config, "base")
     finally:
@@ -356,7 +366,7 @@ def test_postgres_business_baseline_upgrade_check_downgrade_upgrade() -> None:
                 "finance_guard_late_bank_action_0015",
             }
             assert obsolete_unified_payout_runtime == 0
-            with pytest.raises(RuntimeError, match="atomic correction history cannot be discarded"):
+            with pytest.raises(RuntimeError, match="payroll provenance protection"):
                 command.downgrade(config, "base")
         finally:
             engine.dispose()

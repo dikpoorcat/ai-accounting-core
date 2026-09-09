@@ -162,15 +162,17 @@ def _isolated_database_on_server(url, prefix):
 
 
 @contextmanager
-def authenticated_business_database(prefix="business_invariant", *, name="组件约束测试"):
-    """Create a real v3 business/catalog pair with explicit evidence and authority."""
+def authenticated_business_database(
+    prefix="business_invariant", *, name="组件约束测试", revision="head"
+):
+    """Create an isolated business/catalog pair with explicit evidence and authority."""
     from ai_accounting.coa import seed_organization
     from ai_accounting.models import Evidence
 
     with isolated_postgres_url(prefix) as url:
         config = Config("alembic.ini")
         config.attributes["database_url_override"] = url
-        command.upgrade(config, "head")
+        command.upgrade(config, revision)
         engine = create_engine(url)
         try:
             with Session(engine) as session:

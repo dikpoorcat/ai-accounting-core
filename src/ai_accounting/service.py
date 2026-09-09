@@ -288,28 +288,24 @@ class FinanceService:
             return primary_message
         return None
 
+    @classmethod
+    def _is_round6_final_dependency_error(cls, exc: DBAPIError) -> bool:
+        """A source dependency is a business constraint, not evidence of concurrency."""
+
+        sqlstate, _constraint, primary = cls._database_error_identity(exc)
+        return sqlstate == "P0001" and primary in {
+            "R6_FINAL_PAYROLL_PROFILE_CORRECTION_BLOCKED",
+            "R6_FINAL_PAYROLL_POLICY_CORRECTION_BLOCKED",
+            "R6_FINAL_PAYROLL_OPENING_CORRECTION_BLOCKED",
+            "R7_FINAL_PAYROLL_PROFILE_TAX_DOWNSTREAM_BLOCKED",
+            "R7_FINAL_PAYROLL_POLICY_TAX_DOWNSTREAM_BLOCKED",
+        }
+
     @staticmethod
-    def _is_round6_final_dependency_error(exc: DBAPIError) -> bool:
-        """Classify only the database closure errors that are safe to expose.
+    def _payroll_database_failure(exc: DBAPIError) -> PayrollResult:
+        from .event_amendments import database_failure
 
-        R6 deliberately places the final correction barrier in deferred
-        PostgreSQL triggers.  A public write must translate that narrow,
-        expected concurrency result into a business rejection, while every
-        unrelated database error must remain visible to the caller's normal
-        error boundary rather than being mislabeled as a correction conflict.
-        """
-
-        rendered = str(exc)
-        return any(
-            code in rendered
-            for code in (
-                "R6_FINAL_PAYROLL_PROFILE_CORRECTION_BLOCKED",
-                "R6_FINAL_PAYROLL_POLICY_CORRECTION_BLOCKED",
-                "R6_FINAL_PAYROLL_OPENING_CORRECTION_BLOCKED",
-                "R7_FINAL_PAYROLL_PROFILE_TAX_DOWNSTREAM_BLOCKED",
-                "R7_FINAL_PAYROLL_POLICY_TAX_DOWNSTREAM_BLOCKED",
-            )
-        )
+        return PayrollResult.model_validate(database_failure(exc, operation="PAYROLL"))
 
     def _assert_round6_final_dependency_constraints_now(self) -> None:
         """Evaluate R6 deferred closures inside the public savepoint.
@@ -2290,7 +2286,7 @@ class FinanceService:
                 batch.status = "calculated"
                 self.session.flush()
                 self._assert_unfinished_payroll_period_constraint_now()
-        except IntegrityError:
+        except IntegrityError as exc:
             existing = self.session.scalar(
                 select(PayrollBatch).where(
                     PayrollBatch.org_id == request.org_id,
@@ -2309,24 +2305,18 @@ class FinanceService:
                     status=PayrollResultStatus.REJECTED,
                     errors=["PAYROLL_IDEMPOTENCY_PAYLOAD_MISMATCH"],
                 )
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-            )
+            return self._payroll_database_failure(exc)
         except ValueError as exc:
             return FinanceResult(status=ResultStatus.REJECTED, errors=[str(exc)])
-        except OperationalError:
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-            )
+        except OperationalError as exc:
+            return self._payroll_database_failure(exc)
         except DBAPIError as exc:
             if code := self._accounting_period_database_error_code(exc):
                 return PayrollResult(
                     status=PayrollResultStatus.REJECTED,
                     errors=[code],
                 )
-            raise
+            return self._payroll_database_failure(exc)
         return self._payroll_result_for_batch(batch)
 
     def confirm_payroll(self, request: ConfirmPayrollRequest) -> PayrollResult:
@@ -2417,24 +2407,14 @@ class FinanceService:
                 status=PayrollResultStatus.REJECTED,
                 errors=[exc.code],
             )
-        except IntegrityError:
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED, errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"]
-            )
+        except IntegrityError as exc:
+            return self._payroll_database_failure(exc)
         except ValueError as exc:
             return FinanceResult(status=ResultStatus.REJECTED, errors=[str(exc)])
-        except OperationalError:
-            return PayrollResult(
-                status=PayrollResultStatus.REJECTED,
-                errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-            )
+        except OperationalError as exc:
+            return self._payroll_database_failure(exc)
         except DBAPIError as exc:
-            if self._is_round6_final_dependency_error(exc):
-                return PayrollResult(
-                    status=PayrollResultStatus.REJECTED,
-                    errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-                )
-            raise
+            return self._payroll_database_failure(exc)
 
     def compile_payroll_accrual_component(
         self,
@@ -3670,7 +3650,7 @@ class FinanceService:
                 raise CalculationValidationError(
                     "UNSUPPORTED_EMPLOYEE_TYPE", "phase 1 supports resident employees only"
                 )
-            if request.batch_kind == PayrollBatchKind.REGULAR:
+            if request.batch_kind == PayrollBatchKind.REGULAR and uses_wage_tax:
                 required_regular_fields = (
                     "tax_reported_salary_fen",
                     "special_additional_deduction_fen",
@@ -4379,14 +4359,7 @@ class FinanceService:
     def _blocked_payroll_version_correction(
         blocking_batch_ids: set[uuid.UUID],
     ) -> dict[str, Any]:
-        """Return the one deterministic activation-barrier result for all versions.
-
-        R5 deliberately chooses the no-pending-state strategy.  A correction
-        is not written at all while immutable downstream payroll facts remain.
-        Keeping the complete, sorted blocking set in the response makes the
-        required remediation (canonical reversal then rebuild) explainable
-        without introducing a second, silently inactive version lineage.
-        """
+        """Expose the affected scope without choosing reversal as a recovery action."""
 
         return {
             "status": "rejected",
@@ -4394,7 +4367,7 @@ class FinanceService:
             "data": {
                 "correction_status": "blocked_by_final_facts",
                 "blocking_batch_ids": [str(batch_id) for batch_id in sorted(blocking_batch_ids)],
-                "activation_condition": "reverse_blocking_batches_then_rebuild_payroll",
+                "activation_condition": "resolve_blocking_facts_through_typed_correction",
             },
         }
 
@@ -5883,7 +5856,7 @@ class FinanceService:
                 return FinanceService._reverse_event_write(self, request)
         except AccountingPeriodError as exc:
             return FinanceResult(status=ResultStatus.REJECTED, errors=[exc.code])
-        except IntegrityError:
+        except IntegrityError as exc:
             existing = self.session.scalar(
                 select(BusinessEvent).where(
                     BusinessEvent.org_id == request.org_id,
@@ -5896,17 +5869,11 @@ class FinanceService:
                 ):
                     return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
                 return self._result_for_existing(existing)
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-            )
+            return FinanceResult.model_validate(self._payroll_database_failure(exc).model_dump())
         except ValueError as exc:
             return FinanceResult(status=ResultStatus.REJECTED, errors=[str(exc)])
-        except OperationalError:
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-            )
+        except OperationalError as exc:
+            return FinanceResult.model_validate(self._payroll_database_failure(exc).model_dump())
 
     def _payroll_tax_dependent_batch_ids(
         self,
@@ -6210,7 +6177,7 @@ class FinanceService:
             with self.session.begin_nested():
                 self.session.add(reversal)
                 self.session.flush()
-        except IntegrityError:
+        except IntegrityError as exc:
             existing_after_conflict = self.session.scalar(
                 select(BusinessEvent).where(
                     BusinessEvent.org_id == request.org_id,
@@ -6223,10 +6190,7 @@ class FinanceService:
                 ):
                     return FinanceResult(status=ResultStatus.REJECTED, errors=[error])
                 return self._result_for_existing(existing_after_conflict)
-            return FinanceResult(
-                status=ResultStatus.REJECTED,
-                errors=["PAYROLL_CONCURRENT_WRITE_CONFLICT"],
-            )
+            return FinanceResult.model_validate(self._payroll_database_failure(exc).model_dump())
         # Reversals preserve their source evidence as immutable inherited
         # links.  A separate, future reversal-reason attachment must use a
         # distinct Evidence object and the ``reversal_reason`` role.

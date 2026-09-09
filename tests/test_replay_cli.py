@@ -298,8 +298,8 @@ def _resume_state(package, org_id, completed):
 
 
 def test_replay_distinguishes_baseline_identity_from_current_heads() -> None:
-    assert replay_cli._BUSINESS_REVISION == "0002_atomic_corrections"
-    assert replay_cli._current_schema_revision(catalog=False) == "0002_atomic_corrections"
+    assert replay_cli._BUSINESS_REVISION == "0005_payroll_provenance"
+    assert replay_cli._current_schema_revision(catalog=False) == "0005_payroll_provenance"
     assert replay_cli._current_schema_revision(catalog=True) == "0001_catalog_baseline_v2"
 
 

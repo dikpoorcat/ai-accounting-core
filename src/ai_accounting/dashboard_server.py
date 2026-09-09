@@ -34,6 +34,7 @@ from .database import make_engine
 from .financial_statement_schemas import PreviewQuarterlyFinancialStatementsRequest
 from .financial_statements import FinancialStatementService
 from .models import AccountingPeriod, CompanyRegistry
+from .schema_readiness import DatabaseSchemaError
 
 LOCAL_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 8765
@@ -262,7 +263,10 @@ def _dashboard_business_target(
                 )
             except CompanyRoutingError as exc:
                 raise DashboardDataError(exc.code) from exc
-        return company_router.engine_for(registry), registry.org_id
+        try:
+            return company_router.engine_for(registry), registry.org_id
+        except (DatabaseSchemaError, CompanyRoutingError) as exc:
+            raise DashboardDataError(exc.code) from exc
 
 
 def load_multi_company_dashboard_context(
