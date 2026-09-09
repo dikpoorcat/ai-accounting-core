@@ -2348,7 +2348,10 @@ def finance_confirm_tax_period(request: TaxPeriodConfirmRequest) -> dict[str, An
 
 @mcp.tool(annotations=REVERSAL_WRITE)
 def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
-    """生成关联冲正凭证；原凭证保持不变。"""
+    """生成关联冲正凭证，原凭证保持不变；未关账且可直接修改或删除时不得使用本工具。
+
+    调用前遵守 agent_operating_protocol.correction_policy；修改或删除失败不得自动转为冲正。
+    """
     try:
         with SessionLocal.begin() as session:
             return FinanceService(session).reverse_event(request).model_dump(mode="json")
@@ -2358,7 +2361,7 @@ def finance_reverse_event(request: ReverseEventRequest) -> dict[str, Any]:
 
 @mcp.tool(annotations=REVERSAL_WRITE)
 def finance_amend_event(request: AmendEventRequest) -> dict[str, Any]:
-    """直接修改未关账业务；复用原类型化流程重算，保留凭证编号和修改前后记录。"""
+    """未关账业务可直接修改时必须使用本工具，不得以冲正重记替代；重算并保留凭证编号及修改历史。"""
     try:
         with SessionLocal.begin() as session:
             return EventAmendmentService(session).amend(request)

@@ -236,11 +236,13 @@ Set-Location ..
 4. `finance_query_context`：查询开放项；银行导入、迟到处理和对账状态使用 `finance_query_bank_statement_state`。
 5. `finance_record_event`：只接受一个或多个类型化 `components` 及独立 `funds`，单项业务也使用同一协议。需要计算确认的组合先用 `finance_preview_event` 取得 `reviewed_request` 及组件哈希。父事件固定为 `composite`，资金项按组件键精确分配，银行流水在整笔业务中只匹配一次。
 6. `finance_get_event`：审阅父事件、全部组件（`kind`、`facts`、`derived`）、资金项、组件来源引用、带 `component_id` 的凭证行、证据和规则轨迹。
-7. 未关账月份需要修改时，先用 `finance_get_event` 读取当前事实与 `facts_hash`，再调用 `finance_amend_event`，提交 `expected_facts_hash`、修改原因、新幂等键和完整的 `replacement` 类型化事实。支持普通收支、工资及社保补缴、固定资产、无形资产、借款、劳务及发放、增值税税期和企业所得税业务；需要试算的业务在修改事务内复用专用试算与确认流程。修改保留事件、原凭证编号和业务主体编号，追加修改前后审计快照，不产生冲正凭证。入账日仍须属于原未关账月份；已关账业务继续使用 `finance_reverse_event` 在后续开放月更正。
+7. 未关账月份能直接修改的业务必须使用 `finance_amend_event`，不得以冲正后重记替代。先用 `finance_get_event` 读取当前事实与 `facts_hash`，核对期间状态和后续依赖，再提交 `expected_facts_hash`、修改原因、新幂等键和完整的 `replacement` 类型化事实。支持普通收支、工资及社保补缴、固定资产、无形资产、借款、劳务及发放、增值税税期和企业所得税业务；需要试算的业务在修改事务内复用专用试算与确认流程。修改保留事件、原凭证编号和业务主体编号，追加修改前后审计快照，不产生冲正凭证。入账日仍须属于原未关账月份；已关账业务继续使用 `finance_reverse_event` 在后续开放月更正。
+
+   修改或删除受阻时先核对缺项、事实版本及后续依赖，不得因一次失败自动转为冲正。仅在已关账，或经核对确实无法通过未关账修改、删除入口完成且内核允许时使用关联冲正；仅修订管理资料使用 `finance_update_business_metadata`，不改凭证也不冲正。AI 的统一选择规则由 `agent_operating_protocol.correction_policy` 提供，并同步进入 MCP 初始化指令。
 
    修改不会自动改写后续业务。存在核销、后续计提、税期快照或报表分类等引用时，返回 `AMENDMENT_DEPENDENT_FACTS_EXIST` 与 `blocking_records`，应先处理依赖；陈旧事实返回 `AMENDMENT_FACTS_STALE`，应重新读取。资料不全或任何重算失败都会回滚整次修改。该入口只替换仍产生正式凭证的业务，不将非零入账转换为无凭证的零额确认，也不改变企业所得税更正的原所属期和前序来源。
 
-   误记业务可调用 `finance_delete_event`，提交事件编号、`expected_facts_hash`、新幂等键和原因。删除原凭证与派生明细，恢复核销余额和流水匹配，保留事件的 `deleted` 标记、原凭证编号和完整审计快照；不产生冲正凭证，不复用已删除凭证的编号。已关账或存在后续依赖时拒绝，含关联冲正的所得税更正结果也不可单独删除，避免留下错误的历史计提状态。
+   未关账整笔误记符合删除条件时必须使用 `finance_delete_event` 直接撤去，不得以冲正替代，提交事件编号、`expected_facts_hash`、新幂等键和原因。删除原凭证与派生明细，恢复核销余额和流水匹配，保留事件的 `deleted` 标记、原凭证编号和完整审计快照；不产生冲正凭证，不复用已删除凭证的编号。已关账或存在后续依赖时拒绝，含关联冲正的所得税更正结果也不可单独删除，避免留下错误的历史计提状态。
 
    误导入银行流水可调用 `finance_withdraw_bank_statement_import`，用 `finance_query_bank_statement_state` 返回的批次编号及 `calculation_hash` 提交撤销。只移除该批次新增的未关账、未使用流水，原本已有的重复流水不受影响。导入原记录、文件和撤销审计保留，活动查询标记为 `withdrawn`；可以使用正确映射和新幂等键重新导入。已匹配、已对账、迟到流水或被后续导入引用时拒绝撤销并返回依赖。
 

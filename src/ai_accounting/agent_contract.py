@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v38"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v39"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.13"
 
 FACT_RESOLUTION_RUNTIME_INSTRUCTION = (
@@ -21,6 +21,18 @@ FACT_RESOLUTION_RUNTIME_INSTRUCTION = (
     "字段语义或错误上下文不明确时先查发现接口及原调用，不凭猜测新增必填事实；不将计算哈希或来源ID等技术缺项交给负责人。"
     "所得税更正的business_date/recognition_period表示结果的核算确认，declaration_date仅是可选外部申报日。"
     "月末截止晚于记账日时核对确认事实与入账期间，不得改问更正申报的具体日期，也不得擅改真实资金日或绕过闭期保护。"
+)
+
+CORRECTION_RUNTIME_INSTRUCTION = (
+    "更正已入账业务前，先读取finance_get_event取得当前事实和facts_hash，并通过内核核对原业务所属期间状态及后续依赖。"
+    "未关账且可直接修改的业务必须使用finance_amend_event，不得用finance_reverse_event冲正后重记替代直接修改。"
+    "提交完整类型化replacement、expected_facts_hash和新幂等键，保留原凭证编号及完整审计历史。"
+    "未关账的整笔误记需要撤销且符合删除条件时，使用finance_delete_event，不得以冲正代替可执行的删除。"
+    "修改或删除受阻时，先核对fact_issues、blocking_records及原调用；缺事实先补事实，事实版本过期先重读，"
+    "后续依赖按各自期间状态和业务事实处理，不得因一次失败自动改走冲正，也不得为方便修改而批量冲正依赖。"
+    "仅在原业务已关账，或经核对确实无法通过未关账修改、删除入口完成且内核允许时，才使用关联冲正；"
+    "已关账业务须在后续开放月冲正，并在需要保留正确业务时按原类型化工作流重记，不得改日期绕过关账锁定。"
+    "仅后补或修订管理资料时使用finance_update_business_metadata，即使已关账也不因此修改凭证或冲正。"
 )
 
 COMPOSITION_RUNTIME_INSTRUCTION = (
@@ -233,6 +245,7 @@ MCP_SERVER_INSTRUCTIONS = (
     f"{COMPOSITION_RUNTIME_INSTRUCTION}"
     f"{PASS_THROUGH_RUNTIME_INSTRUCTION}"
     f"{FACT_RESOLUTION_RUNTIME_INSTRUCTION}"
+    f"{CORRECTION_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
     f"{OWNER_WORKFLOW_RUNTIME_INSTRUCTION}"
     f"{HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION}"
@@ -289,11 +302,21 @@ def agent_operating_protocol() -> dict[str, Any]:
             "ordinary_counterparty_required": False,
             "metadata_update_tool": "finance_update_business_metadata",
         },
+        "correction_policy": {
+            "instruction": CORRECTION_RUNTIME_INSTRUCTION,
+            "read_tool": "finance_get_event",
+            "open_month_amendment_tool": "finance_amend_event",
+            "open_month_deletion_tool": "finance_delete_event",
+            "reversal_tool": "finance_reverse_event",
+            "metadata_only_tool": "finance_update_business_metadata",
+            "prefer_direct_open_month_changes": True,
+            "automatic_reversal_on_failure": False,
+        },
         "open_month_deletions": {
             "event_tool": "finance_delete_event",
             "bank_import_tool": "finance_withdraw_bank_statement_import",
             "instructions": [
-                "未关账误记业务可删除：先读取 finance_get_event，"
+                "未关账整笔误记符合删除条件时必须直接删除，不使用冲正；先读取 finance_get_event，"
                 "提交事件编号、facts_hash、新幂等键和原因。",
                 "删除撤去原凭证及派生明细、恢复核销余额，保留事件删除标记、原编号和删除前快照。",
                 "误导入流水先查询 finance_query_bank_statement_state，"
@@ -308,7 +331,7 @@ def agent_operating_protocol() -> dict[str, Any]:
         "open_month_amendments": {
             "tool": "finance_amend_event",
             "instructions": [
-                "未关账业务需要修改时，先读取 finance_get_event，"
+                "未关账业务能直接修改时必须使用本入口，不得冲正后重记；先读取 finance_get_event，"
                 "使用其 facts_hash 防止覆盖他人的修改。",
                 "提交修改原因、新幂等键和完整类型化 replacement 事实；复用对应业务原有的事实结构。",
                 "普通收支、工资、资产、借款、劳务和税务均可走修改入口；原凭证编号保留，修改历史可查询。",
