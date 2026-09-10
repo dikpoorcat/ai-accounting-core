@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v45"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v46"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.15"
 
 USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION = (
@@ -244,6 +244,9 @@ OWNER_SECURITY_RUNTIME_INSTRUCTION = (
 )
 
 CLOSE_BACKUP_RUNTIME_INSTRUCTION = (
+    "正式关账前，AI先调用 finance_prepare_close_backup 自动准备备份环境，无需另问负责人；"
+    "它仅补齐已登记且身份核验通过的数据库连接权限，并用真实备份账号验证只读快照，"
+    "不创建公司、修改账务、代输密码或重复关账。"
     "正式关账前，AI必须调用 finance_get_close_backup_configuration 核对自动备份配置和就绪状态；"
     "该配置按公司隔离，返回的 org_id 必须是当前公司，未配置、公司不匹配或未就绪时不得绕过。"
     "finance_confirm_accounting_period_close 在关账事务提交后由内核自动导出该公司一致性快照并"

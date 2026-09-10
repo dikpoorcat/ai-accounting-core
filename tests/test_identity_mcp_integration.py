@@ -115,6 +115,7 @@ def test_authenticated_data_tools_fail_closed_without_session(
         "finance_list_companies",
         "finance_create_company",
         "finance_get_close_backup_configuration",
+        "finance_prepare_close_backup",
         "finance_configure_close_backup",
         "finance_preview_company_profile_change",
         "finance_confirm_company_profile_change",

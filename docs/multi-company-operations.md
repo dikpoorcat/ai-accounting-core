@@ -84,8 +84,20 @@ FINANCE_PROVISIONING_DATABASE_URL=postgresql+psycopg://migrator:...@127.0.0.1:54
 创建路径的最后一级；父目录必须已经存在。该位置按当前公司以不可变版本记录在目录库中，后续
 改位置只为该公司追加新版本；目录库继续保留历史关账所用位置版本及备份尝试的审计归因。
 
-`finance_confirm_accounting_period_close` 在写入前检查目录、专用 `finance_backup` 凭据和
-PostgreSQL 17 `pg_dump`/`pg_restore`；未就绪时不会关账。关账业务事务提交后，系统使用只读
+生产环境中新建公司、公司导入和空库回放共用数据库访问配置：同时赋予运行账号必要的业务权限
+及 `finance_backup` 的连接权限，完成后才把公司交给运行环境。备份角色仍仅继承
+`pg_read_all_data`、`pg_monitor`，不创建或提升角色，也不授予业务写入权限。
+
+会计模式关账前自动调用 `finance_prepare_close_backup`：按目录库登记检查权限，发现缺失的
+CONNECT 时，先核验本机同一集群、数据库版本、公司和目录绑定及数据库所有权，再通过部署账号
+幂等补齐。仅修复已登记库的连接权限；未登记库的额外权限、身份不符或未知数据库版本会阻断，
+不扩大访问范围或修改业务。公司创建、导入和关账按相同顺序持有访问配置锁，避免登记发布与
+权限检查交错。`finance_get_close_backup_configuration` 保持只读，真实连接失败时不再报告 ready。
+
+`finance_confirm_accounting_period_close` 在写入前执行同一准备检查：检查目录、专用凭据、
+PostgreSQL 17 `pg_dump`/`pg_restore`，并以真实备份账号验证权限及只读快照；未就绪时不会关账。
+短暂连接故障在连接层最多尝试三次；认证和权限错误立即分类返回，已开始执行的业务或快照体
+不会被连接层重放。这些准备不要求负责人管理数据库权限。关账业务事务提交后，系统使用只读
 `REPEATABLE READ` 导出快照，复制该公司实际引用的证据，验证清单和所有摘要，并生成
 `<统一社会信用代码>.finance-company.zip`。发布前，系统把已验证的当前包滚动为
 `<统一社会信用代码>.previous.finance-company.zip`，再以写穿方式原子发布新当前包，最终只保留

@@ -123,7 +123,12 @@ continue to use their own typed completion facts.
    posted, call `finance_confirm_period_material_completeness` with the current activity snapshot.
 6. `关账确认` — reach this step only after rows 3 and 4 have completed their external declaration
    checks. Use the normal preview, password approval, confirmation, and automatic-backup workflow.
-   Next-month cash payment is not a prior-month close gate.
+   Before close, call `finance_prepare_close_backup` to repair missing CONNECT grants on
+   identity-verified registered databases and test the real backup snapshot connection, then
+   verify `finance_get_close_backup_configuration`. This is automatic infrastructure preparation;
+   do not ask the owner to manage database permissions. The close tool also performs this check
+   before any close write. Transient connection failures retry internally; only a persistent
+   failure requires a blocker response. Next-month cash payment is not a prior-month close gate.
 7. `税费申报及财务报表` — this follows close when applicable. Confirm the returned kernel-generated
    obligation with `finance_confirm_external_obligation`; never create a custom obligation.
 8. `企业所得税年度汇算清缴` and 9. `工商年报` — when returned in `queue_steps`, keep overdue

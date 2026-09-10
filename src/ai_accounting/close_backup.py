@@ -22,6 +22,7 @@ from .backup import (
     create_portable_backup_archive,
     verify_portable_backup_archive,
 )
+from .backup_access import lock_backup_access, reconcile_backup_access
 from .backup_credentials import (
     BackupCredentialError,
     CredentialManagerConnectionProvider,
@@ -33,6 +34,7 @@ from .backup_integration import (
     PgDumpAdapter,
     PostgresEndpoint,
     create_integrated_online_backup,
+    postgres_backup_snapshot,
 )
 from .company_schemas import ConfigureCloseBackupRequest
 from .config import Settings
@@ -83,31 +85,35 @@ class CloseBackupService:
         existing = self.session.scalar(
             select(CloseBackupLocationVersion).where(
                 CloseBackupLocationVersion.org_id == self.context.org_id,
-                CloseBackupLocationVersion.idempotency_key == request.idempotency_key
+                CloseBackupLocationVersion.idempotency_key == request.idempotency_key,
             )
         )
         if existing is not None:
             if existing.request_payload_hash != payload_hash:
-                raise CloseBackupError(
-                    "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST"
-                )
+                raise CloseBackupError("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST")
             return self._configuration_result(existing, replayed=True)
 
         # The catalog singleton is the serialization point even before a first
         # location version exists, avoiding competing version=1 inserts.
-        if self.session.scalar(
-            select(CatalogMetadata).where(CatalogMetadata.singleton_key == 1).with_for_update()
-        ) is None:
+        if (
+            self.session.scalar(
+                select(CatalogMetadata).where(CatalogMetadata.singleton_key == 1).with_for_update()
+            )
+            is None
+        ):
             raise CloseBackupError("CATALOG_NOT_INITIALIZED")
         backup_root = self._prepare_backup_root(request.backup_directory)
-        version = int(
-            self.session.scalar(
-                select(func.max(CloseBackupLocationVersion.version)).where(
-                    CloseBackupLocationVersion.org_id == self.context.org_id
+        version = (
+            int(
+                self.session.scalar(
+                    select(func.max(CloseBackupLocationVersion.version)).where(
+                        CloseBackupLocationVersion.org_id == self.context.org_id
+                    )
                 )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         item = CloseBackupLocationVersion(
             org_id=self.context.org_id,
             version=version,
@@ -138,6 +144,7 @@ class CloseBackupService:
         return self._configuration_result(location, replayed=False)
 
     def require_ready(self) -> CloseBackupRuntime:
+        lock_backup_access(self.session)
         location = self._current_location()
         if location is None:
             raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_LOCATION_REQUIRED")
@@ -149,7 +156,67 @@ class CloseBackupService:
             raise CloseBackupError(str(exc)) from exc
         if credential is None:
             raise CloseBackupError("BACKUP_CREDENTIAL_REQUIRED")
+        self._check_database(repair=True)
         return CloseBackupRuntime(location, backup_root, pg_bin_dir)
+
+    def prepare(self) -> dict[str, Any]:
+        """Idempotent infrastructure preparation; no close or accounting write."""
+        runtime = self.require_ready()
+        return self._configuration_result(runtime.location, replayed=False)
+
+    def _database_inputs(self) -> tuple[CompanyRegistry, PostgresEndpoint, str, frozenset[str]]:
+        registry = self.session.get(CompanyRegistry, self.context.org_id)
+        if registry is None or registry.status not in {"active", "archived"}:
+            raise CloseBackupError("COMPANY_NOT_READABLE")
+        catalog = make_url(self.settings.database_url)
+        company = make_url(self.settings.finance_company_database_url or "")
+        if not catalog.database or not company.host or not company.username:
+            raise CloseBackupError("COMPANY_DATABASE_ROUTING_NOT_CONFIGURED")
+        if (catalog.host, catalog.port or 5432) != (company.host, company.port or 5432):
+            raise CloseBackupError("BACKUP_DATABASE_ENDPOINT_MISMATCH")
+        names = self.session.scalars(
+            select(CompanyRegistry.database_name).where(
+                CompanyRegistry.status.in_(("active", "archived"))
+            )
+        ).all()
+        return (
+            registry,
+            PostgresEndpoint(
+                host=company.host,
+                port=company.port or 5432,
+                database=registry.database_name,
+                username="finance_backup",
+                application_name="finance-close-backup",
+            ),
+            company.username,
+            frozenset([catalog.database, *names]),
+        )
+
+    def _check_database(self, *, repair: bool) -> None:
+        try:
+            lock_backup_access(self.session)
+            if repair:
+                registries = self.session.scalars(
+                    select(CompanyRegistry).where(
+                        CompanyRegistry.status.in_(("active", "archived"))
+                    )
+                ).all()
+                reconcile_backup_access(self.session, self.settings, registries)
+            _, endpoint, runtime_role, allowed_names = self._database_inputs()
+            with postgres_backup_snapshot(
+                CredentialManagerConnectionProvider(WindowsFinanceBackupCredentialStore()),
+                endpoint,
+                runtime_role=runtime_role,
+                include_evidence=False,
+                forbid_identity_tables=True,
+                allowed_database_names=allowed_names,
+                require_no_runtime_connections=False,
+            ):
+                pass
+        except CloseBackupError:
+            raise
+        except Exception as exc:
+            raise CloseBackupError(self._safe_error(exc)) from exc
 
     def backup_committed_close(
         self,
@@ -160,10 +227,7 @@ class CloseBackupService:
         period_month: str,
         runtime: CloseBackupRuntime,
     ) -> dict[str, Any]:
-        if (
-            registry.org_id != self.context.org_id
-            or runtime.location.org_id != registry.org_id
-        ):
+        if registry.org_id != self.context.org_id or runtime.location.org_id != registry.org_id:
             raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_IDENTITY_MISMATCH")
         attempt = self.session.scalar(
             select(AccountingPeriodCloseBackup)
@@ -242,33 +306,7 @@ class CloseBackupService:
             ".replacement"
         )
 
-        settings_url = make_url(self.settings.database_url)
-        company_url = make_url(self.settings.finance_company_database_url or "")
-        if (
-            settings_url.host is None
-            or settings_url.database is None
-            or company_url.host is None
-            or company_url.username is None
-        ):
-            raise CloseBackupError("COMPANY_DATABASE_ROUTING_NOT_CONFIGURED")
-        endpoint = PostgresEndpoint(
-            host=company_url.host,
-            port=company_url.port or 5432,
-            database=registry.database_name,
-            username="finance_backup",
-            application_name="finance-close-backup",
-        )
-        registries = self.session.scalars(
-            select(CompanyRegistry).where(
-                CompanyRegistry.status.in_(("active", "archived"))
-            )
-        ).all()
-        allowed_names = frozenset(
-            {
-                settings_url.database,
-                *(item.database_name for item in registries),
-            }
-        )
+        _, endpoint, runtime_role, allowed_names = self._database_inputs()
         verifier = WindowsCurrentUserOnlyAclVerifier()
         credential_store = WindowsFinanceBackupCredentialStore()
         pgpass = WindowsProtectedPgPassProvider(
@@ -277,16 +315,13 @@ class CloseBackupService:
             verifier,
         )
         publisher = WindowsWriteThroughPublisher()
-        backup_id = (
-            f"close-{period_month.replace('-', '')}-{close_id.hex[:12]}-"
-            f"a{attempt_number}"
-        )
+        backup_id = f"close-{period_month.replace('-', '')}-{close_id.hex[:12]}-a{attempt_number}"
         verified = create_integrated_online_backup(
             runtime.backup_root,
             backup_id=backup_id,
             evidence_root=self.settings.finance_evidence_dir,
             endpoint=endpoint,
-            runtime_role=company_url.username,
+            runtime_role=runtime_role,
             connection_provider=CredentialManagerConnectionProvider(credential_store),
             adapter_factory=lambda snapshot_id: PgDumpAdapter(
                 endpoint,
@@ -386,8 +421,7 @@ class CloseBackupService:
             previous = verify_portable_backup_archive(previous_archive_file)
             self._require_company_archive(previous, registry)
         staged = backup_root / (
-            f".{registry.taxpayer_identification_number}-{uuid.uuid4().hex}"
-            ".previous.replacement"
+            f".{registry.taxpayer_identification_number}-{uuid.uuid4().hex}.previous.replacement"
         )
         try:
             source_before = current.archive_file.lstat()
@@ -420,9 +454,7 @@ class CloseBackupService:
             if retained.archive_sha256 != current.archive_sha256:
                 raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_FILE_CONFLICT")
         except FileExistsError as exc:
-            raise CloseBackupError(
-                "ACCOUNTING_PERIOD_CLOSE_BACKUP_ROTATION_FAILED"
-            ) from exc
+            raise CloseBackupError("ACCOUNTING_PERIOD_CLOSE_BACKUP_ROTATION_FAILED") from exc
         finally:
             self._remove_replacement_file(staged, backup_root)
 
@@ -444,7 +476,7 @@ class CloseBackupService:
         except OSError as exc:
             raise CloseBackupError(
                 "ACCOUNTING_PERIOD_CLOSE_BACKUP_RETENTION_CLEANUP_FAILED"
-        ) from exc
+            ) from exc
         for candidate in candidates:
             try:
                 if candidate.is_symlink() or candidate.resolve(strict=True) in retained:
@@ -491,6 +523,7 @@ class CloseBackupService:
             credential = WindowsFinanceBackupCredentialStore().load_password()
             if credential is None:
                 raise CloseBackupError("BACKUP_CREDENTIAL_REQUIRED")
+            self._check_database(repair=False)
         except BackupCredentialError as exc:
             readiness = "not_ready"
             readiness_errors.append(str(exc))
@@ -512,9 +545,7 @@ class CloseBackupService:
         }
 
     @staticmethod
-    def _attempt_result(
-        attempt: AccountingPeriodCloseBackup, *, replayed: bool
-    ) -> dict[str, Any]:
+    def _attempt_result(attempt: AccountingPeriodCloseBackup, *, replayed: bool) -> dict[str, Any]:
         return {
             "status": attempt.status,
             "backup_id": str(attempt.id),

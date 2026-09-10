@@ -12,6 +12,7 @@ from sqlalchemy import Connection, Engine, select, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
+from .backup_access import grant_backup_database_access
 from .config import Settings, get_settings
 from .database import SessionLocal, make_engine, make_session_factory
 from .models import CatalogMetadata, CompanyRegistry, OrganizationDatabaseMetadata
@@ -214,3 +215,11 @@ def grant_runtime_database_access(connection: Connection, runtime_role: str) -> 
         "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
         f"GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {quoted_role}"
     )
+
+
+def grant_finance_database_access(connection: Connection, runtime_role: str) -> None:
+    """A production database is usable only with both runtime and backup access."""
+    if runtime_role == "finance_backup":
+        raise CompanyRoutingError("COMPANY_RUNTIME_ROLE_PRIVILEGES_INVALID")
+    grant_runtime_database_access(connection, runtime_role)
+    grant_backup_database_access(connection)

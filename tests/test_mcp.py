@@ -65,6 +65,7 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_list_companies",
         "finance_create_company",
         "finance_get_close_backup_configuration",
+        "finance_prepare_close_backup",
         "finance_configure_close_backup",
         "finance_preview_company_profile_change",
         "finance_confirm_company_profile_change",
@@ -525,6 +526,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert protocol["owner_security_window"]["accepts_secrets"] is False
     assert protocol["owner_security_window"]["window_status_is_authorization"] is False
     assert "finance_get_close_backup_configuration" in mcp.instructions
+    assert "finance_prepare_close_backup" in mcp.instructions
     assert "close_backup.status=failed" in mcp.instructions
     assert "另写临时备份脚本" in mcp.instructions
     assert "finance_configure_historical_test_close_mode" in mcp.instructions

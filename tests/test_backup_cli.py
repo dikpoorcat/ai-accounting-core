@@ -309,6 +309,54 @@ def test_credential_connection_provider_does_not_mask_body_failure(
             raise BackupIntegrationError("BACKUP_BODY_FAILED")
 
 
+def test_backup_connection_recovers_transient_outage_without_replaying_body(monkeypatch):
+    calls = []
+    sleeps = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+    def connect(**kwargs):
+        calls.append(kwargs["user"])
+        if len(calls) < 3:
+            raise backup_credentials.psycopg.OperationalError("connection refused")
+        return Connection()
+
+    monkeypatch.setattr(backup_credentials.psycopg, "connect", connect)
+    monkeypatch.setattr(backup_credentials.time, "sleep", sleeps.append)
+    body_calls = 0
+    with CredentialManagerConnectionProvider(InMemoryPasswordStore()).connect(_endpoint()):
+        body_calls += 1
+    assert calls == ["finance_backup"] * 3
+    assert sleeps == [0.25, 1.0]
+    assert body_calls == 1
+
+
+@pytest.mark.parametrize("message,code", [
+    ("permission denied for database secret-db", "BACKUP_DATABASE_CONNECT_PERMISSION_DENIED"),
+    ("password authentication failed for user private", "BACKUP_DATABASE_AUTHENTICATION_FAILED"),
+    ("connection refused secret-host", "BACKUP_DATABASE_CONNECTION_FAILED"),
+])
+def test_backup_connection_failure_is_bounded_and_redacted(monkeypatch, message, code):
+    calls = []
+
+    def connect(**kwargs):
+        calls.append(1)
+        raise backup_credentials.psycopg.OperationalError(message)
+
+    monkeypatch.setattr(backup_credentials.psycopg, "connect", connect)
+    monkeypatch.setattr(backup_credentials.time, "sleep", lambda _: None)
+    with pytest.raises(BackupCredentialError) as failure:
+        with CredentialManagerConnectionProvider(InMemoryPasswordStore()).connect(_endpoint()):
+            pytest.fail("failed connection must never yield")
+    assert str(failure.value) == code
+    assert len(calls) == (3 if code == "BACKUP_DATABASE_CONNECTION_FAILED" else 1)
+
+
 def test_create_cli_rejects_nonproduction_before_windows_or_credential_access(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

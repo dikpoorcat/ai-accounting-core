@@ -23,11 +23,11 @@ from .backup_credentials import (
     WindowsProtectedArchiveCopyProvider,
     WindowsProtectedPgPassProvider,
 )
-from .backup_integration import PgRestoreAdapter, PostgresEndpoint
+from .backup_integration import BackupIntegrationError, PgRestoreAdapter, PostgresEndpoint
 from .company_router import (
     CompanyDatabaseRouter,
     assert_provisioning_role,
-    grant_runtime_database_access,
+    grant_finance_database_access,
 )
 from .config import get_settings
 from .credential_store import WindowsCredentialStore
@@ -86,7 +86,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             return
         if args.command == "import-company":
             _import_company(args)
-    except (BackupError, CompanyCliError, IdentityError) as exc:
+    except (BackupError, BackupIntegrationError, CompanyCliError, IdentityError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:
@@ -221,6 +221,9 @@ def _import_company(args: argparse.Namespace) -> None:
     catalog_engine = create_engine(settings.database_url)
     try:
         with Session(catalog_engine) as catalog_session, catalog_session.begin():
+            from .backup_access import lock_backup_access
+
+            lock_backup_access(catalog_session)
             catalog_session.info["catalog_mode"] = True
             context_value = IdentityService(catalog_session).authorize_execution(
                 session_token=token.get_secret_value(),
@@ -475,7 +478,7 @@ def _grant_runtime_access(database_url: URL, runtime_role: str) -> None:
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:
-            grant_runtime_database_access(connection, runtime_role)
+            grant_finance_database_access(connection, runtime_role)
     finally:
         engine.dispose()
 

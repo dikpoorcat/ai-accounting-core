@@ -258,6 +258,7 @@ REVERSAL_WRITE = ToolAnnotations(
 
 _GLOBAL_COMPANY_TOOLS = {
     "finance_get_close_backup_configuration",
+    "finance_prepare_close_backup",
     "finance_configure_close_backup",
     "finance_list_companies",
     "finance_create_company",
@@ -500,6 +501,12 @@ def _secure_registered_data_tools() -> None:
                         if is_global_company_tool:
                             return _original(*args, **kwargs)
                         assert requested_org_id is not None
+                        if _tool_name == "finance_confirm_accounting_period_close":
+                            from .backup_access import lock_backup_access
+
+                            # Take the cluster access lock before any company row lock,
+                            # matching provisioning's order and avoiding a lock cycle.
+                            lock_backup_access(session)
                         try:
                             registry = company_router.resolve(
                                 session,
@@ -1164,6 +1171,16 @@ def finance_get_close_backup_configuration(org_id: uuid.UUID) -> dict[str, Any]:
     del org_id  # Authenticated wrapper binds and validates the active company.
     try:
         return _close_backup_service().get_configuration()
+    except CloseBackupError as exc:
+        return {"status": "rejected", "errors": [exc.code]}
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_prepare_close_backup(org_id: uuid.UUID) -> dict[str, Any]:
+    """自动补齐已登记公司缺失的备份连接权限并实测就绪；不关账、不修改业务。"""
+    del org_id
+    try:
+        return _close_backup_service().prepare()
     except CloseBackupError as exc:
         return {"status": "rejected", "errors": [exc.code]}
 

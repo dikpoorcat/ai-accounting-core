@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from alembic import command
 
 from .coa import get_business_class_template, seed_organization
-from .company_router import grant_runtime_database_access
+from .company_router import grant_finance_database_access, grant_runtime_database_access
 from .config import get_settings
 from .models import (
     Account,
@@ -3306,7 +3306,10 @@ def _grant_runtime_access(database_url: URL, runtime_role: str) -> None:
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:
-            grant_runtime_database_access(connection, runtime_role)
+            if get_settings().finance_environment == "production":
+                grant_finance_database_access(connection, runtime_role)
+            else:
+                grant_runtime_database_access(connection, runtime_role)
     finally:
         engine.dispose()
 

@@ -15,13 +15,14 @@ from sqlalchemy.orm import Session
 from alembic import command
 
 from .accounting_periods import canonical_sha256, china_current_date
+from .backup_integration import BackupIntegrationError
 from .coa import seed_organization
 from .company_router import (
     CompanyDatabaseRouter,
     CompanyRoutingError,
     assert_provisioning_role,
     catalog_instance_id,
-    grant_runtime_database_access,
+    grant_finance_database_access,
     router,
 )
 from .company_schemas import (
@@ -88,6 +89,9 @@ class CompanyService:
         }
 
     def create_company(self, request: CreateCompanyRequest) -> dict[str, Any]:
+        from .backup_access import lock_backup_access
+
+        lock_backup_access(self.catalog_session)
         catalog_id = catalog_instance_id(self.catalog_session)
         org_id = uuid.uuid5(catalog_id, f"finance-create-company:{request.idempotency_key}")
         database_identity = uuid.uuid5(org_id, "finance-company-database")
@@ -193,14 +197,15 @@ class CompanyService:
                 "company": self._registry_payload(registry),
                 "lifecycle_action_id": str(action.id),
             }
-        except (CompanyLifecycleError, CompanyRoutingError) as exc:
+        except (CompanyLifecycleError, CompanyRoutingError, BackupIntegrationError) as exc:
+            code = str(exc) if isinstance(exc, BackupIntegrationError) else exc.code
             registry.status = "attention_required"
             registry.updated_at = utcnow()
             action.status = "failed"
-            action.error_code = exc.code
+            action.error_code = code
             action.completed_at = utcnow()
             self.catalog_session.flush()
-            return self._rejected(exc.code, org_id=org_id)
+            return self._rejected(code, org_id=org_id)
         except (OSError, SQLAlchemyError):
             registry.status = "attention_required"
             registry.updated_at = utcnow()
@@ -625,7 +630,7 @@ class CompanyService:
         engine = create_engine(migration_url)
         try:
             with engine.begin() as connection:
-                grant_runtime_database_access(connection, runtime_url.username)
+                grant_finance_database_access(connection, runtime_url.username)
         finally:
             engine.dispose()
 

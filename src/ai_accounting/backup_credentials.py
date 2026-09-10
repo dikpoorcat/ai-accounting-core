@@ -8,6 +8,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -199,25 +200,37 @@ class CredentialManagerConnectionProvider:
         password = self._credential_store.load_password()
         if password is None:
             raise BackupCredentialError("BACKUP_CREDENTIAL_REQUIRED")
-        yielded = False
-        try:
-            with psycopg.connect(
-                host=endpoint.host,
-                port=endpoint.port,
-                dbname=endpoint.database,
-                user=endpoint.username,
-                password=password.get_secret_value(),
-                application_name=endpoint.application_name,
-                connect_timeout=15,
-            ) as connection:
-                yielded = True
-                yield connection
-        except BackupCredentialError:
-            raise
-        except Exception as exc:
-            if yielded:
-                raise
-            raise BackupCredentialError("BACKUP_DATABASE_CONNECTION_FAILED") from exc
+        for attempt in range(3):
+            try:
+                connection = psycopg.connect(
+                    host=endpoint.host,
+                    port=endpoint.port,
+                    dbname=endpoint.database,
+                    user=endpoint.username,
+                    password=password.get_secret_value(),
+                    application_name=endpoint.application_name,
+                    connect_timeout=10,
+                )
+                break
+            except Exception as exc:
+                # Classify internally; native connection strings/errors never leave here.
+                message = str(exc).lower()
+                state = getattr(exc, "sqlstate", None)
+                if state == "42501" or "permission denied for database" in message:
+                    raise BackupCredentialError(
+                        "BACKUP_DATABASE_CONNECT_PERMISSION_DENIED"
+                    ) from exc
+                if state in {"28000", "28P01"} or "password authentication failed" in message:
+                    raise BackupCredentialError("BACKUP_DATABASE_AUTHENTICATION_FAILED") from exc
+                transient = isinstance(exc, psycopg.OperationalError) and (
+                    state is None or state.startswith("08") or state in {"57P01", "57P03"}
+                )
+                if not transient or attempt == 2:
+                    raise BackupCredentialError("BACKUP_DATABASE_CONNECTION_FAILED") from exc
+                time.sleep((0.25, 1.0)[attempt])
+        # Once a snapshot body starts, it must never be replayed by the connection layer.
+        with connection:
+            yield connection
 
 
 def _pgpass_content(endpoint: PostgresEndpoint, password: SecretStr) -> bytearray:
@@ -245,9 +258,7 @@ def _create_protected_pgpass(
     root = _validated_lease_root(lease_root)
     sid = _current_windows_sid()
     security_descriptor = _security_descriptor_for_sid(sid)
-    attributes = _SecurityAttributes(
-        ctypes.sizeof(_SecurityAttributes), security_descriptor, 0
-    )
+    attributes = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), security_descriptor, 0)
     kernel32 = ctypes.WinDLL("Kernel32.dll", use_last_error=True)
     _configure_protected_file_api(kernel32)
     directory = root / f".finance-pgpass-{uuid.uuid4().hex}"
@@ -330,9 +341,7 @@ def _create_protected_archive_copy(
     root = _validated_lease_root(lease_root)
     sid = _current_windows_sid()
     security_descriptor = _security_descriptor_for_sid(sid)
-    attributes = _SecurityAttributes(
-        ctypes.sizeof(_SecurityAttributes), security_descriptor, 0
-    )
+    attributes = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), security_descriptor, 0)
     kernel32 = ctypes.WinDLL("Kernel32.dll", use_last_error=True)
     _configure_protected_file_api(kernel32)
     directory = root / f".finance-restore-{uuid.uuid4().hex}"
@@ -387,13 +396,8 @@ def _create_protected_archive_copy(
             or copied_size != expected_size_bytes
         ):
             raise BackupCredentialError("BACKUP_ARCHIVE_SOURCE_CHANGED")
-        copied_again_sha256, copied_again_size = _hash_windows_handle(
-            kernel32, destination_handle
-        )
-        if (
-            copied_again_sha256 != expected_sha256
-            or copied_again_size != expected_size_bytes
-        ):
+        copied_again_sha256, copied_again_size = _hash_windows_handle(kernel32, destination_handle)
+        if copied_again_sha256 != expected_sha256 or copied_again_size != expected_size_bytes:
             raise BackupCredentialError("BACKUP_ARCHIVE_COPY_MISMATCH")
         verifier.assert_current_windows_user_only(archive)
         verifier.assert_current_windows_user_only(directory)
@@ -442,9 +446,7 @@ def _validated_archive_source(source: Path, source_root: Path) -> tuple[Path, os
     return candidate, source_stat
 
 
-def _assert_archive_path_still_same(
-    source: Path, expected: os.stat_result
-) -> None:
+def _assert_archive_path_still_same(source: Path, expected: os.stat_result) -> None:
     _reject_reparse_points(source)
     try:
         current = source.lstat()
@@ -493,13 +495,16 @@ def _copy_windows_handles(
         digest.update(content)
         size += read.value
         written = ctypes.c_uint32()
-        if not kernel32.WriteFile(  # type: ignore[attr-defined]
-            destination_handle,
-            ctypes.byref(buffer),
-            read.value,
-            ctypes.byref(written),
-            None,
-        ) or written.value != read.value:
+        if (
+            not kernel32.WriteFile(  # type: ignore[attr-defined]
+                destination_handle,
+                ctypes.byref(buffer),
+                read.value,
+                ctypes.byref(written),
+                None,
+            )
+            or written.value != read.value
+        ):
             raise BackupCredentialError("BACKUP_ARCHIVE_COPY_WRITE_FAILED")
 
 
