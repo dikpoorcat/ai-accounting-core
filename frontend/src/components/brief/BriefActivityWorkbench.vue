@@ -596,7 +596,7 @@ h3 {
   display: grid;
   width: 100%;
   min-height: 48px;
-  grid-template-columns: 125px 110px minmax(0, 1fr) 130px 42px;
+  grid-template-columns: 125px 150px minmax(0, 1fr) 130px 42px;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;

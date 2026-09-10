@@ -5,6 +5,8 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
@@ -14,7 +16,13 @@ from ai_accounting.accounting_period_schemas import (
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
-from ai_accounting.models import AccountingPeriod, Evidence, Organization
+from ai_accounting.models import (
+    AccountingPeriod,
+    Evidence,
+    ExternalObligationConfirmation,
+    Organization,
+    PayrollTaxImportExport,
+)
 from ai_accounting.owner_workflow import OwnerWorkflowService
 from ai_accounting.owner_workflow_schemas import (
     ConfirmExternalObligationRequest,
@@ -403,7 +411,13 @@ def test_closed_payroll_iit_never_becomes_a_historical_confirmation_backlog(
     }
 
 
-def test_iit_step_is_scoped_to_selected_period_and_exposes_one_target() -> None:
+@pytest.mark.parametrize(
+    ("export_current", "expected_action"),
+    [(None, "generate"), (False, "generate"), (True, "reuse")],
+)
+def test_iit_step_is_scoped_to_selected_period_and_exposes_one_target(
+    export_current: bool | None, expected_action: str
+) -> None:
     organization = SimpleNamespace(id=uuid.uuid4(), filing_cycle="quarterly")
     period = SimpleNamespace(
         id=uuid.uuid4(),
@@ -426,7 +440,11 @@ def test_iit_step_is_scoped_to_selected_period_and_exposes_one_target() -> None:
     workflow._current_obligation_confirmation = MagicMock(  # type: ignore[method-assign]
         return_value=None
     )
-    workflow._period_exports = MagicMock(return_value=[])  # type: ignore[method-assign]
+    workflow._active_obligation_confirmation = MagicMock(  # type: ignore[method-assign]
+        return_value=None
+    )
+    exports = [] if export_current is None else [{"id": "saved", "current": export_current}]
+    workflow._period_exports = MagicMock(return_value=exports)  # type: ignore[method-assign]
 
     step = workflow._iit_step(  # noqa: SLF001 - selected-period scope regression
         organization,
@@ -436,8 +454,124 @@ def test_iit_step_is_scoped_to_selected_period_and_exposes_one_target() -> None:
 
     assert step["obligation"]["scope_identity"] == "2026-08"
     assert [target["scope_identity"] for target in step["confirmation_targets"]] == ["2026-08"]
+    assert step["payroll_tax_import_action"] == expected_action
+    assert step["existing_export"] == (exports[0] if export_current else None)
+    assert step["missing_facts"] == (
+        ["external_individual_income_tax_submission"]
+        if export_current
+        else ["current_payroll_tax_import_export"]
+    )
     workflow._posted_payroll_source_snapshot.assert_called_with(organization.id, period)
     session.scalars.assert_not_called()
+
+
+@pytest.mark.parametrize("contribution_satisfied", [False, True])
+def test_iit_filing_completion_precedes_export_and_changed_sources_require_review(
+    session: Session, organization: Organization, contribution_satisfied: bool
+) -> None:
+    period = _generate_august_period(session, organization)
+    source = {"hash": "b" * 64, "data": {}, "declared_line_count": 1}
+    gates = {
+        "gates": {
+            "contribution_accounting": {
+                "active_employee_count": 1,
+                "satisfied": contribution_satisfied,
+            }
+        }
+    }
+
+    def read_workflow():
+        workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 10))
+        workflow._posted_payroll_source_snapshot = MagicMock(return_value=source)
+        return workflow, workflow._iit_step(organization, period, gates)  # noqa: SLF001
+
+    workflow, pending = read_workflow()
+    assert pending["payroll_tax_import_action"] == "generate"
+    target = pending["confirmation_targets"][0]
+    request = ConfirmExternalObligationRequest(
+        org_id=organization.id,
+        obligation_id=target["obligation_id"],
+        source_snapshot_hash=target["source_snapshot_hash"],
+        completion_status="submitted",
+        idempotency_key="iit-already-filed-without-export",
+        confirmation_note="负责人确认八月个税已申报缴纳，不需要重新生成导入表。",
+    )
+    confirmation = workflow.confirm_external_obligation(request)
+    assert confirmation["status"] == "confirmed"
+    assert workflow.confirm_external_obligation(request)["idempotent_replay"] is True
+    session.flush()
+    session.expire_all()
+
+    _, completed = read_workflow()
+    assert completed["completion_state"] == "completed"
+    assert completed["payroll_tax_import_action"] == "none"
+    assert completed["next_owner_action"] is None
+    assert completed["completion_proof"][0]["confirmation_id"] == confirmation["confirmation_id"]
+    assert session.scalar(select(PayrollTaxImportExport)) is None
+
+    # 例如同金额工资重建导致来源版本变化：不能沿用旧确认，也不能自动当成未申报重导。
+    source["hash"] = "c" * 64
+    workflow, changed = read_workflow()
+    assert changed["completion_state"] == "stale"
+    assert changed["payroll_tax_import_action"] == "review_filed_source_change"
+    assert changed["missing_facts"] == ["filed_payroll_source_review"]
+    assert changed["previous_confirmation"]["confirmation_id"] == confirmation["confirmation_id"]
+    assert (
+        changed["previous_confirmation"]["source_snapshot_hash"] == target["source_snapshot_hash"]
+    )
+    assert (
+        changed["confirmation_targets"][0]["supersedes_confirmation_id"]
+        == (confirmation["confirmation_id"])
+    )
+    assert workflow.confirm_external_obligation(request)["errors"] == [
+        "EXTERNAL_OBLIGATION_SNAPSHOT_STALE"
+    ]
+    assert len(list(session.scalars(select(ExternalObligationConfirmation)))) == 1
+
+    reviewed_target = changed["confirmation_targets"][0]
+    reviewed = workflow.confirm_external_obligation(
+        request.model_copy(
+            update={
+                "source_snapshot_hash": reviewed_target["source_snapshot_hash"],
+                "supersedes_confirmation_id": uuid.UUID(confirmation["confirmation_id"]),
+                "idempotency_key": "iit-filed-source-reviewed",
+                "confirmation_note": (
+                    "已核对原申报内容与当前工资一致，仅来源版本变化，无需重新申报。"
+                ),
+            }
+        )
+    )
+    assert reviewed["status"] == "confirmed"
+    _, completed_again = read_workflow()
+    assert completed_again["payroll_tax_import_action"] == "none"
+    assert session.scalar(select(PayrollTaxImportExport)) is None
+
+
+@pytest.mark.parametrize(
+    ("active_count", "satisfied", "expected_action", "expected_state"),
+    [(1, False, "wait_for_payroll", "waiting"), (0, True, "none", "not_applicable")],
+)
+def test_iit_does_not_generate_without_posted_wage_source(
+    active_count: int, satisfied: bool, expected_action: str, expected_state: str
+) -> None:
+    workflow = OwnerWorkflowService(MagicMock())
+    workflow._posted_payroll_source_snapshot = MagicMock(return_value={"declared_line_count": 0})
+    workflow._period_exports = MagicMock()
+    step = workflow._iit_step(  # noqa: SLF001
+        SimpleNamespace(id=uuid.uuid4()),
+        SimpleNamespace(),
+        {
+            "gates": {
+                "contribution_accounting": {
+                    "active_employee_count": active_count,
+                    "satisfied": satisfied,
+                }
+            }
+        },
+    )
+    assert step["payroll_tax_import_action"] == expected_action
+    assert step["completion_state"] == expected_state
+    workflow._period_exports.assert_not_called()
 
 
 def test_closed_period_is_terminal_for_monthly_rows_without_replaying_prompt_facts() -> None:
@@ -481,6 +615,7 @@ def test_closed_period_is_terminal_for_monthly_rows_without_replaying_prompt_fac
     steps = workflow._build_steps(organization, period, {})  # noqa: SLF001
 
     assert [step["completion_state"] for step in steps[:6]] == ["completed"] * 6
+    assert steps[3]["payroll_tax_import_action"] == "none"
     for step in steps[:5]:
         assert step["completion_proof"] == [
             {

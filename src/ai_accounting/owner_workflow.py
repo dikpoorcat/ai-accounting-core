@@ -886,6 +886,8 @@ class OwnerWorkflowService:
             step.setdefault("next_owner_action", None)
             step.setdefault("close_gate_satisfied", True)
             step.setdefault("confirmation_targets", [])
+            if code == "INDIVIDUAL_INCOME_TAX_WITHHOLDING":
+                step.setdefault("payroll_tax_import_action", "none")
             step.setdefault("_ready", True)
             step["symbol"] = self._base_symbol(step)
             result.append(step)
@@ -980,27 +982,53 @@ class OwnerWorkflowService:
     def _iit_step(
         self, organization: Organization, period: AccountingPeriod, gates: dict[str, Any]
     ) -> dict[str, Any]:
-        contribution_gate = gates["gates"]["contribution_accounting"]
-        if contribution_gate["active_employee_count"] and not contribution_gate["satisfied"]:
-            return self._incomplete(
-                state="waiting",
-                attention="waiting_dependency",
-                missing=["posted_regular_payroll_using_confirmed_contribution_assessment"],
-                action=None,
-                ready=False,
-            )
         source = self._posted_payroll_source_snapshot(organization.id, period)
         if not source["declared_line_count"]:
-            return self._not_applicable("本期没有工资个税扣缴义务。")
+            contribution_gate = gates["gates"]["contribution_accounting"]
+            if contribution_gate["active_employee_count"] and not contribution_gate["satisfied"]:
+                return self._incomplete(
+                    state="waiting",
+                    attention="waiting_dependency",
+                    missing=["posted_regular_payroll"],
+                    action=None,
+                    ready=False,
+                ) | {"payroll_tax_import_action": "wait_for_payroll"}
+            return self._not_applicable("本期没有工资个税扣缴义务。") | {
+                "payroll_tax_import_action": "none"
+            }
         obligation = self._iit_obligation(organization, period)
         confirmation = self._current_obligation_confirmation(obligation)
         if confirmation is not None:
-            return self._completed([self._obligation_completion_proof(confirmation, obligation)])
+            return self._completed(
+                [self._obligation_completion_proof(confirmation, obligation)]
+            ) | {"payroll_tax_import_action": "none"}
+        previous_confirmation = self._active_obligation_confirmation(
+            organization.id, uuid.UUID(obligation["obligation_id"])
+        )
+        if previous_confirmation is not None:
+            # 来源变化保留审计上的失效判定，但不能把已申报误判成首次待申报。
+            return self._incomplete(
+                state="stale",
+                missing=["filed_payroll_source_review"],
+                action="本期个税已有申报确认，工资来源随后发生变化；请先核对原申报是否需要更正。",
+                deadline=obligation["deadline"],
+            ) | {
+                "obligation": obligation,
+                "confirmation_targets": [
+                    self._confirmation_target(obligation)
+                    | {"supersedes_confirmation_id": str(previous_confirmation.id)}
+                ],
+                "previous_confirmation": self._obligation_completion_proof(
+                    previous_confirmation, obligation
+                )
+                | {"source_snapshot_hash": previous_confirmation.source_snapshot_hash},
+                "payroll_tax_import_action": "review_filed_source_change",
+            }
         exports = self._period_exports(organization.id, self._period_month(period))
         current_export = next((item for item in exports if item["current"]), None)
         deadline = date.fromisoformat(obligation["deadline"])
         action = (
-            "个税导入文件需要自动生成并交付桌面。"
+            "若本期尚未申报，需生成个税导入文件并交付桌面；已申报则直接登记结果。"
             if current_export is None
             else "请在税务客户端导入核对并完成个税申报，完成后确认结果。"
         )
@@ -1017,6 +1045,7 @@ class OwnerWorkflowService:
             "obligation": obligation,
             "confirmation_targets": [self._confirmation_target(obligation)],
             "existing_export": current_export,
+            "payroll_tax_import_action": "generate" if current_export is None else "reuse",
         }
 
     def _materials_step(

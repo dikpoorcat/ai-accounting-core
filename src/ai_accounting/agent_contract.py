@@ -173,14 +173,24 @@ PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION = (
 
 PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION = (
     "第4项“个人所得税”的申报导出使用已过账工资及导出所需人员事实，不以第2、3项管理复核"
-    "或外部办理进度为记账门禁。若尚无正式工资来源，先完成必要工资事实的预览和入账；"
-    "当期存在纳入工资个税申报的已过账常规工资后，AI必须"
+    "或外部办理进度为记账门禁。先核对负责人已提供的申报结果，再读取"
+    "finance_get_owner_workflow第4项的payroll_tax_import_action；不得把进入、结束第4项"
+    "或普通工资写入当作无条件导出触发器。负责人已明确本期申报完成时，优先按返回的"
+    "confirmation_targets调用finance_confirm_external_obligation保存结果，再刷新流程；"
+    "导入文件存在或重新生成不是申报完成确认的前置条件，也不重复追问已明确的申报状态。"
+    "若尚无正式工资来源，先完成必要工资事实的预览和入账，随后复用已提供的申报结果，"
+    "不因补入账再生成一次。已完成或已关账时不自动生成、复制或再次交付文件。"
+    "若返回review_filed_source_change，先核对原申报与当前工资的差异；来源版本失效不等于"
+    "尚未申报，也不等于必须更正申报。未经核对不得套用旧确认到新来源，或自动生成更正导入表。"
+    "仅在尚无已完成申报事实、第4项为当前步骤且动作是generate时，AI才"
     "从正式工资批次、已保存员工事实、历史已确认导入资料和现有材料整理参数，主动调用"
-    "finance_generate_payroll_tax_import，不得先问老板是否生成。不得臆造证件号码、扣除类别或"
-    "金额，也不得把扣除合计猜分到明细类别。返回generated后必须按返回sha256校验源文件，使用"
-    "操作系统当前用户桌面已知目录而非硬编码路径，将返回file_name复制到桌面；新会话先复用"
-    "finance_get_owner_workflow返回的当前导出记录，同名同哈希视为"
-    "幂等成功，同名不同内容不得覆盖。只向老板报告桌面文件名、行数和去税务客户端导入核对的"
+    "finance_generate_payroll_tax_import，不另问是否生成。动作为reuse时先校验并复用返回的"
+    "existing_export，不调用生成工具；桌面已有同名同哈希文件即为幂等交付成功，只有缺少桌面"
+    "副本时才从留存文件补交，不把复用说成重新生成。负责人明确要求重新导出、替换模板或办理"
+    "更正申报时按该具体请求处理，不受自动生成条件限制；仍须核对来源和所需事实。"
+    "不得臆造证件号码、扣除类别或金额，也不得把扣除合计猜分到明细类别。返回generated后必须"
+    "按返回sha256校验源文件，使用操作系统当前用户桌面已知目录而非硬编码路径，将返回file_name"
+    "复制到桌面；同名不同内容不得覆盖。只向老板报告桌面文件名、行数和去税务客户端导入核对的"
     "下一动作，不在聊天中展示证件号码。文件生成不等于已申报；第4项在老板确认外部申报结果"
     "后完成，申报日期仅在现有事实已经建立时一并保存。不得询问缴款状态或缴款日期。实际个税"
     "缴款以后由发生月份的银行流水以及finance_record_event中的payable_settlement组件核销。"
@@ -634,9 +644,27 @@ def agent_operating_protocol() -> dict[str, Any]:
                         "prohibit_external_status_question": True,
                     },
                     "entry_action": (
-                        "ensure_posted_regular_payroll_then_generate_before_status_question"
+                        "persist_known_filing_result_then_follow_payroll_tax_import_action"
                     ),
-                    "auto_generate_when": "current_and_posted_regular_payroll_requires_declaration",
+                    "auto_generate_when": (
+                        "current_and_action_generate_and_no_known_filing_completion"
+                    ),
+                    "payroll_tax_import_action_field": "steps[].payroll_tax_import_action",
+                    "payroll_tax_import_actions": {
+                        "generate": "generate_missing_or_stale_export_before_filing",
+                        "reuse": "verify_and_reuse_current_export_without_generating",
+                        "none": "no_automatic_generation_or_delivery",
+                        "wait_for_payroll": "post_known_payroll_then_recheck_known_filing_result",
+                        "review_filed_source_change": "reconcile_filed_result_before_any_reexport",
+                    },
+                    "known_filing_completion": {
+                        "tool": "finance_confirm_external_obligation",
+                        "priority": "before_export",
+                        "export_required": False,
+                        "stale_confirmation": "reconcile_before_superseding",
+                    },
+                    "exit_action": "refresh_workflow_without_export",
+                    "explicit_reexport_request": "allowed_after_source_and_fact_validation",
                     "obligation_scope": "selected_accounting_period_only",
                     "closed_period_history": "satisfied_by_accounting_period_close",
                     "payroll_import_rule": PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION,

@@ -402,7 +402,30 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     )
     assert (
         individual_income_tax_step["entry_action"]
-        == "ensure_posted_regular_payroll_then_generate_before_status_question"
+        == "persist_known_filing_result_then_follow_payroll_tax_import_action"
+    )
+    assert individual_income_tax_step["auto_generate_when"] == (
+        "current_and_action_generate_and_no_known_filing_completion"
+    )
+    assert individual_income_tax_step["payroll_tax_import_action_field"] == (
+        "steps[].payroll_tax_import_action"
+    )
+    assert individual_income_tax_step["payroll_tax_import_actions"] == {
+        "generate": "generate_missing_or_stale_export_before_filing",
+        "reuse": "verify_and_reuse_current_export_without_generating",
+        "none": "no_automatic_generation_or_delivery",
+        "wait_for_payroll": "post_known_payroll_then_recheck_known_filing_result",
+        "review_filed_source_change": "reconcile_filed_result_before_any_reexport",
+    }
+    assert individual_income_tax_step["known_filing_completion"] == {
+        "tool": "finance_confirm_external_obligation",
+        "priority": "before_export",
+        "export_required": False,
+        "stale_confirmation": "reconcile_before_superseding",
+    }
+    assert individual_income_tax_step["exit_action"] == "refresh_workflow_without_export"
+    assert individual_income_tax_step["explicit_reexport_request"] == (
+        "allowed_after_source_and_fact_validation"
     )
     assert individual_income_tax_step["if_expected_payroll_unposted"] == {
         "current_step": "SOCIAL_INSURANCE_AND_HOUSING_FUND",
@@ -485,7 +508,6 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION in mcp.instructions
     assert "该管理确认不是工资计提或关账前置" in mcp.instructions
     assert "不等待外部申报完成或流程确认" in mcp.instructions
-    assert "不得先问老板是否生成" in mcp.instructions
     assert "当前用户桌面已知目录" in mcp.instructions
     assert CONFIRMATION_RUNTIME_INSTRUCTION in mcp.instructions
     assert "不得要求老板逐字段填表" in mcp.instructions

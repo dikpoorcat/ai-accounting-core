@@ -108,18 +108,17 @@ continue to use their own typed completion facts.
    unconfirmed declaration snapshot. Never ask for payment status or payment date. Later actual
    payment is posted from the bank statement in the month it occurs and does not block prior-month
    close.
-4. `个人所得税` — when this is the returned current step and current posted regular payroll exists,
-   call `finance_generate_payroll_tax_import` immediately with a stable idempotency key. Reuse a
-   current export returned by the workflow after revalidating its hash. Otherwise verify the new
-   file and deliver it with
+4. `个人所得税` — 按运行契约的 `payroll_import_rule` 和当前行的
+   `payroll_tax_import_action` 分支处理，不把进入或结束第4项当作导出触发器。
+   负责人已经明确本期申报完成时，先用返回的确认目标保存申报结果，再刷新流程；
+   不以生成或补交文件为确认前置。已有有效导出先校验复用，不再次调用生成工具；
+   同名同哈希的桌面文件不重复复制，也不报告成新生成。只有当前待申报且需要生成时才导出。
+   已申报后的来源变化先核对是否需要更正，不能按首次申报自动重导，也不能直接沿用旧确认。
+   新生成文件或确需补交的桌面副本使用
    `scripts/copy-export-to-desktop.ps1 -SourcePath <file_path> -ExpectedSha256 <sha256>
-   -FileName <file_name>`. Never invent identity or deduction facts. Export generation is not filing
-   completion; after the owner confirms the tax-client submission, call
-   `finance_confirm_external_obligation` with the returned obligation id and source hash. Include
-   `completion_date` only when the declaration date is already established in the available facts;
-   an unknown date does not keep the row open. Do not ask for payment status or payment date; later
-   payment is handled from its actual bank statement. Use only the current step's target for the
-   selected accounting period; never gather older closed payroll months into this row.
+   -FileName <file_name>` 校验交付。明确要求重新导出或替换模板时按该具体请求办理。
+   申报日期仅在事实已建立时保存，不追问缴款状态或日期；实际缴款按以后银行流水处理。
+   只处理所选账期的确认目标，不重新展开已关闭月份。
 5. `票据及非银行业务` — after the materials are actually reviewed and any supported entries are
    posted, call `finance_confirm_period_material_completeness` with the current activity snapshot.
 6. `关账确认` — reach this step only after rows 3 and 4 have completed their external declaration

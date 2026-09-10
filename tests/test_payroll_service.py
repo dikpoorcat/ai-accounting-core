@@ -506,6 +506,8 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
         item for item in result["steps"] if item["code"] == "INDIVIDUAL_INCOME_TAX_WITHHOLDING"
     )
     obligation = iit_step["obligation"]
+    assert iit_step["payroll_tax_import_action"] == "generate"
+    assert session.scalar(select(PayrollTaxImportExport)) is None
     iit_confirmation_request = ConfirmExternalObligationRequest(
         org_id=organization.id,
         obligation_id=uuid.UUID(obligation["obligation_id"]),
@@ -539,6 +541,8 @@ def test_declared_contribution_and_same_snapshot_payroll_complete_step_three_wit
         if item["code"] == "INDIVIDUAL_INCOME_TAX_WITHHOLDING"
     )
     assert completed_iit_step["completion_state"] == "completed"
+    assert completed_iit_step["payroll_tax_import_action"] == "none"
+    assert session.scalar(select(PayrollTaxImportExport)) is None
     assert completed_iit_step["symbol"] == "✅"
     assert completed_iit_step["completion_proof"][0]["completion_date"] is None
     assert completed_iit_step["completion_proof"][0]["completion_date_status"] == (
@@ -566,6 +570,18 @@ def test_generate_payroll_tax_import_matches_tax_authority_xls_template(
     organization: Organization,
     tmp_path: Path,
 ) -> None:
+    period_result = AccountingPeriodService(
+        session, current_date=date(2026, 4, 2)
+    ).generate_accounting_period(
+        GenerateAccountingPeriodRequest(
+            org_id=organization.id,
+            period_month="2026-03",
+            idempotency_key="tax-export-lifecycle-period",
+            confirmation_note="验证申报前导出、申报后不再导出的流程。",
+        )
+    )
+    assert period_result.status == "posted", period_result.errors
+    period = session.get(AccountingPeriod, period_result.period_id)
     _service, confirmed = preview_and_confirm(session, organization)
     assert confirmed.batch_id is not None
     payroll_line = session.scalar(
@@ -645,6 +661,32 @@ def test_generate_payroll_tax_import_matches_tax_authority_xls_template(
     assert replay.idempotent_replay is True
     assert replay.file_path == result.file_path
     assert replay.sha256 == result.sha256
+
+    workflow = OwnerWorkflowService(session, current_date=date(2026, 4, 2))
+    waiting_filing = workflow._iit_step(organization, period, {})  # noqa: SLF001
+    assert waiting_filing["payroll_tax_import_action"] == "reuse"
+    assert waiting_filing["existing_export"]["id"] == str(result.export_id)
+    target = waiting_filing["confirmation_targets"][0]
+    filed = workflow.confirm_external_obligation(
+        ConfirmExternalObligationRequest(
+            org_id=organization.id,
+            obligation_id=target["obligation_id"],
+            source_snapshot_hash=target["source_snapshot_hash"],
+            completion_status="submitted",
+            idempotency_key="tax-export-lifecycle-filed",
+            confirmation_note="已用交付的导入文件完成申报。",
+        )
+    )
+    assert filed["status"] == "confirmed"
+    session.flush()
+    session.expire_all()
+    reloaded = OwnerWorkflowService(session, current_date=date(2026, 4, 2))
+    completed = reloaded._iit_step(organization, period, {})  # noqa: SLF001
+    assert completed["completion_state"] == "completed"
+    assert completed["payroll_tax_import_action"] == "none"
+    assert completed["next_owner_action"] is None
+    assert [row.id for row in session.scalars(select(PayrollTaxImportExport))] == [result.export_id]
+    assert result.file_path.read_bytes() == content
 
 
 def test_generate_payroll_tax_import_requires_deduction_breakdown_reconciliation(
