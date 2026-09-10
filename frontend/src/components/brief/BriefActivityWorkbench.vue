@@ -36,7 +36,18 @@ function selectMode(value: "business" | "voucher") {
   }
 }
 
-function toggleVoucher(number: string) {
+function toggleVoucher(number: string, event: MouseEvent) {
+  const selection = window.getSelection();
+  const target = event.currentTarget;
+  if (
+    event.detail > 0 &&
+    selection &&
+    !selection.isCollapsed &&
+    target instanceof Node &&
+    (target.contains(selection.anchorNode) || target.contains(selection.focusNode))
+  ) {
+    return;
+  }
   selectedVoucherNumber.value = selectedVoucherNumber.value === number ? "" : number;
 }
 
@@ -177,7 +188,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
             class="voucher-row"
             type="button"
             :aria-expanded="selectedVoucherNumber === voucher.number"
-            @click="toggleVoucher(voucher.number)"
+            @click="toggleVoucher(voucher.number, $event)"
           >
             <strong>{{ voucher.number }}</strong>
             <span class="voucher-type">{{ voucher.type }}</span>
@@ -582,6 +593,7 @@ h3 {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  user-select: text;
 }
 
 .voucher-type {
