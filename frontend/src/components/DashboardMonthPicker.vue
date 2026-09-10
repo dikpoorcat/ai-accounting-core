@@ -126,7 +126,7 @@ function monthLabel(year: number, month: number, period?: DashboardPeriod) {
         </div>
 
         <div class="quarter-labels" aria-hidden="true">
-          <span>Q1</span><span>Q2</span><span>Q3</span><span>Q4</span>
+          <span>一季度</span><span>二季度</span><span>三季度</span><span>四季度</span>
         </div>
 
         <div class="month-grid">

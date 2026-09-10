@@ -637,7 +637,13 @@ onBeforeUnmount(() => {
                   <tr v-for="(item, index) in visibleMovements" :key="`${index}-${item.reference}-${item.account_code}`">
                     <td class="date-column">{{ formatDate(item.date) }}</td>
                     <td class="account-column">{{ item.account_name }}（{{ item.account_code }}）</td>
-                    <td>{{ item.type }} · {{ item.summary }}<template v-if="item.internal_transfer"> · 账户互转</template></td>
+                    <td>
+                      {{ item.type }} · {{ item.display_summary || item.summary }}<template v-if="item.internal_transfer"> · 账户互转</template>
+                      <details v-if="item.display_summary && item.display_summary !== item.summary">
+                        <summary>查看原始摘要（上方概述根据业务事实生成）</summary>
+                        <p>{{ item.summary }}</p>
+                      </details>
+                    </td>
                     <td class="party-column">{{ item.party }}</td>
                     <td class="direction-column"><span class="direction" :class="item.direction">{{ item.direction === "inflow" ? "流入" : "流出" }}</span></td>
                     <td class="number amount-column">{{ movementAmount(item.direction, item.amount_fen) }}</td>

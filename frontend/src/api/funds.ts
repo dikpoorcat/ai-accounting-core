@@ -73,6 +73,7 @@ export interface FundMovement {
   reference: string;
   type: string;
   summary: string;
+  display_summary: string;
   party: string;
   internal_transfer: boolean;
   component_kinds: string[];

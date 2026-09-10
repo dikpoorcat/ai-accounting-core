@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from .bank_statement_service import BankStatementService
 from .dashboard_common import (
+    component_presentation,
     dashboard_session,
+    display_business_summary,
     list_dashboard_periods,
     period_view,
     resolve_dashboard_organization,
@@ -29,42 +31,6 @@ from .models import (
 )
 
 FINAL_VOUCHER_STATUSES = ("posted", "reversed")
-
-_COMPONENT_LABELS = {
-    "expense": "费用",
-    "service_sale": "服务收入",
-    "customer_advance": "客户预收款",
-    "supplier_advance": "供应商预付款",
-    "supplier_advance_application": "供应商预付款冲抵",
-    "supplier_advance_refund": "供应商预付款退回",
-    "project_cost": "项目阶段成本",
-    "project_cost_expense": "项目成本转费用",
-    "service_fulfillment": "服务履约确认",
-    "customer_refund": "客户退款",
-    "receivable_settlement": "应收款结算",
-    "payable_settlement": "应付款结算",
-    "pass_through": "代收代付",
-    "debt_transfer": "债务转移",
-    "refundable_deposit": "可退保证金",
-    "owner_funding": "股东投入或借款",
-    "other_income": "其他收入",
-    "managed_account_return": "备用金退回",
-    "expense_recovery": "费用退回",
-    "expense_reserve_settlement": "费用备用金结算",
-    "funds_transfer": "资金调拨",
-    "tax_settlement": "税费结算",
-    "salary_settlement": "工资与社保结算",
-    "labor_settlement": "个人劳务结算",
-    "labor_tax_settlement": "劳务个税结算",
-    "fixed_asset_acquisition": "固定资产购置",
-    "fixed_asset_disposal": "固定资产处置",
-    "intangible_asset_acquisition": "无形资产购置",
-    "intangible_asset_retirement": "无形资产退役",
-    "borrowing_drawdown": "借款到账",
-    "borrowing_interest_payment": "借款利息支付",
-    "borrowing_principal_repayment": "借款本金归还",
-}
-
 
 def _bank_activity_party(
     transaction: BankTransaction,
@@ -403,8 +369,9 @@ def build_funds_data(
         allocated_components = [component for component in allocated_components if component]
         kinds = list(dict.fromkeys(component.kind for component in allocated_components))
         internal_transfer = "funds_transfer" in kinds
-        labels = [_COMPONENT_LABELS.get(kind, kind) for kind in kinds]
+        labels = [component_presentation(kind)[1] for kind in kinds]
         event_label = "、".join(labels) or "资金结算"
+        summary = " ".join((row.description or row.memo or event_label).strip().split())
         classification = row.business_class or row.system_role
         movements.append(
             {
@@ -425,8 +392,9 @@ def build_funds_data(
                 "signed_amount_fen": signed_fen,
                 "reference": row.voucher_number,
                 "type": event_label,
-                "summary": " ".join(
-                    (row.description or row.memo or event_label).strip().split()
+                "summary": summary,
+                "display_summary": display_business_summary(
+                    summary, label=event_label, posting_date=activity_date, amount_fen=amount_fen
                 ),
                 "party": "、".join(sorted(parties_by_event.get(row.event_id, set()))) or "—",
                 "component_kinds": kinds,

@@ -23,8 +23,12 @@ class BusinessMetadata(BaseModel):
     counterparty: CounterpartyRef | None = None
     beneficiary: CounterpartyRef | None = None
     handler: CounterpartyRef | None = None
-    purpose: str | None = Field(default=None, max_length=2000)
-    description: str | None = Field(default=None, max_length=2000)
+    purpose: str | None = Field(
+        default=None, max_length=2000, description="可选用途；AI撰写时使用简体中文。"
+    )
+    description: str | None = Field(
+        default=None, max_length=2000, description="可选业务说明；AI撰写时使用简体中文。"
+    )
     project_reference: str | None = Field(default=None, max_length=200)
     contract_reference: str | None = Field(default=None, max_length=500)
     acceptance_reference: str | None = Field(default=None, max_length=500)
@@ -32,9 +36,15 @@ class BusinessMetadata(BaseModel):
     refund_reference: str | None = Field(default=None, max_length=500)
     assessment_reference: str | None = Field(default=None, max_length=500)
     declaration_reference: str | None = Field(default=None, max_length=500)
-    confirmation_note: str | None = Field(default=None, max_length=2000)
+    confirmation_note: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="可选确认说明；AI整理时使用简体中文，忠实保留事实。",
+    )
     capitalization_basis: str | None = Field(default=None, max_length=2000)
-    reason: str | None = Field(default=None, max_length=2000)
+    reason: str | None = Field(
+        default=None, max_length=2000, description="可选原因说明；AI撰写时使用简体中文。"
+    )
     reason_code: str | None = Field(default=None, max_length=100)
     asset_code: str | None = Field(default=None, max_length=100)
     asset_name: str | None = Field(default=None, max_length=200)

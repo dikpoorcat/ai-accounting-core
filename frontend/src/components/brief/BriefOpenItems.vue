@@ -92,7 +92,7 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
         </summary>
         <div class="category-detail">
           <div class="party-groups">
-            <article v-for="group in category.groups" :key="group.party">
+            <article v-for="group in category.groups" :key="group.key">
               <span>{{ group.party }}</span>
               <strong>{{ formatFen(group.outstanding_fen) }}</strong>
               <small>
@@ -119,10 +119,7 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
                 </tr>
               </thead>
               <tbody>
-                <tr
-                  v-for="item in category.items"
-                  :key="`${item.voucher}-${item.party}-${item.description}`"
-                >
+                <tr v-for="item in category.items" :key="item.id">
                   <td data-label="凭证">{{ item.voucher }}</td>
                   <td data-label="往来对象">{{ item.party }}</td>
                   <td data-label="事项">{{ item.description }}</td>

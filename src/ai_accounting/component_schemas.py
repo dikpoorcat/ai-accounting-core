@@ -602,7 +602,14 @@ class RecordEventRequest(BaseModel):
     org_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=200)
     posting_date: date
-    description: str = Field(default="", max_length=2000)
+    description: str = Field(
+        default="",
+        max_length=2000,
+        description=(
+            "面向负责人的中文业务摘要；AI撰写时使用简体中文，保留原有名称和必要缩写，"
+            "准确表述已核对的业务事实。不得直接提交英文工作笔记；不改变原始证据。"
+        ),
+    )
     evidence_references: list[uuid.UUID] = Field(default_factory=list)
     components: list[BusinessComponent] = Field(min_length=1)
     funds: list[FundsSettlement] = Field(default_factory=list)

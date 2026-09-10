@@ -9,8 +9,19 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v43"
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.14"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v45"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.15"
+
+USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION = (
+    "面向负责人的交流、业务摘要、用途、确认说明及其他由AI撰写的展示文本统一使用简体中文。"
+    "此要求同样适用于正式工具请求中的description、metadata.description、purpose、"
+    "confirmation_note和reason等持久化说明，不仅适用于聊天回复。提交前检查这些文字；"
+    "英文工作笔记先根据已核对事实改写为中文，再预览和提交，不新增或改变金额、日期及业务含义。"
+    "业务类型和状态使用内核提供的中文名称；API字段名、枚举、组件键、编号与哈希保持协议原值，"
+    "不把英文技术代码直接当作业务名称。原始证据、银行原始摘要、外文名称及专有缩写保持原样，"
+    "不得为统一显示语言改写原件或已入账凭证。说明文字的语言不是缺少核算事实，不得向负责人"
+    "追问或为翻译而更正、冲正业务。"
+)
 
 EVIDENCE_RETENTION_RUNTIME_INSTRUCTION = (
     "finance_register_evidence用于留存负责人提供的原始文件、外部回执，以及补充或更改业务事实的"
@@ -273,6 +284,7 @@ MCP_SERVER_INSTRUCTIONS = (
     f"{FACT_RESOLUTION_RUNTIME_INSTRUCTION}"
     f"{CORRECTION_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
+    f"{USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION}"
     f"{OWNER_WORKFLOW_RUNTIME_INSTRUCTION}"
     f"{HISTORICAL_OBLIGATION_RUNTIME_INSTRUCTION}"
     f"{PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION}"
@@ -298,6 +310,10 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "user_facing_language_policy": {
+            "language": "zh-CN",
+            "instruction": USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION,
+        },
         "evidence_retention_policy": {
             "tool": "finance_register_evidence",
             "instruction": EVIDENCE_RETENTION_RUNTIME_INSTRUCTION,

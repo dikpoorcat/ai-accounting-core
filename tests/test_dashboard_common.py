@@ -9,10 +9,28 @@ import pytest
 from ai_accounting.dashboard_common import (
     DashboardDataError,
     _quarter_views,
+    display_business_summary,
     period_view,
     resolve_dashboard_period,
 )
 from ai_accounting.models import AccountingPeriod
+
+
+def test_english_summary_display_uses_ledger_facts_and_exact_integer_amounts() -> None:
+    original = "Pay out the RMB 23,426.50 pass-through collection through two bank movements."
+    assert display_business_summary(
+        original, label="应付款结算", posting_date="2026-08-31", amount_fen=2_342_650
+    ) == "2026-08-31，应付款结算，金额23,426.50元。"
+    assert display_business_summary(
+        "Reversal", label="费用", posting_date="2026-08-31", amount_fen=-101
+    ) == "2026-08-31，费用，金额-1.01元。"
+
+
+@pytest.mark.parametrize("original", ["", "工资计提", "通过TIPS缴款给ACME公司", "原件编号202608"])
+def test_chinese_summary_and_original_names_are_preserved(original: str) -> None:
+    assert display_business_summary(
+        original, label="应付款结算", posting_date="2026-08-31", amount_fen=100
+    ) == original
 
 
 def _period(year: int, month: int, *, status: str = "open") -> AccountingPeriod:

@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
 from .business_metadata import metadata_projection
 from .dashboard_common import (
+    component_presentation,
     dashboard_session,
+    display_business_summary,
     list_dashboard_periods,
     period_view,
     resolve_dashboard_organization,
@@ -46,46 +48,6 @@ ACTIVITY_GROUPS = {
     "fund_movement": "资金调拨与保证金",
     "correction": "更正与冲正",
     "other": "其他业务",
-}
-
-COMPONENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
-    "expense": ("expense_supplier", "费用"),
-    "service_sale": ("income_customer", "服务收入"),
-    "customer_advance": ("income_customer", "客户预收款"),
-    "supplier_advance": ("expense_supplier", "供应商预付款"),
-    "supplier_advance_application": ("expense_supplier", "供应商预付款冲抵"),
-    "supplier_advance_refund": ("expense_supplier", "供应商预付款退回"),
-    "project_cost": ("assets", "项目阶段成本"),
-    "project_cost_expense": ("assets", "项目成本转费用"),
-    "service_fulfillment": ("income_customer", "服务履约确认"),
-    "customer_refund": ("income_customer", "客户退款"),
-    "receivable_settlement": ("income_customer", "应收款结算"),
-    "payable_settlement": ("expense_supplier", "应付款结算"),
-    "pass_through": ("fund_movement", "代收代付"),
-    "debt_transfer": ("fund_movement", "债务转移"),
-    "refundable_deposit": ("fund_movement", "可退保证金"),
-    "owner_funding": ("financing_owner", "股东投入或借款"),
-    "other_income": ("income_customer", "其他收入"),
-    "managed_account_return": ("expense_supplier", "备用金退回"),
-    "expense_recovery": ("expense_supplier", "费用退回"),
-    "expense_reserve_settlement": ("expense_supplier", "费用备用金结算"),
-    "funds_transfer": ("fund_movement", "资金调拨"),
-    "tax_settlement": ("tax", "税费结算"),
-    "salary_settlement": ("payroll", "工资与社保结算"),
-    "labor_settlement": ("labor", "个人劳务结算"),
-    "labor_tax_settlement": ("labor", "劳务个税结算"),
-    "fixed_asset_acquisition": ("assets", "固定资产购置"),
-    "fixed_asset_activation": ("assets", "固定资产启用"),
-    "fixed_asset_depreciation": ("assets", "固定资产折旧"),
-    "fixed_asset_depreciation_batch": ("assets", "固定资产折旧汇总"),
-    "fixed_asset_disposal": ("assets", "固定资产处置"),
-    "intangible_asset_acquisition": ("assets", "无形资产购置"),
-    "intangible_asset_amortization": ("assets", "无形资产摊销"),
-    "intangible_asset_retirement": ("assets", "无形资产退役"),
-    "borrowing_drawdown": ("financing_owner", "借款到账"),
-    "borrowing_interest_accrual": ("financing_owner", "借款利息计提"),
-    "borrowing_interest_payment": ("financing_owner", "借款利息支付"),
-    "borrowing_principal_repayment": ("financing_owner", "借款本金归还"),
 }
 
 OPEN_ITEM_CONFIGS = {
@@ -277,10 +239,6 @@ def _counterparty_names(session: Session, org_id: uuid.UUID) -> dict[uuid.UUID, 
     return result
 
 
-def _component_presentation(kind: str) -> tuple[str, str]:
-    return COMPONENT_PRESENTATIONS.get(kind, ("other", kind or "其他业务"))
-
-
 def _source_references(
     facts: dict[str, Any], derived: dict[str, Any] | None = None
 ) -> list[dict[str, str]]:
@@ -336,7 +294,7 @@ def _component_view(
     component_lines = [line for line in lines if line["component_id"] == str(component.id)]
     debit_fen = sum(line["debit_fen"] for line in component_lines)
     credit_fen = sum(line["credit_fen"] for line in component_lines)
-    group, label = _component_presentation(component.kind)
+    group, label = component_presentation(component.kind)
     facts = component.facts if isinstance(component.facts, dict) else {}
     return {
         "id": str(component.id),
@@ -421,10 +379,17 @@ def _load_vouchers(
         ]
         business_components = [item for item in components if item["kind"] != "funds"]
         component_labels = list(dict.fromkeys(item["label"] for item in business_components))
+        event_label = "、".join(component_labels) or "其他业务"
+        display_summary = display_business_summary(
+            voucher.description,
+            label=event_label,
+            posting_date=voucher.posting_date.isoformat(),
+            amount_fen=debit_fen,
+        )
         item = {
             "number": voucher.voucher_number,
             "date": voucher.posting_date.isoformat(),
-            "type": "、".join(component_labels) or "其他业务",
+            "type": event_label,
             "status": "reversed" if voucher.event.status == "reversed" else voucher.status,
             "state": "冲正入账"
             if voucher.reversal_of_voucher_id is not None
@@ -433,7 +398,8 @@ def _load_vouchers(
             else "已入账",
             "is_reversal": voucher.reversal_of_voucher_id is not None,
             "summary": voucher.description,
-            "list_summary": _first_summary_clause(voucher.description),
+            "display_summary": display_summary,
+            "list_summary": _first_summary_clause(display_summary),
             "amount_fen": debit_fen,
             "parties": parties,
             "evidence": sorted(item.original_name for item in voucher.event.evidence),
@@ -489,6 +455,7 @@ def _build_activity_groups(
                     "title": event_label,
                     "subject": item["list_summary"],
                     "description": item["summary"],
+                    "display_description": item.get("display_summary", item["summary"]),
                     "amount_fen": sum(component["amount_fen"] for component in components)
                     or item["amount_fen"],
                     "state": item["state"],
@@ -638,7 +605,6 @@ def _load_open_items(
             Counterparty.name,
             Counterparty.kind,
             source_reversal.posting_date,
-            BusinessEvent.idempotency_key,
             BusinessEventComponent.key,
         )
         .join(
@@ -710,7 +676,6 @@ def _load_open_items(
         party,
         party_kind,
         reversal_date,
-        event_key,
         component_key,
     ) in rows:
         if reversal_date is not None and (as_of_date is None or reversal_date <= as_of_date):
@@ -746,11 +711,23 @@ def _load_open_items(
             category = "supplier_payables"
         else:
             category = "other_payables"
+        party_name = (counterparties.get(open_item.counterparty_id, party) or "").strip()
+        if not party_name and component_key:
+            management = metadata_projection(
+                session, org_id, open_item.source_event_id, component_key
+            )
+            party_name = (management["display_names"].get("counterparty") or "").strip()
+        # Missing names must not expose business keys or merge unrelated open items.
+        party_key = f"party:{party_name}" if party_name else f"open_item:{open_item.id}"
+        party_label = party_name or (
+            f"未填写往来对象（{voucher_number}）" if voucher_number else "未填写往来对象"
+        )
         buckets[category].append(
             {
+                "id": str(open_item.id),
                 "voucher": voucher_number or "—",
-                "party": counterparties.get(open_item.counterparty_id, party)
-                or f"业务 {event_key}/{component_key}/{open_item.component_key}",
+                "party_key": party_key,
+                "party": party_label,
                 "description": description,
                 "status": "partial" if settled_fen else "open",
                 "outstanding_fen": outstanding_fen,
@@ -763,8 +740,9 @@ def _summarize_open_items(items: list[dict[str, Any]]) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
     for item in items:
         group = groups.setdefault(
-            item["party"],
+            item["party_key"],
             {
+                "key": item["party_key"],
                 "party": item["party"],
                 "count": 0,
                 "outstanding_fen": 0,

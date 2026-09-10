@@ -23,6 +23,8 @@ continue this accounting workflow only when the user also requests accounting wo
    Before registering evidence or cleaning up temporary processing files, apply its
    `evidence_retention_policy` to decide what to retain, reference, and remove. The same policy
    governs original materials, owner confirmations, and intermediate processing results.
+   Apply `user_facing_language_policy` to both replies and persisted business descriptions before
+   submitting tool requests; it also defines the boundary for original materials and technical codes.
 2. Call `finance_list_companies(include_archived=false)`.
    - If exactly one active company is available, select it for the conversation.
    - If several are available and the user has not already selected one unambiguously, list only

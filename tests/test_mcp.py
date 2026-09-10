@@ -30,6 +30,7 @@ from ai_accounting.agent_contract import (
     OWNER_WORKFLOW_RUNTIME_INSTRUCTION,
     PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION,
     PAYROLL_TAX_IMPORT_RUNTIME_INSTRUCTION,
+    USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION,
 )
 from ai_accounting.mcp_server import mcp
 
@@ -235,6 +236,10 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert preview_tool.annotations.readOnlyHint is True
     assert "salary_settlement" in schema["component_types"]
     assert protocol["version"] == AI_OPERATING_PROTOCOL_VERSION
+    language = protocol["user_facing_language_policy"]
+    assert language["language"] == "zh-CN"
+    assert language["instruction"] == USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION
+    assert language["instruction"] in mcp.instructions
     retention = protocol["evidence_retention_policy"]
     assert retention["tool"] == "finance_register_evidence"
     assert retention["instruction"] == EVIDENCE_RETENTION_RUNTIME_INSTRUCTION
@@ -321,7 +326,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "resume_queue_after": "blocker_resolved_and_operation_continued",
         "needs_information_is_technical_error": False,
     }
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.14"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.15"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
     assert protocol["owner_workflow"]["target_selection"] == (

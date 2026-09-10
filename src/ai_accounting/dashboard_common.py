@@ -15,6 +15,70 @@ from .models import AccountingPeriod, Organization
 _PERIOD_KEY_PATTERN = re.compile(r"(?P<year>[0-9]{4})-(?P<month>0[1-9]|1[0-2])")
 
 
+COMPONENT_PRESENTATIONS: dict[str, tuple[str, str]] = {
+    "expense": ("expense_supplier", "费用"),
+    "service_sale": ("income_customer", "服务收入"),
+    "customer_advance": ("income_customer", "客户预收款"),
+    "supplier_advance": ("expense_supplier", "供应商预付款"),
+    "supplier_advance_application": ("expense_supplier", "供应商预付款冲抵"),
+    "supplier_advance_refund": ("expense_supplier", "供应商预付款退回"),
+    "project_cost": ("assets", "项目阶段成本"),
+    "project_cost_expense": ("assets", "项目成本转费用"),
+    "service_fulfillment": ("income_customer", "服务履约确认"),
+    "customer_refund": ("income_customer", "客户退款"),
+    "receivable_settlement": ("income_customer", "应收款结算"),
+    "payable_settlement": ("expense_supplier", "应付款结算"),
+    "pass_through": ("fund_movement", "代收代付"),
+    "debt_transfer": ("fund_movement", "债务转移"),
+    "refundable_deposit": ("fund_movement", "可退保证金"),
+    "owner_funding": ("financing_owner", "股东投入或借款"),
+    "other_income": ("income_customer", "其他收入"),
+    "managed_account_return": ("expense_supplier", "备用金退回"),
+    "expense_recovery": ("expense_supplier", "费用退回"),
+    "expense_reserve_settlement": ("expense_supplier", "费用备用金结算"),
+    "funds_transfer": ("fund_movement", "资金调拨"),
+    "tax_settlement": ("tax", "税费结算"),
+    "salary_settlement": ("payroll", "工资与社保结算"),
+    "labor_settlement": ("labor", "个人劳务结算"),
+    "labor_tax_settlement": ("labor", "劳务个税结算"),
+    "fixed_asset_acquisition": ("assets", "固定资产购置"),
+    "fixed_asset_activation": ("assets", "固定资产启用"),
+    "fixed_asset_depreciation": ("assets", "固定资产折旧"),
+    "fixed_asset_depreciation_batch": ("assets", "固定资产折旧汇总"),
+    "fixed_asset_disposal": ("assets", "固定资产处置"),
+    "intangible_asset_acquisition": ("assets", "无形资产购置"),
+    "intangible_asset_amortization": ("assets", "无形资产摊销"),
+    "intangible_asset_retirement": ("assets", "无形资产退役"),
+    "borrowing_drawdown": ("financing_owner", "借款到账"),
+    "borrowing_interest_accrual": ("financing_owner", "借款利息计提"),
+    "borrowing_interest_payment": ("financing_owner", "借款利息支付"),
+    "borrowing_principal_repayment": ("financing_owner", "借款本金归还"),
+    "tax_relief": ("tax", "税费减免"),
+    "enterprise_income_tax_assessment": ("tax", "企业所得税计提"),
+    "enterprise_income_tax_result": ("tax", "企业所得税申报结果调整"),
+    "payroll_accrual": ("payroll", "工资计提"),
+    "labor_remuneration_accrual": ("labor", "个人劳务计提"),
+    "payroll_contribution_supplement": ("payroll", "社保公积金补缴"),
+    "funds": ("fund_movement", "资金结算"),
+}
+
+
+def component_presentation(kind: str) -> tuple[str, str]:
+    """Keep owner-facing business names Chinese, including unknown future kinds."""
+    return COMPONENT_PRESENTATIONS.get(kind, ("other", "其他业务"))
+
+
+def display_business_summary(
+    original: str, *, label: str, posting_date: str, amount_fen: int
+) -> str:
+    """Describe foreign-language notes from ledger facts, without translating or rewriting them."""
+    if not re.search(r"[A-Za-z]", original) or re.search(r"[\u3400-\u9fff]", original):
+        return original
+    whole, cents = divmod(abs(amount_fen), 100)
+    amount = f"{'-' if amount_fen < 0 else ''}{whole:,}.{cents:02d}"
+    return f"{posting_date}，{label}，金额{amount}元。"
+
+
 class DashboardDataError(ValueError):
     """A stable, user-safe error raised by dashboard read models."""
 

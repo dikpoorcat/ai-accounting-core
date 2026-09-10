@@ -1,12 +1,32 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
+from ai_accounting.component_schemas import RecordEventRequest
 from ai_accounting.dashboard_brief import (
+    ACTIVITY_GROUPS,
     _build_activity_groups,
     _component_view,
     _source_references,
 )
+from ai_accounting.dashboard_common import COMPONENT_PRESENTATIONS, component_presentation
 from ai_accounting.dashboard_funds import _bank_activity_party
+
+
+def test_all_supported_components_have_chinese_dashboard_names() -> None:
+    components = RecordEventRequest.model_json_schema()["properties"]["components"]["items"]
+    supported_kinds = set(components["discriminator"]["mapping"])
+    assert set(COMPONENT_PRESENTATIONS) == supported_kinds | {"funds"}
+    for kind in supported_kinds | {"funds"}:
+        group, label = component_presentation(kind)
+        assert group in ACTIVITY_GROUPS
+        assert label and all("\u4e00" <= character <= "\u9fff" for character in label)
+
+
+@pytest.mark.parametrize("kind", ["future_component", "", "payroll_accrual_v2"])
+def test_unknown_components_never_expose_technical_codes_as_names(kind: str) -> None:
+    assert component_presentation(kind) == ("other", "其他业务")
 
 
 def test_mixed_event_is_projected_into_every_component_business_area() -> None:

@@ -43,6 +43,7 @@ export interface BriefVoucher {
   type: string;
   state: string;
   summary: string;
+  display_summary: string;
   list_summary: string;
   amount_fen: string;
   evidence: string[];
@@ -57,6 +58,7 @@ export interface BriefActivityRow {
   title: string;
   subject: string;
   description: string;
+  display_description: string;
   amount_fen: string;
   state: string;
   party: string;
@@ -114,7 +116,9 @@ export interface BriefPosition {
 }
 
 export interface BriefOpenItem {
+  id: string;
   voucher: string;
+  party_key: string;
   party: string;
   description: string;
   status: "open" | "partial" | string;
@@ -129,6 +133,7 @@ export interface BriefOpenCategory {
   count: number;
   outstanding_fen: string;
   groups: Array<{
+    key: string;
     party: string;
     count: number;
     outstanding_fen: string;

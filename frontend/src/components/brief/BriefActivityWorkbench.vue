@@ -121,7 +121,11 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                 <small>{{ formatDate(item.date) }} · {{ item.reference }}</small>
                 <span class="event-type">{{ item.title }}</span>
                 <strong class="event-subject">{{ item.subject || item.title }}</strong>
-                <span class="event-description">{{ item.description }}</span>
+                <span class="event-description">{{ item.display_description || item.description }}</span>
+                <details v-if="item.display_description && item.display_description !== item.description" class="disclosure">
+                  <summary>查看原始摘要（上方概述根据业务事实生成）</summary>
+                  <p>{{ item.description }}</p>
+                </details>
               </div>
               <b>{{ formatFen(item.amount_fen) }}</b>
             </div>
@@ -138,7 +142,6 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
               <ul class="component-list">
                 <li v-for="component in [...item.components, ...item.funds]" :key="component.id">
                   <strong>{{ component.label }}</strong>
-                  <span>{{ component.key }} · {{ component.kind }}</span>
                   <span v-if="component.recognition?.precision === 'month'">按月确认 · {{ component.recognition.period }}</span>
                   <span v-if="component.description">{{ component.description }}</span>
                   <span v-if="component.parties.length">往来：{{ component.parties.join("、") }}</span>
@@ -157,9 +160,13 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                       · 说明：{{ component.management.metadata.description }}
                     </template>
                   </span>
-                  <span v-if="component.source_references.length">
-                    来源：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
-                  </span>
+                  <details class="disclosure">
+                    <summary>查看技术标识</summary>
+                    <p>组件键：{{ component.key }} · 类型代码：{{ component.kind }}</p>
+                    <p v-if="component.source_references.length">
+                      来源标识：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
+                    </p>
+                  </details>
                 </li>
               </ul>
             </details>
@@ -191,7 +198,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
             @click="toggleVoucher(voucher.number, $event)"
           >
             <strong>{{ voucher.number }}</strong>
-            <span class="voucher-type">{{ voucher.type }}</span>
+            <span class="voucher-type" :title="voucher.type">{{ voucher.type }}</span>
             <span class="voucher-row-summary">{{ voucher.list_summary || voucher.summary }}</span>
             <strong class="voucher-row-amount">{{ formatFen(voucher.amount_fen) }}</strong>
             <span class="voucher-toggle">
@@ -208,7 +215,11 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
               <div class="voucher-description">
                 <span class="detail-label">凭证摘要</span>
                 <span class="voucher-detail-meta">凭证状态 · {{ voucher.state }}</span>
-                <p>{{ voucher.summary }}</p>
+                <p>{{ voucher.display_summary || voucher.summary }}</p>
+                <details v-if="voucher.display_summary && voucher.display_summary !== voucher.summary" class="disclosure">
+                  <summary>查看原始摘要（上方概述根据业务事实生成）</summary>
+                  <p>{{ voucher.summary }}</p>
+                </details>
               </div>
               <div class="voucher-balance">
                 <span>借方合计</span>
@@ -224,12 +235,15 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
               <ul class="component-list">
                 <li v-for="component in [...voucher.components, ...voucher.funds]" :key="component.id">
                   <strong>{{ component.label }}</strong>
-                  <span>{{ component.key }} · {{ component.kind }}</span>
                   <span v-if="component.recognition?.precision === 'month'">按月确认 · {{ component.recognition.period }}</span>
                   <span v-if="component.description">{{ component.description }}</span>
-                  <span v-if="component.source_references.length">
-                    来源：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
-                  </span>
+                  <details class="disclosure">
+                    <summary>查看技术标识</summary>
+                    <p>组件键：{{ component.key }} · 类型代码：{{ component.kind }}</p>
+                    <p v-if="component.source_references.length">
+                      来源标识：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
+                    </p>
+                  </details>
                 </li>
               </ul>
             </details>
@@ -597,9 +611,10 @@ h3 {
 }
 
 .voucher-type {
+  min-width: 0;
   color: var(--brief-muted);
   font-size: 12px;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .voucher-row:hover,
@@ -823,6 +838,7 @@ td:first-child small {
     grid-column: 2;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .voucher-row-summary {

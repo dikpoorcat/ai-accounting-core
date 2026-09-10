@@ -13,7 +13,13 @@ from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
 from ai_accounting.dashboard_brief import load_brief_dashboard
 from ai_accounting.database import Base, make_engine
-from ai_accounting.ledger import CashFlowPlan, ComponentPostingPlan, Entry, commit_posting_plan
+from ai_accounting.ledger import (
+    CashFlowPlan,
+    ComponentPostingPlan,
+    Entry,
+    OpenItemPlan,
+    commit_posting_plan,
+)
 from ai_accounting.models import (
     Account,
     AccountingPeriod,
@@ -21,9 +27,11 @@ from ai_accounting.models import (
     AccountingPeriodClose,
     AccountingPeriodCloseCommentary,
     BusinessEvent,
+    BusinessMetadataVersion,
     Counterparty,
     Evidence,
     Organization,
+    Voucher,
 )
 
 
@@ -85,6 +93,7 @@ def _add_owner_contribution(
     *,
     organization: Organization,
     evidence: Evidence,
+    description: str = "测试负责人投入启动资金",
 ) -> None:
     owner = Counterparty(org_id=organization.id, kind="owner", name="测试负责人")
     session.add(owner)
@@ -107,7 +116,7 @@ def _add_owner_contribution(
         idempotency_key="dashboard-brief-owner-contribution",
         event_type="composite",
         status="draft",
-        description="测试负责人投入启动资金",
+        description=description,
         facts={"components": ["capital", "funds.receipt"]},
         business_date=date(2026, 2, 9),
         posting_date=date(2026, 2, 9),
@@ -240,6 +249,43 @@ def test_brief_projects_balanced_month_and_owner_activity(brief_engine: Engine) 
     assert validation_items["period_status"]["state"] == "pending"
 
 
+def test_foreign_summary_has_chinese_display_without_rewriting_voucher(
+    brief_engine: Engine,
+) -> None:
+    from ai_accounting.dashboard_funds import load_funds_dashboard
+
+    original = "Owner contributed RMB 100.00 as startup capital."
+    with Session(brief_engine) as session, session.begin():
+        organization, evidence = _seed_organization(session)
+        _generate_period(
+            session, organization=organization, evidence=evidence, period_key="2026-02"
+        )
+        _add_owner_contribution(
+            session, organization=organization, evidence=evidence, description=original
+        )
+        org_id = organization.id
+
+    data = load_brief_dashboard(brief_engine, period_key="2026-02", org_id=org_id)["data"]
+    expected = "2026-02-09，股东投入或借款，金额100.00元。"
+    voucher = data["vouchers"][0]
+    assert voucher["summary"] == original
+    assert voucher["display_summary"] == expected
+    assert voucher["list_summary"] == expected.rstrip("。")
+    activity = data["activity_groups"][0]["rows"][0]
+    assert activity["description"] == original
+    assert activity["display_description"] == expected
+    assert voucher["amount_fen"] == 10_000
+    assert voucher["balanced"] is True
+
+    funds = load_funds_dashboard(brief_engine, period_key="2026-02", org_id=org_id)["data"]
+    movement = funds["movements"][0]
+    assert movement["summary"] == original
+    assert movement["display_summary"] == expected
+    with Session(brief_engine) as session:
+        assert session.scalar(select(Voucher.description)) == original
+        assert session.scalar(select(BusinessEvent.description)) == original
+
+
 def test_brief_returns_stored_close_management_commentary(brief_engine: Engine) -> None:
     expected = "公司完成启动投入，但尚未形成经营造血能力；下一阶段应关注稳定收入。"
     with Session(brief_engine) as session, session.begin():
@@ -348,3 +394,112 @@ def test_brief_defaults_to_latest_generated_period_even_when_empty(
     assert result["data"]["activity_groups"] == []
     assert result["data"]["position"]["assets_fen"] == 10_000
     assert result["data"]["position"]["capital_fen"] == 10_000
+
+
+@pytest.mark.parametrize("party_source", ["ledger", "metadata_name", "metadata_id", "missing"])
+def test_open_items_use_readable_names_without_merging_unnamed_items(
+    brief_engine: Engine, party_source: str
+) -> None:
+    with Session(brief_engine) as session, session.begin():
+        organization, evidence = _seed_organization(session)
+        _generate_period(
+            session, organization=organization, evidence=evidence, period_key="2026-02"
+        )
+        party = Counterparty(org_id=organization.id, kind="customer", name="测试客户")
+        session.add(party)
+        session.flush()
+        party_id = party.id if party_source == "ledger" else None
+        event = BusinessEvent(
+            org_id=organization.id,
+            idempotency_key="semantic-replay:" + "f" * 40,
+            event_type="composite",
+            status="draft",
+            description="测试客户服务收入（摘要不能用来推断往来对象）",
+            facts={"components": ["sale1", "sale2"]},
+            business_date=date(2026, 2, 9),
+            posting_date=date(2026, 2, 9),
+            rule_trace=[],
+            evidence=[evidence],
+        )
+        voucher = commit_posting_plan(
+            session,
+            event=event,
+            posting_date=event.posting_date,
+            description=event.description,
+            components=[
+                ComponentPostingPlan(
+                    key=key,
+                    kind="service_sale",
+                    facts={"key": key, "kind": "service_sale", "amount_fen": amount},
+                    derived={},
+                    entries=[
+                        Entry(
+                            account_role="accounts_receivable",
+                            counterparty_id=party_id,
+                            debit_fen=amount,
+                        ),
+                        Entry(account_role="service_revenue", credit_fen=amount),
+                    ],
+                    cash_flows=[],
+                    open_items=[
+                        OpenItemPlan(
+                            counterparty_id=party_id,
+                            item_type="receivable",
+                            original_amount_fen=amount,
+                            account_role="accounts_receivable",
+                        )
+                    ],
+                    rule_version="test-components",
+                )
+                for key, amount in [("sale1", 10_000), ("sale2", 20_000)]
+            ],
+        )
+        if party_source != "missing":
+            for key in ("sale1", "sale2"):
+                for version in (1, 2):
+                    reference = (
+                        {"id": str(party.id)}
+                        if party_source == "metadata_id"
+                        else {"kind": "customer", "name": party.name}
+                    )
+                    if version == 1 or party_source == "ledger":
+                        reference = {"kind": "customer", "name": "其他管理名称"}
+                    session.add(
+                        BusinessMetadataVersion(
+                            org_id=organization.id,
+                            event_id=event.id,
+                            component_key=key,
+                            version=version,
+                            metadata_values={"counterparty": reference},
+                            idempotency_key=f"metadata-{key}-{version}",
+                            request_hash="a" * 64,
+                        )
+                    )
+        organization_id = organization.id
+        voucher_number = voucher.voucher_number
+        original_facts = event.facts
+
+    result = load_brief_dashboard(brief_engine, period_key="2026-02", org_id=organization_id)
+    open_items = result["data"]["open_items"]
+    category = next(
+        item for item in open_items["categories"] if item["key"] == "customer_receivables"
+    )
+    expected_name = (
+        f"未填写往来对象（{voucher_number}）" if party_source == "missing" else "测试客户"
+    )
+    assert {item["party"] for item in category["items"]} == {expected_name}
+    assert {group["party"] for group in category["groups"]} == {expected_name}
+    assert len({item["id"] for item in category["items"]}) == 2
+    assert len(category["groups"]) == (2 if party_source == "missing" else 1)
+    assert len({group["key"] for group in category["groups"]}) == len(category["groups"])
+    assert sum(group["count"] for group in category["groups"]) == 2
+    assert sum(group["outstanding_fen"] for group in category["groups"]) == 30_000
+    assert open_items["receivable_fen"] == 30_000
+    assert open_items["receivable_count"] == 2
+    assert open_items["current_outstanding"]["receivable_fen"] == 30_000
+    with Session(brief_engine) as session:
+        stored = session.scalar(
+            select(BusinessEvent).where(BusinessEvent.org_id == organization_id)
+        )
+        assert stored.facts == original_facts
+        assert stored.description == "测试客户服务收入（摘要不能用来推断往来对象）"

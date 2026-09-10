@@ -250,6 +250,18 @@ Set-Location ..
 
 需要新增同类明细科目时使用 `finance_configure_account` 配置受控 `business_class`。`system_role` 只标识内核已有能力的默认科目；公共接口不接受任意科目、借贷方向或自由分录行。所有金额均为整数“分”，日期均为 ISO `YYYY-MM-DD`。
 
+### 界面与业务说明语言
+
+负责人界面的业务名称、状态与系统说明统一使用简体中文。经营简报和资金页共享
+`dashboard_common.COMPONENT_PRESENTATIONS`，测试从正式组件 Schema 枚举全部业务类型，
+检查中文名称完整性；未知类型使用中文兜底，技术代码只在展开的技术信息中展示。
+
+AI撰写的业务摘要、用途及确认说明遵守运行协议 `user_facing_language_policy`，在预览、
+正式提交前使用中文准确描述已核对事实。原始证据、银行原始摘要、外文名称和必要缩写保持原样。
+经营简报与资金页对不含汉字的英文历史摘要按业务类型、日期和金额生成中文展示概述，原文仍可展开
+查看，数据库中的业务与凭证摘要保持不变；该概述不冒充原文的完整翻译。中英文混合的原有说明
+保留原文，避免误改名称或缩写。此展示处理不新增入账条件，也不触发会计更正。
+
 ### 证据与临时处理文件
 
 留存规则由 `finance_get_event_schema` 返回的 `agent_operating_protocol.evidence_retention_policy`
