@@ -144,8 +144,20 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
     management_commentary_context_hash: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "经营结论生成依据，复用关账预览 assistant_review_checklist.management_commentary."
+            "context_hash；由 AI 提交，不向负责人索要。"
+        ),
     )
-    management_commentary: str | None = Field(default=None, min_length=1, max_length=1200)
+    management_commentary: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1200,
+        description=(
+            "AI 必须依据关账预览的 context、instruction 和 success_criteria 生成并提交的"
+            "经营结论，供负责人关账前审阅；属于关账交付内容，不是负责人需补充的核算事实。"
+        ),
+    )
     owner_approval_id: uuid.UUID | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
     review_facts: AccountingPeriodReviewFacts = Field(default_factory=AccountingPeriodReviewFacts)
@@ -171,7 +183,7 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
             )
             if getattr(self, name) is None
         ]
-        return (
+        requirements = (
             [
                 AccountingPeriodInformationRequirement(
                     code="ACCOUNTING_PERIOD_CLOSE_CONFIRMATION_REQUIRED",
@@ -184,6 +196,25 @@ class ConfirmAccountingPeriodCloseRequest(PreviewAccountingPeriodCloseRequest):
             if fields
             else []
         )
+        commentary_fields = [
+            name
+            for name in ("management_commentary", "management_commentary_context_hash")
+            if getattr(self, name) is None
+        ]
+        if commentary_fields:
+            requirements.append(
+                AccountingPeriodInformationRequirement(
+                    code="ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED",
+                    message=(
+                        "AI 须依据关账预览 assistant_review_checklist.management_commentary 的 "
+                        "context、instruction 和 success_criteria 生成经营结论，供负责人审阅后，"
+                        "提交原文及 context_hash。此项由 AI 完成，不得要求负责人撰写或提供哈希；"
+                        "无业务或证据不足时如实说明，不能省略或编造经营原因。"
+                    ),
+                    fields=commentary_fields,
+                )
+            )
+        return requirements
 
 
 class GetAccountingPeriodsRequest(BaseModel):

@@ -696,8 +696,7 @@ class AccountingPeriodService:
                 period_id=period.id,
             )
         if (
-            request.management_commentary is not None
-            and snapshot["management_commentary_context_hash"]
+            snapshot["management_commentary_context_hash"]
             != request.management_commentary_context_hash
         ):
             return self._failure_action(
@@ -765,18 +764,17 @@ class AccountingPeriodService:
         )
         self.session.add(close)
         self.session.flush()
-        if request.management_commentary is not None:
-            self.session.add(
-                AccountingPeriodCloseCommentary(
-                    org_id=request.org_id,
-                    close_id=close.id,
-                    commentary=request.management_commentary,
-                    prompt_version=MANAGEMENT_COMMENTARY_PROMPT_VERSION,
-                    context_payload=snapshot["management_commentary_context"],
-                    context_hash=snapshot["management_commentary_context_hash"],
-                    generation_method="close_ai_agent",
-                )
+        self.session.add(
+            AccountingPeriodCloseCommentary(
+                org_id=request.org_id,
+                close_id=close.id,
+                commentary=request.management_commentary,
+                prompt_version=MANAGEMENT_COMMENTARY_PROMPT_VERSION,
+                context_payload=snapshot["management_commentary_context"],
+                context_hash=snapshot["management_commentary_context_hash"],
+                generation_method="close_ai_agent",
             )
+        )
         self.session.add_all(
             [
                 AccountingPeriodCloseSource(
@@ -1087,7 +1085,7 @@ class AccountingPeriodService:
         management_commentary_context = self._management_commentary_context(period)
         management_commentary_context_hash = canonical_sha256(management_commentary_context)
         assistant_review_checklist["management_commentary"] = {
-            "required_for_close": False,
+            "required_for_close": True,
             "prompt_version": MANAGEMENT_COMMENTARY_PROMPT_VERSION,
             "context_hash": management_commentary_context_hash,
             "context": management_commentary_context,
@@ -1117,9 +1115,11 @@ class AccountingPeriodService:
             ),
         }
         assistant_review_checklist["ai_instruction"] += (
-            "经营解读为可选管理信息，可按 management_commentary 的 instruction、"
-            "success_criteria 和 context 生成经营解读，提交时附 commentary "
-            "及 context_hash；不得用看板指标拼接文本代替分析。"
+            "AI 必须按 management_commentary 的 instruction、success_criteria 和 context "
+            "生成经营结论，供负责人关账前审阅，并在确认关账时原样提交 management_commentary "
+            "及 management_commentary_context_hash；不得用看板指标拼接文本代替分析。"
+            "这是 AI 的关账交付职责，不得要求负责人撰写结论或提供哈希；无业务或证据不足时"
+            "须如实说明，不能跳过。"
         )
         previous = prior[-1] if prior else None
         previous_close_hash = None
@@ -3224,6 +3224,16 @@ class AccountingPeriodService:
             close_data["calculation"] = close.calculation
             close_data["period"] = self._period_data(
                 self.session.get(AccountingPeriod, close.period_id)
+            )
+            commentary = self.session.scalar(
+                select(AccountingPeriodCloseCommentary).where(
+                    AccountingPeriodCloseCommentary.org_id == close.org_id,
+                    AccountingPeriodCloseCommentary.close_id == close.id,
+                )
+            )
+            close_data["management_commentary"] = commentary.commentary if commentary else None
+            close_data["management_commentary_context_hash"] = (
+                commentary.context_hash if commentary else None
             )
         return self._result(
             AccountingPeriodResultStatus(action.status),

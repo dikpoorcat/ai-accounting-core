@@ -121,6 +121,8 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_request_accounting_period_close_approval_window",
         "finance_get_accounting_period_close_approval",
         "finance_confirm_accounting_period_close",
+        "finance_preview_period_commentary",
+        "finance_backfill_period_commentary",
         "finance_configure_historical_test_close_mode",
         "finance_confirm_historical_test_period_close",
         "finance_get_accounting_periods",
@@ -514,6 +516,15 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert "不得要求老板逐字段填表" in mcp.instructions
     assert "agent_operating_protocol" in mcp.instructions
     assert "management_commentary" in mcp.instructions
+    assert "AI 必须依据关账预览 management_commentary" in mcp.instructions
+    commentary_step = next(
+        item
+        for item in protocol["required_sequence"]
+        if item["code"] == "generate_period_close_management_commentary"
+    )
+    assert "AI 必须" in commentary_step["instruction"]
+    assert "ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED" in commentary_step["instruction"]
+    assert "不得将生成结论或提供哈希转交负责人" in commentary_step["instruction"]
     assert "一至两个短句的简明综合判断" in mcp.instructions
     assert "不得把看板指标或关账清单简单拼接" in mcp.instructions
     assert "存在阻断时必须先补事实再关账" in mcp.instructions

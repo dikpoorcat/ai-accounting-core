@@ -283,7 +283,10 @@ FINANCIAL_STATEMENT_CLOSE_RUNTIME_INSTRUCTION = (
 CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
     "关账以finance_preview_accounting_period_close的实际账务检查为准：已知工资计提、折旧、摊销、利息、"
     "银行对账、账表一致性及授权备份仍需满足。普通未付款往来可跨月，不能为关账虚构付款。"
-    "经营解读、外部申报进度、人员复核打卡和逐项管理声明属于提示，不是记账或关账的前置条件。"
+    "外部申报进度、人员复核打卡和逐项管理声明属于提示，不是记账或关账的前置条件。"
+    "经营结论是 AI 必须完成的关账交付，不向负责人索要；已关账月份缺失结论时，"
+    "先用 finance_preview_period_commentary 读取冻结依据，再用 finance_backfill_period_commentary "
+    "补写，不重开期间、不重新关账、不改动原凭证或覆盖已有结论。"
     "仅存在未确认试算草稿不代表业务已发生；负责人针对本次关账快照确认完整性，不强制重复逐项声明。"
 )
 
@@ -306,8 +309,10 @@ MCP_SERVER_INSTRUCTIONS = (
     "这是确定性记账内核，不是自由分录接口。调用企业数据工具前先调用 "
     "finance_get_event_schema，并遵守其 agent_operating_protocol。"
     f"{EVIDENCE_FIRST_RUNTIME_INSTRUCTION}"
-    "经营解读为可选管理功能；提供解读时依据 management_commentary 的 context、instruction "
-    "和 success_criteria 生成月度经营解读，并在确认关账时提交解读及 context_hash；"
+    "AI 必须依据关账预览 management_commentary 的 context、instruction 和 success_criteria "
+    "生成月度经营结论，供负责人关账前审阅，并在确认关账时原样提交 management_commentary "
+    "及 management_commentary_context_hash；此项由 AI 完成，不得要求负责人撰写或提供哈希，"
+    "无业务或证据不足时如实说明，不能省略。"
     "解读应形成一至两个短句的简明综合判断，不得把看板指标或关账清单简单拼接成结论。"
     "无法唯一确定时让受控工作流返回 needs_information。"
     f"{CLOSE_OBLIGATION_RUNTIME_INSTRUCTION}"
@@ -814,11 +819,14 @@ def agent_operating_protocol() -> dict[str, Any]:
             {
                 "code": "generate_period_close_management_commentary",
                 "instruction": (
-                    "可按需使用预览提供的 management_commentary 上下文和版本化要求生成"
+                    "AI 必须使用预览提供的 management_commentary 上下文和版本化要求生成"
                     "简短月度经营结论：用一至两个短句概括总体经营结果、最主要驱动和最多一个"
                     "后续关注点；只有理解结论确有必要时才引用关键金额，不得复述看板或关账"
-                    "清单，不得猜测 context 不能证明的原因，并将原文及 context_hash 一并提交"
-                    "给确认关账工具。"
+                    "清单，不得猜测 context 不能证明的原因。供负责人关账前审阅后，将原文及 "
+                    "context_hash 分别作为 management_commentary 和 "
+                    "management_commentary_context_hash 一并提交给确认关账工具。"
+                    "若返回 ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED，由 AI 按预览补齐，"
+                    "不得将生成结论或提供哈希转交负责人；无业务或证据不足时如实说明，不能跳过。"
                 ),
             },
             {

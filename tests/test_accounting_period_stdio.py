@@ -23,6 +23,7 @@ from ai_accounting.accounting_period_schemas import (
 )
 from ai_accounting.accounting_period_service import AccountingPeriodService
 from ai_accounting.coa import seed_organization
+from ai_accounting.dashboard_brief import load_brief_dashboard
 from ai_accounting.database import Base, make_engine, make_session_factory
 from ai_accounting.financial_statement_schemas import (
     ConfirmFinancialStatementOpeningBalanceRequest,
@@ -663,6 +664,28 @@ def test_zero_voucher_month_closes_through_real_stdio(
                     period_id=generated["period_id"],
                     calculation_hash=preview["calculation_hash"],
                 )
+                incomplete = await _call(
+                    client,
+                    "finance_confirm_accounting_period_close",
+                    {
+                        **close_facts,
+                        "calculation_hash": preview["calculation_hash"],
+                        "owner_approval_id": owner_approval_id,
+                        "idempotency_key": "stdio-zero-close-without-commentary",
+                    },
+                )
+                assert incomplete["status"] == "needs_information", incomplete
+                assert incomplete["missing_information"][0]["code"] == (
+                    "ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED"
+                )
+                with make_session_factory(setup_engine)() as check_session:
+                    period = check_session.get(AccountingPeriod, uuid.UUID(generated["period_id"]))
+                    approval = check_session.get(
+                        AccountingPeriodCloseApproval, uuid.UUID(owner_approval_id)
+                    )
+                    assert period.status == "open"
+                    assert period.close_id is None
+                    assert approval.consumed_at is None
                 confirmed = await _call(
                     client,
                     "finance_confirm_accounting_period_close",
@@ -706,6 +729,12 @@ def test_zero_voucher_month_closes_through_real_stdio(
             ) == (0, 0, 0, 0)
             period = database_session.get(AccountingPeriod, uuid.UUID(confirmed["period_id"]))
             assert period.status == "closed"
+        brief = load_brief_dashboard(
+            verification_engine, period_key="2026-06", org_id=uuid.UUID(org_id)
+        )
+        assert brief["data"]["management_commentary"] == (
+            "本月尚无经营活动，现有事实不足以评价经营表现。"
+        )
     finally:
         verification_engine.dispose()
 

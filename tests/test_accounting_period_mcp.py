@@ -77,6 +77,18 @@ def _call_registered_tool(name: str, request: object) -> dict[str, Any]:
 def test_accounting_period_tools_publish_strict_typed_contracts() -> None:
     tools = _listed_tools()
     assert PERIOD_TOOL_NAMES <= tools.keys()
+    assert tools["finance_preview_period_commentary"].annotations.readOnlyHint is True
+    assert tools["finance_backfill_period_commentary"].annotations.idempotentHint is True
+    backfill_schema = tools["finance_backfill_period_commentary"].inputSchema
+    backfill = backfill_schema["$defs"]["BackfillPeriodCommentaryRequest"]
+    assert backfill["additionalProperties"] is False
+    assert set(backfill["required"]) == {
+        "org_id",
+        "period_id",
+        "close_id",
+        "context_hash",
+        "commentary",
+    }
 
     for name in PERIOD_TOOL_NAMES:
         assert tools[name].inputSchema["additionalProperties"] is False

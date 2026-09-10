@@ -5,12 +5,12 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from ai_accounting.accounting_period_schemas import (
     AccountingPeriodResultStatus,
-    AccountingPeriodReviewFacts,
     ConfirmAccountingPeriodCloseRequest,
     GenerateAccountingPeriodRequest,
     PreviewAccountingPeriodCloseRequest,
@@ -762,7 +762,7 @@ def test_preview_review_management_is_optional_for_close() -> None:
     assert "不得在计提时索要或虚构支付日" in checklist["ai_instruction"]
     assert "不得向负责人展示 not_due 项" in checklist["ai_instruction"]
     commentary_prompt = checklist["management_commentary"]
-    assert commentary_prompt["required_for_close"] is False
+    assert commentary_prompt["required_for_close"] is True
     assert commentary_prompt["prompt_version"] == "period_close_management_commentary_v2"
     assert len(commentary_prompt["context_hash"]) == 64
     assert commentary_prompt["context"]["current_period"]["period_month"] == "2026-03"
@@ -770,8 +770,12 @@ def test_preview_review_management_is_optional_for_close() -> None:
     assert any("1 至 2 个短句" in item for item in commentary_prompt["success_criteria"])
     assert any("最多点出一个" in item for item in commentary_prompt["success_criteria"])
     assert "不得用看板指标拼接文本代替分析" in checklist["ai_instruction"]
-    assert missing.status is not AccountingPeriodResultStatus.NEEDS_INFORMATION
-    assert not missing.missing_information
+    assert missing.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
+    assert missing.missing_information[0].code == "ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED"
+    assert missing.missing_information[0].fields == [
+        "management_commentary",
+        "management_commentary_context_hash",
+    ]
 
 
 def test_quarterly_tax_filing_is_not_asked_before_quarter_end() -> None:
@@ -962,7 +966,17 @@ def test_annual_checkpoints_are_scheduled_without_monthly_repetition() -> None:
     assert "ANNUAL_BUSINESS_REPORT" not in december_items
 
 
-def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
+@pytest.mark.parametrize(
+    "missing_fields",
+    [
+        ("management_commentary",),
+        ("management_commentary_context_hash",),
+        ("management_commentary", "management_commentary_context_hash"),
+    ],
+)
+def test_zero_voucher_month_requires_commentary_before_atomic_close(
+    missing_fields: tuple[str, ...],
+) -> None:
     session = _session()
     organization, evidence = _organization_and_evidence(session)
     scope_action = BankReconciliationScopeAction(
@@ -1030,18 +1044,24 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
         ]["context_hash"],
         management_commentary="本月尚无经营活动，现有事实不足以评价经营表现。",
         idempotency_key="empty-close",
-        confirmation_note="确认本月无业务",
-        evidence_references=[evidence.id],
-        review_facts=AccountingPeriodReviewFacts(
-            voucher_completeness_reviewed=True,
-            bank_reconciliation_reviewed=True,
-            open_items_reviewed=True,
-            payroll_and_statutory_items_reviewed=True,
-            payroll_settlements_reviewed=True,
-            tax_items_reviewed=True,
-            asset_and_borrowing_schedules_reviewed=True,
-        ),
     )
+
+    # AI output is required even when owner management notes/checklists are omitted.
+    incomplete_request = ConfirmAccountingPeriodCloseRequest.model_validate(
+        close_request.model_dump(exclude=set(missing_fields))
+        | {"idempotency_key": "empty-close-missing-commentary"}
+    )
+    incomplete = service.confirm_accounting_period_close(incomplete_request)
+    assert incomplete.status is AccountingPeriodResultStatus.NEEDS_INFORMATION
+    assert incomplete.missing_information[0].code == "ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED"
+    assert incomplete.missing_information[0].fields == list(missing_fields)
+    assert "由 AI 完成" in incomplete.missing_information[0].message
+    assert incomplete.close_id is None
+    period = session.get(AccountingPeriod, generated.period_id)
+    assert period.status == "open"
+    assert period.close_id is None
+    assert session.query(AccountingPeriodClose).count() == 0
+    assert session.query(AccountingPeriodCloseCommentary).count() == 0
 
     stale_commentary = service.confirm_accounting_period_close(
         close_request.model_copy(
@@ -1051,6 +1071,9 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
             }
         )
     )
+    assert period.status == "open"
+    assert session.query(AccountingPeriodClose).count() == 0
+    assert session.query(AccountingPeriodCloseCommentary).count() == 0
     closed = service.confirm_accounting_period_close(close_request)
     replay = service.confirm_accounting_period_close(close_request)
     repeated = service.confirm_accounting_period_close(
@@ -1106,6 +1129,10 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     assert commentary.prompt_version == "period_close_management_commentary_v2"
     assert commentary.generation_method == "close_ai_agent"
     assert commentary.context_hash == close_request.management_commentary_context_hash
+    assert (
+        commentary.context_payload
+        == preview.data["assistant_review_checklist"]["management_commentary"]["context"]
+    )
     assert closed.data["management_commentary"] == commentary.commentary
     assert (
         close.voucher_count,
@@ -1120,6 +1147,8 @@ def test_zero_voucher_month_can_close_with_full_review_and_evidence() -> None:
     )
     assert replay.close_id == closed.close_id
     assert replay.data["idempotent_replay"] is True
+    assert replay.data["management_commentary"] == commentary.commentary
+    assert session.query(AccountingPeriodCloseCommentary).count() == 1
     assert repeated.errors == ["ACCOUNTING_PERIOD_ALREADY_CLOSED"]
 
 

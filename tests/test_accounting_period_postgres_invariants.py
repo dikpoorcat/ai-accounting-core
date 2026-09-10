@@ -38,6 +38,7 @@ from ai_accounting.models import (
     AccountingPeriod,
     AccountingPeriodClose,
     AccountingPeriodCloseApproval,
+    AccountingPeriodCloseCommentary,
     Evidence,
     ExecutionAttribution,
     Organization,
@@ -928,6 +929,38 @@ def test_postgres_close_vs_close_is_linearized() -> None:
 
             barrier = Barrier(2)
 
+            with Session(engine) as session:
+                with authority.attributed_call(
+                    session, tool_name="finance_confirm_accounting_period_close"
+                ) as attribution:
+                    approval_id = _approve_close(
+                        session,
+                        attribution,
+                        period_id=period_id,
+                        calculation_hash=preview.calculation_hash,
+                    )
+                    incomplete = AccountingPeriodService(
+                        session, current_date=date(2026, 8, 11)
+                    ).confirm_accounting_period_close(
+                        ConfirmAccountingPeriodCloseRequest(
+                            **preview_request.model_dump(),
+                            calculation_hash=preview.calculation_hash,
+                            owner_approval_id=approval_id,
+                            idempotency_key="pg-close-without-commentary",
+                        )
+                    )
+                assert incomplete.status == "needs_information"
+                assert incomplete.missing_information[0].code == (
+                    "ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED"
+                )
+                assert session.get(AccountingPeriod, period_id).status == "open"
+                assert session.get(AccountingPeriodCloseApproval, approval_id).consumed_at is None
+                assert (
+                    session.scalar(sa.select(sa.func.count()).select_from(AccountingPeriodClose))
+                    == 0
+                )
+                session.commit()
+
             def close(key: str) -> tuple[str, list[str]]:
                 with Session(engine) as session:
                     barrier.wait()
@@ -976,6 +1009,15 @@ def test_postgres_close_vs_close_is_linearized() -> None:
             with engine.connect() as connection:
                 assert (
                     connection.scalar(sa.text("SELECT count(*) FROM accounting_period_closes")) == 1
+                )
+            with Session(engine) as session:
+                commentary = session.scalars(sa.select(AccountingPeriodCloseCommentary)).one()
+                assert commentary.commentary == "七月经营情况已基于关账上下文完成分析。"
+                assert (
+                    commentary.context_hash
+                    == preview.data["assistant_review_checklist"]["management_commentary"][
+                        "context_hash"
+                    ]
                 )
         finally:
             authority_stack.close()

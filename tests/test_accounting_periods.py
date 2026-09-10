@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ai_accounting.accounting_period_schemas import GenerateAccountingPeriodRequest
+from ai_accounting.accounting_period_schemas import (
+    ConfirmAccountingPeriodCloseRequest,
+    GenerateAccountingPeriodRequest,
+)
 from ai_accounting.accounting_periods import (
     AccountingPeriodCalculationError,
     canonical_json,
@@ -50,3 +53,32 @@ def test_generation_schema_forbids_agent_supplied_journal_or_check_data() -> Non
                 "debit_fen": 1,
             }
         )
+
+
+@pytest.mark.parametrize("commentary", ["", " ", "\n\t", "\u3000"])
+def test_close_rejects_empty_or_whitespace_commentary(commentary: str) -> None:
+    with pytest.raises(ValidationError):
+        ConfirmAccountingPeriodCloseRequest(
+            org_id="00000000-0000-0000-0000-000000000001",
+            period_id="00000000-0000-0000-0000-000000000002",
+            closing_date="2026-08-31",
+            management_commentary=commentary,
+        )
+
+
+def test_close_null_commentary_returns_ai_resolvable_requirement() -> None:
+    request = ConfirmAccountingPeriodCloseRequest(
+        org_id="00000000-0000-0000-0000-000000000001",
+        period_id="00000000-0000-0000-0000-000000000002",
+        closing_date="2026-08-31",
+        calculation_hash="a" * 64,
+        idempotency_key="null-commentary",
+        management_commentary=None,
+        management_commentary_context_hash=None,
+    )
+    requirements = request.missing_information()
+    assert len(requirements) == 1
+    assert requirements[0].code == "ACCOUNTING_PERIOD_CLOSE_COMMENTARY_REQUIRED"
+    assert requirements[0].fields == ["management_commentary", "management_commentary_context_hash"]
+    assert "assistant_review_checklist.management_commentary" in requirements[0].message
+    assert "不得要求负责人" in requirements[0].message

@@ -156,6 +156,11 @@ from .owner_workflow_schemas import (
     GetOwnerWorkflowRequest,
     PreviewPayrollContributionAssessmentRequest,
 )
+from .period_commentary import (
+    BackfillPeriodCommentaryRequest,
+    PeriodCommentaryService,
+    PreviewPeriodCommentaryRequest,
+)
 from .schema_readiness import DatabaseSchemaError, require_current_schema
 from .schemas import (
     AcquireFixedAssetRequest,
@@ -2130,6 +2135,26 @@ def finance_confirm_accounting_period_close(
                 .confirm_accounting_period_close(request)
                 .model_dump(mode="json")
             )
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_period_commentary(request: PreviewPeriodCommentaryRequest) -> dict[str, Any]:
+    """读取已关账月份的结论或补写依据；仅使用不可变关账快照。"""
+    try:
+        with SessionLocal() as session:
+            return PeriodCommentaryService(session).preview(request)
+    except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_backfill_period_commentary(request: BackfillPeriodCommentaryRequest) -> dict[str, Any]:
+    """仅补写已关账月份缺失的经营结论并留审计；不覆盖结论、不修改凭证或关账快照。"""
+    try:
+        with SessionLocal.begin() as session:
+            return PeriodCommentaryService(session).backfill(request)
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
