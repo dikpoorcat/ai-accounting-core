@@ -1525,19 +1525,33 @@ class FinanceResult(BaseModel):
 
 
 class RegisterEvidenceRequest(BaseModel):
-    """Public MCP contract for content-addressed supporting evidence."""
+    """登记原始资料、外部回执或负责人补充／更改业务事实的确认依据。
+
+    按 agent_operating_protocol.evidence_retention_policy 选择应留存资料；普通清洗、
+    OCR及可重建处理结果不另行登记。文件格式不决定证据性质，原件字节保持不变。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     org_id: uuid.UUID
-    source: str = Field(min_length=1, max_length=50)
+    source: str = Field(
+        min_length=1,
+        max_length=50,
+        description="资料的实际来源，如银行原件、外部回执或负责人补充确认；不按文件格式分类。",
+    )
     file_path: Path | None = Field(
         default=None,
-        description="批准证据目录内的文件路径；与 content_base64 必须且只能提供一个。",
+        description=(
+            "批准证据目录内应留存资料的原始文件路径，按原始字节保存；"
+            "与 content_base64 必须且只能提供一个。"
+        ),
     )
     content_base64: str | None = Field(
         default=None,
-        description="内联 base64 内容；与 file_path 必须且只能提供一个。",
+        description=(
+            "原件字节或负责人补充／更改业务事实的准确确认文本，经 base64 编码提交；"
+            "不提交普通清洗或OCR中间结果。与 file_path 必须且只能提供一个。"
+        ),
     )
     original_name: str | None = None
     media_type: str = "application/octet-stream"

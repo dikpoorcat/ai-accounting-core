@@ -9,8 +9,23 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v42"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v43"
 OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.14"
+
+EVIDENCE_RETENTION_RUNTIME_INSTRUCTION = (
+    "finance_register_evidence用于留存负责人提供的原始文件、外部回执，以及补充或更改业务事实的"
+    "负责人确认。电子表格、图片、PDF等原件按原始字节保存，业务通过现有证据引用关联；"
+    "不能按扩展名或文件名判断证据性质，负责人提供的原始CSV或文本同样可以是证据。"
+    "普通格式转换、OCR文本、列名标准化、临时明细和可重建计算结果只作为临时处理产物，"
+    "不得额外登记为证据；已采纳的类型化事实、计算结果、来源引用及审计信息由现有数据库保存。"
+    "负责人在聊天中补充金额等业务事实时，保存准确的确认文本作为依据；整理表包含原件之外的"
+    "新增或修改事实并经负责人明确确认时，保留该表及确认依据，并保留原件引用。仅人工整理、"
+    "核对或复述原件已有事实不构成另存一份证据的理由。"
+    "临时产物保留到对应预览、确认及必要核对完成，且原始依据已留存、采用的事实已持久化后，"
+    "再清理本次生成的临时文件；预览与确认之间不得改动或删除导入文件。不得以临时清理为由"
+    "删除原件、已登记证据、备份或回放资料。系统导出物继续由现有导出机制管理，不额外登记为证据。"
+    "正式入账仍须按各类型化工作流引用原始依据，不得用本规则省略证据要求。"
+)
 
 FACT_RESOLUTION_RUNTIME_INSTRUCTION = (
     "处理缺项或校验失败时，先核对本次原请求、来源证据、字段的x-accounting-fact语义和data.fact_issues；"
@@ -254,6 +269,7 @@ MCP_SERVER_INSTRUCTIONS = (
     f"{OWNER_SECURITY_RUNTIME_INSTRUCTION}"
     f"{COMPOSITION_RUNTIME_INSTRUCTION}"
     f"{PASS_THROUGH_RUNTIME_INSTRUCTION}"
+    f"{EVIDENCE_RETENTION_RUNTIME_INSTRUCTION}"
     f"{FACT_RESOLUTION_RUNTIME_INSTRUCTION}"
     f"{CORRECTION_RUNTIME_INSTRUCTION}"
     f"{COMMUNICATION_RUNTIME_INSTRUCTION}"
@@ -282,6 +298,10 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "evidence_retention_policy": {
+            "tool": "finance_register_evidence",
+            "instruction": EVIDENCE_RETENTION_RUNTIME_INSTRUCTION,
+        },
         "owner_security_window": {
             "request_tool": "finance_request_owner_security_window",
             "status_tool": "finance_get_owner_security_window_status",

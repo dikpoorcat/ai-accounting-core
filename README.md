@@ -232,7 +232,7 @@ Set-Location ..
 
 1. `finance_get_profile`：读取企业、科目和税务政策。
 2. `finance_get_event_schema`：不传选择器时取得组合请求 JSON Schema；传入 `component_type` 时取得单个业务组件结构和要求。
-3. 可选调用 `finance_register_evidence`；银行业务先按下述专用工作流确认实际账户范围并导入流水。`finance_import_bank_statement` 仅保留开发回归，生产模式不可用。
+3. 按 `agent_operating_protocol.evidence_retention_policy` 登记应留存的新资料，已有证据直接复用引用；各类型化工作流的正式证据要求仍须满足。银行业务先按下述专用工作流确认实际账户范围并导入流水。`finance_import_bank_statement` 仅保留开发回归，生产模式不可用。
 4. `finance_query_context`：查询开放项；银行导入、迟到处理和对账状态使用 `finance_query_bank_statement_state`。
 5. `finance_record_event`：只接受一个或多个类型化 `components` 及独立 `funds`，单项业务也使用同一协议。需要计算确认的组合先用 `finance_preview_event` 取得 `reviewed_request` 及组件哈希。父事件固定为 `composite`，资金项按组件键精确分配，银行流水在整笔业务中只匹配一次。
 6. `finance_get_event`：审阅父事件、全部组件（`kind`、`facts`、`derived`）、资金项、组件来源引用、带 `component_id` 的凭证行、证据和规则轨迹。
@@ -249,6 +249,25 @@ Set-Location ..
    误导入银行流水可调用 `finance_withdraw_bank_statement_import`，用 `finance_query_bank_statement_state` 返回的批次编号及 `calculation_hash` 提交撤销。只移除该批次新增的未关账、未使用流水，原本已有的重复流水不受影响。导入原记录、文件和撤销审计保留，活动查询标记为 `withdrawn`；可以使用正确映射和新幂等键重新导入。已匹配、已对账、迟到流水或被后续导入引用时拒绝撤销并返回依赖。
 
 需要新增同类明细科目时使用 `finance_configure_account` 配置受控 `business_class`。`system_role` 只标识内核已有能力的默认科目；公共接口不接受任意科目、借贷方向或自由分录行。所有金额均为整数“分”，日期均为 ISO `YYYY-MM-DD`。
+
+### 证据与临时处理文件
+
+留存规则由 `finance_get_event_schema` 返回的 `agent_operating_protocol.evidence_retention_policy`
+统一发布，并同步进入 MCP 初始化说明。`finance_register_evidence` 按原始字节保存调用方提交的
+文件或 base64 内容，以 SHA-256 寻址和去重；它不会自动转换文件，也不会自动识别或过滤清洗结果。
+智能体负责依据材料是否提供业务事实决定是否登记，不能按扩展名或文件名分类。
+
+| 材料场景 | 留存与引用 |
+| --- | --- |
+| 负责人提供的原始电子表格、图片、PDF或外部回执 | 原始字节登记为证据，业务引用原件；负责人提供的原始CSV、文本也适用。 |
+| 原表转换出的临时CSV、OCR文本、标准化流水或计算明细 | 不额外登记为证据；采用的事实、计算结果、来源引用、列映射及审计快照由现有数据库保存。 |
+| 负责人在聊天中补充原件没有的金额等业务事实 | 将准确的确认文本保存为依据，业务引用相关原件与补充确认。 |
+| 负责人修改并明确确认采用的表格 | 含新增或修改业务事实时保留该表及确认依据，并保留原件引用；仅整理格式、核对或复述已有事实不另存一份证据。 |
+
+临时产物保留到对应预览、确认及必要核对完成，且原始依据已留存、采用的事实已持久化后，
+再清理本次生成的临时文件。预览与确认之间不得改动或删除导入文件；不得以临时清理为由删除
+原件、已登记证据、备份或回放资料。历史证据及引用保持完整，正式入账的依据要求保持有效。
+工资申报表等系统导出物继续由现有导出机制管理，不额外登记为证据。
 
 ### 会计期间与月结专用工作流
 

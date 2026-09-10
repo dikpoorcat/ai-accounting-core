@@ -1234,7 +1234,11 @@ def finance_confirm_company_status_change(
 
 @mcp.tool(annotations=IDEMPOTENT_WRITE)
 def finance_register_evidence(request: RegisterEvidenceRequest) -> dict[str, Any]:
-    """把本地文件或 base64 内容登记到 SHA-256 内容寻址证据库。"""
+    """按原始字节登记原始资料、外部回执或负责人补充／更改事实的确认依据，并按SHA-256去重。
+
+    调用前遵守 agent_operating_protocol.evidence_retention_policy；普通格式转换、OCR和
+    可重建处理结果不额外登记。内核保存调用方提交的内容，不自动识别或过滤清洗文件。
+    """
     try:
         with SessionLocal.begin() as session:
             evidence = register_evidence(session, request)

@@ -25,6 +25,7 @@ from ai_accounting.agent_contract import (
     COMMUNICATION_RUNTIME_INSTRUCTION,
     CONFIRMATION_RUNTIME_INSTRUCTION,
     EVIDENCE_FIRST_RUNTIME_INSTRUCTION,
+    EVIDENCE_RETENTION_RUNTIME_INSTRUCTION,
     IDENTITY_RUNTIME_INSTRUCTION,
     OWNER_WORKFLOW_RUNTIME_INSTRUCTION,
     PAYROLL_ACCRUAL_GATE_RUNTIME_INSTRUCTION,
@@ -234,6 +235,10 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
     assert preview_tool.annotations.readOnlyHint is True
     assert "salary_settlement" in schema["component_types"]
     assert protocol["version"] == AI_OPERATING_PROTOCOL_VERSION
+    retention = protocol["evidence_retention_policy"]
+    assert retention["tool"] == "finance_register_evidence"
+    assert retention["instruction"] == EVIDENCE_RETENTION_RUNTIME_INSTRUCTION
+    assert retention["instruction"] in mcp.instructions
     assert protocol["identity"] == {
         "role": "accounting_execution_assistant",
         "audience": "local_business_owner",
