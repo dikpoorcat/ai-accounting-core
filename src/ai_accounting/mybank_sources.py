@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -121,7 +122,13 @@ def read_payment_source(raw, suffix, kind, period):
                 if raw_value is None or str(raw_value).strip() == "":
                     raise ValueError(f"MYBANK_SOURCE_AMOUNT_MISSING:{name}:{field}")
                 else:
-                    number_fen = amount_fen(raw_value)
+                    # A currency-prefixed accounting zero is explicit display data.
+                    # Bare dashes and blank cells still have no established amount.
+                    number_fen = (
+                        0
+                        if re.fullmatch(r"[¥￥]\s*-", str(raw_value).strip())
+                        else amount_fen(raw_value)
+                    )
                 if number_fen < 0:
                     raise ValueError(f"MYBANK_SOURCE_NEGATIVE_AMOUNT:{name}:{field}")
                 row[field] = number_fen

@@ -50,7 +50,7 @@ from .models import (
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FORMAT_VERSION = "ai-accounting-composition-replay-v3"
-_BUSINESS_REVISION = "0007_mybank_payment_sources"
+_BUSINESS_REVISION = "0008_mybank_payment_metadata"
 _CATALOG_REVISION = "0001_catalog_baseline_v2"
 
 
@@ -2931,6 +2931,7 @@ def _export_company(
         # The just-retired chain remains a read-only export source for v4 replay.
         if revision not in {
             _current_schema_revision(catalog=False),
+            "0007_mybank_payment_sources",
             "0006_material_completeness",
             "0005_payroll_provenance",
             "0004_payroll_dependency_scope",

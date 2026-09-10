@@ -72,9 +72,7 @@ def test_preview_confirm_recovers_committed_result_after_checkpoint_failure(monk
     resolver = SimpleNamespace(
         materialize=lambda value: value,
         existing_calculation_hash=lambda key: (
-            "stored-calculation-hash"
-            if key == "amortization-confirm"
-            else None
+            "stored-calculation-hash" if key == "amortization-confirm" else None
         ),
     )
     calls = []
@@ -298,9 +296,30 @@ def _resume_state(package, org_id, completed):
 
 
 def test_replay_distinguishes_baseline_identity_from_current_heads() -> None:
-    assert replay_cli._BUSINESS_REVISION == "0007_mybank_payment_sources"
-    assert replay_cli._current_schema_revision(catalog=False) == "0007_mybank_payment_sources"
+    assert replay_cli._BUSINESS_REVISION == "0008_mybank_payment_metadata"
+    assert replay_cli._current_schema_revision(catalog=False) == "0008_mybank_payment_metadata"
     assert replay_cli._current_schema_revision(catalog=True) == "0001_catalog_baseline_v2"
+
+
+@pytest.mark.parametrize(
+    "revision,expected_error",
+    [
+        ("0007_mybank_payment_sources", "REPLAY_SOURCE_ORGANIZATION_MISSING"),
+        ("0008_mybank_payment_metadata", "REPLAY_SOURCE_ORGANIZATION_MISSING"),
+        ("unknown_history", "REPLAY_SOURCE_COMPONENT_BASELINE_REQUIRED"),
+    ],
+)
+def test_payment_metadata_upgrade_retains_supported_replay_sources(
+    tmp_path, monkeypatch, revision, expected_error
+):
+    from contextlib import nullcontext
+
+    source = SimpleNamespace(scalar=lambda *_args: revision, get=lambda *_args: None)
+    monkeypatch.setattr(replay_cli, "Session", lambda _engine: nullcontext(source))
+    with pytest.raises(replay_cli.ReplayError, match=expected_error):
+        replay_cli._export_company(
+            engine=None, registry={"org_id": str(uuid.uuid4())}, package_root=tmp_path
+        )
 
 
 def test_replay_orders_non_primary_company_before_primary() -> None:
@@ -785,9 +804,7 @@ def test_export_normalizes_legacy_payroll_scope(legacy, scope):
         }
     )
 
-    assert request["employee_items"] == [
-        {"employee_id": "E01", "wage_tax_scope": scope}
-    ]
+    assert request["employee_items"] == [{"employee_id": "E01", "wage_tax_scope": scope}]
 
 
 def test_export_rejects_conflicting_legacy_payroll_scope():
@@ -948,9 +965,9 @@ def test_export_migrates_legacy_workforce_wage_difference_with_batch_evidence(mo
     )
 
     assert operations[0]["evidence_references"] == [evidence_reference]
-    assert operations[0]["regular_payroll_items"][0][
-        "tax_reporting_difference_reason"
-    ].startswith("历史空库重放：")
+    assert operations[0]["regular_payroll_items"][0]["tax_reporting_difference_reason"].startswith(
+        "历史空库重放："
+    )
 
 
 def test_metadata_replay_accounts_for_target_generated_initial_metadata():
@@ -967,9 +984,7 @@ def test_metadata_replay_accounts_for_target_generated_initial_metadata():
         metadata_values={"description": "原管理说明"},
     )
     session = SimpleNamespace(
-        execute=lambda *_args, **_kwargs: SimpleNamespace(
-            all=lambda: [(row, source_event_key)]
-        )
+        execute=lambda *_args, **_kwargs: SimpleNamespace(all=lambda: [(row, source_event_key)])
     )
     event_operations = [
         {

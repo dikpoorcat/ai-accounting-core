@@ -105,8 +105,7 @@ def test_invalid_original_is_atomic(session, source_case, raw, code):
 
 def test_payment_register_dash_is_not_assumed_to_be_zero(session, source_case):
     raw = (
-        "姓名,月份,报税工资,未报税劳务,回扣报销1,回扣报销2,发票报销\n"
-        "张三,2026-03,100,-,0,0,0\n"
+        "姓名,月份,报税工资,未报税劳务,回扣报销1,回扣报销2,发票报销\n张三,2026-03,100,-,0,0,0\n"
     ).encode()
     with pytest.raises(ValueError, match="AMOUNT_UNREADABLE"):
         source_case(raw, "payment_register")
@@ -237,6 +236,21 @@ def test_source_change_is_detected(session, organization, source_case):
         MybankPaymentSourceService(session).latest(organization.id, "2026-03", "actual_tax")
     with pytest.raises(ValueError, match="MATERIAL_SOURCE_CHANGED"):
         MybankPaymentSourceService(session).import_source(request)
+
+
+def test_currency_accounting_zero_does_not_fill_unknown_cells():
+    header = "姓名,月份,报税工资,未报税劳务,回扣报销1,回扣报销2,发票报销\n"
+    row = "张三,2026-03,40000,¥ -,￥\u00a0-,0,0\n"
+    result = read_payment_source((header + row).encode(), ".csv", "payment_register", "2026-03")
+    assert result[0]["untaxed_labor_fen"] == result[0]["rebate_1_fen"] == 0
+    for unknown in ("", "-", "待定"):
+        with pytest.raises(ValueError):
+            read_payment_source(
+                (header + row.replace("¥ -", unknown)).encode(),
+                ".csv",
+                "payment_register",
+                "2026-03",
+            )
 
 
 def test_replay_exports_latest_source_as_original_evidence_reference(
