@@ -1,0 +1,962 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "workspace": "D:\\GitHub\\ai-accounting-core\\.tmp\\payroll-benchmark-20260910-164349",
+  "started_at": "2026-09-10T16:43:49.570703+00:00",
+  "scales": [
+    {
+      "employees": 100,
+      "months": 3,
+      "status": "complete",
+      "metrics": {
+        "source_confirmation": {
+          "seconds": 6.816323200007901,
+          "sql": {
+            "driver_calls": 9044,
+            "read_calls": 3012,
+            "executemany_calls": 1506
+          },
+          "transactions": 502,
+          "total_lock_seconds": 2.2617069999687374,
+          "max_lock_seconds": 0.36532480001915246,
+          "sqlite_trace_events_including_triggers": 12064,
+          "memory_before": {
+            "rss_bytes": 40599552,
+            "process_peak_rss_bytes": 41472000
+          },
+          "memory_after": {
+            "rss_bytes": 42496000,
+            "process_peak_rss_bytes": 42545152
+          },
+          "sampled_peak_rss_bytes": 42541056,
+          "rss_sampling_seconds": 0.025
+        },
+        "monthly_batches": [
+          {
+            "period": "2026-01",
+            "calculations": 100,
+            "preview": {
+              "seconds": 0.15762489999178797,
+              "sql": {
+                "driver_calls": 2114,
+                "read_calls": 2113
+              },
+              "transactions": 0,
+              "total_lock_seconds": 0,
+              "max_lock_seconds": 0,
+              "sqlite_trace_events_including_triggers": 0,
+              "memory_before": {
+                "rss_bytes": 42487808,
+                "process_peak_rss_bytes": 42545152
+              },
+              "memory_after": {
+                "rss_bytes": 44322816,
+                "process_peak_rss_bytes": 46505984
+              },
+              "sampled_peak_rss_bytes": 46501888,
+              "rss_sampling_seconds": 0.025
+            },
+            "confirm": {
+              "seconds": 0.3071065999683924,
+              "sql": {
+                "driver_calls": 6521,
+                "read_calls": 3916,
+                "executemany_calls": 600
+              },
+              "transactions": 1,
+              "total_lock_seconds": 0.10848269995767623,
+              "max_lock_seconds": 0.10848269995767623,
+              "sqlite_trace_events_including_triggers": 8307,
+              "memory_before": {
+                "rss_bytes": 44306432,
+                "process_peak_rss_bytes": 46505984
+              },
+              "memory_after": {
+                "rss_bytes": 45690880,
+                "process_peak_rss_bytes": 47681536
+              },
+              "sampled_peak_rss_bytes": 47677440,
+              "rss_sampling_seconds": 0.025
+            }
+          },
+          {
+            "period": "2026-02",
+            "calculations": 100,
+            "preview": {
+              "seconds": 0.19356889999471605,
+              "sql": {
+                "driver_calls": 2314,
+                "read_calls": 2313
+              },
+              "transactions": 0,
+              "total_lock_seconds": 0,
+              "max_lock_seconds": 0,
+              "sqlite_trace_events_including_triggers": 0,
+              "memory_before": {
+                "rss_bytes": 45699072,
+                "process_peak_rss_bytes": 47681536
+              },
+              "memory_after": {
+                "rss_bytes": 47136768,
+                "process_peak_rss_bytes": 47681536
+              },
+              "sampled_peak_rss_bytes": 47157248,
+              "rss_sampling_seconds": 0.025
+            },
+            "confirm": {
+              "seconds": 0.3096396999899298,
+              "sql": {
+                "driver_calls": 6721,
+                "read_calls": 4116,
+                "executemany_calls": 600
+              },
+              "transactions": 1,
+              "total_lock_seconds": 0.09938029997283593,
+              "max_lock_seconds": 0.09938029997283593,
+              "sqlite_trace_events_including_triggers": 8907,
+              "memory_before": {
+                "rss_bytes": 47136768,
+                "process_peak_rss_bytes": 47681536
+              },
+              "memory_after": {
+                "rss_bytes": 47271936,
+                "process_peak_rss_bytes": 49197056
+              },
+              "sampled_peak_rss_bytes": 49160192,
+              "rss_sampling_seconds": 0.025
+            }
+          },
+          {
+            "period": "2026-03",
+            "calculations": 100,
+            "preview": {
+              "seconds": 0.1932948000030592,
+              "sql": {
+                "driver_calls": 2514,
+                "read_calls": 2513
+              },
+              "transactions": 0,
+              "total_lock_seconds": 0,
+              "max_lock_seconds": 0,
+              "sqlite_trace_events_including_triggers": 0,
+              "memory_before": {
+                "rss_bytes": 47263744,
+                "process_peak_rss_bytes": 49197056
+              },
+              "memory_after": {
+                "rss_bytes": 48369664,
+                "process_peak_rss_bytes": 49291264
+              },
+              "sampled_peak_rss_bytes": 48947200,
+              "rss_sampling_seconds": 0.025
+            },
+            "confirm": {
+              "seconds": 0.3781929000397213,
+              "sql": {
+                "driver_calls": 6921,
+                "read_calls": 4316,
+                "executemany_calls": 600
+              },
+              "transactions": 1,
+              "total_lock_seconds": 0.11992430000100285,
+              "max_lock_seconds": 0.11992430000100285,
+              "sqlite_trace_events_including_triggers": 9507,
+              "memory_before": {
+                "rss_bytes": 48361472,
+                "process_peak_rss_bytes": 49291264
+              },
+              "memory_after": {
+                "rss_bytes": 48652288,
+                "process_peak_rss_bytes": 50745344
+              },
+              "sampled_peak_rss_bytes": 50741248,
+              "rss_sampling_seconds": 0.025
+            }
+          }
+        ],
+        "single_employee_backfill": {
+          "affected_employees": 1,
+          "affected_calculations": 3,
+          "unrelated_calculations_unchanged": 297,
+          "all_original_voucher_numbers_preserved": true,
+          "source_confirmation": {
+            "seconds": 0.027094800025224686,
+            "sql": {
+              "driver_calls": 22,
+              "read_calls": 9,
+              "executemany_calls": 3
+            },
+            "transactions": 1,
+            "total_lock_seconds": 0.01247959997272119,
+            "max_lock_seconds": 0.01247959997272119,
+            "sqlite_trace_events_including_triggers": 32,
+            "memory_before": {
+              "rss_bytes": 49106944,
+              "process_peak_rss_bytes": 50745344
+            },
+            "memory_after": {
+              "rss_bytes": 49192960,
+              "process_peak_rss_bytes": 50745344
+            },
+            "sampled_peak_rss_bytes": 49192960,
+            "rss_sampling_seconds": 0.025
+          },
+          "preview": {
+            "seconds": 0.018510600028093904,
+            "sql": {
+              "driver_calls": 77,
+              "read_calls": 76
+            },
+            "transactions": 0,
+            "total_lock_seconds": 0,
+            "max_lock_seconds": 0,
+            "sqlite_trace_events_including_triggers": 0,
+            "memory_before": {
+              "rss_bytes": 49192960,
+              "process_peak_rss_bytes": 50745344
+            },
+            "memory_after": {
+              "rss_bytes": 49266688,
+              "process_peak_rss_bytes": 50745344
+            },
+            "sampled_peak_rss_bytes": 49266688,
+            "rss_sampling_seconds": 0.025
+          },
+          "confirm": {
+            "seconds": 0.05978760001016781,
+            "sql": {
+              "driver_calls": 285,
+              "read_calls": 175,
+              "executemany_calls": 18
+            },
+            "transactions": 1,
+            "total_lock_seconds": 0.016305500001180917,
+            "max_lock_seconds": 0.016305500001180917,
+            "sqlite_trace_events_including_triggers": 360,
+            "memory_before": {
+              "rss_bytes": 49254400,
+              "process_peak_rss_bytes": 50745344
+            },
+            "memory_after": {
+              "rss_bytes": 48758784,
+              "process_peak_rss_bytes": 50745344
+            },
+            "sampled_peak_rss_bytes": 49971200,
+            "rss_sampling_seconds": 0.025
+          }
+        },
+        "dense_correction_first": {
+          "affected_employees": 50,
+          "affected_calculations": 150,
+          "unrelated_calculations_unchanged": 150,
+          "all_original_voucher_numbers_preserved": true,
+          "source_confirmation": {
+            "seconds": 0.6331234000390396,
+            "sql": {
+              "driver_calls": 1105,
+              "read_calls": 455,
+              "executemany_calls": 150
+            },
+            "transactions": 50,
+            "total_lock_seconds": 0.23150569997960702,
+            "max_lock_seconds": 0.031168799963779747,
+            "sqlite_trace_events_including_triggers": 1606,
+            "memory_before": {
+              "rss_bytes": 49303552,
+              "process_peak_rss_bytes": 50745344
+            },
+            "memory_after": {
+              "rss_bytes": 49491968,
+              "process_peak_rss_bytes": 50745344
+            },
+            "sampled_peak_rss_bytes": 49545216,
+            "rss_sampling_seconds": 0.025
+          },
+          "preview": {
+            "seconds": 0.2482748999609612,
+            "sql": {
+              "driver_calls": 3164,
+              "read_calls": 3163
+            },
+            "transactions": 0,
+            "total_lock_seconds": 0,
+            "max_lock_seconds": 0,
+            "sqlite_trace_events_including_triggers": 0,
+            "memory_before": {
+              "rss_bytes": 49491968,
+              "process_peak_rss_bytes": 50745344
+            },
+            "memory_after": {
+              "rss_bytes": 48304128,
+              "process_peak_rss_bytes": 50765824
+            },
+            "sampled_peak_rss_bytes": 50348032,
+            "rss_sampling_seconds": 0.025
+          },
+          "confirm": {
+            "seconds": 0.5900980000151321,
+            "sql": {
+              "driver_calls": 13221,
+              "read_calls": 7966,
+              "executemany_calls": 900
+            },
+            "transactions": 1,
+            "total_lock_seconds": 0.2982077000197023,
+            "max_lock_seconds": 0.2982077000197023,
+            "sqlite_trace_events_including_triggers": 17657,
+            "memory_before": {
+              "rss_bytes": 48287744,
+              "process_peak_rss_bytes": 50765824
+            },
+            "memory_after": {
+              "rss_bytes": 49459200,
+              "process_peak_rss_bytes": 51625984
+            },
+            "sampled_peak_rss_bytes": 51621888,
+            "rss_sampling_seconds": 0.025
+          }
+        },
+        "dense_correction_repeated": {
+          "affected_employees": 50,
+          "affected_calculations": 150,
+          "unrelated_calculations_unchanged": 150,
+          "all_original_voucher_numbers_preserved": true,
+          "source_confirmation": {
+            "seconds": 1.3167345999972895,
+            "sql": {
+              "driver_calls": 1350,
+              "read_calls": 700,
+              "executemany_calls": 150
+            },
+            "transactions": 50,
+            "total_lock_seconds": 0.5366058002109639,
+            "max_lock_seconds": 0.2773496999870986,
+            "sqlite_trace_events_including_triggers": 1900,
+            "memory_before": {
+              "rss_bytes": 49557504,
+              "process_peak_rss_bytes": 51625984
+            },
+            "memory_after": {
+              "rss_bytes": 49807360,
+              "process_peak_rss_bytes": 51625984
+            },
+            "sampled_peak_rss_bytes": 49860608,
+            "rss_sampling_seconds": 0.025
+          },
+          "preview": {
+            "seconds": 0.2500163000077009,
+            "sql": {
+              "driver_calls": 3164,
+              "read_calls": 3163
+            },
+            "transactions": 0,
+            "total_lock_seconds": 0,
+            "max_lock_seconds": 0,
+            "sqlite_trace_events_including_triggers": 0,
+            "memory_before": {
+              "rss_bytes": 49807360,
+              "process_peak_rss_bytes": 51625984
+            },
+            "memory_after": {
+              "rss_bytes": 49197056,
+              "process_peak_rss_bytes": 51625984
+            },
+            "sampled_peak_rss_bytes": 51257344,
+            "rss_sampling_seconds": 0.025
+          },
+          "confirm": {
+            "seconds": 0.6541945000062697,
+            "sql": {
+              "driver_calls": 13221,
+              "read_calls": 7966,
+              "executemany_calls": 900
+            },
+            "transactions": 1,
+            "total_lock_seconds": 0.33352749998448417,
+            "max_lock_seconds": 0.33352749998448417,
+            "sqlite_trace_events_including_triggers": 17657,
+            "memory_before": {
+              "rss_bytes": 49197056,
+              "process_peak_rss_bytes": 51625984
+            },
+            "memory_after": {
+              "rss_bytes": 49475584,
+              "process_peak_rss_bytes": 51625984
+            },
+            "sampled_peak_rss_bytes": 51519488,
+            "rss_sampling_seconds": 0.025
+          }
+        }
+      },
+      "source_sha256": {
+        "scripts/benchmark-local-payroll.py": "1674131c48a1efcc473c6808d3155cdf6f70d7937410591848d9eed11cbb47bf",
+        "src/ai_accounting/kernel/__init__.py": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167",
+        "src/ai_accounting/kernel/backup.py": "449560b0f27791489d2733f16a97d30dbc566bd4a5f2de2e12a3e703f9efda28",
+        "src/ai_accounting/kernel/catalog.py": "b26f97e3111b325d9f189946ec741932b9b5e5bb4dcd2cca5e471d791a5f24f0",
+        "src/ai_accounting/kernel/cli.py": "bfeb534eb45845b0f3da56e384292eac464da53df2175b1e1c7a119688a4a6f4",
+        "src/ai_accounting/kernel/contracts.py": "33187b5ae05c64cf3bde0e6ce2827be55f6e490fd64152d80dbd2a7361d6a88d",
+        "src/ai_accounting/kernel/domains/adjustments.py": "ecc7a42ddb7b2853ad1ade3a0c8d402fc520f695f89e38e509915e6f809c4360",
+        "src/ai_accounting/kernel/domains/assets.py": "942b718cc5ce967274fb0d6766e9d7fd833ce365feac879df9b3d7aa7fa76e6c",
+        "src/ai_accounting/kernel/domains/banking.py": "2d1ef115b3cb05d5f7dcf5e787e19360ed9d26b426e0824a476ca1da73960f7b",
+        "src/ai_accounting/kernel/domains/payroll.py": "d10df2c6c48cefab470e8ee3b190fa0432cd7a5d0c6d8425acb070d22d7bb62a",
+        "src/ai_accounting/kernel/domains/taxes.py": "0e7f0545330259b1d6500a8dd42190dcf25d5c50fbfd2e5719cc49950e8250f3",
+        "src/ai_accounting/kernel/domains/transactions.py": "ce6d731f95387bfc83f8c46006126a66d822918c4bd5d7487651180638c382f4",
+        "src/ai_accounting/kernel/engine.py": "b050ab44ba6306e1ceb81fd93d1daff888796dec813fd396e02d662c48db7d4e",
+        "src/ai_accounting/kernel/exports.py": "36c584f6992b11d004bb9a07d63a0c3829a93a3e86afccc9c1d2518195cdb3f4",
+        "src/ai_accounting/kernel/http.py": "be3aa04899b32eb93cf8b1679aab23b94fecfcbbbf9dee502a281c26c0fd0fd3",
+        "src/ai_accounting/kernel/mcp.py": "f931700d8747d205479a92f3314419788f3d9075ccd38abd78c9baf1b6d4e4f8",
+        "src/ai_accounting/kernel/periods.py": "0b542af61f2d81e7ea3ee21a89ad087577497a07be695e40a5bfce9b97610bd5",
+        "src/ai_accounting/kernel/runtime.py": "5966559f700725c04d026e57492e685e537e99a62e2f6be8e2031deb1894e339",
+        "src/ai_accounting/kernel/schema.py": "654dc32f650c659ac1943cb897b9efaf5c50f1fd9ff802be2468789673f521b9",
+        "src/ai_accounting/kernel/service.py": "6e757ee4f8c316aa82eaaa96604b128e13e200b0defb866f0124b8f7974dacda",
+        "src/ai_accounting/kernel/storage.py": "4162482f137e8c6a6d63fd9e8d49b5d714afd2e65b7a9cfa9613baf0c510e789",
+        "src/ai_accounting/kernel/types.py": "c531115d20f402305417bdd96d051396253ab4e744cd6ff3dcf82e9f1c8b6d83",
+        "src/ai_accounting/payroll/__init__.py": "b89f5cf22b1f4bdc4032cc7da167216e916bfdc0182f6d3f45d32973a6df8373",
+        "src/ai_accounting/payroll/annual_bonus.py": "555b8c671ee19733ce38aa9d5e48dfa8b12e53859edcc90f9f3156b72e3e9150",
+        "src/ai_accounting/payroll/contributions.py": "a0249b45a56b016864a3f8d0ef19869257ca2cfe75e9b95398e1471b7829727c",
+        "src/ai_accounting/payroll/income_tax.py": "07adec2550862f6da06510a36c5c4c3e0a13658d2418adcc56d79bd649a65e83",
+        "src/ai_accounting/payroll/regular.py": "01dc2700f652e3b584926a6a043126405a3c8a5514a65eb0d1780833c728d803",
+        "src/ai_accounting/payroll/types.py": "f8448257363e52dfcda4bdbc808a9dc6090e7b2d9c26523766296034975127e9"
+      },
+      "schema_sha256": "cae861eae70324b75540be95656d65ad23d9ad81511ec9ee07adce867512f2e1",
+      "verification": {
+        "identity": {
+          "company_id": "payroll-benchmark-100",
+          "taxpayer_id": "91310000123456789A",
+          "database_id": "payroll-benchmark-db-100",
+          "schema_version": 1
+        },
+        "evidence_count": 1,
+        "latest_closed_period": null
+      },
+      "row_counts": {
+        "fact_revision": 603,
+        "calculation": 603,
+        "dependency_fact": 3116,
+        "dependency_calculation": 603,
+        "dependency_scope": 5427,
+        "voucher": 300,
+        "voucher_version": 603,
+        "voucher_line": 3015,
+        "pending": 0
+      },
+      "wal_and_durability": {
+        "journal_mode": "wal",
+        "synchronous": 2
+      },
+      "database_bytes": 10760192,
+      "source_files_changed_during_measurement": [],
+      "final_source_sha256": {
+        "scripts/benchmark-local-payroll.py": "1674131c48a1efcc473c6808d3155cdf6f70d7937410591848d9eed11cbb47bf",
+        "src/ai_accounting/kernel/__init__.py": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167",
+        "src/ai_accounting/kernel/backup.py": "449560b0f27791489d2733f16a97d30dbc566bd4a5f2de2e12a3e703f9efda28",
+        "src/ai_accounting/kernel/catalog.py": "b26f97e3111b325d9f189946ec741932b9b5e5bb4dcd2cca5e471d791a5f24f0",
+        "src/ai_accounting/kernel/cli.py": "bfeb534eb45845b0f3da56e384292eac464da53df2175b1e1c7a119688a4a6f4",
+        "src/ai_accounting/kernel/contracts.py": "33187b5ae05c64cf3bde0e6ce2827be55f6e490fd64152d80dbd2a7361d6a88d",
+        "src/ai_accounting/kernel/domains/adjustments.py": "ecc7a42ddb7b2853ad1ade3a0c8d402fc520f695f89e38e509915e6f809c4360",
+        "src/ai_accounting/kernel/domains/assets.py": "942b718cc5ce967274fb0d6766e9d7fd833ce365feac879df9b3d7aa7fa76e6c",
+        "src/ai_accounting/kernel/domains/banking.py": "2d1ef115b3cb05d5f7dcf5e787e19360ed9d26b426e0824a476ca1da73960f7b",
+        "src/ai_accounting/kernel/domains/payroll.py": "d10df2c6c48cefab470e8ee3b190fa0432cd7a5d0c6d8425acb070d22d7bb62a",
+        "src/ai_accounting/kernel/domains/taxes.py": "0e7f0545330259b1d6500a8dd42190dcf25d5c50fbfd2e5719cc49950e8250f3",
+        "src/ai_accounting/kernel/domains/transactions.py": "ce6d731f95387bfc83f8c46006126a66d822918c4bd5d7487651180638c382f4",
+        "src/ai_accounting/kernel/engine.py": "b050ab44ba6306e1ceb81fd93d1daff888796dec813fd396e02d662c48db7d4e",
+        "src/ai_accounting/kernel/exports.py": "36c584f6992b11d004bb9a07d63a0c3829a93a3e86afccc9c1d2518195cdb3f4",
+        "src/ai_accounting/kernel/http.py": "be3aa04899b32eb93cf8b1679aab23b94fecfcbbbf9dee502a281c26c0fd0fd3",
+        "src/ai_accounting/kernel/mcp.py": "f931700d8747d205479a92f3314419788f3d9075ccd38abd78c9baf1b6d4e4f8",
+        "src/ai_accounting/kernel/periods.py": "0b542af61f2d81e7ea3ee21a89ad087577497a07be695e40a5bfce9b97610bd5",
+        "src/ai_accounting/kernel/runtime.py": "5966559f700725c04d026e57492e685e537e99a62e2f6be8e2031deb1894e339",
+        "src/ai_accounting/kernel/schema.py": "654dc32f650c659ac1943cb897b9efaf5c50f1fd9ff802be2468789673f521b9",
+        "src/ai_accounting/kernel/service.py": "6e757ee4f8c316aa82eaaa96604b128e13e200b0defb866f0124b8f7974dacda",
+        "src/ai_accounting/kernel/storage.py": "4162482f137e8c6a6d63fd9e8d49b5d714afd2e65b7a9cfa9613baf0c510e789",
+        "src/ai_accounting/kernel/types.py": "c531115d20f402305417bdd96d051396253ab4e744cd6ff3dcf82e9f1c8b6d83",
+        "src/ai_accounting/payroll/__init__.py": "b89f5cf22b1f4bdc4032cc7da167216e916bfdc0182f6d3f45d32973a6df8373",
+        "src/ai_accounting/payroll/annual_bonus.py": "555b8c671ee19733ce38aa9d5e48dfa8b12e53859edcc90f9f3156b72e3e9150",
+        "src/ai_accounting/payroll/contributions.py": "a0249b45a56b016864a3f8d0ef19869257ca2cfe75e9b95398e1471b7829727c",
+        "src/ai_accounting/payroll/income_tax.py": "07adec2550862f6da06510a36c5c4c3e0a13658d2418adcc56d79bd649a65e83",
+        "src/ai_accounting/payroll/regular.py": "01dc2700f652e3b584926a6a043126405a3c8a5514a65eb0d1780833c728d803",
+        "src/ai_accounting/payroll/types.py": "f8448257363e52dfcda4bdbc808a9dc6090e7b2d9c26523766296034975127e9"
+      }
+    },
+    {
+      "employees": 500,
+      "months": 3,
+      "status": "complete",
+      "metrics": {
+        "source_confirmation": {
+          "seconds": 37.7056128999684,
+          "sql": {
+            "driver_calls": 45044,
+            "read_calls": 15012,
+            "executemany_calls": 7506
+          },
+          "transactions": 2502,
+          "total_lock_seconds": 13.846245899389032,
+          "max_lock_seconds": 0.4143642000271939,
+          "sqlite_trace_events_including_triggers": 60064,
+          "memory_before": {
+            "rss_bytes": 49315840,
+            "process_peak_rss_bytes": 51625984
+          },
+          "memory_after": {
+            "rss_bytes": 49803264,
+            "process_peak_rss_bytes": 51625984
+          },
+          "sampled_peak_rss_bytes": 50016256,
+          "rss_sampling_seconds": 0.025
+        },
+        "monthly_batches": [
+          {
+            "period": "2026-01",
+            "calculations": 500,
+            "preview": {
+              "seconds": 0.652087299968116,
+              "sql": {
+                "driver_calls": 10514,
+                "read_calls": 10513
+              },
+              "transactions": 0,
+              "total_lock_seconds": 0,
+              "max_lock_seconds": 0,
+              "sqlite_trace_events_including_triggers": 0,
+              "memory_before": {
+                "rss_bytes": 49803264,
+                "process_peak_rss_bytes": 51625984
+              },
+              "memory_after": {
+                "rss_bytes": 57274368,
+                "process_peak_rss_bytes": 62709760
+              },
+              "sampled_peak_rss_bytes": 57274368,
+              "rss_sampling_seconds": 0.025
+            },
+            "confirm": {
+              "seconds": 1.2373849999858066,
+              "sql": {
+                "driver_calls": 32521,
+                "read_calls": 19516,
+                "executemany_calls": 3000
+              },
+              "transactions": 1,
+              "total_lock_seconds": 0.5153819000115618,
+              "max_lock_seconds": 0.5153819000115618,
+              "sqlite_trace_events_including_triggers": 41507,
+              "memory_before": {
+                "rss_bytes": 57266176,
+                "process_peak_rss_bytes": 62709760
+              },
+              "memory_after": {
+                "rss_bytes": 61071360,
+                "process_peak_rss_bytes": 67305472
+              },
+              "sampled_peak_rss_bytes": 63488000,
+              "rss_sampling_seconds": 0.025
+            }
+          },
+          {
+            "period": "2026-02",
+            "calculations": 500,
+            "preview": {
+              "seconds": 1.153977499983739,
+              "sql": {
+                "driver_calls": 11514,
+                "read_calls": 11513
+              },
+              "transactions": 0,
+              "total_lock_seconds": 0,
+              "max_lock_seconds": 0,
+              "sqlite_trace_events_including_triggers": 0,
+              "memory_before": {
+                "rss_bytes": 61071360,
+                "process_peak_rss_bytes": 67305472
+              },
+              "memory_after": {
+                "rss_bytes": 63619072,
+                "process_peak_rss_bytes": 69259264
+              },
+              "sampled_peak_rss_bytes": 66994176,
+              "rss_sampling_seconds": 0.025
+            },
+            "confirm": {
+              "seconds": 2.042692499991972,
+              "sql": {
+                "driver_calls": 33521,
+                "read_calls": 20516,
+                "executemany_calls": 3000
+              },
+              "transactions": 1,
+              "total_lock_seconds": 0.8817381000262685,
+              "max_lock_seconds": 0.8817381000262685,
+              "sqlite_trace_events_including_triggers": 44507,
+              "memory_before": {
+                "rss_bytes": 63619072,
+                "process_peak_rss_bytes": 69259264
+              },
+              "memory_after": {
+                "rss_bytes": 66740224,
+                "process_peak_rss_bytes": 72589312
+              },
+              "sampled_peak_rss_bytes": 69107712,
+              "rss_sampling_seconds": 0.025
+            }
+          },
+          {
+            "period": "2026-03",
+            "calculations": 500,
+            "preview": {
+              "seconds": 1.4713968000141904,
+              "sql": {
+                "driver_calls": 12514,
+                "read_calls": 12513
+              },
+              "transactions": 0,
+              "total_lock_seconds": 0,
+              "max_lock_seconds": 0,
+              "sqlite_trace_events_including_triggers": 0,
+              "memory_before": {
+                "rss_bytes": 66732032,
+                "process_peak_rss_bytes": 72589312
+              },
+              "memory_after": {
+                "rss_bytes": 67092480,
+                "process_peak_rss_bytes": 73969664
+              },
+              "sampled_peak_rss_bytes": 68968448,
+              "rss_sampling_seconds": 0.025
+            },
+            "confirm": {
+              "seconds": 2.561460299999453,
+              "sql": {
+                "driver_calls": 34521,
+                "read_calls": 21516,
+                "executemany_calls": 3000
+              },
+              "transactions": 1,
+              "total_lock_seconds": 1.0560663999640383,
+              "max_lock_seconds": 1.0560663999640383,
+              "sqlite_trace_events_including_triggers": 47507,
+              "memory_before": {
+                "rss_bytes": 67084288,
+                "process_peak_rss_bytes": 73969664
+              },
+              "memory_after": {
+                "rss_bytes": 72417280,
+                "process_peak_rss_bytes": 77860864
+              },
+              "sampled_peak_rss_bytes": 75091968,
+              "rss_sampling_seconds": 0.025
+            }
+          }
+        ],
+        "single_employee_backfill": {
+          "affected_employees": 1,
+          "affected_calculations": 3,
+          "unrelated_calculations_unchanged": 1497,
+          "all_original_voucher_numbers_preserved": true,
+          "source_confirmation": {
+            "seconds": 0.024670800019521266,
+            "sql": {
+              "driver_calls": 22,
+              "read_calls": 9,
+              "executemany_calls": 3
+            },
+            "transactions": 1,
+            "total_lock_seconds": 0.010863600007724017,
+            "max_lock_seconds": 0.010863600007724017,
+            "sqlite_trace_events_including_triggers": 32,
+            "memory_before": {
+              "rss_bytes": 72261632,
+              "process_peak_rss_bytes": 77860864
+            },
+            "memory_after": {
+              "rss_bytes": 72478720,
+              "process_peak_rss_bytes": 77860864
+            },
+            "sampled_peak_rss_bytes": 72478720,
+            "rss_sampling_seconds": 0.025
+          },
+          "preview": {
+            "seconds": 0.015498399967327714,
+            "sql": {
+              "driver_calls": 77,
+              "read_calls": 76
+            },
+            "transactions": 0,
+            "total_lock_seconds": 0,
+            "max_lock_seconds": 0,
+            "sqlite_trace_events_including_triggers": 0,
+            "memory_before": {
+              "rss_bytes": 72470528,
+              "process_peak_rss_bytes": 77860864
+            },
+            "memory_after": {
+              "rss_bytes": 72572928,
+              "process_peak_rss_bytes": 77860864
+            },
+            "sampled_peak_rss_bytes": 72572928,
+            "rss_sampling_seconds": 0.025
+          },
+          "confirm": {
+            "seconds": 0.0766275999485515,
+            "sql": {
+              "driver_calls": 285,
+              "read_calls": 175,
+              "executemany_calls": 18
+            },
+            "transactions": 1,
+            "total_lock_seconds": 0.030874299991410226,
+            "max_lock_seconds": 0.030874299991410226,
+            "sqlite_trace_events_including_triggers": 360,
+            "memory_before": {
+              "rss_bytes": 72556544,
+              "process_peak_rss_bytes": 77860864
+            },
+            "memory_after": {
+              "rss_bytes": 72466432,
+              "process_peak_rss_bytes": 77860864
+            },
+            "sampled_peak_rss_bytes": 73654272,
+            "rss_sampling_seconds": 0.025
+          }
+        },
+        "dense_correction_first": {
+          "affected_employees": 250,
+          "affected_calculations": 750,
+          "unrelated_calculations_unchanged": 750,
+          "all_original_voucher_numbers_preserved": true,
+          "source_confirmation": {
+            "seconds": 3.619002499966882,
+            "sql": {
+              "driver_calls": 5505,
+              "read_calls": 2255,
+              "executemany_calls": 750
+            },
+            "transactions": 250,
+            "total_lock_seconds": 1.3281487002386712,
+            "max_lock_seconds": 0.2537496000295505,
+            "sqlite_trace_events_including_triggers": 8006,
+            "memory_before": {
+              "rss_bytes": 72581120,
+              "process_peak_rss_bytes": 77860864
+            },
+            "memory_after": {
+              "rss_bytes": 72908800,
+              "process_peak_rss_bytes": 77860864
+            },
+            "sampled_peak_rss_bytes": 72953856,
+            "rss_sampling_seconds": 0.025
+          },
+          "preview": {
+            "seconds": 1.8127494999789633,
+            "sql": {
+              "driver_calls": 15764,
+              "read_calls": 15763
+            },
+            "transactions": 0,
+            "total_lock_seconds": 0,
+            "max_lock_seconds": 0,
+            "sqlite_trace_events_including_triggers": 0,
+            "memory_before": {
+              "rss_bytes": 72929280,
+              "process_peak_rss_bytes": 77860864
+            },
+            "memory_after": {
+              "rss_bytes": 72519680,
+              "process_peak_rss_bytes": 79319040
+            },
+            "sampled_peak_rss_bytes": 75923456,
+            "rss_sampling_seconds": 0.025
+          },
+          "confirm": {
+            "seconds": 4.081210799980909,
+            "sql": {
+              "driver_calls": 66021,
+              "read_calls": 39766,
+              "executemany_calls": 4500
+            },
+            "transactions": 1,
+            "total_lock_seconds": 2.051617899967823,
+            "max_lock_seconds": 2.051617899967823,
+            "sqlite_trace_events_including_triggers": 88257,
+            "memory_before": {
+              "rss_bytes": 72519680,
+              "process_peak_rss_bytes": 79319040
+            },
+            "memory_after": {
+              "rss_bytes": 75546624,
+              "process_peak_rss_bytes": 82272256
+            },
+            "sampled_peak_rss_bytes": 78876672,
+            "rss_sampling_seconds": 0.025
+          }
+        },
+        "dense_correction_repeated": {
+          "affected_employees": 250,
+          "affected_calculations": 750,
+          "unrelated_calculations_unchanged": 750,
+          "all_original_voucher_numbers_preserved": true,
+          "source_confirmation": {
+            "seconds": 4.240361500007566,
+            "sql": {
+              "driver_calls": 6750,
+              "read_calls": 3500,
+              "executemany_calls": 750
+            },
+            "transactions": 250,
+            "total_lock_seconds": 1.68768569995882,
+            "max_lock_seconds": 0.28292740002507344,
+            "sqlite_trace_events_including_triggers": 9500,
+            "memory_before": {
+              "rss_bytes": 75014144,
+              "process_peak_rss_bytes": 82272256
+            },
+            "memory_after": {
+              "rss_bytes": 75898880,
+              "process_peak_rss_bytes": 82272256
+            },
+            "sampled_peak_rss_bytes": 75943936,
+            "rss_sampling_seconds": 0.025
+          },
+          "preview": {
+            "seconds": 1.8954239999875426,
+            "sql": {
+              "driver_calls": 15764,
+              "read_calls": 15763
+            },
+            "transactions": 0,
+            "total_lock_seconds": 0,
+            "max_lock_seconds": 0,
+            "sqlite_trace_events_including_triggers": 0,
+            "memory_before": {
+              "rss_bytes": 75894784,
+              "process_peak_rss_bytes": 82272256
+            },
+            "memory_after": {
+              "rss_bytes": 75563008,
+              "process_peak_rss_bytes": 83922944
+            },
+            "sampled_peak_rss_bytes": 80527360,
+            "rss_sampling_seconds": 0.025
+          },
+          "confirm": {
+            "seconds": 4.383980699989479,
+            "sql": {
+              "driver_calls": 66021,
+              "read_calls": 39766,
+              "executemany_calls": 4500
+            },
+            "transactions": 1,
+            "total_lock_seconds": 2.4592134000267833,
+            "max_lock_seconds": 2.4592134000267833,
+            "sqlite_trace_events_including_triggers": 88257,
+            "memory_before": {
+              "rss_bytes": 75612160,
+              "process_peak_rss_bytes": 83922944
+            },
+            "memory_after": {
+              "rss_bytes": 76746752,
+              "process_peak_rss_bytes": 83922944
+            },
+            "sampled_peak_rss_bytes": 78954496,
+            "rss_sampling_seconds": 0.025
+          }
+        }
+      },
+      "source_sha256": {
+        "scripts/benchmark-local-payroll.py": "1674131c48a1efcc473c6808d3155cdf6f70d7937410591848d9eed11cbb47bf",
+        "src/ai_accounting/kernel/__init__.py": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167",
+        "src/ai_accounting/kernel/backup.py": "449560b0f27791489d2733f16a97d30dbc566bd4a5f2de2e12a3e703f9efda28",
+        "src/ai_accounting/kernel/catalog.py": "b26f97e3111b325d9f189946ec741932b9b5e5bb4dcd2cca5e471d791a5f24f0",
+        "src/ai_accounting/kernel/cli.py": "bfeb534eb45845b0f3da56e384292eac464da53df2175b1e1c7a119688a4a6f4",
+        "src/ai_accounting/kernel/contracts.py": "33187b5ae05c64cf3bde0e6ce2827be55f6e490fd64152d80dbd2a7361d6a88d",
+        "src/ai_accounting/kernel/domains/adjustments.py": "ecc7a42ddb7b2853ad1ade3a0c8d402fc520f695f89e38e509915e6f809c4360",
+        "src/ai_accounting/kernel/domains/assets.py": "942b718cc5ce967274fb0d6766e9d7fd833ce365feac879df9b3d7aa7fa76e6c",
+        "src/ai_accounting/kernel/domains/banking.py": "2d1ef115b3cb05d5f7dcf5e787e19360ed9d26b426e0824a476ca1da73960f7b",
+        "src/ai_accounting/kernel/domains/payroll.py": "d10df2c6c48cefab470e8ee3b190fa0432cd7a5d0c6d8425acb070d22d7bb62a",
+        "src/ai_accounting/kernel/domains/taxes.py": "0e7f0545330259b1d6500a8dd42190dcf25d5c50fbfd2e5719cc49950e8250f3",
+        "src/ai_accounting/kernel/domains/transactions.py": "ce6d731f95387bfc83f8c46006126a66d822918c4bd5d7487651180638c382f4",
+        "src/ai_accounting/kernel/engine.py": "b050ab44ba6306e1ceb81fd93d1daff888796dec813fd396e02d662c48db7d4e",
+        "src/ai_accounting/kernel/exports.py": "36c584f6992b11d004bb9a07d63a0c3829a93a3e86afccc9c1d2518195cdb3f4",
+        "src/ai_accounting/kernel/http.py": "be3aa04899b32eb93cf8b1679aab23b94fecfcbbbf9dee502a281c26c0fd0fd3",
+        "src/ai_accounting/kernel/mcp.py": "f931700d8747d205479a92f3314419788f3d9075ccd38abd78c9baf1b6d4e4f8",
+        "src/ai_accounting/kernel/periods.py": "0b542af61f2d81e7ea3ee21a89ad087577497a07be695e40a5bfce9b97610bd5",
+        "src/ai_accounting/kernel/runtime.py": "5966559f700725c04d026e57492e685e537e99a62e2f6be8e2031deb1894e339",
+        "src/ai_accounting/kernel/schema.py": "654dc32f650c659ac1943cb897b9efaf5c50f1fd9ff802be2468789673f521b9",
+        "src/ai_accounting/kernel/service.py": "6e757ee4f8c316aa82eaaa96604b128e13e200b0defb866f0124b8f7974dacda",
+        "src/ai_accounting/kernel/storage.py": "4162482f137e8c6a6d63fd9e8d49b5d714afd2e65b7a9cfa9613baf0c510e789",
+        "src/ai_accounting/kernel/types.py": "c531115d20f402305417bdd96d051396253ab4e744cd6ff3dcf82e9f1c8b6d83",
+        "src/ai_accounting/payroll/__init__.py": "b89f5cf22b1f4bdc4032cc7da167216e916bfdc0182f6d3f45d32973a6df8373",
+        "src/ai_accounting/payroll/annual_bonus.py": "555b8c671ee19733ce38aa9d5e48dfa8b12e53859edcc90f9f3156b72e3e9150",
+        "src/ai_accounting/payroll/contributions.py": "a0249b45a56b016864a3f8d0ef19869257ca2cfe75e9b95398e1471b7829727c",
+        "src/ai_accounting/payroll/income_tax.py": "07adec2550862f6da06510a36c5c4c3e0a13658d2418adcc56d79bd649a65e83",
+        "src/ai_accounting/payroll/regular.py": "01dc2700f652e3b584926a6a043126405a3c8a5514a65eb0d1780833c728d803",
+        "src/ai_accounting/payroll/types.py": "f8448257363e52dfcda4bdbc808a9dc6090e7b2d9c26523766296034975127e9"
+      },
+      "schema_sha256": "cae861eae70324b75540be95656d65ad23d9ad81511ec9ee07adce867512f2e1",
+      "verification": {
+        "identity": {
+          "company_id": "payroll-benchmark-500",
+          "taxpayer_id": "91310000123456789A",
+          "database_id": "payroll-benchmark-db-500",
+          "schema_version": 1
+        },
+        "evidence_count": 1,
+        "latest_closed_period": null
+      },
+      "row_counts": {
+        "fact_revision": 3003,
+        "calculation": 3003,
+        "dependency_fact": 15516,
+        "dependency_calculation": 3003,
+        "dependency_scope": 27027,
+        "voucher": 1500,
+        "voucher_version": 3003,
+        "voucher_line": 15015,
+        "pending": 0
+      },
+      "wal_and_durability": {
+        "journal_mode": "wal",
+        "synchronous": 2
+      },
+      "database_bytes": 50044928,
+      "source_files_changed_during_measurement": [],
+      "final_source_sha256": {
+        "scripts/benchmark-local-payroll.py": "1674131c48a1efcc473c6808d3155cdf6f70d7937410591848d9eed11cbb47bf",
+        "src/ai_accounting/kernel/__init__.py": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167",
+        "src/ai_accounting/kernel/backup.py": "449560b0f27791489d2733f16a97d30dbc566bd4a5f2de2e12a3e703f9efda28",
+        "src/ai_accounting/kernel/catalog.py": "b26f97e3111b325d9f189946ec741932b9b5e5bb4dcd2cca5e471d791a5f24f0",
+        "src/ai_accounting/kernel/cli.py": "bfeb534eb45845b0f3da56e384292eac464da53df2175b1e1c7a119688a4a6f4",
+        "src/ai_accounting/kernel/contracts.py": "33187b5ae05c64cf3bde0e6ce2827be55f6e490fd64152d80dbd2a7361d6a88d",
+        "src/ai_accounting/kernel/domains/adjustments.py": "ecc7a42ddb7b2853ad1ade3a0c8d402fc520f695f89e38e509915e6f809c4360",
+        "src/ai_accounting/kernel/domains/assets.py": "942b718cc5ce967274fb0d6766e9d7fd833ce365feac879df9b3d7aa7fa76e6c",
+        "src/ai_accounting/kernel/domains/banking.py": "2d1ef115b3cb05d5f7dcf5e787e19360ed9d26b426e0824a476ca1da73960f7b",
+        "src/ai_accounting/kernel/domains/payroll.py": "d10df2c6c48cefab470e8ee3b190fa0432cd7a5d0c6d8425acb070d22d7bb62a",
+        "src/ai_accounting/kernel/domains/taxes.py": "0e7f0545330259b1d6500a8dd42190dcf25d5c50fbfd2e5719cc49950e8250f3",
+        "src/ai_accounting/kernel/domains/transactions.py": "ce6d731f95387bfc83f8c46006126a66d822918c4bd5d7487651180638c382f4",
+        "src/ai_accounting/kernel/engine.py": "b050ab44ba6306e1ceb81fd93d1daff888796dec813fd396e02d662c48db7d4e",
+        "src/ai_accounting/kernel/exports.py": "36c584f6992b11d004bb9a07d63a0c3829a93a3e86afccc9c1d2518195cdb3f4",
+        "src/ai_accounting/kernel/http.py": "be3aa04899b32eb93cf8b1679aab23b94fecfcbbbf9dee502a281c26c0fd0fd3",
+        "src/ai_accounting/kernel/mcp.py": "f931700d8747d205479a92f3314419788f3d9075ccd38abd78c9baf1b6d4e4f8",
+        "src/ai_accounting/kernel/periods.py": "0b542af61f2d81e7ea3ee21a89ad087577497a07be695e40a5bfce9b97610bd5",
+        "src/ai_accounting/kernel/runtime.py": "5966559f700725c04d026e57492e685e537e99a62e2f6be8e2031deb1894e339",
+        "src/ai_accounting/kernel/schema.py": "654dc32f650c659ac1943cb897b9efaf5c50f1fd9ff802be2468789673f521b9",
+        "src/ai_accounting/kernel/service.py": "6e757ee4f8c316aa82eaaa96604b128e13e200b0defb866f0124b8f7974dacda",
+        "src/ai_accounting/kernel/storage.py": "4162482f137e8c6a6d63fd9e8d49b5d714afd2e65b7a9cfa9613baf0c510e789",
+        "src/ai_accounting/kernel/types.py": "c531115d20f402305417bdd96d051396253ab4e744cd6ff3dcf82e9f1c8b6d83",
+        "src/ai_accounting/payroll/__init__.py": "b89f5cf22b1f4bdc4032cc7da167216e916bfdc0182f6d3f45d32973a6df8373",
+        "src/ai_accounting/payroll/annual_bonus.py": "555b8c671ee19733ce38aa9d5e48dfa8b12e53859edcc90f9f3156b72e3e9150",
+        "src/ai_accounting/payroll/contributions.py": "a0249b45a56b016864a3f8d0ef19869257ca2cfe75e9b95398e1471b7829727c",
+        "src/ai_accounting/payroll/income_tax.py": "07adec2550862f6da06510a36c5c4c3e0a13658d2418adcc56d79bd649a65e83",
+        "src/ai_accounting/payroll/regular.py": "01dc2700f652e3b584926a6a043126405a3c8a5514a65eb0d1780833c728d803",
+        "src/ai_accounting/payroll/types.py": "f8448257363e52dfcda4bdbc808a9dc6090e7b2d9c26523766296034975127e9"
+      }
+    }
+  ],
+  "runtime": {
+    "python": "3.12.13",
+    "sqlite": "3.53.1",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "cpu_count": 16
+  },
+  "method": "real typed Engine source confirmation, payroll preview/confirm and dependency corrections; no direct SQL data seeding",
+  "finished_at": "2026-09-10T16:45:09.948426+00:00"
+}

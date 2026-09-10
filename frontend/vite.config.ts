@@ -44,5 +44,11 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: mode === "release" ? "../src/ai_accounting/static/dashboard" : "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        dashboard: fileURLToPath(new URL("./index.html", import.meta.url)),
+        local: fileURLToPath(new URL("./local.html", import.meta.url)),
+      },
+    },
   },
 }));

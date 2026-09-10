@@ -1,0 +1,38 @@
+{
+  "format": "ai-accounting-local-runtime-verification",
+  "format_version": 1,
+  "verified_on": "2026-09-11",
+  "status": "passed",
+  "archive_file": "20260911-020906.zip",
+  "archive_sha256": "66449b8926af8d20321ac957e0b513cfee8646d54c046f39ca0d0ac7b81a631b",
+  "archive_bytes": 30850187,
+  "software_bytes": 82855652,
+  "runtime": {
+    "python": "3.12.13",
+    "sqlite": "3.53.1",
+    "build_id": "local-kernel-1:8840d89e6e5f3696c43518715d67a4a85bed2d155ac909dee8c0846c7a1ea1b5",
+    "isolated": 1
+  },
+  "verified_software_files": 2717,
+  "cli_calls": 11,
+  "fact_kinds": 55,
+  "synthetic_posting": {
+    "published_vouchers": 1,
+    "debit_fen": 123456,
+    "credit_fen": 123456
+  },
+  "checks": {
+    "file_digests": true,
+    "source_build_matches_repository": true,
+    "backup_verified_and_restored": true,
+    "relative_imports_only": true,
+    "external_python_environment_ignored": true,
+    "http_page_and_authenticated_api": true,
+    "relative_cmd_and_powershell_launchers": true,
+    "stdio_mcp_handshake_and_query": true,
+    "blank_financial_report_template": true
+  },
+  "template_bytes": 24322,
+  "data_policy": "Software archive contains no company databases, credentials or repository working materials; synthetic validation data is stored outside the package.",
+  "scope": "Isolated relocation and synthetic entry-point smoke; kernel regression and performance results are recorded separately."
+}

@@ -17,6 +17,7 @@ dist/
 build/
 /outputs/
 /.tmp/
+/.tmp-local-distribution/
 /src/ai_accounting/static/dashboard/
 *.egg-info/
 .codex/tmp/

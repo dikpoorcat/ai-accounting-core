@@ -1,0 +1,1945 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "workspace": "D:\\GitHub\\ai-accounting-core\\.tmp\\kernel-benchmark-20260910-162954",
+  "started_at": "2026-09-10T16:29:54.210631+00:00",
+  "scales": [
+    {
+      "synthetic_vouchers": 10000,
+      "metrics": {
+        "record_save_preview_confirm": {
+          "samples": 7,
+          "seconds": [
+            0.0759222999913618,
+            0.050324800016824156,
+            0.049866799963638186,
+            0.05622980004409328,
+            0.06701390002854168,
+            0.0517524000024423,
+            0.06452050001826137
+          ],
+          "p50_seconds": 0.05622980004409328,
+          "p95_seconds": 0.0759222999913618,
+          "driver_calls": [
+            75,
+            75,
+            75,
+            75,
+            75,
+            75,
+            75
+          ],
+          "read_calls": [
+            39,
+            39,
+            39,
+            39,
+            39,
+            39,
+            39
+          ],
+          "lock_seconds": [
+            0.014583899988792837,
+            0.008104999957140535,
+            0.0046107000089250505,
+            0.01013999996939674,
+            0.01781930000288412,
+            0.006132100010290742,
+            0.02005769999232143
+          ],
+          "write_trace_events_including_triggers": [
+            47,
+            47,
+            47,
+            47,
+            47,
+            47,
+            47
+          ],
+          "memory_before": {
+            "rss_bytes": 32751616,
+            "peak_rss_bytes": 32755712
+          },
+          "memory_after": {
+            "rss_bytes": 34082816,
+            "peak_rss_bytes": 34336768
+          }
+        },
+        "overview": {
+          "samples": 7,
+          "seconds": [
+            0.003496800025459379,
+            0.007352699991315603,
+            0.006830599973909557,
+            0.00788220000686124,
+            0.009256799996364862,
+            0.007040099997539073,
+            0.007794400036800653
+          ],
+          "p50_seconds": 0.007352699991315603,
+          "p95_seconds": 0.009256799996364862,
+          "driver_calls": [
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "read_calls": [
+            4,
+            4,
+            4,
+            4,
+            4,
+            4,
+            4
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 39784448,
+            "peak_rss_bytes": 41218048
+          },
+          "memory_after": {
+            "rss_bytes": 39456768,
+            "peak_rss_bytes": 41218048
+          }
+        },
+        "ledger_first_page": {
+          "samples": 7,
+          "seconds": [
+            0.0096303999889642,
+            0.011142099974676967,
+            0.010475199960637838,
+            0.009527100017294288,
+            0.011469000019133091,
+            0.009813900047447532,
+            0.010262100026011467
+          ],
+          "p50_seconds": 0.010262100026011467,
+          "p95_seconds": 0.011469000019133091,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 39456768,
+            "peak_rss_bytes": 41218048
+          },
+          "memory_after": {
+            "rss_bytes": 39710720,
+            "peak_rss_bytes": 41226240
+          }
+        },
+        "ledger_cursor_page": {
+          "samples": 7,
+          "seconds": [
+            0.009379499999340624,
+            0.008073700009845197,
+            0.008465400023851544,
+            0.00784080004086718,
+            0.00916680000955239,
+            0.008763299963902682,
+            0.007608199957758188
+          ],
+          "p50_seconds": 0.008465400023851544,
+          "p95_seconds": 0.009379499999340624,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 39714816,
+            "peak_rss_bytes": 41226240
+          },
+          "memory_after": {
+            "rss_bytes": 39399424,
+            "peak_rss_bytes": 41226240
+          }
+        },
+        "ledger_recent_sparse_period": {
+          "samples": 7,
+          "seconds": [
+            0.009377899987157434,
+            0.00830889999633655,
+            0.00748220004606992,
+            0.007186700007878244,
+            0.006365999986883253,
+            0.007586200023069978,
+            0.0098112000268884
+          ],
+          "p50_seconds": 0.007586200023069978,
+          "p95_seconds": 0.0098112000268884,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 39399424,
+            "peak_rss_bytes": 41226240
+          },
+          "memory_after": {
+            "rss_bytes": 39669760,
+            "peak_rss_bytes": 41226240
+          }
+        },
+        "close_preview": {
+          "samples": 3,
+          "seconds": [
+            0.009372100001201034,
+            0.014983200002461672,
+            0.016990699979942292
+          ],
+          "p50_seconds": 0.014983200002461672,
+          "p95_seconds": 0.016990699979942292,
+          "driver_calls": [
+            21,
+            21,
+            21
+          ],
+          "read_calls": [
+            20,
+            20,
+            20
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 37220352,
+            "peak_rss_bytes": 40181760
+          },
+          "memory_after": {
+            "rss_bytes": 35094528,
+            "peak_rss_bytes": 40181760
+          }
+        },
+        "rebuild_projections": {
+          "samples": 1,
+          "seconds": [
+            0.10490689997095615
+          ],
+          "p50_seconds": 0.10490689997095615,
+          "p95_seconds": 0.10490689997095615,
+          "driver_calls": [
+            12
+          ],
+          "read_calls": [
+            3
+          ],
+          "lock_seconds": [
+            0.09606269997311756
+          ],
+          "write_trace_events_including_triggers": [
+            12
+          ],
+          "memory_before": {
+            "rss_bytes": 39448576,
+            "peak_rss_bytes": 41922560
+          },
+          "memory_after": {
+            "rss_bytes": 39800832,
+            "peak_rss_bytes": 42090496
+          }
+        },
+        "portable_backup": {
+          "samples": 1,
+          "seconds": [
+            1.4253858999582008
+          ],
+          "p50_seconds": 1.4253858999582008,
+          "p95_seconds": 1.4253858999582008,
+          "driver_calls": [
+            0
+          ],
+          "read_calls": [
+            0
+          ],
+          "lock_seconds": [
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 39800832,
+            "peak_rss_bytes": 42090496
+          },
+          "memory_after": {
+            "rss_bytes": 40157184,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "restore_and_verify": {
+          "samples": 1,
+          "seconds": [
+            0.4139985000365414
+          ],
+          "p50_seconds": 0.4139985000365414,
+          "p95_seconds": 0.4139985000365414,
+          "driver_calls": [
+            0
+          ],
+          "read_calls": [
+            0
+          ],
+          "lock_seconds": [
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 40157184,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 40218624,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "close_confirm_on_restored_copy": {
+          "samples": 1,
+          "seconds": [
+            0.0903371999738738
+          ],
+          "p50_seconds": 0.0903371999738738,
+          "p95_seconds": 0.0903371999738738,
+          "driver_calls": [
+            30
+          ],
+          "read_calls": [
+            23
+          ],
+          "lock_seconds": [
+            0.05449359997874126
+          ],
+          "write_trace_events_including_triggers": [
+            9
+          ],
+          "memory_before": {
+            "rss_bytes": 35094528,
+            "peak_rss_bytes": 40181760
+          },
+          "memory_after": {
+            "rss_bytes": 35094528,
+            "peak_rss_bytes": 40181760
+          }
+        }
+      },
+      "close_manifest_vouchers": 83,
+      "close_manifest_bytes": 9937,
+      "backup_bytes": 3999906,
+      "restored_evidence_count": 1,
+      "closed_snapshot_verified": true,
+      "actual_vouchers": 10007,
+      "actual_lines": 20014,
+      "query_plan_ledger": [
+        "SEARCH h USING COVERING INDEX voucher_period (period=?)",
+        "SEARCH a USING INDEX sqlite_autoindex_voucher_current_2 (version_id=?)",
+        "SEARCH v USING INDEX sqlite_autoindex_voucher_1 (id=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "database_bytes": 17801216,
+      "source_verification": {
+        "identity": {
+          "company_id": "benchmark-company",
+          "taxpayer_id": "91310000123456789A",
+          "database_id": "benchmark-db",
+          "schema_version": 1
+        },
+        "evidence_count": 1,
+        "latest_closed_period": null
+      },
+      "integrity": "ok",
+      "foreign_keys_ok": true,
+      "construction": {
+        "seconds": 2.0383912999532185,
+        "proof": "e553962e36f47a75d927d0bb507c7bd9c0b2b2cdd415f77cfb22e6c84e20c5d1",
+        "synthetic_vouchers": 10000,
+        "batch_size": 2000
+      },
+      "initial_metrics_before_cutoff_fix": {
+        "close_preview": {
+          "samples": 3,
+          "seconds": [
+            0.01215500000398606,
+            0.01487690000794828,
+            0.013930499961134046
+          ],
+          "p50_seconds": 0.013930499961134046,
+          "p95_seconds": 0.01487690000794828,
+          "driver_calls": [
+            20,
+            20,
+            20
+          ],
+          "read_calls": [
+            19,
+            19,
+            19
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 39669760,
+            "peak_rss_bytes": 41226240
+          },
+          "memory_after": {
+            "rss_bytes": 39448576,
+            "peak_rss_bytes": 41922560
+          }
+        },
+        "close_confirm_on_restored_copy": {
+          "samples": 1,
+          "seconds": [
+            0.021041199972387403
+          ],
+          "p50_seconds": 0.021041199972387403,
+          "p95_seconds": 0.021041199972387403,
+          "driver_calls": [
+            29
+          ],
+          "read_calls": [
+            22
+          ],
+          "lock_seconds": [
+            0.0032854999881237745
+          ],
+          "write_trace_events_including_triggers": [
+            9
+          ],
+          "memory_before": {
+            "rss_bytes": 40210432,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 39792640,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "record_save_preview_confirm": {
+          "samples": 7,
+          "seconds": [
+            0.04230620001908392,
+            0.04408479999983683,
+            0.16493989998707548,
+            0.1227089999592863,
+            0.05026829999405891,
+            0.10972880001645535,
+            0.04804500000318512
+          ],
+          "p50_seconds": 0.05026829999405891,
+          "p95_seconds": 0.16493989998707548,
+          "driver_calls": [
+            75,
+            75,
+            75,
+            75,
+            75,
+            75,
+            75
+          ],
+          "read_calls": [
+            39,
+            39,
+            39,
+            39,
+            39,
+            39,
+            39
+          ],
+          "lock_seconds": [
+            0.003907900012563914,
+            0.0042106000473722816,
+            0.12263060000259429,
+            0.08034370001405478,
+            0.009504300018306822,
+            0.06406419997802004,
+            0.004818500019609928
+          ],
+          "write_trace_events_including_triggers": [
+            46,
+            46,
+            46,
+            46,
+            46,
+            46,
+            46
+          ],
+          "memory_before": {
+            "rss_bytes": 39337984,
+            "peak_rss_bytes": 41218048
+          },
+          "memory_after": {
+            "rss_bytes": 39784448,
+            "peak_rss_bytes": 41218048
+          }
+        }
+      },
+      "historical_checkpoint_setup": {
+        "periods": 119,
+        "seconds": 18.55472070001997
+      }
+    },
+    {
+      "synthetic_vouchers": 100000,
+      "metrics": {
+        "record_save_preview_confirm": {
+          "samples": 7,
+          "seconds": [
+            0.11277280002832413,
+            0.1262354999780655,
+            0.10733909998089075,
+            0.09221360000083223,
+            0.14255639998009428,
+            0.06030700000701472,
+            0.14389680000022054
+          ],
+          "p50_seconds": 0.11277280002832413,
+          "p95_seconds": 0.14389680000022054,
+          "driver_calls": [
+            75,
+            75,
+            75,
+            75,
+            75,
+            75,
+            75
+          ],
+          "read_calls": [
+            39,
+            39,
+            39,
+            39,
+            39,
+            39,
+            39
+          ],
+          "lock_seconds": [
+            0.05143399996450171,
+            0.08025719999568537,
+            0.059690000023692846,
+            0.04038069996749982,
+            0.0887102999840863,
+            0.01598339999327436,
+            0.09323699999367818
+          ],
+          "write_trace_events_including_triggers": [
+            47,
+            47,
+            47,
+            47,
+            47,
+            47,
+            47
+          ],
+          "memory_before": {
+            "rss_bytes": 35414016,
+            "peak_rss_bytes": 40181760
+          },
+          "memory_after": {
+            "rss_bytes": 35721216,
+            "peak_rss_bytes": 40181760
+          }
+        },
+        "overview": {
+          "samples": 7,
+          "seconds": [
+            0.0027422999846749008,
+            0.008072900003753603,
+            0.008167200023308396,
+            0.007207299990113825,
+            0.007931699976325035,
+            0.006382399995345622,
+            0.008284500043373555
+          ],
+          "p50_seconds": 0.007931699976325035,
+          "p95_seconds": 0.008284500043373555,
+          "driver_calls": [
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "read_calls": [
+            4,
+            4,
+            4,
+            4,
+            4,
+            4,
+            4
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 41062400,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 41082880,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "ledger_first_page": {
+          "samples": 7,
+          "seconds": [
+            0.02165199996670708,
+            0.023033300007227808,
+            0.02324220002628863,
+            0.09235550003359094,
+            0.021757699956651777,
+            0.02555009996285662,
+            0.021559099957812577
+          ],
+          "p50_seconds": 0.023033300007227808,
+          "p95_seconds": 0.09235550003359094,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 41082880,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 40972288,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "ledger_cursor_page": {
+          "samples": 7,
+          "seconds": [
+            0.02133789996150881,
+            0.023789200000464916,
+            0.020423600042704493,
+            0.02208019996760413,
+            0.022075499990023673,
+            0.021378500037826598,
+            0.021559900022111833
+          ],
+          "p50_seconds": 0.021559900022111833,
+          "p95_seconds": 0.023789200000464916,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 40972288,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 40960000,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "ledger_recent_sparse_period": {
+          "samples": 7,
+          "seconds": [
+            0.007235899975057691,
+            0.00932079995982349,
+            0.008836799999698997,
+            0.007612299988977611,
+            0.008549900026991963,
+            0.00823470001341775,
+            0.009889200038742274
+          ],
+          "p50_seconds": 0.008549900026991963,
+          "p95_seconds": 0.009889200038742274,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 40960000,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 40640512,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "close_preview": {
+          "samples": 3,
+          "seconds": [
+            0.07304419996216893,
+            0.08559739997144789,
+            0.07890859997132793
+          ],
+          "p50_seconds": 0.07890859997132793,
+          "p95_seconds": 0.08559739997144789,
+          "driver_calls": [
+            21,
+            21,
+            21
+          ],
+          "read_calls": [
+            20,
+            20,
+            20
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 39297024,
+            "peak_rss_bytes": 41582592
+          },
+          "memory_after": {
+            "rss_bytes": 37621760,
+            "peak_rss_bytes": 41582592
+          }
+        },
+        "rebuild_projections": {
+          "samples": 1,
+          "seconds": [
+            1.0002769000129774
+          ],
+          "p50_seconds": 1.0002769000129774,
+          "p95_seconds": 1.0002769000129774,
+          "driver_calls": [
+            12
+          ],
+          "read_calls": [
+            3
+          ],
+          "lock_seconds": [
+            0.9897945999982767
+          ],
+          "write_trace_events_including_triggers": [
+            12
+          ],
+          "memory_before": {
+            "rss_bytes": 40861696,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 40968192,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "portable_backup": {
+          "samples": 1,
+          "seconds": [
+            13.09299049997935
+          ],
+          "p50_seconds": 13.09299049997935,
+          "p95_seconds": 13.09299049997935,
+          "driver_calls": [
+            0
+          ],
+          "read_calls": [
+            0
+          ],
+          "lock_seconds": [
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 40968192,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 40673280,
+            "peak_rss_bytes": 48103424
+          }
+        },
+        "restore_and_verify": {
+          "samples": 1,
+          "seconds": [
+            4.128880999982357
+          ],
+          "p50_seconds": 4.128880999982357,
+          "p95_seconds": 4.128880999982357,
+          "driver_calls": [
+            0
+          ],
+          "read_calls": [
+            0
+          ],
+          "lock_seconds": [
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 40673280,
+            "peak_rss_bytes": 48103424
+          },
+          "memory_after": {
+            "rss_bytes": 40480768,
+            "peak_rss_bytes": 48115712
+          }
+        },
+        "close_confirm_on_restored_copy": {
+          "samples": 1,
+          "seconds": [
+            0.12068180000642315
+          ],
+          "p50_seconds": 0.12068180000642315,
+          "p95_seconds": 0.12068180000642315,
+          "driver_calls": [
+            30
+          ],
+          "read_calls": [
+            23
+          ],
+          "lock_seconds": [
+            0.027942200016696006
+          ],
+          "write_trace_events_including_triggers": [
+            9
+          ],
+          "memory_before": {
+            "rss_bytes": 37621760,
+            "peak_rss_bytes": 41582592
+          },
+          "memory_after": {
+            "rss_bytes": 38543360,
+            "peak_rss_bytes": 41582592
+          }
+        }
+      },
+      "close_manifest_vouchers": 833,
+      "close_manifest_bytes": 99192,
+      "backup_bytes": 40492206,
+      "restored_evidence_count": 1,
+      "closed_snapshot_verified": true,
+      "actual_vouchers": 100014,
+      "actual_lines": 200028,
+      "query_plan_ledger": [
+        "SEARCH h USING COVERING INDEX voucher_period (period=?)",
+        "SEARCH a USING INDEX sqlite_autoindex_voucher_current_2 (version_id=?)",
+        "SEARCH v USING INDEX sqlite_autoindex_voucher_1 (id=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "database_bytes": 186699776,
+      "source_verification": {
+        "identity": {
+          "company_id": "benchmark-company",
+          "taxpayer_id": "91310000123456789A",
+          "database_id": "benchmark-db",
+          "schema_version": 1
+        },
+        "evidence_count": 1,
+        "latest_closed_period": null
+      },
+      "integrity": "ok",
+      "foreign_keys_ok": true,
+      "construction": {
+        "seconds": 31.44789030001266,
+        "proof": "e553962e36f47a75d927d0bb507c7bd9c0b2b2cdd415f77cfb22e6c84e20c5d1",
+        "synthetic_vouchers": 100000,
+        "batch_size": 2000
+      },
+      "initial_metrics_before_cutoff_fix": {
+        "close_preview": {
+          "samples": 3,
+          "seconds": [
+            0.07479129999410361,
+            0.0759653999703005,
+            0.07457289996091276
+          ],
+          "p50_seconds": 0.07479129999410361,
+          "p95_seconds": 0.0759653999703005,
+          "driver_calls": [
+            20,
+            20,
+            20
+          ],
+          "read_calls": [
+            19,
+            19,
+            19
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 40640512,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 40849408,
+            "peak_rss_bytes": 46047232
+          }
+        },
+        "close_confirm_on_restored_copy": {
+          "samples": 1,
+          "seconds": [
+            0.0827053000102751
+          ],
+          "p50_seconds": 0.0827053000102751,
+          "p95_seconds": 0.0827053000102751,
+          "driver_calls": [
+            29
+          ],
+          "read_calls": [
+            22
+          ],
+          "lock_seconds": [
+            0.008750700042583048
+          ],
+          "write_trace_events_including_triggers": [
+            9
+          ],
+          "memory_before": {
+            "rss_bytes": 41291776,
+            "peak_rss_bytes": 48115712
+          },
+          "memory_after": {
+            "rss_bytes": 41324544,
+            "peak_rss_bytes": 48115712
+          }
+        },
+        "record_save_preview_confirm": {
+          "samples": 7,
+          "seconds": [
+            0.06260800000745803,
+            0.06496250000782311,
+            0.043345300015062094,
+            0.06700109998928383,
+            0.045362900011241436,
+            0.0693203000118956,
+            0.08720620005624369
+          ],
+          "p50_seconds": 0.06496250000782311,
+          "p95_seconds": 0.08720620005624369,
+          "driver_calls": [
+            75,
+            75,
+            75,
+            75,
+            75,
+            75,
+            75
+          ],
+          "read_calls": [
+            39,
+            39,
+            39,
+            39,
+            39,
+            39,
+            39
+          ],
+          "lock_seconds": [
+            0.024881399993319064,
+            0.028088600025512278,
+            0.006571599980816245,
+            0.029292199993506074,
+            0.006893699988722801,
+            0.0317973000346683,
+            0.034140000003390014
+          ],
+          "write_trace_events_including_triggers": [
+            46,
+            46,
+            46,
+            46,
+            46,
+            46,
+            46
+          ],
+          "memory_before": {
+            "rss_bytes": 40878080,
+            "peak_rss_bytes": 46047232
+          },
+          "memory_after": {
+            "rss_bytes": 41062400,
+            "peak_rss_bytes": 46047232
+          }
+        }
+      },
+      "historical_checkpoint_setup": {
+        "periods": 119,
+        "seconds": 38.532378100033384
+      }
+    },
+    {
+      "synthetic_vouchers": 1000000,
+      "metrics": {
+        "record_save_preview_confirm": {
+          "samples": 7,
+          "seconds": [
+            0.19985879998421296,
+            0.08505470003001392,
+            0.06213879998540506,
+            0.08052100002532825,
+            0.0644789999932982,
+            0.05260469997301698,
+            0.061093299998901784
+          ],
+          "p50_seconds": 0.0644789999932982,
+          "p95_seconds": 0.19985879998421296,
+          "driver_calls": [
+            75,
+            75,
+            75,
+            75,
+            75,
+            75,
+            75
+          ],
+          "read_calls": [
+            39,
+            39,
+            39,
+            39,
+            39,
+            39,
+            39
+          ],
+          "lock_seconds": [
+            0.025141999998595566,
+            0.04028160002781078,
+            0.01660269999410957,
+            0.03520689997822046,
+            0.018618400034029037,
+            0.005625399993732572,
+            0.01156989997252822
+          ],
+          "write_trace_events_including_triggers": [
+            47,
+            47,
+            47,
+            47,
+            47,
+            47,
+            47
+          ],
+          "memory_before": {
+            "rss_bytes": 36540416,
+            "peak_rss_bytes": 41582592
+          },
+          "memory_after": {
+            "rss_bytes": 37318656,
+            "peak_rss_bytes": 41582592
+          }
+        },
+        "overview": {
+          "samples": 7,
+          "seconds": [
+            0.0030837999656796455,
+            0.007395699969492853,
+            0.008090300019830465,
+            0.007996000000275671,
+            0.008875600004103035,
+            0.00788659998215735,
+            0.008555299951694906
+          ],
+          "p50_seconds": 0.007996000000275671,
+          "p95_seconds": 0.008875600004103035,
+          "driver_calls": [
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "read_calls": [
+            4,
+            4,
+            4,
+            4,
+            4,
+            4,
+            4
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 41795584,
+            "peak_rss_bytes": 48115712
+          },
+          "memory_after": {
+            "rss_bytes": 41795584,
+            "peak_rss_bytes": 48115712
+          }
+        },
+        "ledger_first_page": {
+          "samples": 7,
+          "seconds": [
+            0.5887296000146307,
+            0.16342870000516996,
+            0.20667679997859523,
+            0.1939964999910444,
+            0.18306739995023236,
+            0.18781380000291392,
+            0.17623540002387017
+          ],
+          "p50_seconds": 0.18781380000291392,
+          "p95_seconds": 0.5887296000146307,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 41795584,
+            "peak_rss_bytes": 48115712
+          },
+          "memory_after": {
+            "rss_bytes": 41984000,
+            "peak_rss_bytes": 48115712
+          }
+        },
+        "ledger_cursor_page": {
+          "samples": 7,
+          "seconds": [
+            0.17867649998515844,
+            0.16913659998681396,
+            0.1847583000198938,
+            0.20347860001493245,
+            0.1857249999884516,
+            0.1657755000051111,
+            0.1633441000012681
+          ],
+          "p50_seconds": 0.17867649998515844,
+          "p95_seconds": 0.20347860001493245,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 41984000,
+            "peak_rss_bytes": 48115712
+          },
+          "memory_after": {
+            "rss_bytes": 43393024,
+            "peak_rss_bytes": 48115712
+          }
+        },
+        "ledger_recent_sparse_period": {
+          "samples": 7,
+          "seconds": [
+            0.009676699992269278,
+            0.008198500028811395,
+            0.009644799982197583,
+            0.007640300027560443,
+            0.008819700044114143,
+            0.009497699968051165,
+            0.008070099982433021
+          ],
+          "p50_seconds": 0.008819700044114143,
+          "p95_seconds": 0.009676699992269278,
+          "driver_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "read_calls": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 43393024,
+            "peak_rss_bytes": 48115712
+          },
+          "memory_after": {
+            "rss_bytes": 43474944,
+            "peak_rss_bytes": 48115712
+          }
+        },
+        "close_preview": {
+          "samples": 3,
+          "seconds": [
+            0.7019059999729507,
+            0.7299574999487959,
+            0.6989173000329174
+          ],
+          "p50_seconds": 0.7019059999729507,
+          "p95_seconds": 0.7299574999487959,
+          "driver_calls": [
+            21,
+            21,
+            21
+          ],
+          "read_calls": [
+            20,
+            20,
+            20
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 51023872,
+            "peak_rss_bytes": 57106432
+          },
+          "memory_after": {
+            "rss_bytes": 51847168,
+            "peak_rss_bytes": 57106432
+          }
+        },
+        "rebuild_projections": {
+          "samples": 1,
+          "seconds": [
+            10.646851500030607
+          ],
+          "p50_seconds": 10.646851500030607,
+          "p95_seconds": 10.646851500030607,
+          "driver_calls": [
+            12
+          ],
+          "read_calls": [
+            3
+          ],
+          "lock_seconds": [
+            10.633003299997654
+          ],
+          "write_trace_events_including_triggers": [
+            12
+          ],
+          "memory_before": {
+            "rss_bytes": 51093504,
+            "peak_rss_bytes": 53600256
+          },
+          "memory_after": {
+            "rss_bytes": 48111616,
+            "peak_rss_bytes": 54177792
+          }
+        },
+        "portable_backup": {
+          "samples": 1,
+          "seconds": [
+            154.34779670002172
+          ],
+          "p50_seconds": 154.34779670002172,
+          "p95_seconds": 154.34779670002172,
+          "driver_calls": [
+            0
+          ],
+          "read_calls": [
+            0
+          ],
+          "lock_seconds": [
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 48111616,
+            "peak_rss_bytes": 54177792
+          },
+          "memory_after": {
+            "rss_bytes": 49274880,
+            "peak_rss_bytes": 57307136
+          }
+        },
+        "restore_and_verify": {
+          "samples": 1,
+          "seconds": [
+            48.967465800000355
+          ],
+          "p50_seconds": 48.967465800000355,
+          "p95_seconds": 48.967465800000355,
+          "driver_calls": [
+            0
+          ],
+          "read_calls": [
+            0
+          ],
+          "lock_seconds": [
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 49274880,
+            "peak_rss_bytes": 57307136
+          },
+          "memory_after": {
+            "rss_bytes": 49360896,
+            "peak_rss_bytes": 57307136
+          }
+        },
+        "close_confirm_on_restored_copy": {
+          "samples": 1,
+          "seconds": [
+            0.7799826000118628
+          ],
+          "p50_seconds": 0.7799826000118628,
+          "p95_seconds": 0.7799826000118628,
+          "driver_calls": [
+            30
+          ],
+          "read_calls": [
+            23
+          ],
+          "lock_seconds": [
+            0.05809220002265647
+          ],
+          "write_trace_events_including_triggers": [
+            9
+          ],
+          "memory_before": {
+            "rss_bytes": 51847168,
+            "peak_rss_bytes": 57106432
+          },
+          "memory_after": {
+            "rss_bytes": 50892800,
+            "peak_rss_bytes": 57106432
+          }
+        }
+      },
+      "close_manifest_vouchers": 8333,
+      "close_manifest_bytes": 1036697,
+      "backup_bytes": 411149373,
+      "restored_evidence_count": 1,
+      "closed_snapshot_verified": true,
+      "actual_vouchers": 1000021,
+      "actual_lines": 2000042,
+      "query_plan_ledger": [
+        "SEARCH h USING COVERING INDEX voucher_period (period=?)",
+        "SEARCH a USING INDEX sqlite_autoindex_voucher_current_2 (version_id=?)",
+        "SEARCH v USING INDEX sqlite_autoindex_voucher_1 (id=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "database_bytes": 1936830464,
+      "source_verification": {
+        "identity": {
+          "company_id": "benchmark-company",
+          "taxpayer_id": "91310000123456789A",
+          "database_id": "benchmark-db",
+          "schema_version": 1
+        },
+        "evidence_count": 1,
+        "latest_closed_period": null
+      },
+      "integrity": "ok",
+      "foreign_keys_ok": true,
+      "construction": {
+        "seconds": 393.43783080001594,
+        "proof": "e553962e36f47a75d927d0bb507c7bd9c0b2b2cdd415f77cfb22e6c84e20c5d1",
+        "synthetic_vouchers": 1000000,
+        "batch_size": 2000
+      },
+      "initial_metrics_before_cutoff_fix": {
+        "close_preview": {
+          "samples": 3,
+          "seconds": [
+            1.4967310000211,
+            0.7028519999585114,
+            0.8428504999610595
+          ],
+          "p50_seconds": 0.8428504999610595,
+          "p95_seconds": 1.4967310000211,
+          "driver_calls": [
+            20,
+            20,
+            20
+          ],
+          "read_calls": [
+            19,
+            19,
+            19
+          ],
+          "lock_seconds": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "write_trace_events_including_triggers": [
+            0,
+            0,
+            0
+          ],
+          "memory_before": {
+            "rss_bytes": 43474944,
+            "peak_rss_bytes": 48115712
+          },
+          "memory_after": {
+            "rss_bytes": 49811456,
+            "peak_rss_bytes": 53600256
+          }
+        },
+        "close_confirm_on_restored_copy": {
+          "samples": 1,
+          "seconds": [
+            0.8226414999808185
+          ],
+          "p50_seconds": 0.8226414999808185,
+          "p95_seconds": 0.8226414999808185,
+          "driver_calls": [
+            29
+          ],
+          "read_calls": [
+            22
+          ],
+          "lock_seconds": [
+            0.059313800011295825
+          ],
+          "write_trace_events_including_triggers": [
+            9
+          ],
+          "memory_before": {
+            "rss_bytes": 51904512,
+            "peak_rss_bytes": 57307136
+          },
+          "memory_after": {
+            "rss_bytes": 51949568,
+            "peak_rss_bytes": 62447616
+          }
+        },
+        "record_save_preview_confirm": {
+          "samples": 7,
+          "seconds": [
+            0.14068569999653846,
+            0.05233609996503219,
+            0.08051150001119822,
+            0.04751050000777468,
+            0.09000000002561137,
+            0.09461079997709021,
+            0.051406700047664344
+          ],
+          "p50_seconds": 0.08051150001119822,
+          "p95_seconds": 0.14068569999653846,
+          "driver_calls": [
+            75,
+            75,
+            75,
+            75,
+            75,
+            75,
+            75
+          ],
+          "read_calls": [
+            39,
+            39,
+            39,
+            39,
+            39,
+            39,
+            39
+          ],
+          "lock_seconds": [
+            0.09697079996112734,
+            0.007018100004643202,
+            0.04032780003035441,
+            0.006766000005882233,
+            0.04550800001015887,
+            0.0077594000031240284,
+            0.008512400032486767
+          ],
+          "write_trace_events_including_triggers": [
+            46,
+            46,
+            46,
+            46,
+            46,
+            46,
+            46
+          ],
+          "memory_before": {
+            "rss_bytes": 41553920,
+            "peak_rss_bytes": 48115712
+          },
+          "memory_after": {
+            "rss_bytes": 41795584,
+            "peak_rss_bytes": 48115712
+          }
+        }
+      },
+      "historical_checkpoint_setup": {
+        "periods": 119,
+        "seconds": 192.13773030001903
+      }
+    }
+  ],
+  "runtime": {
+    "python": "3.12.13",
+    "sqlite": "3.53.1",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "cpu_count": 16
+  },
+  "source_sha256": {
+    "src/ai_accounting/kernel/__init__.py": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167",
+    "src/ai_accounting/kernel/backup.py": "449560b0f27791489d2733f16a97d30dbc566bd4a5f2de2e12a3e703f9efda28",
+    "src/ai_accounting/kernel/catalog.py": "b26f97e3111b325d9f189946ec741932b9b5e5bb4dcd2cca5e471d791a5f24f0",
+    "src/ai_accounting/kernel/cli.py": "bfeb534eb45845b0f3da56e384292eac464da53df2175b1e1c7a119688a4a6f4",
+    "src/ai_accounting/kernel/contracts.py": "5d9ae5f7c5b2c82ff2b567bdcc7b2fe0c95699ed9c8f345e835aa78ca0e53e05",
+    "src/ai_accounting/kernel/domains/assets.py": "e0bae536c6c488f2bb42adb2eac047129587818c2d7fb629800fa22961989134",
+    "src/ai_accounting/kernel/domains/banking.py": "3f27b2027c74c2b091211ceabe2ae770042c083af9f22beea13cd4092c2e8787",
+    "src/ai_accounting/kernel/domains/payroll.py": "d037e48c23ac6a058108f3563f0d0fd1099cf37744d9c875c6c5df09ee8e57ef",
+    "src/ai_accounting/kernel/domains/taxes.py": "0e7f0545330259b1d6500a8dd42190dcf25d5c50fbfd2e5719cc49950e8250f3",
+    "src/ai_accounting/kernel/domains/transactions.py": "dc19356bd04fec94b7ddb41b6400ded89eccbfac26b6c9242a46f47d16887924",
+    "src/ai_accounting/kernel/engine.py": "f6d42e9d01404b666acecf1a748e7390f21af2b5d12f581b497edea4b68dd05d",
+    "src/ai_accounting/kernel/exports.py": "a38e63e54d65a3008a1023663c269af77b0db81567245285685508e88ef036fa",
+    "src/ai_accounting/kernel/http.py": "be3aa04899b32eb93cf8b1679aab23b94fecfcbbbf9dee502a281c26c0fd0fd3",
+    "src/ai_accounting/kernel/mcp.py": "f931700d8747d205479a92f3314419788f3d9075ccd38abd78c9baf1b6d4e4f8",
+    "src/ai_accounting/kernel/periods.py": "0b542af61f2d81e7ea3ee21a89ad087577497a07be695e40a5bfce9b97610bd5",
+    "src/ai_accounting/kernel/runtime.py": "5966559f700725c04d026e57492e685e537e99a62e2f6be8e2031deb1894e339",
+    "src/ai_accounting/kernel/schema.py": "a5492d4ee6388bc104b928bce1be39441c89195a568d18014f5176a1e3fe87fd",
+    "src/ai_accounting/kernel/service.py": "772cf85f20fd61c62da22408c886018ed15b821da1bacd3b1dc1677125fa43a0",
+    "src/ai_accounting/kernel/storage.py": "1055a10d0d4045b5ca73681aa26019822e4ae5dfab2a074dc99076bddb4c149f",
+    "src/ai_accounting/kernel/types.py": "c531115d20f402305417bdd96d051396253ab4e744cd6ff3dcf82e9f1c8b6d83",
+    "scripts/benchmark-local-kernel.py": "ff92183f2ad7894e766a1b4bdcd5ecf6b5263bcc396201fb5a2b24296d7cfdc3"
+  },
+  "schema_sha256": "52e97b135798627ef8874937bd740b3c62a07930ce2d1a8a60ee6cbaf76e97c5",
+  "method": "trusted synthetic fixture batch insert; constraints and FULL sync enabled; foreground operations use public typed Engine calls; no real company data",
+  "finished_at": "2026-09-10T16:42:15.825878+00:00",
+  "final_verification": {
+    "identity": {
+      "company_id": "benchmark-company",
+      "taxpayer_id": "91310000123456789A",
+      "database_id": "benchmark-db",
+      "schema_version": 1
+    },
+    "evidence_count": 1,
+    "latest_closed_period": null
+  },
+  "hotfix_refresh": {
+    "status": "complete",
+    "started_at": "2026-09-10T17:01:07.707201+00:00",
+    "workspace": "D:\\GitHub\\ai-accounting-core\\.tmp\\kernel-benchmark-20260910-162954\\hotfix-refresh-20260910-170107",
+    "scales": [
+      {
+        "synthetic_vouchers": 10000,
+        "snapshot_schema_sha256": "52e97b135798627ef8874937bd740b3c62a07930ce2d1a8a60ee6cbaf76e97c5",
+        "historical_checkpoint_setup": {
+          "periods": 119,
+          "seconds": 18.55472070001997
+        },
+        "closed_snapshot_verified": true
+      },
+      {
+        "synthetic_vouchers": 100000,
+        "snapshot_schema_sha256": "52e97b135798627ef8874937bd740b3c62a07930ce2d1a8a60ee6cbaf76e97c5",
+        "historical_checkpoint_setup": {
+          "periods": 119,
+          "seconds": 38.532378100033384
+        },
+        "closed_snapshot_verified": true
+      },
+      {
+        "synthetic_vouchers": 1000000,
+        "snapshot_schema_sha256": "52e97b135798627ef8874937bd740b3c62a07930ce2d1a8a60ee6cbaf76e97c5",
+        "historical_checkpoint_setup": {
+          "periods": 119,
+          "seconds": 192.13773030001903
+        },
+        "closed_snapshot_verified": true
+      }
+    ],
+    "source_sha256": {
+      "src/ai_accounting/kernel/__init__.py": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167",
+      "src/ai_accounting/kernel/backup.py": "449560b0f27791489d2733f16a97d30dbc566bd4a5f2de2e12a3e703f9efda28",
+      "src/ai_accounting/kernel/catalog.py": "a95012139fcb63115aaae94d7a53afbe264ab1c81d62b1808bfd8c0d35c190f4",
+      "src/ai_accounting/kernel/cli.py": "1ed119881486b3f537028aaa5ede9aec3d67b58ccf31c7935761e58315105a13",
+      "src/ai_accounting/kernel/contracts.py": "d996c051e4eaf525133335100f16f342d2ad0197818a257e28b1aa5e7e5ae4a9",
+      "src/ai_accounting/kernel/domains/adjustments.py": "89d269fee9e30a57a609f5c6df22ce313d025145d46efb0cf2258584c58a791e",
+      "src/ai_accounting/kernel/domains/assets.py": "b2d3710f3df294756d928a663162b6ad5462e03b9db3efb4b0a50c1528e11b44",
+      "src/ai_accounting/kernel/domains/banking.py": "3e54865250d3be13a635f90a891fa9eaa256013c86388f9b6288e70f9afa65f3",
+      "src/ai_accounting/kernel/domains/payroll.py": "d10df2c6c48cefab470e8ee3b190fa0432cd7a5d0c6d8425acb070d22d7bb62a",
+      "src/ai_accounting/kernel/domains/taxes.py": "da1251ddadda2fb8f3ba50ba05a79bbe2410410f36adb081b0a8a0326588bee1",
+      "src/ai_accounting/kernel/domains/transactions.py": "d0b925209ecd33783e69d69f95a9e86c344d6a49d57e589cb212754db19fcf63",
+      "src/ai_accounting/kernel/engine.py": "e7e3c71a8b88963cec9fda58c47af89f199ba7fba20ae8ebab382c07c4cd8064",
+      "src/ai_accounting/kernel/exports.py": "fe8781870ede19776271624e7a45316c5e5fac3e9572a1b8dcac53576140aee8",
+      "src/ai_accounting/kernel/http.py": "923401e79a74694b3cece9f91182079b5193fb83094b5bd6daa76c81992d4d44",
+      "src/ai_accounting/kernel/mcp.py": "f931700d8747d205479a92f3314419788f3d9075ccd38abd78c9baf1b6d4e4f8",
+      "src/ai_accounting/kernel/periods.py": "c927d4fcc167ac22bc14c319f88ccbe499f632a5c0b3db3fdb9db93b8be58057",
+      "src/ai_accounting/kernel/runtime.py": "5966559f700725c04d026e57492e685e537e99a62e2f6be8e2031deb1894e339",
+      "src/ai_accounting/kernel/schema.py": "e495d7f7909d5be91ea621b5444de0fc9a583e3726544006c6f9d1b1b9fa4880",
+      "src/ai_accounting/kernel/service.py": "9583fba46551cf96835a46fba08b355e99924e9f28e8c21c228971269abd8641",
+      "src/ai_accounting/kernel/storage.py": "b2e77340c6d007ff7232936279e188d96eb4669ea761714bd3340df2f4dd927b",
+      "src/ai_accounting/kernel/types.py": "659fed06767019414e14796739e606aee6fb3d67696640ddbcd580d29cbee91a",
+      "scripts/benchmark-local-kernel.py": "651a61e089024698fddd2db10a4dc0862ce24236adc0f19faaff900047e50845"
+    },
+    "finished_at": "2026-09-10T17:06:18.081391+00:00"
+  },
+  "final_contract_review": {
+    "completed_at": "2026-09-10T17:45:49.586538+00:00",
+    "status": "passed",
+    "pytest": "tests/kernel/test_performance_contract.py: 3 passed in 37.84s",
+    "ordinary_history_scales": [
+      100,
+      2000
+    ],
+    "empty_period_history_scales": [
+      240,
+      2400
+    ],
+    "full_scale_measurement_repeated": false,
+    "note": "Later generic monthly scopes, wildcard dependency invalidation and program version hashing changed the kernel after the timed three-scale run. Original latency/SQL tables describe their recorded measurement trees, not the final tree. Final structural checks confirm foreground SQL remains independent of accounting age. A planner regression in the earlier-period close gate was fixed by driving its bounded period range through fact_period with CROSS JOIN. Quarterly financial statements are not part of this simple-voucher benchmark."
+  }
+}

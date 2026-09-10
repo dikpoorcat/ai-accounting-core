@@ -35,6 +35,7 @@ dev = [
 ]
 
 [project.scripts]
+finance-local = "ai_accounting.kernel.cli:main"
 finance-mcp = "ai_accounting.mcp_server:main"
 finance-bootstrap = "ai_accounting.bootstrap:main"
 finance-login = "ai_accounting.identity_cli:main"
