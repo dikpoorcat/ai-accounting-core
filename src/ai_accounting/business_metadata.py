@@ -6,6 +6,7 @@ import hashlib
 import json
 import uuid
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -22,6 +23,12 @@ class BusinessMetadata(BaseModel):
 
     counterparty: CounterpartyRef | None = None
     beneficiary: CounterpartyRef | None = None
+    payment_period: str | None = Field(
+        default=None,
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
+        description="可选代发归集月份，不改变核算确认期或真实收付款日。",
+    )
+    payment_category: Literal["labor", "reimbursement"] | None = None
     handler: CounterpartyRef | None = None
     purpose: str | None = Field(
         default=None, max_length=2000, description="可选用途；AI撰写时使用简体中文。"

@@ -220,6 +220,20 @@ export interface BriefValidation {
 }
 
 export interface BriefData {
+  material_completeness: {
+    closed: boolean;
+    satisfied: boolean;
+    revision?: number;
+    company_notes?: { path: string; sha256: string; exists: boolean };
+    issues: Array<{
+      code: string;
+      message: string;
+      location?: string;
+      source_name?: string;
+      excerpt?: string;
+      difference_fen?: string;
+    }>;
+  };
   generated_at: string;
   management_commentary: string;
   voucher_count: number;

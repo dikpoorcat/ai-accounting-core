@@ -4257,6 +4257,70 @@ class TaxRule(Base):
     )
 
 
+class MybankPaymentSourceVersion(Base):
+    """Append-only, evidence-derived payment facts; never a journal entry."""
+
+    __tablename__ = "mybank_payment_source_versions"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payroll_period: Mapped[str] = mapped_column(String(7), nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    __table_args__ = (
+        ForeignKeyConstraint(["org_id"], ["organizations.id"], ondelete="RESTRICT"),
+        ForeignKeyConstraint(
+            ["org_id", "evidence_id"], ["evidence.org_id", "evidence.id"], ondelete="RESTRICT"
+        ),
+        UniqueConstraint(
+            "org_id",
+            "payroll_period",
+            "source_kind",
+            "revision",
+            name="uq_mybank_payment_source_version",
+        ),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_mybank_payment_source_request"),
+        CheckConstraint("revision > 0", name="ck_mybank_source_revision"),
+        CheckConstraint(
+            "source_kind IN ('actual_tax','payment_register')", name="ck_mybank_source_kind"
+        ),
+        CheckConstraint("length(payroll_period) = 7", name="ck_mybank_source_period"),
+    )
+
+
+class PeriodMaterialInventory(Base):
+    """Append-only source coverage and reconciliation, never a second ledger."""
+
+    __tablename__ = "period_material_inventories"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    period_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "period_id"],
+            ["accounting_periods.org_id", "accounting_periods.id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("org_id", "period_id", "revision", name="uq_material_inventory_revision"),
+        UniqueConstraint("org_id", "idempotency_key", name="uq_material_inventory_request"),
+        CheckConstraint("revision > 0", name="ck_material_inventory_revision"),
+    )
+
+
 class Evidence(Base):
     __tablename__ = "evidence"
 
@@ -7256,6 +7320,8 @@ def _enforce_owner_workflow_facts_append_only(
         OwnerPeriodConfirmation,
         PayrollContributionAssessmentConfirmation,
         PayrollTaxImportExport,
+        MybankPaymentSourceVersion,
+        PeriodMaterialInventory,
     )
     if any(isinstance(item, fact_types) for item in session.deleted):
         raise ValueError("OWNER_WORKFLOW_FACT_IMMUTABLE")

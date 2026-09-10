@@ -241,8 +241,16 @@ class ObligationSettlementComponent(ComponentFacts):
 
 
 class PassThroughComponent(ComponentFacts):
+    supports_monthly_recognition = True
     kind: Literal["pass_through"]
     amount_fen: PositiveFen | None = None
+    recognition_basis: Literal["received", "credit"] = Field(
+        default="received",
+        description="received为实际代收；credit表示已有证据确认收款债权及转付义务均已成立。不得仅凭预计收款选择credit。",
+        json_schema_extra={
+            "x-accounting-fact": {"role": "accounting", "meaning": "recognition_basis"}
+        },
+    )
 
 
 class DebtTransferComponent(ComponentFacts):

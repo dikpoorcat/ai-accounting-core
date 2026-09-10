@@ -58,6 +58,8 @@ _IDENTITY_TABLES = (
     "owner_recovery_codes",
     "identity_audit_events",
 )
+
+
 class CompanyCliError(ValueError):
     pass
 
@@ -110,9 +112,11 @@ def _check_schema(*, org_id: uuid.UUID | None = None) -> dict:
                 state = schema_state(session.connection(), catalog=True)
                 states.append(state)
                 if state["ready"]:
-                    query = select(CompanyRegistry).where(
-                        CompanyRegistry.status.in_(["active", "archived"])
-                    ).order_by(CompanyRegistry.org_id)
+                    query = (
+                        select(CompanyRegistry)
+                        .where(CompanyRegistry.status.in_(["active", "archived"]))
+                        .order_by(CompanyRegistry.org_id)
+                    )
                     if org_id is not None:
                         query = query.where(CompanyRegistry.org_id == org_id)
                     registries = session.scalars(query).all()
@@ -123,10 +127,12 @@ def _check_schema(*, org_id: uuid.UUID | None = None) -> dict:
                         try:
                             with business_engine.connect() as connection:
                                 connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-                                states.append({
-                                    **schema_state(connection),
-                                    "org_id": str(registry.org_id),
-                                })
+                                states.append(
+                                    {
+                                        **schema_state(connection),
+                                        "org_id": str(registry.org_id),
+                                    }
+                                )
                         finally:
                             business_engine.dispose()
     finally:
@@ -282,6 +288,10 @@ def _import_company(args: argparse.Namespace) -> None:
             )
             if duplicate_taxpayer is not None:
                 raise CompanyCliError("COMPANY_IMPORT_TAXPAYER_ALREADY_EXISTS")
+            if verification.company_notes:
+                _install_imported_company_notes(
+                    verification, imported.taxpayer_identification_number
+                )
             catalog_id = catalog_session.get(CatalogMetadata, 1)
             if catalog_id is None:
                 raise CompanyCliError("COMPANY_IMPORT_CATALOG_NOT_INITIALIZED")
@@ -391,20 +401,51 @@ def _validate_imported_company(
             )
             if profile is None:
                 raise CompanyCliError("COMPANY_IMPORT_PROFILE_MISSING")
-            evidence_rows = session.execute(
-                text("SELECT id::text, sha256, size_bytes FROM evidence ORDER BY id::text")
-            ).mappings().all()
+            evidence_rows = (
+                session.execute(
+                    text("SELECT id::text, sha256, size_bytes FROM evidence ORDER BY id::text")
+                )
+                .mappings()
+                .all()
+            )
             expected = sorted(
                 (item.evidence_id, item.sha256, item.size_bytes) for item in expected_evidence
             )
-            actual = sorted(
-                (row["id"], row["sha256"], row["size_bytes"]) for row in evidence_rows
-            )
+            actual = sorted((row["id"], row["sha256"], row["size_bytes"]) for row in evidence_rows)
             if actual != expected:
                 raise CompanyCliError("COMPANY_IMPORT_EVIDENCE_MISMATCH")
             return _ImportedCompany(organizations[0], profile)
     finally:
         engine.dispose()
+
+
+def _install_imported_company_notes(verification, taxpayer_identification_number):
+    from types import SimpleNamespace
+
+    from .company_notes import notes_path
+
+    root = verification.backup_directory
+    _, manifest_bytes = read_regular_file_in_root(root / "manifest.json", root, max_bytes=4_000_000)
+    if hashlib.sha256(manifest_bytes).hexdigest() != verification.manifest_sha256:
+        raise CompanyCliError("COMPANY_IMPORT_NOTES_MANIFEST_CHANGED")
+    entry = json.loads(manifest_bytes)["company_notes"]
+    _, content = read_regular_file_in_root(root / "company-notes.md", root, max_bytes=4_000_000)
+    if (
+        hashlib.sha256(content).hexdigest() != entry["sha256"]
+        or len(content) != entry["size_bytes"]
+    ):
+        raise CompanyCliError("COMPANY_IMPORT_NOTES_CHANGED")
+    path = notes_path(
+        SimpleNamespace(taxpayer_identification_number=taxpayer_identification_number)
+    )
+    storage = get_settings().finance_storage_dir
+    ensure_directory_in_root(path.parent, storage)
+    if path.exists():
+        _, existing = read_regular_file_in_root(path, storage, max_bytes=4_000_000)
+        if existing != content:
+            raise CompanyCliError("COMPANY_IMPORT_NOTES_CONFLICT")
+    else:
+        write_new_regular_file_in_root(path, storage, content, max_bytes=4_000_000)
 
 
 def _install_imported_evidence(
@@ -464,10 +505,13 @@ def _create_named_database(provisioning_url: str, database_name: str) -> None:
         with engine.connect() as connection:
             if get_settings().finance_environment == "production":
                 assert_provisioning_role(connection)
-            if connection.scalar(
-                text("SELECT 1 FROM pg_database WHERE datname = :name"),
-                {"name": database_name},
-            ) is not None:
+            if (
+                connection.scalar(
+                    text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                    {"name": database_name},
+                )
+                is not None
+            ):
                 raise CompanyCliError("COMPANY_IMPORT_DATABASE_ALREADY_EXISTS")
             connection.exec_driver_sql(f'CREATE DATABASE "{database_name}"')
     finally:

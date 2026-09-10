@@ -241,7 +241,7 @@ def test_brief_projects_balanced_month_and_owner_activity(brief_engine: Engine) 
     validation = month["validation"]
     assert validation["state"] == "attention"
     assert validation["integrity_valid"] is True
-    assert validation["attention_count"] == 1
+    assert validation["attention_count"] == 1 + len(month["material_completeness"]["issues"])
     validation_items = {item["key"]: item for item in validation["items"]}
     assert validation_items["voucher_balance"]["state"] == "pass"
     assert validation_items["accounting_equation"]["state"] == "pass"

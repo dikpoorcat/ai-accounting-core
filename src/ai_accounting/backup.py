@@ -102,6 +102,7 @@ class BackupRequest:
     artifact_type: str | None = None
     org_id: str | None = None
     database_identity: str | None = None
+    company_notes: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,7 @@ class BackupVerification:
     org_id: str | None = None
     database_identity: str | None = None
     purpose: str | None = None
+    company_notes: bool = False
 
 
 @dataclass(frozen=True)
@@ -164,6 +166,7 @@ def create_portable_backup_archive(
         _MANIFEST_DIGEST_NAME,
         _DATABASE_ARCHIVE_NAME,
         *(f"evidence/{item.sha256}" for item in verified.evidence),
+        *(["company-notes.md"] if verified.company_notes else []),
     ]
     try:
         with zipfile.ZipFile(
@@ -215,9 +218,7 @@ def verify_portable_backup_archive(
             manifest_bytes = archive.read(manifest_info)
             digest_bytes = archive.read(digest_info)
             try:
-                expected_manifest_digest = digest_bytes.decode(
-                    "ascii", errors="strict"
-                ).strip()
+                expected_manifest_digest = digest_bytes.decode("ascii", errors="strict").strip()
             except UnicodeDecodeError as exc:
                 raise BackupError("BACKUP_PORTABLE_INVALID") from exc
             actual_manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
@@ -234,6 +235,7 @@ def verify_portable_backup_archive(
                 _MANIFEST_DIGEST_NAME,
                 database["path"],
                 *(item["path"] for item in evidence),
+                *(["company-notes.md"] if manifest.get("company_notes") else []),
             }
             if set(names) != expected_members:
                 raise BackupError("BACKUP_PORTABLE_INVALID")
@@ -245,7 +247,10 @@ def verify_portable_backup_archive(
                 max_bytes=DEFAULT_MAX_DATABASE_DUMP_BYTES,
                 error_code="BACKUP_DATABASE_ARCHIVE_HASH_MISMATCH",
             )
-            for item in evidence:
+            for item in [
+                *evidence,
+                *([manifest["company_notes"]] if manifest.get("company_notes") else []),
+            ]:
                 _verify_portable_content(
                     archive,
                     info_by_name[item["path"]],
@@ -419,6 +424,17 @@ def _create_backup_contents(
                 "org_id": request.org_id,
                 "database_identity": request.database_identity,
             }
+        if request.company_notes is not None:
+            if request.artifact_type != "company":
+                raise BackupError("BACKUP_COMPANY_NOTES_SCOPE_INVALID")
+            write_new_regular_file_in_root(
+                partial / "company-notes.md", root, request.company_notes, max_bytes=4_000_000
+            )
+            manifest_payload["company_notes"] = {
+                "path": "company-notes.md",
+                "sha256": hashlib.sha256(request.company_notes).hexdigest(),
+                "size_bytes": len(request.company_notes),
+            }
         manifest = _canonical_json(manifest_payload)
         write_new_regular_file_in_root(
             partial / _MANIFEST_NAME,
@@ -507,7 +523,10 @@ def verify_backup(
         raise BackupError("BACKUP_DATABASE_ARCHIVE_HASH_MISMATCH")
 
     evidence = manifest["evidence"]
-    for entry in evidence:
+    for entry in [
+        *evidence,
+        *([manifest["company_notes"]] if manifest.get("company_notes") else []),
+    ]:
         digest, size = _hash_manifest_content(
             directory,
             root,
@@ -546,6 +565,7 @@ def verify_backup(
             artifact.get("database_identity") if isinstance(artifact, dict) else None
         ),
         purpose=manifest["purpose"],
+        company_notes=bool(manifest.get("company_notes")),
     )
 
 
@@ -709,9 +729,7 @@ def _validate_request(
     if (
         request.database.archive_format != "pg_dump_custom"
         or not _REVISION_PATTERN.fullmatch(request.database.schema_revision)
-        or not _SYSTEM_IDENTIFIER_PATTERN.fullmatch(
-            request.database.source_system_identifier
-        )
+        or not _SYSTEM_IDENTIFIER_PATTERN.fullmatch(request.database.source_system_identifier)
         or int(request.database.source_system_identifier) > 2**64 - 1
     ):
         raise BackupError("BACKUP_DATABASE_METADATA_INVALID")
@@ -1118,6 +1136,20 @@ def _parse_manifest(content: bytes) -> dict[str, object]:
     }
     if parsed.get("format_version") == 2:
         required.add("artifact")
+    if "company_notes" in parsed:
+        required.add("company_notes")
+        notes = parsed["company_notes"]
+        if (
+            not isinstance(notes, dict)
+            or set(notes) != {"path", "sha256", "size_bytes"}
+            or notes.get("path") != "company-notes.md"
+            or not isinstance(notes.get("sha256"), str)
+            or not _SHA256_PATTERN.fullmatch(notes["sha256"])
+            or type(notes.get("size_bytes")) is not int
+            or not 0 <= notes["size_bytes"] <= 4_000_000
+            or parsed.get("artifact", {}).get("type") != "company"
+        ):
+            raise BackupError("BACKUP_MANIFEST_INVALID")
     if set(parsed) != required:
         raise BackupError("BACKUP_MANIFEST_INVALID")
     if (
@@ -1175,9 +1207,7 @@ def _validate_database_manifest(database: dict[object, object]) -> None:
         or not isinstance(database["schema_revision"], str)
         or not _REVISION_PATTERN.fullmatch(database["schema_revision"])
         or not isinstance(database["source_system_identifier"], str)
-        or not _SYSTEM_IDENTIFIER_PATTERN.fullmatch(
-            database["source_system_identifier"]
-        )
+        or not _SYSTEM_IDENTIFIER_PATTERN.fullmatch(database["source_system_identifier"])
         or int(database["source_system_identifier"]) > 2**64 - 1
         or not isinstance(database["sha256"], str)
         or not _SHA256_PATTERN.fullmatch(database["sha256"])
@@ -1227,9 +1257,9 @@ def _assert_manifest_matches_directory(
 
 
 def _canonical_json(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 def _utc_clock(clock: Callable[[], datetime]) -> datetime:

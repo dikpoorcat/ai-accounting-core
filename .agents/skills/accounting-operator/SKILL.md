@@ -47,6 +47,23 @@ continue this accounting workflow only when the user also requests accounting wo
 5. If the user provides a concrete task or materials, begin that task after company selection; do
    not insert an unrelated dashboard-style briefing.
 
+Before interpreting company business, read `finance_get_company_notes` and follow the runtime
+`material_completeness_policy`. The file is ordinary company Markdown, editable by the owner.
+Record answers with their actual period and scope using `finance_update_company_notes` and its
+expected hash. On a changed hash, re-read and merge; do not overwrite the owner's edits or turn a
+single-business answer into a permanent rule. Markdown changes do not themselves post or correct
+accounts. Preserve adopted accounting confirmations as immutable evidence for typed requests.
+
+After retaining each original source, register its full coverage with
+`finance_register_period_materials` **before posting**. For CSV/XLSX supply column mappings and
+control totals; the kernel reads the original cells, including hidden data. For PDF, images and
+text, read all supplied material and identify original pages/passages and unresolved questions.
+Keep unresolved facts in the persisted inventory, even if posting fails. Determine company-borne
+expenses versus pass-through from business facts, never from a bank label such as “报销款”. If the
+pass-through right/obligation timing remains unknown, ask about that specific business and record
+the answer in the company file and evidence. Use the existing typed components to post or link
+valid prior recognition, then update inventory resolutions with the returned component facts hash.
+
 For owner setup, login, close approval, password changes, recovery, and recovery-code replacement,
 use `finance_request_owner_security_window` and the kernel's native local form. Query the returned
 request with `finance_get_owner_security_window_status`: `starting` is not a visible window;
@@ -119,8 +136,11 @@ continue to use their own typed completion facts.
    -FileName <file_name>` 校验交付。明确要求重新导出或替换模板时按该具体请求办理。
    申报日期仅在事实已建立时保存，不追问缴款状态或日期；实际缴款按以后银行流水处理。
    只处理所选账期的确认目标，不重新展开已关闭月份。
-5. `票据及非银行业务` — after the materials are actually reviewed and any supported entries are
-   posted, call `finance_confirm_period_material_completeness` with the current activity snapshot.
+5. `票据及非银行业务` — query `finance_get_period_material_completeness`; resolve each source,
+   amount, period and component mismatch. Transfer other-period items to the correct inventory;
+   associate duplicate evidence with the original item. Only after the kernel checks pass, obtain
+   one owner confirmation limited to materials not yet supplied and call
+   `finance_confirm_period_material_completeness` with the current activity snapshot.
 6. `关账确认` — reach this step only after rows 3 and 4 have completed their external declaration
    checks. Use the normal preview, password approval, confirmation, and automatic-backup workflow.
    Before close, call `finance_prepare_close_backup` to repair missing CONNECT grants on

@@ -160,12 +160,14 @@ def load_brief_dashboard(
         balanced = total_debit_fen == total_credit_fen and all(
             item["balanced"] for item in vouchers
         )
+        materials = _material_completeness(session, organization.id, period)
         validation = _build_validation(
             period=period,
             balanced=balanced,
             equation_valid=equation_valid,
             bank_activity=cash,
             close_snapshot_consistent=close_snapshot_consistent,
+            materials=materials,
         )
         attention_rows = cash.get("attention_rows", [])
         return {
@@ -217,8 +219,30 @@ def load_brief_dashboard(
                     "intangible_active_count": assets["intangible"]["active_count"],
                 },
                 "validation": validation,
+                "material_completeness": materials,
             },
         }
+
+
+def _material_completeness(session, org_id, period):
+    from .material_service import MaterialService
+
+    if period.status == "closed":
+        return {"closed": True, "satisfied": True, "issues": []}
+    result = MaterialService(session).check(org_id, period.id)
+    return {
+        "closed": False,
+        "satisfied": result["satisfied"],
+        "issues": [
+            {
+                key: str(value) if key.endswith("_fen") and type(value) is int else value
+                for key, value in issue.items()
+            }
+            for issue in result["issues"]
+        ],
+        "revision": result["revision"],
+        "company_notes": result["company_notes"],
+    }
 
 
 def _counterparty_names(session: Session, org_id: uuid.UUID) -> dict[uuid.UUID, str]:
@@ -803,6 +827,7 @@ def _build_validation(
     equation_valid: bool,
     bank_activity: dict[str, Any],
     close_snapshot_consistent: bool | None,
+    materials: dict[str, Any],
 ) -> dict[str, Any]:
     items = [
         {
@@ -821,6 +846,18 @@ def _build_validation(
         },
     ]
     ordinary = bank_activity["ordinary_count"]
+    material_count = len(materials["issues"])
+    if not materials["closed"]:
+        items.append(
+            {
+                "key": "material_completeness",
+                "label": "资料与应收应付",
+                "state": "pass" if materials["satisfied"] else "pending",
+                "text": "已接收资料逐项核对通过"
+                if materials["satisfied"]
+                else f"{material_count} 项待处理，关账前须完成核对",
+            }
+        )
     items.append(
         {
             "key": "bank_match",
@@ -875,11 +912,14 @@ def _build_validation(
         bank_activity["unmatched_count"]
         + bank_activity["pending_late_count"]
         + (period.status != "closed")
+        + material_count
     )
     if not integrity:
         state, title, summary = "error", "账务一致性异常", "存在必须立即复核的数据一致性问题"
     elif attention:
         parts = []
+        if material_count:
+            parts.append(f"资料核对有 {material_count} 项待处理")
         if bank_activity["unmatched_count"]:
             parts.append(f"{bank_activity['unmatched_count']} 笔流水待识别")
         if bank_activity["pending_late_count"]:

@@ -163,9 +163,7 @@ def test_portable_archive_is_one_verified_file_and_extracts_for_import(
     )
     archive_file = tmp_path / "company.finance-company.zip"
 
-    portable = create_portable_backup_archive(
-        backup_root, verified.backup_directory, archive_file
-    )
+    portable = create_portable_backup_archive(backup_root, verified.backup_directory, archive_file)
 
     assert portable == verify_portable_backup_archive(archive_file)
     assert portable.org_id == "74299243-c333-43d9-9807-4f2336cd984c"
@@ -197,6 +195,50 @@ def test_backup_rejects_nonstopped_service_before_creating_a_partial_directory(
     with pytest.raises(BackupError, match="BACKUP_SERVICE_NOT_STOPPED"):
         create_stopped_backup(tmp_path / "media", request, FakeDumpAdapter())
     assert not (tmp_path / "media" / "backup-20260811.partial").exists()
+
+
+def test_portable_company_notes_verify_restore_and_detect_tampering(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from ai_accounting.company_cli import CompanyCliError, _install_imported_company_notes
+    from ai_accounting.company_notes import read_company_notes
+    from ai_accounting.config import Settings
+
+    settings = Settings(finance_storage_dir=tmp_path / "target-storage")
+    monkeypatch.setattr("ai_accounting.company_cli.get_settings", lambda: settings)
+    monkeypatch.setattr("ai_accounting.company_notes.get_settings", lambda: settings)
+    evidence_root, source = _source(tmp_path)
+    root = tmp_path / "media"
+    content = (
+        "# 业务说明\n\n## 长期规则\n\n## 按月确认\n"
+        "8月代收权利义务在收款前已成立。\n\n## 待澄清事项\n"
+    ).encode()
+    request = replace(
+        _request(evidence_root, source),
+        artifact_type="company",
+        purpose="handoff",
+        org_id="74299243-c333-43d9-9807-4f2336cd984c",
+        database_identity="f3a7301c-fe09-44a6-a865-6e8c22ed6d60",
+        company_notes=content,
+    )
+    verified = create_stopped_backup(root, request, FakeDumpAdapter())
+    archive = tmp_path / "company.finance-company.zip"
+    create_portable_backup_archive(root, verified.backup_directory, archive)
+    extraction = tmp_path / "extract"
+    extraction.mkdir()
+    restored = extract_portable_backup_archive(archive, extraction)
+    assert restored.company_notes
+    code = "91330106MA1234567T"
+    _install_imported_company_notes(restored, code)
+    notes = read_company_notes(SimpleNamespace(taxpayer_identification_number=code))
+    assert notes["content"] == content.decode()
+    _install_imported_company_notes(restored, code)
+    Path(notes["path"]).write_text("负责人已修改", encoding="utf-8")
+    with pytest.raises(CompanyCliError, match="COMPANY_IMPORT_NOTES_CONFLICT"):
+        _install_imported_company_notes(restored, code)
+    (verified.backup_directory / "company-notes.md").write_bytes(b"tampered")
+    with pytest.raises(BackupError):
+        verify_backup(root, verified.backup_directory)
 
 
 def test_online_backup_accepts_live_snapshot_without_weakening_stopped_backup(

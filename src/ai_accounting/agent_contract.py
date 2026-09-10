@@ -9,8 +9,28 @@ from __future__ import annotations
 
 from typing import Any
 
-AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v46"
-OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.15"
+AI_OPERATING_PROTOCOL_VERSION = "accounting_execution_assistant_v47"
+OWNER_WORKFLOW_VERSION = "owner_monthly_workflow_cn_2026.16"
+
+MATERIAL_COMPLETENESS_RUNTIME_INSTRUCTION = (
+    "处理相关业务前调用finance_get_company_notes查阅公司业务说明.md。负责人回答按具体业务、"
+    "月份及适用范围记录；单次回答不自动扩大为长期规则。使用finance_update_company_notes的"
+    "预期哈希写入，文件变化时重读合并。MD不直接更改账务，采用的核算确认须留存不可变证据。"
+    "接收资料后先登记原件，再用finance_register_period_materials保存全部来源及待核对项，"
+    "然后补齐必要事实、通过现有类型化入口入账或关联已有组件，最后更新清单。"
+    "CSV/XLSX由内核读取原文件，AI提供每表列映射及合计行；金额缺失、隐藏内容、未映射列"
+    "或公式无结果不得跳过。PDF、图片和文字由AI逐页/逐段阅读并登记原文位置和未决问题，"
+    "不能声称内核已自动证明自由文本完整理解。合计行不重复入账；多证据关联同一业务时"
+    "使用duplicate，拆分行使用splits，其他期间使用other_period转入对应清单。"
+    "代收代付何时成立权利义务须查证据；事实不足时具体提问并保存回答。"
+    "pass_through.recognition_basis默认received；收款前权利义务已成立且有证据时使用credit，"
+    "允许recognition_period月份精度，同时确认代收应收和代付应付。后续分别用receivable_settlement和payable_settlement核销。"
+    "公司承担的报销用expense/person_advance，银行摘要“报销款”不能决定业务性质。"
+    "finance_get_period_material_completeness是第5项、第6项及完整代发的共同核对结果；"
+    "有缺项不能用笼统材料已齐确认绕过。内核核对原始确认金额、组件事实及实际入账月份，"
+    "不以余额为零判定漏记，也不要求等待后续收付；所有已导入后续月份收付款都参与归属核查。"
+    "清单、来源或MD变化后重查。已提供材料处理完后，负责人完整性确认仅限尚未提供的材料。"
+)
 
 USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION = (
     "面向负责人的交流、业务摘要、用途、确认说明及其他由AI撰写的展示文本统一使用简体中文。"
@@ -93,7 +113,9 @@ COMPOSITION_RUNTIME_INSTRUCTION = (
 )
 
 PASS_THROUGH_RUNTIME_INSTRUCTION = (
-    "代收不确认为收入或预收款。代收只需金额、实际收款日期、稳定业务键及证据；付款引用原代收来源核销。"
+    "代收不确认为收入或预收款。received方式沿用实际收到款项时确认；credit方式仅在有证据证明"
+    "收款前权利义务已经成立时使用，按明确日期或月份同时确认代收应收及代付应付。"
+    "收款和付款分别引用原确认的应收、应付来源核销，不重复确认往来。"
     "受益人、经办人、用途说明等放入可选metadata，不因缺少管理资料追问或阻断。"
     "只有明确形成员工或股东垫付债务时，才通过个人垫付或debt_transfer组件提供垫付人、债务确认日期或月份及依据。具体垫付日选填metadata.advance_payment_date，不据此追问。"
     "普通应收、应付、预收及预付同样可按稳定业务键入账，不创建虚构往来对象；核销继承来源账户和余额。"
@@ -292,7 +314,7 @@ CLOSE_OBLIGATION_RUNTIME_INSTRUCTION = (
 
 
 MCP_SERVER_INSTRUCTIONS = (
-    f"{IDENTITY_RUNTIME_INSTRUCTION}"
+    MATERIAL_COMPLETENESS_RUNTIME_INSTRUCTION + f"{IDENTITY_RUNTIME_INSTRUCTION}"
     f"{OWNER_SECURITY_RUNTIME_INSTRUCTION}"
     f"{COMPOSITION_RUNTIME_INSTRUCTION}"
     f"{PASS_THROUGH_RUNTIME_INSTRUCTION}"
@@ -328,6 +350,15 @@ def agent_operating_protocol() -> dict[str, Any]:
     """Return a fresh JSON-safe protocol payload for MCP discovery."""
 
     return {
+        "material_completeness_policy": {
+            "instruction": MATERIAL_COMPLETENESS_RUNTIME_INSTRUCTION,
+            "notes_read_tool": "finance_get_company_notes",
+            "notes_update_tool": "finance_update_company_notes",
+            "intake_tool": "finance_register_period_materials",
+            "resolution_tool": "finance_update_period_material_inventory",
+            "check_tool": "finance_get_period_material_completeness",
+            "completion_is_derived": True,
+        },
         "user_facing_language_policy": {
             "language": "zh-CN",
             "instruction": USER_FACING_LANGUAGE_RUNTIME_INSTRUCTION,

@@ -36,14 +36,16 @@ from ai_accounting.schemas import RegisterEmployeeRequest
 from ai_accounting.service import FinanceService
 
 
-def _generate_august_period(session: Session, organization: Organization) -> AccountingPeriod:
+def _generate_august_period(
+    session: Session, organization: Organization, *, path=None
+) -> AccountingPeriod:
     evidence = Evidence(
         org_id=organization.id,
-        sha256="d" * 64,
+        sha256=__import__("hashlib").sha256(path.read_bytes()).hexdigest() if path else "d" * 64,
         original_name="owner-workflow-period.txt",
         source="test",
-        size_bytes=1,
-        storage_path="tests/owner-workflow-period.txt",
+        size_bytes=path.stat().st_size if path else 1,
+        storage_path=str(path) if path else "tests/owner-workflow-period.txt",
     )
     session.add(evidence)
     session.flush()
@@ -92,7 +94,10 @@ def test_closed_period_backup_status_uses_catalog_session_in_split_database_mode
     business_session.scalar.assert_not_called()
 
 
-def test_material_snapshot_uses_exists_instead_of_distinct_over_json_columns() -> None:
+def test_material_snapshot_uses_exists_instead_of_distinct_over_json_columns(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ai_accounting.material_service.MaterialService.check", lambda *args: {"snapshot": {}}
+    )
     org_id = uuid.uuid4()
     event_id = uuid.uuid4()
     session = MagicMock()
@@ -129,8 +134,55 @@ def test_material_snapshot_uses_exists_instead_of_distinct_over_json_columns() -
 def test_typed_owner_confirmations_survive_new_service_and_stale_on_upstream_change(
     session: Session,
     organization: Organization,
+    tmp_path,
+    monkeypatch,
 ) -> None:
-    period = _generate_august_period(session, organization)
+    from ai_accounting.company_notes import read_company_notes
+    from ai_accounting.material_schemas import (
+        RegisterPeriodMaterialsRequest,
+        UpdatePeriodMaterialInventoryRequest,
+    )
+    from ai_accounting.material_service import MaterialService
+
+    settings = SimpleNamespace(
+        finance_storage_dir=tmp_path / "storage",
+        finance_evidence_dir=tmp_path,
+        finance_max_evidence_bytes=4_000_000,
+    )
+    monkeypatch.setattr("ai_accounting.company_notes.get_settings", lambda: settings)
+    monkeypatch.setattr("ai_accounting.material_reader.get_settings", lambda: settings)
+    path = tmp_path / "period.txt"
+    path.write_text("期间生成依据，本月无其他业务。", encoding="utf-8")
+    period = _generate_august_period(session, organization, path=path)
+    evidence = session.scalar(select(Evidence).where(Evidence.org_id == organization.id))
+    service = MaterialService(session)
+    service.register(
+        RegisterPeriodMaterialsRequest(
+            org_id=organization.id,
+            period_id=period.id,
+            expected_revision=0,
+            idempotency_key="intake",
+            sources=[
+                {"evidence_id": evidence.id, "passages": {"全文": path.read_text(encoding="utf-8")}}
+            ],
+        )
+    )
+    service.update(
+        UpdatePeriodMaterialInventoryRequest(
+            org_id=organization.id,
+            period_id=period.id,
+            expected_revision=1,
+            idempotency_key="review",
+            reviewed_notes_hash=read_company_notes(organization)["sha256"],
+            resolutions=[
+                {
+                    "item_key": f"{evidence.id}:全文",
+                    "treatment": "supporting",
+                    "basis": "零活动期间生成说明",
+                }
+            ],
+        )
+    )
     workflow = OwnerWorkflowService(session, current_date=date(2026, 9, 2))
     gates = workflow.close_gate_snapshot(organization.id, period)
     assert gates["enforced_for_period"] is False

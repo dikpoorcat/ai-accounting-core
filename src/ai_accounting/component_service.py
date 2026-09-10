@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .accounting_periods import canonical_sha256
 from .business_metadata import metadata_projection, save_initial_metadata, validate_metadata
 from .coa import (
     account_business_class,
@@ -182,6 +183,20 @@ class ComponentService:
         resolved = resolve(request)
         for c in resolved.components:
             validate_metadata(self.session, request.org_id, c.metadata)
+            if (
+                c.kind == "pass_through"
+                and c.recognition_basis == "credit"
+                and not (c.evidence_references or resolved.evidence_references)
+            ):
+                raise AccountingFactError(
+                    AccountingFactIssue(
+                        code="PASS_THROUGH_CREDIT_EVIDENCE_REQUIRED",
+                        kind="missing_accounting_fact",
+                        fields=[f"components.{c.key}.evidence_references"],
+                        message="先查阅公司说明和原始依据；须有确认收款债权及转付义务已成立的证据。",
+                    ),
+                    [f"components.{c.key}.evidence_references"],
+                )
             dates = {
                 f.payment_date
                 for f in resolved.funds
@@ -530,6 +545,7 @@ class ComponentService:
                         "id": str(c.id),
                         "key": c.key,
                         "kind": c.kind,
+                        "facts_hash": canonical_sha256(c.facts),
                         "derived": c.derived,
                         "recognition": recognition_projection(c.facts),
                         "business_reference": {
@@ -624,7 +640,7 @@ class ComponentService:
         return plan
 
     def compile(self, c: Any) -> ComponentPostingPlan:
-        if hasattr(c, "amount_fen"):
+        if hasattr(c, "amount_fen") and c.kind != "pass_through":
             self.need(c, "amount_fen")
         compiler = getattr(self, f"compile_{c.kind}", None)
         if compiler is None:
@@ -1465,7 +1481,54 @@ class ComponentService:
         )
 
     def compile_pass_through(self, c) -> ComponentPostingPlan:
+        if c.amount_fen is None:
+            raise AccountingFactError(
+                AccountingFactIssue(
+                    code="PASS_THROUGH_AMOUNT_REQUIRED",
+                    kind="missing_accounting_fact",
+                    fields=[f"components.{c.key}.amount_fen"],
+                    expected={"unit": "fen", "type": "integer"},
+                    message="请从原资料或负责人确认中核定代收代付金额。",
+                ),
+                [f"components.{c.key}.amount_fen"],
+            )
+        if c.recognition_basis == "credit":
+            return self.plan(
+                c,
+                [
+                    Entry(account_role="pass_through_receivable", debit_fen=c.amount_fen),
+                    Entry(account_role="pass_through_payable", credit_fen=c.amount_fen),
+                ],
+                open_items=[
+                    OpenItemPlan(
+                        counterparty_id=None,
+                        key="receivable",
+                        item_type="receivable",
+                        original_amount_fen=c.amount_fen,
+                    ),
+                    OpenItemPlan(
+                        counterparty_id=None,
+                        item_type="payable",
+                        original_amount_fen=c.amount_fen,
+                        payable_category="pass_through",
+                        pass_through_key=c.key,
+                    ),
+                ],
+                derived={
+                    "open_item_accounts": {
+                        "receivable": "pass_through_receivable",
+                        "primary": "pass_through_payable",
+                    },
+                    "open_item_cash_flow_categories": {
+                        "receivable": "cash_flow_2",
+                        "primary": "cash_flow_6",
+                    },
+                    "amount_fen": c.amount_fen,
+                },
+            )
         self.need(c, "payment_date")
+        if c.recognition_period:
+            raise ValueError("PASS_THROUGH_RECEIPT_REQUIRES_ACTUAL_FUNDS_DATE")
         return self.plan(
             c,
             [Entry(account_role="pass_through_payable", credit_fen=c.amount_fen)],

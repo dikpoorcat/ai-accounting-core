@@ -59,7 +59,9 @@ def _session() -> Session:
     return Session(engine)
 
 
-def _organization_and_evidence(session: Session) -> tuple[Organization, Evidence]:
+def _organization_and_evidence(
+    session: Session, *, material_path=None
+) -> tuple[Organization, Evidence]:
     organization = Organization(
         name="期间测试企业",
         taxpayer_identification_number="91330106MA1234567T",
@@ -68,11 +70,13 @@ def _organization_and_evidence(session: Session) -> tuple[Organization, Evidence
     session.flush()
     evidence = Evidence(
         org_id=organization.id,
-        sha256="a" * 64,
+        sha256=__import__("hashlib").sha256(material_path.read_bytes()).hexdigest()
+        if material_path
+        else "a" * 64,
         original_name="period.txt",
         source="test",
-        size_bytes=0,
-        storage_path="period-test",
+        size_bytes=material_path.stat().st_size if material_path else 0,
+        storage_path=str(material_path) if material_path else "period-test",
     )
     session.add(evidence)
     session.flush()
@@ -497,6 +501,8 @@ def test_payroll_cash_settlement_waits_for_bank_without_close_review() -> None:
         status="open",
     )
 
+    session.add(period)
+    session.flush()
     service = AccountingPeriodService(session)
     module_checks = service._module_checks(organization.id, period)
     check = module_checks["payroll_settlements"]
@@ -734,26 +740,13 @@ def test_preview_review_management_is_optional_for_close() -> None:
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["state"] == "needs_attention"
     assert item_by_code["MONTH_END_TAX_AND_FILING"]["due_now"] is True
     completeness_item = item_by_code["MONTH_END_UNRECORDED_BUSINESS_CONFIRMATION"]
-    assert completeness_item["system_facts"]["next_month_bank_inflow_count"] == 1
-    assert completeness_item["system_facts"]["next_month_bank_inflow_total_fen"] == 149_400
-    assert completeness_item["system_facts"]["next_month_revenue_cutoff_review_count"] == 1
-    assert completeness_item["system_facts"]["next_month_bank_inflows"] == [
-        {
-            "bank_transaction_id": str(
-                session.query(BankTransaction.id)
-                .filter(BankTransaction.external_id == "next-month-customer-inflow")
-                .scalar()
-            ),
-            "booking_date": "2026-04-02",
-            "amount_fen": 149_400,
-            "counterparty_name": "次月回款客户",
-            "memo": "三月服务费",
-            "current_match_event_id": None,
-            "current_match_event_type": None,
-            "settled_source_events": [],
-            "revenue_cutoff_state": "unmatched",
-        }
+    completeness = completeness_item["system_facts"]["material_completeness"]
+    bank_issues = [
+        i for i in completeness["issues"] if i["code"] == "MATERIAL_SUBSEQUENT_BANK_UNREVIEWED"
     ]
+    assert len(bank_issues) == 1
+    assert bank_issues[0]["amount_fen"] == 149_400
+    assert bank_issues[0]["booking_date"] == "2026-04-02"
     assert "AI核对已提供材料后" in completeness_item["owner_questions"][0]
     assert "除这些已提供材料外" in completeness_item["owner_questions"][1]
     assert "泛泛询问代替材料核对" in checklist["ai_instruction"]
@@ -976,9 +969,27 @@ def test_annual_checkpoints_are_scheduled_without_monthly_repetition() -> None:
 )
 def test_zero_voucher_month_requires_commentary_before_atomic_close(
     missing_fields: tuple[str, ...],
+    tmp_path,
+    monkeypatch,
 ) -> None:
     session = _session()
-    organization, evidence = _organization_and_evidence(session)
+    from ai_accounting import company_notes, material_reader
+    from ai_accounting.material_schemas import (
+        RegisterPeriodMaterialsRequest,
+        UpdatePeriodMaterialInventoryRequest,
+    )
+    from ai_accounting.material_service import MaterialService
+
+    settings = SimpleNamespace(
+        finance_storage_dir=tmp_path / "storage",
+        finance_evidence_dir=tmp_path,
+        finance_max_evidence_bytes=4_000_000,
+    )
+    monkeypatch.setattr(company_notes, "get_settings", lambda: settings)
+    monkeypatch.setattr(material_reader, "get_settings", lambda: settings)
+    material_path = tmp_path / "period.txt"
+    material_path.write_text("公司成立、无银行账户，本月没有经营活动。", encoding="utf-8")
+    organization, evidence = _organization_and_evidence(session, material_path=material_path)
     scope_action = BankReconciliationScopeAction(
         org_id=organization.id,
         action_type="initial_confirmation",
@@ -1030,6 +1041,37 @@ def test_zero_voucher_month_requires_commentary_before_atomic_close(
         )
     )
     assert opening.status == "posted"
+    materials = MaterialService(session)
+    registered = materials.register(
+        RegisterPeriodMaterialsRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            expected_revision=0,
+            idempotency_key="zero-materials",
+            sources=[
+                {
+                    "evidence_id": evidence.id,
+                    "passages": {"全文": material_path.read_text(encoding="utf-8")},
+                }
+            ],
+        )
+    )
+    materials.update(
+        UpdatePeriodMaterialInventoryRequest(
+            org_id=organization.id,
+            period_id=generated.period_id,
+            expected_revision=registered["revision"],
+            idempotency_key="zero-review",
+            reviewed_notes_hash=company_notes.read_company_notes(organization)["sha256"],
+            resolutions=[
+                {
+                    "item_key": f"{evidence.id}:全文",
+                    "treatment": "supporting",
+                    "basis": "设立及零业务范围确认，不产生核算金额",
+                }
+            ],
+        )
+    )
     preview_request = PreviewAccountingPeriodCloseRequest(
         org_id=organization.id,
         period_id=generated.period_id,

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, aliased
 
 from .accounting_periods import canonical_sha256, china_current_date
 from .agent_contract import OWNER_WORKFLOW_VERSION
+from .material_service import MaterialService, lock_material_company
 from .models import (
     AccountingPeriod,
     AccountingPeriodClose,
@@ -241,10 +242,17 @@ class OwnerWorkflowService:
     def confirm_period_material_completeness(
         self, request: ConfirmPeriodMaterialCompletenessRequest
     ) -> dict[str, Any]:
+        lock_material_company(self.session, request.org_id)
         period = self._period_for_org(request.org_id, request.period_id)
         if period is None:
             return {"status": "rejected", "errors": ["ACCOUNTING_PERIOD_NOT_FOUND"]}
         snapshot = self._material_snapshot(request.org_id, period)
+        if not snapshot["completeness"]["satisfied"]:
+            return {
+                "status": "needs_information",
+                "errors": ["PERIOD_MATERIAL_INCOMPLETE"],
+                "completeness": snapshot["completeness"],
+            }
         if request.activity_snapshot_hash != snapshot["hash"]:
             return {
                 "status": "rejected",
@@ -628,7 +636,9 @@ class OwnerWorkflowService:
         material = self._material_snapshot(org_id, period)
         material_fact = self._active_period_confirmation(org_id, period.id, "non_bank_materials")
         material_current = bool(
-            material_fact is not None and material_fact.source_snapshot_hash == material["hash"]
+            material_fact is not None
+            and material_fact.source_snapshot_hash == material["hash"]
+            and material["completeness"]["satisfied"]
         )
 
         contribution = self._contribution_snapshot(org_id, period)
@@ -763,6 +773,7 @@ class OwnerWorkflowService:
                 },
                 "non_bank_materials": {
                     "satisfied": material_current,
+                    "completeness": material["completeness"],
                     "source_snapshot_hash": material["hash"],
                     "confirmation_id": str(material_fact.id) if material_fact else None,
                     "stale": material_fact is not None and not material_current,
@@ -1065,9 +1076,16 @@ class OwnerWorkflowService:
         return self._incomplete(
             state="stale" if gate["stale"] else "incomplete",
             missing=["non_bank_material_completeness"],
-            action="请确认本期票据、个人代垫和其他非银行业务材料已全部提供。",
+            action=(
+                "正在核对已提供资料中的漏项及归属；必要事实不明时会列出具体问题。"
+                if gate.get("completeness", {}).get("issues")
+                else "除已提供并核对的资料外，是否另有尚未提供且会影响本期记账的业务材料？"
+            ),
             close_gate=False,
-        )
+        ) | {
+            "material_issues": gate.get("completeness", {}).get("issues", []),
+            "material_check_tool": "finance_get_period_material_completeness",
+        }
 
     def _close_step(
         self, organization: Organization, period: AccountingPeriod, gates: dict[str, Any]
@@ -1775,7 +1793,9 @@ class OwnerWorkflowService:
                 {"id": str(item.id), "sha256": item.sha256} for item in evidence_rows
             ],
         }
-        return {"hash": canonical_sha256(data), "data": data}
+        completeness = MaterialService(self.session).check(org_id, period.id)
+        data["material_completeness"] = completeness["snapshot"]
+        return {"hash": canonical_sha256(data), "data": data, "completeness": completeness}
 
     def _contribution_snapshot(self, org_id: uuid.UUID, period: AccountingPeriod) -> dict[str, Any]:
         finance = FinanceService(self.session)

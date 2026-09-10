@@ -72,6 +72,11 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_preview_company_status_change",
         "finance_confirm_company_status_change",
         "finance_register_evidence",
+        "finance_get_company_notes",
+        "finance_update_company_notes",
+        "finance_register_period_materials",
+        "finance_update_period_material_inventory",
+        "finance_get_period_material_completeness",
         "finance_import_bank_statement",
         "finance_preview_bank_statement_import",
         "finance_confirm_bank_statement_import",
@@ -93,6 +98,9 @@ def test_mcp_exposes_only_domain_tools() -> None:
         "finance_confirm_payroll",
         "finance_get_payroll_batch",
         "finance_generate_payroll_tax_import",
+        "finance_preview_mybank_export",
+        "finance_import_mybank_payment_source",
+        "finance_generate_mybank_export",
         "finance_register_labor_service_person",
         "finance_end_labor_service_person",
         "finance_preview_labor_remuneration_batch",
@@ -329,7 +337,7 @@ def test_ai_operating_contract_is_published_at_runtime_and_in_discovery() -> Non
         "resume_queue_after": "blocker_resolved_and_operation_continued",
         "needs_information_is_technical_error": False,
     }
-    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.15"
+    assert protocol["owner_workflow"]["version"] == "owner_monthly_workflow_cn_2026.16"
     assert protocol["owner_workflow"]["status_source"] == "finance_get_owner_workflow"
     assert protocol["owner_workflow"]["confirmation_target_source"] == "confirmation_targets"
     assert protocol["owner_workflow"]["target_selection"] == (

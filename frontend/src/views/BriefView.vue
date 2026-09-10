@@ -487,6 +487,21 @@ onBeforeUnmount(() => {
             </div>
           </article>
         </div>
+        <details
+          v-if="data.material_completeness && !data.material_completeness.closed"
+          class="trust-proof"
+          :open="!data.material_completeness.satisfied"
+        >
+          <summary>关账前资料核对：{{ data.material_completeness.satisfied ? "已逐项核对" : "还有待处理项目" }}</summary>
+          <ul v-if="data.material_completeness.issues.length">
+            <li v-for="(issue, index) in data.material_completeness.issues" :key="index">
+              <strong v-if="issue.location">{{ issue.source_name }} {{ issue.location }}：</strong>{{ issue.message }}
+              <span v-if="issue.excerpt"> {{ issue.excerpt }}</span>
+              <span v-if="issue.difference_fen != null">差额 {{ formatFen(issue.difference_fen) }} 元</span>
+            </li>
+          </ul>
+          <p v-if="data.material_completeness.company_notes">公司业务说明：{{ data.material_completeness.company_notes.path }}</p>
+        </details>
         <details class="trust-proof">
           <summary>查看本月校验依据</summary>
           <dl>

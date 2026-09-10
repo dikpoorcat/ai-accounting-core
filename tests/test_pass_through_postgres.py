@@ -61,16 +61,17 @@ def accounting_base(postgres_engine, tmp_path_factory):
                 )
                 session.add(evidence)
                 session.flush()
-                generated = AccountingPeriodService(session).generate_accounting_period(
-                    GenerateAccountingPeriodRequest(
-                        org_id=org.id,
-                        period_month="2026-08",
-                        idempotency_key="august",
-                        confirmation_note="Test month",
-                        evidence_references=[evidence.id],
+                for month in ("2026-07", "2026-08"):
+                    generated = AccountingPeriodService(session).generate_accounting_period(
+                        GenerateAccountingPeriodRequest(
+                            org_id=org.id,
+                            period_month=month,
+                            idempotency_key=month,
+                            confirmation_note="Test month",
+                            evidence_references=[evidence.id],
+                        )
                     )
-                )
-                assert generated.status == "posted", generated
+                    assert generated.status == "posted", generated
             with authority.attributed_call(
                 session, tool_name="finance_confirm_bank_reconciliation_scope"
             ):
@@ -82,7 +83,7 @@ def accounting_base(postgres_engine, tmp_path_factory):
                         {
                             "bank_account_code": "1002",
                             "account_name": "银行存款",
-                            "start_date": date(2026, 8, 1),
+                            "start_date": date(2026, 7, 1),
                         }
                     ],
                     explanation="Test scope",
@@ -439,13 +440,130 @@ def test_mixed_receipt_amend_pay_delete_reverse_and_bank_conservation(accounting
                 event_id=second.event_id,
                 idempotency_key="reverse-second",
                 posting_date=date(2026, 8, 11),
-                reason="Payment returned",
+                reason="测试未关账误记付款的更正路由",
             )
         )
-        assert reversed_result.status == "posted", reversed_result
-        session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        assert reversed_result.status == "rejected", reversed_result
+        assert reversed_result.data["route"] == "amend"
+    assert edit(session, attributed, second.event_id)["status"] == "deleted"
+    session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
     assert items[1].settled_amount_fen == 0
     assert again.event_id != first.event_id
+
+
+def test_credit_pass_through_has_two_obligations_without_income_or_cash(accounting):
+    from ai_accounting.component_service import ComponentService
+    from ai_accounting.material_service import MaterialService
+    from ai_accounting.models import Account, AccountingPeriod, OpenItem, VoucherLine
+
+    session, org, evidence, attributed, bank = accounting
+    period = session.scalar(
+        select(AccountingPeriod).where(
+            AccountingPeriod.org_id == org.id, AccountingPeriod.calendar_month == 7
+        )
+    )
+    with attributed("finance_record_event"):
+        result = ComponentService(session).record(
+            RecordEventRequest(
+                org_id=org.id,
+                idempotency_key="credit-before-receipt",
+                posting_date="2026-07-31",
+                evidence_references=[evidence.id],
+                components=[
+                    {
+                        "key": "pass",
+                        "kind": "pass_through",
+                        "recognition_basis": "credit",
+                        "recognition_period": "2026-07",
+                        "amount_fen": 307687,
+                    }
+                ],
+            )
+        )
+        assert result.status == "posted", result
+        session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    items = list(
+        session.scalars(select(OpenItem).where(OpenItem.source_event_id == result.event_id))
+    )
+    assert {(i.item_type, i.component_key, i.original_amount_fen) for i in items} == {
+        ("receivable", "receivable", 307687),
+        ("payable", "primary", 307687),
+    }
+    lines = session.execute(
+        select(Account.system_role, VoucherLine.debit_fen, VoucherLine.credit_fen)
+        .join(VoucherLine, VoucherLine.account_id == Account.id)
+        .where(VoucherLine.voucher_id == result.voucher_id)
+    ).all()
+    assert set(lines) == {
+        ("pass_through_receivable", 307687, 0),
+        ("pass_through_payable", 0, 307687),
+    }
+    session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+    for month in ("2026-09",):
+        with attributed("finance_generate_accounting_period"):
+            generated = AccountingPeriodService(session).generate_accounting_period(
+                GenerateAccountingPeriodRequest(
+                    org_id=org.id,
+                    period_month=month,
+                    idempotency_key=month,
+                    evidence_references=[evidence.id],
+                )
+            )
+        assert generated.status == "posted", generated
+    for index, (direction, day, open_key) in enumerate(
+        (("receipt", "2026-08-02", "receivable"), ("payment", "2026-09-02", "primary"))
+    ):
+        reference = bank(307687 if direction == "receipt" else -307687, day, f"future-{index}")
+        pending_issues = []
+        MaterialService(session)._subsequent_bank(org.id, period, {}, pending_issues)
+        assert any(
+            issue.get("bank_transaction_id") == str(reference.id)
+            and issue["code"] == "MATERIAL_SUBSEQUENT_BANK_UNREVIEWED"
+            for issue in pending_issues
+        )
+        with attributed("finance_record_event"):
+            settled = ComponentService(session).record(
+                RecordEventRequest(
+                    org_id=org.id,
+                    idempotency_key=f"future-settle-{index}",
+                    posting_date=day,
+                    evidence_references=[evidence.id],
+                    components=[
+                        {
+                            "key": "settle",
+                            "kind": "receivable_settlement"
+                            if direction == "receipt"
+                            else "payable_settlement",
+                            "allocations": [
+                                {
+                                    "source_event_key": "credit-before-receipt",
+                                    "source_component_key": "pass",
+                                    "source_open_item_key": open_key,
+                                    "amount_fen": 307687,
+                                }
+                            ],
+                        }
+                    ],
+                    funds=[
+                        {
+                            "key": "bank",
+                            "account_code": "1002",
+                            "direction": direction,
+                            "payment_date": day,
+                            "amount_fen": 307687,
+                            "bank_transaction_references": [reference],
+                            "allocations": [{"component_key": "settle", "amount_fen": 307687}],
+                        }
+                    ],
+                )
+            )
+        assert settled.status == "posted", settled
+    issues = []
+    reviewed = MaterialService(session)._subsequent_bank(org.id, period, {}, issues)
+    assert len(reviewed) == 2 and all(item["reviewed"] for item in reviewed)
+    assert not issues, issues
+    assert all(item.original_amount_fen == item.settled_amount_fen == 307687 for item in items)
+    session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
 
 
 @pytest.mark.parametrize(

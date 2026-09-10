@@ -23,6 +23,9 @@ def register_evidence(
     request: RegisterEvidenceRequest,
     settings: Settings | None = None,
 ) -> Evidence:
+    from .material_service import lock_material_company
+
+    lock_material_company(session, request.org_id)
     settings = settings or get_settings()
     if session.get(Organization, request.org_id) is None:
         raise ValueError("ORGANIZATION_NOT_FOUND")

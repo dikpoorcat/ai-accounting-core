@@ -58,6 +58,7 @@ from .business_metadata import (
     update_business_metadata,
 )
 from .close_backup import CloseBackupError, CloseBackupRuntime, CloseBackupService
+from .company_notes import read_company_notes, update_company_notes
 from .company_router import CompanyRoutingError, assert_runtime_role
 from .company_router import router as company_router
 from .company_schemas import (
@@ -113,6 +114,14 @@ from .labor_remuneration_schemas import (
     PreviewLaborRemunerationBatchRequest,
     RegisterLaborServicePersonRequest,
 )
+from .material_schemas import (
+    CompanyNotesRequest,
+    MaterialRequest,
+    RegisterPeriodMaterialsRequest,
+    UpdateCompanyNotesRequest,
+    UpdatePeriodMaterialInventoryRequest,
+)
+from .material_service import MaterialService, lock_material_company
 from .models import (
     Account,
     AccountingPeriod,
@@ -137,6 +146,11 @@ from .models import (
     TaxRule,
     Voucher,
     event_evidence,
+)
+from .mybank_schemas import (
+    GenerateMybankExportRequest,
+    ImportMybankPaymentSourceRequest,
+    PreviewMybankExportRequest,
 )
 from .owner_brief import OwnerBriefService
 from .owner_login_launcher import (
@@ -692,7 +706,9 @@ def _invalid(exc: Exception) -> dict[str, Any]:
             diagnostic_id = uuid.uuid4().hex
             logger.warning(
                 "MCP database request failed code=%s diagnostic=%s sqlstate=%s",
-                error_code, diagnostic_id, sqlstate,
+                error_code,
+                diagnostic_id,
+                sqlstate,
             )
             return {
                 "status": "rejected",
@@ -1554,6 +1570,106 @@ def finance_generate_payroll_tax_import(
         with SessionLocal.begin() as session:
             return _payroll_tax_import_service(session).generate(request).model_dump(mode="json")
     except (ValidationError, ValueError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_company_notes(request: CompanyNotesRequest) -> dict[str, Any]:
+    """读取公司可编辑业务说明；正式账务仍以类型化事实和不可变证据为准。"""
+    try:
+        with SessionLocal() as session:
+            org = session.get(Organization, request.org_id)
+            if org is None:
+                return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
+            return {"status": "ok", "company_notes": read_company_notes(org)}
+    except (ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_update_company_notes(request: UpdateCompanyNotesRequest) -> dict[str, Any]:
+    """按读取版本保存公司业务说明；不得用备注修改代替正式业务更正。"""
+    try:
+        with SessionLocal.begin() as session:
+            lock_material_company(session, request.org_id)
+            org = session.get(Organization, request.org_id)
+            if org is None:
+                return {"status": "rejected", "errors": ["ORGANIZATION_NOT_FOUND"]}
+            return update_company_notes(org, request.expected_sha256, request.content)
+    except (ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_register_period_materials(request: RegisterPeriodMaterialsRequest) -> dict[str, Any]:
+    """读取原始资料登记逐项待核对清单；解析失败仍保留为阻断项。先登记，再处理入账。"""
+    try:
+        with SessionLocal.begin() as session:
+            return MaterialService(session).register(request)
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_update_period_material_inventory(
+    request: UpdatePeriodMaterialInventoryRequest,
+) -> dict[str, Any]:
+    """登记逐项核对依据；完成状态由内核核验实际组件、金额和所属期后派生。"""
+    try:
+        with SessionLocal.begin() as session:
+            return MaterialService(session).update(request)
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_get_period_material_completeness(request: MaterialRequest) -> dict[str, Any]:
+    """查询原资料覆盖、漏计应收应付、跨月归属及需要重新核对的来源。"""
+    try:
+        with SessionLocal() as session:
+            return {
+                "status": "ok",
+                **MaterialService(session).check(request.org_id, request.period_id),
+            }
+    except (ValidationError, ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_import_mybank_payment_source(
+    request: ImportMybankPaymentSourceRequest,
+) -> dict[str, Any]:
+    """由代码读取已留存原表，保存逐人实际个税或代发来源版本；不修改凭证。"""
+    from .mybank_sources import MybankPaymentSourceService
+
+    try:
+        with SessionLocal.begin() as session:
+            return MybankPaymentSourceService(session).import_source(request)
+    except (ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def finance_preview_mybank_export(request: PreviewMybankExportRequest) -> dict[str, Any]:
+    """按公司和月份自动归集内核薪资、劳务和报销；不接受导出金额覆盖。"""
+    from .mybank_service import MybankExportService
+
+    try:
+        with SessionLocal() as session:
+            return MybankExportService(session).preview(request)
+    except (ValueError, OSError, SQLAlchemyError) as exc:
+        return _invalid(exc)
+
+
+@mcp.tool(annotations=IDEMPOTENT_WRITE)
+def finance_generate_mybank_export(request: GenerateMybankExportRequest) -> dict[str, Any]:
+    """核对预览来源哈希，按四列银行模板生成本地文件；不写凭证或付款状态。"""
+    from .mybank_service import MybankExportService
+
+    try:
+        with SessionLocal() as session:
+            return MybankExportService(session).generate(request)
+    except (ValueError, OSError, SQLAlchemyError) as exc:
         return _invalid(exc)
 
 
@@ -2800,6 +2916,7 @@ def finance_get_event(org_id: str, event_id: str) -> dict[str, Any]:
                     "key": component.key,
                     "kind": component.kind,
                     "facts": component.facts,
+                    "facts_hash": canonical_sha256(component.facts),
                     "derived": component.derived,
                     "business_reference": {
                         "event_key": event.idempotency_key,

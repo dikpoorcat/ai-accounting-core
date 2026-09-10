@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .accounting_periods import china_current_date
 from .bank_statement_service import BankStatementService
+from .company_notes import read_company_notes
 from .models import (
     AccountingPeriod,
     BankTransaction,
@@ -120,6 +121,7 @@ class OwnerBriefService:
 
         return {
             "status": "ok",
+            "company_notes": read_company_notes(organization),
             "generated_at": datetime.now(UTC).isoformat(),
             "organization": {
                 "id": str(organization.id),

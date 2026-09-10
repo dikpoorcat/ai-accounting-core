@@ -144,6 +144,7 @@ class DatabaseBackupSnapshot:
     source_system_identifier: str
     snapshot_id: str
     evidence: tuple[EvidenceSnapshot, ...]
+    company_notes: bytes | None = None
 
 
 class CommandRunner(Protocol):
@@ -345,8 +346,7 @@ class PgRestoreAdapter:
                     template, sqlalchemy_url_count = re.subn(
                         r"(?m)^sqlalchemy\.url\s*=.*$",
                         lambda _: (
-                            "sqlalchemy.url = "
-                            + self._endpoint.passwordless_sqlalchemy_url()
+                            "sqlalchemy.url = " + self._endpoint.passwordless_sqlalchemy_url()
                         ),
                         template,
                     )
@@ -391,9 +391,7 @@ def postgres_backup_snapshot(
     try:
         with connection_provider.connect(endpoint) as connection:
             with connection.transaction():
-                connection.execute(
-                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-                )
+                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 current_user = connection.execute("SELECT current_user").fetchone()
                 if current_user is None or current_user[0] != _FINANCE_BACKUP_ROLE:
                     raise BackupIntegrationError("BACKUP_DATABASE_ROLE_INVALID")
@@ -473,11 +471,25 @@ def postgres_backup_snapshot(
                     or not _SNAPSHOT_PATTERN.fullmatch(exported[0])
                 ):
                     raise BackupIntegrationError("BACKUP_DATABASE_SNAPSHOT_INVALID")
+                company_notes = None
+                if forbid_identity_tables:
+                    from types import SimpleNamespace
+
+                    from .company_notes import read_company_notes_bytes
+
+                    company = connection.execute(
+                        "SELECT taxpayer_identification_number FROM organizations"
+                    ).fetchone()
+                    if company:
+                        company_notes = read_company_notes_bytes(
+                            SimpleNamespace(taxpayer_identification_number=company[0])
+                        )
                 yield DatabaseBackupSnapshot(
                     schema_revision=revisions[0][0],
                     source_system_identifier=source_identity[1],
                     snapshot_id=exported[0],
                     evidence=evidence,
+                    company_notes=company_notes,
                 )
     except BackupIntegrationError:
         raise
@@ -530,6 +542,7 @@ def create_integrated_stopped_backup(
                     artifact_type=artifact_type,
                     org_id=org_id,
                     database_identity=database_identity,
+                    company_notes=snapshot.company_notes,
                 ),
                 adapter_factory(snapshot.snapshot_id),
                 publisher=publisher,
@@ -578,6 +591,7 @@ def create_integrated_online_backup(
                 artifact_type="company",
                 org_id=org_id,
                 database_identity=database_identity,
+                company_notes=snapshot.company_notes,
             ),
             adapter_factory(snapshot.snapshot_id),
             publisher=publisher,
@@ -703,7 +717,9 @@ def _assert_finance_backup_database_connect_is_minimal(
     expected = (
         [(name,) for name in sorted(allowed_database_names)]
         if allowed_database_names is not None
-        else [(current[0],)] if current is not None else []
+        else [(current[0],)]
+        if current is not None
+        else []
     )
     if current is None or databases != expected or current[0] not in {row[0] for row in expected}:
         raise BackupIntegrationError("BACKUP_DATABASE_ROLE_CONNECT_PRIVILEGES_INVALID")

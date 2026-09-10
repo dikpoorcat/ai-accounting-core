@@ -16,6 +16,7 @@ DEFAULT_ACCOUNTS = [
     ("1122", "应收账款", "asset", "debit", "accounts_receivable"),
     ("1123", "预付账款", "asset", "debit", "prepayments"),
     ("1221", "其他应收款", "asset", "debit", "employee_receivable"),
+    ("122105", "其他应收款—代收代付", "asset", "debit", "pass_through_receivable"),
     ("2202", "应付账款", "liability", "credit", "accounts_payable"),
     ("2203", "合同负债及预收款", "liability", "credit", "contract_liability"),
     ("222101", "应交增值税", "liability", "credit", "vat_payable"),

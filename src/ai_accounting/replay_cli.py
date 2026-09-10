@@ -50,7 +50,7 @@ from .models import (
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FORMAT_VERSION = "ai-accounting-composition-replay-v3"
-_BUSINESS_REVISION = "0005_payroll_provenance"
+_BUSINESS_REVISION = "0007_mybank_payment_sources"
 _CATALOG_REVISION = "0001_catalog_baseline_v2"
 
 
@@ -426,6 +426,8 @@ def _verify_operation_references(
         raise ReplayError("REPLAY_PACKAGE_OPERATION_KEY_INVALID")
     positions = {key: index for index, key in enumerate(keys)}
     allowed_kinds = {
+        "company_notes",
+        "material_inventory",
         "tool",
         "preview_confirm",
         "evidence",
@@ -2929,6 +2931,8 @@ def _export_company(
         # The just-retired chain remains a read-only export source for v4 replay.
         if revision not in {
             _current_schema_revision(catalog=False),
+            "0006_material_completeness",
+            "0005_payroll_provenance",
             "0004_payroll_dependency_scope",
             "0003_payroll_correction_uses",
             "0002_atomic_corrections",
@@ -3054,6 +3058,9 @@ def _export_company(
         ):
             anchored.append((operation["source_created_at"], 0, index, operation))
         business_timeline = [item[3] for item in sorted(anchored, key=lambda v: v[:3])]
+        from .material_replay import export_material_operations
+
+        material_operations = export_material_operations(session, org_id, maps, company_dir)
         operations = [
             *_evidence_operations(evidence),
             *_period_operations(session, org_id=org_id, support_evidence=support_evidence),
@@ -3067,6 +3074,7 @@ def _export_company(
                 if operation.get("tool") != "finance_confirm_enterprise_income_tax_quarter"
             ),
             *_bank_reconciliation_operations(session, org_id=org_id, maps=maps),
+            *material_operations,
             *_owner_control_operations(
                 session,
                 org_id=org_id,
@@ -4505,6 +4513,10 @@ def _execute_operation(
     resolver: _ReplayResolver,
 ) -> dict[str, Any]:
     kind = str(operation.get("kind"))
+    if kind in {"company_notes", "material_inventory"}:
+        from .material_replay import execute_material_operation
+
+        return execute_material_operation(operation, package_company_dir, resolver)
     if kind == "tool":
         request = resolver.materialize(operation["request"])
         result = _call_tool(str(operation["tool"]), request)
