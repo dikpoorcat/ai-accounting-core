@@ -9,7 +9,15 @@ from ..types import ActualDate, Fen, YearMonth, sum_fen
 from .transactions import Identifier
 
 CashKind = Literal[
-    "payment", "funding", "funds_transfer", "loan_drawdown", "bank_income", "cash_bank_transfer"
+    "payment",
+    "funding",
+    "funds_transfer",
+    "loan_drawdown",
+    "bank_income",
+    "cash_bank_transfer",
+    "bank_platform_transfer",
+    "managed_reserve_bank_expense",
+    "payroll_reserve_payment",
 ]
 CASH_KINDS = (
     "payment",
@@ -18,6 +26,9 @@ CASH_KINDS = (
     "loan_drawdown",
     "bank_income",
     "cash_bank_transfer",
+    "bank_platform_transfer",
+    "managed_reserve_bank_expense",
+    "payroll_reserve_payment",
 )
 
 
@@ -32,8 +43,16 @@ def cash_amount(fact, bank_account_id: str) -> int:
         raise KernelError("bank_account_mismatch", "资金账户与流水不一致")
     if fact.kind == "cash_bank_transfer":
         return fact.amount_fen if fact.direction == "deposit" else -fact.amount_fen
+    if fact.kind == "managed_reserve_bank_expense":
+        return -fact.amount_fen
+    if fact.kind == "bank_platform_transfer":
+        return fact.amount_fen if fact.direction == "platform_to_bank" else -fact.amount_fen
     amount = fact.principal_fen if fact.kind == "loan_drawdown" else fact.amount_fen
-    return -amount if fact.kind == "payment" and fact.direction == "outflow" else amount
+    return (
+        -amount
+        if fact.kind in {"payment", "payroll_reserve_payment"} and fact.direction == "outflow"
+        else amount
+    )
 
 
 def cash_reads(key: str, before_period: YearMonth | None = None):
@@ -70,6 +89,7 @@ class BankOpening(Fact):
     kind: ClassVar[str] = "bank_opening"
     identity_fields: ClassVar[tuple[str, ...]] = ("bank_account_id", "period")
     material_category: ClassVar[str] = "bank"
+    business_activity: ClassVar[bool] = False
     bank_account_id: Identifier
     opening_fen: Fen
     basis: Literal["new_account", "existing_ledger"]
@@ -79,7 +99,11 @@ class BankOpening(Fact):
 
     def reads(self):
         key = f"bank:{self.bank_account_id}"
-        return (Read("fact", self.kind, key), *cash_reads(key, self.period))
+        return (
+            Read("fact", self.kind, key),
+            Read("calculation", "opening_bank", key),
+            *cash_reads(key, self.period),
+        )
 
 
 def calculate_opening(version, context):
@@ -88,9 +112,17 @@ def calculate_opening(version, context):
     if any(item.subject_id != version.subject_id for item in context.facts(fact.kind, key)):
         raise KernelError("duplicate_bank_opening", "每个实际银行账户仅有一个明确账面起点")
     sources = published_cash(context, fact.bank_account_id, key, fact.period)
-    if fact.basis == "new_account" and (fact.opening_fen != 0 or sources):
+    continuations = context.calculations("opening_bank", key)
+    if len(continuations) > 1 or any(row.period > fact.period for row in continuations):
+        raise KernelError("bank_opening_conflict", "接续银行起点不唯一或晚于所核对月份")
+    if fact.basis == "new_account" and (fact.opening_fen != 0 or sources or continuations):
         raise KernelError("new_bank_opening_conflict", "新开户的账面起点须为零且不得已有资金历史")
-    book = sum_fen(amount for _, amount in sources.values())
+    book = sum_fen(
+        (
+            *[amount for _, amount in sources.values()],
+            *[row.values["opening_fen"] for row in continuations],
+        )
+    )
     if book != fact.opening_fen:
         raise NeedsInformation(
             "opening_fen",
@@ -128,6 +160,7 @@ class BankStatement(Fact):
     kind: ClassVar[str] = "bank_statement"
     identity_fields: ClassVar[tuple[str, ...]] = ("bank_account_id", "period")
     material_category: ClassVar[str] = "bank"
+    activity_count_field: ClassVar[str] = "transaction_count"
     bank_account_id: Identifier
     opening_fen: Fen
     closing_fen: Fen
@@ -175,12 +208,15 @@ class Match(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     reference: str = Field(min_length=1, max_length=500)
     source_kind: CashKind
-    source_id: Identifier
+    source_id: Identifier = Field(
+        description="已发布实际资金身份；同一来源可对应多条同账户、同日、同方向的原行，组内合计必须等于来源总额"
+    )
 
 
 class BankReconciliation(Fact):
     kind: ClassVar[str] = "bank_reconciliation"
     material_category: ClassVar[str] = "bank"
+    activity_count_field: ClassVar[str] = "matched_count"
     identity_fields: ClassVar[tuple[str, ...]] = ("statement_id", "bank_account_id", "period")
     statement_id: Identifier
     bank_account_id: Identifier = Field(description="从所引用银行流水复用的实际账户身份，必须一致")
@@ -200,9 +236,15 @@ class BankReconciliation(Fact):
             Read("calculation", "bank_statement", "@" + self.statement_id),
             Read("fact", self.kind, f"{key}:{self.period}"),
             Read("calculation", "bank_opening", key),
+            Read("calculation", "opening_bank", key),
             Read("calculation", self.kind, key, self.period),
             *cash_reads(f"{key}:{self.period}"),
-            *(Read("fact", match.source_kind, "@" + match.source_id) for match in self.matches),
+            *(
+                Read("fact", kind, "@" + source_id)
+                for kind, source_id in dict.fromkeys(
+                    (match.source_kind, match.source_id) for match in self.matches
+                )
+            ),
         )
 
 
@@ -220,7 +262,9 @@ def calculate_reconciliation(version, context):
     alternatives = context.facts(fact.kind, f"bank:{fact.bank_account_id}:{fact.period}")
     if any(item.subject_id != version.subject_id for item in alternatives):
         raise KernelError("duplicate_reconciliation", "同一账户月份的对账应沿原身份修订")
-    openings = context.calculations("bank_opening", f"bank:{fact.bank_account_id}")
+    legacy_openings = context.calculations("bank_opening", f"bank:{fact.bank_account_id}")
+    continuations = context.calculations("opening_bank", f"bank:{fact.bank_account_id}")
+    openings = legacy_openings or continuations
     if len(openings) != 1 or openings[0].period > fact.period:
         raise NeedsInformation("bank_opening", "需要明确账面起点；银行流水期初不能自动代替账面期初")
     previous = context.select(
@@ -245,22 +289,29 @@ def calculate_reconciliation(version, context):
     expected = published_cash(
         context, fact.bank_account_id, f"bank:{fact.bank_account_id}:{fact.period}"
     )
-    matched = set()
+    groups = {}
     for match in fact.matches:
         key = (match.source_kind, match.source_id)
-        if key in matched:
-            raise KernelError("duplicate_cash_match", "一项实际资金不能重复匹配")
-        matched.add(key)
-        real = context.one(match.source_kind, "@" + match.source_id).fact
+        groups.setdefault(key, []).append(entries[match.reference])
+    for (source_kind, source_id), group in groups.items():
+        key = (source_kind, source_id)
+        real = context.one(source_kind, "@" + source_id).fact
         amount = cash_amount(real, fact.bank_account_id)
-        entry = entries[match.reference]
-        if real.actual_date != entry.actual_date or amount != entry.signed_fen:
-            raise KernelError("bank_match_difference", "匹配的实际日期、金额或方向存在差异")
+        if (
+            any(
+                real.actual_date != entry.actual_date or (amount > 0) != (entry.signed_fen > 0)
+                for entry in group
+            )
+            or sum_fen(entry.signed_fen for entry in group) != amount
+        ):
+            raise KernelError(
+                "bank_match_difference", "匹配组的实际日期、方向或合计金额与资金来源存在差异"
+            )
         if key not in expected:
             raise NeedsInformation(
-                "actual_funds", "匹配资金尚未形成当前账户月份的正式结果", sources=(match.source_id,)
+                "actual_funds", "匹配资金尚未形成当前账户月份的正式结果", sources=(source_id,)
             )
-    if matched != set(expected):
+    if set(groups) != set(expected):
         raise NeedsInformation("matches", "账面实际资金与银行流水尚未完整对应")
     if (
         sum_fen((opening_fen, *(amount for _, amount in expected.values())))
@@ -274,7 +325,7 @@ def calculate_reconciliation(version, context):
             "statement_id": fact.statement_id,
             "opening_fen": opening_fen,
             "closing_fen": statement.closing_fen,
-            "matched_count": len(matched),
+            "matched_count": len(groups),
             "balanced": True,
         },
     )
@@ -283,9 +334,9 @@ def calculate_reconciliation(version, context):
 def required_reads(period: YearMonth):
     before = YearMonth.from_ordinal(period.ordinal + 1)
     return tuple(
-        Read(source, kind, "*" if kind == "bank_opening" else str(period), before)
+        Read(source, kind, "*" if kind in {"bank_opening", "opening_bank"} else str(period), before)
         for source in ("fact", "calculation")
-        for kind in ("bank_opening", "bank_statement", "bank_reconciliation")
+        for kind in ("bank_opening", "opening_bank", "bank_statement", "bank_reconciliation")
     )
 
 
@@ -294,10 +345,14 @@ def required_work(period: YearMonth, context):
     selected = {(read.source, read.kind): context.select(read) for read in required_reads(period)}
     posted = {
         row.fact_id
-        for kind in ("bank_opening", "bank_statement", "bank_reconciliation")
+        for kind in ("bank_opening", "opening_bank", "bank_statement", "bank_reconciliation")
         for row in selected[("calculation", kind)]
     }
-    openings = {row.fact.bank_account_id: row for row in selected[("fact", "bank_opening")]}
+    openings = {
+        row.fact.bank_account_id: row
+        for kind in ("opening_bank", "bank_opening")
+        for row in selected[("fact", kind)]
+    }
     statements = {
         row.fact.bank_account_id: row
         for row in selected[("fact", "bank_statement")]

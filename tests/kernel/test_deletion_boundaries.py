@@ -3,13 +3,14 @@
 import itertools
 
 import pytest
+from material_fixture import supporting_text
 
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.types import YearMonth
+from ai_accounting.kernel.types import YearMonth, canonical
 
 
 @pytest.fixture
@@ -22,6 +23,7 @@ def book(tmp_path):
     proof = engine.register_evidence(
         b"Synthetic source and recording-error evidence", "text/plain", "proof", request_id="proof"
     )["digest"]
+    supporting_text(engine, proof)
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0, *, amend=False):
@@ -233,7 +235,17 @@ def test_open_business_without_dependents_deletes_idempotently_and_retains_histo
     assert engine.delete("expense", **args) == result
     with engine.store.connection(read_only=True) as connection:
         assert engine.store.fact(connection, original["fact_id"]).fact.amount_fen == 100
-        assert connection.execute("SELECT count(*) FROM fact_current").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM fact_current c JOIN subject s ON s.id=c.subject_id "
+                "WHERE s.kind IN (SELECT value FROM json_each(?))",
+                (canonical([
+                    kind for kind, model in engine.store.registry.models.items()
+                    if model.lane == "accounting"
+                ]),),
+            ).fetchone()[0]
+            == 0
+        )
         assert connection.execute("SELECT count(*) FROM calculation_current").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM voucher_current").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM voucher_version").fetchone()[0] == 1

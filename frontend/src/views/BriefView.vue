@@ -26,6 +26,8 @@ const router = useRouter();
 const { context, load: loadContext } = useDashboardContext();
 const response = ref<Awaited<ReturnType<typeof fetchBrief>> | null>(null);
 const loading = ref(false);
+const loadingMore = ref(false);
+let pageController: AbortController | null = null;
 const error = ref("");
 const activeSection = ref("overview");
 let controller: AbortController | null = null;
@@ -91,8 +93,11 @@ const priorities = computed(() => {
 });
 const takeaway = computed(() => {
   if (!data.value) return "";
+  const details = data.value.management_commentary_details;
+  if (details?.status === "stale") return "已有经营结论的依据发生变化，需要更新后再使用。";
+  if (details?.current) return details.current.text;
   if (data.value.management_commentary) return data.value.management_commentary;
-  return isClosed.value ? "本月暂无经营结论。" : "本月尚未关账，经营结论将在关账时形成。";
+  return "本月尚未提供经营结论。";
 });
 
 function queryPeriod() {
@@ -101,18 +106,38 @@ function queryPeriod() {
 
 async function loadData(period: string | null) {
   controller?.abort();
+  pageController?.abort();
+  loadingMore.value = false;
   const request = new AbortController();
   controller = request;
   loading.value = true;
   error.value = "";
   try {
-    response.value = await fetchBrief(period, request.signal);
+    const result = await fetchBrief(period, request.signal);
+    if (!request.signal.aborted) response.value = result;
   } catch (caught: unknown) {
     if (caught instanceof DOMException && caught.name === "AbortError") return;
     error.value = dashboardErrorMessage(caught);
   } finally {
     if (controller === request) loading.value = false;
   }
+}
+
+async function loadMore() {
+  const current = response.value;
+  if (!current?.data?.voucher_page.has_more || loadingMore.value) return;
+  const request = new AbortController(); pageController = request; loadingMore.value = true;
+  try {
+    const next = await fetchBrief(selectedPeriod.value, request.signal, current.data.voucher_page.next_after_number ?? 0);
+    if (request.signal.aborted || !next.data || response.value !== current) return;
+    const groups = next.data.activity_groups.map(group => {
+      const old = current.data!.activity_groups.find(item => item.key === group.key);
+      return { ...group, rows: [...(old?.rows ?? []), ...group.rows] };
+    });
+    for (const group of current.data.activity_groups) if (!groups.some(item => item.key === group.key)) groups.push(group);
+    response.value = { ...next, data: { ...next.data, vouchers: [...current.data.vouchers, ...next.data.vouchers], activity_groups: groups } };
+  } catch (caught) { if (!request.signal.aborted) error.value = dashboardErrorMessage(caught); }
+  finally { if (pageController === request) loadingMore.value = false; }
 }
 
 async function initialize() {
@@ -245,7 +270,7 @@ function bankContext() {
 }
 
 watch(
-  () => route.query.org_id,
+  () => route.query.company_id,
   (value, previous) => {
     if (!initialized || value === previous) return;
     controller?.abort();
@@ -254,7 +279,7 @@ watch(
   },
 );
 watch(
-  () => [context.value?.current_company.org_id, route.query.period] as const,
+  () => [context.value?.current_company?.company_id, route.query.period] as const,
   ([orgId, period], [previousOrgId, previousPeriod]) => {
     if (!initialized || !orgId) return;
     if (orgId !== previousOrgId || period !== previousPeriod) {
@@ -284,6 +309,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   controller?.abort();
+  pageController?.abort();
   window.removeEventListener("scroll", updateSectionFromScroll);
   window.removeEventListener("wheel", enableSectionSyncForUserScroll);
   window.removeEventListener("touchmove", enableSectionSyncForUserScroll);
@@ -358,6 +384,14 @@ onBeforeUnmount(() => {
           <div class="takeaway">
             <span>经营结论</span>
             <strong>{{ takeaway }}</strong>
+            <details v-if="data.management_commentary_details?.status === 'stale' && data.management_commentary_details.latest">
+              <summary>查看已失效的旧结论</summary>
+              <p>{{ data.management_commentary_details.latest.text }}</p>
+            </details>
+            <details v-if="data.management_commentary_details?.supplements.length">
+              <summary>后补说明（不改变关账时封存结论）</summary>
+              <p v-for="note in data.management_commentary_details.supplements" :key="note.id">第 {{ note.revision }} 版：{{ note.text }}</p>
+            </details>
           </div>
         </div>
 
@@ -434,6 +468,9 @@ onBeforeUnmount(() => {
           :voucher-count="data.voucher_count"
           :line-count="data.line_count"
         />
+        <p class="muted">已加载 {{ data.vouchers.length }} / {{ data.voucher_count }} 张凭证；本页汇总按全月计算。</p>
+        <button v-if="data.voucher_page.has_more" class="dashboard-action" :disabled="loadingMore" @click="loadMore">{{ loadingMore ? "加载中…" : "加载更多业务与凭证" }}</button>
+
       </div>
 
       <div v-if="data.workforce_cost.has_activity" id="workforce" class="section-anchor" tabindex="-1">
@@ -662,6 +699,9 @@ onBeforeUnmount(() => {
   font-weight: 850;
   white-space: nowrap;
 }
+
+.takeaway details { grid-column: 1 / -1; font-size: 13px; }
+.takeaway summary { cursor: pointer; color: var(--muted); }
 
 .takeaway strong {
   font-size: 14px;

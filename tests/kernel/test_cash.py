@@ -3,6 +3,7 @@
 import itertools
 
 import pytest
+from material_fixture import supporting_text
 from test_payroll import labor, labor_policy
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
@@ -26,6 +27,7 @@ def book(tmp_path):
     proof = engine.register_evidence(
         b"Synthetic actual cash evidence", "text/plain", "proof", request_id="evidence"
     )["digest"]
+    supporting_text(engine, proof)
     requests = itertools.count()
 
     def save(kind, subject, data, revision=0):

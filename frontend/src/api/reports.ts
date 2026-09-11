@@ -1,4 +1,5 @@
-import { DashboardApiError, requestJson, withCurrentCompany } from "./client";
+import { DashboardApiError, requestJson } from "./client";
+import { requestLocalJson, LocalApiError } from "./localKernel";
 
 export type ReportStatus =
   | "ready"
@@ -87,6 +88,8 @@ export interface QuarterlyReport {
     available: boolean;
     file_name: string;
     calculation_hash: string | null;
+    preview_digest: string | null;
+    epochs: { accounting: number; material: number; management: number } | null;
   };
   technical: {
     calculation_hash: string | null;
@@ -99,8 +102,8 @@ export interface QuarterlyReport {
       version?: string;
     };
     source_close_hashes: string[];
-    classification_count: number;
-    income_tax_confirmation_count: number;
+    classification_count: number | null;
+    income_tax_confirmation_count: number | null;
     requirement_codes: string[];
     errors: string[];
   };
@@ -129,40 +132,31 @@ export async function fetchQuarterlyReport(
   return report;
 }
 
-export async function fetchQuarterlyWorkbook(
-  report: QuarterlyReport,
-  signal?: AbortSignal,
-) {
-  const calculationHash = report.export.calculation_hash;
-  if (!report.export.available || !calculationHash) {
-    throw new DashboardApiError(
-      409,
-      "REPORT_EXPORT_UNAVAILABLE",
-      "季度报表尚未准备完成，当前不能导出。",
-    );
+export async function requestQuarterlyExport(companyId: string, report: QuarterlyReport, requestId: string, signal?: AbortSignal): Promise<{ job_id: string }> {
+  if (!report.export.available || !report.export.preview_digest || !report.export.epochs) {
+    throw new DashboardApiError(409, "REPORT_EXPORT_UNAVAILABLE", "季度报表尚未准备完成，当前不能导出。");
   }
-  const query = new URLSearchParams({
-    year: String(report.period.year),
-    quarter: String(report.period.quarter),
-    calculation_hash: calculationHash,
-  });
-  const response = await fetch(withCurrentCompany(`/financial-reports/quarterly.xlsx?${query}`), {
-    headers: {
-      Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    },
-    signal,
+  const result = await requestLocalJson("/api/local/report-export", { method: "POST", signal, body: JSON.stringify({
+    company_id: companyId, year: report.period.year, quarter: report.period.quarter,
+    preview_digest: report.export.preview_digest, epochs: report.export.epochs, request_id: requestId,
+  }) });
+  if (!result || typeof result !== "object" || !("job_id" in result) || typeof result.job_id !== "string") {
+    throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务响应无法读取，请刷新后台任务核对。");
+  }
+  return { job_id: result.job_id };
+}
+
+export async function fetchQuarterlyWorkbook(companyId: string, jobId: string, signal?: AbortSignal) {
+  const query = new URLSearchParams({ company_id: companyId });
+  const response = await fetch(`/api/local/report-export/${encodeURIComponent(jobId)}/download?${query}`, {
+    headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    signal, cache: "no-store", credentials: "same-origin", redirect: "error",
   });
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as
-      | { errors?: unknown; message?: unknown }
-      | null;
-    const errors = Array.isArray(payload?.errors) ? payload.errors : [];
-    const code = typeof errors[0] === "string" ? errors[0] : "REPORT_EXPORT_FAILED";
-    const message =
-      typeof payload?.message === "string"
-        ? payload.message
-        : "季度报表导出失败，请稍后重试。";
-    throw new DashboardApiError(response.status, code, message);
+    if (response.status === 401) window.dispatchEvent(new Event("finance-session-expired"));
+    const payload: unknown = await response.json().catch(() => null);
+    const code = payload && typeof payload === "object" && "code" in payload && typeof payload.code === "string" ? payload.code : "REPORT_EXPORT_FAILED";
+    throw new LocalApiError(response.status, code, "报表文件尚不可下载，请刷新任务状态后重试。");
   }
   return response.blob();
 }

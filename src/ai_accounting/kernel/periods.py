@@ -9,11 +9,14 @@ from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInfo
 from .types import YearMonth, canonical, digest
 
 MATERIAL_CATEGORIES = ("transactions", "payroll", "bank", "tax", "assets", "financing")
+_CURRENT_CLOSE = object()
 
 
 class Periods:
-    def __init__(self, engine):
+    def __init__(self, engine, *, authorize_close=None, authorize_close_range=None):
         self.engine, self.store = engine, engine.store
+        self.authorize_close = authorize_close
+        self.authorize_close_range = authorize_close_range
 
     def management(
         self,
@@ -107,7 +110,36 @@ class Periods:
         )
 
     @staticmethod
-    def completeness(connection, month, registry):
+    def _has_business_activity(connection, month, kind, model):
+        """Read compact, current publication summaries, never repeated fact rows."""
+        count_field = model.activity_count_field
+        if count_field is None and model.business_activity:
+            return True  # The caller has already found this kind's current facts.
+        condition = ""
+        parameters = [month, kind]
+        if count_field is not None:
+            # Missing, malformed or nonzero counts never establish no activity.
+            # The path is bound as data and is declared by the domain, not a caller.
+            condition = (
+                " OR json_type(c.outcome,?) IS NOT 'integer' OR json_extract(c.outcome,?)<>0"
+            )
+            parameters.extend(["$.values." + count_field] * 2)
+        return (
+            connection.execute(
+                "SELECT 1 FROM fact_revision r INDEXED BY fact_period "
+                "CROSS JOIN fact_current f CROSS JOIN subject s "
+                "LEFT JOIN calculation_current a ON a.subject_id=s.id "
+                "LEFT JOIN calculation c ON c.id=a.calculation_id "
+                "WHERE r.period=? AND f.fact_id=r.id AND s.id=f.subject_id AND s.kind=? "
+                "AND (c.fact_id IS NOT f.fact_id OR EXISTS(SELECT 1 FROM pending p "
+                "WHERE p.subject_id=s.id)" + condition + ") LIMIT 1",
+                parameters,
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def completeness(connection, month, registry, *, material_coverage=None):
         inventories = {
             row["category"]: row
             for row in connection.execute(
@@ -126,22 +158,11 @@ class Periods:
                 continue
             if row["expected"] > row["received"]:
                 issues.append({"field": f"materials.{category}", "message": "预期资料尚未全部收到"})
-            unprocessed = connection.execute(
-                "SELECT count(*) FROM material_item i WHERE "
-                "i.inventory_id=? AND NOT EXISTS(SELECT 1 "
-                "FROM fact_evidence e JOIN fact_revision f ON "
-                "f.id=e.fact_id WHERE "
-                "e.evidence_digest=i.evidence_digest)",
-                (row["id"],),
-            ).fetchone()[0]
-            if unprocessed:
-                issues.append(
-                    {
-                        "field": f"materials.{category}",
-                        "message": "已接收资料存在未确认的业务事实",
-                        "unprocessed": unprocessed,
-                    }
-                )
+        from .materials import check_completeness
+
+        if material_coverage is None:
+            material_coverage = check_completeness(connection, month, registry)
+        issues.extend(material_coverage["issues"])
         # Facts awaiting initial publication are just as incomplete as stale results.
         unpublished = connection.execute(
             "SELECT s.id,s.kind FROM subject s JOIN fact_current f "
@@ -157,7 +178,12 @@ class Periods:
         ):
             model = registry.models[row[0]]
             inventory = inventories.get(model.material_category)
-            if row[0] in registry.evaluators and inventory and inventory["no_business"]:
+            if (
+                row[0] in registry.evaluators
+                and inventory
+                and inventory["no_business"]
+                and Periods._has_business_activity(connection, month, row[0], model)
+            ):
                 issues.append(
                     {
                         "field": f"materials.{model.material_category}",
@@ -166,19 +192,28 @@ class Periods:
                 )
         return inventories, issues, unpublished
 
-    def _manifest(self, connection, period: str, owner_confirmation: str):
+    def _manifest(
+        self, connection, period: str, owner_confirmation: str, *, previous_close=_CURRENT_CLOSE
+    ):
+        from .display import Display
+
         month = YearMonth(period).ordinal
         if not connection.execute(
             "SELECT 1 FROM evidence WHERE digest=?", (bytes.fromhex(owner_confirmation),)
         ).fetchone():
             raise NeedsInformation("owner_confirmation", "需要负责人不可变确认依据")
-        previous_close = connection.execute(
-            "SELECT period,digest FROM period_close ORDER BY period DESC LIMIT 1"
-        ).fetchone()
+        if previous_close is _CURRENT_CLOSE:
+            previous_close = connection.execute(
+                "SELECT period,digest FROM period_close ORDER BY period DESC LIMIT 1"
+            ).fetchone()
         cutoff = previous_close["period"] if previous_close else -1
         if cutoff >= month:
             raise KernelError("already_closed", "月份已经关账")
-        kinds = sorted(self.store.registry.evaluators)
+        kinds = sorted(
+            kind
+            for kind in self.store.registry.evaluators
+            if self.store.registry.models[kind].lane != "management"
+        )
         if kinds:
             earlier = connection.execute(
                 "SELECT f.period FROM fact_revision f INDEXED BY fact_period "
@@ -193,7 +228,12 @@ class Periods:
                     "须先处理并关闭前面有业务的月份",
                     period=str(YearMonth.from_ordinal(earlier[0])),
                 )
-        inventories, issues, unpublished = self.completeness(connection, month, self.store.registry)
+        from .materials import check_completeness
+
+        material_coverage = check_completeness(connection, month, self.store.registry)
+        inventories, issues, unpublished = self.completeness(
+            connection, month, self.store.registry, material_coverage=material_coverage
+        )
         readiness = {}
         for name, (required_reads, evaluate) in sorted(self.store.registry.readiness.items()):
             reads = tuple(required_reads(YearMonth(period)))
@@ -205,7 +245,7 @@ class Periods:
                 "calculations": sorted({item.id for item in used if isinstance(item, Calculation)}),
             }
         for row in unpublished:
-            if row["kind"] in self.store.registry.evaluators:
+            if row["kind"] in kinds:
                 issues.append({"field": row["id"], "message": "业务事实尚未正式处理"})
         for checker in self.store.registry.snapshot_readiness.values():
             issues.extend(checker(self.store, connection, YearMonth(period)))
@@ -237,12 +277,17 @@ class Periods:
                     "message": "银行账户尚未完成对账",
                 }
             )
-        pending = connection.execute(
-            "SELECT p.subject_id FROM pending p CROSS JOIN "
-            "fact_current c CROSS JOIN fact_revision f "
-            "WHERE c.subject_id=p.subject_id AND f.id=c.fact_id AND f.period<=? LIMIT 1",
-            (month,),
-        ).fetchone()
+        pending = (
+            connection.execute(
+                "SELECT p.subject_id FROM pending p CROSS JOIN "
+                "fact_current c CROSS JOIN fact_revision f CROSS JOIN subject s "
+                "WHERE c.subject_id=p.subject_id AND f.id=c.fact_id AND s.id=c.subject_id "
+                f"AND s.kind IN({','.join('?' for _ in kinds)}) AND f.period<=? LIMIT 1",
+                (*kinds, month),
+            ).fetchone()
+            if kinds
+            else None
+        )
         if pending:
             issues.append({"field": pending[0], "message": "当前或前期存在待更正事项"})
         if issues:
@@ -280,9 +325,10 @@ class Periods:
             dict(r)
             for r in connection.execute(
                 "SELECT account,sum(debit) debit,sum(credit) credit "
-                "FROM monthly_account WHERE period<=? "
+                "FROM (SELECT * FROM monthly_account WHERE period<=? UNION ALL "
+                "SELECT * FROM opening_account WHERE period<=?) "
                 "GROUP BY account ORDER BY account",
-                (month,),
+                (month, month),
             )
         ]
         return {
@@ -296,6 +342,12 @@ class Periods:
             "inventories": {key: row["id"] for key, row in sorted(inventories.items())},
             "owner_confirmation": owner_confirmation,
             "readiness": readiness,
+            "management_snapshot": Display.snapshot(
+                connection, period, registry=self.store.registry
+            ),
+            "material_coverage": {
+                key: value for key, value in material_coverage.items() if key != "issues"
+            },
             "trial_balance": trial_balance,
             "report_classification": {
                 "1": "assets",
@@ -316,7 +368,9 @@ class Periods:
             "status": "preview",
             "epochs": epochs,
             "manifest": manifest,
-            "digest": digest([manifest, epochs["accounting"], epochs["material"]]).hex(),
+            "digest": digest(
+                [manifest, epochs["accounting"], epochs["material"], epochs["management"]]
+            ).hex(),
         }
 
     def close(
@@ -335,12 +389,21 @@ class Periods:
         cached = self.engine._cached(request_id, hashed)
         if cached:
             return cached
-        preview = self.preview_close(period, owner_confirmation=owner_confirmation)
-        if preview["digest"] != preview_digest:
-            raise KernelError("preview_expired", "关账预览已变化")
-        manifest = preview["manifest"]
 
         def operation(connection):
+            manifest = self._manifest(connection, period, owner_confirmation)
+            current = self.store.epochs(connection)
+            if (
+                digest(
+                    [manifest, current["accounting"], current["material"], current["management"]]
+                ).hex()
+                != preview_digest
+            ):
+                raise KernelError("preview_expired", "关账预览已变化")
+            if self.authorize_close:
+                manifest["password_confirmation"] = self.authorize_close(
+                    connection, period, preview_digest, epochs
+                )
             connection.execute(
                 "INSERT INTO period_close VALUES(?,?,?)",
                 (YearMonth(period).ordinal, canonical(manifest), digest(manifest)),
@@ -371,7 +434,13 @@ class Periods:
             }
 
         return self.engine._write(
-            request_id, hashed, epochs, ("accounting", "material"), "close", operation
+            request_id,
+            hashed,
+            epochs,
+            ("accounting", "material"),
+            "close",
+            operation,
+            checked_lanes=("accounting", "material", "management"),
         )
 
     def closed_report(self, period: str):
@@ -382,3 +451,207 @@ class Periods:
             if not row:
                 raise KernelError("not_closed", "月份尚未关账")
             return json.loads(row[0])
+
+    def _range_snapshot(self, connection, from_period, through_period, owner_confirmation):
+        first, last = YearMonth(from_period), YearMonth(through_period)
+        if first > last:
+            raise KernelError("invalid_close_range", "关账起始月不能晚于截至月")
+        epochs = self.store.epochs(connection)
+        closed = list(connection.execute("SELECT period,digest FROM period_close ORDER BY period"))
+        by_month = {row["period"]: row for row in closed}
+        remaining, prefix = first.ordinal, []
+        while remaining <= last.ordinal and remaining in by_month:
+            row = by_month[remaining]
+            prefix.append(
+                {"period": str(YearMonth.from_ordinal(remaining)), "digest": row["digest"].hex()}
+            )
+            remaining += 1
+        previous = closed[-1] if closed else None
+        if remaining <= last.ordinal and previous is not None:
+            if previous["period"] >= remaining:
+                raise KernelError(
+                    "closed_range_gap", "已有闭期不是连续前缀，不能补写或重开其前方月份"
+                )
+            if remaining != previous["period"] + 1:
+                raise KernelError(
+                    "close_range_not_contiguous",
+                    "待关范围必须紧接当前最后闭期",
+                    next_period=str(YearMonth.from_ordinal(previous["period"] + 1)),
+                )
+        anchor = (
+            None
+            if previous is None
+            else {
+                "period": str(YearMonth.from_ordinal(previous["period"])),
+                "digest": previous["digest"].hex(),
+            }
+        )
+        manifests = []
+        for ordinal in range(remaining, last.ordinal + 1):
+            month = str(YearMonth.from_ordinal(ordinal))
+            try:
+                manifest = self._manifest(
+                    connection, month, owner_confirmation, previous_close=previous
+                )
+            except KernelError as error:
+                error.details["closing_period"] = month
+                for issue in error.details.get("fact_issues", ()):
+                    issue.setdefault("closing_period", month)
+                raise
+            manifests.append(manifest)
+            # Only the prior closed boundary is virtual. Facts, publications,
+            # inventories and every readiness check use the unchanged read snapshot.
+            previous = {"period": ordinal, "digest": digest(manifest)}
+        result = {
+            "status": "preview" if manifests else "already_closed",
+            "company_id": self.store.company_id,
+            "database_id": self.store.database_id,
+            "from_period": str(first),
+            "through_period": str(last),
+            "owner_confirmation": owner_confirmation,
+            "epochs": epochs,
+            "closed_prefix": prefix,
+            "previous_close": anchor,
+            "manifests": manifests,
+            "month_count": len(manifests),
+        }
+        result["digest"] = digest(
+            {
+                **result,
+                "epochs": {key: epochs[key] for key in ("accounting", "material", "management")},
+            }
+        ).hex()
+        return result
+
+    def preview_close_range(
+        self,
+        from_period: str,
+        through_period: str,
+        *,
+        owner_confirmation: str,
+    ):
+        """Preview all consecutive months without writing or rolling back any close."""
+        with self.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            result = self._range_snapshot(
+                connection, from_period, through_period, owner_confirmation
+            )
+            connection.commit()
+        return result
+
+    def close_range(
+        self,
+        from_period: str,
+        through_period: str,
+        *,
+        owner_confirmation: str,
+        preview_digest: str,
+        epochs: dict,
+        request_id: str,
+        backup_directory: str | None = None,
+    ):
+        """Recheck and publish one company's complete range in one transaction."""
+        first, last = str(YearMonth(from_period)), str(YearMonth(through_period))
+        hashed = digest(
+            [
+                "close_range",
+                first,
+                last,
+                owner_confirmation,
+                preview_digest,
+                epochs,
+                backup_directory,
+            ]
+        )
+        cached = self.engine._cached(request_id, hashed)
+        if cached is not None:
+            return cached
+
+        def operation(connection):
+            preview = self._range_snapshot(connection, first, last, owner_confirmation)
+            if not preview["manifests"]:
+                raise KernelError("already_closed", "请求范围已经全部关账，无需再次批准")
+            if preview["digest"] != preview_digest:
+                raise KernelError("preview_expired", "连续关账预览已变化，请重新核对整个范围")
+            authorization = None
+            if self.authorize_close_range:
+                authorization = self.authorize_close_range(
+                    connection, first, last, preview_digest, epochs
+                )
+            previous_digest = (
+                preview["previous_close"]["digest"] if preview["previous_close"] else None
+            )
+            results = []
+            for prepared in preview["manifests"]:
+                manifest = {**prepared, "previous_close_digest": previous_digest}
+                if authorization is not None:
+                    manifest["password_confirmation"] = authorization
+                manifest["close_range"] = {
+                    "from_period": first,
+                    "through_period": last,
+                    "preview_digest": preview_digest,
+                }
+                hashed_manifest = digest(manifest)
+                connection.execute(
+                    "INSERT INTO period_close VALUES(?,?,?)",
+                    (YearMonth(manifest["period"]).ordinal, canonical(manifest), hashed_manifest),
+                )
+                result = {"period": manifest["period"], "digest": hashed_manifest.hex()}
+                connection.execute(
+                    "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
+                    (
+                        request_id,
+                        "close_range_month",
+                        canonical(
+                            {
+                                **result,
+                                "from_period": first,
+                                "through_period": last,
+                                "preview_digest": preview_digest,
+                                "actor": self.engine.audit_actor,
+                            }
+                        ),
+                    ),
+                )
+                results.append(result)
+                previous_digest = result["digest"]
+                self.engine.fault("close_range_month:" + manifest["period"], connection)
+            job_id = None
+            if backup_directory:
+                job_id = uuid.uuid4().hex
+                connection.execute(
+                    "INSERT INTO jobs(id,kind,payload,status) VALUES(?,?,?,'pending')",
+                    (
+                        job_id,
+                        "portable_backup",
+                        canonical(
+                            {
+                                "directory": backup_directory,
+                                "rollover": True,
+                                "close_period": last,
+                                "close_digest": previous_digest,
+                            }
+                        ),
+                    ),
+                )
+            return {
+                "status": "closed",
+                "company_id": self.store.company_id,
+                "database_id": self.store.database_id,
+                "from_period": first,
+                "through_period": last,
+                "preview_digest": preview_digest,
+                "closed_prefix": preview["closed_prefix"],
+                "results": results,
+                "backup_job": job_id,
+            }
+
+        return self.engine._write(
+            request_id,
+            hashed,
+            epochs,
+            ("accounting", "material"),
+            "close_range",
+            operation,
+            checked_lanes=("accounting", "material", "management"),
+        )

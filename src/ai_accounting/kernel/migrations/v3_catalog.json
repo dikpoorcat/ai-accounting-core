@@ -1,0 +1,142 @@
+{
+  "kind": "catalog",
+  "version": 3,
+  "sha256": "396c26ab12876f416d0c5daea8ad75379929c20a0a8bd623f1c876260a79bf90",
+  "objects": [
+    {
+      "type": "index",
+      "name": "security_recovery_current",
+      "sql": "CREATE UNIQUE INDEX security_recovery_current ON security_recovery(owner_id)\n        WHERE used_at IS NULL AND invalidated_at IS NULL"
+    },
+    {
+      "type": "index",
+      "name": "security_session_owner",
+      "sql": "CREATE INDEX security_session_owner ON security_session(owner_id)"
+    },
+    {
+      "type": "table",
+      "name": "catalog_identity",
+      "sql": "CREATE TABLE catalog_identity(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL UNIQUE,\n schema_version INTEGER NOT NULL) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "company",
+      "sql": "CREATE TABLE company(id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,path TEXT NOT NULL UNIQUE,database_id TEXT NOT NULL UNIQUE) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "company_operation",
+      "sql": "CREATE TABLE company_operation(id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL UNIQUE,\n kind TEXT NOT NULL CHECK(kind IN('create','restore')), payload TEXT NOT NULL CHECK(json_valid(payload)),\n status TEXT NOT NULL CHECK(status IN('pending','succeeded','failed')),\n attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "company_setting",
+      "sql": "CREATE TABLE company_setting(company_id TEXT NOT NULL REFERENCES company(id),\n revision INTEGER NOT NULL CHECK(revision>0),backup_directory TEXT NOT NULL,\n PRIMARY KEY(company_id,revision)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "schema_history",
+      "sql": "CREATE TABLE schema_history(version INTEGER PRIMARY KEY, fingerprint BLOB NOT NULL\n CHECK(length(fingerprint)=32), installed_at TEXT NOT NULL\n DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "security_audit",
+      "sql": "CREATE TABLE security_audit(\n        id INTEGER PRIMARY KEY, occurred_at INTEGER NOT NULL,\n        owner_id TEXT, session_id TEXT, event TEXT NOT NULL,\n        outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','rejected','blocked')),\n        reason TEXT, request_id TEXT NOT NULL\n    ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "security_close_batch",
+      "sql": "CREATE TABLE security_close_batch(\n        id TEXT PRIMARY KEY, catalog_instance_id TEXT NOT NULL,\n        owner_id TEXT NOT NULL REFERENCES security_owner(id),\n        session_id TEXT NOT NULL REFERENCES security_session(id),\n        credential_version INTEGER NOT NULL CHECK(credential_version>=1),\n        targets TEXT NOT NULL CHECK(json_valid(targets)),\n        digest BLOB NOT NULL CHECK(length(digest)=32),\n        confirmed_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,\n        CHECK(expires_at>confirmed_at)\n    ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "security_identity_import",
+      "sql": "CREATE TABLE security_identity_import(\n        source_catalog_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE\n          REFERENCES security_owner(id), imported_at INTEGER NOT NULL\n    ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "security_owner",
+      "sql": "CREATE TABLE security_owner(\n        id TEXT PRIMARY KEY, singleton INTEGER NOT NULL UNIQUE CHECK(singleton=1),\n        login_name TEXT NOT NULL, login_key TEXT NOT NULL UNIQUE,\n        status TEXT NOT NULL CHECK(status IN ('active','disabled')),\n        password_hash TEXT NOT NULL CHECK(length(password_hash)=97\n          AND password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=4$%'),\n        credential_version INTEGER NOT NULL CHECK(credential_version>=1),\n        password_failures INTEGER NOT NULL CHECK(password_failures>=0),\n        password_blocked_until INTEGER,\n        recovery_failures INTEGER NOT NULL CHECK(recovery_failures>=0),\n        recovery_blocked_until INTEGER,\n        created_at INTEGER NOT NULL, password_changed_at INTEGER NOT NULL,\n        last_authenticated_at INTEGER,\n        CHECK(login_key=lower(trim(login_name))),\n        CHECK(length(login_name) BETWEEN 3 AND 100\n          AND login_name=trim(login_name) AND login_name NOT GLOB '*[^A-Za-z0-9._-]*'\n          AND substr(login_name,1,1) GLOB '[A-Za-z0-9]')\n    ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "security_recovery",
+      "sql": "CREATE TABLE security_recovery(\n        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES security_owner(id),\n        code_hash BLOB NOT NULL UNIQUE CHECK(length(code_hash)=32),\n        credential_version INTEGER NOT NULL CHECK(credential_version>=1),\n        created_at INTEGER NOT NULL, used_at INTEGER, invalidated_at INTEGER,\n        CHECK(used_at IS NULL OR used_at>=created_at),\n        CHECK(invalidated_at IS NULL OR invalidated_at>=created_at),\n        CHECK(used_at IS NULL OR invalidated_at IS NULL)\n    ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "security_session",
+      "sql": "CREATE TABLE security_session(\n        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES security_owner(id),\n        secret_hash BLOB NOT NULL UNIQUE CHECK(length(secret_hash)=32),\n        credential_version INTEGER NOT NULL CHECK(credential_version>=1),\n        created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL,\n        idle_expires_at INTEGER NOT NULL, absolute_expires_at INTEGER NOT NULL,\n        revoked_at INTEGER, revoke_reason TEXT,\n        CHECK(last_seen_at>=created_at),\n        CHECK(idle_expires_at>created_at AND idle_expires_at<=absolute_expires_at),\n        CHECK((revoked_at IS NULL AND revoke_reason IS NULL)\n          OR (revoked_at>=created_at AND revoke_reason IS NOT NULL))\n    ) STRICT"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_catalog_identity_delete",
+      "sql": "CREATE TRIGGER immutable_catalog_identity_delete BEFORE DELETE ON catalog_identity\n BEGIN SELECT RAISE(ABORT,'immutable directory identity'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_catalog_identity_update",
+      "sql": "CREATE TRIGGER immutable_catalog_identity_update BEFORE UPDATE ON catalog_identity\n BEGIN SELECT RAISE(ABORT,'immutable directory identity'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_company_operation",
+      "sql": "CREATE TRIGGER immutable_company_operation BEFORE UPDATE OF id,taxpayer_id,kind,payload ON company_operation\n BEGIN SELECT RAISE(ABORT,'immutable company operation'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_company_setting_delete",
+      "sql": "CREATE TRIGGER immutable_company_setting_delete BEFORE DELETE ON company_setting\n BEGIN SELECT RAISE(ABORT,'immutable company setting'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_company_setting_update",
+      "sql": "CREATE TRIGGER immutable_company_setting_update BEFORE UPDATE ON company_setting\n BEGIN SELECT RAISE(ABORT,'immutable company setting'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_schema_history_delete",
+      "sql": "CREATE TRIGGER immutable_schema_history_delete BEFORE DELETE ON schema_history\n BEGIN SELECT RAISE(ABORT,'immutable schema history'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_schema_history_update",
+      "sql": "CREATE TRIGGER immutable_schema_history_update BEFORE UPDATE ON schema_history\n BEGIN SELECT RAISE(ABORT,'immutable schema history'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "retained_company_operation",
+      "sql": "CREATE TRIGGER retained_company_operation BEFORE DELETE ON company_operation\n BEGIN SELECT RAISE(ABORT,'retained company operation'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "security_audit_no_delete",
+      "sql": "CREATE TRIGGER security_audit_no_delete BEFORE DELETE ON security_audit\n        BEGIN SELECT RAISE(ABORT,'immutable security audit'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "security_audit_no_update",
+      "sql": "CREATE TRIGGER security_audit_no_update BEFORE UPDATE ON security_audit\n        BEGIN SELECT RAISE(ABORT,'immutable security audit'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "security_close_batch_no_delete",
+      "sql": "CREATE TRIGGER security_close_batch_no_delete BEFORE DELETE ON security_close_batch\n        BEGIN SELECT RAISE(ABORT,'retained close batch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "security_close_batch_no_update",
+      "sql": "CREATE TRIGGER security_close_batch_no_update BEFORE UPDATE ON security_close_batch\n        BEGIN SELECT RAISE(ABORT,'immutable close batch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "security_import_no_delete",
+      "sql": "CREATE TRIGGER security_import_no_delete BEFORE DELETE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "security_import_no_update",
+      "sql": "CREATE TRIGGER security_import_no_update BEFORE UPDATE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
+    }
+  ]
+}

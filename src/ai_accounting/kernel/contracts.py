@@ -84,10 +84,22 @@ class Claim:
 class Fact(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     kind: ClassVar[str]
+    lane: ClassVar[Literal["accounting", "material", "management"]] = "accounting"
     immutable: ClassVar[bool] = False
     immutable_fields: ClassVar[tuple[str, ...]] = ()
     identity_fields: ClassVar[tuple[str, ...]] = ()
     material_category: ClassVar[str | None] = None
+    # Some internal facts are compiled from verified source bytes by a typed
+    # command. They retain common versioning but are not arbitrary fact inputs.
+    registration_command: ClassVar[str | None] = None
+    # Explicit alternative names for the same source amount. Paths use fact.X_fen
+    # or result.X_fen; equal values alone never establish an alias.
+    material_amount_aliases: ClassVar[dict[str, str]] = {}
+    # Explicit domain meaning, independent of whether a calculation has journal
+    # lines. A published zero count may establish an idle period; only current,
+    # reviewed calculation summaries qualify for this exception.
+    business_activity: ClassVar[bool] = True
+    activity_count_field: ClassVar[str | None] = None
     period: YearMonth
 
     def scopes(self) -> tuple[str, ...]:
@@ -96,9 +108,27 @@ class Fact(BaseModel):
     def reads(self) -> tuple[Read, ...]:
         return ()
 
+    def reads_for(self, subject_id: str) -> tuple[Read, ...]:
+        """Declare identity-scoped reads without duplicating the public subject ID."""
+        return self.reads()
+
+    def scopes_for(self, subject_id: str) -> tuple[str, ...]:
+        """Expose identity-scoped source categories without adding redundant fields."""
+        return self.scopes()
+
     def claims(self) -> tuple[Claim, ...]:
         """Explicit typed allocation facts; independent of a business-specific save path."""
         return ()
+
+    def validate_material_amount(
+        self,
+        amount_field: str,
+        amount_fen: int,
+        *,
+        source_amounts: tuple[int, ...],
+        source_directions: tuple[Literal["signed_net", "inflow", "outflow"] | None, ...] = (),
+    ) -> None:
+        """Pure constraints on unchanged originals and explicitly declared column directions."""
 
     def required_closed_periods(self) -> tuple[YearMonth, ...]:
         return ()
@@ -164,8 +194,20 @@ class Outcome:
     values: dict[str, Any]
     balances: tuple[BalanceEffect, ...] = ()
     explanation: tuple[dict, ...] = ()
+    opening_lines: tuple[Line, ...] = ()
+    opening: bool = False
 
     def __post_init__(self):
+        if type(self.opening) is not bool or (self.opening_lines and not self.opening):
+            raise ValueError("opening balances require an explicit opening calculation")
+        if self.opening_lines and (self.lines or any(line.cashflow for line in self.opening_lines)):
+            raise ValueError("opening balances cannot carry current-period activity or cash flow")
+        if self.opening_lines and (
+            len(self.opening_lines) < 2
+            or sum_fen(x.debit for x in self.opening_lines)
+            != sum_fen(x.credit for x in self.opening_lines)
+        ):
+            raise ValueError("unbalanced opening calculation")
         if self.lines and (
             len(self.lines) < 2
             or sum_fen(x.debit for x in self.lines) != sum_fen(x.credit for x in self.lines)
@@ -234,4 +276,17 @@ class Registry:
             self.evaluators[model.kind] = evaluator
 
     def schemas(self) -> dict:
-        return {kind: model.model_json_schema() for kind, model in self.models.items()}
+        return {
+            kind: model.model_json_schema()
+            | (
+                {"x-registration-command": model.registration_command}
+                if model.registration_command
+                else {}
+            )
+            | (
+                {"x-material-amount-aliases": model.material_amount_aliases}
+                if model.material_amount_aliases
+                else {}
+            )
+            for kind, model in self.models.items()
+        }

@@ -23,6 +23,8 @@ const {
 } = useDashboardContext();
 
 const selectedPeriod = ref("");
+const loadingMore = ref(false);
+let pageRequest: AbortController | null = null;
 const selectedAccount = ref("");
 const selectedBankAccount = ref("");
 const selectedDetailView = ref<"book" | "bank">("book");
@@ -174,6 +176,8 @@ function updateSectionFromScroll() {
 }
 
 async function loadFunds(periodKey: string) {
+  pageRequest?.abort();
+  loadingMore.value = false;
   activeRequest?.abort();
   const controller = new AbortController();
   lockSectionSync();
@@ -224,6 +228,21 @@ async function loadFunds(periodKey: string) {
   }
 }
 
+async function loadMore(kind: "book" | "bank") {
+  const current = funds.value;
+  const page = kind === "book" ? current?.movement_page : current?.bank_statement.page;
+  if (!current || !page?.has_more || !page.next_cursor || loadingMore.value) return;
+  const request = new AbortController(); pageRequest = request; loadingMore.value = true;
+  try {
+    const next = await fetchFundsDashboard(selectedPeriod.value, request.signal,
+      kind === "book" ? { after_movement: page.next_cursor } : { after_statement: page.next_cursor });
+    if (request.signal.aborted || !next.data || funds.value !== current) return;
+    if (kind === "book") funds.value = { ...current, movements: [...current.movements, ...next.data.movements], movement_page: next.data.movement_page };
+    else funds.value = { ...current, bank_statement: { ...current.bank_statement, rows: [...current.bank_statement.rows, ...next.data.bank_statement.rows], page: next.data.bank_statement.page } };
+  } catch (caught) { if (!request.signal.aborted) requestError.value = dashboardErrorMessage(caught); }
+  finally { if (pageRequest === request) loadingMore.value = false; }
+}
+
 function changePeriod(value: string) {
   void router.push({ query: { ...route.query, period: value || undefined } });
 }
@@ -247,7 +266,9 @@ async function retry() {
   }
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string | null): string {
+  if (!value) return "日期未提供";
+  if (/^\d{4}-\d{2}$/.test(value)) return `${value} · 按月确认`;
   const parts = value.split("-");
   if (parts.length !== 3) return value;
   return `${Number(parts[1])} 月 ${Number(parts[2])} 日`;
@@ -298,7 +319,7 @@ function reconciliationAttention(state: string): boolean {
 }
 
 watch(
-  () => route.query.org_id,
+  () => route.query.company_id,
   (value, previous) => {
     if (value === previous) return;
     activeRequest?.abort();
@@ -324,7 +345,7 @@ watch(
     if (!dashboardContext) return;
     const previousContext = previous?.[0];
     const companyChanged =
-      dashboardContext.current_company.org_id !== previousContext?.current_company.org_id;
+      dashboardContext.current_company?.company_id !== previousContext?.current_company?.company_id;
     const requested = routePeriod();
     const requestedExists = dashboardContext.periods.some(
       (item) => item.key === requested,
@@ -368,6 +389,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  pageRequest?.abort();
   activeRequest?.abort();
   window.removeEventListener("scroll", updateSectionFromScroll);
   window.removeEventListener("wheel", enableSectionSyncForUserScroll);
@@ -652,7 +674,9 @@ onBeforeUnmount(() => {
                 </tbody>
               </table>
             </div>
-            <p v-else class="empty">{{ selectedAccount ? "本月该账户没有已入账资金变动。" : "本月没有已入账资金变动。" }}</p>
+            <p v-else class="empty">{{ selectedAccount ? "当前已加载明细中，该账户没有资金变动。" : "本月没有已入账资金变动。" }}</p>
+            <p class="muted">已加载 {{ funds.movements.length }} / {{ funds.movement_count }} 条；账户筛选作用于已加载明细，汇总按全月计算。</p>
+            <button v-if="funds.movement_page.has_more" class="control" :disabled="loadingMore" @click="loadMore('book')">{{ loadingMore ? "加载中…" : "加载更多账面明细" }}</button>
           </div>
 
           <div
@@ -714,7 +738,9 @@ onBeforeUnmount(() => {
                 </tbody>
               </table>
             </div>
-            <p v-else class="empty">{{ selectedBankAccount ? "本月该账户没有可展示的银行流水。" : "本月没有可展示的银行流水。" }}</p>
+            <p v-else class="empty">{{ selectedBankAccount ? "当前已加载明细中，该账户没有银行流水。" : "本月没有可展示的银行流水。" }}</p>
+            <p class="muted">已加载 {{ funds.bank_statement.rows.length }} / {{ funds.bank_statement.transaction_count }} 条银行流水。</p>
+            <button v-if="funds.bank_statement.page.has_more" class="control" :disabled="loadingMore" @click="loadMore('bank')">{{ loadingMore ? "加载中…" : "加载更多银行流水" }}</button>
           </div>
         </section>
         </div>

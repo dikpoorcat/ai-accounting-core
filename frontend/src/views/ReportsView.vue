@@ -3,9 +3,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 
 import { DashboardApiError, dashboardErrorMessage } from "../api/client";
+import { fetchLocalJob, LocalApiError } from "../api/localKernel";
 import {
   fetchQuarterlyReport,
   fetchQuarterlyWorkbook,
+  requestQuarterlyExport,
   type QuarterlyReport,
   type ReportStatement,
   type ReportStatementRow,
@@ -74,6 +76,7 @@ const selectedQuarter = ref("");
 const report = ref<QuarterlyReport | null>(null);
 const loading = ref(false);
 const exporting = ref(false);
+let exportAttempt: { digest: string; requestId: string; jobId?: string } | null = null;
 const errorMessage = ref("");
 const exportNotice = ref("");
 const exportNoticeKind = ref<"success" | "attention" | "error">("success");
@@ -201,8 +204,8 @@ const technicalRows = computed<TechnicalRow[]>(() => {
       : null,
     technical.rule.version ? { label: "计算规则", value: technical.rule.version } : null,
     { label: "结账快照", value: `${technical.source_close_hashes.length} 份` },
-    { label: "报表分类", value: `${technical.classification_count} 项` },
-    { label: "所得税确认", value: `${technical.income_tax_confirmation_count} 项` },
+    { label: "报表分类", value: technical.classification_count === null ? "未提供" : `${technical.classification_count} 项` },
+    { label: "所得税确认", value: technical.income_tax_confirmation_count === null ? "未提供" : `${technical.income_tax_confirmation_count} 项` },
     technical.requirement_codes.length
       ? { label: "待办代码", value: technical.requirement_codes }
       : null,
@@ -350,14 +353,32 @@ async function refresh() {
 
 async function exportReport() {
   const current = report.value;
-  if (!current?.export.available || !current.export.calculation_hash) return;
+  const companyId = route.query.company_id;
+  if (!current?.export.available || !current.export.preview_digest || typeof companyId !== "string") return;
   exportController?.abort();
   const controller = new AbortController();
   exportController = controller;
   exporting.value = true;
-  exportNotice.value = "";
+  exportNoticeKind.value = "attention";
+  exportNotice.value = "正在创建报表生成任务…";
   try {
-    const blob = await fetchQuarterlyWorkbook(current, controller.signal);
+    const digest = `${companyId}:${current.export.preview_digest}`;
+    if (exportAttempt?.digest !== digest) exportAttempt = { digest, requestId: crypto.randomUUID() };
+    const attempt = exportAttempt;
+    if (!attempt.jobId) attempt.jobId = (await requestQuarterlyExport(companyId, current, attempt.requestId, controller.signal)).job_id;
+    exportNotice.value = "报表正在后台生成并校验，完成后将开始下载。离开页面不会中断后台任务。";
+    while (!controller.signal.aborted) {
+      const [job] = await fetchLocalJob(companyId, attempt.jobId, controller.signal);
+      if (job?.status === "succeeded") break;
+      if (!job || job.status === "failed") throw new DashboardApiError(409, "REPORT_JOB_FAILED", "报表任务未完成，请在后台任务中查看结果后重试。");
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+        const timer = setTimeout(() => { controller.signal.removeEventListener("abort", abort); resolve(); }, 1200);
+        controller.signal.addEventListener("abort", abort, { once: true });
+      });
+    }
+    if (controller.signal.aborted) return;
+    const blob = await fetchQuarterlyWorkbook(companyId, attempt.jobId, controller.signal);
     if (exportController !== controller) return;
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -369,10 +390,11 @@ async function exportReport() {
     URL.revokeObjectURL(href);
     exportNoticeKind.value = "success";
     exportNotice.value =
-      "已导出已填充的 Excel 导入文件；请在电子税务局手工导入并逐项复核。";
+      "已下载经过校验的季度报表文件，请负责人逐项复核后使用。";
   } catch (error: unknown) {
     if (exportController !== controller) return;
-    if (error instanceof DashboardApiError && error.code === "REPORT_PREVIEW_STALE") {
+    if ((error instanceof DashboardApiError || error instanceof LocalApiError) && ["REPORT_PREVIEW_STALE", "preview_expired"].includes(error.code)) {
+      exportAttempt = null;
       await preview(selectedQuarter.value);
       exportNoticeKind.value = "attention";
       exportNotice.value = `${error.message} 报表已重新核对，请再次确认后导出。`;
@@ -474,7 +496,7 @@ onMounted(() => {
 });
 
 watch(
-  () => route.query.org_id,
+  () => route.query.company_id,
   (value, previous) => {
     if (!mounted || value === previous) return;
     previewController?.abort();
@@ -484,7 +506,7 @@ watch(
   },
 );
 watch(
-  () => [context.value?.current_company.org_id, route.query.period, route.query.quarter] as const,
+  () => [context.value?.current_company?.company_id, route.query.period, route.query.quarter] as const,
   ([orgId], [previousOrgId]) => {
     if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId);
   },

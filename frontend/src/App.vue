@@ -1,13 +1,16 @@
 <!-- @format -->
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
+import OwnerSessionPanel from "./components/OwnerSessionPanel.vue";
+import BackgroundJobsPanel from "./components/BackgroundJobsPanel.vue";
 import DashboardMonthPicker from "./components/DashboardMonthPicker.vue";
 import { useDashboardContext } from "./composables/useDashboardContext";
 
 type Theme = "light" | "dark";
+defineProps<{ launchError?: string }>();
 
 const appVersion = __APP_VERSION__;
 const navItems = [
@@ -18,6 +21,11 @@ const navItems = [
   { name: "reports", label: "财务报表", path: "/reports", icon: "report" },
 ] as const;
 
+const authenticated = ref(false);
+const showSecurity = ref(false);
+const showJobs = ref(false);
+const contextError = ref("");
+localStorage.removeItem("finance-dashboard-org-id");
 const route = useRoute();
 const router = useRouter();
 const savedTheme = localStorage.getItem("finance-dashboard-theme");
@@ -48,50 +56,46 @@ const selectedPeriod = computed(() => {
   return periods.value.at(-1)?.key ?? "";
 });
 
-watch(
-  () => route.query.org_id,
-  async (routeOrgId) => {
-    const saved = localStorage.getItem("finance-dashboard-org-id");
-    if (typeof routeOrgId !== "string" && saved) {
-      await router.replace({ query: { ...route.query, org_id: saved } });
+async function loadCompanyContext() {
+  cancelContext();
+  contextError.value = "";
+  if (!authenticated.value) return;
+  const requested = typeof route.query.company_id === "string" ? route.query.company_id : undefined;
+  try {
+    const loaded = await loadContext(true);
+    if (route.query.company_id !== requested || !authenticated.value) return;
+    const companyId = loaded.current_company?.company_id;
+    if (!companyId) return;
+    const saved = localStorage.getItem("finance-dashboard-company-id");
+    if (!requested && saved && saved !== companyId && loaded.companies.some(item => item.company_id === saved)) {
+      await router.replace({ query: { ...route.query, company_id: saved } });
       return;
     }
-    cancelContext();
-    try {
-      const loaded = await loadContext(true);
-      if (route.query.org_id !== routeOrgId) return;
-      const selectedOrgId = loaded.current_company.org_id;
-      localStorage.setItem("finance-dashboard-org-id", selectedOrgId);
-      const period =
-        typeof route.query.period === "string" &&
-        loaded.periods.some((item) => item.key === route.query.period)
-          ? route.query.period
-          : (loaded.default_period ?? undefined);
-      const quarter =
-        typeof route.query.quarter === "string" &&
-        loaded.quarters.some((item) => item.key === route.query.quarter)
-          ? route.query.quarter
-          : undefined;
-      if (
-        route.query.org_id !== selectedOrgId ||
-        route.query.period !== period ||
-        route.query.quarter !== quarter
-      ) {
-        await router.replace({
-          query: { ...route.query, org_id: selectedOrgId, period, quarter },
-        });
-      }
-    } catch (caught: unknown) {
-      if (caught instanceof DOMException && caught.name === "AbortError")
-        return;
-      if (saved && routeOrgId === saved) {
-        localStorage.removeItem("finance-dashboard-org-id");
-        await router.replace({ query: { ...route.query, org_id: undefined } });
-      }
+    localStorage.setItem("finance-dashboard-company-id", companyId);
+    const period = typeof route.query.period === "string" && loaded.periods.some(item => item.key === route.query.period)
+      ? route.query.period : loaded.default_period ?? undefined;
+    const quarter = typeof route.query.quarter === "string" && loaded.quarters.some(item => item.key === route.query.quarter)
+      ? route.query.quarter : undefined;
+    if (route.query.company_id !== companyId || route.query.period !== period || route.query.quarter !== quarter || route.query.org_id) {
+      await router.replace({ query: { ...route.query, org_id: undefined, company_id: companyId, period, quarter } });
     }
-  },
-  { immediate: true },
-);
+  } catch (caught) {
+    if (caught instanceof DOMException && caught.name === "AbortError") return;
+    contextError.value = caught instanceof Error ? caught.message : "公司资料读取失败，请重试。";
+  }
+}
+function setAuthenticated(value: boolean) {
+  authenticated.value = value;
+  if (value) showSecurity.value = false;
+  if (!value) { cancelContext(); showSecurity.value = true; }
+}
+function sessionExpired() { setAuthenticated(false); }
+watch([authenticated, () => route.query.company_id], () => { void loadCompanyContext(); });
+onMounted(async () => {
+  window.addEventListener("finance-session-expired", sessionExpired);
+  if (route.query.org_id) await router.replace({ query: { ...route.query, org_id: undefined } });
+});
+onBeforeUnmount(() => { cancelContext(); window.removeEventListener("finance-session-expired", sessionExpired); });
 
 watch(
   theme,
@@ -120,12 +124,12 @@ async function selectPeriod(periodKey: string) {
 }
 
 async function selectCompany(orgId: string) {
-  if (route.query.org_id === orgId) return;
+  if (route.query.company_id === orgId) return;
   cancelContext();
   await router.push({
     query: {
       ...route.query,
-      org_id: orgId,
+      company_id: orgId,
       period: undefined,
       quarter: undefined,
     },
@@ -163,7 +167,7 @@ async function selectCompany(orgId: string) {
               companyName
             }}</strong>
             <select
-              :value="currentCompany?.org_id"
+              :value="currentCompany?.company_id"
               aria-label="切换公司"
               @change="
                 selectCompany(($event.target as HTMLSelectElement).value)
@@ -171,8 +175,8 @@ async function selectCompany(orgId: string) {
             >
               <option
                 v-for="company in companies"
-                :key="company.org_id"
-                :value="company.org_id"
+                :key="company.company_id"
+                :value="company.company_id"
               >
                 {{ company.name
                 }}{{ company.status === "archived" ? "（已归档）" : "" }}
@@ -190,7 +194,7 @@ async function selectCompany(orgId: string) {
           </div>
         </div>
 
-        <nav class="module-nav" aria-label="看板模块">
+        <nav v-if="authenticated" class="module-nav" aria-label="看板模块">
           <RouterLink
             v-for="item in navItems"
             :key="item.name"
@@ -248,13 +252,15 @@ async function selectCompany(orgId: string) {
         </nav>
 
         <DashboardMonthPicker
-          v-if="!sidebarCollapsed"
+          v-if="authenticated && !sidebarCollapsed"
           :periods="periods"
           :selected-period="selectedPeriod"
           @select="selectPeriod"
         />
 
         <div class="sidebar-footer">
+          <button class="theme-button" type="button" :aria-expanded="showSecurity" aria-label="负责人身份" title="负责人身份" @click="showSecurity = !showSecurity"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M5 21v-3a7 7 0 0 1 14 0v3"/></svg><span class="control-label">负责人身份</span></button>
+          <button v-if="authenticated && currentCompany" class="theme-button" type="button" :aria-expanded="showJobs" aria-label="后台任务" title="后台任务" @click="showJobs = !showJobs"><svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="control-label">后台任务</span></button>
           <button
             class="theme-button"
             type="button"
@@ -292,7 +298,13 @@ async function selectCompany(orgId: string) {
     </header>
 
     <main id="workspace-content" class="workspace-main" tabindex="-1">
-      <RouterView />
+      <OwnerSessionPanel :authenticated="authenticated" :expanded="!authenticated || showSecurity" :launch-error="launchError" @authenticated="setAuthenticated" />
+      <div v-if="authenticated && contextError" class="panel" role="alert"><p>{{ contextError }}</p><button class="dashboard-action" @click="loadCompanyContext">重新读取</button></div>
+      <p v-else-if="authenticated && context && !currentCompany" class="panel">目录中还没有公司。登记公司后，可在这里查看已发布账务。</p>
+      <template v-if="authenticated && currentCompany && context?.current_company?.company_id === route.query.company_id">
+        <BackgroundJobsPanel v-if="showJobs" :company-id="currentCompany.company_id" />
+        <RouterView :key="currentCompany.company_id" />
+      </template>
     </main>
   </div>
 </template>

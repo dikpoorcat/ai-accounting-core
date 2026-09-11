@@ -24,7 +24,7 @@ export interface DashboardContext {
   schema_version: 2;
   company: string;
   companies: DashboardCompany[];
-  current_company: DashboardCompany;
+  current_company: DashboardCompany | null;
   generated_at: string;
   default_period: string | null;
   periods: DashboardPeriod[];
@@ -34,7 +34,7 @@ export interface DashboardContext {
 }
 
 export interface DashboardCompany {
-  org_id: string;
+  company_id: string;
   name: string;
   status: "active" | "archived";
 }

@@ -1,12 +1,10 @@
-"""MYbank workbook format and authenticated CLI; no external monetary input."""
+"""Retained MYbank workbook format and generation helpers for the local kernel."""
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import re
-import sys
 from copy import copy
 from io import BytesIO
 from pathlib import Path
@@ -190,70 +188,3 @@ def publish_export(output_dir: str, files: dict[str, bytes], summary: dict) -> d
         )
         staging.rename(target)
     return summary
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="从已登录公司的内核事实预览/生成网商银行代发文件")
-    parser.add_argument(
-        "--request", required=True, help="仅含公司、期间、来源 ID 和文件路径的 JSON"
-    )
-    parser.add_argument("--generate", action="store_true", help="按预览哈希生成文件，默认仅预览")
-    parser.add_argument("--expected-source-hash")
-    parser.add_argument("--output-dir")
-    parser.add_argument("--report", help="将本次内核核对结果另存为新的 JSON 文件")
-    args = parser.parse_args(argv)
-    from . import mcp_server
-    from .config import get_settings
-    from .mybank_schemas import GenerateMybankExportRequest, PreviewMybankExportRequest
-
-    try:
-        if args.report and Path(args.report).exists():
-            raise MybankExportError("核对报告已存在，请使用新文件名")
-        payload = json.loads(Path(args.request).read_text(encoding="utf-8-sig"))
-        request = PreviewMybankExportRequest.model_validate(payload)
-        if args.generate:
-            request = GenerateMybankExportRequest.model_validate(
-                {
-                    **request.model_dump(),
-                    "expected_source_hash": args.expected_source_hash,
-                    "output_dir": args.output_dir,
-                }
-            )
-        elif args.expected_source_hash or args.output_dir:
-            parser.error("生成参数必须与 --generate 一起使用")
-        mcp_server._initialize_mcp_credential_store(environment=get_settings().finance_environment)
-        try:
-            tool_name = (
-                "finance_generate_mybank_export"
-                if args.generate
-                else "finance_preview_mybank_export"
-            )
-            # Registered tools carry owner authentication and company database routing.
-            # Module-level handler functions deliberately do not carry those wrappers.
-            tool = mcp_server.mcp._tool_manager.get_tool(tool_name)
-            result = tool.fn(request=request)
-        finally:
-            mcp_server._clear_mcp_credential_store()
-        text = json.dumps(result, ensure_ascii=False, indent=2)
-        if args.report:
-            with Path(args.report).open("x", encoding="utf-8") as handle:
-                handle.write(text)
-        print(text)
-        return 0 if result.get("status") in {"ready", "generated"} else 2
-    except (OSError, ValueError) as exc:
-        from pydantic import ValidationError
-
-        message = (
-            "请求结构无效；不接受外部金额，请检查参数"
-            if isinstance(exc, ValidationError)
-            else str(exc)
-        )
-        print(
-            json.dumps({"status": "rejected", "errors": [message]}, ensure_ascii=False),
-            file=sys.stderr,
-        )
-        return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -1,17 +1,23 @@
 [CmdletBinding()]
 param(
-    [switch] $SkipDependencies
+    [switch] $SkipDependencies,
+    [string] $UvPath
 )
 
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $kernelEnvironment = Join-Path $repository '.tmp-kernel-venv'
 $kernelPython = Join-Path $kernelEnvironment 'Scripts/python.exe'
-$repositoryUv = Join-Path $repository '.venv/Scripts/uv.exe'
+if ($UvPath) {
+    $repositoryUv = (Resolve-Path -LiteralPath $UvPath).Path
+} else {
+    $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    $repositoryUv = if ($uvCommand) { $uvCommand.Source } else { Join-Path $repository '.venv/Scripts/uv.exe' }
+}
 $pinnedPython = '3.12.13'
 
 if (-not (Test-Path -LiteralPath $repositoryUv -PathType Leaf)) {
-    throw 'The repository uv executable is missing: .venv/Scripts/uv.exe'
+    throw 'Install uv 0.12.3 and add it to PATH, or pass -UvPath. No previous Python environment is required.'
 }
 
 # uv 0.12.3 pins the available standalone build; its CPython 3.12.13 Windows

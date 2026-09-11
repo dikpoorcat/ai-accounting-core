@@ -1,19 +1,19 @@
 ---
 name: accounting-startup
-description: Prepare this repository's installed Windows accounting environment when the user says 启动, 启动记账环境, or 做好记账准备. Start Docker and the existing database, verify the Codex MCP connection and owner login, and open the dashboard. Requests to implement or change startup behavior are repository development instead.
+description: Prepare the installed local SQLite accounting service and native owner login when the user says 启动, 启动记账环境, or 做好记账准备. Open the accounting page and verify the actual MCP connection. Changes to startup implementation are repository development.
 ---
 
-# Accounting Startup
+# 记账环境准备
 
-“启动”授权执行本机记账准备。直接完成可执行步骤，不再询问是否打开 Docker、启动已有服务或打开看板。
+“启动”授权准备已有环境并打开页面。执行 `deploy/windows/start_accounting.ps1`，使用已安装包或仓库受控运行时，复用每个资料根目录唯一的本地服务。脚本默认打开页面；无需 Docker 或 PostgreSQL。参数和安装说明见 [本地运行入口](../../../docs/local-kernel-startup.md)。
 
-1. 从仓库根目录执行 `./deploy/windows/start_accounting.ps1`。脚本等待 Docker Engine 和已有 PostgreSQL 容器就绪，复用或启动本仓库的看板，并检查页面响应。长时间启动时持续报告实际进度。细节与手工入口见 [Windows 本地运行速查](../../../docs/windows-local-operations.md)。
-2. 通过当前宿主的工具发现机制查找 `ai_accounting`，调用 `finance_get_event_schema` 并遵守其 `agent_operating_protocol`，然后调用 `finance_list_companies(include_archived=false)` 验证目录库连接和负责人登录。工具名称可见或看板返回 HTTP 200 都不等于 MCP 已连接、登录有效；必须以实际调用结果为准。
-   - MCP 是由 Codex 按仓库 `.codex/config.toml` 管理的 STDIO 进程，不另起后台 `finance-mcp` 进程冒充连接。若宿主提供重连功能，重连后重试；若当前会话没有可调用的工具或连接仍失败，报告服务已就绪但 MCP 未连接，请用户重新打开本项目会话后再说“启动”。不改写 MCP 配置或审批设置。
-   - 认证要求出现时，沿用内核返回的原生负责人安全窗口请求，必要时使用 `finance_request_owner_security_window(kind=login)`。通过 `finance_get_owner_security_window_status` 区分启动中、已显示等待输入、完成和失败；启动请求不代表窗口已显示。负责人完成后重试被中断的只读调用，以该调用成功作为登录证明。不得通过聊天、`write_stdin`、集成终端或临时脚本处理密码、恢复码及会话令牌；窗口取消、冲突或失败时报告稳定结果，不重复弹窗或回退到终端输入。等待登录期间不能报告准备完成。
-3. 成功后打开脚本返回的看板地址（默认 `http://127.0.0.1:8765/`）。优先用宿主的浏览器面板；没有面板工具时使用系统默认浏览器。已存在对应标签页则复用。
-4. 单独的“启动”只报告准备结果和看板入口，例如：“记账环境已就绪，看板已打开。可以说‘开始记账’，或直接发送业务资料。”不选公司、不读取公司账务或展示月度待办。若没有可访问的公司，如实说明尚无可用公司，不自动创建。
+1. 通过宿主工具发现 `ai_accounting`，调用 `finance_local_schema`，遵守返回的 `agent_operating_protocol`。调用 `finance_local_command(command="companies", payload={})` 验证实际 MCP 连接和负责人会话。仅页面可访问、进程存在或工具名称可见，都不算准备完成。
+2. 需要登录时，调用 `finance_local_security(action="request", payload={"kind":"login"})`，再用 `action="status"` 和返回的 `request_id` 检查安全窗口。仅 `waiting_for_user` 表示窗口已显示。负责人输入原独立密码后，重试公司列表，以实际成功响应确认登录有效。密码、恢复码、会话令牌不进入聊天、业务载荷、命令行或临时文件。
+3. 新安装尚无负责人时，按明确安装授权请求 `kind="bootstrap_owner"`；已有目录身份异常不能通过重建负责人或数据库绕过。窗口取消时结束该登录尝试，不循环弹窗。
+   启动只复用或恢复登录。历史关账批准在业务资料和整个批次预览准备好后一次请求，不在启动时提前弹出关账密码窗口；已有安全请求先查询持久状态，避免中断后重复要求密码。
+4. 页面通过启动器的一次性票据打开，票据兑换后移出地址栏。不要构造令牌 URL；需要再开页面可执行 `finance-local --root <资料根目录> serve`。已有页面可复用。
+5. 单独“启动”不选公司、不读取账务、不创建企业。成功后简短说明环境和页面已就绪。若用户同时要求开始记账或提供业务资料，继续使用 `$accounting-operator`。
 
-若用户同时要求“启动并开始记账”或附带具体记账任务，准备成功后继续使用仓库 `$accounting-operator`，按其公司选择和业务流程执行，不要求重复发指令。
+MCP 由宿主管理，配置使用同一资料根目录和 `finance-local ... mcp`。若当前会话未加载新工具，报告服务状态与 MCP 尚未连接的区别，使用宿主已有重连能力；无法重连时说明需重新打开项目会话。不得另起后台 stdio 进程冒充当前会话已连接。
 
-这是已有环境的日常启动，不包含安装依赖、数据库初始化、迁移、回放、清库、重建容器或卷、前端构建、Git 更新及正式账务写入。脚本报告缺少安装或现有容器、未知历史库、端口冲突等阻断时，不用初始化或覆盖绕过；说明未完成环节、实际原因和一个具体恢复动作。只报告实际验证过的状态，保留工具返回的稳定错误码。
+日常启动不包含重新安装、清库、导入旧账、回放或正式账务写入。结构指纹、运行时或公司身份不匹配时报告实际错误，不能重新建表掩盖问题。已知数据库的前向升级和持久任务恢复由服务启动完成。

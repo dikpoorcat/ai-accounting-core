@@ -1,14 +1,9 @@
-name: Continuous integration
+name: Local accounting kernel
 
 on:
   pull_request:
-    paths-ignore:
-      - "**/*.md"
   push:
-    branches:
-      - main
-    paths-ignore:
-      - "**/*.md"
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,72 +13,34 @@ permissions:
   contents: read
 
 jobs:
-  non-postgres:
-    name: Non-PostgreSQL checks
+  standalone-windows:
     runs-on: windows-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7.5.0
-        with:
-          version: "0.12.3"
-          enable-cache: true
-      - name: Install the locked project and development tools
-        run: uv sync --locked --all-extras
-      - name: Build the dashboard
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build:release
-      - name: Verify installed dependencies
-        run: uv run python -m pip check
-      - name: Lint
-        run: uv run ruff check .
-      - name: Run non-PostgreSQL tests
-        run: uv run pytest -m "not postgres"
-
-  postgres-17:
-    name: PostgreSQL 17 tests and Alembic
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    services:
-      postgres:
-        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
-        env:
-          POSTGRES_DB: finance_ci
-          POSTGRES_USER: finance_ci
-          POSTGRES_PASSWORD: finance_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U finance_ci -d finance_ci"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    timeout-minutes: 25
     env:
-      DATABASE_URL: postgresql+psycopg://finance_ci:finance_ci@localhost:5432/finance_ci
+      UV_PROJECT_ENVIRONMENT: .tmp-kernel-venv
+      UV_PYTHON_NO_REGISTRY: '1'
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.12"
       - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7.5.0
         with:
-          version: "0.12.3"
+          version: '0.12.3'
           enable-cache: true
-      - name: Install the locked project and development tools
-        run: uv sync --locked --all-extras
-      - name: Build the dashboard
+      - name: Install controlled Python and locked dependencies
+        run: |
+          uv python install 3.12.13
+          uv sync --locked --extra dev --managed-python --python 3.12.13
+          uv run python -c "from ai_accounting.kernel.runtime import require_supported_runtime; require_supported_runtime()"
+          uv pip check --python .tmp-kernel-venv/Scripts/python.exe
+      - name: Check and build the single accounting page
         working-directory: frontend
         run: |
           npm ci
+          npm test
           npm run build:release
-      - name: Apply and validate Alembic migrations
-        run: |
-          uv run alembic upgrade head
-          uv run alembic check
-      - name: Run current dual-baseline PostgreSQL 17 gate
-        run: uv run pytest -m postgres_current
+      - name: Lint active code
+        run: uv run ruff check src/ai_accounting/kernel src/ai_accounting/payroll tests/kernel tests/pure scripts/package_local_kernel.py scripts/verify_local_package.py scripts/benchmark-local-kernel.py
+      - name: Run default tests without database services or special collection flags
+        run: uv run pytest
+      - name: Build and verify the independent runtime
+        run: ./scripts/package-local-kernel.ps1 -OutputDirectory .tmp-local-distribution/ci

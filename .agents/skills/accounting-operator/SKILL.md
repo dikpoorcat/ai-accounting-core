@@ -1,245 +1,67 @@
 ---
 name: accounting-operator
-description: Operate the real local accounting workflow for the business owner, including invoices, receipts, bank statements, payroll, tax periods, assets, borrowings, corrections, and month close. Use when the user says 开始记账 or provides real business materials to process. Do not use for repository development, code changes, tests, migrations, or product design.
+description: Operate real local accounting from invoices, bank records, payroll, tax, assets and owner confirmations through the typed local kernel. Use for 开始记账 or supplied business materials. Repository development, tests, migrations and product design are separate tasks.
 ---
 
-<!-- @format -->
+# 会计执行助理
 
-# Accounting Operator
+解释原始资料和负责人业务说明，通过 `ai_accounting` MCP 登记有依据的事实并发布会计结果。本工具不是法定账簿、报税服务或税务机关。
 
-Act as the accounting execution assistant for the local business owner. Interpret materials and
-business language, derive typed facts, use the `ai_accounting` MCP tools, and report the business
-outcome. Do not present yourself as a certified public accountant, tax authority, automatic tax
-filing service, or the deterministic kernel itself.
+## 开始与找回上下文
 
-## Start the accounting conversation
+- 用户要求启动时先使用 `$accounting-startup`。单独启动只准备环境。
+- 先调用 `finance_local_schema`，以 `agent_operating_protocol`、`facts` 和 `command_schemas` 为当前契约。业务调用统一使用 `finance_local_command(command=..., payload=...)`；除全局命令外都绑定明确的 `company_id`。
+- 调用 `companies`。已明确选择的公司持续有效；多家公司且上下文不能确定时，先让负责人选择公司，再读取其账务。
+- 读取 `company_context` 和 `find_facts`，按人员、业务类型、期间和状态找回既有依据。无需先知道计算 ID，不从聊天记忆重建账务状态。`update_company_note` 使用返回的版本防止覆盖；说明文本不代替正式核算事实。
+- 泛化的“开始记账”读取所选期间的 `workflow(period, as_of)`，按内核返回的 `steps` 展示简短进度。具体业务请求直接处理该事项，不插入无关看板。`as_of` 由当前实际日期明确给出，不能替代业务发生日。
 
-For an explicit request to prepare the environment (such as “启动” or “启动并开始记账”),
-use the repository `$accounting-startup` skill first. A standalone “启动” ends after readiness;
-continue this accounting workflow only when the user also requests accounting work.
+## 资料与事实
 
-1. Call `finance_get_event_schema` before any enterprise-data tool and follow the returned
-   `agent_operating_protocol` as the authoritative runtime contract.
-   Before registering evidence or cleaning up temporary processing files, apply its
-   `evidence_retention_policy` to decide what to retain, reference, and remove. The same policy
-   governs original materials, owner confirmations, and intermediate processing results.
-   Apply `user_facing_language_policy` to both replies and persisted business descriptions before
-   submitting tool requests; it also defines the boundary for original materials and technical codes.
-2. Call `finance_list_companies(include_archived=false)`.
-   - If exactly one active company is available, select it for the conversation.
-   - If several are available and the user has not already selected one unambiguously, list only
-     their numbers and names as a short choice and ask one question before reading that company's
-     business records.
-   - Keep using the selected company until the user explicitly switches it.
-3. For a generic request such as “开始记账”, call `finance_get_owner_brief`, then call
-   `finance_get_owner_workflow` for the selected company. The brief supplies context only; the
-   workflow response is the only authority for the internal nine rows, displayed `queue_steps`,
-   symbols, deadlines, completion proof, current owner action, and close gates. Do not recreate a row state from chat history,
-   unmatched counts, or a separate close checklist.
-4. End a generic opening with `当前处理：` and the returned `current_action`, followed immediately
-   by every row in returned `queue_steps`, in that order and with its canonical order number. Do not
-   call the opening action `下一步`. Rows 1–6 remain visible;
-   rows 7–9 appear only while the kernel says they require owner attention. Copy each returned symbol
-   exactly: `✅`, `🔄`, `⏰`, `⬜`, or `➖`.
-   Include only the owner's returned action; do not turn calculations, matching, posting, file
-   generation, or tool calls into owner work. If no period exists, ask only for the first month to
-   process and use the controlled period-generation workflow.
-5. If the user provides a concrete task or materials, begin that task after company selection; do
-   not insert an unrelated dashboard-style briefing.
+先保全并核验原件，再用 `evidence` 登记实际采用内容；正文最多 20 MiB。文件名或外部声称的哈希不能替代内容摘要。负责人事实确认原文也作为不可变证据保存。
 
-Before interpreting company business, read `finance_get_company_notes` and follow the runtime
-`material_completeness_policy`. The file is ordinary company Markdown, editable by the owner.
-Record answers with their actual period and scope using `finance_update_company_notes` and its
-expected hash. On a changed hash, re-read and merge; do not overwrite the owner's edits or turn a
-single-business answer into a permanent rule. Markdown changes do not themselves post or correct
-accounts. Preserve adopted accounting confirmations as immutable evidence for typed requests.
+对每份采用资料调用 `inspect_material`、`receive_material`，用 `resolve_material` 逐项登记明确处置。CSV/XLS/XLSX 核对原始行、隐藏内容、金额、期间、控制合计和拆分；PDF、图像及文本阅读全部相关内容，保留页码、位置或原文片段。支持性说明明确用途，不能把未处理业务行统一标成支持资料。重复来源关联原项，跨期项目归属真实期间，已失效结果不能作为已处理证明。
 
-After retaining each original source, register its full coverage with
-`finance_register_period_materials` **before posting**. For CSV/XLSX supply column mappings and
-control totals; the kernel reads the original cells, including hidden data. For PDF, images and
-text, read all supplied material and identify original pages/passages and unresolved questions.
-Keep unresolved facts in the persisted inventory, even if posting fails. Determine company-borne
-expenses versus pass-through from business facts, never from a bank label such as “报销款”. If the
-pass-through right/obligation timing remains unknown, ask about that specific business and record
-the answer in the company file and evidence. Use the existing typed components to post or link
-valid prior recognition, then update inventory resolutions with the returned component facts hash.
+跨月资料用 `preview_material_allocation` / `confirm_material_allocation` 核对原行归属。明确的原件期间可复用，未知期间保留待确认；人工归期引用实际登记的确认依据和位置。个人付款日不能自动成为公司承担月份。归期与入账分开：后月已知归属的未处理行留给后月，本月仍须完成自己的每项处置；整份文件的完成状态另外核对。分组小计用解析规范中的明确成员位置或范围核对，不能把每个小计都当整列总计。
 
-For owner setup, login, close approval, password changes, recovery, and recovery-code replacement,
-use `finance_request_owner_security_window` and the kernel's native local form. Query the returned
-request with `finance_get_owner_security_window_status`: `starting` is not a visible window;
-`waiting_for_user` means the form is displayed. After success, retry the original tool to verify
-authentication; window status never replaces a close approval. Existing CLI commands launch this
-same form and do not accept terminal password input. Never use chat, `write_stdin`, an integrated
-terminal, or a custom script to receive passwords, recovery codes, or session tokens. On cancellation,
-failure, or a busy window, stop that action and report its stable result. If an identity change was
-already committed, do not repeat it merely because login or recovery-code acknowledgement failed.
-For an isolated replay target, use the replay executor's target-bound window request; the live MCP
-may still point to a different catalog.
-If MCP, the database, or login remains unavailable, report only the returned state and the concrete
-recovery action. Do not invent a company, work queue, or posting result.
+同一原件的一组业务项已明确共同形成核准总额，但未确认逐行分类、逐项期间或资产与人员分摊矩阵时，使用 `resolve_material_group` 保存完整成员、核准依据和联合结果。成员总额与联合结果金额必须相等，不能遗漏隐藏行、与其他处置重复或超用结果金额。组只归属已确认结果的有限月份；不为满足逐行字段而编造分摊，也不把业务行标为支持资料。
 
-A blocking error in the current operation takes precedence over the ordinary workflow display. If
-a tool error, rejected approval, file collision, authentication failure, or unavailable service must
-be resolved before that operation can continue, report only that it was not completed, the plain
-cause, one concrete recovery action, and the stable error code. Do not write `下一步：` and do not
-show the workflow queue in that response. After the blocker is resolved and the operation continues
-successfully, re-read the workflow and resume the normal next-action-plus-queue format.
-`needs_information` for a missing business fact is not automatically a technical error and may keep
-the current-node conversation, but it does not by itself justify a `下一步` heading or repeat the
-queue.
+银行与平台原件可能使用有符号净额，也可能把收、支分列并都填正数。按实际列头在金额列的 `funds_direction` 声明 `signed_net`、`inflow` 或 `outflow`，保留原件金额及位置；不能为通过核验把正支出改写成负数原件。缺省仅兼容有符号净额。已登记解析规范确需补充时追加来源版本并重核原项，不重复登记交易。划转关联银行或平台侧的对应金额维度，分组不得混合相反资金方向。
 
-## Advance the fixed owner workflow
+升级前已接收的来源提示 `material_allocation_required` 时，复用原件及已有有效处置完成一次归期预览／确认；不重建来源、不撤销已有处置，也不要求负责人重新确认原件已经明确的月份。材料关联中的 `fact` / `result` 同名金额及 Schema 声明的金额别名共享使用额度，不能用切换字段路径重复覆盖不同原始业务项。
 
-Never mark a row yourself. After any owner answer or accounting write, call the corresponding typed
-tool and then re-read `finance_get_owner_workflow` before replying:
+`material_completeness`、关账和完整代发使用同一检查。文件被引用、待匹配数为零、旧完成标记或数据库无记录，都不能证明完整或无业务。月度清单使用 `inventory`，无业务须有明确确认依据。
 
-Rows 1–6 always refer only to the selected accounting period returned by the workflow. A closed
-period is their durable terminal baseline: do not reopen its bank, workforce, contribution, payroll
-IIT, or materials work from older source records or missing newer workflow confirmations. Row 6 may
-still report an unfinished automatic close backup. Rows 7–9 are separate post-close obligations and
-continue to use their own typed completion facts.
+询问负责人前，核对原件、公司说明、既有事实、往来余额、实际流水和冻结依据。不要把查找、计算或对账转交负责人。能从依据唯一确定的事实直接通过类型化入口处理。确有关键歧义时，说明已知事实、最有依据的完整处理建议及影响，请负责人确认或纠正；沉默不算确认。无法支持任何建议时只问精确的事实缺项。
 
-1. `银行流水` — use the existing controlled bank-scope, import, matching, late-evidence, and
-   reconciliation workflows. Zero unmatched rows alone is not completion proof.
-2. `员工及工资变动` — ask separately about entry, departure, suspended pay, pay or bonus changes,
-   individual-income-tax deduction material, participation, and contribution-base changes. Before
-   asking for any wage amount, inspect `regular_payroll_preparation` returned by the workflow. Reuse
-   a current-period calculated batch first, then a persisted monthly plan, then (only after an owner
-   `no_change` confirmation) the latest posted regular payroll. Never ask again for employee wage
-   values already returned there. Once changes are resolved, call
-   `finance_confirm_workforce_review` with the workflow's current workforce snapshot hash. This
-   step does not require payroll posting. Pass `regular_payroll_items` only for a first-time or
-   changed plan that the kernel could not recover; present one complete suggested plan for owner
-   confirmation instead of requesting a field list.
-3. `社保及公积金` — call `finance_preview_payroll_contribution_assessment`. If the external
-   assessment differs from policy, first register the actual amounts with the existing typed tool.
-   After the external declaration is complete, call
-   `finance_confirm_payroll_contribution_assessment` with the final declared snapshot. Include
-   `declaration_date` only when it is already established in the available facts; do not ask for it
-   merely to complete the row. Then use that same snapshot and the workflow's recovered
-   `regular_payroll_preparation.employee_items` to preview and confirm regular payroll. Omit
-   `payment_date` for a regular payroll: its accrual belongs to `payroll_period`, and actual payment
-   is recorded only from the later bank statement. `payment_date` remains required for annual-bonus
-   payroll because it controls the bonus tax period. If the declaration is
-   still `尚未申报`, leave the row current; do not persist a completion or post payroll from an
-   unconfirmed declaration snapshot. Never ask for payment status or payment date. Later actual
-   payment is posted from the bank statement in the month it occurs and does not block prior-month
-   close.
-4. `个人所得税` — 按运行契约的 `payroll_import_rule` 和当前行的
-   `payroll_tax_import_action` 分支处理，不把进入或结束第4项当作导出触发器。
-   负责人已经明确本期申报完成时，先用返回的确认目标保存申报结果，再刷新流程；
-   不以生成或补交文件为确认前置。已有有效导出先校验复用，不再次调用生成工具；
-   同名同哈希的桌面文件不重复复制，也不报告成新生成。只有当前待申报且需要生成时才导出。
-   已申报后的来源变化先核对是否需要更正，不能按首次申报自动重导，也不能直接沿用旧确认。
-   新生成文件或确需补交的桌面副本使用
-   `scripts/copy-export-to-desktop.ps1 -SourcePath <file_path> -ExpectedSha256 <sha256>
-   -FileName <file_name>` 校验交付。明确要求重新导出或替换模板时按该具体请求办理。
-   申报日期仅在事实已建立时保存，不追问缴款状态或日期；实际缴款按以后银行流水处理。
-   只处理所选账期的确认目标，不重新展开已关闭月份。
-5. `票据及非银行业务` — query `finance_get_period_material_completeness`; resolve each source,
-   amount, period and component mismatch. Transfer other-period items to the correct inventory;
-   associate duplicate evidence with the original item. Only after the kernel checks pass, obtain
-   one owner confirmation limited to materials not yet supplied and call
-   `finance_confirm_period_material_completeness` with the current activity snapshot.
-6. `关账确认` — reach this step only after rows 3 and 4 have completed their external declaration
-   checks. Use the normal preview, password approval, confirmation, and automatic-backup workflow.
-   Before close, call `finance_prepare_close_backup` to repair missing CONNECT grants on
-   identity-verified registered databases and test the real backup snapshot connection, then
-   verify `finance_get_close_backup_configuration`. This is automatic infrastructure preparation;
-   do not ask the owner to manage database permissions. The close tool also performs this check
-   before any close write. Transient connection failures retry internally; only a persistent
-   failure requires a blocker response. Next-month cash payment is not a prior-month close gate.
-7. `税费申报及财务报表` — this follows close when applicable. Confirm the returned kernel-generated
-   obligation with `finance_confirm_external_obligation`; never create a custom obligation.
-8. `企业所得税年度汇算清缴` and 9. `工商年报` — when returned in `queue_steps`, keep overdue
-   obligations visible until their generated obligation ids are confirmed. Completed or currently
-   inapplicable rows 7–9 are intentionally absent and must not be added back from `steps`. If
-   establishment date is the only missing fact, confirm
-   it once with the typed establishment tool; a current financial-statement opening confirmation
-   may already supply it.
+旧系统重建还须沿回放文档索引读取实际执行包、后续修正版及最新保全记录中的补充说明、事实输入和负责人确认，不能只查看票据附件。保留文件、行号或业务键及来源版本；已明确的事实直接复用，旧计算结果重新计算。附件差异先与核准报销、资产原价和实际付款的既有依据交叉核对；不能将个人采购截图不齐自动转成重复业务追问。
 
-For rows 7–9 completed before the kernel tracked them, use only the
-matching `historical_obligation_completion_candidates` returned by the workflow and call
-`finance_confirm_historical_obligation_completion` once per returned obligation type. This records
-an owner-confirmed cutoff with `completion_date_status=not_established`. Re-read the workflow after
-each write. This migration fact cannot confirm a current or future obligation. Do not construct a
-historical payroll-IIT cutoff: closed accounting periods already terminate that pre-close row.
+`save_fact` / `save_facts` 追加最新确认事实；批次最多 5,000 条。使用稳定业务身份、证据摘要和当前修订号。`preview` 后用原摘要、相关版本和同一幂等键 `confirm`。不提交自由科目、借贷方向或任意分录。金额用整数分，小数规则用十进制字符串；`needs_information` 先按 `fact_issues` 检查可复用来源，不直接把错误码转换成追问。
 
-Use `confirmation_targets` as the machine-readable set of kernel-generated obligations available
-for confirmation. Interpret phrases such as “都完成了” from the selected company, current workflow
-step, the most recently displayed queue, and the surrounding conversation. When that context clearly
-identifies one or more targets, call the existing typed confirmation tool for each without imposing
-an extra kernel scope rule or asking the owner to restate periods. If materially different targets
-remain equally plausible, present the best-supported interpretation for correction under the normal
-communication policy. Never invent an obligation id or move a confirmation across companies.
+Schema 标有 `x-registration-command` 的记录由对应类型化命令核对并生成，不通过通用事实保存入口自行构造。
 
-Upstream employee, payroll, policy, contribution-actual, event, evidence, or material changes can
-make an old confirmation or export stale. If the workflow reopens a row, follow its missing facts
-and supersede the old typed confirmation; do not preserve the old check from chat memory.
+## 工资、付款与外部办理
 
-Use this compact shape when the queue is shown:
+- 工资先检查 `payroll_reuse_basis` 和已确认本期方案。本期方案可复用；上期方案只有负责人明确确认本期无变化、且人员及扣除等来源检查通过后才复用。用 `prepare_payroll` / `confirm_payroll_preparation` 保存方案，再走统一计算发布。
+- 实际社保、公积金、扣除或人员资料变化进入来源版本及待更正处理，不用管理日期代替核算月份或实际付款日。工资计提与真实发薪分开，重算不能改写已发生的银行付款。
+- 工资扣除细项未知时保留 `null`，可用 `payroll_bounded` 让同一计算器核验税额上界；仅证明本期税额必为零时发布。未知累计保留字段及来源版本，不填零、不跳过上月；税务导出仍要求完整细项。收入仅有月份时不补造发薪日，月内规则差异按内核必要事实问题处理。
+- 已有原始税务记录及明确实际扣税确认时，使用 `payroll_withholding_actual` 保存人员、税期和实际扣税额，工资采用实际额；内核计算值、差异及原件列示累计减除另行保留。实际额明确时，未知扣除细项仍为 `null`，不能反推或伪造它们来凑平计算值。申报记录本身不自动等同实际扣税；已有已扣已缴事实也不能误写成暂扣待核实。与相关工资和代发依据统一预览发布，沿依赖核对后续累计，已有银行付款不改写。
+- 个税文件使用 `preview_tax_import` / `confirm_tax_import`，从 `jobs` 读取自动后台生成结果。身份、扣除明细缺项只影响相关导出，不伪造身份或实际申报。已确认申报的事实直接保存，导出不作为申报完成的前置或证明。
+- 银行代发使用 `preview_export` / `confirm_export`；报告使用相应报表导出命令。后台任务失败最多自动尝试三次，说明实际失败状态；不把 `pending` 当成交付完成。确需桌面副本时，用 `scripts/copy-export-to-desktop.ps1` 校验内核返回的文件哈希后复制，已存在同哈希文件复用。
+- 外部申报、缴税和其他办理进度单独保存事实、形成待办。它们的进度本身不阻断关账。用已确认公司适用范围和规则版本 `prepare_obligations` / `confirm_obligations` 生成季、年义务，不自行编造义务或申报日期。
 
-```text
-下一步：<one owner action>
+## 更正、接续与关账
 
-待办清单：
-1. ✅ 银行流水
-2. 🔄 员工及工资变动
-3. ⏰ 社保及公积金（9月15日前）
-4. ⬜ 个人所得税（9月15日前）
-5. ⬜ 票据及非银行业务
-6. ⬜ 关账确认
-```
+开放期修订发布替代版本，保留凭证号；误记删除先 `preview_delete`，仅无有效下游依赖时确认。闭期更正指定开放期，原版本保留，冲正反向原凭证。新事实确实不影响会计处理时使用内核复核处置。管理资料后补不重新计算会计结果。
 
-Use `下一步：` only after the current workflow row has become completed or not applicable and the
-workflow has advanced to a different row. During investigation, clarification, owner confirmation,
-external work, or any other exchange inside the same row, speak directly about the current matter
-without `下一步：` and without repeating the queue. A generic opening uses `当前处理：`; an explicit
-owner request for status may show the queue without implying that a row has just finished.
+从指定月份接续时，按类型化期初事实保存银行现金、往来、资产、借款、税费、权益及薪酬累计数据，再统一预览校验和发布。只使用有据的期初明细；不能默认为零、照抄旧计算结果或虚构历史收付款。期初不计入本期收入、费用或现金流。缺项保持待确认。
 
-If an active statutory obligation exists, append only the returned conditional row, preserving its
-number, for example `8. ⏰ 企业所得税年度汇算清缴（5月31日前）`. Do not renumber it to 7.
+关账前处理核算缺项、对账差异、逐项资料遗漏和相关待更正。已关账月份是冻结终态，不根据最新员工资料或外部办理进度重新打开。关账流程：
 
-Do not add bracketed status words such as `[当前]` or a separate legend in ordinary replies. The
-symbol, fixed row order, concise item label, and optional deadline are sufficient.
+1. 单月使用 `preview_close`；连续历史月份使用 `preview_close_range(from_period, through_period)`。先补齐整批事实、核对每家公司的冻结清单和负责人确认依据，准备完毕后再请求密码。
+2. 连续历史关账使用 `finance_local_security(action="request", payload={"kind":"approve_close_batches", "batches":[...]})`，按安全 Schema 提供每家公司的身份、数据库身份、明确起止月份、`calculation_hash` 和三个版本。一个原生窗口显示所有目标，一次密码确认整批；不得拆成逐月弹窗。单月原 `approve_period_close` 仍可使用。密码只在原生窗口输入。
+3. 通过安全 `status` 取得各公司批准后，用 `close_range`（单月为 `close`）提交对应原预览及 `approval_id`。每家公司在同一事务完整关账并一次消费批准；跨公司成功情况分别记录。响应丢失、中断或部分成功先复用原安全请求状态、批准及幂等键，不重新要求密码；过期、会话失效或核算／资料版本变化才重建预览。不得扩大负责人已确认范围；截止月后的月份保持开放。
+4. 检查自动备份任务直至实际成功，并核验便携公司包。每家公司独立 `<统一社会信用代码>.finance-company.zip`；首次备份无 previous，后续滚动保留上一版。活动 SQLite 文件不能直接复制充当备份。
 
-Keep completed rows 1–6 in the queue so the owner can see month-close progress, but shorten them to
-the label and completion state. Show the complete returned `queue_steps` every time a real node
-transition uses `下一步：`. The queue must immediately follow the next action; do not insert a long
-accounting summary between them.
+## 回复
 
-## Perform the work
-
-- Inspect all provided materials and existing kernel facts before asking the user. Use relevant
-  document, PDF, spreadsheet, or image capabilities when the source format requires them.
-- Own the investigation, comparison, and drafting work. Before asking the owner, exhaust relevant
-  read-only tools and derive every fact that can be supported by existing materials, transaction
-  chronology, linked events, open items, and frozen rules. Never ask the owner to perform a lookup,
-  classification, date comparison, or reconciliation that the assistant can perform.
-- Use only typed accounting tools and their current schemas. Never construct arbitrary journal
-  lines, account directions, tax amounts, or missing business facts.
-- When the facts uniquely determine the supported treatment, call the formal tool directly. Do
-  not ask for an extra chat confirmation; the Codex write-tool approval is the ordinary approval
-  boundary. Preserve every specialized preview, hash, local-window, password, and close control.
-- When one complete treatment is best supported but a material fact still requires owner
-  confirmation, state that single proposed treatment first, including the proposed values for all
-  linked missing fields and the evidence or reasoning behind them. Then ask one confirmation:
-  `建议按“<完整方案>”处理，是否正确？如不符，请直接说明差异。` Do not make the owner fill a
-  field list or choose among unexplained options. Do not submit the proposed facts until the owner
-  confirms them; silence is not confirmation, and a correction replaces the proposal.
-- Only when the available evidence cannot responsibly support even one proposed treatment may the
-  assistant ask one precise factual question without a recommendation. Explain why no option can
-  yet be preferred; never invent a recommendation merely to satisfy the conversation format.
-- If a tool approval is rejected or cancelled, stop that action without retrying or reporting it
-  as complete.
-- If facts remain material and ambiguous, use the order required by `communication_policy`:
-  reviewed facts, reasoned assessment, one recommended answer, material effect, and one request to
-  confirm or correct.
-
-## Communicate the result
-
-Use concise Chinese without a fixed salutation. Lead with the outcome, status, or exact blocker.
-For completed work, report the selected company, matter, amount, posting date, and result in
-business language. Hide raw JSON, journal lines, and internal UUIDs unless the user asks for audit
-detail. Explain failures plainly and append the stable error code. Never infer that there was no
-business merely because the kernel has no record of it.
+用简洁中文报告公司、事项和实际结果，隐藏内部 ID、JSON 和分录细节，除非用户需要追溯。步骤未推进时直接讨论当前问题，不重复整张队列；推进后按最新 `workflow.steps` 展示进度。失败说明缺少什么依据或哪项执行失败，保留稳定错误码，不把原始资料缺项误报成技术失败。

@@ -22,19 +22,64 @@ from ai_accounting.mybank_export import render_import, validate_template, yuan
 
 from .backup import _worker_lock
 from .contracts import KernelError, NeedsInformation
+from .domains.payroll import PAYROLL_KINDS
+from .payroll_tax_declarations import PayrollDisbursementBasis, export_disbursement
 from .periods import Periods
 from .types import YearMonth, canonical, digest, sum_fen
 
 WORKBOOK_NAME = "银行批量代发.xlsx"
 MANIFEST_NAME = "代发核对.json"
-EXPORT_KINDS = ("payroll", "annual_bonus", "labor", "expense", "employee_advance")
+REIMBURSEMENT_KINDS = (
+    "reimbursed_asset",
+    "reimbursed_asset_batch",
+    "reimbursed_deposit",
+    "reimbursement_acceptance",
+)
+EXPORT_KINDS = (
+    *PAYROLL_KINDS,
+    "annual_bonus",
+    "labor",
+    "labor_accrual",
+    "labor_project_cost",
+    "expense",
+    "employee_advance",
+    *REIMBURSEMENT_KINDS,
+)
 DEFAULT_CATEGORIES = {
-    "payroll": "工资",
+    **dict.fromkeys(PAYROLL_KINDS, "工资"),
     "annual_bonus": "奖金",
     "labor": "劳务",
+    "labor_accrual": "劳务",
+    "labor_project_cost": "劳务",
     "expense": "报销",
     "employee_advance": "报销",
+    **dict.fromkeys(REIMBURSEMENT_KINDS, "报销"),
 }
+
+
+def _export_obligations(kind, values):
+    """Select published payment rights, never reconstruct domain amounts or claims."""
+    if kind == "expense" and values.get("creditor_kind") not in {"employee", "individual"}:
+        return ()
+    if kind == "employee_advance" and values.get("payer_kind") != "employee":
+        return ()
+    payables = tuple(
+        item
+        for item in values.get("obligations", ())
+        if item["normal"] == "credit" and item["category"] == "payable"
+    )
+    if kind not in REIMBURSEMENT_KINDS:
+        name = "primary" if kind in {"expense", "employee_advance"} else "net"
+        payables = tuple(item for item in payables if item["name"] == name)
+        if len(payables) != 1:
+            raise KernelError("invalid_export_obligation", "代发来源没有唯一明确的应付款")
+    # A card derived from batch acceptance has no new debt. Deposit refund rights
+    # are receivables and cannot become payment instructions to the landlord.
+    if len({item["key"] for item in payables}) != len(payables):
+        raise KernelError("invalid_export_obligation", "同一来源的付款义务不能重复")
+    if any("payment" not in item.get("settlement_modes", ("payment",)) for item in payables):
+        raise KernelError("invalid_export_obligation", "该义务不允许实际付款核销")
+    return payables
 
 
 def _evidence_digest(value: str) -> bytes:
@@ -143,22 +188,23 @@ class Exports:
                 "FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
                 "LEFT JOIN management_revision m ON m.id=(SELECT n.id FROM management_revision n "
                 "WHERE n.subject_id=c.subject_id ORDER BY n.revision DESC LIMIT 1) "
-                "WHERE c.kind IN ('payroll','annual_bonus','labor','expense','employee_advance') "
+                "WHERE c.kind IN (SELECT value FROM json_each(?)) "
                 "AND coalesce(m.payment_period,c.period)=? "
                 "AND (? IS NULL OR c.subject_id IN (SELECT value FROM json_each(?))) "
                 "ORDER BY c.subject_id",
                 (
+                    canonical(EXPORT_KINDS),
                     month.ordinal,
                     None if requested is None else canonical(requested),
                     canonical(requested or []),
                 ),
             ).fetchall()
             outcomes = {row["id"]: json.loads(row["outcome"]) for row in calculations}
-            obligations = [
-                item
-                for outcome in outcomes.values()
-                for item in outcome["values"].get("obligations", ())
-            ]
+            selected_obligations = {
+                row["id"]: _export_obligations(row["kind"], outcomes[row["id"]]["values"])
+                for row in calculations
+            }
+            obligations = [item for selected in selected_obligations.values() for item in selected]
             party_ids = sorted(
                 {item["counterparty_id"] for item in obligations if item.get("counterparty_id")}
             )
@@ -180,97 +226,100 @@ class Exports:
                     (canonical(sorted({item["key"] for item in obligations})),),
                 )
             }
-            sources, periods, eligible = [], {str(month)}, set()
+            sources, periods, eligible, seen_obligations = [], {str(month)}, set(), set()
+            disbursements = []
             for calculation in calculations:
                 subject = calculation["subject_id"]
-                outcome = outcomes[calculation["id"]]
-                if (
-                    calculation["kind"] == "expense"
-                    and outcome["values"].get("creditor_kind") != "employee"
-                ):
+                selected = selected_obligations[calculation["id"]]
+                if not selected:
                     continue
-                if (
-                    calculation["kind"] == "employee_advance"
-                    and outcome["values"].get("payer_kind") != "employee"
-                ):
-                    continue
-                name = (
-                    "primary" if calculation["kind"] in {"expense", "employee_advance"} else "net"
-                )
-                obligations = [
-                    item
-                    for item in outcome["values"].get("obligations", ())
-                    if item["name"] == name and item["normal"] == "credit"
-                ]
-                if len(obligations) != 1:
-                    raise KernelError("invalid_export_obligation", "代发来源没有唯一明确的应付款")
                 eligible.add(subject)
-                item = obligations[0]
-                key = (item["category"], item["key"])
-                # The projection canonically omits settled zero balances.
-                remaining = balances.get(key, 0)
-                if remaining < 0 or remaining > item["amount_fen"]:
-                    raise KernelError("invalid_payable_balance", "应付款余额与已确认来源不一致")
                 source_period = str(YearMonth.from_ordinal(calculation["period"]))
                 periods.add(source_period)
-                if remaining == 0:
-                    continue
-                party_id = item.get("counterparty_id")
-                if not party_id:
-                    raise NeedsInformation(
-                        "counterparty_id", "代发来源缺少明确收款人", sources=(subject,)
+                for item in selected:
+                    key = (item["category"], item["key"])
+                    if key in seen_obligations:
+                        raise KernelError("invalid_export_obligation", "付款义务被重复选择")
+                    seen_obligations.add(key)
+                    # The projection canonically omits settled zero balances.
+                    remaining = balances.get(key, 0)
+                    if remaining < 0 or remaining > item["amount_fen"]:
+                        raise KernelError("invalid_payable_balance", "应付款余额与已确认来源不一致")
+                    amount, disbursement = export_disbursement(
+                        self.store,
+                        connection,
+                        calculation,
+                        outcomes[calculation["id"]]["values"],
+                        remaining,
                     )
-                payee = payees.get(party_id)
-                if payee is None:
-                    raise NeedsInformation(
-                        "payee", "需要已确认的收款姓名和账号", sources=(party_id,)
+                    if disbursement is not None:
+                        disbursements.append({"subject_id": subject, **disbursement})
+                    if amount == 0:
+                        continue
+                    party_id = item.get("counterparty_id")
+                    if not party_id:
+                        raise NeedsInformation(
+                            "counterparty_id", "代发来源缺少明确收款人", sources=(subject,)
+                        )
+                    payee = payees.get(party_id)
+                    if payee is None:
+                        raise NeedsInformation(
+                            "payee", "需要已确认的收款姓名和账号", sources=(party_id,)
+                        )
+                    category = (
+                        calculation["payment_category"] or DEFAULT_CATEGORIES[calculation["kind"]]
                     )
-                category = (
-                    calculation["payment_category"] or DEFAULT_CATEGORIES[calculation["kind"]]
-                )
-                _safe_text(category, "payment category", maximum=32)
-                if len(f"{period} {category}") > 40:
-                    raise KernelError("payment_memo_too_long", "代发月份和用途合计不能超过40字")
-                sources.append(
-                    {
-                        "subject_id": subject,
-                        "kind": calculation["kind"],
-                        "source_period": source_period,
-                        "calculation_id": calculation["id"],
-                        "obligation": item["key"],
-                        "amount_fen": remaining,
-                        "party_id": party_id,
-                        "payee_revision_id": payee["id"],
-                        "name": payee["name"],
-                        "account": payee["account"],
-                        "category": category,
-                        "management_revision_id": calculation["management_id"],
-                    }
-                )
+                    _safe_text(category, "payment category", maximum=32)
+                    if len(f"{period} {category}") > 40:
+                        raise KernelError("payment_memo_too_long", "代发月份和用途合计不能超过40字")
+                    sources.append(
+                        {
+                            "subject_id": subject,
+                            "kind": calculation["kind"],
+                            "source_period": source_period,
+                            "calculation_id": calculation["id"],
+                            "obligation": item["key"],
+                            "amount_fen": amount,
+                            "party_id": party_id,
+                            "payee_revision_id": payee["id"],
+                            "name": payee["name"],
+                            "account": payee["account"],
+                            "category": category,
+                            "management_revision_id": calculation["management_id"],
+                        }
+                    )
             if requested is not None and set(requested) != eligible:
                 raise KernelError(
                     "invalid_export_sources",
                     "指定来源不属于本次可代发范围",
                     source_ids=sorted(set(requested) - eligible),
                 )
-            inventory_versions = {}
+            from .materials import check_completeness
+
+            inventory_versions, material_coverage_versions = {}, {}
             for source_period in sorted(periods):
+                coverage = check_completeness(
+                    connection, YearMonth(source_period).ordinal, self.store.registry
+                )
                 inventories, issues, unpublished = Periods.completeness(
                     connection,
                     YearMonth(source_period).ordinal,
                     self.store.registry,
+                    material_coverage=coverage,
                 )
                 issues = list(issues)
                 issues.extend(
                     {"field": row["id"], "message": "业务事实尚未正式核算"}
                     for row in unpublished
                     if row["kind"] in self.store.registry.evaluators
+                    and row["kind"] != PayrollDisbursementBasis.kind
                 )
                 pending = connection.execute(
                     "SELECT p.subject_id FROM pending p CROSS JOIN fact_current c "
-                    "CROSS JOIN fact_revision f WHERE c.subject_id=p.subject_id "
-                    "AND f.id=c.fact_id AND f.period<=? LIMIT 1",
-                    (YearMonth(source_period).ordinal,),
+                    "CROSS JOIN fact_revision f CROSS JOIN subject s "
+                    "WHERE c.subject_id=p.subject_id AND s.id=c.subject_id "
+                    "AND f.id=c.fact_id AND f.period<=? AND s.kind!=? LIMIT 1",
+                    (YearMonth(source_period).ordinal, PayrollDisbursementBasis.kind),
                 ).fetchone()
                 if pending:
                     issues.append({"field": pending[0], "message": "存在尚未完成的会计更正"})
@@ -284,10 +333,17 @@ class Exports:
                 inventory_versions[source_period] = {
                     key: row["id"] for key, row in inventories.items()
                 }
+                material_coverage_versions[source_period] = {
+                    key: value for key, value in coverage.items() if key != "issues"
+                }
             connection.commit()
         validate_template(template_content)
         if not sources:
-            raise KernelError("no_payables", "该范围没有可代发的未付余额")
+            raise KernelError(
+                "no_payables",
+                "该范围没有可代发的未付余额",
+                payroll_disbursements=disbursements,
+            )
         grouped = {}
         for source in sources:
             key = (source["party_id"], source["category"])
@@ -317,7 +373,10 @@ class Exports:
             "template_evidence_digest": template_evidence_digest,
             "epochs": epochs,
             "inventories": inventory_versions,
+            "material_coverage": material_coverage_versions,
             "rows": rows,
+            "payroll_disbursements": disbursements,
+            "total_held_fen": sum_fen(item["held_fen"] for item in disbursements),
             "total_fen": sum_fen(row["amount_fen"] for row in rows),
         }
         result["digest"] = digest(result).hex()
@@ -493,7 +552,7 @@ def run_export_jobs(engine, *, limit: int = 10, fault=None) -> list[dict]:
                 exclude = f"AND id NOT IN ({','.join('?' for _ in attempted)})" if attempted else ""
                 job = connection.execute(
                     "SELECT id,payload FROM jobs WHERE kind='payment_export' "
-                    f"AND status IN ('pending','running','failed') {exclude} "
+                    f"AND status IN ('pending','running','failed') AND attempts<3 {exclude} "
                     "ORDER BY attempts,id LIMIT 1",
                     attempted,
                 ).fetchone()

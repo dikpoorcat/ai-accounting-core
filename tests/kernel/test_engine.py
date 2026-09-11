@@ -111,6 +111,32 @@ def test_fact_versions_empty_dependencies_and_idempotency(engine):
     )
 
 
+def test_preview_exposes_complete_outcome_hash_without_writing(engine):
+    from ai_accounting.kernel.types import canonical, digest
+
+    saved = save(engine)
+    with engine.store.connection(read_only=True) as connection:
+        before = list(connection.iterdump())
+    preview = engine.preview(["charge"])
+    item = preview["results"][0]
+    outcome = {
+        key: item[key]
+        for key in ("lines", "values", "balances", "explanation", "opening_lines", "opening")
+    }
+    assert item["result_digest"] == digest(outcome).hex()
+    assert (item["fact_id"], item["kind"], item["period"]) == (
+        saved["fact_id"],
+        "test_charge",
+        "2026-01",
+    )
+    with engine.store.connection(read_only=True) as connection:
+        assert list(connection.iterdump()) == before
+    _, published = publish(engine)
+    trace = engine.trace(published["results"][0]["calculation_id"])["calculation"]
+    assert canonical(trace["outcome"]) == canonical(outcome)
+    assert trace["digest"] == item["result_digest"]
+
+
 @pytest.mark.parametrize("stage", ["begin", "lines", "calculation", "published", "commit"])
 def test_failure_is_atomic(engine, stage):
     save(engine)

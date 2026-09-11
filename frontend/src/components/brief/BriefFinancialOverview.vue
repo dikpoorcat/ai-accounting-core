@@ -33,7 +33,9 @@ function bankStateLabel(state: string) {
   );
 }
 
-function formatDate(value: string) {
+function formatDate(value: string | null) {
+  if (!value) return "日期未提供";
+  if (/^\d{4}-\d{2}$/.test(value)) return `${value} · 按月确认`;
   const [, month, day] = value.slice(0, 10).split("-");
   return `${Number(month)} 月 ${Number(day)} 日`;
 }

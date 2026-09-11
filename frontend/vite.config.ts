@@ -38,7 +38,6 @@ export default defineConfig(({ mode }) => ({
   server: {
     proxy: {
       "/api": "http://127.0.0.1:8765",
-      "/financial-reports": "http://127.0.0.1:8765",
     },
   },
   build: {

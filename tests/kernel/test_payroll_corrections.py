@@ -11,6 +11,7 @@ from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
 from ai_accounting.kernel.domains.payroll import PayrollOpeningState, PayrollProfile
 from ai_accounting.kernel.domains.transactions import Allocation, Overpayment, Payment
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.storage import Store
@@ -42,14 +43,15 @@ class Company:
         return f"test-command-{self.sequence}"
 
     def save(self, fact, subject, revision=0):
+        confirmed = canonical(
+            {
+                "subject": subject,
+                "revision": revision + 1,
+                "confirmed_facts": fact.model_dump(mode="json"),
+            }
+        )
         evidence = self.engine.register_evidence(
-            canonical(
-                {
-                    "subject": subject,
-                    "revision": revision + 1,
-                    "confirmed_facts": fact.model_dump(mode="json"),
-                }
-            ).encode(),
+            confirmed.encode(),
             "application/json",
             f"{subject}-confirmed-facts",
             request_id=self.request(),
@@ -63,6 +65,41 @@ class Company:
             request_id=self.request(),
         )
         self.materials[type(fact).material_category].append((str(fact.period), evidence))
+        if type(fact).material_category is None:
+            return result
+        materials = Materials(self.engine)
+        source = materials.receive(
+            "test-source-" + evidence,
+            {
+                "period": str(fact.period),
+                "evidence_digest": evidence,
+                "category": type(fact).material_category,
+                "purpose": "supporting",
+                "supporting_purpose": "测试生成的类型化事实确认记录，不是原始业务表格",
+                "specification": {
+                    "format": "text",
+                    "all_pages_reviewed": True,
+                    "passages": [{"location": "confirmed-facts", "page": 1, "excerpt": confirmed}],
+                },
+            },
+            evidence=(evidence,),
+            expected_revision=0,
+            request_id=self.request(),
+        )
+        materials.resolve(
+            "test-resolution-" + evidence,
+            {
+                "period": str(fact.period),
+                "source_id": source["subject_id"],
+                "source_fact_id": source["fact_id"],
+                "location": "confirmed-facts",
+                "treatment": "supporting",
+                "reason": "确认记录仅证明上述已保存的类型化事实，不代表额外业务行",
+            },
+            evidence=(evidence,),
+            expected_revision=0,
+            request_id=self.request(),
+        )
         return result
 
     def publish(self, *subjects, correction_period=None):

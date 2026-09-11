@@ -1,0 +1,59 @@
+{
+  "format": "ai-accounting-local-runtime-verification",
+  "format_version": 1,
+  "verified_on": "2026-09-12",
+  "status": "passed",
+  "archive_file": "dashboard-v8-final-20260912.zip",
+  "archive_sha256": "4a58334a499fc3c7c7236c311f9c5f84d93964caeef4122634c50eb6beb59d1e",
+  "archive_bytes": 33912902,
+  "software_bytes": 94521431,
+  "runtime": {
+    "python": "3.12.13",
+    "sqlite": "3.53.1",
+    "build_id": "local-kernel-2:9e64dc8b99144a898b679e35b29bfed967cc0c73d67d8b100ac42a303c5b9bae",
+    "isolated": 1
+  },
+  "schemas": {
+    "business": {
+      "version": 8,
+      "schema_sha256": "f939b8177f4db8ecb568c37873bd5756a84ca730f4833e2f5d1eded486e57aa4"
+    },
+    "catalog": {
+      "version": 3,
+      "schema_sha256": "396c26ab12876f416d0c5daea8ad75379929c20a0a8bd623f1c876260a79bf90"
+    }
+  },
+  "verified_software_files": 4112,
+  "archive_entries": 4113,
+  "dependency_distributions": 38,
+  "application_python_modules": 71,
+  "release_frontend_files": 19,
+  "fact_kinds": 105,
+  "cli_calls": 12,
+  "checks": {
+    "backup_verified_and_restored": true,
+    "background_backup_without_manual_run": true,
+    "relative_imports_only": true,
+    "http_page_and_authenticated_api": true,
+    "dashboard_five_routes_and_legacy_entries": true,
+    "dashboard_six_authenticated_queries": true,
+    "dashboard_integer_cent_strings": true,
+    "relative_cmd_and_powershell_launchers": true,
+    "stdio_mcp_handshake_and_query": true,
+    "native_pythonw_window_and_private_transport": true,
+    "tk_form_synthetic_login": true,
+    "windows_private_metadata_acl": true,
+    "synthetic_credentials_revoked_and_removed": true,
+    "file_digests": true,
+    "source_build_matches_repository": true,
+    "canonical_release_frontend_matches_package": true,
+    "software_archive_excludes_business_databases": true,
+    "repository_launcher_with_source_and_relocated_package": true,
+    "browser_same_origin_report_export_and_verified_job_download": true,
+    "browser_desktop_and_mobile_without_horizontal_overflow": true
+  },
+  "artifacts": {
+    "archive": ".tmp-local-distribution/dashboard-v8-final-20260912.zip"
+  },
+  "data_policy": "Software only. No real company databases, owner credentials, or reconstruction sources included."
+}

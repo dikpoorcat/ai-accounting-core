@@ -26,7 +26,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-ROOT_DEPENDENCIES = ("mcp", "pydantic", "openpyxl", "xlwt", "xlrd")
+ROOT_DEPENDENCIES = ("mcp", "pydantic", "argon2-cffi", "pypdf", "openpyxl", "xlwt", "xlrd")
 
 
 def sha256(path: Path) -> str:
@@ -75,7 +75,11 @@ def copy_runtime(output: Path):
             source.suffix in {".exe", ".dll"} or source.name in {"BUILD", "LICENSE.txt"}
         ):
             copy_file(source, runtime / source.name)
-    for directory in ("DLLs", "Lib"):
+    for directory in ("DLLs", "Lib", "tcl"):
+        if not (base / directory).is_dir():
+            raise ValueError(
+                f"Controlled Python is missing required runtime directory: {directory}"
+            )
         for source in (base / directory).rglob("*"):
             relative = source.relative_to(base)
             if source.is_file() and not {"site-packages", "__pycache__"} & set(relative.parts):
@@ -127,7 +131,11 @@ def copy_application(output: Path):
     default_registry().schemas()
     source_package = REPOSITORY / "src/ai_accounting"
     selected = set((source_package / "kernel").rglob("*.py"))
+    selected.discard(source_package / "kernel/security/legacy.py")
     selected.update((source_package / "payroll").rglob("*.py"))
+    from ai_accounting.kernel.build import SHARED_SOURCE_FILES
+
+    selected.update(source_package / name for name in SHARED_SOURCE_FILES)
     for name, module in tuple(sys.modules.items()):
         path = getattr(module, "__file__", None)
         if name.startswith("ai_accounting") and path:
@@ -135,12 +143,16 @@ def copy_application(output: Path):
             if not source.is_relative_to(source_package) or source.suffix != ".py":
                 raise ValueError("Application imports escaped the repository's source package")
             selected.add(source)
+    if source_package / "kernel/security/legacy.py" in selected:
+        raise ValueError("The installer-only identity importer entered the runtime import graph")
     if any(
         path.name in {"models.py", "database.py", "service.py"} and path.parent == source_package
         for path in selected
     ):
         raise ValueError("The local runtime unexpectedly imports legacy persistence")
     for source in sorted(selected):
+        copy_file(source, output / "app/ai_accounting" / source.relative_to(source_package))
+    for source in (source_package / "kernel/migrations").glob("*.json"):
         copy_file(source, output / "app/ai_accounting" / source.relative_to(source_package))
     from ai_accounting.financial_statement_template import TEMPLATE_FILE_NAME, _template_bytes
 
@@ -149,9 +161,9 @@ def copy_application(output: Path):
     copy_file(
         template, output / "app/ai_accounting/templates/financial_reports" / TEMPLATE_FILE_NAME
     )
-    frontend = REPOSITORY / "frontend/dist"
-    if not (frontend / "local.html").is_file():
-        raise ValueError("Build the frontend before packaging: npm run build")
+    frontend = source_package / "static/dashboard"
+    if not all((frontend / name).is_file() for name in ("index.html", "local.html")):
+        raise ValueError("Build the release frontend before packaging: npm run build:release")
     for source in frontend.rglob("*"):
         if source.is_file():
             copy_file(source, output / "frontend/dist" / source.relative_to(frontend))

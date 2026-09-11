@@ -6,6 +6,7 @@ import hashlib
 import json
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 
 from pydantic import ValidationError
@@ -38,10 +39,12 @@ class Prepared:
 
 
 class Engine:
-    def __init__(self, store: Store, *, fault=None):
+    def __init__(self, store: Store, *, fault=None, commit_guard=None, audit_actor=None):
         self.store = store
         self.fault = fault or (lambda stage, connection: None)
         self.last_metrics = {}
+        self.commit_guard = commit_guard or nullcontext
+        self.audit_actor = audit_actor
 
     def _cached(self, key, request_hash):
         with self.store.connection(read_only=True) as connection:
@@ -61,7 +64,7 @@ class Engine:
             raise KernelError(
                 "invalid_request_id", "request id must be nonempty and at most 200 chars"
             )
-        with self.store.connection() as connection:
+        with self.commit_guard(), self.store.connection() as connection:
             count = 0
 
             def trace(sql):
@@ -90,7 +93,15 @@ class Engine:
                     connection.execute(f"UPDATE state SET {lane}={lane}+1 WHERE id=1")
                 connection.execute(
                     "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
-                    (key, action, canonical(result)),
+                    (
+                        key,
+                        action,
+                        canonical(
+                            {"result": result, "actor": self.audit_actor}
+                            if self.audit_actor is not None
+                            else result
+                        ),
+                    ),
                 )
                 connection.execute(
                     "INSERT INTO request VALUES(?,?,?)", (key, request_hash, canonical(result))
@@ -111,6 +122,8 @@ class Engine:
     def register_evidence(self, content: bytes, media_type: str, name: str, *, request_id: str):
         if not isinstance(content, bytes):
             raise ValueError("evidence content must be bytes")
+        if len(content) > 20 * 1024 * 1024:
+            raise KernelError("evidence_too_large", "单份证据不能超过 20 MiB")
         hashed = hashlib.sha256(content).digest()
         request_hash = digest(["evidence", hashed.hex(), media_type, name])
 
@@ -210,10 +223,10 @@ class Engine:
                 uuid.uuid4().hex, subject_id, revision + 1, fact, tuple(sorted(set(evidence)))
             )
             self.store.write_fact(connection, version, digest(fact.model_dump(mode="json")))
-            scopes = set(fact.scopes()) | {"@" + subject_id, str(fact.period)}
+            scopes = set(fact.scopes_for(subject_id)) | {"@" + subject_id, str(fact.period)}
             scopes.update(claim.key for claim in fact.claims())
             if old:
-                scopes.update(old.fact.scopes())
+                scopes.update(old.fact.scopes_for(old.subject_id))
                 scopes.add(str(old.fact.period))
                 scopes.update(claim.key for claim in old.fact.claims())
             affected = self._scope_consumers(
@@ -240,6 +253,15 @@ class Engine:
 
         return request_hash, operation
 
+    def _require_direct_registration(self, kind):
+        model = self.store.registry.models.get(kind)
+        if model is not None and model.registration_command:
+            raise KernelError(
+                "registration_command_required",
+                "此类事实须通过核对来源的类型化命令生成",
+                command=model.registration_command,
+            )
+
     def save_fact(
         self,
         kind: str,
@@ -250,11 +272,17 @@ class Engine:
         expected_revision: int,
         request_id: str,
     ):
+        self._require_direct_registration(kind)
         request_hash, operation = self._registration(
             False, kind, subject_id, data, evidence=evidence, expected_revision=expected_revision
         )
         return self._write(
-            request_id, request_hash, None, ("accounting",), "confirm_fact", operation
+            request_id,
+            request_hash,
+            None,
+            (self.store.registry.models[kind].lane,),
+            "confirm_fact",
+            operation,
         )
 
     def amend_fact(
@@ -269,6 +297,7 @@ class Engine:
         request_id: str,
     ):
         """Explicitly correct recorded facts; preserve every original revision and evidence."""
+        self._require_direct_registration(kind)
         if recording_error_confirmed is not True:
             raise NeedsInformation("recording_error_confirmed", "需要确认这是原记录的录入错误")
         request_hash, operation = self._registration(
@@ -278,7 +307,7 @@ class Engine:
             request_id,
             digest(["amend_fact", request_hash.hex()]),
             None,
-            ("accounting",),
+            (self.store.registry.models[kind].lane,),
             "recording_correction",
             operation,
         )
@@ -289,6 +318,8 @@ class Engine:
             raise ValueError("a fact batch contains 1..5000 typed records")
         if len({item["subject_id"] for item in facts}) != len(facts):
             raise KernelError("duplicate_subject", "同一来源批次不能重复修改同一业务身份")
+        for item in facts:
+            self._require_direct_registration(item["kind"])
         registrations = [self._registration(False, **item) for item in facts]
         request_hash = digest(["confirm_facts", [hashed.hex() for hashed, _ in registrations]])
 
@@ -297,7 +328,12 @@ class Engine:
             return {"status": "confirmed", "results": results}
 
         return self._write(
-            request_id, request_hash, None, ("accounting",), "confirm_facts", operation
+            request_id,
+            request_hash,
+            None,
+            tuple(sorted({self.store.registry.models[item["kind"]].lane for item in facts})),
+            "confirm_facts",
+            operation,
         )
 
     @staticmethod
@@ -344,19 +380,20 @@ class Engine:
                 sid = queue.pop()
                 version = self.store.current_fact(connection, sid)
                 facts[sid] = version
-                if version.fact.kind not in self.store.registry.evaluators:
-                    extra = {
-                        r[0]
-                        for r in connection.execute(
-                            "SELECT subject_id FROM pending WHERE cause_id=?", (version.id,)
-                        )
-                    }
-                else:
-                    extra = self._scope_consumers(
+                # A calculable fact is also a versioned input. Its fact-range
+                # consumers may differ from consumers of its published result.
+                extra = {
+                    r[0]
+                    for r in connection.execute(
+                        "SELECT subject_id FROM pending WHERE cause_id=?", (version.id,)
+                    )
+                }
+                if version.fact.kind in self.store.registry.evaluators:
+                    extra |= self._scope_consumers(
                         connection,
                         "calculation",
                         version.fact.kind,
-                        set(version.fact.scopes()) | {"@" + sid, str(version.fact.period)},
+                        set(version.fact.scopes_for(sid)) | {"@" + sid, str(version.fact.period)},
                         version.fact.period.ordinal,
                     )
                 extra |= self._descendants(connection, {sid})
@@ -366,7 +403,11 @@ class Engine:
             facts = {
                 sid: v for sid, v in facts.items() if v.fact.kind in self.store.registry.evaluators
             }
-            reads = {read for version in facts.values() for read in version.fact.reads()}
+            reads = {
+                read
+                for version in facts.values()
+                for read in version.fact.reads_for(version.subject_id)
+            }
             selections = {
                 read: self.store.select(connection, read) for read in sorted(reads, key=repr)
             }
@@ -385,7 +426,7 @@ class Engine:
                 period.ordinal not in closed for period in version.fact.required_closed_periods()
             ):
                 raise KernelError("awaiting_close", "该业务须等待所依据期间关账")
-            for read in version.fact.reads():
+            for read in version.fact.reads_for(version.subject_id):
                 if read.source != "calculation" or read.key.startswith("#"):
                     continue
                 for other, upstream in facts.items():
@@ -393,7 +434,12 @@ class Engine:
                         other != sid
                         and (upstream.fact.kind == read.kind or read.kind == "*")
                         and read.key
-                        in (*upstream.fact.scopes(), "@" + other, str(upstream.fact.period), "*")
+                        in (
+                            *upstream.fact.scopes_for(other),
+                            "@" + other,
+                            str(upstream.fact.period),
+                            "*",
+                        )
                         and (not read.before_period or upstream.fact.period < read.before_period)
                     ):
                         dependencies[sid].add(other)
@@ -417,7 +463,7 @@ class Engine:
         for sid in ordered:
             version = facts[sid]
             selected = {}
-            for read in version.fact.reads():
+            for read in version.fact.reads_for(version.subject_id):
                 values = list(selections[read])
                 if read.source == "calculation" and not read.key.startswith("#"):
                     values = [v for v in values if v.subject_id not in overlays]
@@ -427,7 +473,7 @@ class Engine:
                             (calc.kind == read.kind or read.kind == "*")
                             and read.key
                             in (
-                                *upstream.fact.scopes(),
+                                *upstream.fact.scopes_for(upstream_id),
                                 "@" + upstream_id,
                                 str(upstream.fact.period),
                                 "*",
@@ -462,6 +508,17 @@ class Engine:
         posting = YearMonth(correction_period) if correction_period is not None else None
         if posting and posting.ordinal <= max(closed, default=-1):
             raise KernelError("closed_period", "冲正必须发布到开放期间")
+        checked_lanes = {"accounting"}
+        for item in prepared:
+            checked_lanes.add(item.version.fact.lane)
+            for read in item.context.used:
+                if read.kind in self.store.registry.models:
+                    checked_lanes.add(self.store.registry.models[read.kind].lane)
+                for selected in item.context.selections[read]:
+                    kind = (
+                        selected.fact.kind if isinstance(selected, FactVersion) else selected.kind
+                    )
+                    checked_lanes.add(self.store.registry.models[kind].lane)
         public = {
             "subjects": sorted(facts),
             "epochs": epochs,
@@ -470,16 +527,26 @@ class Engine:
                 {
                     "subject_id": p.version.subject_id,
                     "calculation_id": p.calculation_id,
+                    "kind": p.version.fact.kind,
+                    "period": str(p.version.fact.period),
+                    "fact_id": p.version.id,
+                    "result_digest": digest(p.outcome).hex(),
                     "values": p.outcome["values"],
+                    "balances": p.outcome["balances"],
                     "explanation": p.outcome["explanation"],
                     "lines": p.outcome["lines"],
+                    "opening_lines": p.outcome["opening_lines"],
+                    "opening": p.outcome["opening"],
                 }
                 for p in prepared
             ],
             "company_id": self.store.company_id,
             "database_id": self.store.database_id,
+            "checked_lanes": sorted(checked_lanes),
         }
-        public["digest"] = digest({**public, "epochs": {"accounting": epochs["accounting"]}}).hex()
+        public["digest"] = digest(
+            {**public, "epochs": {lane: epochs[lane] for lane in checked_lanes}}
+        ).hex()
         return public, prepared
 
     def preview(self, subjects: list[str], *, correction_period: str | None = None):
@@ -510,7 +577,16 @@ class Engine:
             results = [self._publish(connection, item, correction_period) for item in prepared]
             return {"status": "published", "results": results, "digest": preview_digest}
 
-        return self._write(request_id, request_hash, epochs, ("accounting",), "publish", operation)
+        lanes = tuple(sorted({item.version.fact.lane for item in prepared}))
+        return self._write(
+            request_id,
+            request_hash,
+            epochs,
+            lanes,
+            "publish",
+            operation,
+            checked_lanes=public["checked_lanes"],
+        )
 
     def _publish(self, connection, prepared, correction_period):
         version, cid, outcome = prepared.version, prepared.calculation_id, prepared.outcome
@@ -533,6 +609,30 @@ class Engine:
             and old["digest"] == outcome_digest
             and old["period"] == version.fact.period.ordinal
         )
+        if outcome.get("opening") and old is None:
+            if (
+                connection.execute("SELECT 1 FROM voucher LIMIT 1").fetchone()
+                or connection.execute("SELECT 1 FROM period_close LIMIT 1").fetchone()
+            ):
+                raise KernelError(
+                    "opening_after_accounting", "期初必须在首次正式业务入账和关账之前确认"
+                )
+            if connection.execute(
+                "SELECT 1 FROM calculation_current a JOIN calculation c ON c.id=a.calculation_id "
+                "WHERE json_extract(c.outcome,'$.opening')=1 LIMIT 1"
+            ).fetchone():
+                raise KernelError("opening_already_published", "公司已存在正式期初接续状态")
+        if not no_impact and (outcome.get("opening") or (old_outcome or {}).get("opening")):
+            earliest = min(
+                version.fact.period.ordinal, old["period"] if old else version.fact.period.ordinal
+            )
+            if connection.execute(
+                "SELECT 1 FROM period_close WHERE period>=?", (earliest,)
+            ).fetchone():
+                raise KernelError(
+                    "closed_opening_immutable",
+                    "已关账期初状态保持冻结，差异须在开放期通过类型化更正处理",
+                )
         posting = version.fact.period.ordinal
         voucher_key = old_publication["voucher_id"] if old_publication else None
         if (
@@ -562,7 +662,7 @@ class Engine:
                 [
                     (cid, version.fact.kind, key)
                     for key in sorted(
-                        set(version.fact.scopes())
+                        set(version.fact.scopes_for(version.subject_id))
                         | {"@" + version.subject_id, str(version.fact.period)}
                     )
                 ],
@@ -685,7 +785,13 @@ class Engine:
                     connection, voucher_key, cid, posting, outcome["lines"]
                 )
             if old_outcome:
+                self._opening_projection(
+                    connection, old["period"], old_outcome.get("opening_lines", ()), -1
+                )
                 self._balance_projection(connection, old_outcome["balances"], -1)
+            self._opening_projection(
+                connection, version.fact.period.ordinal, outcome.get("opening_lines", ()), 1
+            )
             self._balance_projection(connection, outcome["balances"], 1)
         if is_new:
             if voucher_key:
@@ -833,9 +939,30 @@ class Engine:
                 (category, key, amount),
             )
 
+    @staticmethod
+    def _opening_projection(connection, period, lines, sign):
+        for line in lines:
+            row = connection.execute(
+                "SELECT debit,credit FROM opening_account WHERE period=? AND account=?",
+                (period, line["account"]),
+            ).fetchone()
+            debit = checked((row[0] if row else 0) + sign * line["debit"])
+            credit = checked((row[1] if row else 0) + sign * line["credit"])
+            if debit == credit == 0:
+                connection.execute(
+                    "DELETE FROM opening_account WHERE period=? AND account=?",
+                    (period, line["account"]),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO opening_account VALUES(?,?,?,?) ON CONFLICT(period,account) "
+                    "DO UPDATE SET debit=excluded.debit,credit=excluded.credit",
+                    (period, line["account"], debit, credit),
+                )
+
     def rebuild_projections(self, *, request_id: str):
         def operation(connection):
-            for table in ("monthly_account", "monthly_cashflow", "balance"):
+            for table in ("monthly_account", "monthly_cashflow", "balance", "opening_account"):
                 connection.execute(f"DELETE FROM {table}")
             # SQLite sum(INTEGER) raises on overflow; total() or floating arithmetic is forbidden.
             connection.execute(
@@ -851,10 +978,12 @@ class Engine:
             )
             balances = {}
             for row in connection.execute(
-                "SELECT outcome FROM calculation_current a JOIN "
+                "SELECT outcome,c.period FROM calculation_current a JOIN "
                 "calculation c ON c.id=a.calculation_id"
             ):
-                for effect in json.loads(row[0])["balances"]:
+                outcome = json.loads(row[0])
+                self._opening_projection(connection, row[1], outcome.get("opening_lines", ()), 1)
+                for effect in outcome["balances"]:
                     key = (effect["category"], effect["key"])
                     balances[key] = checked(balances.get(key, 0) + effect["amount"])
             connection.executemany(
@@ -874,6 +1003,14 @@ class Engine:
             result = {
                 "period": period,
                 "epochs": self.store.epochs(connection),
+                "opening_balances": [
+                    dict(r)
+                    for r in connection.execute(
+                        "SELECT account,sum(debit) debit,sum(credit) credit FROM opening_account "
+                        "WHERE period<=? GROUP BY account ORDER BY account",
+                        (month,),
+                    )
+                ],
                 "accounts": [
                     dict(r)
                     for r in connection.execute(
@@ -906,16 +1043,68 @@ class Engine:
             connection.commit()
             return result
 
-    def jobs(self, *, status: str | None = None, limit: int = 50):
+    def queue_backup(self, directory: str, *, request_id: str, rollover: bool = False):
+        """Commit durable intent only; the resident worker performs file I/O afterward."""
+        from pathlib import Path
+
+        if not directory.strip() or type(rollover) is not bool:
+            raise ValueError("invalid backup destination")
+        payload = {"directory": str(Path(directory).expanduser().resolve()), "rollover": rollover}
+
+        def operation(connection):
+            job_id = uuid.uuid4().hex
+            connection.execute(
+                "INSERT INTO jobs(id,kind,payload,status) VALUES(?,?,?,'pending')",
+                (job_id, "portable_backup", canonical(payload)),
+            )
+            return {"status": "pending", "job_id": job_id}
+
+        return self._write(request_id, digest(["backup", payload]), None, (), "backup", operation)
+
+    def retry_job(self, job_id: str, *, request_id: str):
+        """An explicit retry starts one new bounded attempt cycle for a failed job."""
+        from .backup import _worker_lock
+
+        def operation(connection):
+            row = connection.execute(
+                "SELECT status,attempts,last_error FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise KernelError("unknown_job", "后台任务不存在")
+            if row["status"] != "failed":
+                raise KernelError("job_not_failed", "仅失败的任务可以重新尝试")
+            connection.execute(
+                "UPDATE jobs SET status='pending',attempts=0,last_error=NULL,result=NULL "
+                "WHERE id=?",
+                (job_id,),
+            )
+            return {
+                "status": "pending",
+                "job_id": job_id,
+                "previous_attempts": row["attempts"],
+                "previous_error": row["last_error"],
+            }
+
+        with _worker_lock(self.store.path) as acquired:
+            if not acquired:
+                raise KernelError("job_running", "后台任务仍在执行，请稍后查看状态")
+            return self._write(
+                request_id, digest(["retry_job", job_id]), None, (), "retry_job", operation
+            )
+
+    def jobs(self, *, status: str | None = None, limit: int = 50, job_id: str | None = None):
         if status not in (None, "pending", "running", "succeeded", "failed"):
             raise ValueError("unknown job status")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("job limit must be 1..100")
+        if job_id is not None and (not isinstance(job_id, str) or not 1 <= len(job_id) <= 200):
+            raise ValueError("invalid job identity")
         with self.store.connection(read_only=True) as connection:
             rows = connection.execute(
                 "SELECT id,kind,status,attempts,last_error,result FROM jobs "
-                "WHERE (? IS NULL OR status=?) ORDER BY rowid DESC LIMIT ?",
-                (status, status, limit),
+                "WHERE (? IS NULL OR status=?) AND (? IS NULL OR id=?) "
+                "ORDER BY rowid DESC LIMIT ?",
+                (status, status, job_id, job_id, limit),
             )
             return [
                 {**dict(row), "result": json.loads(row["result"]) if row["result"] else None}
@@ -1005,9 +1194,12 @@ class Engine:
                 "AND p.posting_period<=(SELECT max(period) FROM period_close) LIMIT 1",
                 (subject_id,),
             ).fetchone()
-            if closed or connection.execute(
-                "SELECT 1 FROM period_close WHERE period>=?", (fact.fact.period.ordinal,)
-            ).fetchone():
+            if (
+                closed
+                or connection.execute(
+                    "SELECT 1 FROM period_close WHERE period>=?", (fact.fact.period.ordinal,)
+                ).fetchone()
+            ):
                 raise KernelError("closed_period", "已关账业务只能通过关联冲正更正")
             consumers = {
                 r[0]
@@ -1030,7 +1222,7 @@ class Engine:
                 (subject_id,),
             ).fetchall():
                 dependent = self.store.fact(connection, candidate[0])
-                for read in dependent.fact.reads():
+                for read in dependent.fact.reads_for(dependent.subject_id):
                     selected_period = (
                         row["period"]
                         if read.source == "calculation" and row is not None
@@ -1101,10 +1293,12 @@ class Engine:
                     connection.execute(
                         "DELETE FROM voucher_current WHERE voucher_id=?", (header["voucher_id"],)
                     )
-                outcome = json.loads(
-                    connection.execute(
-                        "SELECT outcome FROM calculation WHERE id=?", (calc,)
-                    ).fetchone()[0]
+                calculation = connection.execute(
+                    "SELECT outcome,period FROM calculation WHERE id=?", (calc,)
+                ).fetchone()
+                outcome = json.loads(calculation[0])
+                self._opening_projection(
+                    connection, calculation[1], outcome.get("opening_lines", ()), -1
                 )
                 self._balance_projection(connection, outcome["balances"], -1)
                 connection.execute(

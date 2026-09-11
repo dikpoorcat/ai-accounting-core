@@ -3,18 +3,81 @@
 import http.client
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import pytest
 
 from ai_accounting.kernel.backup import create_portable
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.http import create_server
+from ai_accounting.kernel.security.primitives import IdentityError
 from ai_accounting.kernel.service import LocalService
+
+
+def test_calculation_does_not_block_reads_and_revocation_wins_before_commit(service):
+    app, company = service
+    engine = app.engine(company)
+    engine.save_facts(records(engine)[:1], request_id="source")
+    preview = engine.preview(["expense-0"])
+    entered, release = threading.Event(), threading.Event()
+    original = app.registry.evaluators["expense"]
+
+    def slow_calculation(version, context):
+        entered.set()
+        assert release.wait(10)
+        return original(version, context)
+
+    app.registry.evaluators["expense"] = slow_calculation
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        confirmation = pool.submit(
+            app.dispatch,
+            "confirm",
+            {
+                "company_id": company,
+                "subjects": ["expense-0"],
+                "preview_digest": preview["digest"],
+                "epochs": preview["epochs"],
+                "request_id": "publication",
+            },
+        )
+        try:
+            assert entered.wait(5)
+            overview = pool.submit(
+                app.dispatch, "overview", {"company_id": company, "period": "2026-01"}
+            )
+            assert overview.result(timeout=3)["accounts"] == []
+            logout = pool.submit(app.security.logout, app._test_session_token)
+            assert logout.result(timeout=3)["status"] == "logged_out"
+        finally:
+            release.set()
+        with pytest.raises(IdentityError):
+            confirmation.result(timeout=5)
+    with engine.store.connection(read_only=True) as connection:
+        assert connection.execute("SELECT count(*) FROM voucher_current").fetchone()[0] == 0
+
+
+def test_publication_audit_records_authority_without_session_secret(service):
+    app, company = service
+    item = records(app.engine(company))[0]
+    app.dispatch("save_fact", {**item, "company_id": company, "request_id": "public-save"})
+    with app.engine(company).store.connection(read_only=True) as connection:
+        payload = connection.execute(
+            "SELECT payload FROM audit WHERE request_id='public-save'"
+        ).fetchone()[0]
+    audit = json.loads(payload)
+    assert audit["actor"]["catalog_id"] == app.security.catalog_instance_id
+    assert audit["actor"]["owner_id"]
+    assert app._test_session_token not in payload
 
 
 @pytest.fixture
 def service(tmp_path):
     result = LocalService(tmp_path)
+    result.security.provision("owner", "test-password-123")
+    token = result.security.login("owner", "test-password-123").session_token
+    result._test_session_token = token.get_secret_value()
+    result.dispatch = partial(result.dispatch, session_token=token)
     company = result.dispatch(
         "create_company",
         {
@@ -97,7 +160,7 @@ def test_loopback_auth_origin_read_only_and_large_money(service, tmp_path):
         return result
 
     try:
-        auth = {"Authorization": "Bearer " + token}
+        auth = {"Authorization": "Bearer " + app._test_session_token}
         assert request("/api/local/companies")[0] == 401
         assert (
             request("/api/local/companies", headers=auth | {"Origin": "https://evil.test"})[0]
@@ -105,7 +168,7 @@ def test_loopback_auth_origin_read_only_and_large_money(service, tmp_path):
         )
         assert request("/api/local/companies", headers=auth | {"Host": "evil.test"})[0] == 403
         assert request("/api/local/save_fact", headers=auth)[0] == 404
-        assert request("/api/local/companies", headers=auth, method="POST")[0] == 501
+        assert request("/api/local/companies", headers=auth, method="POST")[0] == 413
         assert request("/../catalog.sqlite")[0] == 404
         assert request("/favicon.ico")[0] == 204
         status, headers, body = request(
@@ -135,11 +198,16 @@ def test_portable_company_import_binds_verified_identity_and_rejects_overwrite(s
     restored = destination.engine(company)
     outcome = restored.preview(["expense-0"])["results"][0]
     assert sum(line["debit"] for line in outcome["lines"]) == 1200
-    with pytest.raises(KernelError) as error:
+    assert (
         destination.catalog.restore_company(
             exported["path"], taxpayer_id="91310000123456789A", name="恢复企业"
         )
-    assert error.value.code == "company_exists"
+        == imported
+    )
+    with pytest.raises(KernelError):
+        destination.catalog.restore_company(
+            exported["path"], taxpayer_id="91310000123456789A", name="另一企业"
+        )
 
 
 def test_generated_command_schemas_validate_typed_facts_and_exclude_journals(service):

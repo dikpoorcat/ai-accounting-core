@@ -4,12 +4,12 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from .contracts import KernelError
-from .service import LocalService
+from .daemon import ServiceClient
+from .diagnostics import error_response
 
 
 def serve(root: Path):
-    service = LocalService(root)
+    service = ServiceClient(root)
     mcp = FastMCP(
         "local-accounting-kernel",
         instructions=(
@@ -22,7 +22,18 @@ def serve(root: Path):
     @mcp.tool()
     def finance_local_schema() -> dict:
         """Get all typed business fact schemas, field meanings and supported commands."""
-        return service.dispatch("schema", {})
+        try:
+            return service.dispatch("schema", {})
+        except Exception as exc:
+            return error_response(exc)
+
+    @mcp.tool()
+    def finance_local_security(action: str, payload: dict) -> dict:
+        """Request/status/cancel the native window; never include passwords or recovery codes."""
+        try:
+            return service.security(action, payload)
+        except Exception as exc:
+            return error_response(exc)
 
     @mcp.tool()
     def finance_local_command(command: str, payload: dict) -> dict:
@@ -35,9 +46,7 @@ def serve(root: Path):
         try:
             result = service.dispatch(command, payload)
             return result if isinstance(result, dict) else {"items": result}
-        except KernelError as exc:
-            return exc.response()
-        except (ValueError, TypeError, KeyError) as exc:
-            return {"status": "rejected", "code": "invalid_command", "message": str(exc)}
+        except Exception as exc:
+            return error_response(exc)
 
     mcp.run(transport="stdio")

@@ -11,16 +11,16 @@ interface AssetItemBase {
   category_label: string;
   status: AssetStatus;
   status_label: string;
-  acquisition_date: string;
-  posting_date: string;
+  acquisition_date: string | null;
+  posting_date: string | null;
   supplier: string;
   settlement_method: string;
   settlement_label: string;
   payment_date: string | null;
   due_date: string | null;
-  purchase_price_fen: string;
-  noncreditable_tax_fen: string;
-  other_direct_cost_fen: string;
+  purchase_price_fen: string | null;
+  noncreditable_tax_fen: string | null;
+  other_direct_cost_fen: string | null;
   cost_fen: string;
   accumulated_charge_fen: string;
   month_charge_fen: string;
@@ -60,7 +60,7 @@ export interface IntangibleAssetRetirement {
 
 export interface IntangibleAssetItem extends AssetItemBase {
   asset_type: "intangible";
-  available_for_use_date: string;
+  available_for_use_date: string | null;
   life_basis_label: string;
   life_basis_explanation: string;
   rights_description: string;
@@ -81,6 +81,7 @@ export interface FixedAssetSummary {
   month_depreciation_fen: string;
   month_acquired_count: number;
   month_acquired_fen: string;
+  month_cost_adjustment_fen?: string;
   month_activated_count: number;
   month_disposed_count: number;
   items: FixedAssetItem[];
@@ -96,6 +97,7 @@ export interface IntangibleAssetSummary {
   month_amortization_fen: string;
   month_acquired_count: number;
   month_acquired_fen: string;
+  month_cost_adjustment_fen?: string;
   month_retired_count: number;
   items: IntangibleAssetItem[];
 }
@@ -120,6 +122,7 @@ export interface AssetsDashboardData {
   month_charge_fen: string;
   month_acquired_count: number;
   month_acquired_fen: string;
+  month_cost_adjustment_fen?: string;
   month_activated_count: number;
   month_exited_count: number;
   reconciled: boolean;

@@ -34,6 +34,8 @@ from ai_accounting.kernel.backup import (
 )
 from ai_accounting.kernel.contracts import Fact, Line, Outcome, Registry
 from ai_accounting.kernel.engine import PROGRAM_VERSION, Engine
+from ai_accounting.kernel.materials import Materials
+from ai_accounting.kernel.materials import register as register_materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import PositiveFen, YearMonth, canonical, digest
@@ -90,9 +92,15 @@ class CountingStore(Store):
             yield _CountingConnection(connection, self.counts)
 
 
-def make_engine(path: Path) -> Engine:
+def benchmark_registry():
     registry = Registry()
     registry.register(BenchmarkCharge, calculate)
+    register_materials(registry)
+    return registry
+
+
+def make_engine(path: Path) -> Engine:
+    registry = benchmark_registry()
     store = CountingStore.create(path, registry, "benchmark-company", TAXPAYER, "benchmark-db")
     return Engine(store)
 
@@ -346,8 +354,51 @@ def prepare_history_closes(engine, proof, *, before=HISTORY_MONTH, progress=None
     """Private synthetic setup: freeze every earlier month using real period APIs."""
     if (engine.store.company_id, engine.store.database_id) != ("benchmark-company", "benchmark-db"):
         raise ValueError("historical checkpoint preparation is restricted to the synthetic company")
-    if engine.store.registry.models != {"benchmark_charge": BenchmarkCharge}:
+    if engine.store.registry.models != benchmark_registry().models:
         raise ValueError("historical checkpoint preparation requires the benchmark-only registry")
+    materials = Materials(engine)
+    source_id = "benchmark-support:" + proof
+    with engine.store.connection(read_only=True) as connection:
+        present = connection.execute("SELECT 1 FROM subject WHERE id=?", (source_id,)).fetchone()
+    if not present:
+        source = materials.receive(
+            source_id,
+            {
+                "period": str(YearMonth.from_ordinal(FIRST_MONTH)),
+                "evidence_digest": proof,
+                "category": "transactions",
+                "purpose": "supporting",
+                "supporting_purpose": "隔离性能样本说明，历史逐笔事实由本脚本确定性生成",
+                "specification": {
+                    "format": "text",
+                    "all_pages_reviewed": True,
+                    "passages": [
+                        {
+                            "location": "benchmark-fixture",
+                            "page": 1,
+                            "excerpt": "Synthetic benchmark history; no real accounting data.",
+                        }
+                    ],
+                },
+            },
+            evidence=(proof,),
+            expected_revision=0,
+            request_id=source_id,
+        )
+        materials.resolve(
+            "benchmark-support-resolution",
+            {
+                "period": str(YearMonth.from_ordinal(FIRST_MONTH)),
+                "source_id": source_id,
+                "source_fact_id": source["fact_id"],
+                "location": "benchmark-fixture",
+                "treatment": "supporting",
+                "reason": "已核验纯合成样本说明，不包含待解析的真实业务行",
+            },
+            evidence=(proof,),
+            expected_revision=0,
+            request_id="benchmark-support-resolution",
+        )
     started = time.perf_counter()
     periods = Periods(engine)
     count = 0
@@ -453,7 +504,11 @@ def measure_scale(
     if include_backups:
         directory = workspace / f"backup-{scale}"
         metrics["portable_backup"], archive = measure(
-            engine, lambda _: create_portable(engine.store.path, directory), repetitions=1
+            engine,
+            lambda _: create_portable(
+                engine.store.path, directory, _registry=engine.store.registry
+            ),
+            repetitions=1,
         )
         metrics["restore_and_verify"], restored = measure(
             engine,
@@ -461,6 +516,7 @@ def measure_scale(
                 archive["path"],
                 directory / "restored.sqlite",
                 expected_company_id="benchmark-company",
+                _registry=engine.store.registry,
             ),
             repetitions=1,
         )
@@ -470,7 +526,7 @@ def measure_scale(
         close_path = directory / "restored.sqlite"
     else:
         close_path = workspace / f"close-copy-{scale}.sqlite"
-        backup_to_file(engine.store.path, close_path)
+        backup_to_file(engine.store.path, close_path, _registry=engine.store.registry)
     restored_engine = Engine(
         CountingStore(
             close_path, engine.store.registry, engine.store.company_id, engine.store.database_id
@@ -502,7 +558,9 @@ def measure_scale(
         ]
     result["database_bytes"] = engine.store.path.stat().st_size
     result["source_verification"] = verify_file(
-        engine.store.path, expected_company_id=engine.store.company_id
+        engine.store.path,
+        expected_company_id=engine.store.company_id,
+        _registry=engine.store.registry,
     )
     result["integrity"] = "ok"
     result["foreign_keys_ok"] = True
@@ -615,8 +673,7 @@ def refresh_existing_report(output: Path):
     tag = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     destination = workspace / ("hotfix-refresh-" + tag)
     destination.mkdir(exist_ok=False)
-    registry = Registry()
-    registry.register(BenchmarkCharge, calculate)
+    registry = benchmark_registry()
     sources = sorted((repository / "src/ai_accounting/kernel").rglob("*.py"))
     sources.append(Path(__file__).resolve())
     refresh = {
@@ -662,6 +719,7 @@ def refresh_existing_report(output: Path):
             close_path,
             expected_company_id="benchmark-company",
             expected_database_id="benchmark-db",
+            _registry=registry,
         )
         close_engine = Engine(
             CountingStore(close_path, registry, "benchmark-company", "benchmark-db")

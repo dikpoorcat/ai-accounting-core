@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 
 import type { BriefActivityGroup, BriefVoucher } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
+import VoucherTrace from "./VoucherTrace.vue";
 
 const props = defineProps<{
   groups: BriefActivityGroup[];
@@ -51,7 +52,10 @@ function toggleVoucher(number: string, event: MouseEvent) {
   selectedVoucherNumber.value = selectedVoucherNumber.value === number ? "" : number;
 }
 
-function formatDate(value: string) {
+function formatDate(value: string | null, recognition?: { label: string }) {
+  if (recognition?.label) return recognition.label;
+  if (!value) return "日期未提供";
+  if (/^\d{4}-\d{2}$/.test(value)) return `${value} · 按月确认`;
   const [, month, day] = value.slice(0, 10).split("-");
   return `${Number(month)} 月 ${Number(day)} 日`;
 }
@@ -108,7 +112,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
             <span>业务分类</span>
             <h3>{{ selectedBusiness.label }}</h3>
           </div>
-          <strong>{{ selectedBusiness.event_count }} 项业务动作</strong>
+            <strong>全月 {{ selectedBusiness.event_count }} 项 · 已加载 {{ selectedBusiness.rows.length }} 项</strong>
         </header>
         <ul class="event-list">
           <li
@@ -118,7 +122,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
           >
             <div class="event-top">
               <div>
-                <small>{{ formatDate(item.date) }} · {{ item.reference }}</small>
+                <small>{{ formatDate(item.date, item.recognition) }} · {{ item.reference }}</small>
                 <span class="event-type">{{ item.title }}</span>
                 <strong class="event-subject">{{ item.subject || item.title }}</strong>
                 <span class="event-description">{{ item.display_description || item.description }}</span>
@@ -189,7 +193,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
       <div class="voucher-list">
         <template v-for="(voucher, index) in vouchers" :key="voucher.number">
           <div v-if="index === 0 || vouchers[index - 1]?.date !== voucher.date" class="voucher-date">
-            {{ formatDate(voucher.date) }}
+            {{ formatDate(voucher.date, voucher.recognition) }}
           </div>
           <button
             class="voucher-row"
@@ -288,6 +292,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                 <li v-for="evidence in voucher.evidence" :key="evidence">{{ evidence }}</li>
               </ul>
             </details>
+            <VoucherTrace v-if="voucher.calculation_id" :calculation-id="voucher.calculation_id" />
           </section>
         </template>
       </div>

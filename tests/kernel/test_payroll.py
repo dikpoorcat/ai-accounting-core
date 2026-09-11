@@ -752,11 +752,17 @@ def test_labor_gross_history_checks_real_date_and_recipient(change, code):
 def test_registry_has_only_typed_fact_inputs_and_immutable_policy_versions():
     registry = Registry()
     register(registry)
-    assert set(registry.evaluators) == {"payroll", "annual_bonus", "labor"}
+    assert set(registry.evaluators) == {
+        "payroll",
+        "payroll_bounded",
+        "annual_bonus",
+        "labor",
+        "labor_accrual",
+    }
     assert all("account" not in model.model_fields for model in registry.models.values())
     assert PayrollIncomeTaxPolicy.immutable is True
     assert Payroll.identity_fields == ("employee_id", "period")
-    assert len(registry.schemas()) == 12
+    assert len(registry.schemas()) == 15
 
 
 def test_calculators_ignore_callers_decimal_precision_rounding_and_traps():

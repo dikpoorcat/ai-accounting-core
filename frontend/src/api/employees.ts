@@ -1,16 +1,28 @@
 import { requestJson } from "./client";
 import type { DashboardPeriod } from "./context";
 
-export type Fen = string;
+export type Fen = string | null;
 
 export interface EmployeeDashboardItem {
+  declared_tax_fen?: Fen;
+  recorded_net_payments_fen?: Fen;
+  tax_details?: Array<{
+    calculation_id: string;
+    period: string;
+    kind: string;
+    reversal: boolean;
+    booked_tax_fen: Fen;
+    calculated_tax_fen: Fen;
+    actual_withholding_tax_fen: Fen;
+    actual_withholding_fact_id: string | null;
+  }>;
   code: string;
   name: string;
-  record_status: string;
-  period_state: "in_period" | "ended" | "not_started";
+  record_status: "active" | "inactive" | "unknown";
+  period_state: "in_period" | "ended" | "not_started" | "unknown";
   period_state_label: string;
-  in_period: boolean;
-  employment_start_date: string;
+  in_period: boolean | null;
+  employment_start_date: string | null;
   employment_end_date: string | null;
   tax_withholding_start_date: string | null;
   profile_available: boolean;
@@ -41,10 +53,11 @@ export interface EmployeeDashboardItem {
 
 export interface EmployeesSummary {
   registered_count: number;
-  in_period_count: number;
+  unknown_period_count?: number;
+  in_period_count: number | null;
   payroll_count: number;
-  without_payroll_count: number;
-  profile_missing_count: number;
+  without_payroll_count: number | null;
+  profile_missing_count: number | null;
   contributions_only_count: number;
   gross_salary_fen: Fen;
   annual_bonus_fen: Fen;

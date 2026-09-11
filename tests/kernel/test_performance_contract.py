@@ -32,7 +32,7 @@ def test_foreground_sql_counts_do_not_grow_with_accounting_history(tmp_path):
     )
     assert small_metrics["read_calls"] == large_metrics["read_calls"]
     assert small_metrics["driver_calls"] == large_metrics["driver_calls"]
-    assert verify_file(engine.store.path)["evidence_count"] == 1
+    assert verify_file(engine.store.path, _registry=engine.store.registry)["evidence_count"] == 1
 
 
 def test_overview_cursor_and_rebuild_work_without_per_voucher_sql(tmp_path):

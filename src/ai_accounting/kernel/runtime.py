@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 MIN_SQLITE_VERSION = (3, 51, 3)
@@ -61,6 +62,7 @@ def connect(
     *,
     read_only: bool = False,
     timeout_seconds: float = 5.0,
+    validator=None,
 ) -> sqlite3.Connection:
     """Open one company file with explicit, durable transactions.
 
@@ -76,7 +78,12 @@ def connect(
         raise ValueError("timeout_seconds must be nonnegative")
 
     database = Path(path).resolve()
-    mode = "ro" if read_only else "rwc"
+    if validator is not None and not read_only:
+        # Reject unknown files without changing their persistent journal mode.
+        # Validate again on the eventual write connection before enabling WAL.
+        with closing(connect(database, read_only=True, timeout_seconds=timeout_seconds)) as probe:
+            validator(probe)
+    mode = "ro" if read_only else "rw" if validator is not None else "rwc"
     connection = sqlite3.connect(
         f"{database.as_uri()}?mode={mode}",
         uri=True,
@@ -92,6 +99,8 @@ def connect(
         connection.execute("PRAGMA recursive_triggers = ON")
         connection.execute("PRAGMA read_uncommitted = OFF")
         connection.execute("PRAGMA synchronous = FULL")
+        if validator is not None:
+            validator(connection)
         if read_only:
             connection.execute("PRAGMA query_only = ON")
         else:

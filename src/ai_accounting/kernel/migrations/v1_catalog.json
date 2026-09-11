@@ -1,0 +1,13 @@
+{
+  "source_commit": "e225d2c",
+  "kind": "catalog",
+  "version": 0,
+  "objects": [
+    {
+      "type": "table",
+      "name": "company",
+      "sql": "CREATE TABLE company(id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,path TEXT NOT NULL UNIQUE,database_id TEXT NOT NULL UNIQUE) STRICT"
+    }
+  ],
+  "sha256": "62eb12d3c752bdf1c3c7cd725e9d89c613df8c0a370044799b3a0328dbce4b73"
+}

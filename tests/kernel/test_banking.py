@@ -4,6 +4,7 @@ import itertools
 import sqlite3
 
 import pytest
+from material_fixture import supporting_text
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.engine import Engine
@@ -26,6 +27,7 @@ def book(tmp_path):
     proof = engine.register_evidence(
         b"Synthetic bank test evidence", "text/plain", "fixture", request_id="evidence"
     )["digest"]
+    supporting_text(engine, proof)
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):
@@ -288,14 +290,14 @@ def test_fact_only_funds_cannot_be_presented_as_formally_reconciled(book):
     assert failure.value.issues[0]["field"] == "actual_funds"
 
 
-def test_source_cannot_match_two_bank_rows(book):
+def test_source_amount_cannot_be_counted_in_full_for_two_bank_rows(book):
     _, save, publish, _ = book
     opening(save, publish)
     funding(save, publish)
     statement(save, publish, [entry("first"), entry("second")])
     with pytest.raises(KernelError) as failure:
         reconciliation(save, publish, [match("first"), match("second")])
-    assert failure.value.code == "duplicate_cash_match"
+    assert failure.value.code == "bank_match_difference"
 
 
 def test_empty_database_never_supplies_a_bank_opening_by_default(book):

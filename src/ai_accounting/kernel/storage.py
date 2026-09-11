@@ -10,8 +10,9 @@ from pydantic import BaseModel
 
 from .contracts import Calculation, FactVersion, KernelError, Read, Registry
 from .runtime import connect, require_local_database
-from .schema import VERSION, base_type, initialize, sequence_model, table_name
+from .schema import base_type, initialize, sequence_model, table_name
 from .types import YearMonth, canonical
+from .versions import verify_schema
 
 
 def composite(annotation):
@@ -73,8 +74,9 @@ class Store:
     def connection(self, *, read_only=False):
         if not self.path.is_file():
             raise KernelError("company_missing", "company database is missing")
-        connection = connect(self.path, read_only=read_only)
-        try:
+
+        def validate(connection):
+            verify_schema(connection, registry=self.registry)
             identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
             if (
                 not identity
@@ -82,8 +84,9 @@ class Store:
                 or identity["database_id"] != self.database_id
             ):
                 raise KernelError("company_mismatch", "database does not match bound company")
-            if identity["schema_version"] != VERSION:
-                raise KernelError("schema_mismatch", "unsupported company database version")
+
+        connection = connect(self.path, read_only=read_only, validator=validate)
+        try:
             yield connection
         finally:
             if connection.in_transaction:
@@ -176,7 +179,7 @@ class Store:
             [
                 (version.id, fact.kind, key)
                 for key in sorted(
-                    set(fact.scopes())
+                    set(fact.scopes_for(version.subject_id))
                     | {"@" + version.subject_id, str(fact.period)}
                     | {claim.key for claim in fact.claims()}
                 )

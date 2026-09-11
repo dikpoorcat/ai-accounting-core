@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from io import BytesIO
 
 import pytest
@@ -22,6 +23,7 @@ from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.adjustments import EmployeeAdvance
 from ai_accounting.kernel.domains.transactions import Allocation, Expense, Payment
 from ai_accounting.kernel.exports import WORKBOOK_NAME, Exports, run_export_jobs
+from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 
 
@@ -304,6 +306,47 @@ def test_frozen_job_uses_approved_payee_and_does_not_invalidate_other_previews(s
         book.close()
     assert export.confirm("2026-01", **arguments) == job
     assert company.count("jobs") == 1
+
+
+def test_export_freezes_material_versions_and_new_allocation_expires_preview(setup, tmp_path):
+    company, export, template = setup
+    preview, job, _ = queue(company, export, template, tmp_path / "material-snapshot")
+    coverage = preview["material_coverage"]["2026-01"]
+    for key in ("source_versions", "resolution_versions", "allocation_versions"):
+        assert coverage[key]
+        assert set(coverage[key]) <= set(coverage["fact_ids"])
+    with company.engine.store.connection(read_only=True) as connection:
+        source_id = connection.execute(
+            "SELECT subject_id FROM fact_revision WHERE id=?",
+            (coverage["source_versions"][0],),
+        ).fetchone()[0]
+        before = connection.execute(
+            "SELECT payload FROM jobs WHERE id=?", (job["job_id"],)
+        ).fetchone()[0]
+    assert json.loads(before)["plan"]["material_coverage"] == preview["material_coverage"]
+    materials = Materials(company.engine)
+    allocation = materials.preview_period_allocation(source_id)
+    materials.confirm_period_allocation(
+        source_id,
+        preview_digest=allocation["digest"],
+        epochs=allocation["epochs"],
+        expected_revision=allocation["expected_revision"],
+        request_id=company.request(),
+    )
+    with pytest.raises(KernelError) as stale:
+        export.confirm(
+            "2026-01",
+            template_evidence_digest=template,
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            output_directory=str(tmp_path / "stale-materials"),
+            request_id=company.request(),
+        )
+    assert stale.value.code == "preview_expired"
+    with company.engine.store.connection(read_only=True) as connection:
+        assert connection.execute(
+            "SELECT payload FROM jobs WHERE id=?", (job["job_id"],)
+        ).fetchone()[0] == before
 
 
 def test_files_published_before_crash_are_verified_and_reused(setup, tmp_path):

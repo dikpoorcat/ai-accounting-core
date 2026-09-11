@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from ai_accounting.kernel import backup, runtime
-from ai_accounting.kernel.contracts import Registry
 from ai_accounting.kernel.schema import initialize
+from ai_accounting.kernel.service import default_registry
 
 TAXPAYER = "91330100MA00000001"
 COMPANY = "company-a"
@@ -36,7 +36,7 @@ def company(tmp_path: Path) -> Path:
     path = tmp_path / "company.sqlite"
     connection = runtime.connect(path)
     try:
-        initialize(connection, Registry(), COMPANY, TAXPAYER, DATABASE)
+        initialize(connection, default_registry(), COMPANY, TAXPAYER, DATABASE)
     finally:
         connection.close()
     add_evidence(path, b"original invoice bytes")
@@ -128,9 +128,9 @@ def test_backup_pins_snapshot_before_concurrent_evidence_is_received(
     original = backup._identity
     received = False
 
-    def identity_then_receive(connection):
+    def identity_then_receive(connection, **options):
         nonlocal received
-        result = original(connection)
+        result = original(connection, **options)
         if not received:
             received = True
             add_evidence(company, b"received after backup snapshot")

@@ -38,8 +38,10 @@ export interface BriefComponent {
 }
 
 export interface BriefVoucher {
+  calculation_id: string;
+  recognition?: { precision: "month" | "day"; period: string; date: string | null; label: string };
   number: string;
-  date: string;
+  date: string | null;
   type: string;
   state: string;
   summary: string;
@@ -53,7 +55,8 @@ export interface BriefVoucher {
 }
 
 export interface BriefActivityRow {
-  date: string;
+  date: string | null;
+  recognition?: { precision: "month" | "day"; period: string; date: string | null; label: string };
   reference: string;
   title: string;
   subject: string;
@@ -71,12 +74,13 @@ export interface BriefActivityGroup {
   key: string;
   label: string;
   event_count: number;
+  loaded_count?: number;
   type_counts: Array<{ label: string; count: number }>;
   rows: BriefActivityRow[];
 }
 
 export interface BriefBankRow {
-  date: string;
+  date: string | null;
   party: string;
   memo: string;
   direction: "inflow" | "outflow";
@@ -220,6 +224,13 @@ export interface BriefValidation {
 }
 
 export interface BriefData {
+  management_commentary_details?: {
+    status: "frozen" | "current" | "stale" | "not_provided";
+    current: { text: string; revision: number } | null;
+    frozen: { text: string; revision: number } | null;
+    latest: { text: string; revision: number } | null;
+    supplements: { id: string; text: string; revision: number; supplementary: boolean }[];
+  };
   material_completeness: {
     closed: boolean;
     satisfied: boolean;
@@ -241,6 +252,7 @@ export interface BriefData {
   total_debit_fen: string;
   total_credit_fen: string;
   vouchers: BriefVoucher[];
+  voucher_page: { has_more: boolean; next_after_number: number | null; total_count: number };
   activity_groups: BriefActivityGroup[];
   position: BriefPosition;
   cash: BriefCash;
@@ -270,7 +282,7 @@ export interface BriefResponse {
   data: BriefData | null;
 }
 
-export function fetchBrief(period: string | null, signal?: AbortSignal) {
-  const query = period ? `?period=${encodeURIComponent(period)}` : "";
-  return requestJson<BriefResponse>(`/api/dashboard/brief${query}`, { signal });
+export function fetchBrief(period: string | null, signal?: AbortSignal, afterNumber = 0) {
+  const query = new URLSearchParams({ after_number: String(afterNumber), limit: "100", ...(period ? { period } : {}) });
+  return requestJson<BriefResponse>(`/api/dashboard/brief?${query}`, { signal });
 }

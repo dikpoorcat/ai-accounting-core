@@ -22,7 +22,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .contracts import KernelError
 from .runtime import connect, require_supported_runtime
+from .versions import verify_schema
 
 FORMAT = "ai-accounting-kernel/company-backup"
 FORMAT_VERSION = 1
@@ -30,7 +32,6 @@ DATABASE_MEMBER = "company.sqlite"
 MANIFEST_MEMBER = "manifest.json"
 MAX_MANIFEST_BYTES = 64 * 1024
 DEFAULT_MAX_DATABASE_BYTES = 32 * 1024**3
-SUPPORTED_SCHEMA_VERSION = 1
 
 
 class BackupError(ValueError):
@@ -46,7 +47,11 @@ def _digest(path: Path) -> str:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def _identity(connection: sqlite3.Connection) -> dict[str, Any]:
+def _identity(connection: sqlite3.Connection, *, _registry=None) -> dict[str, Any]:
+    try:
+        verify_schema(connection, registry=_registry, allow_previous=True)
+    except KernelError as exc:
+        raise BackupError(str(exc)) from exc
     tables = {row[1]: row for row in connection.execute("PRAGMA table_list")}
     for name in ("identity", "evidence", "period_close"):
         if name not in tables or tables[name][2] != "table" or tables[name][5] != 1:
@@ -58,8 +63,6 @@ def _identity(connection: sqlite3.Connection) -> dict[str, Any]:
         raise BackupError("Company identity must contain exactly one singleton row")
     identity = dict(rows[0])
     identity.pop("id")
-    if identity["schema_version"] != SUPPORTED_SCHEMA_VERSION:
-        raise BackupError("Unsupported company schema version")
     if any(
         not isinstance(identity[field], str) or not identity[field].strip()
         for field in ("company_id", "taxpayer_id", "database_id")
@@ -90,6 +93,7 @@ def verify_file(
     expected_company_id: str | None = None,
     expected_taxpayer_id: str | None = None,
     expected_database_id: str | None = None,
+    _registry=None,
 ) -> dict[str, Any]:
     """Verify SQLite structure, foreign keys, company identity and all evidence."""
     database = Path(path).resolve()
@@ -99,7 +103,7 @@ def verify_file(
     try:
         connection = connect(database, read_only=True)
         connection.execute("BEGIN")
-        identity = _identity(connection)
+        identity = _identity(connection, _registry=_registry)
         _check_identity(
             identity,
             expected_company_id=expected_company_id,
@@ -159,6 +163,7 @@ def backup_to_file(
     expected_taxpayer_id: str | None = None,
     expected_database_id: str | None = None,
     timeout_seconds: float = 120.0,
+    _registry=None,
 ) -> dict[str, Any]:
     """Create and verify one standalone snapshot; the target must not exist."""
     require_supported_runtime()
@@ -181,7 +186,7 @@ def backup_to_file(
         destination = sqlite3.connect(temporary, isolation_level=None)
         try:
             source_connection.execute("BEGIN")
-            _check_identity(_identity(source_connection), **identity_checks)
+            _check_identity(_identity(source_connection, _registry=_registry), **identity_checks)
             destination.execute("PRAGMA synchronous=FULL")
             started = time.monotonic()
 
@@ -197,7 +202,7 @@ def backup_to_file(
             destination.close()
             source_connection.rollback()
             source_connection.close()
-        result = verify_file(temporary, **identity_checks)
+        result = verify_file(temporary, _registry=_registry, **identity_checks)
         _sync_file(temporary)
         try:
             _publish_new(temporary, target_path)
@@ -282,6 +287,7 @@ def verify_portable(
     expected_taxpayer_id: str | None = None,
     expected_database_id: str | None = None,
     max_database_bytes: int = DEFAULT_MAX_DATABASE_BYTES,
+    _registry=None,
 ) -> dict[str, Any]:
     """Verify member paths, archive hashes, company identity and database contents."""
     require_supported_runtime()
@@ -290,6 +296,7 @@ def verify_portable(
             Path(path).resolve(),
             Path(directory),
             max_database_bytes=max_database_bytes,
+            _registry=_registry,
             expected_company_id=expected_company_id,
             expected_taxpayer_id=expected_taxpayer_id,
             expected_database_id=expected_database_id,
@@ -303,6 +310,7 @@ def create_portable(
     *,
     rollover: bool = False,
     request_id: str | None = None,
+    _registry=None,
 ) -> dict[str, Any]:
     """Publish a verified company ZIP; rollover retains a verified previous ZIP.
 
@@ -313,12 +321,13 @@ def create_portable(
     output.mkdir(parents=True, exist_ok=True)
     source_connection = connect(source, read_only=True)
     try:
-        identity = _identity(source_connection)
+        identity = _identity(source_connection, _registry=_registry)
     finally:
         source_connection.close()
     checks = {
         f"expected_{key}": identity[key] for key in ("company_id", "taxpayer_id", "database_id")
     }
+    checks["_registry"] = _registry
     final = output / _taxpayer_filename(identity["taxpayer_id"])
     existing = verify_portable(final, **checks) if final.exists() else None
     if existing is not None:
@@ -369,6 +378,7 @@ def restore_portable(
     expected_taxpayer_id: str | None = None,
     expected_database_id: str | None = None,
     max_database_bytes: int = DEFAULT_MAX_DATABASE_BYTES,
+    _registry=None,
 ) -> dict[str, Any]:
     """Restore into an absent company file, never merge or replace an old file."""
     require_supported_runtime()
@@ -385,6 +395,7 @@ def restore_portable(
             Path(archive).resolve(),
             Path(temporary),
             max_database_bytes=max_database_bytes,
+            _registry=_registry,
             expected_company_id=expected_company_id,
             expected_taxpayer_id=expected_taxpayer_id,
             expected_database_id=expected_database_id,
@@ -435,7 +446,7 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1) -> list[dict[str, A
     Backup failure changes no accounting state and never undoes a closed month.
     Each job is attempted at most once in this invocation.
     """
-    if limit < 1:
+    if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError("limit must be positive")
     path = Path(database).resolve()
     if not path.is_file():
@@ -445,8 +456,9 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1) -> list[dict[str, A
     with _worker_lock(path) as acquired:
         if not acquired:
             return outcomes
-        connection = connect(path)
+        connection = connect(path, validator=verify_schema)
         try:
+            verify_schema(connection)
             for _ in range(limit):
                 connection.execute("BEGIN IMMEDIATE")
                 try:
@@ -455,7 +467,7 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1) -> list[dict[str, A
                     )
                     job = connection.execute(
                         "SELECT id,payload FROM jobs WHERE kind='portable_backup' "
-                        "AND status IN ('pending','running','failed') "
+                        "AND status IN ('pending','running','failed') AND attempts<3 "
                         f"{exclude} ORDER BY attempts,id LIMIT 1",
                         attempted,
                     ).fetchone()

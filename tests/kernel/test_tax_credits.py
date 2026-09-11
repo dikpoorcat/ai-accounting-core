@@ -4,6 +4,7 @@ import json
 from datetime import date
 
 import pytest
+from material_fixture import supporting_text
 from pydantic import ValidationError
 from test_business_domains import surtax_policy, vat_policy
 
@@ -32,6 +33,8 @@ class Company:
             "decision",
             request_id=self.request(),
         )["digest"]
+        supporting_text(self.engine, self.confirmation)
+        supporting_text(self.engine, self.filing)
 
     def request(self):
         self.counter += 1

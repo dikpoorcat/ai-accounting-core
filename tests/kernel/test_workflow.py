@@ -44,7 +44,89 @@ def obligation(kind="individual_income_tax"):
     )
 
 
-def test_completion_reopens_on_new_calculation_and_does_not_invent_date(tmp_path):
+def confirmation_clock(monkeypatch, engine, timestamp):
+    """Fix only SQLite's audit clock in synthetic confirmation transactions."""
+
+    def fixed_clock(stage, connection):
+        if stage == "published":
+            # Test-only UDF defaults require this on the isolated connection;
+            # production keeps trusted_schema disabled and SQLite's own clock.
+            connection.execute("PRAGMA trusted_schema=ON")
+            connection.create_function("strftime", 2, lambda fmt, when: timestamp)
+
+    monkeypatch.setattr(engine, "fault", fixed_clock)
+
+
+def test_external_unfiled_work_is_a_todo_and_closed_steps_stay_final(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(obligation(), "unfiled")
+    service = workflow.Workflow(company.engine)
+    before = service.query("2026-01", as_of="2026-02-25")
+    assert before["obligations"][0]["status"] == "due"
+    company.close("2026-01")
+    after = service.query("2026-01", as_of="2026-03-25")
+    assert all(
+        item["status"] == "closed" and not item["fact_issues"] for item in after["steps"][:6]
+    )
+    assert not after["fact_issues"]
+
+
+def test_company_scope_generates_versioned_period_obligations_without_inventing_deadlines(tmp_path):
+    company = setup_company(tmp_path)
+    company.save(
+        workflow.FilingCalendarPolicy(
+            period="2026-01",
+            version="test-calendar-2026",
+            effective_from="2026-01",
+            effective_to="2026-12",
+            primary_source_url="https://www.chinatax.gov.cn/test-calendar",
+            rules=tuple(
+                workflow.FilingRule(
+                    obligation_kind=kind,
+                    cycle="monthly"
+                    if kind in workflow.MONTHLY_PAYROLL_OBLIGATIONS
+                    else "quarterly"
+                    if kind == "quarterly_tax_and_reports"
+                    else "annual",
+                )
+                for kind in workflow.SOURCES
+            ),
+        ),
+        "calendar",
+    )
+    company.save(
+        workflow.CompanyWorkflowScope(
+            period="2026-01",
+            established_period="2026-01",
+            effective_from="2026-01",
+            effective_to="2026-12",
+            calendar_policy_id="calendar",
+            applicability={
+                kind: "not_applicable" if kind == "contribution_declaration" else "required"
+                for kind in workflow.SOURCES
+            },
+        ),
+        "scope",
+    )
+    service = workflow.Workflow(company.engine)
+    plan = service.prepare_obligations("2026-02")
+    assert plan["status"] == "ready"
+    assert len(plan["candidates"]) == 5
+    assert all(item["data"]["due_date"] is None for item in plan["candidates"])
+    quarter = next(
+        item["data"]
+        for item in plan["candidates"]
+        if item["data"]["obligation_kind"] == "quarterly_tax_and_reports"
+    )
+    assert (quarter["start_period"], quarter["end_period"]) == ("2026-01", "2026-03")
+    result = service.confirm_obligations(
+        "2026-02", preview_digest=plan["digest"], request_id=company.request()
+    )
+    assert result["source_fact_ids"] == plan["source_fact_ids"]
+    assert len(service.prepare_obligations("2026-02")["reused"]) == 5
+
+
+def test_completion_reopens_on_new_calculation_and_does_not_invent_date(tmp_path, monkeypatch):
     company = setup_company(tmp_path)
     for fact, subject in (
         (profile(), "profile"),
@@ -73,8 +155,10 @@ def test_completion_reopens_on_new_calculation_and_does_not_invent_date(tmp_path
             }
         )
     )
-    company.save(completion, "completion")
-    company.publish("completion")
+    with monkeypatch.context() as clock:
+        confirmation_clock(clock, company.engine, "2026-02-20T10:00:00.000Z")
+        company.save(completion, "completion")
+        company.publish("completion")
     assert service.query("2026-02", as_of="2026-03-01")["obligations"][0]["status"] == "completed"
     assert company.current("completion", "external_completion").values["completion_date"] is None
     changed = payroll().model_copy(update={"accounting_gross_salary_fen": 1100000})
@@ -238,7 +322,8 @@ def test_monthly_obligation_recorded_later_still_requires_actual_completion(tmp_
     company = setup_company(tmp_path)
     company.save(obligation().model_copy(update={"period": "2026-02"}), "late-obligation")
     registry = company.engine.store.registry
-    reads, evaluate = registry.readiness["external_monthly_declarations"]
+    reads, evaluate = workflow.required_reads, workflow.required_work
+    assert "external_monthly_declarations" not in registry.readiness
     from ai_accounting.kernel.contracts import Context
     from ai_accounting.kernel.types import YearMonth
 
@@ -472,7 +557,7 @@ def test_confirmed_submission_preserves_source_and_cannot_silently_lose_it(tmp_p
 
 
 @pytest.fixture
-def submitted_payroll(tmp_path):
+def submitted_payroll(tmp_path, monkeypatch):
     company = setup_company(tmp_path)
     for fact, subject in (
         (profile(effective_to="2026-01"), "profile"),
@@ -485,11 +570,13 @@ def submitted_payroll(tmp_path):
         company.save(fact, subject)
     company.publish("january")
     basis = workflow.Workflow(company.engine).obligation_basis("obligation")
-    company.save(
-        completion_from_basis(basis, completion_date=None, date_status="not_established"),
-        "completion",
-    )
-    company.publish("completion")
+    with monkeypatch.context() as clock:
+        confirmation_clock(clock, company.engine, "2026-02-20T10:00:00.000Z")
+        company.save(
+            completion_from_basis(basis, completion_date=None, date_status="not_established"),
+            "completion",
+        )
+        company.publish("completion")
     return company
 
 
@@ -620,7 +707,7 @@ def test_quarter_review_excludes_monthly_submission_revisions_from_accounting_ba
         != old_monthly.result_digest
     )
     assert all(
-        item["status"] == "completed"
+        item["status"] in {"completed", "closed"}
         for item in service.query("2026-01", as_of="2026-03-01")["obligations"]
     )
     assert company.current("quarter-completion", "external_completion").values[

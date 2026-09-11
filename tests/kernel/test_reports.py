@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from material_fixture import supporting_text
 from openpyxl import load_workbook
 
 from ai_accounting.kernel.contracts import KernelError
@@ -27,6 +28,7 @@ def book(tmp_path):
     proof = engine.register_evidence(
         b"fictional report evidence", "text/plain", "proof", request_id="proof"
     )["digest"]
+    supporting_text(engine, proof)
     counter = itertools.count()
 
     def save(kind, subject, data, revision=0):

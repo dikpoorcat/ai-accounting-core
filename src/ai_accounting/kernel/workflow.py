@@ -4,13 +4,16 @@ Deadlines and applicability are confirmed facts, never inferred from an empty
 database. Recalculation cannot rewrite the fact that an external filing occurred.
 """
 
-from typing import ClassVar, Literal
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from .contracts import Context, Fact, KernelError, NeedsInformation, Outcome, Read
+from .domains.payroll import PAYROLL_KINDS
 from .periods import Periods
-from .types import ActualDate, YearMonth
+from .types import ActualDate, YearMonth, digest
 
 ObligationKind = Literal[
     "contribution_declaration",
@@ -20,8 +23,14 @@ ObligationKind = Literal[
     "annual_business_report",
 ]
 SOURCES = {
-    "contribution_declaration": ("payroll",),
-    "individual_income_tax": ("payroll", "annual_bonus", "labor"),
+    "contribution_declaration": PAYROLL_KINDS,
+    "individual_income_tax": (
+        *PAYROLL_KINDS,
+        "annual_bonus",
+        "labor",
+        "labor_accrual",
+        "labor_project_cost",
+    ),
     # Quarter completion requires prior close, but accepts the explicitly selected
     # current calculations. These can differ from the old frozen close manifest
     # after a later correction; basis_current reports that distinction honestly.
@@ -30,7 +39,64 @@ SOURCES = {
     "annual_business_report": (),
 }
 MONTHLY_PAYROLL_OBLIGATIONS = {"contribution_declaration", "individual_income_tax"}
-NON_ACCOUNTING_CALCULATIONS = {"external_completion"}
+NON_ACCOUNTING_CALCULATIONS = {"external_completion", "payroll_disbursement_basis"}
+EXTERNAL_WORKFLOW_KINDS = frozenset(NON_ACCOUNTING_CALCULATIONS)
+
+
+class FilingRule(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    obligation_kind: ObligationKind
+    cycle: Literal["monthly", "quarterly", "annual"]
+
+
+class FilingDeadline(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    obligation_kind: ObligationKind
+    end_period: YearMonth
+    due_date: ActualDate
+
+
+class FilingCalendarPolicy(Fact):
+    """Explicit scope/deadline rules, not an inferred tax filing calendar."""
+
+    kind: ClassVar[str] = "filing_calendar_policy_v2"
+    lane: ClassVar[str] = "management"
+    version: str = Field(min_length=1)
+    effective_from: YearMonth
+    effective_to: YearMonth
+    primary_source_url: Annotated[str, Field(pattern=r"^https://[^/\s]+/[^\s]*$")]
+    rules: tuple[FilingRule, ...]
+    deadlines: tuple[FilingDeadline, ...] = ()
+
+    @model_validator(mode="after")
+    def rule_identity(self):
+        if self.effective_from > self.effective_to:
+            raise ValueError("invalid calendar validity")
+        kinds = [rule.obligation_kind for rule in self.rules]
+        keys = [(item.obligation_kind, item.end_period) for item in self.deadlines]
+        if len(kinds) != len(set(kinds)) or len(keys) != len(set(keys)):
+            raise ValueError("duplicate filing rule or deadline")
+        if any(item.obligation_kind not in kinds for item in self.deadlines):
+            raise ValueError("deadline requires an explicit rule")
+        return self
+
+
+class CompanyWorkflowScope(Fact):
+    kind: ClassVar[str] = "company_workflow_scope_v2"
+    lane: ClassVar[str] = "management"
+    established_period: YearMonth
+    effective_from: YearMonth
+    effective_to: YearMonth
+    calendar_policy_id: str = Field(min_length=1)
+    applicability: dict[ObligationKind, Literal["required", "not_applicable"]]
+
+    @model_validator(mode="after")
+    def explicit_scope(self):
+        if self.established_period > self.effective_from or self.effective_from > self.effective_to:
+            raise ValueError("invalid company coverage")
+        if set(self.applicability) != set(SOURCES):
+            raise ValueError("each external work category needs explicit applicability")
+        return self
 
 
 def _basis_reads(kind, start, end):
@@ -47,6 +113,7 @@ def _basis_reads(kind, start, end):
 
 class ExternalObligation(Fact):
     kind: ClassVar[str] = "external_obligation"
+    lane: ClassVar[str] = "management"
     identity_fields: ClassVar[tuple[str, ...]] = ("obligation_kind", "start_period", "end_period")
     obligation_kind: ObligationKind
     start_period: YearMonth
@@ -88,6 +155,7 @@ class AcceptedCalculation(BaseModel):
 
 class ExternalCompletion(Fact):
     kind: ClassVar[str] = "external_completion"
+    lane: ClassVar[str] = "management"
     immutable: ClassVar[bool] = True
     identity_fields: ClassVar[tuple[str, ...]] = ("obligation_id",)
     obligation_id: str = Field(min_length=1)
@@ -215,6 +283,11 @@ def _accepted_history(fact, select):
                 and item.kind not in SOURCES[fact.obligation_kind]
             )
             or not item.result_digest
+            or (
+                fact.obligation_kind == "individual_income_tax"
+                and item.kind in PAYROLL_KINDS
+                and item.values.get("tax_status") == "not_started"
+            )
         ):
             raise KernelError("invalid_accepted_calculation", "接受版本的业务身份、类型或月份不符")
         accepted.append(item)
@@ -266,13 +339,23 @@ def _basis_state(obligation, select):
                         "message": "当前业务事实尚未形成对应的正式计算",
                     }
                 )
-    return tuple(calculations[subject] for subject in sorted(calculations)), issues
+    return tuple(
+        calculations[subject]
+        for subject in sorted(calculations)
+        if not (
+            obligation.obligation_kind == "individual_income_tax"
+            and calculations[subject].kind in PAYROLL_KINDS
+            and calculations[subject].values.get("tax_status") == "not_started"
+        )
+    ), issues
 
 
 def _payroll_population_issues(profiles, facts, start, end):
     issues = []
     payroll_months = {
-        (item.fact.employee_id, item.fact.period) for item in facts if item.fact.kind == "payroll"
+        (item.fact.employee_id, item.fact.period)
+        for item in facts
+        if item.fact.kind in PAYROLL_KINDS
     }
     missing = set()
     for version in profiles:
@@ -303,14 +386,21 @@ def _payroll_population_issues(profiles, facts, start, end):
 def payroll_required_reads(period):
     return (
         Read("fact", "payroll_profile", "*"),
-        Read("fact", "payroll", str(period)),
-        Read("calculation", "payroll", str(period)),
+        *(
+            Read(source, kind, str(period))
+            for kind in PAYROLL_KINDS
+            for source in ("fact", "calculation")
+        ),
     )
 
 
 def payroll_required_work(period, context):
-    facts = context.facts("payroll", str(period))
-    calculations = {item.subject_id: item for item in context.calculations("payroll", str(period))}
+    facts = tuple(item for kind in PAYROLL_KINDS for item in context.facts(kind, str(period)))
+    calculations = {
+        item.subject_id: item
+        for kind in PAYROLL_KINDS
+        for item in context.calculations(kind, str(period))
+    }
     issues = _payroll_population_issues(
         context.facts("payroll_profile", "*"), facts, period, period
     )
@@ -349,10 +439,59 @@ def _matches_basis(obligation_version, completion_fact, completion, basis, issue
     ) == tuple(_reviewed_basis(basis))
 
 
+def _completion_confirmation_times(connection, fact_ids):
+    """Read immutable confirmation metadata without adding it to business calculation.
+
+    A saved fact has one confirmation audit, including when saved in a batch or
+    with an actor envelope. Replays reuse that fact and amendments create a new
+    fact ID. Walk the audit primary key backwards and stop once all are found.
+    """
+    missing, found = set(fact_ids), {}
+    if not missing:
+        return found
+    rows = connection.execute(
+        "SELECT action,payload,created_at FROM audit WHERE action IN "
+        "('confirm_fact','confirm_facts','recording_correction') ORDER BY id DESC"
+    )
+    try:
+        for row in rows:
+            payload = json.loads(row["payload"])
+            result = payload.get("result", payload)
+            entries = result.get("results", ()) if row["action"] == "confirm_facts" else (result,)
+            for entry in entries:
+                fact_id = entry.get("fact_id")
+                if fact_id in missing:
+                    found[fact_id] = row["created_at"]
+                    missing.remove(fact_id)
+            if not missing:
+                break
+    finally:
+        rows.close()
+    return found
+
+
+def _completion_known_as_of(completion_date, confirmed_at, as_of):
+    if completion_date is not None:
+        return completion_date <= as_of
+    if confirmed_at is None:
+        return False
+    try:
+        confirmed = datetime.fromisoformat(confirmed_at)
+    except ValueError:
+        return False
+    if confirmed.tzinfo is None:
+        return False
+    # as_of is a Chinese accounting calendar day (inclusive), not an instant.
+    # Keep its boundary stable across restore hosts; never use OS local time.
+    confirmed_day = confirmed.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    return confirmed_day <= as_of
+
+
 def register(registry):
+    registry.register(CompanyWorkflowScope)
+    registry.register(FilingCalendarPolicy)
     registry.register(ExternalObligation)
     registry.register(ExternalCompletion, calculate_completion)
-    registry.register_readiness("external_monthly_declarations", required_reads, required_work)
     registry.register_readiness("payroll_presence", payroll_required_reads, payroll_required_work)
 
 
@@ -364,7 +503,7 @@ def required_reads(period):
         Read("fact", "payroll_profile", "*"),
         *(
             Read(source, kind, "*")
-            for kind in ("payroll", "annual_bonus", "labor")
+            for kind in SOURCES["individual_income_tax"]
             for source in ("fact", "calculation")
         ),
     )
@@ -421,6 +560,155 @@ def required_work(period, context):
 class Workflow:
     def __init__(self, engine):
         self.engine, self.store = engine, engine.store
+
+    def prepare_obligations(self, period: str):
+        """Return current-month and current quarter/year facts for explicit confirmation.
+
+        A missing official deadline stays unknown. Existing manual declarations
+        are reused by meaning; conflicting scope is returned for review.
+        """
+        month = YearMonth(period)
+        with self.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            scopes = [
+                item
+                for item in self.store.select(
+                    connection, Read("fact", CompanyWorkflowScope.kind, "*")
+                )
+                if item.fact.effective_from <= month <= item.fact.effective_to
+            ]
+            if len(scopes) != 1:
+                raise NeedsInformation(
+                    "company_workflow_scope", "需要唯一覆盖本月的明确公司适用范围"
+                )
+            scope = scopes[0]
+            policies = self.store.select(
+                connection,
+                Read("fact", FilingCalendarPolicy.kind, "@" + scope.fact.calendar_policy_id),
+            )
+            if (
+                len(policies) != 1
+                or not policies[0].fact.effective_from <= month <= policies[0].fact.effective_to
+            ):
+                raise NeedsInformation("filing_calendar_policy", "需要覆盖本月的版本化官方规则")
+            policy = policies[0]
+            rules = {rule.obligation_kind: rule for rule in policy.fact.rules}
+            if set(rules) != set(SOURCES):
+                raise NeedsInformation(
+                    "filing_calendar_policy.rules", "需明确全部五类事项的周期规则"
+                )
+            deadlines = {
+                (item.obligation_kind, item.end_period): item.due_date
+                for item in policy.fact.deadlines
+            }
+            existing = self.store.select(connection, Read("fact", ExternalObligation.kind, "*"))
+            candidates, reused, issues = [], [], []
+            for kind in SOURCES:
+                width = {"monthly": 1, "quarterly": 3, "annual": 12}[rules[kind].cycle]
+                start = YearMonth.from_ordinal(month.ordinal - (int(month[5:]) - 1) % width)
+                end = YearMonth.from_ordinal(start.ordinal + width - 1)
+                start = max(start, scope.fact.established_period)
+                if (
+                    start < scope.fact.effective_from
+                    or end > scope.fact.effective_to
+                    or start < policy.fact.effective_from
+                    or end > policy.fact.effective_to
+                ):
+                    issues.append(
+                        {
+                            "field": "coverage",
+                            "obligation_kind": kind,
+                            "message": "公司适用范围与规则须覆盖整个申报周期，不能推定其余月份",
+                        }
+                    )
+                    continue
+                data = ExternalObligation(
+                    period=month,
+                    obligation_kind=kind,
+                    start_period=start,
+                    end_period=end,
+                    due_date=deadlines.get((kind, end)),
+                    applicability_confirmed=True,
+                    applicability=scope.fact.applicability[kind],
+                ).model_dump(mode="json")
+                matching = [
+                    item
+                    for item in existing
+                    if item.fact.obligation_kind == kind
+                    and item.fact.start_period == start
+                    and item.fact.end_period == end
+                ]
+                if matching:
+                    if (
+                        len(matching) != 1
+                        or matching[0].fact.applicability != data["applicability"]
+                        or matching[0].fact.due_date != data["due_date"]
+                    ):
+                        issues.append(
+                            {
+                                "field": "external_obligation",
+                                "obligation_kind": kind,
+                                "message": "已有义务与当前明确范围或期限冲突，需显式复核",
+                            }
+                        )
+                    else:
+                        reused.append(matching[0].subject_id)
+                    continue
+                candidates.append(
+                    {
+                        "kind": ExternalObligation.kind,
+                        "subject_id": f"external:{kind}:{start}:{end}",
+                        "data": data,
+                        "evidence": sorted(set(scope.evidence + policy.evidence)),
+                        "expected_revision": 0,
+                    }
+                )
+            result = {
+                "period": month,
+                "candidates": candidates,
+                "reused": reused,
+                "fact_issues": issues,
+                "source_fact_ids": [scope.id, policy.id],
+                "policy_version": policy.fact.version,
+                "primary_source_url": policy.fact.primary_source_url,
+                "epochs": {"management": self.store.epochs(connection)["management"]},
+            }
+            return {
+                **result,
+                "digest": digest(result).hex(),
+                "status": "needs_information" if issues else "ready",
+            }
+
+    def confirm_obligations(self, period: str, *, preview_digest: str, request_id: str):
+        request_hash = digest(["workflow_obligations", period, preview_digest])
+        cached = self.engine._cached(request_id, request_hash)
+        if cached is not None:
+            return cached
+        plan = self.prepare_obligations(period)
+        if plan["digest"] != preview_digest:
+            raise KernelError("preview_expired", "公司范围或规则已变化，请重新准备")
+        if plan["fact_issues"]:
+            raise KernelError(
+                "needs_information", "申报周期事实尚不完整", fact_issues=plan["fact_issues"]
+            )
+        registrations = [self.engine._registration(False, **item)[1] for item in plan["candidates"]]
+
+        def operation(connection):
+            return {
+                "status": "confirmed",
+                "source_fact_ids": plan["source_fact_ids"],
+                "results": [save(connection) for save in registrations],
+                "reused": plan["reused"],
+            }
+
+        return self.engine._write(
+            request_id,
+            request_hash,
+            plan["epochs"],
+            ("management",),
+            "workflow_obligations",
+            operation,
+        )
 
     def obligation_basis(self, obligation_id):
         with self.store.connection(read_only=True) as connection:
@@ -480,6 +768,17 @@ class Workflow:
                 row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")
             }
             facts = self.store.select(connection, Read("fact", "external_obligation", "*"))
+            completion_calculations = self.store.select(
+                connection, Read("calculation", "external_completion", "*")
+            )
+            confirmation_times = _completion_confirmation_times(
+                connection,
+                (
+                    item.fact_id
+                    for item in completion_calculations
+                    if item.values["completion_date"] is None
+                ),
+            )
             obligations = []
             for version in facts:
                 fact = version.fact
@@ -500,7 +799,7 @@ class Workflow:
                         Read("fact", "external_completion", "completion:" + version.subject_id),
                     )
                 }
-                current = [
+                matching = [
                     item
                     for item in completions
                     if item.subject_id not in pending
@@ -508,12 +807,14 @@ class Workflow:
                     and _matches_basis(
                         version, completion_facts[item.subject_id], item, basis, basis_issues
                     )
-                    and (
-                        completion_facts[item.subject_id].fact.completion_date <= day
-                        if completion_facts[item.subject_id].fact.completion_date is not None
-                        else completion_facts[item.subject_id].fact.period < day.period
-                    )
                 ]
+                known_as_of = {
+                    item.id: _completion_known_as_of(
+                        item.values["completion_date"], confirmation_times.get(item.fact_id), day
+                    )
+                    for item in completions
+                }
+                current = [item for item in matching if known_as_of[item.id]]
                 status = (
                     "not_applicable"
                     if fact.applicability == "not_applicable"
@@ -527,6 +828,12 @@ class Workflow:
                         )
                     )
                 )
+                if (
+                    closed
+                    and fact.obligation_kind in MONTHLY_PAYROLL_OBLIGATIONS
+                    and fact.end_period <= month
+                ):
+                    status = "closed"
                 obligations.append(
                     {
                         "id": version.subject_id,
@@ -535,6 +842,7 @@ class Workflow:
                         "end_period": fact.end_period,
                         "due_date": fact.due_date,
                         "status": status,
+                        "basis_review_required": any(known_as_of.values()) and not current,
                         "completion_calculations": sorted(item.id for item in current),
                         "basis_issues": basis_issues,
                         "recorded_completions": [
@@ -542,7 +850,9 @@ class Workflow:
                                 "calculation_id": item.id,
                                 "status": item.values["completion_status"],
                                 "completion_date": item.values["completion_date"],
-                                "basis_current": item in current,
+                                "basis_current": item in matching,
+                                "known_as_of": known_as_of[item.id],
+                                "confirmation_recorded_at": confirmation_times.get(item.fact_id),
                             }
                             for item in completions
                         ],
@@ -572,7 +882,7 @@ class Workflow:
                 related = [
                     issue
                     for issue in issues
-                    if category and issue["field"] == f"materials.{category}"
+                    if category and issue["field"] in {"materials", f"materials.{category}"}
                 ]
                 if number in {1, 2, 5}:
                     relevant_kinds = {
@@ -616,7 +926,8 @@ class Workflow:
                             }
                         )
                     elif any(
-                        item["status"] not in {"completed", "not_applicable"} for item in matching
+                        item["status"] not in {"completed", "not_applicable", "closed"}
+                        for item in matching
                     ):
                         related.append(
                             {
@@ -639,7 +950,7 @@ class Workflow:
                         "number": number,
                         "label": label,
                         "status": "closed"
-                        if closed and number == 6
+                        if closed
                         else (
                             "needs_information"
                             if related
@@ -649,7 +960,7 @@ class Workflow:
                                 else ("completed" if declaration_kind else "ready")
                             )
                         ),
-                        "fact_issues": related,
+                        "fact_issues": [] if closed else related,
                     }
                 )
             for number, kind in (

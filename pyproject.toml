@@ -7,20 +7,17 @@ name = "ai-accounting-core"
 version = "0.1.0"
 description = "Deterministic accounting kernel for Chinese small-scale VAT taxpayers"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 license = { text = "Proprietary" }
 authors = [{ name = "ai-accounting-core contributors" }]
 dependencies = [
-  "alembic>=1.16,<2",
   "argon2-cffi>=25.1,<26",
   "mcp>=1.13,<2",
   "openpyxl>=3.1,<4",
-  "psycopg[binary]>=3.2,<4",
   "pydantic>=2.11,<2.13",
-  "pydantic-settings>=2.10,<3",
-  "sqlalchemy>=2.0.41,<3",
   "xlwt>=1.3,<2",
   "xlrd>=2.0.2,<3",
+  "pypdf>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -31,35 +28,40 @@ dev = [
   "pytest>=8.4,<10",
   "pytest-cov>=6.2,<8",
   "ruff>=0.12,<1",
-  "testcontainers[postgres]>=4.10,<5",
+  "jsonschema>=4.25,<5",
+  "pyyaml>=6,<7",
 ]
 
 [project.scripts]
 finance-local = "ai_accounting.kernel.cli:main"
-finance-mcp = "ai_accounting.mcp_server:main"
-finance-bootstrap = "ai_accounting.bootstrap:main"
-finance-login = "ai_accounting.identity_cli:main"
-finance-backup = "ai_accounting.backup_cli:main"
-finance-dashboard = "ai_accounting.dashboard_server:main"
-finance-company = "ai_accounting.company_cli:main"
-finance-replay = "ai_accounting.replay_cli:main"
-finance-mybank = "ai_accounting.mybank_export:main"
 
 [tool.uv]
 # Keep local and CI lock-file resolution on the same audited uv release.
 required-version = "==0.12.3"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ai_accounting"]
+only-include = [
+  "src/ai_accounting/__init__.py",
+  "src/ai_accounting/kernel",
+  "src/ai_accounting/payroll",
+  "src/ai_accounting/bank_statements.py",
+  "src/ai_accounting/bank_statement_schemas.py",
+  "src/ai_accounting/borrowings.py",
+  "src/ai_accounting/fixed_assets.py",
+  "src/ai_accounting/intangible_assets.py",
+  "src/ai_accounting/fact_requirements.py",
+  "src/ai_accounting/mybank_export.py",
+  "src/ai_accounting/financial_statement_template.py",
+  "src/ai_accounting/templates/financial_reports",
+  "src/ai_accounting/static/dashboard",
+]
+sources = ["src"]
 artifacts = ["src/ai_accounting/static/dashboard/**"]
+exclude = ["src/ai_accounting/kernel/security/legacy.py"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/kernel", "tests/pure"]
 addopts = "-ra --strict-markers"
-markers = [
-  "postgres: requires a local Docker daemon and validates PostgreSQL behavior",
-  "postgres_current: current dual-baseline and multi-company PostgreSQL 17 gate",
-]
 
 [tool.ruff]
 target-version = "py312"

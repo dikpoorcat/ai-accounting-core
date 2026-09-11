@@ -29,17 +29,24 @@ from ..contracts import (
     Registry,
 )
 from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, sum_fen
+from .money import ACTUAL_PAYMENT_KINDS
 from .taxes import VatPolicy, split_tax_inclusive
 
 Identifier = Annotated[
     str, Field(min_length=1, max_length=150, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ]
-ExpenseClass = Literal["administration", "sales", "service", "bank_fee"]
+ExpenseClass = Literal[
+    "administration", "sales", "service", "bank_fee", "tax_late_fee", "social_contribution_late_fee"
+]
 EXPENSE_ACCOUNTS = {
     "administration": "5602",
     "sales": "5601",
     "service": "5401",
     "bank_fee": "5603",
+    # MOF small-enterprise chart, 5711 (2011 appendix). Preserve the distinct
+    # nature: social-contribution surcharges are not tax late-payment charges.
+    "tax_late_fee": "571103",
+    "social_contribution_late_fee": "571104",
 }
 
 
@@ -201,7 +208,7 @@ class Expense(Fact):
     counterparty_id: Identifier
     amount_fen: PositiveFen
     expense_class: ExpenseClass
-    creditor_kind: Literal["supplier", "employee"]
+    creditor_kind: Literal["supplier", "employee", "individual"]
 
     def scopes(self):
         return (str(self.period), f"party:{self.counterparty_id}")
@@ -209,7 +216,7 @@ class Expense(Fact):
 
 def calculate_expense(version: FactVersion, ctx: Context) -> Outcome:
     fact: Expense = version.fact
-    payable = "2202" if fact.creditor_kind == "supplier" else "224101"
+    payable = {"supplier": "2202", "employee": "224101", "individual": "2241"}[fact.creditor_kind]
     return outcome(
         [
             Line(EXPENSE_ACCOUNTS[fact.expense_class], debit=fact.amount_fen),
@@ -233,7 +240,93 @@ def calculate_expense(version: FactVersion, ctx: Context) -> Outcome:
     )
 
 
+class ExpenseRecovery(Fact):
+    """A confirmed return of a previously recognized cost; cash is recorded separately."""
+
+    kind: ClassVar[str] = "expense_recovery"
+    source_expense_id: Identifier
+    counterparty_id: Identifier
+    amount_fen: PositiveFen
+    recovery_right_confirmed: StrictBool | None = None
+
+    def scopes(self):
+        return (str(self.period), f"expense-return:{self.source_expense_id}")
+
+    def claims(self):
+        return (Claim(f"expense-return:{self.source_expense_id}", self.amount_fen),)
+
+    def reads(self):
+        return (
+            Read("fact", "*", f"@{self.source_expense_id}"),
+            Read("calculation", "*", f"@{self.source_expense_id}"),
+            _through_month("fact", "*", f"expense-return:{self.source_expense_id}", self.period),
+        )
+
+
+def calculate_expense_recovery(version: FactVersion, ctx: Context) -> Outcome:
+    fact: ExpenseRecovery = version.fact
+    if fact.recovery_right_confirmed is not True or not version.evidence:
+        raise NeedsInformation("recovery_right_confirmed", "需要有依据的原费用退回权利确认")
+    original = ctx.one("*", f"@{fact.source_expense_id}")
+    posted = ctx.calculations("*", f"@{fact.source_expense_id}")
+    if len(posted) != 1 or posted[0].fact_id != original.id:
+        raise NeedsInformation("source_expense_id", "需要原费用的当前正式核算结果")
+    if original.fact.kind in {"managed_reserve_bank_expense", "bank_platform_transfer"}:
+        if posted[0].values.get("accounting_treatment") != "reserve_expense":
+            raise KernelError("unsupported_expense_source", "原银行退出尚未确认为费用")
+        original_cost = posted[0].values["managed_reserve_cost_fen"]
+        expense_class = "administration"
+    elif original.fact.kind in {"expense", "platform_expense_confirmation"}:
+        original_cost = (
+            original.fact.amount_fen
+            if original.fact.kind == "expense"
+            else original.fact.confirmed_amount_fen
+        )
+        expense_class = original.fact.expense_class
+    else:
+        raise KernelError("unsupported_expense_source", "费用退回只能引用明确支持的原已确认成本")
+    if original.fact.period > fact.period:
+        raise KernelError("expense_recovery_period", "费用收回月份不能早于原费用确认月份")
+    recoveries = ctx.select(
+        _through_month("fact", "*", f"expense-return:{fact.source_expense_id}", fact.period)
+    )
+    if (
+        sum_fen(
+            claim.amount
+            for item in recoveries
+            for claim in item.fact.claims()
+            if claim.key == f"expense-return:{fact.source_expense_id}"
+        )
+        > original_cost
+    ):
+        raise KernelError("excess_expense_recovery", "累计费用退回不能超过原确认费用")
+    return outcome(
+        [
+            Line("1221", debit=fact.amount_fen),
+            Line(EXPENSE_ACCOUNTS[expense_class], credit=fact.amount_fen),
+        ],
+        {
+            "amount_fen": fact.amount_fen,
+            "expense_class": expense_class,
+            "source_expense_fact_id": original.id,
+        },
+        [
+            obligation(
+                version,
+                amount=fact.amount_fen,
+                account="1221",
+                normal="debit",
+                counterparty=fact.counterparty_id,
+                cashflow="other_operating_receipts",
+            )
+        ],
+    )
+
+
 class ProjectCost(Fact):
+    material_amount_aliases: ClassVar[dict[str, str]] = {
+        "fact.amount_fen": "result.capitalized_fen"
+    }
     kind: ClassVar[str] = "project_cost"
     project_id: Identifier
     supplier_id: Identifier
@@ -285,6 +378,9 @@ class ProjectCostSource(BaseModel):
     amount_fen: PositiveFen
 
 
+PROJECT_COST_KINDS = ("project_cost", "labor_project_cost")
+
+
 def project_cost_reads(sources: tuple[ProjectCostSource, ...]) -> tuple[Read, ...]:
     return tuple(
         sorted(
@@ -292,7 +388,10 @@ def project_cost_reads(sources: tuple[ProjectCostSource, ...]) -> tuple[Read, ..
                 read
                 for source in sources
                 for read in (
-                    Read("calculation", "project_cost", f"@{source.source_id}"),
+                    *(
+                        Read("calculation", kind, f"@{source.source_id}")
+                        for kind in PROJECT_COST_KINDS
+                    ),
                     Read("fact", "project_release", f"cost:{source.source_id}"),
                     Read("fact", "asset", f"cost:{source.source_id}"),
                 )
@@ -307,7 +406,11 @@ def consume_project_costs(
     """Check source capacities once and return frozen credit lines and effects."""
     lines, effects, project_ids = [], [], set()
     for source in sources:
-        values = ctx.calculations("project_cost", f"@{source.source_id}")
+        values = tuple(
+            item
+            for kind in PROJECT_COST_KINDS
+            for item in ctx.calculations(kind, f"@{source.source_id}")
+        )
         if len(values) != 1:
             raise NeedsInformation(
                 "project_sources", "需要已确认的项目成本来源", sources=(source.source_id,)
@@ -426,6 +529,8 @@ class Advance(Fact):
     or expected receipt from silently creating an accounting receivable/payable.
     """
 
+    material_amount_aliases: ClassVar[dict[str, str]] = {"fact.amount_fen": "result.gross_fen"}
+
     kind: ClassVar[str] = "advance"
     counterparty_id: Identifier
     amount_fen: PositiveFen
@@ -534,6 +639,9 @@ def calculate_advance(version: FactVersion, ctx: Context) -> Outcome:
 
 
 class AdvanceFulfillment(Fact):
+    material_amount_aliases: ClassVar[dict[str, str]] = {
+        "fact.fulfilled_gross_fen": "result.gross_fulfilled_fen"
+    }
     """Confirmed gross performance; allocation of net revenue is derived."""
 
     kind: ClassVar[str] = "advance_fulfillment"
@@ -857,7 +965,8 @@ class Payment(Fact):
             *(
                 ("loan-principal",)
                 if any(
-                    a.source_kind == "loan_drawdown" and a.obligation == "principal"
+                    a.source_kind in {"loan_drawdown", "opening_loan"}
+                    and a.obligation == "principal"
                     for a in self.allocations
                 )
                 else ()
@@ -1095,7 +1204,7 @@ def payment_tax_transfers(version: FactVersion, ctx: Context):
         receipts = [
             peer
             for peer in peers
-            if peer.fact.kind in {"payment", "cash_payment"} and peer.fact.direction == "inflow"
+            if getattr(peer.fact, "actual_payment", False) and peer.fact.direction == "inflow"
         ]
         first = min([version, *receipts], key=lambda item: (item.fact.actual_date, item.subject_id))
         if first.subject_id != version.subject_id:
@@ -1233,7 +1342,7 @@ class Settlement(Fact):
                     for item in (self.first, self.second)
                     for read in (
                         Read("calculation", item.source_kind, f"@{item.source_id}"),
-                        Read("fact", "*", item.scope),
+                        _through_month("fact", "*", item.scope, self.period),
                     )
                 }
             )
@@ -1244,8 +1353,10 @@ def calculate_settlement(version: FactVersion, ctx: Context) -> Outcome:
     fact: Settlement = version.fact
     if fact.offset_right_confirmed is not True:
         raise NeedsInformation("offset_right_confirmed", "需要有依据的预付款应用或债务抵销权利")
-    _, first = _source_obligation(ctx, fact.first)
-    _, second = _source_obligation(ctx, fact.second)
+    first_source, first = _source_obligation(ctx, fact.first)
+    second_source, second = _source_obligation(ctx, fact.second)
+    if any(source.period > fact.period for source in (first_source, second_source)):
+        raise KernelError("settlement_before_obligation", "抵销不能早于任一来源权利义务的确认月份")
     if any(
         "offset" not in item.get("settlement_modes", ("payment", "offset"))
         for item in (first, second)
@@ -1259,13 +1370,31 @@ def calculate_settlement(version: FactVersion, ctx: Context) -> Outcome:
         valid = [
             (ref, item)
             for ref, item in ((fact.first, first), (fact.second, second))
-            if ref.source_kind == "advance" and ref.obligation == "advance"
+            if ref.source_kind in {"advance", "asset_advance"} and ref.obligation == "advance"
         ]
         if len(valid) != 1:
             raise KernelError("advance_source_required", "预收预付应用必须使用明确的预收预付来源")
+        advance_ref, _ = valid[0]
+        if advance_ref.source_kind == "asset_advance":
+            advance_source, cost_source = (
+                (first_source, second_source)
+                if fact.first == advance_ref
+                else (second_source, first_source)
+            )
+            cost_type = cost_source.values.get("asset_type")
+            if cost_source.values.get("project_nature") in {
+                "purchased_intangible",
+                "internal_development",
+            }:
+                cost_type = "intangible"
+            if cost_type != advance_source.values["asset_type"]:
+                raise KernelError(
+                    "asset_advance_purpose_conflict",
+                    "资产预付款只能用于已确认的同类资产成本，不能抵普通费用",
+                )
     for allocation, item in ((fact.first, first), (fact.second, second)):
         allocated = allocation.amount_fen
-        for prior in ctx.facts("*", allocation.scope):
+        for prior in ctx.select(_through_month("fact", "*", allocation.scope, fact.period)):
             if prior.subject_id != version.subject_id:
                 allocated = sum_fen(
                     (
@@ -1304,7 +1433,7 @@ class SaleReturn(Fact):
             _through_month("fact", self.kind, f"sale:{self.sale_id}", self.period),
             *(
                 Read("calculation", kind, f"service-tax:{self.sale_id}", self.period)
-                for kind in ("payment", "cash_payment", "service_tax_point")
+                for kind in (*ACTUAL_PAYMENT_KINDS, "service_tax_point")
             ),
         )
 
@@ -1346,7 +1475,7 @@ def calculate_sale_return(version: FactVersion, ctx: Context) -> Outcome:
     if source.values.get("vat_recognition") == "deferred":
         transferred = [
             row
-            for kind in ("payment", "cash_payment", "service_tax_point")
+            for kind in (*ACTUAL_PAYMENT_KINDS, "service_tax_point")
             for row in ctx.select(
                 Read("calculation", kind, f"service-tax:{fact.sale_id}", fact.period)
             )
@@ -1429,7 +1558,12 @@ class BankIncome(Fact):
     actual_date: ActualDate
     bank_account_id: Identifier
     amount_fen: PositiveFen
-    income_kind: Literal["bank_interest", "government_grant", "retained_verification_payment"]
+    income_kind: Literal[
+        "bank_interest",
+        "government_grant",
+        "retained_verification_payment",
+        "bank_promotion_reward",
+    ]
     counterparty_id: Identifier
     entitlement_confirmed: StrictBool | None = None
 
@@ -1495,8 +1629,51 @@ def calculate_deposit(version: FactVersion, ctx: Context) -> Outcome:
     )
 
 
+class ReimbursedDeposit(Fact):
+    """Accept a personally funded deposit as a company right and employee debt."""
+
+    kind: ClassVar[str] = "reimbursed_deposit"
+    counterparty_id: Identifier
+    employee_id: Identifier
+    amount_fen: PositiveFen
+    company_acceptance_confirmed: Literal[True]
+    refund_right_confirmed: Literal[True]
+
+
+def calculate_reimbursed_deposit(version: FactVersion, ctx: Context) -> Outcome:
+    fact: ReimbursedDeposit = version.fact
+    return outcome(
+        [Line("1221", debit=fact.amount_fen), Line("224101", credit=fact.amount_fen)],
+        {"amount_fen": fact.amount_fen},
+        [
+            obligation(
+                version,
+                name="reimbursement",
+                amount=fact.amount_fen,
+                account="224101",
+                normal="credit",
+                counterparty=fact.employee_id,
+                cashflow="operating_payments",
+            ),
+            obligation(
+                version,
+                name="refund",
+                amount=fact.amount_fen,
+                account="1221",
+                normal="debit",
+                counterparty=fact.counterparty_id,
+                cashflow="operating_payments",
+            ),
+        ],
+    )
+
+
 class Overpayment(Fact):
     """Explicit recovery right for a previously paid, now reduced obligation."""
+
+    material_amount_aliases: ClassVar[dict[str, str]] = {
+        "fact.amount_fen": "result.overpayment_fen"
+    }
 
     kind: ClassVar[str] = "overpayment"
     source_kind: Identifier
@@ -1564,6 +1741,7 @@ def register(registry: Registry) -> None:
     for model, evaluator in (
         (ServiceSale, calculate_sale),
         (Expense, calculate_expense),
+        (ExpenseRecovery, calculate_expense_recovery),
         (ProjectCost, calculate_project_cost),
         (ProjectRelease, calculate_project_release),
         (PassThrough, calculate_pass_through),
@@ -1579,5 +1757,6 @@ def register(registry: Registry) -> None:
         (FundsTransfer, calculate_transfer),
         (BankIncome, calculate_bank_income),
         (RefundableDeposit, calculate_deposit),
+        (ReimbursedDeposit, calculate_reimbursed_deposit),
     ):
         registry.register(model, evaluator)

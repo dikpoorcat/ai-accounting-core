@@ -12,7 +12,7 @@ import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
-type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended";
+type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended" | "unknown";
 
 const route = useRoute();
 const router = useRouter();
@@ -20,7 +20,7 @@ const { context, load: loadContext } = useDashboardContext();
 const response = ref<EmployeesDashboardResponse | null>(null);
 const loading = ref(false);
 const error = ref("");
-const filter = ref<EmployeeFilter>("in_period");
+const filter = ref<EmployeeFilter>("all");
 const displayMode = ref<"cards" | "list">("cards");
 let controller: AbortController | null = null;
 let initialized = false;
@@ -32,7 +32,7 @@ const selectedPeriodKey = computed(
 );
 const employerContribution = computed(() =>
   employees.value
-    ? fen(employees.value.employer_social_insurance_fen) +
+    ? employees.value.employer_social_insurance_fen === null || employees.value.employer_housing_fund_fen === null ? null : fen(employees.value.employer_social_insurance_fen) +
       fen(employees.value.employer_housing_fund_fen)
     : 0n,
 );
@@ -61,6 +61,7 @@ const attentionItems = computed(() => {
   const data = employees.value;
   if (!data) return [];
   const items: string[] = [];
+  if (data.unknown_period_count) items.push(`${data.unknown_period_count} 名员工的身份起止资料未提供，未据此推断在职或核算范围。`);
   if (data.profile_missing_count) {
     items.push(
       `${data.profile_missing_count} 名本月核算范围内员工在月末没有有效工资核算配置。未据此推断社保、公积金或个税口径。`,
@@ -82,22 +83,23 @@ const filteredEmployees = computed(() => {
   if (filter.value === "no_payroll") {
     return items.filter((item) => item.in_period && !item.has_payroll_activity);
   }
+  if (filter.value === "unknown") return items.filter(item => item.period_state === "unknown");
   if (filter.value === "ended") return items.filter((item) => item.period_state === "ended");
   return items;
 });
 const employeeListColumns = [
-  { key: "tax-salary", label: "报税工资", amount: (item: EmployeeDashboardItem) => fen(item.tax_reported_salary_fen) },
-  { key: "bonus", label: "全年一次性奖金", amount: (item: EmployeeDashboardItem) => fen(item.annual_bonus_fen) },
-  { key: "company-insurance", label: "公司社保", amount: (item: EmployeeDashboardItem) => fen(item.employer_social_insurance_fen) },
-  { key: "company-fund", label: "公司公积金", amount: (item: EmployeeDashboardItem) => fen(item.employer_housing_fund_fen) },
+  { key: "tax-salary", label: "报税工资", amount: (item: EmployeeDashboardItem) => item.tax_reported_salary_fen === null ? null : fen(item.tax_reported_salary_fen) },
+  { key: "bonus", label: "全年一次性奖金", amount: (item: EmployeeDashboardItem) => item.annual_bonus_fen === null ? null : fen(item.annual_bonus_fen) },
+  { key: "company-insurance", label: "公司社保", amount: (item: EmployeeDashboardItem) => item.employer_social_insurance_fen === null ? null : fen(item.employer_social_insurance_fen) },
+  { key: "company-fund", label: "公司公积金", amount: (item: EmployeeDashboardItem) => item.employer_housing_fund_fen === null ? null : fen(item.employer_housing_fund_fen) },
   {
     key: "personal-contribution",
     label: "个人社保公积金",
-    amount: (item: EmployeeDashboardItem) => fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen),
+    amount: (item: EmployeeDashboardItem) => item.employee_social_insurance_fen === null || item.employee_housing_fund_fen === null ? null : fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen),
   },
-  { key: "tax", label: "个人所得税", amount: (item: EmployeeDashboardItem) => fen(item.individual_income_tax_fen) },
-  { key: "deductions", label: "个人扣减合计", amount: (item: EmployeeDashboardItem) => fen(item.personal_deduction_fen) },
-  { key: "net", label: "到手金额", amount: (item: EmployeeDashboardItem) => fen(item.net_salary_fen) },
+  { key: "tax", label: "个人所得税", amount: (item: EmployeeDashboardItem) => item.individual_income_tax_fen === null ? null : fen(item.individual_income_tax_fen) },
+  { key: "deductions", label: "个人扣减合计", amount: (item: EmployeeDashboardItem) => item.personal_deduction_fen === null ? null : fen(item.personal_deduction_fen) },
+  { key: "net", label: "应付净薪", amount: (item: EmployeeDashboardItem) => item.net_salary_fen === null ? null : fen(item.net_salary_fen) },
 ];
 const visibleListColumns = computed(() =>
   employeeListColumns.filter((column) =>
@@ -118,6 +120,7 @@ const filterLabel = computed(
       payroll: "本月有已过账工资",
       no_payroll: "本月暂无已过账工资",
       ended: "本月前已结束核算",
+      unknown: "核算范围未提供",
     })[filter.value],
 );
 
@@ -183,7 +186,7 @@ function participationLabel(
 }
 
 watch(
-  () => route.query.org_id,
+  () => route.query.company_id,
   (value, previous) => {
     if (!initialized || value === previous) return;
     controller?.abort();
@@ -192,7 +195,7 @@ watch(
   },
 );
 watch(
-  () => [context.value?.current_company.org_id, route.query.period] as const,
+  () => [context.value?.current_company?.company_id, route.query.period] as const,
   ([orgId], [previousOrgId]) => {
     if (initialized && orgId) void loadPeriod(routePeriod(), orgId !== previousOrgId);
   },
@@ -239,11 +242,11 @@ onBeforeUnmount(() => controller?.abort());
             {{ response.selected_period.label }} · 工资核算与正式账簿口径
           </p>
           <span id="people-headcount-label">本月工资核算日期范围内</span>
-          <strong class="people-headcount">{{ employees.in_period_count }}<small>人</small></strong>
+          <strong class="people-headcount">{{ employees.in_period_count ?? "未提供" }}<small v-if="employees.in_period_count !== null">人</small></strong>
           <p class="muted">
             已登记 {{ employees.registered_count }} 人 · 本月有已过账工资
             {{ employees.payroll_count }} 人 · 本月暂无已过账工资
-            {{ employees.without_payroll_count }} 人
+            {{ employees.without_payroll_count === null ? "人数未提供" : `${employees.without_payroll_count} 人` }}
           </p>
         </div>
         <div class="people-cost">
@@ -273,7 +276,7 @@ onBeforeUnmount(() => controller?.abort());
           <small>其中个人所得税 {{ formatFen(employees.individual_income_tax_fen) }}</small>
         </article>
         <article class="people-kpi">
-          <span>工资到手金额</span>
+          <span>工资应付净额</span>
           <strong>{{ formatFen(employees.net_salary_fen) }}</strong>
           <small>来自已过账工资批次，不代表银行已付款</small>
         </article>
@@ -304,6 +307,7 @@ onBeforeUnmount(() => controller?.abort());
           <p class="muted">{{ filterLabel }} · 显示 {{ filteredEmployees.length }} 人</p>
           <div class="employee-toolbar-controls">
             <select v-model="filter" class="control" aria-label="筛选员工">
+              <option value="unknown">核算范围未提供</option>
               <option value="in_period">本月核算范围内</option>
               <option value="payroll">本月有已过账工资</option>
               <option value="no_payroll">本月暂无已过账工资</option>
@@ -376,7 +380,7 @@ onBeforeUnmount(() => controller?.abort());
                   <div class="employee-meta">
                     <span>{{ item.period_state_label }}</span>
                     <span>
-                      核算日期 {{ item.employment_start_date }} 至
+                      核算日期 {{ item.employment_start_date ?? "未提供" }} 至
                       {{ item.employment_end_date || "未设结束日" }}
                     </span>
                     <span v-if="item.has_payroll_activity">
@@ -394,11 +398,11 @@ onBeforeUnmount(() => controller?.abort());
                     <div><span>公司公积金</span><strong>{{ formatFen(item.employer_housing_fund_fen) }}</strong></div>
                     <div>
                       <span>个人社保公积金</span>
-                      <strong>{{ formatFen(fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen)) }}</strong>
+                      <strong>{{ item.employee_social_insurance_fen === null || item.employee_housing_fund_fen === null ? "未提供" : formatFen(fen(item.employee_social_insurance_fen) + fen(item.employee_housing_fund_fen)) }}</strong>
                     </div>
                     <div><span>个人所得税</span><strong>{{ formatFen(item.individual_income_tax_fen) }}</strong></div>
                     <div><span>个人扣减合计</span><strong>{{ formatFen(item.personal_deduction_fen) }}</strong></div>
-                    <div><span>到手金额</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div>
+                    <div><span>应付净薪</span><strong>{{ formatFen(item.net_salary_fen) }}</strong></div>
                   </div>
 
                   <div class="employee-status-row">
@@ -413,6 +417,22 @@ onBeforeUnmount(() => controller?.abort());
               </summary>
 
               <div class="employee-profile">
+                <dl class="employee-profile-grid">
+                  <div><dt>本月已核销净薪</dt><dd>{{ formatFen(item.recorded_net_payments_fen) }}</dd></div>
+                  <div><dt>已申报个税</dt><dd>{{ formatFen(item.declared_tax_fen) }}</dd></div>
+                </dl>
+                <details v-if="item.tax_details?.length" class="tax-details">
+                  <summary>查看个税核算与实际扣缴依据</summary>
+                  <div v-for="detail in item.tax_details" :key="detail.calculation_id" class="tax-detail">
+                    <p>{{ detail.period }}{{ detail.reversal ? " · 冲正" : "" }}</p>
+                    <dl class="employee-profile-grid">
+                      <div><dt>按规则计算个税</dt><dd>{{ formatFen(detail.calculated_tax_fen) }}</dd></div>
+                      <div><dt>实际扣缴事实</dt><dd>{{ formatFen(detail.actual_withholding_tax_fen) }}</dd></div>
+                      <div><dt>账务采用扣税额</dt><dd>{{ formatFen(detail.booked_tax_fen) }}</dd></div>
+                    </dl>
+                    <details><summary>查看技术标识</summary><p>{{ detail.calculation_id }} · {{ detail.actual_withholding_fact_id || "实际扣税事实未提供" }}</p></details>
+                  </div>
+                </details>
                 <p
                   v-if="fen(item.gross_salary_fen) !== fen(item.tax_reported_salary_fen)"
                   class="employee-gross-detail muted"
@@ -422,7 +442,7 @@ onBeforeUnmount(() => controller?.abort());
                 <template v-if="displayMode === 'list'">
                   <div class="employee-meta">
                     <span>{{ item.period_state_label }}</span>
-                    <span>核算日期 {{ item.employment_start_date }} 至 {{ item.employment_end_date || "未设结束日" }}</span>
+                    <span>核算日期 {{ item.employment_start_date ?? "未提供" }} 至 {{ item.employment_end_date || "未设结束日" }}</span>
                     <span v-if="item.has_payroll_activity">
                       {{ item.batch_count }} 个已过账工资批次<span v-if="item.payroll_periods.length"> · 归属期 {{ item.payroll_periods.join("、") }}</span>
                     </span>
@@ -451,7 +471,7 @@ onBeforeUnmount(() => controller?.abort());
                     <dd>{{ item.resident_employee === null ? "未设置" : item.resident_employee ? "居民个人" : "非居民个人" }}</dd>
                   </div>
                   <div><dt>费用归属</dt><dd>{{ item.expense_areas.join("、") || "未设置" }}</dd></div>
-                  <div><dt>员工档案状态</dt><dd>{{ item.record_status === "active" ? "启用" : "停用" }}</dd></div>
+                  <div><dt>员工档案状态</dt><dd>{{ item.record_status === "active" ? "启用" : item.record_status === "inactive" ? "停用" : "未提供" }}</dd></div>
                 </dl>
                 <p v-else class="muted">
                   当前月份末未找到有效的工资核算配置；页面不会据此推断参保、缴存或税务口径。
@@ -463,7 +483,7 @@ onBeforeUnmount(() => controller?.abort());
       </section>
 
       <section class="panel identity-note">
-        {{ employees.identity_note }} 工资到手金额来自已过账工资批次，不表示银行已经付款。
+        {{ employees.identity_note }} 工资应付净薪来自已过账工资批次，不表示银行已经付款。
       </section>
     </template>
   </section>

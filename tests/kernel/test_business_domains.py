@@ -38,14 +38,14 @@ def calculation(source, result):
 
 def context(source, *, facts=(), calculations=()):
     selections = {}
-    for read in source.fact.reads():
+    for read in source.fact.reads_for(source.subject_id):
         candidates = facts if read.source == "fact" else calculations
         chosen = []
         for item in candidates:
             fact = item.fact if read.source == "fact" else item[0].fact
             subject = item.subject_id if read.source == "fact" else item[0].subject_id
             if (read.kind != "*" and fact.kind != read.kind) or read.key not in (
-                *fact.scopes(),
+                *fact.scopes_for(subject),
                 "@" + subject,
                 *(claim.key for claim in fact.claims()),
             ):

@@ -1,7 +1,8 @@
-"""Version one of the NEW company format; unrelated to legacy Alembic trees."""
+"""Current company format and deterministic typed DDL; independent of legacy migrations."""
 
 import re
 import types
+from functools import lru_cache
 from typing import Annotated, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 from .contracts import Registry
 from .types import YearMonth
 
-VERSION = 1
+VERSION = 8
 DDL = """
 CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1), company_id TEXT NOT NULL,
  taxpayer_id TEXT NOT NULL, database_id TEXT NOT NULL, schema_version INTEGER NOT NULL) STRICT;
@@ -66,6 +67,7 @@ CREATE INDEX dependency_upstream ON dependency_calculation(upstream_id,calculati
 CREATE TABLE pending(subject_id TEXT NOT NULL REFERENCES subject, cause_id TEXT NOT NULL
  REFERENCES fact_revision,
  PRIMARY KEY(subject_id,cause_id)) STRICT;
+CREATE INDEX pending_cause ON pending(cause_id,subject_id);
 CREATE TABLE disposition(id INTEGER PRIMARY KEY, subject_id TEXT NOT NULL REFERENCES subject,
  cause_id TEXT NOT NULL REFERENCES fact_revision, action TEXT NOT NULL,
  calculation_id TEXT REFERENCES calculation, explanation TEXT NOT NULL) STRICT;
@@ -325,9 +327,16 @@ def fact_ddl(registry: Registry) -> str:
     return "\n".join(statements)
 
 
-def initialize(connection, registry: Registry, company_id: str, taxpayer_id: str, database_id: str):
-    if connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchone():
-        raise ValueError("new company database must be empty")
+def schema_sql(registry: Registry) -> str:
+    # The registered type set is fixed for a service build. Cache generated SQL,
+    # never the inspected file: every connection still verifies its actual DDL.
+    return _schema_for_models(tuple(registry.models.items()))
+
+
+@lru_cache(maxsize=32)
+def _schema_for_models(models) -> str:
+    registry = Registry()
+    registry.models = dict(models)
     script = DDL + "\n" + "\n".join(immutable_sql(t) for t in IMMUTABLE) + fact_ddl(registry)
     script += ownership_sql(registry)
     script += "\n".join(
@@ -344,13 +353,46 @@ def initialize(connection, registry: Registry, company_id: str, taxpayer_id: str
             "dependency_calculation",
         )
     )
+    from .display import DISPLAY_DDL
+    from .security.schema import COMPANY_DDL
+    from .versions import HISTORY_DDL
+
+    return (
+        script
+        + HISTORY_DDL
+        + """
+CREATE TABLE opening_account(period INTEGER NOT NULL, account TEXT NOT NULL,
+ debit INTEGER NOT NULL CHECK(debit>=0),credit INTEGER NOT NULL CHECK(credit>=0),
+ PRIMARY KEY(period,account)) STRICT;
+CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE
+ CHECK(revision>0), text TEXT NOT NULL, digest BLOB NOT NULL CHECK(length(digest)=32),
+ evidence_digest BLOB REFERENCES evidence(digest)) STRICT;
+"""
+        + immutable_sql("company_note_revision")
+        + DISPLAY_DDL
+        + immutable_sql("display_profile_revision")
+        + immutable_sql("period_commentary_revision")
+        + ";\n".join(COMPANY_DDL)
+        + ";\n"
+    )
+
+
+def initialize(connection, registry: Registry, company_id: str, taxpayer_id: str, database_id: str):
+    from .versions import check_released_contract, execute_statements, record_version
+
+    if connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchone():
+        raise ValueError("new company database must be empty")
     try:
-        connection.executescript("BEGIN IMMEDIATE;\n" + script)
+        connection.execute("BEGIN IMMEDIATE")
+        script = schema_sql(registry)
+        check_released_contract(script, kind="business", registry=registry)
+        execute_statements(connection, script)
         connection.execute(
             "INSERT INTO identity VALUES(1,?,?,?,?)",
             (company_id, taxpayer_id, database_id, VERSION),
         )
         connection.execute(f"PRAGMA user_version={VERSION}")
+        record_version(connection, VERSION)
         connection.commit()
     except BaseException:
         connection.rollback()

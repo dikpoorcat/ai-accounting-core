@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal, localcontext
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from decimal import Context as DecimalContext
 from typing import Annotated, ClassVar, Literal
 from urllib.parse import urlsplit
@@ -29,6 +29,7 @@ from ..contracts import (
     Registry,
 )
 from ..types import MAX_FEN, ActualDate, Fen, NonNegativeFen, YearMonth, sum_fen
+from .money import ACTUAL_PAYMENT_KINDS
 
 Money = NonNegativeFen
 TaxSourceId = Annotated[
@@ -41,8 +42,7 @@ VAT_CALCULATION_KINDS = (
     "advance",
     "advance_fulfillment",
     "service_tax_point",
-    "payment",
-    "cash_payment",
+    *ACTUAL_PAYMENT_KINDS,
     "advance_refund",
 )
 
@@ -56,6 +56,19 @@ def _through_period(kind: str, key: str, period: YearMonth) -> Read:
 
 class TaxInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def exact_decimal_rate(value) -> Decimal:
+    """Convert the JSON decimal-string contract before strict nested validation."""
+    if not isinstance(value, (Decimal, str)):
+        raise ValueError("tax rates must be decimal strings or Decimal, never binary floats")
+    try:
+        result = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError("tax rates must be valid finite decimals") from exc
+    if not result.is_finite():
+        raise ValueError("tax rates must be finite decimals")
+    return result
 
 
 class EffectiveTaxPolicy(TaxInput):
@@ -101,9 +114,7 @@ class VatPolicy(EffectiveTaxPolicy):
     @field_validator("rate_percent", mode="before")
     @classmethod
     def no_binary_rate(cls, value):
-        if not isinstance(value, (Decimal, str)):
-            raise ValueError("rates must be decimal strings or Decimal, never binary floats")
-        return value
+        return exact_decimal_rate(value)
 
 
 class SurtaxPolicy(EffectiveTaxPolicy):
@@ -121,9 +132,7 @@ class SurtaxPolicy(EffectiveTaxPolicy):
     )
     @classmethod
     def no_binary_rate(cls, value):
-        if not isinstance(value, (Decimal, str)):
-            raise ValueError("rates must be decimal strings or Decimal, never binary floats")
-        return value
+        return exact_decimal_rate(value)
 
 
 class UsedAssetVatPolicy(EffectiveTaxPolicy):
@@ -133,9 +142,7 @@ class UsedAssetVatPolicy(EffectiveTaxPolicy):
     @field_validator("tax_base_rate_percent", "payable_rate_percent", mode="before")
     @classmethod
     def decimal_rates(cls, value):
-        if not isinstance(value, (Decimal, str)):
-            raise ValueError("tax rates must be exact decimal strings or Decimal")
-        return value
+        return exact_decimal_rate(value)
 
 
 class VatSales(TaxInput):
@@ -335,7 +342,7 @@ def calculate_tax_assessment(version: FactVersion, ctx: Context) -> Outcome:
         month = YearMonth.from_ordinal(index)
         for kind in VAT_CALCULATION_KINDS:
             for row in ctx.calculations(kind, f"tax:{month}"):
-                if kind in {"payment", "cash_payment"}:
+                if kind in ACTUAL_PAYMENT_KINDS:
                     sales.extend(
                         VatSales(
                             **{

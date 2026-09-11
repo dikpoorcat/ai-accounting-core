@@ -1,7 +1,7 @@
 [mcp_servers.ai_accounting]
-command = "D:/GitHub/ai-accounting-core/.venv/Scripts/python.exe"
-args = ["-m", "ai_accounting.mcp_server"]
+command = "D:/GitHub/ai-accounting-core/.tmp-kernel-venv/Scripts/python.exe"
+args = ["-m", "ai_accounting.kernel.cli", "--root", "D:/GitHub/ai-accounting-core/data", "mcp"]
 cwd = "D:/GitHub/ai-accounting-core"
 startup_timeout_sec = 20
-tool_timeout_sec = 60
+tool_timeout_sec = 300
 default_tools_approval_mode = "writes"

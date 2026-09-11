@@ -164,9 +164,9 @@ function assetTypeLabel(item: AssetItem) {
 
 function availabilityLabel(item: AssetItem) {
   if (isFixedAsset(item)) {
-    return item.in_service_date ? `开始使用 ${item.in_service_date}` : "尚未启用";
+    return item.in_service_date ? `开始使用 ${item.in_service_date}` : item.status === "pending_activation" ? "尚未启用" : "启用日期未提供";
   }
-  return `可供使用 ${item.available_for_use_date}`;
+  return item.available_for_use_date ? `可供使用 ${item.available_for_use_date}` : "可供使用日期未提供";
 }
 
 function chargeLabel(item: AssetItem, current = false) {
@@ -210,7 +210,7 @@ function assetDetails(item: AssetItem): DetailRow[] {
   ];
   if (isFixedAsset(item)) {
     rows.push(
-      { label: "折旧方法", value: item.depreciation_method_label || "尚未启用" },
+      { label: "折旧方法", value: item.depreciation_method_label || "未提供" },
       {
         label: "使用年限",
         value: item.useful_life_months ? `${item.useful_life_months} 个月` : "尚未确定",
@@ -247,10 +247,10 @@ function assetDetails(item: AssetItem): DetailRow[] {
     }
   } else {
     rows.push(
-      { label: "摊销期限", value: `${item.useful_life_months} 个月` },
+      { label: "摊销期限", value: item.useful_life_months === null ? "未提供" : `${item.useful_life_months} 个月` },
       { label: "期限依据", value: item.life_basis_label },
       { label: "权利内容", value: item.rights_description },
-      { label: "期限说明", value: item.life_basis_explanation },
+      { label: "期限说明", value: item.life_basis_explanation || "未提供" },
     );
     if (item.retirement) {
       rows.push({ label: "退役凭证", value: item.retirement.reference || "未展示" });
@@ -265,7 +265,7 @@ onMounted(() => {
 });
 
 watch(
-  () => route.query.org_id,
+  () => route.query.company_id,
   (value, previous) => {
     if (!mounted || value === previous) return;
     activeController?.abort();
@@ -274,7 +274,7 @@ watch(
   },
 );
 watch(
-  () => [context.value?.current_company.org_id, route.query.period] as const,
+  () => [context.value?.current_company?.company_id, route.query.period] as const,
   ([orgId], [previousOrgId]) => {
     if (mounted && orgId) void synchronizePeriod(orgId !== previousOrgId);
   },
@@ -398,6 +398,10 @@ onBeforeUnmount(() => {
                 {{ data.month_activated_count }} 项
               </small>
             </article>
+            <article v-if="fen(data.month_cost_adjustment_fen) !== 0n">
+              <span>以前取得资产的成本调整</span><strong>{{ formatFen(data.month_cost_adjustment_fen) }}</strong>
+              <small>本月对原资产成本的调整，不计为新增资产</small>
+            </article>
             <article>
               <span>本月退出</span><strong>{{ data.month_exited_count }} 项</strong>
               <small>已出售、报废或退役的资产卡片</small>
@@ -443,7 +447,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="asset-meta">
                   <span>{{ item.category_label }}</span><span>{{ item.status_label }}</span>
-                  <span>取得日期 {{ item.acquisition_date }}</span>
+                  <span>取得日期 {{ item.acquisition_date ?? "未提供" }}</span>
                   <span>{{ availabilityLabel(item) }}</span>
                 </div>
                 <div class="value-grid">

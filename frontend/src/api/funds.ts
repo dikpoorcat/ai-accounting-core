@@ -1,6 +1,8 @@
 import { requestJson } from "./client";
 import type { DashboardPeriod } from "./context";
 
+export interface FundPage { has_more: boolean; next_cursor: string | null; total_count: number }
+
 export type FenValue = string;
 export type FundDirection = "inflow" | "outflow";
 export type BankStatementState =
@@ -49,7 +51,7 @@ export interface FundAccount {
   code: string;
   name: string;
   type: "bank" | "cash" | "payment_platform";
-  active: boolean;
+  active: boolean | null;
   opening_fen: FenValue;
   inflow_fen: FenValue;
   outflow_fen: FenValue;
@@ -63,7 +65,8 @@ export interface FundAccount {
 }
 
 export interface FundMovement {
-  date: string;
+  id: string;
+  date: string | null;
   account_code: string;
   account_name: string;
   account_type: "bank" | "cash" | "payment_platform";
@@ -80,7 +83,8 @@ export interface FundMovement {
 }
 
 export interface BankStatementRow {
-  date: string;
+  id: string;
+  date: string | null;
   account_code: string;
   account_name: string;
   direction: FundDirection;
@@ -102,6 +106,7 @@ export interface FundBankStatement {
   late_count: number;
   pending_late_count: number;
   rows: BankStatementRow[];
+  page: FundPage;
 }
 
 export interface FundsData {
@@ -121,6 +126,7 @@ export interface FundsData {
   attention_account_count: number;
   accounts: FundAccount[];
   movements: FundMovement[];
+  movement_page: FundPage;
   movement_count: number;
   bank_statement: FundBankStatement;
 }
@@ -131,9 +137,9 @@ export interface FundsDashboardResponse {
   data: FundsData | null;
 }
 
-export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal) {
-  const query = periodKey ? `?period=${encodeURIComponent(periodKey)}` : "";
-  return requestJson<FundsDashboardResponse>(`/api/dashboard/funds${query}`, {
+export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, cursors: { after_movement?: string; after_statement?: string } = {}) {
+  const query = new URLSearchParams({ limit: "100", ...(periodKey ? { period: periodKey } : {}), ...cursors });
+  return requestJson<FundsDashboardResponse>(`/api/dashboard/funds?${query}`, {
     signal,
   });
 }

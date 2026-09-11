@@ -417,6 +417,9 @@ button {
 }
 
 @media (max-width: 900px) {
+  .sidebar-footer { display: flex; gap: 5px; }
+  .sidebar-footer .control-label { display: none; }
+  .sidebar-footer .theme-button { width: 40px; height: 40px; padding: 0; justify-content: center; }
   .app-shell {
     display: block;
   }
@@ -437,7 +440,7 @@ button {
 
   .brand {
     min-height: 40px;
-    padding-right: 100px;
+    padding-right: 145px;
   }
 
   .brand-mark,
@@ -486,6 +489,20 @@ button {
   }
 }
 
+.dashboard-action {
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.dashboard-action:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.dashboard-action:disabled { opacity: .6; cursor: default; }
+
 @media (max-width: 720px) {
   .workspace-sidebar {
     position: relative;
@@ -497,7 +514,7 @@ button {
 
   .brand {
     min-height: 38px;
-    padding-right: 58px;
+    padding-right: 145px;
   }
 
   .brand-name {
