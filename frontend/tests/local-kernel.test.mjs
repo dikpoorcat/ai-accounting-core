@@ -35,8 +35,31 @@ test("launch ticket is removed before one same-origin exchange and never reused 
   assert.deepEqual(events, [["strip", "/?period=2026-09"], ["fetch", "/api/browser-session"]]);
 });
 
+test("development obtains a one-use browser ticket without exposing the service capability", async () => {
+  const events = [];
+  globalThis.window = {
+    location: { hash: "", pathname: "/", search: "" },
+    history: { replaceState() { assert.fail("a generated ticket never enters the address bar"); } },
+  };
+  globalThis.fetch = async (url, options) => {
+    events.push([url, JSON.parse(options.body)]);
+    assert.equal(options.headers.Authorization, undefined);
+    if (url === "/api/browser-ticket") {
+      return new Response(JSON.stringify({ url: "http://127.0.0.1:54321/#ticket=development-ticket" }));
+    }
+    assert.equal(url, "/api/browser-session");
+    return new Response(JSON.stringify({ status: "ready", authenticated: true }));
+  };
+  await api.consumeLocalTicket(true);
+  assert.deepEqual(events, [
+    ["/api/browser-ticket", {}],
+    ["/api/browser-session", { ticket: "development-ticket" }],
+  ]);
+});
+
 test("obsolete owner token fragments are discarded without sending them", async () => {
   window.location.hash = "#token=must-not-send";
+  window.history.replaceState = () => { window.location.hash = ""; };
   globalThis.fetch = async () => { assert.fail("token must not be exchanged"); };
   await api.consumeLocalTicket();
   assert.equal(window.location.hash, "");

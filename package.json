@@ -1,0 +1,11 @@
+{
+  "name": "ai-accounting-core-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "test": "npm --prefix frontend test",
+    "type-check": "npm --prefix frontend run type-check",
+    "build": "npm --prefix frontend run build",
+    "build:release": "npm --prefix frontend run build:release"
+  }
+}

@@ -6,7 +6,7 @@ import "./styles.css";
 
 async function start() {
   let launchError = "";
-  try { await consumeLocalTicket(); }
+  try { await consumeLocalTicket(import.meta.env.DEV); }
   catch (error) { launchError = localErrorMessage(error); }
   // Create router history only after launch credentials have been removed.
   const { default: router } = await import("./router");

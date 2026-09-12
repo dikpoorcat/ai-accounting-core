@@ -212,13 +212,23 @@ export function localBusinessName(kind?: string): string {
   return kind ? (localBusinessNames[kind] ?? "其他业务") : "会计业务";
 }
 
-export async function consumeLocalTicket(): Promise<void> {
+export async function consumeLocalTicket(development = false): Promise<void> {
   const fragment = new URLSearchParams(window.location.hash.slice(1));
-  const supplied = fragment.get("ticket");
+  let supplied = fragment.get("ticket");
   // Remove sensitive launch fragments before any asynchronous request. Owner
   // credentials never enter JavaScript storage or subsequent query parameters.
   if (fragment.has("ticket") || fragment.has("token")) {
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+  if (!supplied && development) {
+    const result = await requestLocalJson("/api/browser-ticket", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (!record(result) || typeof result.url !== "string") {
+      throw new LocalApiError(502, "LOCAL_TICKET_RESPONSE", "本地开发会话无法建立，请重新启动本地服务。");
+    }
+    supplied = new URLSearchParams(new URL(result.url).hash.slice(1)).get("ticket");
   }
   if (supplied) {
     await requestLocalJson("/api/browser-session", { method: "POST", body: JSON.stringify({ ticket: supplied }) });
