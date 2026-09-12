@@ -89,6 +89,27 @@ def known_contracts(kind):
     return contracts
 
 
+@lru_cache(maxsize=1)
+def recorded_business_v10_variant():
+    """Exact T4 intermediate DDL, accepted only by the forward-upgrade probe.
+
+    This is not another released v10 contract. Its complete object snapshot and
+    pinned digest preserve the recorded source without changing v1-v10 history.
+    """
+    expected_hash = "45dd0bba8f9668b552859ff7beea612a8c51fd9838f1a3d9785c76771bc08266"
+    data = json.loads(
+        (Path(__file__).with_name("migrations") / "recorded_business_v10_pre_account_indexes.json")
+        .read_text("utf-8")
+    )
+    if (
+        data["version"] != 10
+        or data["sha256"] != expected_hash
+        or fingerprint(data["objects"]).hex() != expected_hash
+    ):
+        raise RuntimeError("packaged historical database contract is damaged")
+    return data
+
+
 def check_released_contract(script, *, kind, registry=None):
     """Released production DDL cannot silently change while retaining its version."""
     released = known_contracts(kind).get(current_version(kind))
@@ -154,6 +175,14 @@ def verify_schema(connection, *, kind="business", registry=None, allow_previous=
             "schema_version_unsupported", "数据库版本不受当前程序支持", version=version
         )
     actual_hash = fingerprint(actual)
+    if kind == "business" and allow_previous and version == 10 and version < current:
+        if actual_hash != expected_hash:
+            recorded = recorded_business_v10_variant()
+            if actual_hash.hex() == recorded["sha256"] and actual == recorded["objects"]:
+                expected = recorded["objects"]
+                expected_hash = bytes.fromhex(recorded["sha256"])
+        # Identity and the original v10 schema_history row must still match
+        # below. Near matches and current-version files never use this branch.
     if actual_hash != expected_hash:
         actual_map = {(item["type"], item["name"]): item["sql"] for item in actual}
         expected_map = {(item["type"], item["name"]): item["sql"] for item in expected}
@@ -219,11 +248,25 @@ def upgrade(connection, *, kind="business", registry=None, fault=None):
                 connection.execute(f'DROP TRIGGER "{item["name"]}"')
         # sqlite_schema sort order is not dependency order; create tables before indexes/triggers.
         for typ in ("table", "index", "view", "trigger"):
+            if typ == "trigger" and kind == "business" and old_version < 9 <= target_version:
+                # V8 retained only an irreversible context digest. Mark those exact
+                # pre-upgrade records before runtime insert guards are installed;
+                # never attach today's content to a historical commentary.
+                connection.execute(
+                    "INSERT INTO period_commentary_basis(commentary_id,contract) "
+                    "SELECT id,'legacy-context-v8' FROM period_commentary_revision"
+                )
             for key, item in new.items():
                 if item["type"] == typ and (key not in old or old[key]["sql"] != item["sql"]):
                     connection.execute(item["sql"])
         if fault:
             fault("after_ddl")
+        if kind == "business" and old_version < 10 <= target_version:
+            from .read_indexes import backfill_read_indexes
+
+            backfill_read_indexes(connection)
+            if fault:
+                fault("after_read_indexes")
         if kind == "business":
             connection.execute("DROP TRIGGER immutable_identity_UPDATE")
             connection.execute("UPDATE identity SET schema_version=? WHERE id=1", (target_version,))

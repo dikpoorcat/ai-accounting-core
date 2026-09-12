@@ -466,14 +466,25 @@ def test_material_change_after_close_snapshot_but_before_commit_expires_plan(aud
     inventory(audit, "2026-01")
     periods = Periods(engine)
     preview = periods.preview_close("2026-01", owner_confirmation=proof)
-    original = periods.preview_close
+    original_write = engine._write
+    injected = False
 
-    def raced_preview(*args, **kwargs):
-        prepared = original(*args, **kwargs)
-        engine.register_evidence(b"late material", "text/plain", "late", request_id="late-material")
-        return prepared
+    def raced_write(key, request_hash, expected, lanes, action, operation, *, checked_lanes=None):
+        nonlocal injected
+        if action == "close":
+            # close now rebuilds its manifest under BEGIN IMMEDIATE rather than
+            # calling preview_close. Commit the competing material after the
+            # caller's snapshot but before entering that real write transaction.
+            assert not injected
+            engine.register_evidence(
+                b"late material", "text/plain", "late", request_id="late-material"
+            )
+            injected = True
+        return original_write(
+            key, request_hash, expected, lanes, action, operation, checked_lanes=checked_lanes
+        )
 
-    monkeypatch.setattr(periods, "preview_close", raced_preview)
+    monkeypatch.setattr(engine, "_write", raced_write)
     with pytest.raises(KernelError) as error:
         periods.close(
             "2026-01",
@@ -483,7 +494,12 @@ def test_material_change_after_close_snapshot_but_before_commit_expires_plan(aud
             request_id="raced-close",
         )
     assert error.value.code == "preview_expired"
+    assert injected
+    assert error.value.details["current"] == {
+        **preview["epochs"], "material": preview["epochs"]["material"] + 1
+    }
     with engine.store.connection(read_only=True) as connection:
+        assert connection.execute("SELECT 1 FROM request WHERE id='late-material'").fetchone()
         assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 0
         assert connection.execute("SELECT 1 FROM request WHERE id='raced-close'").fetchone() is None
 

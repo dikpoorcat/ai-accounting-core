@@ -1,0 +1,1154 @@
+{
+  "task_id": "01a095d6-05dd-7c63-82eb-d29543bf6c48",
+  "architecture_thread_id": "01a09416-a4e3-76b2-bf46-6387d8d47cfc",
+  "revision": "r2",
+  "approval_basis": "Architecture v1 review explicitly authorized the two narrow repairs without replanning.",
+  "status": "submitted_for_architecture_acceptance",
+  "v1_preserved": {
+    "path": "docs/t6-implementation-verification.json",
+    "sha256": "70a5a03e6a46d30f1d0a350e52899b1a8745dd0354697489fe0e65fdea0945aa",
+    "bytes": 84364
+  },
+  "baseline": {
+    "path": ".tmp/t6-r2/baseline-hashes.json",
+    "sha256": "ba2b701880437f5cab525253152b50320cc31fdcb0204653f518913b0a5f82e9",
+    "bytes": 32555
+  },
+  "baseline_file_count": 220,
+  "changed_existing_files": [
+    {
+      "path": "frontend/src/components/DashboardModuleHeader.vue",
+      "before_sha256": "57e234fa480da8bd19ce7288ea407249d70e61a73bf8745e16d457c160e34273",
+      "after_sha256": "36f8c15dfe3520da9879d67fe3d20e7a2100ac444b64a277e31c8cf97925e211"
+    },
+    {
+      "path": "frontend/src/views/FundsView.vue",
+      "before_sha256": "ce7378598f1b62742aa39b6fe0726f5fe112e6d00489e9031a68547072a3fcd7",
+      "after_sha256": "f910a12aa4a7f46310e3a7d832e85e85366ebd56c65aed04bba54cc527760c29"
+    },
+    {
+      "path": "frontend/tests/browser-t6-interactions.cjs",
+      "before_sha256": "70341cc341d447acbaa0d45544a8a28c1e0c9506d6269a490de1a2f32f6c203a",
+      "after_sha256": "fbd59da7826f03b4ff89a84ed2689a46d97864994cf0983a117cffba0d951a88"
+    },
+    {
+      "path": "frontend/tests/funds-filters.test.mjs",
+      "before_sha256": "fe82aabfb7aac6d6ee6f79f410e69978998887b86cb5d776a1703a14b4570a12",
+      "after_sha256": "abd69af76cf38fa80fcabec4ec7cebcaa47a6bff193b41ca4346ffaa53b0c6b8"
+    },
+    {
+      "path": "frontend/tests/t6-context.test.mjs",
+      "before_sha256": "dd17a5549f0a1ed4b40788a52fc1fe3cb29711c3f62c251fb707e55facfa8c6c",
+      "after_sha256": "8667d7500f3745ebbd5b1e0f8ef73b6475eaf195c3bd3fff0b91fef7b927dd8a"
+    },
+    {
+      "path": "scripts/verify_t6_browser.py",
+      "before_sha256": "2428e02940d2487bb0ffaa7f75ae0765b168e77481337aa25e7345a26651da23",
+      "after_sha256": "cbbaee76835d2abfa60963cadf21a45aeba027a17aa01a15ed7e2035f5afa24e"
+    }
+  ],
+  "new_record": {
+    "path": "docs/t6-review-r2.md",
+    "sha256": "5e75d7a75228b1238e31da604425f6f7b54197c07332428c23061c010a470743",
+    "bytes": 4200
+  },
+  "this_json": {
+    "path": "docs/t6-review-r2.json",
+    "status": "added",
+    "self_hash_omitted": true
+  },
+  "unchanged_baseline_files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "8c14fb5459176cbede092db482e82d89b261dd3cddaf83ea068defba8a64fdb1"
+    },
+    {
+      "path": "docs/accounting-equivalence.md",
+      "sha256": "4a8c43498cfe83029f45b3c4f95058024f212ada3edf65d7a5acb3e29ac876ca"
+    },
+    {
+      "path": "docs/architecture-roadmap.md",
+      "sha256": "6d4d8fdfba6947d38cce8525b9e84b261c290911b13cda4e6b67a75712861bfa"
+    },
+    {
+      "path": "docs/architecture-task-prompts.md",
+      "sha256": "cf26259ca7a9850c6a4285ad8e833255ffad257b71769c67a0a5d7c12876d369"
+    },
+    {
+      "path": "docs/atomic-corrections-review.md",
+      "sha256": "3a1f3b863847c9edd31fe17306f18b987c76c37b371d02804ca02355e7bd405b"
+    },
+    {
+      "path": "docs/bounded-dashboard-queries.md",
+      "sha256": "fbeb0ce203c627d3f487de8d36263537eec5a90239202624d14b07619bb85999"
+    },
+    {
+      "path": "docs/business-components.md",
+      "sha256": "9c3fe0ed2a0bcd590101e1bcce89574554c7d4e868d2f12cfc987109d99260f1"
+    },
+    {
+      "path": "docs/composition-refactor-validation.md",
+      "sha256": "d9d44f271fb4863d3221da6b0c134cd6a7efe2a5e7b8b9679aadc4905706f213"
+    },
+    {
+      "path": "docs/dashboard-kernel-alignment.md",
+      "sha256": "918275a73d47814b38412a443ec9ed981cac244fb093d7337f270d77d9b19631"
+    },
+    {
+      "path": "docs/dashboard-owner-experience.md",
+      "sha256": "f976c5e5569a6c0e31c74d27d84a0e24f2476cc74c7e82eb57fbe0fb06670aef"
+    },
+    {
+      "path": "docs/empty-database-replay.md",
+      "sha256": "a74b139dc3db92965099c643585ca27aa475b2eca294b2fb118a2b7ae9268ae1"
+    },
+    {
+      "path": "docs/essential-accounting-review.md",
+      "sha256": "610c17cc943a1e6ffc80b4559a58a95420eca6d4285ebf7ba72e6a6fdb3d45e5"
+    },
+    {
+      "path": "docs/fact-requirements.md",
+      "sha256": "c09b971f895680a813d1ec777791543a65e9006e95dc8905907aaf47babd7197"
+    },
+    {
+      "path": "docs/formal-empty-db-startup-checklist-template.md",
+      "sha256": "7a4c1ee01045d9f1fee9b0cd6bf5930e2962752254291cccb400e525cc1b9ad3"
+    },
+    {
+      "path": "docs/history-content-versions.md",
+      "sha256": "d09814cb555f6eab7cdd3c063622378b6ac595df465a89dc7229dfa2f93a07da"
+    },
+    {
+      "path": "docs/kernel-payment-exports.md",
+      "sha256": "5cfd78188ed147d1be265f088671395a8c8646cdb6c1e328c22ac8cfb523bb4e"
+    },
+    {
+      "path": "docs/local-kernel-acceptance.json",
+      "sha256": "1796de4cf49ca9c225ee0db98479bbfae8892d67de937c461cc612f8a034cf11"
+    },
+    {
+      "path": "docs/local-kernel-acceptance.md",
+      "sha256": "384b9e6781f151d0abe43c643c66aee837a94649194b493515704564b8670f22"
+    },
+    {
+      "path": "docs/local-kernel-actual-withholding-v7-package-verification.json",
+      "sha256": "3f162c429542a76cf7d1bc59a6a7ca30716c2eed18aaa718a560517d0fa6b0cb"
+    },
+    {
+      "path": "docs/local-kernel-benchmark.json",
+      "sha256": "450bc61a54c236996a97f736cc862a85505e294c3adaf67d3b7b133bfb10ff0a"
+    },
+    {
+      "path": "docs/local-kernel-benchmark.md",
+      "sha256": "265570cd438f43c24eaa311a95937203a44920b49f52c402bbe21a7ed86fc2d6"
+    },
+    {
+      "path": "docs/local-kernel-dashboard-alignment-package-verification.json",
+      "sha256": "23d71cbe4084110a9dec8088fdacff018775131cb1c66db2e9fa17b7d628a11f"
+    },
+    {
+      "path": "docs/local-kernel-dashboard-owner-package-verification.json",
+      "sha256": "081b39c58e8f368ace0d260717cbac6f7c0c43b853d50aa63ae9306018af9375"
+    },
+    {
+      "path": "docs/local-kernel-dashboard-v8-package-verification.json",
+      "sha256": "d99ac670de9d533fc9a1eb1ff191f50558c83d0d0927ff4c86566f16db75b073"
+    },
+    {
+      "path": "docs/local-kernel-final-verification.json",
+      "sha256": "16b1d9d38276bc15f3cff80ededdb3bd13ca68d07e6725fd0b755532d62997bf"
+    },
+    {
+      "path": "docs/local-kernel-history-v5-package-verification.json",
+      "sha256": "3a2057d7606f81fb4000de0e1b434bc8436ca07ff011305db6cfbcc6e5fedab6"
+    },
+    {
+      "path": "docs/local-kernel-investments.md",
+      "sha256": "bc0edfeeabff8daa59d2f9cd34fe3988635c5440d3cd723e5d8aa4e65a509e70"
+    },
+    {
+      "path": "docs/local-kernel-material-sides-package-verification.json",
+      "sha256": "2e9581cd775190a13f1f483712295468f264ce4438229e999181f9951bb27a37"
+    },
+    {
+      "path": "docs/local-kernel-opening.md",
+      "sha256": "c72914fef7e565f31860b0020177d196ac138fd6b902b0297c28c7f86cda9abd"
+    },
+    {
+      "path": "docs/local-kernel-package-verification.json",
+      "sha256": "6c0afd2e9946f464c3b7dc4225aef3e514733cd282b34328fc81d7b63d8cae5a"
+    },
+    {
+      "path": "docs/local-kernel-packaging.md",
+      "sha256": "d5348d98aaf3fac019931126b53d6ead5052a3bed10233081c0e174ae73d6fad"
+    },
+    {
+      "path": "docs/local-kernel-reconstruction-v6-package-verification.json",
+      "sha256": "78edb0cda0b146c68fd2024986b4420a2a4b9331353614d21fac55eac823b5eb"
+    },
+    {
+      "path": "docs/local-kernel-reports.md",
+      "sha256": "71343088dc30c11b915cfc56fe73ba7f0fc2126ea2b8e19da16ccc0145da2ebe"
+    },
+    {
+      "path": "docs/local-kernel-startup.md",
+      "sha256": "6d0a1835c53654eec775bf48a5df735f2af43c732d0ec4f3c997ff610b573bb3"
+    },
+    {
+      "path": "docs/local-kernel-takeover-package-verification.json",
+      "sha256": "f4071de8e849c2d22cd0244f60d33a1eeb6086dbb22c4b36fec2f574e8eeb02b"
+    },
+    {
+      "path": "docs/local-kernel-takeover.md",
+      "sha256": "03271e34d73a62c37969b1e6b79b698e098a7dd2b380bba3528b69d50b21a0de"
+    },
+    {
+      "path": "docs/local-kernel-zero-opening-package-verification.json",
+      "sha256": "31111d1d69b257b8c924c4fadb6cd1ed6cf899179fb08062bf0a80a39ddac5eb"
+    },
+    {
+      "path": "docs/local-kernel.md",
+      "sha256": "a219167baa6d25489229c970486de45a79a68206a1f35bb2cbfc0abb35c98078"
+    },
+    {
+      "path": "docs/local-payroll-benchmark.json",
+      "sha256": "663763e69ef17ba319fc90f8b961e81e67315334b09eb5228de66e6f871f8ffe"
+    },
+    {
+      "path": "docs/local-payroll-benchmark.md",
+      "sha256": "4bf15c5b69c0a9766f23d55cd55950d08909687f19560305f9dc5a65cdb76cf4"
+    },
+    {
+      "path": "docs/local-source-batch-benchmark.json",
+      "sha256": "8f10579ce58538de5b737c627945dc4fbb75c86c6452468a662135fdc36703f5"
+    },
+    {
+      "path": "docs/local-source-batch-benchmark.md",
+      "sha256": "16b5869ef22e7152951b0f53dc73853d33ef9d5793cb1b5c9bae8d867afe01d5"
+    },
+    {
+      "path": "docs/material-completeness.md",
+      "sha256": "1a6f3a30bd7cc2f132c06909ad1e11e575631aaa5d185d97bfd104801d76be2d"
+    },
+    {
+      "path": "docs/multi-company-operations.md",
+      "sha256": "e5e388104d52383ac01089f46eab92d04e432b59cd2a831d04574dcba912d773"
+    },
+    {
+      "path": "docs/mybank-batch-payments.md",
+      "sha256": "f991eac99e49e0faa55090386f76e76b97d8b676e5b96ffc198b3f34ff562652"
+    },
+    {
+      "path": "docs/pass-through-funds.md",
+      "sha256": "892d764bffca45296a6626166053509f63259cd4fdcd72c762e0c812bfe4dd14"
+    },
+    {
+      "path": "docs/performance/kernel-materials-v3-20260911.md",
+      "sha256": "528ffeab8e0ba3e8124330b90fabeb622d8b6487d82c1c04164b3491d2230115"
+    },
+    {
+      "path": "docs/performance/kernel-takeover-20260911.json",
+      "sha256": "88d8e804f66ca3af1dc7266b68e8c1de84f90678a5b3f925b19caa910f2a0ccf"
+    },
+    {
+      "path": "docs/performance/kernel-takeover-20260911.md",
+      "sha256": "a08fbc31bccb13b05e973ebd6eeb7a0f5124f59d71e363655c1297a952095a88"
+    },
+    {
+      "path": "docs/personal-labor-remuneration-workflow.md",
+      "sha256": "e86debace6f9ffd408db5af43eda4c996d7161c18ee1a4a08d7cdda74f98626a"
+    },
+    {
+      "path": "docs/purchase-project-components.md",
+      "sha256": "aa53a8e9bd931ffc27be1f4c528ecd4cf33f2643c57c27c55d48b75fe342fe33"
+    },
+    {
+      "path": "docs/t3-implementation-verification.json",
+      "sha256": "a899a78462493b5cf7e3edc34172dc82a3bc5a8fa482b04552c4e0ed12d92ba3"
+    },
+    {
+      "path": "docs/t3-review-r2.json",
+      "sha256": "a97d5484114ee1b84cccf3ddea75f00cdeff3b550f7376b350a5322426a1f83c"
+    },
+    {
+      "path": "docs/t3-review-revisions.json",
+      "sha256": "7e20e483ced1d05a73b963b1742fc8bec898859d0873f56eadde8ba09c77d327"
+    },
+    {
+      "path": "docs/t4-approved-plan.md",
+      "sha256": "1ab0016e8135c3e47ceb3f6ecfb1f765dcadf77505d9db869382692d673940f1"
+    },
+    {
+      "path": "docs/t4-implementation-result.md",
+      "sha256": "00b5c66651d16ee07a75b3c43235a81af43fc20186c6641c314f0fcc3ef487ae"
+    },
+    {
+      "path": "docs/t4-implementation-verification.json",
+      "sha256": "f24ca46f2bc4150cc91fb4c8b8df13352fd7bec76510161ee68d79d5632c37c7"
+    },
+    {
+      "path": "docs/t4-review-r2.json",
+      "sha256": "2a25c062ad2e91389de86d02d8a9fd0b31d99b0f1d2115d9cb34d97a879e9c53"
+    },
+    {
+      "path": "docs/t4-review-r2.md",
+      "sha256": "0a734e110875b2459402b30da0dd457c320152f019de68afd873ac16dcae9f4f"
+    },
+    {
+      "path": "docs/t5-approved-plan.md",
+      "sha256": "ef2714a2fcf6dde2a6512cbe2043a342a9ce71a26905c84e12fbe84c47355bcb"
+    },
+    {
+      "path": "docs/t5-implementation-result.md",
+      "sha256": "0cefde15b58ed30ebb5e389192f738b3e3627d73b38d1d377923075a42d69f2a"
+    },
+    {
+      "path": "docs/t5-implementation-verification.json",
+      "sha256": "b5393f6c5773abe554df968fdfe1ca322a71544e978856be1b38a62c9cedbb0c"
+    },
+    {
+      "path": "docs/t6-approved-plan.md",
+      "sha256": "c40431b5c30f10a162b209e5f20029489e7f1fac092c3c27539b8d2635646257"
+    },
+    {
+      "path": "docs/t6-implementation-result.md",
+      "sha256": "191aa908140ef35d0faae1f71cad6e55942e8b4d92a3832a80cc86901b1f5cfb"
+    },
+    {
+      "path": "docs/t6-implementation-verification.json",
+      "sha256": "70a5a03e6a46d30f1d0a350e52899b1a8745dd0354697489fe0e65fdea0945aa"
+    },
+    {
+      "path": "docs/unified-business-queries.md",
+      "sha256": "f6c1016cb2733448fe871759ea1bc9b78909654fb83f02d3c4b73e6d181425bd"
+    },
+    {
+      "path": "docs/windows-local-operations.md",
+      "sha256": "aeebcb29bb94662b97cb076888ebc3099dff1864e039dd6e36a23e31f39c8e36"
+    },
+    {
+      "path": "FRONTEND.md",
+      "sha256": "1ddeed550893e54b7a6fd57e60e01c2e7275fdd9e1783182f18a2a59da00e968"
+    },
+    {
+      "path": "frontend/index.html",
+      "sha256": "8f353245db617f6d93e1cc15c6f1914bd45b43f40a99f5613b9ce35212c192df"
+    },
+    {
+      "path": "frontend/local.html",
+      "sha256": "52659e4c5be0c90762f11f656627ae3042f9a45a4301ebed73cb98e1d5f4fd28"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "sha256": "9b4844e8c1d43c82e0c44b3242ad6b4d21bdd77ff36e367f00c525b95d47f38a"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256": "52c99262d094c0acbc8c3acdb9ec37211147802d8a9fd5a53d13c2a49c62cf72"
+    },
+    {
+      "path": "frontend/src/api/assets.ts",
+      "sha256": "d1ff21e669ac57bace01e0dbcd060228fae643844a5d97f0ceb05b55de917767"
+    },
+    {
+      "path": "frontend/src/api/brief.ts",
+      "sha256": "fa5d0758425803213c496744e404b1d2023e07c9813d3a469c24b6d5e9e9b6b2"
+    },
+    {
+      "path": "frontend/src/api/businessStatus.ts",
+      "sha256": "8efe1c745d442495f8f514a820129a8538597b111e0f68878dd2b23b4b2e372b"
+    },
+    {
+      "path": "frontend/src/api/client.ts",
+      "sha256": "9038ae470a8fc033efa4af59b9e6cb8eed7b27357611a2fe42c022a014e63a5b"
+    },
+    {
+      "path": "frontend/src/api/context.ts",
+      "sha256": "d0fe0e5836b56fec533eed760cd8b0c0e914b7b9871512aa9b77525294bbbfad"
+    },
+    {
+      "path": "frontend/src/api/dashboardContracts.ts",
+      "sha256": "740e54f48d2bed094f6c2623e5fc3e223f8523c8c6d6dedf5f6c4553edcffeb3"
+    },
+    {
+      "path": "frontend/src/api/employees.ts",
+      "sha256": "032ed4a52c397333ed57734ee4a1e447050db2a9c70763295cc28d8bd0b30802"
+    },
+    {
+      "path": "frontend/src/api/funds.ts",
+      "sha256": "12b1cb3fcd7397065b9602d26bee1661a342c30010377825be148825243ac908"
+    },
+    {
+      "path": "frontend/src/api/localKernel.ts",
+      "sha256": "4d428cdeef45f77915fd68ac8db30911a3559b91e3ddbfc415152f4d98e55821"
+    },
+    {
+      "path": "frontend/src/api/reports.ts",
+      "sha256": "f588c601ccc705a51c790a3b7bc87c0c2073d85911a856d6a20b324e192e8ada"
+    },
+    {
+      "path": "frontend/src/App.vue",
+      "sha256": "dadb4b9c926ba19488b3974a0231ad624af6340471167d52a7c63ff47b37114e"
+    },
+    {
+      "path": "frontend/src/components/BackgroundJobsPanel.vue",
+      "sha256": "b338d4d175ce65acaf284bbc8552adf42e7a7d4ccc6ffdd82664c5c06f2a54ec"
+    },
+    {
+      "path": "frontend/src/components/brief/BriefActivityWorkbench.vue",
+      "sha256": "ae68b2ef6c0c04bd78f84f68ed5ef6008ee213ae85a382595fdd06791c7f3f16"
+    },
+    {
+      "path": "frontend/src/components/brief/BriefFinancialOverview.vue",
+      "sha256": "455cc8522cdebbfbc86e81696953c71bf441ee49fc3f1cba27fa028e01d36280"
+    },
+    {
+      "path": "frontend/src/components/brief/BriefOpenItems.vue",
+      "sha256": "735b4c8fe8816ff72aa554be3e63da4964af0c207fcc944ee317a4395a060bfc"
+    },
+    {
+      "path": "frontend/src/components/brief/BriefWorkforceSection.vue",
+      "sha256": "a45a5ee646444bb7f992351472bb9eb98fd84c06c4c23beefc0a7cc0ba23d8c8"
+    },
+    {
+      "path": "frontend/src/components/brief/BusinessDetails.vue",
+      "sha256": "755491b3cdeb9725c24c377d4065eea5fb2e21e76d67c4502955d9d87140a6b8"
+    },
+    {
+      "path": "frontend/src/components/brief/EvidenceList.vue",
+      "sha256": "b9d806677e9ca4aebd52abeaf5f7f727dde8ca39fd7a5b83d8897711ed6f9232"
+    },
+    {
+      "path": "frontend/src/components/brief/VoucherTrace.vue",
+      "sha256": "29e11cee133de9a1794dfadbbaab1147b1ec0ec2f1ab694006047bd26b06b646"
+    },
+    {
+      "path": "frontend/src/components/BusinessStatusDetails.vue",
+      "sha256": "1c429b5facf636fb7ad3cd0e149de44123169df195b8021e92213a64856a1fbb"
+    },
+    {
+      "path": "frontend/src/components/DashboardBusinessRecords.vue",
+      "sha256": "4345833d4dfea27de53ae5e081226c077b579ebd3eb328666c273eda2dd76af6"
+    },
+    {
+      "path": "frontend/src/components/DashboardPagination.vue",
+      "sha256": "53aed3b37f8acd725c55ad923b1f76fdcd2b4a9085f1c10fc2296c58af7bc085"
+    },
+    {
+      "path": "frontend/src/components/DashboardSectionNav.vue",
+      "sha256": "e852fd0137acc2eeb1d63da6f0e9f0e79bffe7851bec26d654ad98405c13a1eb"
+    },
+    {
+      "path": "frontend/src/components/DashboardSourceHistory.vue",
+      "sha256": "f06bf09b804786a817c4e0cee3edfcb8c66f9ea613c38fe32576586f1810a58b"
+    },
+    {
+      "path": "frontend/src/components/OwnerSessionPanel.vue",
+      "sha256": "023d2fcbd8ac297be3d8c62b60ba260b6d11efb400d9653aeb8c466e892ebcee"
+    },
+    {
+      "path": "frontend/src/components/PeriodPreparation.vue",
+      "sha256": "510b56631c4d5465367fe2e7ecf01bb213a273ba78c2bcc2425827c8dd1948b2"
+    },
+    {
+      "path": "frontend/src/composables/useDashboardContext.ts",
+      "sha256": "c073a93c583f228125332a5c247e3e1ca6d49100189ee6682127bcd9d760d0a9"
+    },
+    {
+      "path": "frontend/src/env.d.ts",
+      "sha256": "6b1994808efabd11506066c16a5047de065cb900be0e481729e062adaa20b454"
+    },
+    {
+      "path": "frontend/src/main.ts",
+      "sha256": "51639baba7b00b173bab7aeb00e4aa71fba69639b42fd94621d7a22aed80ec66"
+    },
+    {
+      "path": "frontend/src/router/index.ts",
+      "sha256": "0c02fdfc9b91f1f7c72c56a6459d68845880105a7d5df89c737bcb2e51a69d75"
+    },
+    {
+      "path": "frontend/src/styles.css",
+      "sha256": "8096d0a71c865805253489c1eee55a25c18432d2ce2f57a5cc59b11a28b55e65"
+    },
+    {
+      "path": "frontend/src/utils/money.ts",
+      "sha256": "0cc39cb9ae76a86c8537e5a8646490db9b0aab70109d980a1ea37858361f2da7"
+    },
+    {
+      "path": "frontend/src/views/AssetsView.vue",
+      "sha256": "31f546d57a5a147281172cc438148a9b1cdaf9f3ebf899c52f069e960e3cd4ec"
+    },
+    {
+      "path": "frontend/src/views/BriefView.vue",
+      "sha256": "9a0d1e5a752ce06a4d8f1ec036918f4b8f482e596fa8366182962ce3222e6b6f"
+    },
+    {
+      "path": "frontend/src/views/EmployeesView.vue",
+      "sha256": "f155af8515b6e940da41827d4f430b952e6164e85c8b80a5480f246d9d5f808e"
+    },
+    {
+      "path": "frontend/src/views/ReportsView.vue",
+      "sha256": "4d5b86cefd6d4548ebe1753b9b4e18d99718cb244b68a5da587d8443ccf2bd47"
+    },
+    {
+      "path": "frontend/tests/brief-position.test.mjs",
+      "sha256": "543fd7f52b051d2f9944d5767221217fb3674883785bcdf7541448d5379563ee"
+    },
+    {
+      "path": "frontend/tests/browser-contract.cjs",
+      "sha256": "af28f4a8da3365147a285137db9115ea09fa41e009dc10dc8d4b9eba7f501e41"
+    },
+    {
+      "path": "frontend/tests/browser-jobs-download.cjs",
+      "sha256": "7f1aed10580de1f0ad462bde65d0c03530e320f8e5e90a215551cc16e5687280"
+    },
+    {
+      "path": "frontend/tests/browser-t5-integration.cjs",
+      "sha256": "e5ecd2b36799c0121d780d6747b5c34fe82b2750b10747bffb80d47361c7145d"
+    },
+    {
+      "path": "frontend/tests/dashboard-context-v2.test.mjs",
+      "sha256": "1d163c78642b91b6bdf8540768d05044dedced3d2c35f31b661cd3f0a47b9452"
+    },
+    {
+      "path": "frontend/tests/dashboard-fixtures.json",
+      "sha256": "fb5be4665471db6a7548f96b926d4480bf5b0f60fc99363aea4d90ded2ae3d91"
+    },
+    {
+      "path": "frontend/tests/dashboard-render-v2.test.mjs",
+      "sha256": "1062c9b614175f2d3a089547746fd87c2ed19a5bfe100fc4f247da51431611cf"
+    },
+    {
+      "path": "frontend/tests/local-kernel.test.mjs",
+      "sha256": "ea287eac249d3f0cb8228b68c64faf84eec0c3fd1bc3700af1b123fd3eb12e7f"
+    },
+    {
+      "path": "frontend/tests/reports-adapter.test.mjs",
+      "sha256": "79185e0cc9da5cb69dc889f02af46d204d984f55a1ec2c9ff70fa09c9d8b3073"
+    },
+    {
+      "path": "frontend/tests/t4-ui-responses.json",
+      "sha256": "7d536c58f5230304a80a3f35088f29be95e162a48b23ce3df58b1acb777b7798"
+    },
+    {
+      "path": "frontend/tests/t4-unestablished-responses.json",
+      "sha256": "f0c9a711a6a38bf6d0254ad9cdb09012e90f919e647cce4c93e2343811d4cce0"
+    },
+    {
+      "path": "frontend/tests/t6-details.test.mjs",
+      "sha256": "3437a6e110f554cf69386b3addbb328e77c57753e005d2033b5e7956209c7d21"
+    },
+    {
+      "path": "frontend/tests/t6-funds-unknown.test.mjs",
+      "sha256": "adf299583222669e9fe683a924996ee29a9e5a49ba3a307511574a21c1768e20"
+    },
+    {
+      "path": "frontend/tsconfig.json",
+      "sha256": "26c83b7e456ecd1ce727b7190143eff7609b862a048d9896e448a8de15292aa7"
+    },
+    {
+      "path": "frontend/vite.config.ts",
+      "sha256": "266f6397f808e7ce7c10ec5466b86ddae458eb6a8b2fbfa4344f8a48a1b07dbb"
+    },
+    {
+      "path": "scripts/benchmark-local-kernel.py",
+      "sha256": "aec15aef8f86b7e67cc702556998123ffbc35aee21d2bec16ed95b84d7701623"
+    },
+    {
+      "path": "scripts/benchmark-local-payroll.py",
+      "sha256": "1674131c48a1efcc473c6808d3155cdf6f70d7937410591848d9eed11cbb47bf"
+    },
+    {
+      "path": "scripts/benchmark-local-source-batches.py",
+      "sha256": "aab6a0cd26404f8a1fadcd6ea2fc06585f8330e59ed30533a92f4b61a41052da"
+    },
+    {
+      "path": "scripts/benchmark-takeover.py",
+      "sha256": "0d9e6a3d23896a487adc7c6cafac70c8a812cf8e24fc07389c6bcd61fda84e10"
+    },
+    {
+      "path": "scripts/kernel-runtime.ps1",
+      "sha256": "e4b60b35d59a7bf12bafb77e11dd8e358e6655b726bc7c740526367ef3caa691"
+    },
+    {
+      "path": "scripts/package_local_kernel.py",
+      "sha256": "2abec8741bc3aa8c0558a3b2c66cf44114cab6075b818200be5760b8336ed6c9"
+    },
+    {
+      "path": "scripts/package-local-kernel.ps1",
+      "sha256": "a80615a747f7046982642011217925fdb4fa3c3f39945083a21d704ba6fdc0c1"
+    },
+    {
+      "path": "scripts/verify_local_package.py",
+      "sha256": "91ee09940b8a6c93c0ddf9d5c6174f8356c338984e0f6dc91cb2f5f5d12d1d7d"
+    },
+    {
+      "path": "scripts/verify_t5_browser.py",
+      "sha256": "edfacd31cadff29c39ba765f80dc4f12cb58f5cf59078e9e89b59bb9148e93df"
+    },
+    {
+      "path": "scripts/verify_t5_read_costs.py",
+      "sha256": "23de1cfa868e9b0260344eddbfafe259c8c85ad812aa7a1c79d82e19dbf132b0"
+    },
+    {
+      "path": "src/ai_accounting/kernel/__init__.py",
+      "sha256": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167"
+    },
+    {
+      "path": "src/ai_accounting/kernel/accounting.py",
+      "sha256": "d37b518b883ce632fa54881a36e4f388b0b5476eae39f1150e5da1081fd97f0b"
+    },
+    {
+      "path": "src/ai_accounting/kernel/backup.py",
+      "sha256": "d49cf81eb5e2c2563fa2378c930dc812782b4e24cd764973760daace74a92074"
+    },
+    {
+      "path": "src/ai_accounting/kernel/build.py",
+      "sha256": "9d5190bb8fb0e873b0d35927ed2bcc76620ec2b45010adfd98399ee76f692e6a"
+    },
+    {
+      "path": "src/ai_accounting/kernel/business_queries.py",
+      "sha256": "e469debb38c6d223feb62879c807c82c232bdd7f22fe9f8d2634bb4da13f3bbe"
+    },
+    {
+      "path": "src/ai_accounting/kernel/catalog.py",
+      "sha256": "b6110b6f05589aedd281dd5d054c71606abb0f2f442bf057366900d9c004c929"
+    },
+    {
+      "path": "src/ai_accounting/kernel/cli.py",
+      "sha256": "273c475f5a7ab24d73835bd4491757e60575753bc863b04e4db1f66bf3d4b96e"
+    },
+    {
+      "path": "src/ai_accounting/kernel/command_schema.py",
+      "sha256": "9f5720e71cf9c50107c8777f9027aa959d9197e101d2b7d5de806ddaa6feda65"
+    },
+    {
+      "path": "src/ai_accounting/kernel/contracts.py",
+      "sha256": "199a0f64fa42760bcc770c27528faedf86be44319080c3fbcf5d2ced7fbd946c"
+    },
+    {
+      "path": "src/ai_accounting/kernel/daemon.py",
+      "sha256": "7e0c47f5d904a33d0f4761f3e1fa2ea427f75d5c2cf0c0641284769b64372fb1"
+    },
+    {
+      "path": "src/ai_accounting/kernel/dashboard_funds.py",
+      "sha256": "90f3f25a75d6f285d9c5da311be2d73d81d21f2aa65313aec978c47fd50a9db2"
+    },
+    {
+      "path": "src/ai_accounting/kernel/dashboard_metadata.py",
+      "sha256": "7895d183af80480c31dce727cf5482ce896bca50362fc623add6e535e690da6b"
+    },
+    {
+      "path": "src/ai_accounting/kernel/dashboard_pages.py",
+      "sha256": "e3c2bfae5e0ef3d9f8bf4d6db475d18e361bb4e51c3870728af716d27e75dd42"
+    },
+    {
+      "path": "src/ai_accounting/kernel/dashboard_reads.py",
+      "sha256": "45f9a6ee6091840f6c8930f58a0d50c4cb6dd6aef8d83a3851d86729e6328d6a"
+    },
+    {
+      "path": "src/ai_accounting/kernel/dashboard.py",
+      "sha256": "a6a1990a881899f4f0492507b1e65cf53e6fc365d87c64ebac546d173babcdc3"
+    },
+    {
+      "path": "src/ai_accounting/kernel/diagnostics.py",
+      "sha256": "e96874b67f46fc9bea0c9370229f5107e91d512afb995b13c4bded8e1acb5ac7"
+    },
+    {
+      "path": "src/ai_accounting/kernel/discovery.py",
+      "sha256": "4d391549a295272b6bdbac172520aeba5e84f7c056a04cbe437c38554451d499"
+    },
+    {
+      "path": "src/ai_accounting/kernel/display.py",
+      "sha256": "3e79e4484a5560570f1d3d70860aa339d78eac4efd33b226aa53cc383074f178"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/accounting.py",
+      "sha256": "72c64bf4519c507549180869d3b15c553e3a45c5d240654f12bc647cf95fd784"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/adjustments.py",
+      "sha256": "fb0deb47593db14d72a2470f34c23950dc49f677b657afef685701c605f29f5f"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/assets.py",
+      "sha256": "09b2cf2071d114be6d789ebd79479a6689cb443f988476e2ebc33eae659da636"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/banking.py",
+      "sha256": "7e80a2abbe273c97e560b4da44d6373c504f5631f0da16789316db8e15b05506"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/cash.py",
+      "sha256": "fa1d2945ae3c7a109c0565b7d26fda1a74787c4be5d846a6399e0c4ffe4b7fff"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/investments.py",
+      "sha256": "def1edcc6c80b3b8ac2a858aead2ba3b9801e30360550b727fbe05a80b106aa5"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/labor_assets.py",
+      "sha256": "a40bd4581c983098ef26de71150dd4c34936a237e3774fa3df4adbf6bcae8593"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/managed_reserve.py",
+      "sha256": "43702d871bdc401351c3b1de52ad2693e7c8d59bb6fe783d96518096a3577369"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/money.py",
+      "sha256": "00ddaeecd386f1cf549077adbe5c64c9dfa897a60b2edc1f37600da7c75d88c4"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/opening.py",
+      "sha256": "b5302e5c557ba7ac68b2cfb0c6c34b22406aea20b791a94e22835455523bc932"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/payroll_reserve_payment.py",
+      "sha256": "c054097bc4444f33e36e3849194aecd1f088ef5b9d4a520161ab7d8539c171ae"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/payroll.py",
+      "sha256": "887202878d4fe45233d82829fe1d5cf586fb38089690f119fd616f176278c740"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/platforms.py",
+      "sha256": "8c392a6f2220027f77bc522dada4210d7cba4b7c04c9bed38efb3521d3b4154c"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/taxes.py",
+      "sha256": "b40845afb163ab58ebad41d9e83e2e6ecb8e15b73001b4211900be6ffc3ae501"
+    },
+    {
+      "path": "src/ai_accounting/kernel/domains/transactions.py",
+      "sha256": "a3fb48a668d7c8dadd8d532c2ea15368a87b95a4cf6c92e6983bd448cf30e6fc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/engine.py",
+      "sha256": "f52d01b251838b7a9b779377e6ead98a2c728b0e2b7a2b58d6c53f09d5591724"
+    },
+    {
+      "path": "src/ai_accounting/kernel/exports.py",
+      "sha256": "a4311a30f719a7391cf9a697cf6385cc958fe4ee5ec61398621c083675ca6789"
+    },
+    {
+      "path": "src/ai_accounting/kernel/http.py",
+      "sha256": "91d3e0980c7c6b11112b43c8e8615b69594118de23f76c9e07eb08ecc2fc92c1"
+    },
+    {
+      "path": "src/ai_accounting/kernel/jobs.py",
+      "sha256": "a2d53c00435cad7b81e602848921d35abe367cd51c3ca830ccbb349a326ddb04"
+    },
+    {
+      "path": "src/ai_accounting/kernel/materials.py",
+      "sha256": "d615f715c7d6342f657ef99dc360104fb845b3de695718a8d65bfab71dcd8490"
+    },
+    {
+      "path": "src/ai_accounting/kernel/mcp.py",
+      "sha256": "93c3830a75868963414af24f5ab2aa504072c127ce91cdebcb21329e59b3d1e4"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v1_business.json",
+      "sha256": "1473e12b1c6a903224c3625fbe6a10bc5a5166dfe9928c6bb85fc5b3f3617900"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v1_catalog.json",
+      "sha256": "1cd1e9701f601dc6db3a5a0ab3ffca8f6ede05e1d5b0239dbd43fddbd22e61ca"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v10_business.json",
+      "sha256": "25d6ed414395fcdbdb20bbc74f279ab1fafb619d364a2acffbb3c47d68504e5a"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v2_business.json",
+      "sha256": "7a89f8ea7baf722c20ecf6faa00c0c55670194e1debda318df8bf74f21819d65"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v2_catalog.json",
+      "sha256": "559a80dda160a026f06e1cdc76c0f8f1d0432b596163d45de1f7fb8079e98297"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v3_business.json",
+      "sha256": "5a2e1bef930c0f646c70ebcf96da4e3ce82a7f61374f90c42ad0251dce9696aa"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v3_catalog.json",
+      "sha256": "28c01841492b032e54646f07bc97d13b01c7b1fd66e738c4af6e732fe9e732ae"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v4_business.json",
+      "sha256": "bc20923c5f8886b48bf3d10e725cd1645c7954a3413c302c681f5f1bb63430dc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v5_business.json",
+      "sha256": "02625c544df804086f9f289bf08a1fd8e0bcfdbcb249bf883f00da1090041ca8"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v6_business.json",
+      "sha256": "e4c0bfc2c771f84ff287f01afdda5121e700e4ec2eca54ebde9b28f3dbc97840"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v7_business.json",
+      "sha256": "ce4f78424567d8ce88648f80772ee50e4989fb18c59d90003eb6888633a49725"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v8_business.json",
+      "sha256": "3deb31126a287977d4daa11c89eb9eed2f3f4c55484f3cf6ce49fd25fb3499c7"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v9_business.json",
+      "sha256": "d40c2acb669b4e673aeeb22e7070972da353c479ab3e14458f7d9f5db1f8760c"
+    },
+    {
+      "path": "src/ai_accounting/kernel/opening_adoption.py",
+      "sha256": "54dca5b7cbbf245cb5d86dcac7323167c3a202d1f647b2b6bac1710681ddfe43"
+    },
+    {
+      "path": "src/ai_accounting/kernel/payroll_preparation.py",
+      "sha256": "fd8f5ec11adec79e2ad48c4e73c3df7f119db41983d1602ffb9b7f09429f0f60"
+    },
+    {
+      "path": "src/ai_accounting/kernel/payroll_tax_declarations.py",
+      "sha256": "a0344c4e4ed8685a40f1636ea08953007afaa1bac68780816052930d043586d6"
+    },
+    {
+      "path": "src/ai_accounting/kernel/periods.py",
+      "sha256": "4c8a21cffa0f5000be919a4283d86a7b128d5eaf2aca592e1639cde45019ba99"
+    },
+    {
+      "path": "src/ai_accounting/kernel/provenance.py",
+      "sha256": "1356847688ec1903b21a2702d74d2a57138e31be6d659998bdef22de6595cf63"
+    },
+    {
+      "path": "src/ai_accounting/kernel/query_reads.py",
+      "sha256": "5b5f812094ea99c4a7af32f6abc858b236338b4614c4a6ef17750e806a219040"
+    },
+    {
+      "path": "src/ai_accounting/kernel/query_semantics.py",
+      "sha256": "500878dff0f1a8921d42c5518405e7997bba408dfe9b2bfa6a2c4eeb7cec2858"
+    },
+    {
+      "path": "src/ai_accounting/kernel/read_indexes.py",
+      "sha256": "cac3d603d05c73ec26e8f5be8b1fca57700e478ed41fb990e6d15b482b4ee8fc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/reports.py",
+      "sha256": "3721e108d9e7941dcf5450e09bc4bd893cb805e794a50caabc1efe8862851d10"
+    },
+    {
+      "path": "src/ai_accounting/kernel/reserves.py",
+      "sha256": "3a4f730329203ddefee284dcaeab5922dca49910a23b4fb9eea3645a92c1d3b5"
+    },
+    {
+      "path": "src/ai_accounting/kernel/runtime.py",
+      "sha256": "452b09dcaef293d56c96ddb5db5b7097718f004d6db9f4a742cc257055064231"
+    },
+    {
+      "path": "src/ai_accounting/kernel/schema.py",
+      "sha256": "d4dc035e508f69408c13d8bf7a7df2762c1a996444afcd10aa53ba6eec3e322a"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/__init__.py",
+      "sha256": "4be5375476e9472cadb13cfaca4cbad1e5b9f945c5861203a1965ad79c8ed3a3"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/approval.py",
+      "sha256": "664c690e02b0868a3579d064ba61359f038761fa6a15a8c84a4c197af9d822ef"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/batches.py",
+      "sha256": "6a4422123f86886cb7f3b8250b119bab087c9d0b4169871b09c038e00346beb6"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/credentials.py",
+      "sha256": "913cd393bde9d2ccebaf8058f1f96ed3d7a30a427b7a32166a512642ebf3d896"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/native.py",
+      "sha256": "95d596301fbc5a67cbc905990a46a63f8ae41f7d5f3eee1a352b7c6f5149a3dc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/primitives.py",
+      "sha256": "f0023a346f0f0fcb1a13a840df6b430954649361bb237e4aa35db6abb5a9475b"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/schema.py",
+      "sha256": "98c5d98bb3099849e884a71dc457cf830850798c7b42312aa3b6f4a6eb4655a5"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/service.py",
+      "sha256": "684b87f90e230464b33f32375de67ba51b7822a0ecae860e3625ef485927dbbc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/transport.py",
+      "sha256": "f78463225d463b9ebe7db66609e1cb0c6bcef39552f8a9691a028e7381245315"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/window.py",
+      "sha256": "7ceeabebdf945eebbbde6f7e60aab1156e68cff9aa10525138ed666c893a101d"
+    },
+    {
+      "path": "src/ai_accounting/kernel/security/windows.py",
+      "sha256": "91dc38234adc16c8a80121941052938ddf92fc48877a65e42523ba43d4527c7d"
+    },
+    {
+      "path": "src/ai_accounting/kernel/service.py",
+      "sha256": "18c29541ef49480b9d10f6bc0344d2910bc8306a464982846b3b8a4ea09d2910"
+    },
+    {
+      "path": "src/ai_accounting/kernel/storage.py",
+      "sha256": "d40f232133311f802dcb2c9ce0427f90dba8647747dec8bb01e5ef3fec53e1c6"
+    },
+    {
+      "path": "src/ai_accounting/kernel/tax_import.py",
+      "sha256": "4c1f8af0cb165735b3128ba4bcac5c2c73b161845b9e1474c4cc35f1bf2dd29b"
+    },
+    {
+      "path": "src/ai_accounting/kernel/types.py",
+      "sha256": "90a39ed4089ba5f2e3792b8c775bd00305e1eac1ab0607afd0eb2a97f387e7fc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/versions.py",
+      "sha256": "d7c0deb9c0ca1663e88ac88d7fa6dcb2f977a7a4b9e2d09ca6d0d15b4e031ebc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/workflow.py",
+      "sha256": "bde82bba7ca01dba3cfc8c310b9327ed3a71eeac8184d02a33283cf1de176d2d"
+    }
+  ],
+  "architecture_owned_changes_not_attributed_to_r2": [],
+  "repairs": [
+    {
+      "id": "R1",
+      "priority": "P2",
+      "result": "Company switch discards old quarter and report-local state. Existing App chooses available same month or new default; existing Reports derives final quarter. Explicit same-company quarter fallback unchanged."
+    },
+    {
+      "id": "R2",
+      "priority": "P3",
+      "result": "Only the current first-page generation/controller completes recovery notices. Context failure uses the current refresh generation. Old loadMore completion cannot announce the newer refresh complete after A-B-A."
+    }
+  ],
+  "test_batches": [
+    {
+      "command": "node --test --test-name-pattern='T6 report|T6 header' tests/t6-context.test.mjs",
+      "cwd": "frontend",
+      "phase": "before_fix",
+      "pass": 2,
+      "fail": 4,
+      "skipped": 7,
+      "log": {
+        "path": ".tmp/t6-r2/context-before.log",
+        "sha256": "056ac4760e281d2543dc502ee187bd082676da4d7f3cf410f4fb01ae42856991",
+        "bytes": 5971
+      },
+      "scope": "Actual Header/App/context harness; new month-default scenario reproduced March instead of June and old quarter residual."
+    },
+    {
+      "command": "node --test --test-name-pattern='T6 report|T6 header' tests/t6-context.test.mjs",
+      "cwd": "frontend",
+      "phase": "after_fix",
+      "pass": 6,
+      "fail": 0,
+      "skipped": 7,
+      "log": {
+        "path": ".tmp/t6-r2/context-after.log",
+        "sha256": "93e8cc65c0c7bb8d55d38a247e7731e59e16866f3c67ddcabde7380a6e4796e7",
+        "bytes": 3175
+      },
+      "scope": "Includes nested cases and unchanged explicit-quarter fallback; not six wholly new standalone tests."
+    },
+    {
+      "command": "node --test tests/funds-filters.test.mjs",
+      "cwd": "frontend",
+      "phase": "before_fix",
+      "pass": 9,
+      "fail": 1,
+      "log": {
+        "path": ".tmp/t6-r2/funds-tests-before.log",
+        "sha256": "c5c695ef5b064b520a11241e2079a1dba11bbfe3d132fd433b7da1c020e0f203",
+        "bytes": 2978
+      }
+    },
+    {
+      "command": "node --test tests/funds-filters.test.mjs",
+      "cwd": "frontend",
+      "phase": "after_fix",
+      "pass": 10,
+      "fail": 0,
+      "log": {
+        "path": ".tmp/t6-r2/funds-tests.log",
+        "sha256": "7cf79be972fa1e2fe8b868a4bf7ad221bea60e0d5043e264ad8ccef5947304e8",
+        "bytes": 2320
+      },
+      "scope": "Old context completion, latest first-page completion, context failure and first-page failure."
+    }
+  ],
+  "build": {
+    "command": "npm --prefix frontend run build",
+    "attempts_this_revision": 1,
+    "status": "passed",
+    "log": {
+      "path": ".tmp/t6-r2/build.log",
+      "sha256": "276429de86624549815cafab32d80847db98d431954c497935b563c93060337d",
+      "bytes": 2579
+    }
+  },
+  "verifier_lint": {
+    "commands": [
+      ".tmp-kernel-venv/Scripts/python.exe -m ruff check scripts/verify_t6_browser.py",
+      "node --check frontend/tests/browser-t6-interactions.cjs"
+    ],
+    "status": "passed",
+    "log": {
+      "path": ".tmp/t6-r2/verifier-lint.log",
+      "sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+      "bytes": 20
+    }
+  },
+  "browser": {
+    "command": ".tmp-kernel-venv/Scripts/python.exe -X utf8 scripts/verify_t6_browser.py --scenario report-company-default --root .tmp/t6-r2/browser-root --output .tmp/t6-r2/browser --node 'D:/Program Files/nodejs/node.exe' --playwright-module 'D:/Develop/nodejs/node_global/node_modules/@playwright/cli/node_modules/playwright'",
+    "result": {
+      "path": ".tmp/t6-r2/browser/result.json",
+      "sha256": "090baf724e439334b7838eab8f755e21aad0fad7dc84ff5af48c91fc0d7fc53d",
+      "bytes": 8893
+    },
+    "status": "passed",
+    "observations": {
+      "from": {
+        "company": "T6默认月份合成甲公司",
+        "period": "2026-01",
+        "quarter": "2026-Q1"
+      },
+      "to": {
+        "company": "T6默认月份合成乙公司",
+        "periods": [
+          "2026-06",
+          "2026-03"
+        ],
+        "default_period": "2026-06",
+        "selected_period": "2026-06",
+        "selected_quarter": "2026-Q2",
+        "api_quarter": 2,
+        "notice": "所选月份已不可查看，已切换至 2026-06。"
+      }
+    },
+    "checks": [
+      "one-use ticket consumed before router; HttpOnly session",
+      "Three typed synthetic expense facts only",
+      "A January/Q1 report switches to B June/Q2 default despite B also having March/Q1",
+      "Company and quarter controls, fallback notice, URL and real context/report API agree",
+      "All actually requested JS response bodies match the final ordinary build"
+    ],
+    "page_errors": [],
+    "api_failures": [],
+    "source_sha256": {
+      "frontend/src/api/assets.ts": "d1ff21e669ac57bace01e0dbcd060228fae643844a5d97f0ceb05b55de917767",
+      "frontend/src/api/brief.ts": "fa5d0758425803213c496744e404b1d2023e07c9813d3a469c24b6d5e9e9b6b2",
+      "frontend/src/api/businessStatus.ts": "8efe1c745d442495f8f514a820129a8538597b111e0f68878dd2b23b4b2e372b",
+      "frontend/src/api/client.ts": "9038ae470a8fc033efa4af59b9e6cb8eed7b27357611a2fe42c022a014e63a5b",
+      "frontend/src/api/context.ts": "d0fe0e5836b56fec533eed760cd8b0c0e914b7b9871512aa9b77525294bbbfad",
+      "frontend/src/api/dashboardContracts.ts": "740e54f48d2bed094f6c2623e5fc3e223f8523c8c6d6dedf5f6c4553edcffeb3",
+      "frontend/src/api/employees.ts": "032ed4a52c397333ed57734ee4a1e447050db2a9c70763295cc28d8bd0b30802",
+      "frontend/src/api/funds.ts": "12b1cb3fcd7397065b9602d26bee1661a342c30010377825be148825243ac908",
+      "frontend/src/api/localKernel.ts": "4d428cdeef45f77915fd68ac8db30911a3559b91e3ddbfc415152f4d98e55821",
+      "frontend/src/api/reports.ts": "f588c601ccc705a51c790a3b7bc87c0c2073d85911a856d6a20b324e192e8ada",
+      "frontend/src/App.vue": "dadb4b9c926ba19488b3974a0231ad624af6340471167d52a7c63ff47b37114e",
+      "frontend/src/components/BackgroundJobsPanel.vue": "b338d4d175ce65acaf284bbc8552adf42e7a7d4ccc6ffdd82664c5c06f2a54ec",
+      "frontend/src/components/brief/BriefActivityWorkbench.vue": "ae68b2ef6c0c04bd78f84f68ed5ef6008ee213ae85a382595fdd06791c7f3f16",
+      "frontend/src/components/brief/BriefFinancialOverview.vue": "455cc8522cdebbfbc86e81696953c71bf441ee49fc3f1cba27fa028e01d36280",
+      "frontend/src/components/brief/BriefOpenItems.vue": "735b4c8fe8816ff72aa554be3e63da4964af0c207fcc944ee317a4395a060bfc",
+      "frontend/src/components/brief/BriefWorkforceSection.vue": "a45a5ee646444bb7f992351472bb9eb98fd84c06c4c23beefc0a7cc0ba23d8c8",
+      "frontend/src/components/brief/BusinessDetails.vue": "755491b3cdeb9725c24c377d4065eea5fb2e21e76d67c4502955d9d87140a6b8",
+      "frontend/src/components/brief/EvidenceList.vue": "b9d806677e9ca4aebd52abeaf5f7f727dde8ca39fd7a5b83d8897711ed6f9232",
+      "frontend/src/components/brief/VoucherTrace.vue": "29e11cee133de9a1794dfadbbaab1147b1ec0ec2f1ab694006047bd26b06b646",
+      "frontend/src/components/BusinessStatusDetails.vue": "1c429b5facf636fb7ad3cd0e149de44123169df195b8021e92213a64856a1fbb",
+      "frontend/src/components/DashboardBusinessRecords.vue": "4345833d4dfea27de53ae5e081226c077b579ebd3eb328666c273eda2dd76af6",
+      "frontend/src/components/DashboardModuleHeader.vue": "36f8c15dfe3520da9879d67fe3d20e7a2100ac444b64a277e31c8cf97925e211",
+      "frontend/src/components/DashboardPagination.vue": "53aed3b37f8acd725c55ad923b1f76fdcd2b4a9085f1c10fc2296c58af7bc085",
+      "frontend/src/components/DashboardSectionNav.vue": "e852fd0137acc2eeb1d63da6f0e9f0e79bffe7851bec26d654ad98405c13a1eb",
+      "frontend/src/components/DashboardSourceHistory.vue": "f06bf09b804786a817c4e0cee3edfcb8c66f9ea613c38fe32576586f1810a58b",
+      "frontend/src/components/OwnerSessionPanel.vue": "023d2fcbd8ac297be3d8c62b60ba260b6d11efb400d9653aeb8c466e892ebcee",
+      "frontend/src/components/PeriodPreparation.vue": "510b56631c4d5465367fe2e7ecf01bb213a273ba78c2bcc2425827c8dd1948b2",
+      "frontend/src/composables/useDashboardContext.ts": "c073a93c583f228125332a5c247e3e1ca6d49100189ee6682127bcd9d760d0a9",
+      "frontend/src/env.d.ts": "6b1994808efabd11506066c16a5047de065cb900be0e481729e062adaa20b454",
+      "frontend/src/main.ts": "51639baba7b00b173bab7aeb00e4aa71fba69639b42fd94621d7a22aed80ec66",
+      "frontend/src/router/index.ts": "0c02fdfc9b91f1f7c72c56a6459d68845880105a7d5df89c737bcb2e51a69d75",
+      "frontend/src/styles.css": "8096d0a71c865805253489c1eee55a25c18432d2ce2f57a5cc59b11a28b55e65",
+      "frontend/src/utils/money.ts": "0cc39cb9ae76a86c8537e5a8646490db9b0aab70109d980a1ea37858361f2da7",
+      "frontend/src/views/AssetsView.vue": "31f546d57a5a147281172cc438148a9b1cdaf9f3ebf899c52f069e960e3cd4ec",
+      "frontend/src/views/BriefView.vue": "9a0d1e5a752ce06a4d8f1ec036918f4b8f482e596fa8366182962ce3222e6b6f",
+      "frontend/src/views/EmployeesView.vue": "f155af8515b6e940da41827d4f430b952e6164e85c8b80a5480f246d9d5f808e",
+      "frontend/src/views/FundsView.vue": "f910a12aa4a7f46310e3a7d832e85e85366ebd56c65aed04bba54cc527760c29",
+      "frontend/src/views/ReportsView.vue": "4d5b86cefd6d4548ebe1753b9b4e18d99718cb244b68a5da587d8443ccf2bd47",
+      "scripts/verify_t6_browser.py": "cbbaee76835d2abfa60963cadf21a45aeba027a17aa01a15ed7e2035f5afa24e",
+      "frontend/tests/browser-t6-interactions.cjs": "fbd59da7826f03b4ff89a84ed2689a46d97864994cf0983a117cffba0d951a88"
+    },
+    "build_assets_sha256": {
+      "index.html": "60f852fdf85f3009e346545291c4b32f12058c1a8da4cef938ae605163f522f3",
+      "local.html": "73d539dc576ab1a7479be4cba864edbf7c915538f50ac335ca2b6587508cc57b",
+      "assets/AssetsView-Co_wNCo7.css": "2b01b154936b5b647e0b95e9738989a188a7bba6de35b3b469074fc001c08ec8",
+      "assets/AssetsView-DO0CNuf6.js": "51d68dcdf6dca8a3f8d5c668b02ac59191d6c75d7730dacbe40f6c0411149a0c",
+      "assets/BriefView-BaIzjcse.css": "cfbcfbeaeabe9bde2ac3add3d0d51a2d2ba9ad8e91eb4f0ab3f32a88518405ec",
+      "assets/BriefView-C_BFzkXd.js": "39d4f5b5aeb9e72473d02b73a12d2b2b743933bea97210f2bb7f3872f299a75a",
+      "assets/DashboardSectionNav-CRE837OA.js": "b63e139e752a3cc6567b58f1fef854a34f3256caee70cef3a208a9822a0f1bc2",
+      "assets/DashboardSectionNav-NV25pnNp.css": "a2f2858aa8a4070dd19eadefa55776d8b9f6768cf242b80af285ed54b9683d50",
+      "assets/DashboardSourceHistory.vue_vue_type_script_setup_true_lang-8-OQF-VF.js": "4598064b733ba2d00ab71a35f5bbf130b6828e09a466852724557f3aab235b4a",
+      "assets/EmployeesView-CY8xLe0t.css": "2bc04c2a017671bc26f19eac1a3769306f1250a7dab67f619cb6f40f2be02973",
+      "assets/EmployeesView-D2ZFc4Rk.js": "1154bb0420b8e24284c3e380a1c43e2c4508d93b3aa87ec722705ab76ea6bc2c",
+      "assets/FundsView-CLA6Mkam.css": "3767c9fbf925712869d5190c540ecf5857537e98c2f8ec881d764868b601f822",
+      "assets/FundsView-dzasNGic.js": "af8370cdb4038475ec8633dae46ac1bec1471bdcb68275e6e655e5ca9844c2d8",
+      "assets/index-qxZiwjLI.js": "7c15729188fe8bfd614c016c70466ec8142a5bc7c16c14694ba85d93c2dcce5d",
+      "assets/main-B6MLykgD.js": "3005d0a6511ec887776e389dcbe40870d2731bbb233b523eb2dd5e1222a47033",
+      "assets/main-CUH4rn3g.css": "5e5f4b1bc07c6f6b62ac5a5d6f11206ad5d7c75b560cb44b80bab85350f8a1d4",
+      "assets/PeriodPreparation-I4ZdXoje.js": "3a3d3d8c50045291f40f154e25c725aa9752359edadf2287336e1c67f7a1e341",
+      "assets/PeriodPreparation-_PejjQn1.css": "d32b9853e24dea6b80b61791a37eb2acc7244d5e2cc919f4b7cd05614d260b71",
+      "assets/ReportsView-CAuCwV8T.js": "7fa87a6ee0e1de5253780f28df9455a44600d088baf6bba6cc5dfb1c89160bac",
+      "assets/ReportsView-DBjCfoAg.css": "b35d11db51402847b74205daa56cf4e759e1a2d30aa5d0d88e2463ddf5cd2659"
+    },
+    "actual_loaded_js_sha256": {
+      "assets/main-B6MLykgD.js": "3005d0a6511ec887776e389dcbe40870d2731bbb233b523eb2dd5e1222a47033",
+      "assets/index-qxZiwjLI.js": "7c15729188fe8bfd614c016c70466ec8142a5bc7c16c14694ba85d93c2dcce5d",
+      "assets/ReportsView-CAuCwV8T.js": "7fa87a6ee0e1de5253780f28df9455a44600d088baf6bba6cc5dfb1c89160bac",
+      "assets/PeriodPreparation-I4ZdXoje.js": "3a3d3d8c50045291f40f154e25c725aa9752359edadf2287336e1c67f7a1e341"
+    },
+    "changed_during_run": [],
+    "screenshots": [
+      {
+        "path": ".tmp/t6-r2/browser/report-company-a-q1.png",
+        "sha256": "c46201357094898618aa5ce5a2a30d302bde270a0bd2c6593afe45d13bc93da5",
+        "bytes": 233709
+      },
+      {
+        "path": ".tmp/t6-r2/browser/report-company-b-default-q2.png",
+        "sha256": "5da958a47c08f3a5db86bc32d5aae879d7ee1f28e23c9ab933b7dad24f50f76e",
+        "bytes": 238742
+      }
+    ],
+    "stderr": {
+      "path": ".tmp/t6-r2/browser.stderr.log",
+      "sha256": "dcb59f99649b849650da6b317dc421caa8d47753edded3e6efdcf6c766c2e893",
+      "bytes": 3014
+    },
+    "credentials_revoked_and_removed": true,
+    "service_metadata_removed": true
+  },
+  "reuse": {
+    "stylesheet_source_unchanged": true,
+    "generated_css_note": "Vue scoped identifiers depend on source; generated CSS hashes may change when component script changes. Source style blocks compare equal, not a claim of identical generated CSS.",
+    "scope": "Architecture-approved v1 five-page layout and unchanged semantics/interaction evidence reused. v1 JS hashes remain scoped to original builds; this revision binds final assets. Only report company-default path repeated in actual UI, Funds notice covered by focused real-script tests."
+  },
+  "boundaries": {
+    "production_files_changed": 2,
+    "existing_test_verifier_files_changed": 4,
+    "new_document_files": 2,
+    "kernel_api_database_or_dependencies_changed": false,
+    "full_frontend_suite_rerun": false,
+    "full_browser_matrix_rerun": false,
+    "kernel_cost_or_package_chain_rerun": false,
+    "deployment_or_real_business_data": false
+  },
+  "remaining_limitations": [
+    "Existing accepted server-disconnect P3 remains; 3014-byte raw stderr preserved. This is distinct from the fixed Funds notice R2/P3.",
+    "Representative synthetic UI regression only; unchanged v1 evidence reused, no blanket new five-page verification claim."
+  ]
+}

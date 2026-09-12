@@ -85,7 +85,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
             if any(len(values) != 1 for values in parameters.values()):
                 raise ValueError("duplicate query parameter")
             payload = {key: values[0] for key, values in parameters.items()}
-            for field in ("limit", "after_number", "year", "quarter"):
+            for field in ("limit", "after_number", "voucher_number", "year", "quarter"):
                 if field in payload:
                     payload[field] = int(payload[field])
             return payload
@@ -97,6 +97,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                 if isinstance(exc, IdentityError)
                 else {
                     "preview_expired": 409,
+                    "dashboard_snapshot_changed": 409,
                     "report_job_not_ready": 409,
                     "unknown_report_job": 404,
                     "report_download_invalid": 409,
@@ -317,7 +318,15 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                 self.reply(204, b"", "image/x-icon")
                 return
             if url.path.startswith("/api/dashboard/"):
-                endpoints = {"context", "brief", "funds", "employees", "assets", "quarterly-report"}
+                endpoints = {
+                    "context",
+                    "brief",
+                    "funds",
+                    "employees",
+                    "assets",
+                    "quarterly-report",
+                    "business-status",
+                }
                 action = url.path.removeprefix("/api/dashboard/")
                 if action not in endpoints:
                     self.json_reply(404, {"code": "unknown_endpoint"})

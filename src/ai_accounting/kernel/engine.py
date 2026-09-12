@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 
 from pydantic import ValidationError
 
+from .accounting import AccountingBook, compatibility
 from .build import calculator_build_id
 from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInformation
 from .storage import Store
@@ -33,9 +34,13 @@ def _reject_binary_numbers(value):
 @dataclass(frozen=True)
 class Prepared:
     version: FactVersion
-    calculation_id: str
-    outcome: dict
+    calculation_id: str | None
+    outcome: dict | None
     context: Context
+    previous_calculation_id: str | None
+    accounting: dict | None
+    impact: str
+    compatibility_issue: dict | None = None
 
 
 class Engine:
@@ -91,7 +96,7 @@ class Engine:
                 self.fault("published", connection)
                 for lane in lanes:
                     connection.execute(f"UPDATE state SET {lane}={lane}+1 WHERE id=1")
-                connection.execute(
+                audit = connection.execute(
                     "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",
                     (
                         key,
@@ -103,6 +108,9 @@ class Engine:
                         ),
                     ),
                 )
+                from .read_indexes import sync_audit
+
+                sync_audit(connection, audit.lastrowid)
                 connection.execute(
                     "INSERT INTO request VALUES(?,?,?)", (key, request_hash, canonical(result))
                 )
@@ -413,11 +421,36 @@ class Engine:
             }
             pending = {r[0] for r in connection.execute("SELECT DISTINCT subject_id FROM pending")}
             closed = {r[0] for r in connection.execute("SELECT period FROM period_close")}
+            previous = {
+                sid: row[0] if (row := connection.execute(
+                    "SELECT calculation_id FROM calculation_current WHERE subject_id=?", (sid,)
+                ).fetchone()) else None
+                for sid in facts
+            }
+            accounting = AccountingBook(self.store.registry)
+            accounting.facts.update((v.id, v) for v in facts.values())
+            accounting.facts.update(
+                (v.id, v) for rows in selections.values() for v in rows
+                if isinstance(v, FactVersion)
+            )
+            comparison_ids = {cid for cid in previous.values() if cid is not None}
+            for version in facts.values():
+                if version.fact.kind in self.store.registry.accounting_consumers:
+                    selector = self.store.registry.accounting_consumers[version.fact.kind]
+                    required = (
+                        selector(version) if selector is not None
+                        else version.fact.reads_for(version.subject_id)
+                    )
+                    comparison_ids.update(
+                        calc.id for read in required
+                        if read.source == "calculation" for calc in selections[read]
+                    )
+            accounting.load(self.store, connection, comparison_ids)
             connection.commit()
-        return epochs, facts, selections, pending, closed
+        return epochs, facts, selections, pending, closed, previous, accounting
 
     def _prepare(self, subjects, correction_period=None):
-        epochs, facts, selections, pending, closed = self._snapshot(subjects)
+        epochs, facts, selections, pending, closed, previous, accounting = self._snapshot(subjects)
         if not facts:
             raise KernelError("no_calculations", "没有可发布的业务计算")
         dependencies = {sid: set() for sid in facts}
@@ -459,7 +492,7 @@ class Engine:
                 raise KernelError("dependency_cycle", "计算依赖形成循环")
             ordered.extend(ready)
             remaining.difference_update(ready)
-        prepared, overlays = [], {}
+        prepared, overlays, blocked = [], {}, set()
         for sid in ordered:
             version = facts[sid]
             selected = {}
@@ -483,8 +516,27 @@ class Engine:
                             values.append(calc)
                     values.sort(key=lambda item: (item.period.ordinal, item.subject_id))
                 selected[read] = tuple(values)
-            context = Context(selected)
-            outcome = asdict(self.store.registry.evaluators[version.fact.kind](version, context))
+            context = Context(selected, accounting=accounting.signature)
+            if dependencies[sid] & blocked:
+                error = compatibility(previous[sid], "upstream_comparison_unavailable")
+                prepared.append(Prepared(
+                    version, None, None, context, previous[sid], None,
+                    "compatibility_required", error.response(),
+                ))
+                blocked.add(sid)
+                continue
+            try:
+                evaluator = self.store.registry.evaluators[version.fact.kind]
+                outcome = asdict(evaluator(version, context))
+            except KernelError as exc:
+                if exc.code != "accounting_compatibility_required":
+                    raise
+                prepared.append(Prepared(
+                    version, None, None, context, previous[sid], None,
+                    "compatibility_required", exc.response(),
+                ))
+                blocked.add(sid)
+                continue
             calculated_hash = digest(
                 {
                     "fact": version.id,
@@ -495,7 +547,6 @@ class Engine:
                 }
             )
             calc_id = "c_" + calculated_hash.hex()
-            prepared.append(Prepared(version, calc_id, outcome, context))
             overlays[sid] = Calculation(
                 calc_id,
                 sid,
@@ -505,6 +556,29 @@ class Engine:
                 version.id,
                 digest(outcome).hex(),
             )
+            signature, issue = None, None
+            try:
+                old_signature = accounting.signature(previous[sid]) if previous[sid] else None
+                accounting.add(
+                    overlays[sid], version, outcome,
+                    (v.id for r in context.used if r.source == "fact"
+                     for v in context.selections[r]),
+                    (v.id for r in context.used if r.source == "calculation"
+                     for v in context.selections[r]),
+                )
+                signature = accounting.signature(calc_id)
+                impact = (
+                    "initial" if old_signature is None else
+                    "review_no_impact" if old_signature == signature else "accounting_changed"
+                )
+            except KernelError as exc:
+                if exc.code != "accounting_compatibility_required":
+                    raise
+                impact, issue = "compatibility_required", exc.response()
+                blocked.add(sid)
+            prepared.append(Prepared(
+                version, calc_id, outcome, context, previous[sid], signature, impact, issue,
+            ))
         posting = YearMonth(correction_period) if correction_period is not None else None
         if posting and posting.ordinal <= max(closed, default=-1):
             raise KernelError("closed_period", "冲正必须发布到开放期间")
@@ -530,13 +604,15 @@ class Engine:
                     "kind": p.version.fact.kind,
                     "period": str(p.version.fact.period),
                     "fact_id": p.version.id,
-                    "result_digest": digest(p.outcome).hex(),
-                    "values": p.outcome["values"],
-                    "balances": p.outcome["balances"],
-                    "explanation": p.outcome["explanation"],
-                    "lines": p.outcome["lines"],
-                    "opening_lines": p.outcome["opening_lines"],
-                    "opening": p.outcome["opening"],
+                    "previous_calculation_id": p.previous_calculation_id,
+                    "accounting": p.accounting,
+                    "impact": p.impact,
+                    **({
+                        "result_digest": digest(p.outcome).hex(),
+                        **p.outcome,
+                    } if p.outcome is not None else {}),
+                    **({"compatibility_issue": p.compatibility_issue}
+                       if p.compatibility_issue else {}),
                 }
                 for p in prepared
             ],
@@ -574,6 +650,15 @@ class Engine:
             raise KernelError("preview_expired", "计算结果与已审阅的预览不同")
 
         def operation(connection):
+            # A comparison failure rejects the whole prepared graph, including
+            # otherwise valid predecessors. It never becomes a partial publish.
+            for item in prepared:
+                if item.compatibility_issue is not None:
+                    raise compatibility(
+                        item.compatibility_issue.get("calculation_id")
+                        or item.previous_calculation_id or item.calculation_id,
+                        item.compatibility_issue.get("reason", "comparison_unavailable"),
+                    )
             results = [self._publish(connection, item, correction_period) for item in prepared]
             return {"status": "published", "results": results, "digest": preview_digest}
 
@@ -596,6 +681,8 @@ class Engine:
             (version.subject_id,),
         ).fetchone()
         old_outcome = json.loads(old["outcome"]) if old else None
+        if (old["id"] if old else None) != prepared.previous_calculation_id:
+            raise KernelError("preview_expired", "当前发布版本与已审阅预览不一致")
         old_publication = (
             connection.execute(
                 "SELECT * FROM calculation_publication WHERE calculation_id=?", (old["id"],)
@@ -604,11 +691,7 @@ class Engine:
             else None
         )
         outcome_digest = digest(outcome)
-        no_impact = (
-            old is not None
-            and old["digest"] == outcome_digest
-            and old["period"] == version.fact.period.ordinal
-        )
+        no_impact = prepared.impact == "review_no_impact"
         if outcome.get("opening") and old is None:
             if (
                 connection.execute("SELECT 1 FROM voucher LIMIT 1").fetchone()
@@ -829,6 +912,8 @@ class Engine:
             "subject_id": version.subject_id,
             "calculation_id": cid,
             "voucher_number": voucher_number,
+            "accounting": prepared.accounting,
+            "impact": prepared.impact,
         }
 
     @staticmethod
@@ -1127,8 +1212,102 @@ class Engine:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def trace(self, calculation_id: str):
+    def trace(self, calculation_id: str | None = None, *, voucher_version_id: str | None = None):
         with self.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            voucher, related = None, []
+            if voucher_version_id:
+                version = connection.execute(
+                    "SELECT v.*,n.number FROM voucher_version v JOIN voucher n "
+                    "ON n.id=v.voucher_id WHERE v.id=?",
+                    (voucher_version_id,),
+                ).fetchone()
+                if version is None:
+                    raise KernelError("unknown_voucher", "凭证版本不存在")
+                basis = version
+                if version["reverses_id"]:
+                    basis = connection.execute(
+                        "SELECT * FROM voucher_version WHERE id=?", (version["reverses_id"],)
+                    ).fetchone()
+                    calculation_id = basis["calculation_id"]
+                elif calculation_id and calculation_id != basis["calculation_id"]:
+                    publication = connection.execute(
+                        "SELECT 1 FROM calculation_publication WHERE calculation_id=? "
+                        "AND voucher_id=? AND posting_period=?",
+                        (calculation_id, version["voucher_id"], version["period"]),
+                    ).fetchone()
+                    if not publication:
+                        raise KernelError("voucher_trace_mismatch", "该计算不属于所选凭证")
+                else:
+                    calculation_id = basis["calculation_id"]
+                voucher = {
+                    "id": version["id"],
+                    "number": version["number"],
+                    "period": str(YearMonth.from_ordinal(version["period"])),
+                    "reverses_id": version["reverses_id"],
+                    "total": version["total"],
+                    "lines": [
+                        dict(item)
+                        for item in connection.execute(
+                            "SELECT line_no,account,debit,credit FROM voucher_line "
+                            "WHERE version_id=? ORDER BY line_no",
+                            (version["id"],),
+                        )
+                    ],
+                }
+                # The reversal records the replacement calculation; its basis remains the original.
+                correction = connection.execute(
+                    "SELECT reverses_id FROM voucher_version WHERE calculation_id=? "
+                    "AND reverses_id IS NOT NULL",
+                    (version["calculation_id"],),
+                ).fetchone()
+                anchor_id = correction[0] if correction else basis["id"]
+                groups = [(anchor_id, "current")]
+                if anchor_id != version["id"] and connection.execute(
+                    "SELECT 1 FROM voucher_version WHERE reverses_id=? LIMIT 1",
+                    (version["id"],),
+                ).fetchone():
+                    groups.append((version["id"], "next"))
+                for group_id, relation in groups:
+                    anchor_number = connection.execute(
+                        "SELECT n.number FROM voucher_version v JOIN voucher n "
+                        "ON n.id=v.voucher_id WHERE v.id=?",
+                        (group_id,),
+                    ).fetchone()[0]
+                    for item in connection.execute(
+                        "SELECT v.id,v.reverses_id,v.calculation_id,n.number,v.period "
+                        "FROM voucher_version v "
+                        "JOIN voucher n ON n.id=v.voucher_id WHERE v.id=? OR v.reverses_id=? "
+                        "OR v.calculation_id IN (SELECT calculation_id FROM voucher_version "
+                        "WHERE reverses_id=?) ORDER BY v.period,n.number",
+                        (group_id, group_id, group_id),
+                    ):
+                        if item["id"] == version["id"]:
+                            continue
+                        role = (
+                            "original" if item["id"] == group_id
+                            else "reversal" if item["reverses_id"] else "replacement"
+                        )
+                        period = str(YearMonth.from_ordinal(item["period"]))
+                        role_label = {
+                            "original": "原凭证", "reversal": "冲正凭证", "replacement": "替换凭证"
+                        }[role]
+                        group_label = "本次更正" if relation == "current" else "后续更正"
+                        related.append({
+                            "id": item["id"],
+                            "number": item["number"],
+                            "period": period,
+                            "role": role,
+                            "correction_of_voucher_id": group_id,
+                            "correction_of_number": anchor_number,
+                            "correction_group": relation,
+                            "label": (
+                                f"{role_label} {item['number']} · {period}"
+                                f"（原凭证 {anchor_number} 的{group_label}）"
+                            ),
+                        })
+            if not calculation_id:
+                raise ValueError("需要计算或凭证版本")
             row = connection.execute(
                 "SELECT * FROM calculation WHERE id=?", (calculation_id,)
             ).fetchone()
@@ -1141,7 +1320,27 @@ class Engine:
                     (calculation_id,),
                 )
             ]
+            from .dashboard import _name
+
+            upstream_details = [
+                {
+                    "id": r["id"],
+                    "label": f"{YearMonth.from_ordinal(r['period'])} · {_name(r['kind'])}",
+                }
+                for r in connection.execute(
+                    "SELECT c.id,c.period,c.kind FROM dependency_calculation d "
+                    "JOIN calculation c ON c.id=d.upstream_id WHERE d.calculation_id=? "
+                    "ORDER BY c.period,c.kind,c.id",
+                    (calculation_id,),
+                )
+            ]
             return {
+                "voucher": voucher,
+                "upstream_details": upstream_details,
+                "related_vouchers": related,
+                "evidence_details": self.store.evidence_metadata(
+                    connection, [proof for fact in facts for proof in fact.evidence]
+                ),
                 "calculation": {
                     **dict(row),
                     "digest": row["digest"].hex(),

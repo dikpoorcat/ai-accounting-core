@@ -1,5 +1,6 @@
 import { requestJson } from "./client";
 import type { DashboardPeriod } from "./context";
+import type { DashboardCollections, PeriodPreparation, UnestablishedSelection } from "./dashboardContracts";
 
 export interface FundPage { has_more: boolean; next_cursor: string | null; total_count: number }
 
@@ -8,9 +9,8 @@ export type FundDirection = "inflow" | "outflow";
 export type BankStatementState =
   | "matched"
   | "unmatched"
-  | "invalid_match"
-  | "pending_late"
-  | "handled_late";
+  | "needs_review";
+export type BankCoverageState = "missing" | "partial" | "complete" | "not_applicable";
 
 export interface FundReconciliation {
   state:
@@ -26,7 +26,7 @@ export interface FundReconciliation {
   book_closing_fen?: FenValue;
   difference_fen?: FenValue;
   unmatched_count?: number;
-  pending_late_count?: number;
+  needs_review_count?: number;
   warning_count?: number;
   coverage_start_date?: string;
   coverage_end_date?: string;
@@ -36,18 +36,18 @@ export interface FundReconciliation {
 export interface FundAccountStatement {
   account_code: string;
   account_name: string;
-  inflow_fen: FenValue;
-  outflow_fen: FenValue;
+  inflow_fen: FenValue | null;
+  outflow_fen: FenValue | null;
   transaction_count: number;
-  ordinary_count: number;
   matched_count: number;
   unmatched_count: number;
-  late_count: number;
-  pending_late_count: number;
+  needs_review_count: number;
+  coverage_state: BankCoverageState;
   last_activity_date: string | null;
 }
 
 export interface FundAccount {
+  account_id: string;
   code: string;
   name: string;
   type: "bank" | "cash" | "payment_platform";
@@ -67,6 +67,7 @@ export interface FundAccount {
 export interface FundMovement {
   id: string;
   date: string | null;
+  account_id: string;
   account_code: string;
   account_name: string;
   account_type: "bank" | "cash" | "payment_platform";
@@ -77,6 +78,7 @@ export interface FundMovement {
   type: string;
   summary: string;
   display_summary: string;
+  list_summary: string;
   party: string;
   internal_transfer: boolean;
   component_kinds: string[];
@@ -85,6 +87,7 @@ export interface FundMovement {
 export interface BankStatementRow {
   id: string;
   date: string | null;
+  account_id: string;
   account_code: string;
   account_name: string;
   direction: FundDirection;
@@ -93,23 +96,66 @@ export interface BankStatementRow {
   party: string;
   memo: string;
   state: BankStatementState;
-  is_late: boolean;
 }
 
 export interface FundBankStatement {
   transaction_count: number;
-  inflow_fen: FenValue;
-  outflow_fen: FenValue;
+  inflow_fen: FenValue | null;
+  outflow_fen: FenValue | null;
   matched_count: number;
-  ordinary_count: number;
   unmatched_count: number;
-  late_count: number;
-  pending_late_count: number;
+  needs_review_count: number;
+  coverage_state: BankCoverageState;
+  statement_count: number;
+  expected_account_count: number;
+  provided_account_count: number;
+  missing_account_count: number;
   rows: BankStatementRow[];
   page: FundPage;
 }
 
+export interface InvestmentProduct {
+  fund_id: string;
+  name: string;
+  opening_cost_fen: FenValue;
+  subscription_cost_fen: FenValue;
+  redemption_cost_fen: FenValue;
+  closing_cost_fen: FenValue;
+  investment_income_fen: FenValue;
+}
+
+export interface InvestmentEvent {
+  id: string;
+  date: string | null;
+  period: string;
+  fund_id: string;
+  name: string;
+  type: string;
+  reference: string;
+  cost_fen: FenValue | null;
+  net_proceeds_fen: FenValue | null;
+  investment_income_fen: FenValue | null;
+  settlement_fen: FenValue | null;
+}
+
+export interface FundInvestments {
+  opening_cost_fen: FenValue;
+  subscription_cost_fen: FenValue;
+  redemption_cost_fen: FenValue;
+  closing_cost_fen: FenValue;
+  investment_income_fen: FenValue;
+  actual_payments_fen: FenValue;
+  actual_receipts_fen: FenValue;
+  products: InvestmentProduct[];
+  events: InvestmentEvent[];
+  event_count: number;
+  page: FundPage;
+}
+
 export interface FundsData {
+  fact_issues: UnestablishedSelection[];
+  period_preparation: PeriodPreparation;
+  collections: DashboardCollections;
   total_fen: FenValue;
   bank_fen: FenValue;
   cash_fen: FenValue;
@@ -129,17 +175,44 @@ export interface FundsData {
   movement_page: FundPage;
   movement_count: number;
   bank_statement: FundBankStatement;
+  investments: FundInvestments;
 }
 
 export interface FundsDashboardResponse {
-  schema_version: 1;
+  schema_version: 2;
+  snapshot_version: string;
   selected_period: DashboardPeriod | null;
   data: FundsData | null;
 }
 
-export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, cursors: { after_movement?: string; after_statement?: string } = {}) {
-  const query = new URLSearchParams({ limit: "100", ...(periodKey ? { period: periodKey } : {}), ...cursors });
+export interface FundsQuery {
+  section?: "accounts" | "movements" | "statements" | "investment_products" | "investment_events";
+  cursor?: string;
+  after_movement?: string;
+  after_statement?: string;
+  after_investment?: string;
+  expected_version?: string;
+  movement_account_type?: FundAccount["type"];
+  movement_account_id?: string;
+  statement_account_id?: string;
+}
+
+export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}) {
+  const query = new URLSearchParams({ limit: "100", ...(periodKey ? { period: periodKey } : {}), ...options });
   return requestJson<FundsDashboardResponse>(`/api/dashboard/funds?${query}`, {
     signal,
   });
+}
+
+// Keep selector labels across source navigation without adding cached rows to a page.
+let accountLabelScope = "";
+const accountLabels = new Map<string, string>();
+export function fundAccountLabel(company: string, period: string, type: string, id: string): string | undefined {
+  const scope = JSON.stringify([company, period]);
+  if (scope !== accountLabelScope) { accountLabels.clear(); accountLabelScope = scope; }
+  return accountLabels.get(JSON.stringify([company, type, id]));
+}
+export function rememberFundAccounts(company: string, period: string, accounts: FundAccount[]) {
+  fundAccountLabel(company, period, "", "");
+  for (const account of accounts) accountLabels.set(JSON.stringify([company, account.type, account.account_id]), `${account.name}（${account.code}）`);
 }

@@ -9,7 +9,10 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, WithJsonSchema, model_validator
 
 from .contracts import KernelError, NeedsInformation
-from .types import ActualDate, YearMonth, digest
+from .types import ActualDate, YearMonth, canonical, digest
+
+CONTENT_CONTRACT = "commentary-content-v1"
+LEGACY_CONTRACT = "legacy-context-v8"
 
 DisplayDate = Annotated[
     YearMonth | ActualDate,
@@ -159,6 +162,7 @@ class Display:
                 result[key] = result[key].hex()
         if "period" in result:
             result["period"] = str(YearMonth.from_ordinal(result["period"]))
+        if "close_digest" in result:
             result["supplementary"] = result["close_digest"] is not None
         return result
 
@@ -244,14 +248,32 @@ class Display:
     def snapshot(connection, period: str, *, registry=None):
         result = Display._metadata_snapshot(connection, period, registry=registry)
         commentary = connection.execute(
-            "SELECT id,revision,digest,context_digest FROM period_commentary_revision "
+            "SELECT * FROM period_commentary_revision "
             "WHERE period=? "
             "AND close_digest IS NULL ORDER BY revision DESC LIMIT 1",
             (YearMonth(period).ordinal,),
         ).fetchone()
-        current_context = Display._context(connection, period, metadata=result)["context_digest"]
-        latest = Display._record(commentary)
-        valid = latest is not None and latest["context_digest"] == current_context
+        record = Display._record(commentary)
+        latest = (
+            {key: record[key] for key in ("id", "revision", "digest", "context_digest")}
+            if record
+            else None
+        )
+        # With no commentary there is no stored basis to validate. Avoid loading
+        # accounting history merely to discard its digest for an empty record.
+        validity = (
+            Display._validity(
+                connection,
+                record,
+                Display._context(connection, period, metadata=result, registry=registry),
+                registry=registry,
+            )
+            if record
+            else None
+        )
+        valid = validity is not None and validity["status"] == "current"
+        if latest is not None:
+            latest["content_validity"] = validity
         result["commentary"] = latest if valid else None
         result["commentary_latest"] = latest
         result["commentary_status"] = (
@@ -330,7 +352,8 @@ class Display:
         }
 
     @staticmethod
-    def _context(connection, period, *, metadata=None, registry=None):
+    def _legacy_context(connection, period, *, metadata=None, registry=None):
+        """The v8 validation algorithm. Never redefine it using new content selectors."""
         closed = Display._closed(connection, period)
         identity = dict(
             connection.execute("SELECT company_id,database_id FROM identity WHERE id=1").fetchone()
@@ -361,7 +384,309 @@ class Display:
         return {"context_digest": digest(basis).hex(), "close_digest": close_digest, "basis": basis}
 
     @staticmethod
-    def commentary(connection, period: str, *, registry=None):
+    def _content_basis(connection, period, *, metadata=None, registry=None):
+        """Exact adopted content, independent of global write counters.
+
+        References and full stored result digests suffice for tracing. Do not
+        re-evaluate accounting or recursively copy historical outcome bodies.
+        """
+        from .materials import check_completeness
+        from .payroll_tax_declarations import declaration_scope, disbursement_scope
+        from .schema import table_name
+
+        if registry is None:
+            from .service import default_registry
+
+            registry = default_registry()
+        month = YearMonth(period).ordinal
+        identity = dict(
+            connection.execute("SELECT company_id,database_id FROM identity WHERE id=1").fetchone()
+        )
+        closes, calculations, fact_ids, vouchers = [], set(), set(), set()
+        close_digest = None
+        for row in connection.execute(
+            "SELECT period,manifest,digest FROM period_close WHERE period<=? ORDER BY period",
+            (month,),
+        ):
+            manifest = json.loads(row["manifest"])
+            closes.append(
+                {
+                    "period": str(YearMonth.from_ordinal(row["period"])),
+                    "digest": row["digest"].hex(),
+                }
+            )
+            if row["period"] == month:
+                close_digest = row["digest"].hex()
+            calculations.update(manifest.get("calculations", ()))
+            fact_ids.update(manifest.get("facts", ()))
+            vouchers.update(item["id"] for item in manifest.get("vouchers", ()))
+        calculations.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT c.id FROM calculation_current a "
+                "JOIN calculation c ON c.id=a.calculation_id "
+                "JOIN calculation_publication p ON p.calculation_id=c.id WHERE p.posting_period<=? "
+                "AND NOT EXISTS(SELECT 1 FROM period_close z WHERE z.period=p.posting_period)",
+                (month,),
+            )
+        )
+        vouchers.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT v.id FROM voucher_current a JOIN voucher_version v ON v.id=a.version_id "
+                "WHERE v.period<=? "
+                "AND NOT EXISTS(SELECT 1 FROM period_close z WHERE z.period=v.period)",
+                (month,),
+            )
+        )
+        voucher_rows = [
+            Display._record(row)
+            for row in connection.execute(
+                "SELECT v.*,n.number FROM voucher_version v JOIN voucher n ON n.id=v.voucher_id "
+                "JOIN json_each(?) ids ON ids.value=v.id ORDER BY v.period,n.number,v.id",
+                (canonical(sorted(vouchers)),),
+            )
+        ]
+        calculations.update(row["calculation_id"] for row in voucher_rows)
+        calculation_rows = [
+            Display._record(row)
+            for row in connection.execute(
+                "SELECT c.id,c.subject_id,c.fact_id,c.kind,c.period,c.digest,p.posting_period "
+                "FROM calculation c JOIN json_each(?) ids ON ids.value=c.id "
+                "JOIN calculation_publication p ON p.calculation_id=c.id ORDER BY c.id",
+                (canonical(sorted(calculations)),),
+            )
+        ]
+        for row in calculation_rows:
+            row["posting_period"] = str(YearMonth.from_ordinal(row["posting_period"]))
+        fact_ids.update(row["fact_id"] for row in calculation_rows)
+        dependencies = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT d.calculation_id,d.fact_id FROM dependency_fact d JOIN json_each(?) ids "
+                "ON ids.value=d.calculation_id ORDER BY d.calculation_id,d.fact_id",
+                (canonical(sorted(calculations)),),
+            )
+        ]
+        fact_ids.update(row["fact_id"] for row in dependencies)
+        upstream = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT d.calculation_id,d.upstream_id FROM dependency_calculation d "
+                "JOIN json_each(?) ids ON ids.value=d.calculation_id "
+                "ORDER BY d.calculation_id,d.upstream_id",
+                (canonical(sorted(calculations)),),
+            )
+        ]
+        kinds = sorted(kind for kind, model in registry.models.items() if model.lane != "material")
+        current_facts = [
+            Display._record(row)
+            for row in connection.execute(
+                "SELECT f.id,f.subject_id,s.kind,f.revision,f.digest FROM fact_current a "
+                "JOIN fact_revision f ON f.id=a.fact_id JOIN subject s ON s.id=f.subject_id "
+                "JOIN json_each(?) k ON k.value=s.kind WHERE f.period<=? ORDER BY s.kind,s.id",
+                (canonical(kinds), month),
+            )
+        ]
+        related_facts = fact_ids | {row["id"] for row in current_facts}
+        scopes = set()
+        for kind in ("payroll", "payroll_bounded"):
+            if kind not in registry.models:
+                continue
+            for row in connection.execute(
+                f"SELECT f.subject_id,f.period,p.employee_id FROM {table_name(kind)} p "
+                "JOIN fact_revision f ON f.id=p.revision_id "
+                "JOIN json_each(?) ids ON ids.value=f.id",
+                (canonical(sorted(related_facts)),),
+            ):
+                scopes.add(
+                    declaration_scope(row["employee_id"], YearMonth.from_ordinal(row["period"]))
+                )
+                scopes.add(disbursement_scope(kind, row["subject_id"]))
+        supplementary = [
+            Display._record(row)
+            for row in connection.execute(
+                "SELECT DISTINCT f.id,f.subject_id,s.kind,f.revision,f.digest FROM fact_scope x "
+                "JOIN json_each(?) k ON k.value=x.scope_key "
+                "JOIN fact_current a ON a.fact_id=x.fact_id "
+                "JOIN fact_revision f ON f.id=a.fact_id JOIN subject s ON s.id=f.subject_id "
+                "WHERE s.kind IN ('payroll_tax_declaration_actual','payroll_disbursement_basis') "
+                "ORDER BY s.kind,f.subject_id",
+                (canonical(sorted(scopes)),),
+            )
+        ]
+        subjects = sorted(
+            {row["subject_id"] for row in current_facts + supplementary + calculation_rows}
+        )
+        heads = [
+            Display._record(row)
+            for row in connection.execute(
+                "SELECT ids.value AS subject_id,f.fact_id,c.id AS calculation_id,"
+                "c.fact_id AS calculated_fact_id,"
+                "c.digest FROM json_each(?) ids LEFT JOIN fact_current f ON f.subject_id=ids.value "
+                "LEFT JOIN calculation_current a ON a.subject_id=ids.value "
+                "LEFT JOIN calculation c ON c.id=a.calculation_id ORDER BY ids.value",
+                (canonical(subjects),),
+            )
+        ]
+        pending = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT p.subject_id,p.cause_id FROM pending p JOIN json_each(?) ids "
+                "ON ids.value=p.subject_id ORDER BY p.subject_id,p.cause_id",
+                (canonical(subjects),),
+            )
+        ]
+        inventories = [
+            Display._record(row)
+            for row in connection.execute(
+                "SELECT m.* FROM material_revision m WHERE m.period=? AND m.id=(SELECT max(n.id) "
+                "FROM material_revision n WHERE n.period=m.period AND n.category=m.category) "
+                "ORDER BY m.category",
+                (month,),
+            )
+        ]
+        items = [
+            dict(inventory_id=row["inventory_id"], evidence_digest=row["evidence_digest"].hex())
+            for row in connection.execute(
+                "SELECT i.* FROM material_item i JOIN json_each(?) ids ON ids.value=i.inventory_id "
+                "ORDER BY i.inventory_id,i.evidence_digest",
+                (canonical([row["id"] for row in inventories]),),
+            )
+        ]
+        coverage = check_completeness(connection, month, registry)
+        accounting_summary = Display._accounting_context(connection, period)
+        accounting_summary["business_summary"].sort(
+            key=lambda item: (item["kind"], item["reversal"])
+        )
+        return {
+            "contract": CONTENT_CONTRACT,
+            "identity": identity,
+            "period": period,
+            "close_digest": close_digest,
+            **(
+                metadata
+                if metadata is not None
+                else Display._metadata_snapshot(connection, period, registry=registry)
+            ),
+            "accounting_summary": accounting_summary,
+            "accounting_sources": {
+                "closes": closes,
+                "vouchers": voucher_rows,
+                "calculations": calculation_rows,
+                "facts": sorted(fact_ids),
+                "dependencies": dependencies,
+                "upstream": upstream,
+            },
+            "current_facts": current_facts,
+            "current_heads": heads,
+            "pending": pending,
+            "supplementary_sources": supplementary,
+            "materials": {
+                "inventories": inventories,
+                "items": items,
+                "coverage_digest": coverage["coverage_digest"],
+                "fact_ids": coverage["fact_ids"],
+                "status": coverage["status"],
+                "issues": coverage["issues"],
+            },
+        }
+
+    @staticmethod
+    def _context(connection, period, *, metadata=None, registry=None):
+        basis = Display._content_basis(connection, period, metadata=metadata, registry=registry)
+        content_digest = digest(basis).hex()
+        epochs = dict(
+            connection.execute(
+                "SELECT accounting,material,management FROM state WHERE id=1"
+            ).fetchone()
+        )
+        return {
+            "context_digest": digest(["commentary-submit-v1", basis, epochs]).hex(),
+            "content_contract": CONTENT_CONTRACT,
+            "content_digest": content_digest,
+            "content_basis": basis,
+            "basis": basis,
+            "close_digest": basis["close_digest"],
+        }
+
+    @staticmethod
+    def _validity(
+        connection, record, context, *, registry=None, legacy_context=None, frozen_digest=None
+    ):
+        row = connection.execute(
+            "SELECT * FROM period_commentary_basis WHERE commentary_id=?", (record["id"],)
+        ).fetchone()
+        result = {"status": "unverifiable", "contract": row["contract"] if row else None}
+        if row is None:
+            return {**result, "reason": "content_basis_missing"}
+        if frozen_digest is not None and frozen_digest != record["digest"]:
+            return {**result, "reason": "frozen_commentary_mismatch"}
+        if row["contract"] not in {LEGACY_CONTRACT, CONTENT_CONTRACT}:
+            return {**result, "reason": "unsupported_content_contract"}
+        # Both versions use the original commentary digest algorithm. A matching
+        # context or manifest digest does not establish integrity of the body read.
+        try:
+            data = [
+                record["period"],
+                record["text"],
+                record["context_digest"],
+                record["source"],
+                record["revision"] - 1,
+                record["evidence_digest"],
+            ]
+            if digest([data, record["close_digest"]]).hex() != record["digest"]:
+                return {**result, "reason": "commentary_digest_mismatch"}
+        except (ValueError, TypeError, KeyError):
+            return {**result, "reason": "commentary_digest_mismatch"}
+        if row["contract"] == LEGACY_CONTRACT:
+            if row["basis"] is not None or row["content_digest"] is not None:
+                return {**result, "reason": "invalid_legacy_marker"}
+            if frozen_digest is not None:
+                return {**result, "status": "frozen", "method": "close_manifest"}
+            legacy = (
+                legacy_context
+                if legacy_context is not None
+                else Display._legacy_context(connection, record["period"], registry=registry)
+            )
+            return {
+                **result,
+                "status": "current"
+                if record["context_digest"] == legacy["context_digest"]
+                else "unverifiable",
+                "method": "legacy_strict",
+            }
+        try:
+            envelope = json.loads(row["basis"])
+            content = envelope["content"]
+            adoption = {
+                "commentary_id": record["id"],
+                "revision": record["revision"],
+                "context_digest": record["context_digest"],
+                "commentary_digest": record["digest"],
+            }
+            if (
+                envelope["adoption"] != adoption
+                or content["contract"] != CONTENT_CONTRACT
+                or content["period"] != record["period"]
+                or content["close_digest"] != record["close_digest"]
+                or content["identity"] != context["basis"]["identity"]
+                or digest(content) != row["content_digest"]
+            ):
+                return {**result, "reason": "content_basis_mismatch"}
+        except (ValueError, TypeError, KeyError):
+            return {**result, "reason": "invalid_content_basis"}
+        if frozen_digest is not None:
+            return {**result, "status": "frozen", "method": "close_manifest"}
+        return {
+            **result,
+            "status": "current"
+            if row["content_digest"].hex() == context["content_digest"]
+            else "stale",
+        }
+
+    @staticmethod
+    def commentary(connection, period: str, *, registry=None, include_context=False):
         period = str(YearMonth(period))
         closed = Display._closed(connection, period)
         rows = [
@@ -372,22 +697,58 @@ class Display:
             )
         ]
         frozen_id = None
+        frozen_digest = None
         if closed:
             snapshot = json.loads(closed["manifest"]).get("management_snapshot", {})
             frozen_id = (snapshot.get("commentary") or {}).get("id")
+            frozen_digest = (snapshot.get("commentary") or {}).get("digest")
         frozen = next((item for item in rows if item["id"] == frozen_id), None)
-        context = Display._context(connection, period, registry=registry)
+        context = (
+            Display._context(connection, period, registry=registry)
+            if rows or include_context
+            else {}
+        )
+        legacy = None
+        if (
+            rows
+            and connection.execute(
+                "SELECT 1 FROM period_commentary_basis b "
+                "JOIN period_commentary_revision r ON r.id=b.commentary_id "
+                "WHERE r.period=? AND b.contract=? LIMIT 1",
+                (YearMonth(period).ordinal, LEGACY_CONTRACT),
+            ).fetchone()
+        ):
+            legacy = Display._legacy_context(connection, period, registry=registry)
+        for item in rows:
+            item["content_validity"] = Display._validity(
+                connection,
+                item,
+                context,
+                registry=registry,
+                legacy_context=legacy,
+                frozen_digest=frozen_digest if item["id"] == frozen_id else None,
+            )
         latest = rows[-1] if rows else None
-        valid = latest is not None and latest["context_digest"] == context["context_digest"]
-        current = frozen if closed else (latest if valid else None)
+        valid = latest is not None and latest["content_validity"]["status"] == "current"
+        current = (
+            (frozen if frozen and frozen["content_validity"]["status"] == "frozen" else None)
+            if closed
+            else (latest if valid else None)
+        )
         return {
             "revision": rows[-1]["revision"] if rows else 0,
             "frozen": frozen,
             "current": current,
             "latest": latest,
             "status": "frozen"
-            if closed and frozen
-            else ("current" if current else ("stale" if latest and not closed else "not_provided")),
+            if closed and current
+            else (
+                "current"
+                if current
+                else "stale"
+                if (frozen if closed else latest)
+                else "not_provided"
+            ),
             "supplements": [item for item in rows if item["supplementary"]],
             **context,
         }
@@ -465,7 +826,9 @@ class Display:
             return {
                 "status": "preview",
                 "period": period,
-                **self.commentary(connection, period, registry=self.store.registry),
+                **self.commentary(
+                    connection, period, registry=self.store.registry, include_context=True
+                ),
             }
 
     def display_profiles(self, *, period: str | None = None):
@@ -499,7 +862,9 @@ class Display:
         data = [period, text, context_digest, source, expected_revision, evidence_digest]
 
         def operation(connection):
-            current = self.commentary(connection, period, registry=self.store.registry)
+            current = self.commentary(
+                connection, period, registry=self.store.registry, include_context=True
+            )
             if current["revision"] != expected_revision:
                 raise KernelError(
                     "period_commentary_conflict", "月度经营结论已变化", revision=current["revision"]
@@ -509,6 +874,27 @@ class Display:
             evidence = self._evidence(connection, evidence_digest)
             identifier = uuid.uuid4().hex
             close_digest = current["close_digest"]
+            record_digest = digest([data, close_digest])
+            envelope = {
+                "content": current["content_basis"],
+                "adoption": {
+                    "commentary_id": identifier,
+                    "revision": expected_revision + 1,
+                    "context_digest": context_digest,
+                    "commentary_digest": record_digest.hex(),
+                },
+            }
+            # The deferred FK and insert guards seal the association in this
+            # transaction; existing commentary can never acquire a new basis.
+            connection.execute(
+                "INSERT INTO period_commentary_basis VALUES(?,?,?,?)",
+                (
+                    identifier,
+                    CONTENT_CONTRACT,
+                    canonical(envelope),
+                    bytes.fromhex(current["content_digest"]),
+                ),
+            )
             connection.execute(
                 "INSERT INTO period_commentary_revision VALUES(?,?,?,?,?,?,?,?,?)",
                 (
@@ -520,7 +906,7 @@ class Display:
                     bytes.fromhex(close_digest) if close_digest else None,
                     source,
                     evidence,
-                    digest([data, close_digest]),
+                    record_digest,
                 ),
             )
             row = connection.execute(

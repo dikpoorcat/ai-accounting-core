@@ -1,5 +1,7 @@
 import type { DashboardPeriod } from "./context";
+import { pageQuery, type DashboardCollections, type DashboardPageQuery, type PeriodPreparation, type BusinessIssue } from "./dashboardContracts";
 import { requestJson } from "./client";
+import type { EvidenceDetails } from "./localKernel";
 
 export interface BriefVoucherLine {
   line_number: number;
@@ -8,6 +10,9 @@ export interface BriefVoucherLine {
   debit_fen: string;
   credit_fen: string;
   party: string;
+  source_label: string;
+  party_state: "known" | "multiple" | "name_missing" | "not_applicable" | "unresolved";
+  parties: { id: string; name: string; amount_fen: string }[];
   component_id: string | null;
 }
 
@@ -18,7 +23,8 @@ export interface BriefComponent {
   group: string;
   label: string;
   description: string;
-  amount_fen: string;
+  amount_fen: string | null;
+  amount_label: string;
   parties: string[];
   management: {
     version: number;
@@ -35,10 +41,27 @@ export interface BriefComponent {
   recognition?: { precision: "month" | "day"; period: string | null; date: string | null; label: string };
   derived: Record<string, unknown>;
   source_references: Array<{ type: string; value: string }>;
+  party_sources?: Array<{ party_id: string; name: string; source: string | null; id?: string }>;
+}
+
+export interface BriefFundMovement {
+  id: string; account_id: string; category: string; name: string;
+  direction: "inflow" | "outflow"; amount_fen: string;
+}
+export interface BriefSettlement {
+  id: string; label: string; account: string; amount_fen: string; change_fen: string;
+  party: string; source_period: string; source_calculation_id: string;
+  source_label?: string;
 }
 
 export interface BriefVoucher {
   calculation_id: string;
+  voucher_version_id: string;
+  reverses_version_id: string | null;
+  business_amount_fen: string | null;
+  business_amount_label: string;
+  fund_inflow_fen: string;
+  fund_outflow_fen: string;
   recognition?: { precision: "month" | "day"; period: string; date: string | null; label: string };
   number: string;
   date: string | null;
@@ -49,12 +72,17 @@ export interface BriefVoucher {
   list_summary: string;
   amount_fen: string;
   evidence: string[];
+  evidence_details: EvidenceDetails[];
   components: BriefComponent[];
-  funds: BriefComponent[];
+  funds: BriefFundMovement[];
+  settlements: BriefSettlement[];
   lines: BriefVoucherLine[];
 }
 
 export interface BriefActivityRow {
+  amount_label: string;
+  calculation_id: string;
+  voucher_version_id: string;
   date: string | null;
   recognition?: { precision: "month" | "day"; period: string; date: string | null; label: string };
   reference: string;
@@ -62,12 +90,15 @@ export interface BriefActivityRow {
   subject: string;
   description: string;
   display_description: string;
-  amount_fen: string;
+  amount_fen: string | null;
+  journal_total_fen: string;
   state: string;
   party: string;
   evidence: string[];
+  evidence_details: EvidenceDetails[];
   components: BriefComponent[];
-  funds: BriefComponent[];
+  funds: BriefFundMovement[];
+  settlements: BriefSettlement[];
 }
 
 export interface BriefActivityGroup {
@@ -80,6 +111,7 @@ export interface BriefActivityGroup {
 }
 
 export interface BriefBankRow {
+  id: string;
   date: string | null;
   party: string;
   memo: string;
@@ -90,43 +122,45 @@ export interface BriefBankRow {
 
 export interface BriefCash {
   transaction_count: number;
-  ordinary_count: number;
-  late_count: number;
   matched_count: number;
   unmatched_count: number;
-  pending_late_count: number;
-  inflow_fen: string;
-  outflow_fen: string;
-  net_fen: string;
+  needs_review_count: number;
+  coverage_state: "missing" | "partial" | "complete" | "not_applicable";
+  inflow_fen: string | null;
+  outflow_fen: string | null;
+  net_fen: string | null;
 }
 
 export interface BriefPosition {
-  assets_fen: string;
-  liabilities_fen: string;
-  capital_fen: string;
+  assets_fen: string | null;
+  liabilities_fen: string | null;
+  capital_fen: string | null;
   bank_fen: string;
   fixed_asset_cost_fen: string;
   accumulated_depreciation_fen: string;
-  fixed_asset_net_fen: string;
+  fixed_asset_net_fen: string | null;
   intangible_asset_cost_fen: string;
   accumulated_amortization_fen: string;
-  intangible_asset_net_fen: string;
-  other_assets_fen: string;
-  month_revenue_fen: string;
-  month_expense_fen: string;
-  month_result_fen: string;
-  cumulative_result_fen: string;
-  equation_valid: boolean;
+  intangible_asset_net_fen: string | null;
+  other_assets_fen: string | null;
+  month_revenue_fen: string | null;
+  month_expense_fen: string | null;
+  month_result_fen: string | null;
+  cumulative_result_fen: string | null;
+  equation_valid: boolean | null;
+  complete: boolean;
+  issues: Array<{ field: string; message: string }>;
 }
 
 export interface BriefOpenItem {
+  source_business?: { subject_id: string; kind: string };
   id: string;
   voucher: string;
   party_key: string;
   party: string;
   description: string;
   status: "open" | "partial" | string;
-  outstanding_fen: string;
+  outstanding_fen: string | null;
 }
 
 export interface BriefOpenCategory {
@@ -135,12 +169,12 @@ export interface BriefOpenCategory {
   direction: "receivable" | "payable";
   unit: string;
   count: number;
-  outstanding_fen: string;
+  outstanding_fen: string | null;
   groups: Array<{
     key: string;
     party: string;
     count: number;
-    outstanding_fen: string;
+    outstanding_fen: string | null;
     open_count: number;
     partial_count: number;
   }>;
@@ -148,16 +182,21 @@ export interface BriefOpenCategory {
 }
 
 export interface BriefOpenItems {
+  complete: boolean;
+  unestablished_count: number;
+  issues: BusinessIssue[];
+  cutoff_period: string;
+  current_cutoff_period: string;
   receivable_count: number;
-  receivable_fen: string;
+  receivable_fen: string | null;
   payable_count: number;
-  payable_fen: string;
+  payable_fen: string | null;
   total_count: number;
   current_outstanding?: {
     receivable_count: number;
-    receivable_fen: string;
+    receivable_fen: string | null;
     payable_count: number;
-    payable_fen: string;
+    payable_fen: string | null;
     total_count: number;
   };
   categories: BriefOpenCategory[];
@@ -173,6 +212,7 @@ export interface WorkforcePeriod {
 }
 
 export interface BriefEmployeeCost {
+  annual_bonus_fen: string | null;
   has_activity: boolean;
   breakdown_available: boolean;
   reason: string | null;
@@ -194,13 +234,15 @@ export interface BriefLaborCost {
   reason: string | null;
   total_fen: string;
   gross_remuneration_fen: string | null;
-  actual_withholding_tax_fen: string | null;
+  booked_withholding_tax_fen: string | null;
   unwithheld_tax_fen: string | null;
   withholding_status: string;
+  withholding_note: string;
   periods: WorkforcePeriod[];
 }
 
 export interface BriefWorkforceCost {
+  capitalized_labor_fen: string | null;
   has_activity: boolean;
   total_fen: string;
   employee: BriefEmployeeCost;
@@ -218,12 +260,20 @@ export interface BriefValidation {
   state: "complete" | "attention" | "error";
   title: string;
   summary: string;
-  integrity_valid: boolean;
+  integrity_valid: boolean | null;
   attention_count: number;
   items: BriefValidationItem[];
+  issues?: Array<{ field?: string; message: string; subject_id?: string; period?: string }>;
 }
 
 export interface BriefData {
+  period_preparation: PeriodPreparation;
+  collections: DashboardCollections;
+  focused_voucher: BriefVoucher | null;
+  funds_overview: {
+    total_fen: string | null; bank_fen: string | null; cash_fen: string | null; payment_platform_fen: string | null;
+    inflow_fen: string; outflow_fen: string; net_change_fen: string; internal_transfer_fen: string;
+  };
   management_commentary_details?: {
     status: "frozen" | "current" | "stale" | "not_provided";
     current: { text: string; revision: number } | null;
@@ -258,31 +308,42 @@ export interface BriefData {
   cash: BriefCash;
   unmatched_bank_activity: {
     count: number;
-    ordinary_count: number;
-    pending_late_count: number;
     inflow_fen: string;
     outflow_fen: string;
     rows: BriefBankRow[];
+    rows_truncated: boolean;
   };
   open_items: BriefOpenItems;
   workforce_cost: BriefWorkforceCost;
   long_term_assets: {
-    net_fen: string;
-    fixed_net_fen: string;
-    intangible_net_fen: string;
+    net_fen: string | null;
+    fixed_net_fen: string | null;
+    intangible_net_fen: string | null;
     fixed_active_count: number;
     intangible_active_count: number;
+    pending_count: number;
+    project_cost_fen: string | null;
   };
   validation: BriefValidation;
 }
 
 export interface BriefResponse {
-  schema_version: 1;
+  schema_version: 2;
+  snapshot_version: string | null;
   selected_period: DashboardPeriod | null;
   data: BriefData | null;
 }
 
-export function fetchBrief(period: string | null, signal?: AbortSignal, afterNumber = 0) {
-  const query = new URLSearchParams({ after_number: String(afterNumber), limit: "100", ...(period ? { period } : {}) });
+export interface BriefQuery extends DashboardPageQuery {
+  section?: "vouchers" | "businesses" | "open_items" | "settlement_events" | "external_followups" | "file_jobs";
+  voucher_version_id?: string;
+  voucher_number?: number;
+}
+
+export function fetchBrief(period: string | null, signal?: AbortSignal, afterNumber = 0, expectedVersion?: string | null, options: BriefQuery = {}) {
+  const query = new URLSearchParams({ after_number: String(afterNumber), limit: "100", ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
+  pageQuery(query, options);
+  if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
+  if (options.voucher_number !== undefined) query.set("voucher_number", String(options.voucher_number));
   return requestJson<BriefResponse>(`/api/dashboard/brief?${query}`, { signal });
 }

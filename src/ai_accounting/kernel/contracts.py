@@ -222,6 +222,7 @@ class Context:
     selections: dict[Read, tuple[FactVersion | Calculation, ...]]
     used: set[Read] = field(default_factory=set)
     versions: set[str] = field(default_factory=set)
+    accounting: Callable[[str], dict] | None = None
 
     def select(self, read: Read) -> tuple:
         if read not in self.selections:
@@ -245,6 +246,17 @@ class Context:
             raise KernelError("ambiguous_source", f"multiple {kind} sources for {key}")
         return items[0]
 
+    def accounting_signature(self, calculation: Calculation) -> dict:
+        """Compare an explicitly selected result using detached frozen inputs."""
+        if calculation.id not in self.versions:
+            raise KernelError("undeclared_read", "核算比较须先选择对应计算来源")
+        if self.accounting is None:
+            raise KernelError(
+                "accounting_compatibility_required", "核算比较上下文未建立",
+                calculation_id=calculation.id, reason="comparison_context_missing",
+            )
+        return self.accounting(calculation.id)
+
 
 Evaluator = Callable[[FactVersion, Context], Outcome]
 
@@ -255,6 +267,19 @@ class Registry:
         self.evaluators: dict[str, Evaluator] = {}
         self.readiness: dict[str, tuple[Callable, Callable]] = {}
         self.snapshot_readiness: dict[str, Callable] = {}
+        self.accounting_projectors: dict[str, tuple[Callable | None, Callable | None]] = {}
+        self.accounting_consumers: dict[str, Callable | None] = {}
+
+    def register_accounting(
+        self, kind: str, projector=None, references=None, *, compares_calculations=False,
+        comparison_reads=None,
+    ):
+        """Declare a pure comparison policy; ordinary reads do not acquire one."""
+        if kind in self.accounting_projectors:
+            raise ValueError(f"duplicate accounting policy {kind}")
+        self.accounting_projectors[kind] = projector, references
+        if compares_calculations:
+            self.accounting_consumers[kind] = comparison_reads
 
     def register_snapshot_readiness(self, name: str, checker: Callable):
         """Register a read-model check run only on the detached read-only snapshot."""

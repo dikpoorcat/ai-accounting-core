@@ -70,6 +70,7 @@ def test_same_month_unknown_completion_uses_single_or_batch_confirmation(
     assert before["status"] == "due"
     recorded = before["recorded_completions"][0]
     assert recorded["basis_current"] and not recorded["known_as_of"]
+    assert recorded["completion_time_basis"] == "confirmation_recorded_at"
     assert not before["basis_review_required"]
     now = item(service, "2026-09-11")
     assert now["status"] == "completed"
@@ -108,8 +109,13 @@ def test_known_business_day_is_not_replaced_by_later_confirmation_time(tmp_path,
         "completion",
     )
     company.publish("completion")
+    original = company.current("completion", "external_completion")
     assert item(service, "2026-02-24")["status"] == "due"
-    assert item(service, "2026-02-25")["status"] == "completed"
+    past = item(service, "2026-02-25")
+    assert past["status"] == "completed"
+    assert past["recorded_completions"][0]["completion_time_basis"] == "actual_date"
+    assert past["recorded_completions"][0]["confirmation_recorded_at"] == "2026-09-11T10:00:00.000Z"
+    assert company.current("completion", "external_completion") == original
 
 
 def test_missing_confirmation_audit_keeps_unknown_day_unestablished(tmp_path):
@@ -129,6 +135,7 @@ def test_missing_confirmation_audit_keeps_unknown_day_unestablished(tmp_path):
     assert recorded["basis_current"]
     assert not recorded["known_as_of"]
     assert recorded["confirmation_recorded_at"] is None
+    assert recorded["completion_time_basis"] == "unestablished"
 
 
 def test_idempotent_replay_and_recalculation_keep_original_knowledge_time(tmp_path, monkeypatch):
@@ -209,6 +216,7 @@ def test_all_obligations_share_one_audit_read(tmp_path, monkeypatch):
 
     monkeypatch.setattr(company.engine.store, "connection", traced_connection)
     result = service.query("2026-09", as_of="2026-09-11")
+    assert result["as_of_semantics"] == "current_knowledge"
     assert len(result["obligations"]) == 3
     assert all(value["status"] == "completed" for value in result["obligations"])
     audit_queries = [

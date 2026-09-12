@@ -1,3 +1,4 @@
+// Historical v1 response fixture: current packaged-browser seam is browser-t5-integration.cjs.
 async page => {
   // Isolated transport fixtures: no real company service or file is accessed.
   const base = "http://127.0.0.1:5178";

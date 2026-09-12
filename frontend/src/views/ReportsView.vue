@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { DashboardApiError, dashboardErrorMessage } from "../api/client";
+import { businessStateLabel } from "../api/dashboardContracts";
 import { fetchLocalJob, LocalApiError } from "../api/localKernel";
 import {
   fetchQuarterlyReport,
@@ -13,12 +14,14 @@ import {
   type ReportStatementRow,
 } from "../api/reports";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
+import PeriodPreparation from "../components/PeriodPreparation.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { formatFen } from "../utils/money";
 
 interface SummaryCard {
   source: string;
   label: string;
+  explanation: string;
   value: string;
   note: string;
 }
@@ -71,11 +74,12 @@ const templateNumberFormatter = new Intl.NumberFormat("zh-CN", {
 
 const route = useRoute();
 const router = useRouter();
-const { context, load: loadContext } = useDashboardContext();
+const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
 const selectedQuarter = ref("");
 const report = ref<QuarterlyReport | null>(null);
 const loading = ref(false);
 const exporting = ref(false);
+const needsRegeneration = ref(false);
 let exportAttempt: { digest: string; requestId: string; jobId?: string } | null = null;
 const errorMessage = ref("");
 const exportNotice = ref("");
@@ -86,15 +90,75 @@ const activeStatementKey = ref("");
 let mounted = false;
 let previewController: AbortController | null = null;
 let exportController: AbortController | null = null;
+let requestGeneration = 0;
+
+function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.quarter, route.query.carry_forward_fact_id]); }
+function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selectionKey() === selection; }
+function invalidateRequests() {
+  requestGeneration += 1;
+  previewController?.abort(); exportController?.abort();
+  previewController = null; exportController = null;
+  report.value = null; loading.value = false; exporting.value = false;
+  exportNotice.value = ""; errorMessage.value = "";
+}
 
 const quarterOptions = computed(() =>
   (context.value?.quarters ?? []).map((quarter) => ({
     key: quarter.key,
     label: quarter.label,
-    status: quarter.complete ? "closed" : "open",
+    status: quarter.key === selectedQuarter.value && report.value
+      ? report.value.close_state : quarter.complete ? "closed" : "open",
   })),
 );
 const reportStateClass = computed(() => report.value?.status.replace("_", "-") ?? "");
+const pendingReadiness = computed(() => report.value?.readiness.filter((item) => item.state !== "pass") ?? []);
+const readinessGroups = computed(() => {
+  const completed = report.value?.readiness.filter((item) => item.state === "pass") ?? [];
+  return [
+    { key: "pending", label: `需要核对的事项（${pendingReadiness.value.length}）`, expanded: true, items: pendingReadiness.value },
+    { key: "completed", label: `已完成 ${completed.length} 项检查`, expanded: false, items: completed },
+  ].filter((group) => group.items.length);
+});
+const monthlyPreparations = computed(() => (report.value?.period_preparations ?? []).map(preparation => {
+  const current = preparation.current_followups;
+  const issueGroups = [
+    { label: "月末核算条件", issues: preparation.readiness?.issues ?? [] },
+    { label: "资料", issues: current.materials.issues },
+    { label: "核算", issues: current.accounting.issues },
+    { label: "业务条件", issues: current.close_requirements.issues },
+    { label: "款项来源", issues: current.settlements.issues ?? [] },
+    { label: "外部办理", issues: current.external.fact_issues ?? [] },
+  ].filter(group => group.issues.length);
+  const notices: string[] = [];
+  if (preparation.readiness?.order_failure) notices.push("月末核算顺序尚需核对");
+  if (current.accounting.unpublished_count) notices.push(`${current.accounting.unpublished_count} 项业务尚未发布`);
+  if (current.settlements.complete === false || [current.settlements.source_amount_fen, current.settlements.paid_fen, current.settlements.other_settled_fen, current.settlements.remaining_fen].some(value => value === null)) notices.push("相关款项金额尚不能完整确定");
+  if (current.settlements.unestablished_state_selection_count) notices.push(`${current.settlements.unestablished_state_selection_count} 组来源尚不能证明封存采用`);
+  if (current.file_jobs.issue_count) notices.push(`${current.file_jobs.issue_count} 项文件任务来源待核对`);
+  if (current.file_jobs.status_counts.failed) notices.push(`${current.file_jobs.status_counts.failed} 项文件任务失败`);
+  const closure = preparation.closure.state === "exact_close" ? "已关账"
+    : preparation.closure.state === "sealed_by_later_close" ? `由 ${preparation.closure.sealing_boundary} 后续关账封存` : "尚未关账";
+  return { preparation, closure, issueGroups, notices, statuses: [
+    `资料：${businessStateLabel(current.materials.status)}`, `核算：${businessStateLabel(current.accounting.status)}`,
+    `业务条件：${businessStateLabel(current.close_requirements.status)}`, `款项：${businessStateLabel(current.settlements.status)}`,
+    `外部办理：${businessStateLabel(current.external.status)}`,
+  ].join(" · ") };
+}));
+const reportHeadline = computed(() => {
+  if (needsRegeneration.value) return "报表需要重新生成";
+  if (report.value?.export.available) return "本季度报表已准备好";
+  if (pendingReadiness.value.length) return `还有 ${pendingReadiness.value.length} 项需要核对`;
+  if (report.value?.close_state === "open") return "相关月份结账后可下载报表";
+  return "本季度报表暂时无法下载";
+});
+const reportNextStep = computed(() => {
+  if (needsRegeneration.value) return "请查看下方提示，重新生成后即可再次下载。";
+  if (report.value?.export.available) return "可生成并下载 Excel 报表，使用前请复核。";
+  if (pendingReadiness.value.length) return "请先核对下方事项，处理后点击“刷新报表”查看结果。";
+  if (report.value?.close_state === "open") return "目前可查看试算金额；相关月份完成结账后，再刷新报表。";
+  return report.value?.message ?? "";
+});
+const needsCarryForward = computed(() => report.value?.technical.requirement_codes.includes("report_carry_forward") ?? false);
 const checkedAt = computed(() => {
   if (!report.value) return "";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -111,6 +175,7 @@ const summaryCards = computed<SummaryCard[]>(() => {
     {
       source: "资产负债表",
       label: "资产合计",
+      explanation: "公司资产的账面价值",
       primary: summary.assets_total_fen,
       noteLabel: "负债和所有者权益",
       secondary: summary.liabilities_equity_total_fen,
@@ -118,6 +183,7 @@ const summaryCards = computed<SummaryCard[]>(() => {
     {
       source: "利润表",
       label: "本季度净利润",
+      explanation: "本季度账面盈亏",
       primary: summary.current_net_profit_fen,
       noteLabel: "本年累计",
       secondary: summary.year_to_date_net_profit_fen,
@@ -125,18 +191,19 @@ const summaryCards = computed<SummaryCard[]>(() => {
     {
       source: "现金流量表",
       label: "本季度现金净增加额",
+      explanation: "本季度现金类资金增加或减少",
       primary: summary.current_cash_change_fen,
       noteLabel: "期末现金",
       secondary: summary.ending_cash_fen,
     },
   ];
   return cards
-    .filter((item) => item.primary !== null)
     .map((item) => ({
       source: item.source,
       label: item.label,
+      explanation: item.explanation,
       value: formatFen(item.primary),
-      note: `${item.noteLabel} ${item.secondary === null ? "—" : formatFen(item.secondary)}`,
+      note: `${item.noteLabel} ${formatFen(item.secondary)}`,
     }));
 });
 const activeStatement = computed<ReportStatement | null>(() => {
@@ -146,7 +213,8 @@ const activeStatement = computed<ReportStatement | null>(() => {
 const visibleStatementRows = computed(() => {
   if (!activeStatement.value) return [];
   return activeStatement.value.rows.filter(
-    (row) => taxTemplateMode.value || row.has_amount || row.is_total,
+    (row) => taxTemplateMode.value || row.has_amount || row.is_total
+      || Object.values(row.values).some((value) => value === null),
   );
 });
 const activeTemplateMeta = computed<StatementTemplateMeta | null>(() => {
@@ -249,8 +317,10 @@ function latestPeriodForQuarter(
 }
 
 async function synchronizeQuarter(force = false) {
+  const generation = requestGeneration, selection = selectionKey();
   try {
     const currentContext = await loadContext();
+    if (!isCurrent(generation, selection)) return;
     if (!currentContext.quarters.length) {
       previewController?.abort();
       exportController?.abort();
@@ -273,6 +343,10 @@ async function synchronizeQuarter(force = false) {
       latestPeriodForQuarter(currentContext, target)?.key ??
       currentContext.default_period ??
       undefined;
+    if (route.query.carry_forward_fact_id && selectedQuarter.value && target !== selectedQuarter.value) {
+      await router.replace({ query: { ...route.query, carry_forward_fact_id: undefined } });
+      return;
+    }
     if (route.query.quarter !== target || route.query.period !== targetPeriod) {
       await router.replace({
         query: {
@@ -287,14 +361,17 @@ async function synchronizeQuarter(force = false) {
       await preview(target);
     }
   } catch (error: unknown) {
+    if (!isCurrent(generation, selection)) return;
     const message = dashboardErrorMessage(error);
     if (message) errorMessage.value = message;
   }
 }
 
 async function preview(quarterKey: string) {
+  const generation = ++requestGeneration, selection = selectionKey();
   previewController?.abort();
   exportController?.abort();
+  exportController = null; exporting.value = false;
   const controller = new AbortController();
   previewController = controller;
   const match = /^(\d{4})-Q([1-4])$/.exec(quarterKey);
@@ -306,26 +383,28 @@ async function preview(quarterKey: string) {
   report.value = null;
   errorMessage.value = "";
   exportNotice.value = "";
+  needsRegeneration.value = false;
   loading.value = true;
   try {
     const result = await fetchQuarterlyReport(
       Number(match[1]),
       Number(match[2]),
       controller.signal,
+      typeof route.query.carry_forward_fact_id === "string" ? route.query.carry_forward_fact_id : undefined,
     );
-    if (previewController !== controller) return;
+    if (!isCurrent(generation, selection) || previewController !== controller) return;
     report.value = result;
     if (!result.statements.some((item) => item.key === activeStatementKey.value)) {
       activeStatementKey.value = "";
       statementsExpanded.value = false;
     }
   } catch (error: unknown) {
-    if (previewController === controller) {
+    if (isCurrent(generation, selection) && previewController === controller) {
       const message = dashboardErrorMessage(error);
       if (message) errorMessage.value = message;
     }
   } finally {
-    if (previewController === controller) {
+    if (isCurrent(generation, selection) && previewController === controller) {
       loading.value = false;
       previewController = null;
     }
@@ -337,21 +416,30 @@ function changeQuarter(value: string) {
   const latestPeriod = context.value ? latestPeriodForQuarter(context.value, value) : null;
   if (value === routeQuarter() && latestPeriod?.key === route.query.period) return;
   void router.push({
-    query: { ...route.query, period: latestPeriod?.key ?? route.query.period, quarter: value },
+    query: { company_id: route.query.company_id, period: latestPeriod?.key ?? route.query.period, quarter: value }, hash: "",
   });
 }
 
+function changeCarryForward(value: string) {
+  void router.replace({ query: { ...route.query, carry_forward_fact_id: value || undefined } });
+}
+
 async function refresh() {
+  invalidateRequests();
+  const generation = requestGeneration, selection = selectionKey();
   try {
-    await loadContext(true);
+    await refreshContext();
+    if (!isCurrent(generation, selection)) return;
     await synchronizeQuarter(true);
   } catch (error: unknown) {
+    if (!isCurrent(generation, selection)) return;
     const message = dashboardErrorMessage(error);
     if (message) errorMessage.value = message;
   }
 }
 
 async function exportReport() {
+  const generation = requestGeneration, selection = selectionKey();
   const current = report.value;
   const companyId = route.query.company_id;
   if (!current?.export.available || !current.export.preview_digest || typeof companyId !== "string") return;
@@ -360,26 +448,30 @@ async function exportReport() {
   exportController = controller;
   exporting.value = true;
   exportNoticeKind.value = "attention";
-  exportNotice.value = "正在创建报表生成任务…";
+  exportNotice.value = "正在准备生成报表…";
   try {
     const digest = `${companyId}:${current.export.preview_digest}`;
     if (exportAttempt?.digest !== digest) exportAttempt = { digest, requestId: crypto.randomUUID() };
     const attempt = exportAttempt;
+    needsRegeneration.value = false;
     if (!attempt.jobId) attempt.jobId = (await requestQuarterlyExport(companyId, current, attempt.requestId, controller.signal)).job_id;
-    exportNotice.value = "报表正在后台生成并校验，完成后将开始下载。离开页面不会中断后台任务。";
+    if (!isCurrent(generation, selection) || exportController !== controller) return;
+    exportNotice.value = "报表正在生成，完成后将开始下载。离开页面后，仍可在“文件与处理进度”中查看结果。";
     while (!controller.signal.aborted) {
       const [job] = await fetchLocalJob(companyId, attempt.jobId, controller.signal);
+      if (!isCurrent(generation, selection) || exportController !== controller) return;
       if (job?.status === "succeeded") break;
-      if (!job || job.status === "failed") throw new DashboardApiError(409, "REPORT_JOB_FAILED", "报表任务未完成，请在后台任务中查看结果后重试。");
+      if (!job || (job.status === "failed" && job.attempts >= 3)) throw new DashboardApiError(409, "REPORT_JOB_FAILED", "原报表任务无法继续生成，请重新生成。");
+      if (job.status === "failed") exportNotice.value = "本次生成未成功，正在等待自动重试。";
       await new Promise<void>((resolve, reject) => {
         const abort = () => { clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
         const timer = setTimeout(() => { controller.signal.removeEventListener("abort", abort); resolve(); }, 1200);
         controller.signal.addEventListener("abort", abort, { once: true });
       });
     }
-    if (controller.signal.aborted) return;
+    if (!isCurrent(generation, selection) || controller.signal.aborted || exportController !== controller) return;
     const blob = await fetchQuarterlyWorkbook(companyId, attempt.jobId, controller.signal);
-    if (exportController !== controller) return;
+    if (!isCurrent(generation, selection) || exportController !== controller) return;
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
@@ -390,23 +482,28 @@ async function exportReport() {
     URL.revokeObjectURL(href);
     exportNoticeKind.value = "success";
     exportNotice.value =
-      "已下载经过校验的季度报表文件，请负责人逐项复核后使用。";
+      "报表文件已开始下载，请在浏览器下载记录中查看，使用前请复核。";
   } catch (error: unknown) {
-    if (exportController !== controller) return;
+    if (!isCurrent(generation, selection) || exportController !== controller) return;
     if ((error instanceof DashboardApiError || error instanceof LocalApiError) && ["REPORT_PREVIEW_STALE", "preview_expired"].includes(error.code)) {
       exportAttempt = null;
       await preview(selectedQuarter.value);
+      if (!mounted || selectionKey() !== selection || requestGeneration !== generation + 1) return;
       exportNoticeKind.value = "attention";
-      exportNotice.value = `${error.message} 报表已重新核对，请再次确认后导出。`;
+      exportNotice.value = "报表资料已有变化，已刷新为最新结果。请核对后重新生成并下载。";
     } else {
+      if ((error instanceof DashboardApiError || error instanceof LocalApiError) && ["REPORT_JOB_FAILED", "report_download_invalid", "unknown_report_job"].includes(error.code)) {
+        exportAttempt = null;
+        needsRegeneration.value = true;
+      }
       const message = dashboardErrorMessage(error);
       if (message) {
         exportNoticeKind.value = "error";
-        exportNotice.value = message;
+        exportNotice.value = message + (needsRegeneration.value ? " 请点击“重新生成”再试一次。" : "");
       }
     }
   } finally {
-    if (exportController === controller) {
+    if (isCurrent(generation, selection) && exportController === controller) {
       exporting.value = false;
       exportController = null;
     }
@@ -418,7 +515,7 @@ function statementValue(value: string | null | undefined) {
 }
 
 function templateStatementValue(value: string | null | undefined) {
-  if (value === null || value === undefined) return "";
+  if (value === null || value === undefined) return "—";
   const amount = BigInt(value);
   const negative = amount < 0n;
   const absolute = negative ? -amount : amount;
@@ -487,7 +584,8 @@ function handleTabKey(event: KeyboardEvent, index: number) {
   if (event.key === "ArrowRight") nextIndex = (index + 1) % statements.length;
   activeStatementKey.value = statements[nextIndex].key;
   statementsExpanded.value = true;
-  void nextTick(() => document.getElementById(`report-statement-button-${nextIndex}`)?.focus());
+  const generation = requestGeneration, selection = selectionKey();
+  void nextTick(() => { if (isCurrent(generation, selection)) document.getElementById(`report-statement-button-${nextIndex}`)?.focus(); });
 }
 
 onMounted(() => {
@@ -496,26 +594,23 @@ onMounted(() => {
 });
 
 watch(
-  () => route.query.company_id,
+  () => [route.query.company_id, route.query.period, route.query.quarter, route.query.carry_forward_fact_id],
   (value, previous) => {
-    if (!mounted || value === previous) return;
-    previewController?.abort();
-    exportController?.abort();
-    report.value = null;
-    loading.value = false;
+    if (value.every((item, index) => item === previous[index])) return;
+    invalidateRequests();
   },
+  { flush: "sync" },
 );
 watch(
-  () => [context.value?.current_company?.company_id, route.query.period, route.query.quarter] as const,
-  ([orgId], [previousOrgId]) => {
-    if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId);
+  () => [context.value?.current_company?.company_id, route.query.period, route.query.quarter, route.query.carry_forward_fact_id] as const,
+  ([orgId, , , source], [previousOrgId, , , previousSource]) => {
+    if (mounted && orgId) void synchronizeQuarter(orgId !== previousOrgId || source !== previousSource);
   },
 );
 
 onBeforeUnmount(() => {
   mounted = false;
-  previewController?.abort();
-  exportController?.abort();
+  invalidateRequests();
 });
 </script>
 
@@ -525,7 +620,7 @@ onBeforeUnmount(() => {
       <DashboardModuleHeader
         eyebrow="财务报表"
         title="季度财务报表"
-        description="核对已结账季度的三张财务报表，并导出已填充的电子税务局 Excel 导入文件。"
+        description="查看本季度资产、盈亏和现金变化，核对后下载财务报表。"
         :options="quarterOptions"
         :selected="selectedQuarter"
         :loading="loading"
@@ -535,61 +630,86 @@ onBeforeUnmount(() => {
       />
 
       <section v-if="!quarterOptions.length && !loading" class="state-panel">
-        <strong>还没有可核对的季度</strong>
-        <span>请先生成会计期间；季度报表不会创建或修改账务数据。</span>
+        <strong>还没有可查看的报表</strong>
+        <span>公司开始记账后，可在这里查看对应季度的财务报表。</span>
       </section>
 
       <section v-else-if="loading && !report" class="state-panel" aria-live="polite">
-        <strong>正在准备季度报表</strong>
-        <span>正在核对关账快照、报表分类、所得税确认和三表勾稽关系…</span>
+        <strong>正在整理本季度报表</strong>
+        <span>正在读取账务和核对资料，请稍候…</span>
       </section>
 
       <section v-else-if="errorMessage && !report" class="state-panel error" role="alert">
         <strong>季度报表读取失败</strong>
         <span>{{ errorMessage }}</span>
-        <button type="button" @click="refresh">重新核对</button>
+        <button type="button" @click="refresh">刷新报表</button>
+        <button v-if="route.query.carry_forward_fact_id" type="button" @click="changeCarryForward('')">采用默认来源重新核对</button>
       </section>
 
       <section v-else-if="report" class="report-dashboard">
         <section class="report-hero" aria-labelledby="report-readiness-title">
           <div class="report-heading">
             <div>
-            <p class="eyebrow">季度申报准备</p>
-              <h2 id="report-readiness-title">申报准备状态</h2>
-              <p>根据已结账账务生成已填充的 Excel 文件；仍需负责人手工导入电子税务局并复核。</p>
+              <p class="eyebrow">{{ report.period.label }}</p>
+              <h2 id="report-readiness-title" aria-live="polite">{{ reportHeadline }}</h2>
+              <p>{{ reportNextStep }}</p>
             </div>
             <div class="report-actions">
               <button class="secondary" type="button" :disabled="loading" @click="refresh">
-                {{ loading ? "正在核对…" : "重新核对" }}
+                {{ loading ? "正在刷新…" : "刷新报表" }}
               </button>
               <button
                 type="button"
                 :disabled="!report.export.available || exporting || loading"
                 @click="exportReport"
               >
-                {{ exporting ? "正在导出…" : "导出" }}
+                {{ exporting ? "正在生成…" : needsRegeneration ? "重新生成" : "生成并下载" }}
               </button>
             </div>
           </div>
 
           <div class="status-meta">
-            <span class="status-badge" :class="reportStateClass">{{ report.status_label }}</span>
-            <span>核对于 {{ checkedAt }}</span>
+            <span class="status-badge" :class="reportStateClass">{{ report.export.available ? "可生成下载" : "暂不可下载" }}</span>
+            <span>更新于 {{ checkedAt }}</span>
           </div>
 
-          <div class="report-state" :class="reportStateClass" role="status" aria-live="polite">
-            <strong>{{ report.headline }}</strong>
+          <details class="report-state" :class="reportStateClass">
+            <summary>查看报表准备详情</summary>
+            <p>{{ report.close_state === "closed" ? "相关月份已结账" : "相关月份尚未全部结账" }} · {{ report.readiness_state === "ready" ? "报表资料已核对" : "报表资料待核对" }}</p>
             <p>{{ report.message }}</p>
-          </div>
+          </details>
 
           <div v-if="exportNotice" class="export-notice" :class="exportNoticeKind" role="status">
             {{ exportNotice }}
           </div>
         </section>
 
-        <section v-if="report.readiness.length" class="readiness" aria-label="季度报表准备度">
+        <section v-if="summaryCards.length" class="summary-grid" aria-label="季度报表摘要">
+          <article v-for="item in summaryCards" :key="item.source">
+            <span>{{ item.source }} · {{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+            <span>{{ item.explanation }}</span>
+            <span>{{ item.note }}</span>
+          </article>
+        </section>
+
+        <details v-if="report.carry_forward.options.length" class="panel report-source" :open="needsCarryForward">
+          <summary>报表来源{{ report.carry_forward.selected_fact_id ? ' · 已指定接账前资料' : '' }}</summary>
+          <label>接账前累计资料
+            <select :value="report.carry_forward.selected_fact_id || ''" :disabled="loading || exporting" @change="changeCarryForward(($event.target as HTMLSelectElement).value)">
+              <option value="">采用现有报表资料</option>
+              <option v-for="source in report.carry_forward.options" :key="source.fact_id" :value="source.fact_id">{{ source.label }} · {{ source.evidence_count }} 份附件</option>
+            </select>
+          </label>
+          <p>如果后来补充了接账前的报表，可在这里选择。本页金额和下载文件使用同一份资料。</p>
+          <details><summary>供核对的资料版本</summary><ul><li v-for="source in report.carry_forward.options" :key="source.fact_id">{{ source.label }}{{ source.used ? ' · 本次已采用' : '' }}：{{ source.fact_id }}</li></ul></details>
+        </details>
+
+        <details v-for="group in readinessGroups" :key="group.key" class="readiness-group" :open="group.expanded">
+          <summary>{{ group.label }}</summary>
+          <div class="readiness">
           <article
-            v-for="item in report.readiness"
+            v-for="item in group.items"
             :key="item.key"
             class="readiness-item"
             :class="[item.state, { detailed: item.details.length }]"
@@ -602,32 +722,41 @@ onBeforeUnmount(() => {
             <ul v-if="item.details.length">
               <li v-for="detail in item.details" :key="`${detail.primary}-${detail.secondary}`">
                 <div><strong>{{ detail.primary }}</strong><span>{{ detail.secondary }}</span></div>
+                <RouterLink v-if="detail.location?.voucher_number !== undefined && detail.location?.period" :to="{ path: '/', query: { company_id: route.query.company_id, period: detail.location.period, voucher: String(detail.location.voucher_number) } }">查看相关凭证</RouterLink>
+                <details v-if="detail.location"><summary>供核对的详细信息</summary><pre>{{ JSON.stringify(detail.location, null, 2) }}</pre></details>
                 <strong v-if="detail.amount_fen != null">{{ formatFen(detail.amount_fen) }}</strong>
               </li>
             </ul>
           </article>
-        </section>
-
-        <section v-if="summaryCards.length" class="summary-grid" aria-label="季度报表摘要">
-          <article v-for="item in summaryCards" :key="item.source">
-            <span>{{ item.source }} · {{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-            <span>{{ item.note }}</span>
-          </article>
-        </section>
+          </div>
+        </details>
 
         <p v-if="report.draft" class="draft-note">
-          以下金额为当前试算，不可用于申报或导出。
+          以下为试算金额，后续记账或核对资料后可能变化，暂不能生成下载文件。
         </p>
+
+        <section class="monthly-preparations" aria-label="季度内各月核算与相关跟进">
+          <h3>季度内各月核算与相关跟进</h3>
+          <p class="monthly-scope">各月跟进为全公司范围，仅包含该期间相关事项。以下分别列出问题、业务及文件任务数量，不合计为待办总数。</p>
+          <details v-for="month in monthlyPreparations" :key="month.preparation.period" class="monthly-preparation">
+            <summary>
+              <span class="monthly-heading"><strong>{{ month.preparation.period }} · {{ month.closure }}</strong><span>展开本月依据</span></span>
+              <span class="monthly-statuses">{{ month.statuses }}</span>
+              <span v-if="month.notices.length" class="monthly-alert">{{ month.notices.join('；') }}</span>
+              <span v-for="group in month.issueGroups" :key="group.label" class="monthly-issue"><strong>{{ group.label }} · {{ group.issues.length }} 条问题：</strong>{{ group.issues[0].message || '相关来源需要核对，展开查看完整依据。' }}</span>
+            </summary>
+            <PeriodPreparation :preparation="month.preparation" @changed="refresh" />
+          </details>
+        </section>
 
         <section v-if="report.statements.length" class="report-review">
           <div class="review-heading">
             <div>
               <strong>完整财务报表</strong>
-              <span>选择一张报表查看明细</span>
+              <span>选择一张报表查看明细；窄屏可在表内左右滑动。</span>
             </div>
             <span class="check-summary">
-              {{ report.checks.total ? `${report.checks.passed} 项勾稽已通过` : "暂无勾稽结果" }}
+              {{ report.checks.total ? `${report.checks.passed} / ${report.checks.total} 项数字核对通过` : "暂无数字核对结果" }}
             </span>
           </div>
 
@@ -806,20 +935,20 @@ onBeforeUnmount(() => {
 
             <details class="disclosure">
               <summary>
-                <strong>勾稽核对</strong>
+                <strong>报表数字核对</strong>
                 <span :class="{ failed: report.checks.passed !== report.checks.total }">
                   {{ report.checks.passed }} / {{ report.checks.total }} 项通过
                 </span>
               </summary>
               <div class="check-list">
-                <div v-for="item in report.checks.items" :key="item.code" :class="{ failed: !item.passed }">
-                  <span>{{ item.passed ? "✓" : "×" }}</span><strong>{{ item.label }}</strong>
+                <div v-for="item in report.checks.items" :key="item.code" :class="{ failed: item.passed === false }">
+                  <span>{{ item.passed === null ? "—" : item.passed ? "✓" : "×" }}</span><strong>{{ item.label }}{{ item.passed === null ? '（依据不完整）' : '' }}</strong>
                 </div>
               </div>
             </details>
 
             <details class="disclosure technical">
-              <summary><strong>技术信息</strong></summary>
+              <summary><strong>供核对的技术信息</strong></summary>
               <dl>
                 <template v-for="item in technicalRows" :key="item.label">
                   <dt>{{ item.label }}</dt>
@@ -837,11 +966,29 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .reports-page { min-height: 100%; }
+.report-source { padding: 18px; margin-top: 18px; }
+.report-source > summary, .readiness-group > summary { color: var(--text); font-size: 13px; font-weight: 700; cursor: pointer; }
+.report-source label { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; font-weight: 700; }
+.report-source select { max-width: 100%; min-height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface); }
+.report-source p, .report-source details { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.readiness pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.readiness-group > summary { padding: 8px 0; }
 .reports-content { width: min(calc(100% - 48px), 1320px); margin: 0 auto; padding: 25px 0 46px; }
 .state-panel { display: grid; gap: 7px; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-soft); }
 .state-panel span { color: var(--muted); }
 .state-panel.error { border-color: var(--danger); }
 .state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--accent); color: var(--surface); cursor: pointer; }
+.monthly-preparations > h3 { font-size: 16px; margin: 8px 0; }
+.monthly-scope, .monthly-statuses { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.monthly-scope { margin: 6px 0 10px; }
+.monthly-preparation { margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.monthly-preparation > summary { padding: 12px 14px; cursor: pointer; overflow-wrap: anywhere; }
+.monthly-preparation > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.monthly-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 14px; min-height: 28px; font-size: 14px; }
+.monthly-heading > span { color: var(--accent); font-size: 12px; }
+.monthly-statuses, .monthly-alert, .monthly-issue { display: block; margin-top: 5px; }
+.monthly-alert, .monthly-issue { color: var(--warning); font-size: 12px; line-height: 1.6; }
+.monthly-preparation > :deep(.period-preparation) { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; }
 .report-dashboard { display: grid; min-width: 0; gap: 12px; }
 .report-hero { padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface))); box-shadow: var(--shadow-soft); }
 .report-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
@@ -862,6 +1009,7 @@ onBeforeUnmount(() => {
 .report-state.blocked { background: var(--warning-soft); color: var(--warning); }
 .report-state.error { background: var(--danger-soft); color: var(--danger); }
 .report-state p { margin: 3px 0 0; font-size: 12px; }
+.report-state summary { font-size: 12px; cursor: pointer; }
 .export-notice { margin-top: 8px; padding: 10px 13px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 12px; }
 .export-notice.attention { background: var(--warning-soft); color: var(--warning); }
 .export-notice.error { background: var(--danger-soft); color: var(--danger); }

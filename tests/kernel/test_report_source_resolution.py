@@ -3,17 +3,24 @@
 from dataclasses import replace
 
 import pytest
+from test_opening_continuation import book as opening_fixture
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll
 from test_payroll import profile as employee_profile
 from test_reports import book as report_book
 from test_reports import cit, close_quarter, profile
 
+from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.reports import Reports
 
 
 @pytest.fixture
 def book(tmp_path):
     return report_book.__wrapped__(tmp_path)
+
+
+@pytest.fixture
+def opening_book(tmp_path):
+    return opening_fixture.__wrapped__(tmp_path)
 
 
 def accepted(creditors=(("alice", 60000), ("bob", 60000))):
@@ -219,6 +226,115 @@ def test_one_explicit_party_cannot_replace_confirmed_group(book):
     plan = report.report(2026, 1)
     assert plan["status"] == "needs_information"
     assert "counterparty_id" in {issue["field"] for issue in plan["fact_issues"]}
+
+
+def test_conflicting_classification_sources_do_not_depend_on_last_fact(book):
+    report = setup(book)
+    engine, save, _, _ = book
+    with engine.store.connection(read_only=True) as connection:
+        voucher = connection.execute(
+            "SELECT v.id FROM voucher_version v JOIN calculation c ON c.id=v.calculation_id "
+            "WHERE c.subject_id='batch'"
+        ).fetchone()[0]
+    for subject, party in (("first-classification", "alice"), ("second-classification", "bob")):
+        save(
+            "report_classification",
+            subject,
+            {
+                "period": "2026-01",
+                "voucher_version_id": voucher,
+                "counterparties": [{"line_no": 2, "counterparty_id": party}],
+            },
+        )
+
+    plan = report.report(2026, 1)
+
+    assert plan["status"] == "needs_information"
+    assert plan["statements"]["balance_sheet"]["39"]["ending_fen"] == 120000
+    assert "report_classification" in {item["field"] for item in plan["fact_issues"]}
+
+
+def test_unknown_creditor_propagates_nullable_balance_and_check(book, monkeypatch):
+    engine = book[0]
+    original = engine.store.registry.evaluators["reimbursed_asset_batch"]
+
+    def without_one_creditor(version, context):
+        outcome = original(version, context)
+        obligations = [dict(item) for item in outcome.values["obligations"]]
+        obligations[0]["counterparty_id"] = None
+        return replace(outcome, values={**outcome.values, "obligations": obligations})
+
+    monkeypatch.setitem(
+        engine.store.registry.evaluators, "reimbursed_asset_batch", without_one_creditor
+    )
+    plan = setup(book).report(2026, 1)
+
+    assert plan["status"] == "needs_information"
+    assert plan["statements"]["balance_sheet"]["39"]["ending_fen"] is None
+    assert (
+        next(item for item in plan["checks"] if item["code"] == "balance_ending_fen")["passed"]
+        is None
+    )
+    view = Dashboard(engine).quarterly_report(2026, 1)
+    assert view["summary"]["assets_total_fen"] is None
+    assert view["checks"]["passed"] == sum(
+        item["passed"] is True for item in view["checks"]["items"]
+    )
+    assert view["export"]["available"] is False
+
+
+def test_opening_reclass_keeps_its_frozen_counterparty(opening_book):
+    engine, save, _, package, _ = opening_book
+    package(
+        [
+            (
+                "opening_obligation",
+                "receivable",
+                {
+                    "counterparty_id": "customer",
+                    "nature": "customer_receivable",
+                    "outstanding_fen": 20000,
+                    "business_reference": "prior-sale",
+                },
+            ),
+            (
+                "opening_equity",
+                "equity",
+                {
+                    "equity_kind": "paid_in_capital",
+                    "balance_fen": 20000,
+                    "holder_or_basis_id": "owner",
+                },
+            ),
+        ]
+    )
+    save(
+        "continuation_report_profile",
+        "profile",
+        {
+            "period": "2026-01",
+            "company_name": "Opening reclass test",
+            "accounting_standard": "small_enterprise",
+            "bookkeeping_start": "2026-01",
+            "opening_package_id": "opening",
+        },
+    )
+    save(
+        "report_income_tax_confirmation",
+        "cit",
+        {
+            "period": "2026-03",
+            "treatment": "zero",
+            "cumulative_assessed_fen": 0,
+            "calculation_id": None,
+            "explanation": "Explicit zero",
+        },
+    )
+
+    plan = Reports(engine).report(2026, 1)
+
+    assert plan["status"] == "ready", plan["fact_issues"]
+    assert plan["statements"]["balance_sheet"]["4"]["beginning_fen"] == 20000
 
 
 @pytest.mark.parametrize("via_acceptance", [False, True])

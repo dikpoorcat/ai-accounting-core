@@ -1,0 +1,1852 @@
+{
+  "task_id": "01a095aa-d868-7bb2-a092-0ff76cc90108",
+  "architecture_task_id": "01a09416-a4e3-76b2-bf46-6387d8d47cfc",
+  "plan_version": "v1 + approved six execution boundaries",
+  "delivery_version": "v1",
+  "status": "submitted_for_architecture_review",
+  "recorded_at": "2026-09-12T13:26:47.450950+00:00",
+  "baseline": {
+    "path": ".tmp/t5-v1/baseline.json",
+    "sha256": "d89e7506c0d86228c630d33301c5e7e4339baf02ce383a2695c5bdefd8f71238"
+  },
+  "head": "66561ee07afb2841562c269a9c60f320787d17e3",
+  "schema": {
+    "company": 10,
+    "catalog": 3,
+    "business_fingerprint": "0d7a1b1823d09b3f05b8a6f30b1dace1f1cc3dd83d1f0aa11260dacbde211f05"
+  },
+  "delivery_delta": [
+    {
+      "path": "AGENTS.md",
+      "baseline_sha256": "a8bde8b2c1ae25047e5081bda7613ddd382adc3187156b619938391fa78680dd",
+      "final_sha256": "8c14fb5459176cbede092db482e82d89b261dd3cddaf83ea068defba8a64fdb1",
+      "owner": "T5"
+    },
+    {
+      "path": "README.md",
+      "baseline_sha256": "af957ddb2bf8860331527b0eb226a2e06f71a538fd3b504c65af9e6efa5d5765",
+      "final_sha256": "5f5a89d1fe764184cabf87421fddcf2af0adcc3b7833ff310e94c60723532845",
+      "owner": "T5"
+    },
+    {
+      "path": "docs/local-kernel-acceptance.md",
+      "baseline_sha256": "245cec45f240cc1b5aa9c01c4b609c98e3ef0ebcc450eb3e92267a2f57fea7d5",
+      "final_sha256": "384b9e6781f151d0abe43c643c66aee837a94649194b493515704564b8670f22",
+      "owner": "T5"
+    },
+    {
+      "path": "docs/local-kernel-packaging.md",
+      "baseline_sha256": "aae7793dd3ad216c88f0a80aa7b2cae75eefbff205e884cb1833126c4cf2ff2c",
+      "final_sha256": "d5348d98aaf3fac019931126b53d6ead5052a3bed10233081c0e174ae73d6fad",
+      "owner": "T5"
+    },
+    {
+      "path": "docs/local-kernel.md",
+      "baseline_sha256": "ad3adaf2fb7a71ff9abd34c978d340f22bf2203c56825aa67e0b6158310f115e",
+      "final_sha256": "a219167baa6d25489229c970486de45a79a68206a1f35bb2cbfc0abb35c98078",
+      "owner": "T5"
+    },
+    {
+      "path": "docs/t5-approved-plan.md",
+      "baseline_sha256": null,
+      "final_sha256": "ef2714a2fcf6dde2a6512cbe2043a342a9ce71a26905c84e12fbe84c47355bcb",
+      "owner": "T5"
+    },
+    {
+      "path": "docs/t5-implementation-result.md",
+      "baseline_sha256": null,
+      "final_sha256": "0cefde15b58ed30ebb5e389192f738b3e3627d73b38d1d377923075a42d69f2a",
+      "owner": "T5"
+    },
+    {
+      "path": "frontend/tests/browser-contract.cjs",
+      "baseline_sha256": "36f699ba9845cc57021782089404012ddb1e93efd5cba25b056330ab88545f4f",
+      "final_sha256": "af28f4a8da3365147a285137db9115ea09fa41e009dc10dc8d4b9eba7f501e41",
+      "owner": "T5"
+    },
+    {
+      "path": "frontend/tests/browser-jobs-download.cjs",
+      "baseline_sha256": "7338b33495bb14e0e70fa0483cfcf30e02365a3733a2f51505db39ee253b9a68",
+      "final_sha256": "7f1aed10580de1f0ad462bde65d0c03530e320f8e5e90a215551cc16e5687280",
+      "owner": "T5"
+    },
+    {
+      "path": "frontend/tests/browser-t5-integration.cjs",
+      "baseline_sha256": null,
+      "final_sha256": "e5ecd2b36799c0121d780d6747b5c34fe82b2750b10747bffb80d47361c7145d",
+      "owner": "T5"
+    },
+    {
+      "path": "scripts/verify_local_package.py",
+      "baseline_sha256": "7ae7b4ff18abb147f589606a430b2055c2f322b2c16d9a083d7380d73e0072b3",
+      "final_sha256": "91ee09940b8a6c93c0ddf9d5c6174f8356c338984e0f6dc91cb2f5f5d12d1d7d",
+      "owner": "T5"
+    },
+    {
+      "path": "scripts/verify_t5_browser.py",
+      "baseline_sha256": null,
+      "final_sha256": "edfacd31cadff29c39ba765f80dc4f12cb58f5cf59078e9e89b59bb9148e93df",
+      "owner": "T5"
+    },
+    {
+      "path": "scripts/verify_t5_read_costs.py",
+      "baseline_sha256": null,
+      "final_sha256": "23de1cfa868e9b0260344eddbfafe259c8c85ad812aa7a1c79d82e19dbf132b0",
+      "owner": "T5"
+    },
+    {
+      "path": "tests/kernel/test_accounting_review_chain.py",
+      "baseline_sha256": "d6b56cb38428e38c1375a078b56834a8b53e06e9feae6820c0f38899126f97b9",
+      "final_sha256": "5d2b025f8beb04752debd8e92174d9326f1ba5ab68a84bc65868be49df10032a",
+      "owner": "T5"
+    },
+    {
+      "path": "tests/kernel/test_commentary_content.py",
+      "baseline_sha256": "11b6fd307e52ba3bcaa675000d509f1bd4999c47a55c4874e482777e1a1cdc2f",
+      "final_sha256": "b5e903ab36553ce037ebda60a17c25d564688b153f142ca1b626b5cb107e03bf",
+      "owner": "T5"
+    }
+  ],
+  "source_candidate_correspondence": {
+    "status": "passed",
+    "package": "D:\\GitHub\\ai-accounting-core\\.tmp-local-distribution\\t5-review-v1-20260912-relocated",
+    "archive": {
+      "path": ".tmp-local-distribution/t5-review-v1-20260912.zip",
+      "sha256": "862b55159d27ec833e26733db28d5a50bd62de50fdcab6a59e379287217d9f62"
+    },
+    "manifest_sha256": "bdd221e8f6364fcd4f75298e51aa76b5f63fbcf6b6b3a0f7bc3b541582072178",
+    "runtime": {
+      "python": "3.12.13",
+      "sqlite": "3.53.1",
+      "build_id": "local-kernel-2:e3c9361e2558ddb7cd97f34b4ff71e64e34004e49a398e86d0ff58200461d31e",
+      "isolated": 1
+    },
+    "source_to_candidate": [
+      {
+        "source": "src/ai_accounting/__init__.py",
+        "candidate": "app/ai_accounting/__init__.py",
+        "sha256": "b76d4948c40d2c033372b6ce4d25ab8d0eb4f7ae043c6919aa82ac4b93005a01"
+      },
+      {
+        "source": "src/ai_accounting/bank_statement_schemas.py",
+        "candidate": "app/ai_accounting/bank_statement_schemas.py",
+        "sha256": "41e60ef01c158eb7ddb09abaecb7aa5f1de2996a4c7a7d70b433b72e828ff3c3"
+      },
+      {
+        "source": "src/ai_accounting/bank_statements.py",
+        "candidate": "app/ai_accounting/bank_statements.py",
+        "sha256": "f26a9f2bf69a8a273cada3ed0eed850da5388972ddec2fc4e9fdf3ce27bdc2a1"
+      },
+      {
+        "source": "src/ai_accounting/borrowings.py",
+        "candidate": "app/ai_accounting/borrowings.py",
+        "sha256": "d381970bcca98b03d7e3dfef8e24aa1937a12c46cb5a4db30c129c9d73d6a7bf"
+      },
+      {
+        "source": "src/ai_accounting/fact_requirements.py",
+        "candidate": "app/ai_accounting/fact_requirements.py",
+        "sha256": "183d00d382960df0f490a2849dc079f261ee3b6e88e94b128d3ed14e31fd8331"
+      },
+      {
+        "source": "src/ai_accounting/financial_statement_template.py",
+        "candidate": "app/ai_accounting/financial_statement_template.py",
+        "sha256": "1e0e18ab74ec672394adc9cdcf27bb1a8c4814081c30d9e618591908ab3beaa3"
+      },
+      {
+        "source": "src/ai_accounting/fixed_assets.py",
+        "candidate": "app/ai_accounting/fixed_assets.py",
+        "sha256": "f86cee8b7c5dfd0158052c95d01844025706301b16095b2539ee71a9176da502"
+      },
+      {
+        "source": "src/ai_accounting/intangible_assets.py",
+        "candidate": "app/ai_accounting/intangible_assets.py",
+        "sha256": "3ffe35b1847ff23a6a0b9d97676fe430114a57e63192aa8de8068b65d1bfb35b"
+      },
+      {
+        "source": "src/ai_accounting/kernel/__init__.py",
+        "candidate": "app/ai_accounting/kernel/__init__.py",
+        "sha256": "a9e62a0b59937a8f176c390b271c14a2274400ef41ac688e18afe436a0dfb167"
+      },
+      {
+        "source": "src/ai_accounting/kernel/accounting.py",
+        "candidate": "app/ai_accounting/kernel/accounting.py",
+        "sha256": "d37b518b883ce632fa54881a36e4f388b0b5476eae39f1150e5da1081fd97f0b"
+      },
+      {
+        "source": "src/ai_accounting/kernel/backup.py",
+        "candidate": "app/ai_accounting/kernel/backup.py",
+        "sha256": "d49cf81eb5e2c2563fa2378c930dc812782b4e24cd764973760daace74a92074"
+      },
+      {
+        "source": "src/ai_accounting/kernel/build.py",
+        "candidate": "app/ai_accounting/kernel/build.py",
+        "sha256": "9d5190bb8fb0e873b0d35927ed2bcc76620ec2b45010adfd98399ee76f692e6a"
+      },
+      {
+        "source": "src/ai_accounting/kernel/business_queries.py",
+        "candidate": "app/ai_accounting/kernel/business_queries.py",
+        "sha256": "e469debb38c6d223feb62879c807c82c232bdd7f22fe9f8d2634bb4da13f3bbe"
+      },
+      {
+        "source": "src/ai_accounting/kernel/catalog.py",
+        "candidate": "app/ai_accounting/kernel/catalog.py",
+        "sha256": "b6110b6f05589aedd281dd5d054c71606abb0f2f442bf057366900d9c004c929"
+      },
+      {
+        "source": "src/ai_accounting/kernel/cli.py",
+        "candidate": "app/ai_accounting/kernel/cli.py",
+        "sha256": "273c475f5a7ab24d73835bd4491757e60575753bc863b04e4db1f66bf3d4b96e"
+      },
+      {
+        "source": "src/ai_accounting/kernel/command_schema.py",
+        "candidate": "app/ai_accounting/kernel/command_schema.py",
+        "sha256": "9f5720e71cf9c50107c8777f9027aa959d9197e101d2b7d5de806ddaa6feda65"
+      },
+      {
+        "source": "src/ai_accounting/kernel/contracts.py",
+        "candidate": "app/ai_accounting/kernel/contracts.py",
+        "sha256": "199a0f64fa42760bcc770c27528faedf86be44319080c3fbcf5d2ced7fbd946c"
+      },
+      {
+        "source": "src/ai_accounting/kernel/daemon.py",
+        "candidate": "app/ai_accounting/kernel/daemon.py",
+        "sha256": "7e0c47f5d904a33d0f4761f3e1fa2ea427f75d5c2cf0c0641284769b64372fb1"
+      },
+      {
+        "source": "src/ai_accounting/kernel/dashboard.py",
+        "candidate": "app/ai_accounting/kernel/dashboard.py",
+        "sha256": "a6a1990a881899f4f0492507b1e65cf53e6fc365d87c64ebac546d173babcdc3"
+      },
+      {
+        "source": "src/ai_accounting/kernel/dashboard_funds.py",
+        "candidate": "app/ai_accounting/kernel/dashboard_funds.py",
+        "sha256": "90f3f25a75d6f285d9c5da311be2d73d81d21f2aa65313aec978c47fd50a9db2"
+      },
+      {
+        "source": "src/ai_accounting/kernel/dashboard_metadata.py",
+        "candidate": "app/ai_accounting/kernel/dashboard_metadata.py",
+        "sha256": "7895d183af80480c31dce727cf5482ce896bca50362fc623add6e535e690da6b"
+      },
+      {
+        "source": "src/ai_accounting/kernel/dashboard_pages.py",
+        "candidate": "app/ai_accounting/kernel/dashboard_pages.py",
+        "sha256": "e3c2bfae5e0ef3d9f8bf4d6db475d18e361bb4e51c3870728af716d27e75dd42"
+      },
+      {
+        "source": "src/ai_accounting/kernel/dashboard_reads.py",
+        "candidate": "app/ai_accounting/kernel/dashboard_reads.py",
+        "sha256": "45f9a6ee6091840f6c8930f58a0d50c4cb6dd6aef8d83a3851d86729e6328d6a"
+      },
+      {
+        "source": "src/ai_accounting/kernel/diagnostics.py",
+        "candidate": "app/ai_accounting/kernel/diagnostics.py",
+        "sha256": "e96874b67f46fc9bea0c9370229f5107e91d512afb995b13c4bded8e1acb5ac7"
+      },
+      {
+        "source": "src/ai_accounting/kernel/discovery.py",
+        "candidate": "app/ai_accounting/kernel/discovery.py",
+        "sha256": "4d391549a295272b6bdbac172520aeba5e84f7c056a04cbe437c38554451d499"
+      },
+      {
+        "source": "src/ai_accounting/kernel/display.py",
+        "candidate": "app/ai_accounting/kernel/display.py",
+        "sha256": "3e79e4484a5560570f1d3d70860aa339d78eac4efd33b226aa53cc383074f178"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/accounting.py",
+        "candidate": "app/ai_accounting/kernel/domains/accounting.py",
+        "sha256": "72c64bf4519c507549180869d3b15c553e3a45c5d240654f12bc647cf95fd784"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/adjustments.py",
+        "candidate": "app/ai_accounting/kernel/domains/adjustments.py",
+        "sha256": "fb0deb47593db14d72a2470f34c23950dc49f677b657afef685701c605f29f5f"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/assets.py",
+        "candidate": "app/ai_accounting/kernel/domains/assets.py",
+        "sha256": "09b2cf2071d114be6d789ebd79479a6689cb443f988476e2ebc33eae659da636"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/banking.py",
+        "candidate": "app/ai_accounting/kernel/domains/banking.py",
+        "sha256": "7e80a2abbe273c97e560b4da44d6373c504f5631f0da16789316db8e15b05506"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/cash.py",
+        "candidate": "app/ai_accounting/kernel/domains/cash.py",
+        "sha256": "fa1d2945ae3c7a109c0565b7d26fda1a74787c4be5d846a6399e0c4ffe4b7fff"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/investments.py",
+        "candidate": "app/ai_accounting/kernel/domains/investments.py",
+        "sha256": "def1edcc6c80b3b8ac2a858aead2ba3b9801e30360550b727fbe05a80b106aa5"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/labor_assets.py",
+        "candidate": "app/ai_accounting/kernel/domains/labor_assets.py",
+        "sha256": "a40bd4581c983098ef26de71150dd4c34936a237e3774fa3df4adbf6bcae8593"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/managed_reserve.py",
+        "candidate": "app/ai_accounting/kernel/domains/managed_reserve.py",
+        "sha256": "43702d871bdc401351c3b1de52ad2693e7c8d59bb6fe783d96518096a3577369"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/money.py",
+        "candidate": "app/ai_accounting/kernel/domains/money.py",
+        "sha256": "00ddaeecd386f1cf549077adbe5c64c9dfa897a60b2edc1f37600da7c75d88c4"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/opening.py",
+        "candidate": "app/ai_accounting/kernel/domains/opening.py",
+        "sha256": "b5302e5c557ba7ac68b2cfb0c6c34b22406aea20b791a94e22835455523bc932"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/payroll.py",
+        "candidate": "app/ai_accounting/kernel/domains/payroll.py",
+        "sha256": "887202878d4fe45233d82829fe1d5cf586fb38089690f119fd616f176278c740"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/payroll_reserve_payment.py",
+        "candidate": "app/ai_accounting/kernel/domains/payroll_reserve_payment.py",
+        "sha256": "c054097bc4444f33e36e3849194aecd1f088ef5b9d4a520161ab7d8539c171ae"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/platforms.py",
+        "candidate": "app/ai_accounting/kernel/domains/platforms.py",
+        "sha256": "8c392a6f2220027f77bc522dada4210d7cba4b7c04c9bed38efb3521d3b4154c"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/taxes.py",
+        "candidate": "app/ai_accounting/kernel/domains/taxes.py",
+        "sha256": "b40845afb163ab58ebad41d9e83e2e6ecb8e15b73001b4211900be6ffc3ae501"
+      },
+      {
+        "source": "src/ai_accounting/kernel/domains/transactions.py",
+        "candidate": "app/ai_accounting/kernel/domains/transactions.py",
+        "sha256": "a3fb48a668d7c8dadd8d532c2ea15368a87b95a4cf6c92e6983bd448cf30e6fc"
+      },
+      {
+        "source": "src/ai_accounting/kernel/engine.py",
+        "candidate": "app/ai_accounting/kernel/engine.py",
+        "sha256": "f52d01b251838b7a9b779377e6ead98a2c728b0e2b7a2b58d6c53f09d5591724"
+      },
+      {
+        "source": "src/ai_accounting/kernel/exports.py",
+        "candidate": "app/ai_accounting/kernel/exports.py",
+        "sha256": "a4311a30f719a7391cf9a697cf6385cc958fe4ee5ec61398621c083675ca6789"
+      },
+      {
+        "source": "src/ai_accounting/kernel/http.py",
+        "candidate": "app/ai_accounting/kernel/http.py",
+        "sha256": "91d3e0980c7c6b11112b43c8e8615b69594118de23f76c9e07eb08ecc2fc92c1"
+      },
+      {
+        "source": "src/ai_accounting/kernel/jobs.py",
+        "candidate": "app/ai_accounting/kernel/jobs.py",
+        "sha256": "a2d53c00435cad7b81e602848921d35abe367cd51c3ca830ccbb349a326ddb04"
+      },
+      {
+        "source": "src/ai_accounting/kernel/materials.py",
+        "candidate": "app/ai_accounting/kernel/materials.py",
+        "sha256": "d615f715c7d6342f657ef99dc360104fb845b3de695718a8d65bfab71dcd8490"
+      },
+      {
+        "source": "src/ai_accounting/kernel/mcp.py",
+        "candidate": "app/ai_accounting/kernel/mcp.py",
+        "sha256": "93c3830a75868963414af24f5ab2aa504072c127ce91cdebcb21329e59b3d1e4"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v10_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v10_business.json",
+        "sha256": "25d6ed414395fcdbdb20bbc74f279ab1fafb619d364a2acffbb3c47d68504e5a"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v1_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v1_business.json",
+        "sha256": "1473e12b1c6a903224c3625fbe6a10bc5a5166dfe9928c6bb85fc5b3f3617900"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v1_catalog.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v1_catalog.json",
+        "sha256": "1cd1e9701f601dc6db3a5a0ab3ffca8f6ede05e1d5b0239dbd43fddbd22e61ca"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v2_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v2_business.json",
+        "sha256": "7a89f8ea7baf722c20ecf6faa00c0c55670194e1debda318df8bf74f21819d65"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v2_catalog.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v2_catalog.json",
+        "sha256": "559a80dda160a026f06e1cdc76c0f8f1d0432b596163d45de1f7fb8079e98297"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v3_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v3_business.json",
+        "sha256": "5a2e1bef930c0f646c70ebcf96da4e3ce82a7f61374f90c42ad0251dce9696aa"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v3_catalog.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v3_catalog.json",
+        "sha256": "28c01841492b032e54646f07bc97d13b01c7b1fd66e738c4af6e732fe9e732ae"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v4_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v4_business.json",
+        "sha256": "bc20923c5f8886b48bf3d10e725cd1645c7954a3413c302c681f5f1bb63430dc"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v5_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v5_business.json",
+        "sha256": "02625c544df804086f9f289bf08a1fd8e0bcfdbcb249bf883f00da1090041ca8"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v6_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v6_business.json",
+        "sha256": "e4c0bfc2c771f84ff287f01afdda5121e700e4ec2eca54ebde9b28f3dbc97840"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v7_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v7_business.json",
+        "sha256": "ce4f78424567d8ce88648f80772ee50e4989fb18c59d90003eb6888633a49725"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v8_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v8_business.json",
+        "sha256": "3deb31126a287977d4daa11c89eb9eed2f3f4c55484f3cf6ce49fd25fb3499c7"
+      },
+      {
+        "source": "src/ai_accounting/kernel/migrations/v9_business.json",
+        "candidate": "app/ai_accounting/kernel/migrations/v9_business.json",
+        "sha256": "d40c2acb669b4e673aeeb22e7070972da353c479ab3e14458f7d9f5db1f8760c"
+      },
+      {
+        "source": "src/ai_accounting/kernel/opening_adoption.py",
+        "candidate": "app/ai_accounting/kernel/opening_adoption.py",
+        "sha256": "54dca5b7cbbf245cb5d86dcac7323167c3a202d1f647b2b6bac1710681ddfe43"
+      },
+      {
+        "source": "src/ai_accounting/kernel/payroll_preparation.py",
+        "candidate": "app/ai_accounting/kernel/payroll_preparation.py",
+        "sha256": "fd8f5ec11adec79e2ad48c4e73c3df7f119db41983d1602ffb9b7f09429f0f60"
+      },
+      {
+        "source": "src/ai_accounting/kernel/payroll_tax_declarations.py",
+        "candidate": "app/ai_accounting/kernel/payroll_tax_declarations.py",
+        "sha256": "a0344c4e4ed8685a40f1636ea08953007afaa1bac68780816052930d043586d6"
+      },
+      {
+        "source": "src/ai_accounting/kernel/periods.py",
+        "candidate": "app/ai_accounting/kernel/periods.py",
+        "sha256": "4c8a21cffa0f5000be919a4283d86a7b128d5eaf2aca592e1639cde45019ba99"
+      },
+      {
+        "source": "src/ai_accounting/kernel/provenance.py",
+        "candidate": "app/ai_accounting/kernel/provenance.py",
+        "sha256": "1356847688ec1903b21a2702d74d2a57138e31be6d659998bdef22de6595cf63"
+      },
+      {
+        "source": "src/ai_accounting/kernel/query_reads.py",
+        "candidate": "app/ai_accounting/kernel/query_reads.py",
+        "sha256": "5b5f812094ea99c4a7af32f6abc858b236338b4614c4a6ef17750e806a219040"
+      },
+      {
+        "source": "src/ai_accounting/kernel/query_semantics.py",
+        "candidate": "app/ai_accounting/kernel/query_semantics.py",
+        "sha256": "500878dff0f1a8921d42c5518405e7997bba408dfe9b2bfa6a2c4eeb7cec2858"
+      },
+      {
+        "source": "src/ai_accounting/kernel/read_indexes.py",
+        "candidate": "app/ai_accounting/kernel/read_indexes.py",
+        "sha256": "cac3d603d05c73ec26e8f5be8b1fca57700e478ed41fb990e6d15b482b4ee8fc"
+      },
+      {
+        "source": "src/ai_accounting/kernel/reports.py",
+        "candidate": "app/ai_accounting/kernel/reports.py",
+        "sha256": "3721e108d9e7941dcf5450e09bc4bd893cb805e794a50caabc1efe8862851d10"
+      },
+      {
+        "source": "src/ai_accounting/kernel/reserves.py",
+        "candidate": "app/ai_accounting/kernel/reserves.py",
+        "sha256": "3a4f730329203ddefee284dcaeab5922dca49910a23b4fb9eea3645a92c1d3b5"
+      },
+      {
+        "source": "src/ai_accounting/kernel/runtime.py",
+        "candidate": "app/ai_accounting/kernel/runtime.py",
+        "sha256": "452b09dcaef293d56c96ddb5db5b7097718f004d6db9f4a742cc257055064231"
+      },
+      {
+        "source": "src/ai_accounting/kernel/schema.py",
+        "candidate": "app/ai_accounting/kernel/schema.py",
+        "sha256": "d4dc035e508f69408c13d8bf7a7df2762c1a996444afcd10aa53ba6eec3e322a"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/__init__.py",
+        "candidate": "app/ai_accounting/kernel/security/__init__.py",
+        "sha256": "4be5375476e9472cadb13cfaca4cbad1e5b9f945c5861203a1965ad79c8ed3a3"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/approval.py",
+        "candidate": "app/ai_accounting/kernel/security/approval.py",
+        "sha256": "664c690e02b0868a3579d064ba61359f038761fa6a15a8c84a4c197af9d822ef"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/batches.py",
+        "candidate": "app/ai_accounting/kernel/security/batches.py",
+        "sha256": "6a4422123f86886cb7f3b8250b119bab087c9d0b4169871b09c038e00346beb6"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/credentials.py",
+        "candidate": "app/ai_accounting/kernel/security/credentials.py",
+        "sha256": "913cd393bde9d2ccebaf8058f1f96ed3d7a30a427b7a32166a512642ebf3d896"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/native.py",
+        "candidate": "app/ai_accounting/kernel/security/native.py",
+        "sha256": "95d596301fbc5a67cbc905990a46a63f8ae41f7d5f3eee1a352b7c6f5149a3dc"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/primitives.py",
+        "candidate": "app/ai_accounting/kernel/security/primitives.py",
+        "sha256": "f0023a346f0f0fcb1a13a840df6b430954649361bb237e4aa35db6abb5a9475b"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/schema.py",
+        "candidate": "app/ai_accounting/kernel/security/schema.py",
+        "sha256": "98c5d98bb3099849e884a71dc457cf830850798c7b42312aa3b6f4a6eb4655a5"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/service.py",
+        "candidate": "app/ai_accounting/kernel/security/service.py",
+        "sha256": "684b87f90e230464b33f32375de67ba51b7822a0ecae860e3625ef485927dbbc"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/transport.py",
+        "candidate": "app/ai_accounting/kernel/security/transport.py",
+        "sha256": "f78463225d463b9ebe7db66609e1cb0c6bcef39552f8a9691a028e7381245315"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/window.py",
+        "candidate": "app/ai_accounting/kernel/security/window.py",
+        "sha256": "7ceeabebdf945eebbbde6f7e60aab1156e68cff9aa10525138ed666c893a101d"
+      },
+      {
+        "source": "src/ai_accounting/kernel/security/windows.py",
+        "candidate": "app/ai_accounting/kernel/security/windows.py",
+        "sha256": "91dc38234adc16c8a80121941052938ddf92fc48877a65e42523ba43d4527c7d"
+      },
+      {
+        "source": "src/ai_accounting/kernel/service.py",
+        "candidate": "app/ai_accounting/kernel/service.py",
+        "sha256": "18c29541ef49480b9d10f6bc0344d2910bc8306a464982846b3b8a4ea09d2910"
+      },
+      {
+        "source": "src/ai_accounting/kernel/storage.py",
+        "candidate": "app/ai_accounting/kernel/storage.py",
+        "sha256": "d40f232133311f802dcb2c9ce0427f90dba8647747dec8bb01e5ef3fec53e1c6"
+      },
+      {
+        "source": "src/ai_accounting/kernel/tax_import.py",
+        "candidate": "app/ai_accounting/kernel/tax_import.py",
+        "sha256": "4c1f8af0cb165735b3128ba4bcac5c2c73b161845b9e1474c4cc35f1bf2dd29b"
+      },
+      {
+        "source": "src/ai_accounting/kernel/types.py",
+        "candidate": "app/ai_accounting/kernel/types.py",
+        "sha256": "90a39ed4089ba5f2e3792b8c775bd00305e1eac1ab0607afd0eb2a97f387e7fc"
+      },
+      {
+        "source": "src/ai_accounting/kernel/versions.py",
+        "candidate": "app/ai_accounting/kernel/versions.py",
+        "sha256": "d7c0deb9c0ca1663e88ac88d7fa6dcb2f977a7a4b9e2d09ca6d0d15b4e031ebc"
+      },
+      {
+        "source": "src/ai_accounting/kernel/workflow.py",
+        "candidate": "app/ai_accounting/kernel/workflow.py",
+        "sha256": "bde82bba7ca01dba3cfc8c310b9327ed3a71eeac8184d02a33283cf1de176d2d"
+      },
+      {
+        "source": "src/ai_accounting/mybank_export.py",
+        "candidate": "app/ai_accounting/mybank_export.py",
+        "sha256": "bcb3daf6bad73a90ca0c817845370daf6d1538a843aec690b13a3c2f040efc9e"
+      },
+      {
+        "source": "src/ai_accounting/payroll/__init__.py",
+        "candidate": "app/ai_accounting/payroll/__init__.py",
+        "sha256": "b89f5cf22b1f4bdc4032cc7da167216e916bfdc0182f6d3f45d32973a6df8373"
+      },
+      {
+        "source": "src/ai_accounting/payroll/annual_bonus.py",
+        "candidate": "app/ai_accounting/payroll/annual_bonus.py",
+        "sha256": "555b8c671ee19733ce38aa9d5e48dfa8b12e53859edcc90f9f3156b72e3e9150"
+      },
+      {
+        "source": "src/ai_accounting/payroll/contributions.py",
+        "candidate": "app/ai_accounting/payroll/contributions.py",
+        "sha256": "a0249b45a56b016864a3f8d0ef19869257ca2cfe75e9b95398e1471b7829727c"
+      },
+      {
+        "source": "src/ai_accounting/payroll/income_tax.py",
+        "candidate": "app/ai_accounting/payroll/income_tax.py",
+        "sha256": "07adec2550862f6da06510a36c5c4c3e0a13658d2418adcc56d79bd649a65e83"
+      },
+      {
+        "source": "src/ai_accounting/payroll/regular.py",
+        "candidate": "app/ai_accounting/payroll/regular.py",
+        "sha256": "01dc2700f652e3b584926a6a043126405a3c8a5514a65eb0d1780833c728d803"
+      },
+      {
+        "source": "src/ai_accounting/payroll/types.py",
+        "candidate": "app/ai_accounting/payroll/types.py",
+        "sha256": "f8448257363e52dfcda4bdbc808a9dc6090e7b2d9c26523766296034975127e9"
+      },
+      {
+        "source": "src/ai_accounting/templates/financial_reports/财务报表报送与信息采集（小企业会计准则）月季报.xlsx",
+        "candidate": "app/ai_accounting/templates/financial_reports/财务报表报送与信息采集（小企业会计准则）月季报.xlsx",
+        "sha256": "bd83011100c52143b3b9a5cf5e13ba4dbe1899191bb1395bd92a5ce0f0c6f7fd"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/AssetsView-7vcNVULZ.css",
+        "candidate": "frontend/dist/assets/AssetsView-7vcNVULZ.css",
+        "sha256": "817f9cfa3f0c21a9e23fc6f7abfff3e39343b7fa92b89402153548b99b81595b"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/AssetsView-C8xzakWT.js",
+        "candidate": "frontend/dist/assets/AssetsView-C8xzakWT.js",
+        "sha256": "3acde7e3c6a687df197c780a88abbfcfde23533692b6a5664c9268f07d0d15c8"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/BriefView-BrtCY1Bb.css",
+        "candidate": "frontend/dist/assets/BriefView-BrtCY1Bb.css",
+        "sha256": "a81e6e07a08ae7a4c24d18f3d18f7615d1dfd77cffcb2e060f9d26839a66d085"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/BriefView-CEqCkmOL.js",
+        "candidate": "frontend/dist/assets/BriefView-CEqCkmOL.js",
+        "sha256": "b61213878f2ba213a4cad16a8273d7131c793e125ab79d1a97117a92f593800c"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/DashboardBusinessRecords-BXFghOc9.css",
+        "candidate": "frontend/dist/assets/DashboardBusinessRecords-BXFghOc9.css",
+        "sha256": "aa6f6c1dab154058c4ab9dce4bfb527afd32fa2644eb3f70c4462cdef6c82de7"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/DashboardBusinessRecords-DWtV5e38.js",
+        "candidate": "frontend/dist/assets/DashboardBusinessRecords-DWtV5e38.js",
+        "sha256": "947631791d2983d0d88ee874c96be1e2dbbbc3d8d963f4ee2aac434ab7f59dab"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/DashboardPagination-B2xp01lR.css",
+        "candidate": "frontend/dist/assets/DashboardPagination-B2xp01lR.css",
+        "sha256": "bfa58032d542efd664be4254d6bac02c749881963155bfddde8e1bb58634ced2"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/DashboardPagination-CZAc5aeR.js",
+        "candidate": "frontend/dist/assets/DashboardPagination-CZAc5aeR.js",
+        "sha256": "6b630a32c91ff472bbd30ab6732861028ab338f5a342a2bdc06e98385187ca93"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/DashboardSectionNav-BcRlKWns.css",
+        "candidate": "frontend/dist/assets/DashboardSectionNav-BcRlKWns.css",
+        "sha256": "34dd00e278aed9fc0042c3a64d43cdc7027a7981eadf4d5e8c17628f7a29095d"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/DashboardSectionNav-BqjYrA88.js",
+        "candidate": "frontend/dist/assets/DashboardSectionNav-BqjYrA88.js",
+        "sha256": "97019f6fbd2b5f394e9074f23fb834e279b2dfdf640d0de626b1279215e9d0c8"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/DashboardSourceHistory.vue_vue_type_script_setup_true_lang-CwEBej6t.js",
+        "candidate": "frontend/dist/assets/DashboardSourceHistory.vue_vue_type_script_setup_true_lang-CwEBej6t.js",
+        "sha256": "70df75f3be80e864b8c6c2869366737209575dc7d9f7b6b4e91374ec82b6ff94"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/EmployeesView-BPprmpyB.css",
+        "candidate": "frontend/dist/assets/EmployeesView-BPprmpyB.css",
+        "sha256": "4c6d6ee36502e00b5a1e1912635cb0e340d8dcf22e7a11d8cf9bf0514c08c3d0"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/EmployeesView-C5mKHfG3.js",
+        "candidate": "frontend/dist/assets/EmployeesView-C5mKHfG3.js",
+        "sha256": "e6a59cfff2d5fd36329a70ea5a8b6b27fc2628ec31c847c71e11f28646730e7e"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/FundsView-DR84H2xA.css",
+        "candidate": "frontend/dist/assets/FundsView-DR84H2xA.css",
+        "sha256": "363a11c01b296142d9f2d52780f75e34b9d297138787dda04c7d3a5f1b0c3bb2"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/FundsView-DT8vyoII.js",
+        "candidate": "frontend/dist/assets/FundsView-DT8vyoII.js",
+        "sha256": "059d311a40cc408861b384e8a0381bb6e73b855d95b494b8558fdba1f1a5e5b1"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/index-qigm3DWT.js",
+        "candidate": "frontend/dist/assets/index-qigm3DWT.js",
+        "sha256": "b7b344f2cfd4af8b863cdce6f723cad755ef56b1bcf48334d991daf18e419306"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/main-BCY39y9s.js",
+        "candidate": "frontend/dist/assets/main-BCY39y9s.js",
+        "sha256": "d40845bec14885f430c9743c3cab1b2a8023bd45af069bcfbc3aeb4ee27daae9"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/main-ZRP1eSGg.css",
+        "candidate": "frontend/dist/assets/main-ZRP1eSGg.css",
+        "sha256": "07ce841ebb345e8cc3546ce52d73eca92a3c52f21b1d6e096026dc109f8e9001"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/PeriodPreparation-5bWZBIVu.css",
+        "candidate": "frontend/dist/assets/PeriodPreparation-5bWZBIVu.css",
+        "sha256": "1b1cf41d46d181dbf1ee0f39c1950d1a9a538d733d1846fbabeb22dec2f17e82"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/PeriodPreparation-CvgnUwT3.js",
+        "candidate": "frontend/dist/assets/PeriodPreparation-CvgnUwT3.js",
+        "sha256": "9754d6832363fbc9fa1b7b1deecd7a384608ade661ab44b8b922b01a13d95ae9"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/ReportsView-C8RjYbsI.css",
+        "candidate": "frontend/dist/assets/ReportsView-C8RjYbsI.css",
+        "sha256": "b839adc7073545b499b02ae3ff80b9f5077a4f6dc3fb2106fa53428fc6b85262"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/assets/ReportsView-H-xzz3-S.js",
+        "candidate": "frontend/dist/assets/ReportsView-H-xzz3-S.js",
+        "sha256": "29db3b9c8caaf3c9788e5080637fd113d925f94d112b5d4698a7822b1951b8b4"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/index.html",
+        "candidate": "frontend/dist/index.html",
+        "sha256": "a8edaf199c99e0946883c05828f9803bc45372a7c75a1e306478779a83572d5b"
+      },
+      {
+        "source": "src/ai_accounting/static/dashboard/local.html",
+        "candidate": "frontend/dist/local.html",
+        "sha256": "98529abde7d9aa9dfe866c6bf0b7c3b237ed56813447f70f3fa4e53a43a00168"
+      },
+      {
+        "source": "scripts/verify_local_package.py",
+        "candidate": "tools/verify_local_package.py",
+        "sha256": "91ee09940b8a6c93c0ddf9d5c6174f8356c338984e0f6dc91cb2f5f5d12d1d7d"
+      }
+    ],
+    "production_source_changes_since_t5_baseline": [],
+    "frozen_migrations": {
+      "src/ai_accounting/kernel/migrations/v1_business.json": "1473e12b1c6a903224c3625fbe6a10bc5a5166dfe9928c6bb85fc5b3f3617900",
+      "src/ai_accounting/kernel/migrations/v1_catalog.json": "1cd1e9701f601dc6db3a5a0ab3ffca8f6ede05e1d5b0239dbd43fddbd22e61ca",
+      "src/ai_accounting/kernel/migrations/v10_business.json": "25d6ed414395fcdbdb20bbc74f279ab1fafb619d364a2acffbb3c47d68504e5a",
+      "src/ai_accounting/kernel/migrations/v2_business.json": "7a89f8ea7baf722c20ecf6faa00c0c55670194e1debda318df8bf74f21819d65",
+      "src/ai_accounting/kernel/migrations/v2_catalog.json": "559a80dda160a026f06e1cdc76c0f8f1d0432b596163d45de1f7fb8079e98297",
+      "src/ai_accounting/kernel/migrations/v3_business.json": "5a2e1bef930c0f646c70ebcf96da4e3ce82a7f61374f90c42ad0251dce9696aa",
+      "src/ai_accounting/kernel/migrations/v3_catalog.json": "28c01841492b032e54646f07bc97d13b01c7b1fd66e738c4af6e732fe9e732ae",
+      "src/ai_accounting/kernel/migrations/v4_business.json": "bc20923c5f8886b48bf3d10e725cd1645c7954a3413c302c681f5f1bb63430dc",
+      "src/ai_accounting/kernel/migrations/v5_business.json": "02625c544df804086f9f289bf08a1fd8e0bcfdbcb249bf883f00da1090041ca8",
+      "src/ai_accounting/kernel/migrations/v6_business.json": "e4c0bfc2c771f84ff287f01afdda5121e700e4ec2eca54ebde9b28f3dbc97840",
+      "src/ai_accounting/kernel/migrations/v7_business.json": "ce4f78424567d8ce88648f80772ee50e4989fb18c59d90003eb6888633a49725",
+      "src/ai_accounting/kernel/migrations/v8_business.json": "3deb31126a287977d4daa11c89eb9eed2f3f4c55484f3cf6ce49fd25fb3499c7",
+      "src/ai_accounting/kernel/migrations/v9_business.json": "d40c2acb669b4e673aeeb22e7070972da353c479ab3e14458f7d9f5db1f8760c"
+    },
+    "locks": {
+      "uv.lock": "6fe4faefd2f1ea45b3b550ce4766aa5993350afdf49f96528a4b90c46f15514a",
+      "frontend/package-lock.json": "9b4844e8c1d43c82e0c44b3242ad6b4d21bdd77ff36e367f00c525b95d47f38a",
+      "frontend/package.json": "52c99262d094c0acbc8c3acdb9ec37211147802d8a9fd5a53d13c2a49c62cf72",
+      "pyproject.toml": "f1e0c797b5ecc03f2414b52cd3af10268ade887ab9fa610548ad599000c285ae"
+    },
+    "scope": "Source app files, packaged verifier and all release frontend files match actual candidate bytes; dependencies were checked by the default relocated verifier. HEAD is not the artifact identity.",
+    "build_package_browser_inputs_unchanged": {
+      "checked_files": 145,
+      "all_match": true,
+      "scope": "Production sources, frontend sources/config/entries, locks and packaging/verifier scripts; generated assets have separate byte correspondence."
+    }
+  },
+  "validation_policy": "Independent runs keep actual states; no one-run 26-pass claim, no sum of T1-T4 totals. No production source changes; runtime and artifacts are bound by hashes, not HEAD alone.",
+  "runs": [
+    {
+      "path": ".tmp/t5-v1/unified-python.json",
+      "sha256": "ac8e4b47b4dee3f44bdfc102317138e5620c18b3b8ebaeb6d5505fdbc7e2166e",
+      "command": [
+        ".\\.tmp-kernel-venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests/kernel/test_accounting_review_chain.py",
+        "tests/kernel/test_review_no_impact.py",
+        "tests/kernel/test_accounting_compatibility.py::test_comparison_failure_is_atomic_isolated_and_recoverable",
+        "tests/kernel/test_accounting_compatibility.py::test_failed_no_impact_review_keeps_old_publication_and_can_retry",
+        "tests/kernel/test_commentary_content.py",
+        "tests/kernel/test_workflow_confirmation_time.py::test_idempotent_replay_and_recalculation_keep_original_knowledge_time",
+        "tests/kernel/test_workflow_confirmation_time.py::test_changed_basis_keeps_actual_completion_and_requests_review",
+        "tests/kernel/test_workflow_confirmation_time.py::test_missing_confirmation_audit_keeps_unknown_day_unestablished",
+        "tests/kernel/test_exports.py::test_any_lane_change_expires_unconfirmed_export",
+        "tests/kernel/test_materials.py::test_changed_or_deleted_current_result_reopens_original_row",
+        "-q",
+        "--junitxml=.tmp/t5-v1/unified-python.xml"
+      ],
+      "exit_code": 1,
+      "seconds": 34.812,
+      "changed_during_run": [
+        "frontend/tests/browser-t5-integration.cjs",
+        "frontend/tests/browser-contract.cjs",
+        "scripts/verify_t5_read_costs.py",
+        "scripts/verify_t5_browser.py",
+        "frontend/tests/browser-jobs-download.cjs"
+      ],
+      "applicability": "24 pass and two new test-fixture/representation failures; intact JUnit is authoritative after wrapper stdout decoder error. Concurrent changes only to unused verification scripts/legacy mock comments, no production source or exercised Python test changes during this run."
+    },
+    {
+      "path": ".tmp/t5-v1/unified-two-fixture-repairs.json",
+      "sha256": "19615dc58b6844bda256c1dbdb2e962b929319d01ef13cc79788a5e5d574e76c",
+      "command": [
+        ".\\.tmp-kernel-venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests/kernel/test_accounting_review_chain.py::test_withholding_evidence_review_then_real_closed_correction",
+        "tests/kernel/test_commentary_content.py::test_future_write_preserves_content_but_not_submission_and_relevant_sources_expire",
+        "-q",
+        "--junitxml=.tmp/t5-v1/unified-two-fixture-repairs.xml"
+      ],
+      "exit_code": 0,
+      "seconds": 14.11,
+      "changed_during_run": [],
+      "applicability": "Only the two failed existing nodes, after canonical list/tuple comparison and typed January fixture setup; no product changes."
+    },
+    {
+      "path": ".tmp/t5-v1/release-build.json",
+      "sha256": "27b393ef7d580fe1d1916507b486bd8f7dd93a56ea4b4aaf27d322f5c404a760",
+      "command": [
+        "cmd.exe",
+        "/d",
+        "/c",
+        "npm",
+        "--prefix",
+        "frontend",
+        "run",
+        "build:release"
+      ],
+      "exit_code": 0,
+      "seconds": 11.453,
+      "changed_during_run": [
+        "scripts/verify_t5_read_costs.py"
+      ],
+      "applicability": "Actual build exit 0 and complete stdout saved before wrapper terminal GBK printing failed; no duplicate build. Concurrent change to cost probe recording logic does not enter frontend build."
+    },
+    {
+      "path": ".tmp/t5-v1/candidate-package.json",
+      "sha256": "018be4f21dc3bb04ce446f6110f105a991f5a5685aa46481c722254b4f6e8230",
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/package-local-kernel.ps1",
+        "-OutputDirectory",
+        ".tmp-local-distribution/t5-review-v1-20260912"
+      ],
+      "exit_code": 0,
+      "seconds": 119.422,
+      "changed_during_run": [],
+      "applicability": "Recorded code state, command and result retained without cumulative count."
+    },
+    {
+      "path": ".tmp/t5-v1/candidate-browser.json",
+      "sha256": "1d64a60dfd9b34f56b364a85611dc7ebcbacd804f6179c07e588c25c426c4910",
+      "command": [
+        ".tmp-local-distribution/t5-review-v1-20260912-relocated/runtime/python.exe",
+        "-I",
+        "-X",
+        "utf8",
+        "scripts/verify_t5_browser.py",
+        "--package",
+        ".tmp-local-distribution/t5-review-v1-20260912-relocated",
+        "--root",
+        ".tmp/t5-v1/browser-root-01",
+        "--output",
+        ".tmp/t5-v1/browser-01",
+        "--node",
+        "D:/Program Files/nodejs/node.exe",
+        "--playwright-module",
+        "D:/Develop/nodejs/node_global/node_modules/@playwright/cli/node_modules/playwright"
+      ],
+      "exit_code": 0,
+      "seconds": 25.328,
+      "changed_during_run": [],
+      "applicability": "Passed assertions; preserved server response-disconnect stderr accepted by architecture as P3, not a zero-server-error claim."
+    },
+    {
+      "path": ".tmp/t5-v1/final-python-static.json",
+      "sha256": "39ed67da7d5d579b9d2d04bbc64d9f9778fe16f22c1bb6a0899d6f9cfb2000a2",
+      "command": [
+        ".\\.tmp-kernel-venv\\Scripts\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "scripts/verify_local_package.py",
+        "scripts/verify_t5_browser.py",
+        "scripts/verify_t5_read_costs.py",
+        "tests/kernel/test_accounting_review_chain.py",
+        "tests/kernel/test_commentary_content.py"
+      ],
+      "exit_code": 0,
+      "seconds": 0.25,
+      "changed_during_run": [],
+      "applicability": "Recorded code state, command and result retained without cumulative count."
+    },
+    {
+      "path": ".tmp/t5-v1/final-whitespace.json",
+      "sha256": "3dc5ae91113b04d397460158434cea124dcababeee43d3684cd6ce31b29e69ce",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 0.235,
+      "changed_during_run": [],
+      "applicability": "Recorded code state, command and result retained without cumulative count."
+    }
+  ],
+  "python_batches": [
+    {
+      "junit": {
+        "path": ".tmp/t5-v1/unified-python.xml",
+        "sha256": "d165f7ec39486bcfe36676b94ea5e6197eb973a76cf58f915bb3a9c9d7aa6a9e"
+      },
+      "tests": 26,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0,
+      "nodes": [
+        {
+          "nodeid": "tests/kernel/test_accounting_review_chain.py::test_withholding_evidence_review_then_real_closed_correction",
+          "result": "failed"
+        },
+        {
+          "nodeid": "tests/kernel/test_review_no_impact.py::test_open_review_keeps_sealed_voucher_and_refreshes_dependencies",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_review_no_impact.py::test_closed_review_needs_no_reversal_but_later_real_change_reverses_original",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_review_no_impact.py::test_same_amount_in_a_different_month_is_an_accounting_change",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_accounting_compatibility.py::test_comparison_failure_is_atomic_isolated_and_recoverable[required_outcome_structure_missing]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_accounting_compatibility.py::test_comparison_failure_is_atomic_isolated_and_recoverable[unsupported_comparison_contract]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_accounting_compatibility.py::test_failed_no_impact_review_keeps_old_publication_and_can_retry[calculation]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_accounting_compatibility.py::test_failed_no_impact_review_keeps_old_publication_and_can_retry[commit]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_future_write_preserves_content_but_not_submission_and_relevant_sources_expire",
+          "result": "failed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_cross_month_pending_cause_is_not_filtered_out",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_related_later_payroll_sources_are_exact_and_unrelated_future_wages_are_excluded",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_frozen_original_and_supplements_have_separate_validity",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_commentary_and_basis_rollback_together_and_no_commentary_skips_content",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_untrusted_basis_only_invalidates_its_commentary[missing]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_untrusted_basis_only_invalidates_its_commentary[contract]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_untrusted_basis_only_invalidates_its_commentary[digest]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_untrusted_basis_only_invalidates_its_commentary[association]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_untrusted_basis_only_invalidates_its_commentary[malformed]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_untrusted_basis_only_invalidates_its_commentary[commentary]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_workflow_confirmation_time.py::test_idempotent_replay_and_recalculation_keep_original_knowledge_time",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_workflow_confirmation_time.py::test_changed_basis_keeps_actual_completion_and_requests_review",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_workflow_confirmation_time.py::test_missing_confirmation_audit_keeps_unknown_day_unestablished",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_exports.py::test_any_lane_change_expires_unconfirmed_export[accounting]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_exports.py::test_any_lane_change_expires_unconfirmed_export[material]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_exports.py::test_any_lane_change_expires_unconfirmed_export[management]",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_materials.py::test_changed_or_deleted_current_result_reopens_original_row",
+          "result": "passed"
+        }
+      ]
+    },
+    {
+      "junit": {
+        "path": ".tmp/t5-v1/unified-two-fixture-repairs.xml",
+        "sha256": "69a749ebed02e222f815fb4c480e1ca2f5c0897cd9b71d69bfe17c16b2e8903b"
+      },
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "nodes": [
+        {
+          "nodeid": "tests/kernel/test_accounting_review_chain.py::test_withholding_evidence_review_then_real_closed_correction",
+          "result": "passed"
+        },
+        {
+          "nodeid": "tests/kernel/test_commentary_content.py::test_future_write_preserves_content_but_not_submission_and_relevant_sources_expire",
+          "result": "passed"
+        }
+      ]
+    }
+  ],
+  "reused_evidence": [
+    {
+      "scope": "T1 pure accounting projection/comparison contract",
+      "reason": "Accounting/contracts/domain comparison source unchanged; changed consumer chains rerun in T5.",
+      "artifacts": [
+        {
+          "path": ".tmp/t1-result.json",
+          "sha256": "c28c5bfa9aa1973d40faa69fb4c4cc146a53b9493efd3f28ff07f9a370504271"
+        },
+        {
+          "path": "docs/accounting-equivalence.md",
+          "sha256": "4a8c43498cfe83029f45b3c4f95058024f212ada3edf65d7a5acb3e29ac876ca"
+        }
+      ]
+    },
+    {
+      "scope": "T2 field provenance and v9 immutable content contract",
+      "reason": "Field provenance has T4 valid integration evidence; T5 rechecks commentary/Workflow consumer seams.",
+      "artifacts": [
+        {
+          "path": ".tmp/t2-baseline-20260912/t2-final-file-hashes.json",
+          "sha256": "f0e4866bc4eef7a4d7d3f2f717e78632aa736922fa8fdffcd4891bfbf0d463c7"
+        },
+        {
+          "path": "docs/history-content-versions.md",
+          "sha256": "d09814cb555f6eab7cdd3c063622378b6ac595df465a89dc7229dfa2f93a07da"
+        }
+      ]
+    },
+    {
+      "scope": "T3 approved query revisions",
+      "reason": "Reuse approved semantics and issue closures; do not sum historical batches.",
+      "artifacts": [
+        {
+          "path": "docs/t3-implementation-verification.json",
+          "sha256": "a899a78462493b5cf7e3edc34172dc82a3bc5a8fa482b04552c4e0ed12d92ba3"
+        },
+        {
+          "path": "docs/t3-review-revisions.json",
+          "sha256": "7e20e483ced1d05a73b963b1742fc8bec898859d0873f56eadde8ba09c77d327"
+        },
+        {
+          "path": "docs/t3-review-r2.json",
+          "sha256": "a97d5484114ee1b84cccf3ddea75f00cdeff3b550f7376b350a5322426a1f83c"
+        }
+      ]
+    },
+    {
+      "scope": "T4 r1/r2 migrations, 48 selector combinations, frontend races and defect checks",
+      "reason": "Production Python/Vue and frozen migrations match T5 baseline; current artifact/cost seams separately verified.",
+      "artifacts": [
+        {
+          "path": "docs/t4-implementation-verification.json",
+          "sha256": "f24ca46f2bc4150cc91fb4c8b8df13352fd7bec76510161ee68d79d5632c37c7"
+        },
+        {
+          "path": "docs/t4-review-r2.json",
+          "sha256": "2a25c062ad2e91389de86d02d8a9fd0b31d99b0f1d2115d9cb34d97a879e9c53"
+        }
+      ]
+    }
+  ],
+  "package": {
+    "preflight": {
+      "path": ".tmp/t5-v1/candidate-preflight.json",
+      "sha256": "640990dcc4c30d43ff6ba000952fa7667f1128b88160f66193403331e8dc6efa"
+    },
+    "verification": {
+      "path": ".tmp-local-distribution/t5-review-v1-20260912-verification.json",
+      "sha256": "48ff1c27304236c1d1038cb330b5f32078a0f61ccbc2427c29b79cc62ed94e30"
+    },
+    "result": {
+      "package": "D:\\GitHub\\ai-accounting-core\\.tmp-local-distribution\\t5-review-v1-20260912",
+      "archive": "D:\\GitHub\\ai-accounting-core\\.tmp-local-distribution\\t5-review-v1-20260912.zip",
+      "archive_bytes": 34075418,
+      "software_bytes": 95613195,
+      "runtime": {
+        "python": "3.12.13",
+        "sqlite": "3.53.1",
+        "build_id": "local-kernel-2:e3c9361e2558ddb7cd97f34b4ff71e64e34004e49a398e86d0ff58200461d31e",
+        "isolated": 1
+      },
+      "relocated": "D:\\GitHub\\ai-accounting-core\\.tmp-local-distribution\\t5-review-v1-20260912-relocated",
+      "validation": {
+        "status": "passed",
+        "package": "D:\\GitHub\\ai-accounting-core\\.tmp-local-distribution\\t5-review-v1-20260912-relocated",
+        "validation_data": "D:\\GitHub\\ai-accounting-core\\.tmp-local-distribution\\t5-review-v1-20260912-relocated-validation",
+        "runtime": {
+          "python": "3.12.13",
+          "sqlite": "3.53.1",
+          "build_id": "local-kernel-2:e3c9361e2558ddb7cd97f34b4ff71e64e34004e49a398e86d0ff58200461d31e",
+          "isolated": 1
+        },
+        "verified_files": 4131,
+        "cli_calls": 16,
+        "fact_kinds": 105,
+        "published_vouchers": 1,
+        "debit_fen": 123456,
+        "credit_fen": 123456,
+        "backup_verified_and_restored": true,
+        "background_backup_without_manual_run": true,
+        "relative_imports_only": true,
+        "http_page_and_authenticated_api": true,
+        "dashboard_five_routes_and_legacy_entries": true,
+        "dashboard_seven_authenticated_queries": true,
+        "business_schema_version": 10,
+        "catalog_schema_version": 3,
+        "cli_mcp_business_status_and_period_readiness": true,
+        "dashboard_current_schemas_and_collections": true,
+        "dashboard_integer_cent_strings": true,
+        "relative_cmd_and_powershell_launchers": true,
+        "stdio_mcp_handshake_and_query": true,
+        "native_pythonw_window_and_private_transport": true,
+        "tk_form_synthetic_login": true,
+        "windows_private_metadata_acl": true,
+        "synthetic_credentials_revoked_and_removed": true,
+        "template_bytes": 24322
+      }
+    }
+  },
+  "browser": {
+    "artifact": {
+      "path": ".tmp/t5-v1/browser-01/result.json",
+      "sha256": "31bd64b8075c4fcbb3b3a737a363a7490297acedd0f568ef0481d96f34333890"
+    },
+    "result": {
+      "status": "passed",
+      "actual_same_origin_api": true,
+      "actual_candidate_assets": true,
+      "five_pages": true,
+      "both_html_entries": true,
+      "refresh": true,
+      "companies": 2,
+      "periods": 2,
+      "nonempty_employee_and_asset": true,
+      "voucher_count": 103,
+      "page_continuation": true,
+      "numeric_voucher_outside_first_page": true,
+      "company_switch_clears_old_data": true,
+      "employee_month_a_b_a": true,
+      "page_errors": [],
+      "api_failures": [],
+      "loaded_scripts": [
+        "assets/AssetsView-C8xzakWT.js",
+        "assets/BriefView-CEqCkmOL.js",
+        "assets/DashboardBusinessRecords-DWtV5e38.js",
+        "assets/DashboardPagination-CZAc5aeR.js",
+        "assets/DashboardSectionNav-BqjYrA88.js",
+        "assets/DashboardSourceHistory.vue_vue_type_script_setup_true_lang-CwEBej6t.js",
+        "assets/EmployeesView-C5mKHfG3.js",
+        "assets/FundsView-DT8vyoII.js",
+        "assets/PeriodPreparation-CvgnUwT3.js",
+        "assets/ReportsView-H-xzz3-S.js",
+        "assets/index-qigm3DWT.js",
+        "assets/main-BCY39y9s.js"
+      ],
+      "screenshots": [
+        "desktop.png",
+        "mobile.png"
+      ],
+      "mobile_width": 390,
+      "limitation": "Thin browser seam; detailed stale-response, unknown-state and invalid-cursor cases reuse recorded unit/HTTP evidence.",
+      "package": "D:\\GitHub\\ai-accounting-core\\.tmp-local-distribution\\t5-review-v1-20260912-relocated",
+      "synthetic_root": "D:\\GitHub\\ai-accounting-core\\.tmp\\t5-v1\\browser-root-01",
+      "runtime": {
+        "python": "3.12.13",
+        "sqlite": "3.53.1",
+        "build_id": "local-kernel-2:e3c9361e2558ddb7cd97f34b4ff71e64e34004e49a398e86d0ff58200461d31e",
+        "isolated": 1
+      },
+      "browser_assets_sha256": {
+        "assets/AssetsView-7vcNVULZ.css": "817f9cfa3f0c21a9e23fc6f7abfff3e39343b7fa92b89402153548b99b81595b",
+        "assets/AssetsView-C8xzakWT.js": "3acde7e3c6a687df197c780a88abbfcfde23533692b6a5664c9268f07d0d15c8",
+        "assets/BriefView-BrtCY1Bb.css": "a81e6e07a08ae7a4c24d18f3d18f7615d1dfd77cffcb2e060f9d26839a66d085",
+        "assets/BriefView-CEqCkmOL.js": "b61213878f2ba213a4cad16a8273d7131c793e125ab79d1a97117a92f593800c",
+        "assets/DashboardBusinessRecords-BXFghOc9.css": "aa6f6c1dab154058c4ab9dce4bfb527afd32fa2644eb3f70c4462cdef6c82de7",
+        "assets/DashboardBusinessRecords-DWtV5e38.js": "947631791d2983d0d88ee874c96be1e2dbbbc3d8d963f4ee2aac434ab7f59dab",
+        "assets/DashboardPagination-B2xp01lR.css": "bfa58032d542efd664be4254d6bac02c749881963155bfddde8e1bb58634ced2",
+        "assets/DashboardPagination-CZAc5aeR.js": "6b630a32c91ff472bbd30ab6732861028ab338f5a342a2bdc06e98385187ca93",
+        "assets/DashboardSectionNav-BcRlKWns.css": "34dd00e278aed9fc0042c3a64d43cdc7027a7981eadf4d5e8c17628f7a29095d",
+        "assets/DashboardSectionNav-BqjYrA88.js": "97019f6fbd2b5f394e9074f23fb834e279b2dfdf640d0de626b1279215e9d0c8",
+        "assets/DashboardSourceHistory.vue_vue_type_script_setup_true_lang-CwEBej6t.js": "70df75f3be80e864b8c6c2869366737209575dc7d9f7b6b4e91374ec82b6ff94",
+        "assets/EmployeesView-BPprmpyB.css": "4c6d6ee36502e00b5a1e1912635cb0e340d8dcf22e7a11d8cf9bf0514c08c3d0",
+        "assets/EmployeesView-C5mKHfG3.js": "e6a59cfff2d5fd36329a70ea5a8b6b27fc2628ec31c847c71e11f28646730e7e",
+        "assets/FundsView-DR84H2xA.css": "363a11c01b296142d9f2d52780f75e34b9d297138787dda04c7d3a5f1b0c3bb2",
+        "assets/FundsView-DT8vyoII.js": "059d311a40cc408861b384e8a0381bb6e73b855d95b494b8558fdba1f1a5e5b1",
+        "assets/index-qigm3DWT.js": "b7b344f2cfd4af8b863cdce6f723cad755ef56b1bcf48334d991daf18e419306",
+        "assets/main-BCY39y9s.js": "d40845bec14885f430c9743c3cab1b2a8023bd45af069bcfbc3aeb4ee27daae9",
+        "assets/main-ZRP1eSGg.css": "07ce841ebb345e8cc3546ce52d73eca92a3c52f21b1d6e096026dc109f8e9001",
+        "assets/PeriodPreparation-5bWZBIVu.css": "1b1cf41d46d181dbf1ee0f39c1950d1a9a538d733d1846fbabeb22dec2f17e82",
+        "assets/PeriodPreparation-CvgnUwT3.js": "9754d6832363fbc9fa1b7b1deecd7a384608ade661ab44b8b922b01a13d95ae9",
+        "assets/ReportsView-C8RjYbsI.css": "b839adc7073545b499b02ae3ff80b9f5077a4f6dc3fb2106fa53428fc6b85262",
+        "assets/ReportsView-H-xzz3-S.js": "29db3b9c8caaf3c9788e5080637fd113d925f94d112b5d4698a7822b1951b8b4",
+        "index.html": "a8edaf199c99e0946883c05828f9803bc45372a7c75a1e306478779a83572d5b",
+        "local.html": "98529abde7d9aa9dfe866c6bf0b7c3b237ed56813447f70f3fa4e53a43a00168"
+      },
+      "business_schema_version": 10,
+      "catalog_schema_version": 3,
+      "synthetic_credentials_revoked_and_removed": true
+    },
+    "screenshots": [
+      {
+        "path": ".tmp/t5-v1/browser-01/desktop.png",
+        "sha256": "1463075fa71d9336389e482ce6b641befe0609e1dfd25bb94edf0ece64ea8150"
+      },
+      {
+        "path": ".tmp/t5-v1/browser-01/mobile.png",
+        "sha256": "a18a1041f398d5cd9607147dca0eaaec8ec1d1e7a75cb83a54e6e744ac268e9b"
+      }
+    ],
+    "visual_inspection": "Viewport crops of original screenshots inspected; no claim of full visual redesign review."
+  },
+  "read_costs": {
+    "artifact": {
+      "path": ".tmp/t5-read-costs.json",
+      "sha256": "0cbe4a729443fee0297c9ed44993ef5df176c8cfd877ce5f87b10cf73b33efe9"
+    },
+    "command": "D:\\GitHub\\ai-accounting-core\\.tmp-kernel-venv\\Scripts\\python.exe scripts/verify_t5_read_costs.py --output .tmp/t5-read-costs.json",
+    "environment": {
+      "python": "3.12.13 (main, Aug  7 2026, 02:26:41) [MSC v.1944 64 bit (AMD64)]",
+      "executable": "D:\\GitHub\\ai-accounting-core\\.tmp-kernel-venv\\Scripts\\python.exe",
+      "sqlite": "3.53.1",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "libraries": {
+        "pydantic": "2.12.5",
+        "openpyxl": "3.1.5",
+        "pytest": "9.1.1"
+      }
+    },
+    "dependency_state_unchanged": true,
+    "dashboard": {
+      "48": {
+        "brief": {
+          "sql_count": 299,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 64400,
+          "json_loads_count": 40,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 19,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 8
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 937040,
+          "python_connection_setup_peak_bytes": 1057120,
+          "elapsed_seconds_instrumented": 0.178781,
+          "response_utf8_bytes": 20657,
+          "money": {
+            "total_debit_fen": 4644000,
+            "total_credit_fen": 4644000
+          }
+        },
+        "funds": {
+          "sql_count": 209,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 41900,
+          "json_loads_count": 32,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 15,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 605564,
+          "python_connection_setup_peak_bytes": 1057296,
+          "elapsed_seconds_instrumented": 0.128063,
+          "response_utf8_bytes": 6509,
+          "money": {
+            "opening_fen": 24760,
+            "net_change_fen": 0,
+            "inflow_fen": 0,
+            "outflow_fen": 0,
+            "internal_transfer_fen": 0,
+            "total_fen": 24760,
+            "bank_fen": 0,
+            "cash_fen": 24760,
+            "payment_platform_fen": 0
+          }
+        },
+        "employees": {
+          "sql_count": 237,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 22100,
+          "json_loads_count": 38,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 19,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 584482,
+          "python_connection_setup_peak_bytes": 1057288,
+          "elapsed_seconds_instrumented": 0.126281,
+          "response_utf8_bytes": 33257,
+          "money": {}
+        },
+        "assets": {
+          "sql_count": 236,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 22400,
+          "json_loads_count": 36,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 15,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 1
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 557141,
+          "python_connection_setup_peak_bytes": 1057280,
+          "elapsed_seconds_instrumented": 0.118378,
+          "response_utf8_bytes": 11496,
+          "money": {
+            "fixed_asset_cost_fen": 1000,
+            "accumulated_depreciation_fen": 8,
+            "fixed_asset_net_fen": 992,
+            "intangible_asset_cost_fen": 0,
+            "accumulated_amortization_fen": 0,
+            "intangible_asset_net_fen": 0,
+            "ledger_cost_fen": 5000,
+            "ledger_accumulated_fen": 8,
+            "ledger_net_fen": 4992,
+            "active_ledger_net_fen": 992,
+            "pending_intangible_cost_fen": 0,
+            "project_cost_fen": 0,
+            "card_cost_fen": 5000,
+            "card_accumulated_fen": 8,
+            "card_net_fen": 4992,
+            "pending_fixed_cost_fen": 4000,
+            "month_charge_fen": 0,
+            "month_acquired_fen": 4000,
+            "month_cost_adjustment_fen": 0
+          }
+        }
+      },
+      "480": {
+        "brief": {
+          "sql_count": 299,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 254200,
+          "json_loads_count": 40,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 19,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 8
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 912715,
+          "python_connection_setup_peak_bytes": 1057088,
+          "elapsed_seconds_instrumented": 0.195303,
+          "response_utf8_bytes": 20657,
+          "money": {
+            "total_debit_fen": 4644000,
+            "total_credit_fen": 4644000
+          }
+        },
+        "funds": {
+          "sql_count": 209,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 231700,
+          "json_loads_count": 32,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 15,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 723708,
+          "python_connection_setup_peak_bytes": 1057264,
+          "elapsed_seconds_instrumented": 0.132471,
+          "response_utf8_bytes": 6509,
+          "money": {
+            "opening_fen": 67960,
+            "net_change_fen": 0,
+            "inflow_fen": 0,
+            "outflow_fen": 0,
+            "internal_transfer_fen": 0,
+            "total_fen": 67960,
+            "bank_fen": 0,
+            "cash_fen": 67960,
+            "payment_platform_fen": 0
+          }
+        },
+        "employees": {
+          "sql_count": 237,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 22200,
+          "json_loads_count": 38,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 19,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 583850,
+          "python_connection_setup_peak_bytes": 1057256,
+          "elapsed_seconds_instrumented": 0.140505,
+          "response_utf8_bytes": 33257,
+          "money": {}
+        },
+        "assets": {
+          "sql_count": 236,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 22500,
+          "json_loads_count": 36,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 15,
+            "calculations": 15,
+            "metadata": 15,
+            "voucher_lines": 1
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 556533,
+          "python_connection_setup_peak_bytes": 1057240,
+          "elapsed_seconds_instrumented": 0.146734,
+          "response_utf8_bytes": 11496,
+          "money": {
+            "fixed_asset_cost_fen": 1000,
+            "accumulated_depreciation_fen": 8,
+            "fixed_asset_net_fen": 992,
+            "intangible_asset_cost_fen": 0,
+            "accumulated_amortization_fen": 0,
+            "intangible_asset_net_fen": 0,
+            "ledger_cost_fen": 5000,
+            "ledger_accumulated_fen": 8,
+            "ledger_net_fen": 4992,
+            "active_ledger_net_fen": 992,
+            "pending_intangible_cost_fen": 0,
+            "project_cost_fen": 0,
+            "card_cost_fen": 5000,
+            "card_accumulated_fen": 8,
+            "card_net_fen": 4992,
+            "pending_fixed_cost_fen": 4000,
+            "month_charge_fen": 0,
+            "month_acquired_fen": 4000,
+            "month_cost_adjustment_fen": 0
+          }
+        }
+      }
+    },
+    "classifications": {
+      "48": {
+        "classification_count": 48,
+        "normalized_rows": {
+          "fact_report_classification": 48,
+          "fact_report_classification_cash_details": 48
+        },
+        "status": "ready",
+        "report_fact_count": 50,
+        "fact_issues": [],
+        "readiness_issues": [],
+        "report": {
+          "sql_count": 37,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 13900,
+          "json_loads_count": 0,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 2,
+            "calculations": 0,
+            "metadata": 0,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 167188,
+          "python_connection_setup_peak_bytes": 1057324,
+          "elapsed_seconds_instrumented": 0.062796,
+          "response_utf8_bytes": 11127
+        },
+        "readiness": {
+          "sql_count": 41,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 13900,
+          "json_loads_count": 0,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 2,
+            "calculations": 0,
+            "metadata": 0,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 185857,
+          "python_connection_setup_peak_bytes": 1056300,
+          "elapsed_seconds_instrumented": 0.074357,
+          "response_utf8_bytes": 2
+        }
+      },
+      "480": {
+        "classification_count": 480,
+        "normalized_rows": {
+          "fact_report_classification": 480,
+          "fact_report_classification_cash_details": 480
+        },
+        "status": "ready",
+        "report_fact_count": 482,
+        "fact_issues": [],
+        "readiness_issues": [],
+        "report": {
+          "sql_count": 37,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 133000,
+          "json_loads_count": 0,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 2,
+            "calculations": 0,
+            "metadata": 0,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 892987,
+          "python_connection_setup_peak_bytes": 1057308,
+          "elapsed_seconds_instrumented": 0.080198,
+          "response_utf8_bytes": 26264
+        },
+        "readiness": {
+          "sql_count": 41,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 133000,
+          "json_loads_count": 0,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 2,
+            "calculations": 0,
+            "metadata": 0,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 896716,
+          "python_connection_setup_peak_bytes": 1056300,
+          "elapsed_seconds_instrumented": 0.086018,
+          "response_utf8_bytes": 2
+        }
+      },
+      "480_plus_invalid": {
+        "classification_count": 481,
+        "normalized_rows": {
+          "fact_report_classification": 481,
+          "fact_report_classification_cash_details": 481
+        },
+        "status": "needs_information",
+        "report_fact_count": 483,
+        "fact_issues": [
+          {
+            "field": "report_classification.voucher_version_id",
+            "message": "分类必须引用本月已经存在的凭证版本",
+            "semantics": "accounting",
+            "voucher_version_id": "zz-t5-missing-voucher"
+          }
+        ],
+        "readiness_issues": [
+          {
+            "field": "report_classification.voucher_version_id",
+            "message": "分类必须引用本月已经存在的凭证版本",
+            "semantics": "accounting",
+            "voucher_version_id": "zz-t5-missing-voucher"
+          }
+        ],
+        "report": {
+          "sql_count": 37,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 133200,
+          "json_loads_count": 0,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 2,
+            "calculations": 0,
+            "metadata": 0,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 893588,
+          "python_connection_setup_peak_bytes": 1057292,
+          "elapsed_seconds_instrumented": 0.080249,
+          "response_utf8_bytes": 26497
+        },
+        "readiness": {
+          "sql_count": 41,
+          "begin_count": 1,
+          "read_connections": 1,
+          "write_connections": 0,
+          "caller_owned_transaction": false,
+          "sqlite_vm_steps_estimate": 133200,
+          "json_loads_count": 0,
+          "excluded_complete_outcome_decodes": 0,
+          "cache_counts": {
+            "facts": 2,
+            "calculations": 0,
+            "metadata": 0,
+            "voucher_lines": 0
+          },
+          "excluded_cached_subjects": {
+            "facts": 0,
+            "calculations": 0,
+            "metadata": 0
+          },
+          "python_request_body_peak_bytes": 897317,
+          "python_connection_setup_peak_bytes": 1056300,
+          "elapsed_seconds_instrumented": 0.089422,
+          "response_utf8_bytes": 188
+        }
+      }
+    },
+    "mismatch": {
+      "measurement": {
+        "sql_count": 40,
+        "begin_count": 0,
+        "read_connections": 0,
+        "write_connections": 0,
+        "caller_owned_transaction": true,
+        "sqlite_vm_steps_estimate": 5000,
+        "json_loads_count": 4,
+        "excluded_complete_outcome_decodes": 0,
+        "cache_counts": {
+          "facts": 4,
+          "calculations": 4,
+          "metadata": 4,
+          "voucher_lines": 0
+        },
+        "excluded_cached_subjects": {
+          "facts": 0,
+          "calculations": 0,
+          "metadata": 0
+        },
+        "python_request_body_peak_bytes": 109774,
+        "python_connection_setup_peak_bytes": 0,
+        "elapsed_seconds_instrumented": 0.013533,
+        "response_utf8_bytes": 2902
+      },
+      "assertions": "Declared A finds unresolved frozen B; exact B trace retained; two slots counted once, one returned; A paid/remaining remain null.",
+      "boundary": "Synthetic in-memory TEMP-table corruption; main company remains valid. One caller-owned transaction with fresh QueryReads; no growth matrix or normal-state claim."
+    },
+    "limits": [
+      "One instrumented request per case with fresh request/connection/QueryReads, except caller-owned mismatch control; not OS cold cache or a latency SLA.",
+      "SQL/VM exclude Store connection setup and explicit integrity verification. VM interval is 100; category attribution and statement quantization are approximate.",
+      "Python tracemalloc includes instrumentation, response and caches; excludes SQLite native memory, OS cache and outcome observation sets. Elapsed time descriptive only.",
+      "Cash effects, all applicable classification scalars/issues, complete relevant manifests and source graphs retain necessary growth. No truncation or invented state.",
+      "Synthetic companies only; no installation, production database, deployment or formal backup. T4 evidence and test matrices are not rerun or combined."
+    ],
+    "recording_addendum": {
+      "task": "T5",
+      "scope": "Evidence recording only; no cost rerun or database construction",
+      "measured_script": {
+        "path": "D:\\GitHub\\ai-accounting-core\\.tmp\\t5-read-costs-probe-measured.py",
+        "sha256": "45e0e18f200c845283eab682233e1d854e380fc4521bd2317d365baee644dd7f"
+      },
+      "final_script": {
+        "path": "D:\\GitHub\\ai-accounting-core\\scripts\\verify_t5_read_costs.py",
+        "sha256": "23de1cfa868e9b0260344eddbfafe259c8c85ad812aa7a1c79d82e19dbf132b0"
+      },
+      "measurement_evidence": {
+        "path": ".tmp/t5-read-costs.json",
+        "sha256": "0cbe4a729443fee0297c9ed44993ef5df176c8cfd877ce5f87b10cf73b33efe9"
+      },
+      "unchanged_core_function_ast": {
+        "sha": true,
+        "source_inventory": true,
+        "used_sources": true,
+        "verify": true,
+        "inventory": true,
+        "category": true,
+        "measure": true,
+        "grow_dashboard": true
+      },
+      "change": "Attach phase/sample mutable results before assertions; preserve completed and current measurements when a phase fails.",
+      "verification": "Passed recording-only simulated RuntimeError check; both completed sample and current measurement retained. No database created and no measurement executed.",
+      "simulation_output": {
+        "path": "D:\\GitHub\\ai-accounting-core\\.tmp\\t5-probe-recording-check.json",
+        "sha256": "61c6911be6a429df44406671ec7b49bb4c60b3bbef5abf3729162dfad28607f3"
+      },
+      "applicability": "Actual performance numbers belong to the measured script hash. Core measurement, fixture growth and production dependencies unchanged; no claim that performance was rerun with the recording-only edit."
+    }
+  },
+  "residuals": [
+    {
+      "id": "T5-P3-01",
+      "status": "accepted_nonblocking_by_architecture",
+      "phenomenon": "Client connection interruption during response write; error handler attempted a second write and logged WinError10053 stacks.",
+      "evidence": {
+        "path": ".tmp/t5-v1/candidate-browser.json",
+        "sha256": "1d64a60dfd9b34f56b364a85611dc7ebcbacd804f6179c07e588c25c426c4910"
+      },
+      "decision": "No HTTP change, rebuild or added test batch in T5; preserve original stderr. WinError alone does not prove a unique network cause.",
+      "observed": "read-only GET dispatch had returned; browser exit0, no page/API failures, later assertions and cleanup succeeded; no calculation/write failure evidence."
+    }
+  ],
+  "constraints": {
+    "real_business_data_accessed": false,
+    "deployed": false,
+    "formal_business_backups_created": false,
+    "committed_or_pushed": false,
+    "one_release_build": true,
+    "one_candidate_package": true,
+    "synthetic_credentials_cleaned": true
+  },
+  "architecture_document_handoff": "Architecture owns roadmap/task-prompts and overall acceptance; update only after its final review."
+}

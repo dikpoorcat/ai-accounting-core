@@ -32,8 +32,26 @@ from ai_accounting.financial_statement_template import (
 
 from .backup import _worker_lock
 from .contracts import Fact, KernelError, Read
-from .schema import table_name
+from .query_semantics import (
+    CASH_ACCOUNTS,
+    CREDIT_BALANCE,
+    DEBIT_BALANCE,
+    PROFIT_ACCOUNTS,
+    RECLASS,
+    TAX_ACCOUNTS,
+    classify_financial_position,
+    report_party_splits,
+)
 from .types import Fen, NonNegativeFen, PositiveFen, YearMonth, canonical, digest, sum_fen
+
+_POSITION_ACCOUNTS = (
+    CASH_ACCOUNTS
+    | set(PROFIT_ACCOUNTS)
+    | set(DEBIT_BALANCE)
+    | set(CREDIT_BALANCE)
+    | TAX_ACCOUNTS
+    | set(RECLASS)
+)
 
 
 class ReportProfile(Fact):
@@ -248,92 +266,7 @@ def check_report_readiness(store, connection, period):
     return problems
 
 
-# Exact codes emitted by typed business modules. Unknown balances are not guessed.
-CASH_ACCOUNTS = {"1001", "1002", "1012"}
-PROFIT_ACCOUNTS = {
-    "5001": (1, -1),
-    "5111": (20, -1),
-    "5401": (2, 1),
-    "540101": (2, 1),
-    "540104": (2, 1),
-    "540102": (2, 1),
-    "540103": (2, 1),
-    "5403": (3, 1),
-    "5601": (11, 1),
-    "560101": (11, 1),
-    "560102": (11, 1),
-    "560103": (11, 1),
-    "560104": (11, 1),
-    "5602": (14, 1),
-    "560201": (14, 1),
-    "560202": (14, 1),
-    "560203": (14, 1),
-    "560204": (14, 1),
-    "5603": (18, 1),
-    "560301": (18, 1),
-    "6301": (22, -1),
-    "630101": (22, -1),
-    "571101": (24, 1),
-    "571102": (24, 1),
-    "571103": (24, 1),
-    "571104": (24, 1),
-    "5801": (31, 1),
-}
-DEBIT_BALANCE = {
-    "1101": 2,
-    "1121": 3,
-    "1131": 6,
-    "1132": 7,
-    "1403": 10,
-    "1405": 12,
-    "1411": 13,
-    "4301": 9,
-    "1501": 16,
-    "1511": 17,
-    "1601": 18,
-    "1604": 21,
-    "1605": 22,
-    "1606": 23,
-    "1621": 24,
-    "1701": 25,
-    "1801": 27,
-    "189901": 28,
-}
-CREDIT_BALANCE = {
-    "1602": 19,
-    "1702": 25,
-    "2001": 31,
-    "2201": 32,
-    "221101": 35,
-    "221102": 35,
-    "221103": 35,
-    "2231": 37,
-    "2232": 38,
-    "2501": 42,
-    "2701": 43,
-    "2401": 44,
-    "3001": 48,
-    "3002": 49,
-    "3101": 50,
-    "3103": 51,
-    "3104": 51,
-}
-TAX_ACCOUNTS = {"222101", "222102", "222103", "222104", "222105", "222106"}
-RECLASS = {
-    "1122": (4, 34),
-    "1123": (5, 33),
-    "1221": (8, 39),
-    "122101": (8, 39),
-    "122105": (8, 39),
-    "2202": (5, 33),
-    "2203": (4, 34),
-    "2241": (8, 39),
-    "224101": (8, 39),
-    "224102": (8, 39),
-    "224103": (8, 39),
-    "224104": (8, 39),
-    "224105": (8, 39),
-}
+# Exact codes emitted by typed business modules are shared with dashboard queries.
 DETAIL_LINES = {
     "management_startup": 15,
     "management_entertainment": 16,
@@ -383,6 +316,211 @@ def _periods(year, quarter):
     return start, end, YearMonth(f"{year:04d}-01")
 
 
+def _report_references(connection, end, source):
+    from .read_indexes import CLOSE_REPORT_FACTS, verify_close_references
+
+    selected = connection.execute(
+        "SELECT * FROM close_reference WHERE reference_type='fact' AND path=? AND close_period<=?",
+        (CLOSE_REPORT_FACTS, end.ordinal),
+    ).fetchall()
+    verify_close_references(connection, selected)
+    references = {row["reference_id"] for row in selected}
+    if source == "open":
+        references.update(
+            row[0]
+            for row in connection.execute(
+                "SELECT f.id FROM fact_current a JOIN fact_revision f ON f.id=a.fact_id "
+                "JOIN subject s ON s.id=f.subject_id "
+                "WHERE s.kind IN (SELECT value FROM json_each(?)) AND f.period<=? "
+                "AND NOT EXISTS(SELECT 1 FROM period_close p WHERE p.period=f.period)",
+                (canonical(sorted(REPORT_KINDS)), end.ordinal),
+            )
+        )
+    return references
+
+
+def _applicable_profile(facts, end):
+    profiles = [f for f in facts if f.fact.kind in PROFILE_KINDS and f.fact.period <= end]
+    if not profiles:
+        return None
+    latest = max(f.fact.period for f in profiles)
+    applicable = {f.id: f for f in profiles if f.fact.period == latest}
+    return next(iter(applicable.values())) if len(applicable) == 1 else None
+
+
+def _closed_period_issues(closes, book_start, year_start, end):
+    problems = []
+    if end.ordinal not in closes:
+        problems.append(issue("period", "季度末尚未关账"))
+    problems.extend(
+        issue(
+            "closed_periods",
+            "年初或建账月起须逐月关账",
+            period=str(YearMonth.from_ordinal(ordinal)),
+        )
+        for ordinal in range(max(book_start.ordinal, year_start.ordinal), end.ordinal + 1)
+        if ordinal not in closes
+    )
+    return problems
+
+
+def _report_vouchers(cutoff, source, **scope):
+    from .query_reads import selected_voucher_sql
+
+    sql, parameters = selected_voucher_sql(YearMonth.from_ordinal(cutoff), **scope)
+    if source == "closed":
+        sql = "SELECT * FROM (" + sql + ") WHERE selection_source='close_manifest'"
+    return sql, parameters
+
+
+def _report_classifications(connection, reads, references, source_vouchers, end, source, problems):
+    """Validate all applicable references; decode only classifications used by rows."""
+    from .read_indexes import verify_close_references
+
+    headers, conflicts = {}, set()
+    for row in connection.execute(
+        "SELECT c.revision_id,c.period,c.voucher_version_id,v.period AS voucher_period "
+        "FROM json_each(?) ids CROSS JOIN fact_report_classification c ON c.revision_id=ids.value "
+        "LEFT JOIN voucher_version v ON v.id=c.voucher_version_id",
+        (canonical(sorted(references)),),
+    ):
+        key = row["voucher_version_id"]
+        if key in headers or key in conflicts:
+            problems.append(
+                issue(
+                    "report_classification",
+                    "同一凭证版本存在多个分类来源",
+                    voucher_version_id=key,
+                )
+            )
+            headers.pop(key, None)
+            conflicts.add(key)
+        else:
+            headers[key] = row
+    if not headers:
+        return {}
+
+    candidates = set(headers)
+    candidates.update(
+        row[0]
+        for row in connection.execute(
+            "SELECT v.id FROM json_each(?) ids CROSS JOIN voucher_version v "
+            "INDEXED BY voucher_version_reverses ON v.reverses_id=ids.value",
+            (canonical(sorted(headers)),),
+        )
+    )
+    sql, parameters = _report_vouchers(end.ordinal, source, voucher_ids=candidates)
+    selected_periods, selected_ids = defaultdict(set), set()
+    for row in connection.execute("SELECT id,period,reverses_id FROM (" + sql + ")", parameters):
+        selected_ids.add(row["id"])
+        periods = selected_periods[row["reverses_id"] or row["id"]]
+        if row["reverses_id"] is None:
+            periods.add(row["period"])
+    selected_references = connection.execute(
+        "SELECT r.* FROM close_reference r WHERE r.reference_type='voucher' "
+        "AND r.reference_id IN (SELECT value FROM json_each(?)) AND r.close_period<=?",
+        (canonical(sorted(selected_ids)), end.ordinal),
+    ).fetchall()
+    verify_close_references(connection, selected_references)
+
+    detail_ids = []
+    for key, row in headers.items():
+        if key not in selected_periods:
+            if row["voucher_period"] != row["period"]:
+                problems.append(
+                    issue(
+                        "report_classification.voucher_version_id",
+                        "分类必须引用本月已经存在的凭证版本",
+                        voucher_version_id=key,
+                    )
+                )
+            continue
+        if row["period"] not in selected_periods[key]:
+            problems.append(
+                issue(
+                    "report_classification.period",
+                    "分类月份必须等于原凭证记账月份",
+                    voucher_version_id=key,
+                )
+            )
+        detail_ids.append(row["revision_id"])
+
+    # These are the same line/account checks for current and historical sources.
+    # Stream the normalized child keys and exact line account; do not construct
+    # historical typed classifications or load their calculation outcomes.
+    for detail_kind, accounts in (
+        ("profit_details", {"5403", "5601", "5602", "5603"}),
+        ("counterparties", RECLASS),
+        ("cash_details", CASH_ACCOUNTS),
+    ):
+        for row in connection.execute(
+            "SELECT c.voucher_version_id,l.account FROM json_each(?) ids "
+            "CROSS JOIN fact_report_classification c ON c.revision_id=ids.value "
+            f"CROSS JOIN fact_report_classification_{detail_kind} d ON d.revision_id=c.revision_id "
+            "LEFT JOIN voucher_line l ON l.version_id=c.voucher_version_id AND l.line_no=d.line_no",
+            (canonical(detail_ids),),
+        ):
+            message = (
+                "分类引用不存在的凭证行"
+                if row["account"] is None
+                else "该凭证行不接受此类报表分类"
+                if row["account"] not in accounts
+                else None
+            )
+            if message is not None:
+                problems.append(
+                    issue(
+                        "report_classification.line_no",
+                        message,
+                        voucher_version_id=row["voucher_version_id"],
+                    )
+                )
+    identifiers = {row["revision_id"] for key, row in headers.items() if key in source_vouchers}
+    return {
+        version.fact.voucher_version_id: version.fact
+        for version in reads.fact_versions(identifiers).values()
+    }
+
+
+def _account_totals(connection, cutoff, source, opening_rows, unknown_opening_period=None):
+    """Frozen cumulative accounts plus the explicitly open monthly interval."""
+    boundary = connection.execute(
+        "SELECT period,json_extract(manifest,'$.trial_balance') AS totals "
+        "FROM period_close WHERE period<=? ORDER BY period DESC LIMIT 1",
+        (cutoff,),
+    ).fetchone()
+    values = defaultdict(int)
+    start = -1
+    if boundary is not None and boundary["totals"] is not None:
+        start = boundary["period"]
+        for row in json.loads(boundary["totals"]):
+            values[row["account"]] += row["debit"] - row["credit"]
+    if start < 0 and unknown_opening_period is not None and unknown_opening_period <= cutoff:
+        return None
+    if source == "open":
+        for row in connection.execute(
+            "SELECT account,sum(debit-credit) amount FROM monthly_account "
+            "WHERE period>? AND period<=? GROUP BY account",
+            (start, cutoff),
+        ):
+            values[row["account"]] += row["amount"]
+    elif start < 0:
+        # Old incomplete manifests do not license current balances. The exact
+        # selected voucher rows are still sufficient for an accounting sum.
+        sql, parameters = _report_vouchers(cutoff, source)
+        for row in connection.execute(
+            "WITH selected AS (" + sql + ") SELECT l.account,sum(l.debit-l.credit) amount "
+            "FROM selected v JOIN voucher_line l ON l.version_id=v.id GROUP BY l.account",
+            parameters,
+        ):
+            values[row["account"]] += row["amount"]
+    if start < 0:
+        for row in opening_rows:
+            if row["period"] <= cutoff:
+                values[row["account"]] += row["amount"]
+    return dict(values)
+
+
 class Reports:
     def __init__(self, engine):
         self.engine, self.store = engine, engine.store
@@ -399,6 +537,50 @@ class Reports:
             year, quarter, source=source, carry_forward_fact_id=carry_forward_fact_id
         )
 
+    def closed_period_coverage(self, year, quarter, *, connection=None, reads=None):
+        """The context selector's existing close test, without building statements."""
+        _, end, year_start = _periods(year, quarter)
+        manager = (
+            nullcontext(connection)
+            if connection is not None
+            else self.store.connection(read_only=True)
+        )
+        with manager as selected:
+            if connection is None:
+                selected.execute("BEGIN")
+            from .query_reads import QueryReads
+
+            reads = reads or QueryReads(self.engine, selected)
+            references = _report_references(selected, end, "closed")
+            profiles = self._report_profiles(selected, references, end, reads)
+            profile = _applicable_profile(profiles, end)
+            book_start = profile.fact.bookkeeping_start if profile else year_start
+            periods = {
+                row[0]
+                for row in selected.execute(
+                    "SELECT period FROM period_close WHERE period<=?", (end.ordinal,)
+                )
+            }
+            problems = _closed_period_issues(periods, book_start, year_start, end)
+            return {
+                "complete": not problems,
+                "fact_issues": problems,
+                "bookkeeping_start": str(book_start),
+            }
+
+    def _report_profiles(self, connection, references, end, reads):
+        identifiers = {
+            row[0]
+            for row in connection.execute(
+                "WITH profiles AS (SELECT f.id,f.period FROM json_each(?) j "
+                "JOIN fact_revision f ON f.id=j.value JOIN subject s ON s.id=f.subject_id "
+                "WHERE s.kind IN (?,?) AND f.period<=?) "
+                "SELECT id FROM profiles WHERE period=(SELECT max(period) FROM profiles)",
+                (canonical(sorted(references)), *PROFILE_KINDS, end.ordinal),
+            )
+        }
+        return list(reads.fact_versions(identifiers).values())
+
     def _report(
         self,
         year,
@@ -408,6 +590,7 @@ class Reports:
         connection=None,
         through_period=None,
         carry_forward_fact_id=None,
+        reads=None,
     ):
         start, end, year_start = _periods(year, quarter)
         if through_period is not None:
@@ -424,33 +607,19 @@ class Reports:
         with manager as connection:
             if not external_connection:
                 connection.execute("BEGIN")
+            from .query_reads import QueryReads
+
+            reads = reads or QueryReads(self.engine, connection)
             epochs = self.store.epochs(connection)
             identity = dict(connection.execute("SELECT * FROM identity WHERE id=1").fetchone())
             close_rows = connection.execute(
-                "SELECT * FROM period_close WHERE period<=? ORDER BY period", (end.ordinal,)
+                "SELECT period,digest FROM period_close WHERE period<=? ORDER BY period",
+                (end.ordinal,),
             ).fetchall()
-            closes = {r["period"]: json.loads(r["manifest"]) for r in close_rows}
+            closes = {r["period"] for r in close_rows}
             problems = []
-            if source == "closed" and end.ordinal not in closes:
-                problems.append(issue("period", "季度末尚未关账"))
-            references = set()
-            for manifest in closes.values():
-                references.update(
-                    manifest.get("readiness", {}).get("financial_reports", {}).get("facts", ())
-                )
-            if source == "open":
-                for kind in REPORT_KINDS:
-                    references.update(
-                        r[0]
-                        for r in connection.execute(
-                            "SELECT c.fact_id FROM fact_current c JOIN fact_revision f ON "
-                            "f.id=c.fact_id "
-                            "JOIN subject s ON s.id=f.subject_id WHERE s.kind=? AND f.period<=? "
-                            "AND NOT EXISTS(SELECT 1 FROM period_close p WHERE p.period=f.period)",
-                            (kind, end.ordinal),
-                        )
-                    )
-            facts = [self.store.fact(connection, ident) for ident in sorted(references)]
+            references = _report_references(connection, end, source)
+            facts = self._report_profiles(connection, references, end, reads)
             if carry_forward_fact_id is not None:
                 explicit = self.store.select(
                     connection, Read("fact", ReportCarryForward.kind, "#" + carry_forward_fact_id)
@@ -464,88 +633,119 @@ class Reports:
                 facts = [fact for fact in facts if fact.fact.kind != ReportCarryForward.kind]
                 facts.extend(explicit)
                 references.add(carry_forward_fact_id)
-            profiles = [f for f in facts if f.fact.kind in PROFILE_KINDS and f.fact.period <= end]
-            profile = None
-            if profiles:
-                latest = max(f.fact.period for f in profiles)
-                applicable = {f.id: f for f in profiles if f.fact.period == latest}
-                if len(applicable) == 1:
-                    profile = next(iter(applicable.values()))
+            profile = _applicable_profile(facts, end)
             if profile is None:
                 problems.append(
                     issue("report_profile", "需要唯一的报表口径及明确的新设或接续建账依据")
                 )
             book_start = profile.fact.bookkeeping_start if profile else year_start
+            needed_references = {
+                row["id"]
+                for row in connection.execute(
+                    "SELECT f.id,s.kind,f.period FROM json_each(?) j "
+                    "JOIN fact_revision f ON f.id=j.value JOIN subject s ON s.id=f.subject_id "
+                    "WHERE (s.kind='report_income_tax_confirmation' AND f.period>=? "
+                    "AND f.period<=?) OR (s.kind='report_carry_forward' AND f.period=?)",
+                    (
+                        canonical(sorted(references)),
+                        year_start.ordinal,
+                        end.ordinal,
+                        book_start.ordinal,
+                    ),
+                )
+                if carry_forward_fact_id is None or row["kind"] != ReportCarryForward.kind
+            }
+            facts.extend(reads.fact_versions(sorted(needed_references)).values())
             if book_start > end:
                 problems.append(issue("bookkeeping_start", "报表期间早于明确建账月"))
-            for ordinal in range(max(book_start.ordinal, year_start.ordinal), end.ordinal + 1):
-                if source == "closed" and ordinal not in closes:
-                    problems.append(
-                        issue(
-                            "closed_periods",
-                            "年初或建账月起须逐月关账",
-                            period=str(YearMonth.from_ordinal(ordinal)),
-                        )
-                    )
-            # JSON table values select frozen IDs without a million-parameter IN list.
-            sql = """SELECT v.id version_id,v.period,v.calculation_id,v.reverses_id,
-                  l.line_no,l.account,l.debit,l.credit,l.cashflow,c.kind,c.fact_id,c.outcome,
-                  c.period calculation_period
-                FROM period_close p,json_each(p.manifest,'$.vouchers') j
-                JOIN voucher_version v ON v.id=json_extract(j.value,'$.id')
-                JOIN voucher_line l ON l.version_id=v.id JOIN calculation c ON c.id=v.calculation_id
-                WHERE p.period<=?"""
-            params = [end.ordinal]
-            if source == "open":
-                sql += """ UNION ALL SELECT v.id,v.period,v.calculation_id,v.reverses_id,
-                  l.line_no,l.account,l.debit,l.credit,l.cashflow,c.kind,c.fact_id,c.outcome,c.period
-                  FROM voucher_current a JOIN voucher_version v ON v.id=a.version_id
-                  JOIN voucher_line l ON l.version_id=v.id
-                  JOIN calculation c ON c.id=v.calculation_id
-                  WHERE v.period<=? AND NOT EXISTS(
-                    SELECT 1 FROM period_close p WHERE p.period=v.period)"""
-                params.append(end.ordinal)
+            if source == "closed":
+                problems.extend(_closed_period_issues(closes, book_start, year_start, end))
+            unknown_accounts = set(_account_totals(connection, end.ordinal, source, ())) - (
+                _POSITION_ACCOUNTS
+            )
+            historical_accounts = set(RECLASS) | unknown_accounts
+            candidates = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM voucher_version WHERE period>=? AND period<=? "
+                    "UNION SELECT l.version_id FROM voucher_line l INDEXED BY voucher_line_account "
+                    "JOIN voucher_version v ON v.id=l.version_id "
+                    "WHERE l.account IN (SELECT value FROM json_each(?)) AND v.period<?",
+                    (
+                        year_start.ordinal,
+                        end.ordinal,
+                        canonical(sorted(historical_accounts)),
+                        year_start.ordinal,
+                    ),
+                )
+            }
+            selected_sql, selected_params = _report_vouchers(
+                end.ordinal, source, voucher_ids=candidates
+            )
+            # Direct balances use synchronous totals. Exact parties and this
+            # posting year's flows retain their immutable classification sources.
+            sql = (
+                "WITH selected AS ("
+                + selected_sql
+                + """
+                ) SELECT v.id version_id,v.period,v.basis_calculation_id calculation_id,
+                  v.reverses_id,v.close_period,
+                  l.line_no,l.account,l.debit,l.credit,l.cashflow,c.kind,c.fact_id,
+                  c.period calculation_period,c.subject_id calculation_subject_id
+                FROM selected v JOIN voucher_line l ON l.version_id=v.id
+                JOIN calculation c ON c.id=v.basis_calculation_id WHERE
+                  (v.period>=? AND l.account IN (SELECT value FROM json_each(?))) OR
+                  l.account IN (SELECT value FROM json_each(?)) OR
+                  l.account NOT IN (SELECT value FROM json_each(?))"""
+            )
+            params = [
+                *selected_params,
+                year_start.ordinal,
+                canonical(sorted(CASH_ACCOUNTS | set(PROFIT_ACCOUNTS))),
+                canonical(sorted(RECLASS)),
+                canonical(sorted(_POSITION_ACCOUNTS)),
+            ]
             rows = [dict(r) for r in connection.execute(sql, params)]
-            if rows and min(r["period"] for r in rows) < book_start.ordinal:
+            from .read_indexes import verify_close_references
+
+            selected_references = connection.execute(
+                "SELECT r.* FROM close_reference r WHERE r.reference_type='voucher' "
+                "AND r.reference_id IN (SELECT value FROM json_each(?)) "
+                "AND r.close_period<=?",
+                (canonical(sorted({row["version_id"] for row in rows})), end.ordinal),
+            ).fetchall()
+            verify_close_references(connection, selected_references)
+            earliest = connection.execute(
+                "SELECT min(period) FROM monthly_account WHERE period<=? AND "
+                "(? OR EXISTS(SELECT 1 FROM period_close p WHERE p.period=monthly_account.period))",
+                (end.ordinal, source == "open"),
+            ).fetchone()[0]
+            if earliest is not None and earliest < book_start.ordinal:
                 problems.append(
                     issue("bookkeeping_start", "已存在建账月之前的账；不能声明该月为新设企业零期初")
                 )
-            classifications = {}
-            for version in facts:
-                fact = version.fact
-                if fact.kind != ReportClassification.kind:
-                    continue
-                key = fact.voucher_version_id
-                if key in classifications:
-                    problems.append(
-                        issue(
-                            "report_classification",
-                            "同一凭证版本存在多个分类来源",
-                            voucher_version_id=key,
-                        )
-                    )
-                classifications[key] = fact
-            calculations, actual_facts, parent_ids = {}, {}, {}
-            obligation_indexes, own_party_indexes = {}, {}
-            for row in rows:
-                if row["calculation_id"] not in calculations:
-                    calculations[row["calculation_id"]] = {
-                        "id": row["calculation_id"],
-                        "kind": row["kind"],
-                        "period": row["calculation_period"],
-                        "fact_id": row["fact_id"],
-                        "decoded": json.loads(row["outcome"]),
-                    }
-                del row["outcome"]
+            source_vouchers = {row["reverses_id"] or row["version_id"] for row in rows}
+            classifications = _report_classifications(
+                connection, reads, references, source_vouchers, end, source, problems
+            )
+            calculations, actual_facts, relation_records = {}, {}, {}
+            originals = {
+                ident: row["calculation_id"]
+                for ident, row in reads.vouchers(
+                    {row["reverses_id"] for row in rows if row["reverses_id"]}
+                ).items()
+            }
+            reads.prime_calculations(
+                {row["calculation_id"] for row in rows} | set(originals.values())
+            )
 
             def calculation(ident):
                 if ident not in calculations:
-                    record = connection.execute(
-                        "SELECT * FROM calculation WHERE id=?", (ident,)
-                    ).fetchone()
-                    if not record:
-                        raise KernelError("missing_report_source", "报表引用的不可变核算不存在")
-                    calculations[ident] = dict(record) | {"decoded": json.loads(record["outcome"])}
+                    record = reads.calculation(ident)
+                    calculations[ident] = record | {
+                        "decoded": record["outcome"],
+                        "period": YearMonth(record["period"]).ordinal,
+                    }
                 return calculations[ident]
 
             def source_fact(ident):
@@ -553,194 +753,18 @@ class Reports:
                     record = calculation(ident)
                     values = dict(record["decoded"]["values"])
                     if record["kind"] in {"funding", "cash_funding", "platform_funding"}:
-                        values["funding_kind"] = connection.execute(
-                            f"SELECT funding_kind FROM {table_name(record['kind'])} "
-                            "WHERE revision_id=?",
-                            (record["fact_id"],),
-                        ).fetchone()[0]
+                        values["funding_kind"] = record["fact_data"]["funding_kind"]
                     elif record["kind"] == "income_tax_assessment":
-                        values["tax_year"] = connection.execute(
-                            "SELECT year FROM fact_income_tax_assessment WHERE revision_id=?",
-                            (record["fact_id"],),
-                        ).fetchone()[0]
+                        values["tax_year"] = record["fact_data"]["year"]
                     actual_facts[ident] = SimpleNamespace(**values)
                 return actual_facts[ident]
 
-            def parents(ident):
-                if ident not in parent_ids:
-                    parent_ids[ident] = [
-                        r[0]
-                        for r in connection.execute(
-                            "SELECT upstream_id FROM dependency_calculation WHERE calculation_id=?",
-                            (ident,),
-                        )
-                    ]
-                return parent_ids[ident]
+            def relations(ident):
+                if ident not in relation_records:
+                    relation_records[ident] = reads.relations(ident)
+                    problems.extend(relation_records[ident]["issues"])
+                return relation_records[ident]
 
-            def party_candidates(ident, account, seen=None):
-                seen = set() if seen is None else seen
-                if ident in seen:
-                    return set()
-                seen.add(ident)
-                own = {
-                    x.get("counterparty_id")
-                    for x in calculation(ident)["decoded"]["values"].get("obligations", ())
-                    if x["account"] == account
-                }
-                if own:
-                    return own
-                result = set()
-                for parent in parents(ident):
-                    result.update(party_candidates(parent, account, seen))
-                return result
-
-            def obligation_index(ident):
-                if ident not in obligation_indexes:
-                    indexed = defaultdict(list)
-                    for obligation in calculation(ident)["decoded"]["values"].get(
-                        "obligations", ()
-                    ):
-                        indexed[obligation["key"]].append(obligation)
-                    obligation_indexes[ident] = indexed
-                return obligation_indexes[ident]
-
-            def obligation_party(ident, item):
-                party = item.get("counterparty_id")
-                if isinstance(party, str) and party:
-                    return party
-                # Personal contributions are statutory payables, not salary owed
-                # to the employee. Their stable obligation identity avoids
-                # inventing an agency or netting unrelated employees/months.
-                if (
-                    calculation(ident)["kind"] in {"payroll", "payroll_bounded"}
-                    and (item.get("name"), item.get("account"))
-                    in {("employee_social", "224102"), ("employee_housing", "224103")}
-                    and item.get("normal") == "credit"
-                ):
-                    return ("statutory_payroll_obligation", item["key"])
-                return None
-
-            def exact_payment_source(row, source_id):
-                """Published payment rows follow their explicit settlement, not every ancestor."""
-                record = calculation(source_id)
-                values = record["decoded"]["values"]
-                accepted = values.get("accepted_sources", ())
-                if record["kind"] in {
-                    "reimbursement_acceptance",
-                    "managed_reserve_obligation_settlement",
-                } and (0 < row["line_no"] <= len(accepted)):
-                    source = accepted[row["line_no"] - 1]
-                    parent_id = source["source_calculation_id"]
-                    choices = obligation_index(parent_id).get(source["obligation"], ())
-                    obligation = choices[0] if len(choices) == 1 else None
-                    original_amount = row["amount"] * (-1 if row["reverses_id"] else 1)
-                    if (
-                        obligation is None
-                        or type(source.get("amount_fen")) is not int
-                        or source["amount_fen"] <= 0
-                        or original_amount != source["amount_fen"]
-                        or row["account"] != obligation["account"]
-                        or obligation["normal"] != "credit"
-                    ):
-                        problems.append(
-                            issue(
-                                "report_source.settlement",
-                                "债务承接行与原义务及金额不一致",
-                                voucher_version_id=row["reverses_id"] or row["version_id"],
-                                line_no=row["line_no"],
-                            )
-                        )
-                        return None
-                    row["settled_party"] = obligation_party(parent_id, obligation)
-                    return obligation
-                settlements = values.get("settlements", ())
-                if record["kind"] not in {
-                    "payment",
-                    "cash_payment",
-                    "platform_payment",
-                    "payroll_reserve_payment",
-                } or not (0 < row["line_no"] <= len(settlements) * 2):
-                    return None
-                settlement = settlements[(row["line_no"] - 1) // 2]
-                parent = calculation(settlement["source_calculation"])
-                choices = obligation_index(parent["id"]).get(settlement["obligation"], ())
-                obligation = choices[0] if len(choices) == 1 else None
-                outgoing = values.get("direction") == "outflow"
-                cash_line = row["line_no"] % 2 == (0 if outgoing else 1)
-                original_amount = row["amount"] * (-1 if row["reverses_id"] else 1)
-                expected_sign = (-1 if outgoing else 1) * (1 if cash_line else -1)
-                if (
-                    obligation is None
-                    or values.get("direction") not in {"inflow", "outflow"}
-                    or type(settlement.get("amount_fen")) is not int
-                    or settlement["amount_fen"] <= 0
-                    or original_amount != expected_sign * settlement["amount_fen"]
-                    or (cash_line and row["account"] not in CASH_ACCOUNTS)
-                    or (not cash_line and row["account"] != obligation["account"])
-                    or obligation["normal"] != ("credit" if outgoing else "debit")
-                ):
-                    problems.append(
-                        issue(
-                            "report_source.settlement",
-                            "付款行与已冻结的核销来源、方向或金额不一致",
-                            voucher_version_id=row["reverses_id"] or row["version_id"],
-                            line_no=row["line_no"],
-                        )
-                    )
-                    return None
-                row["cash_source"] = source_fact(parent["id"])
-                row["cash_obligation"] = obligation
-                row["settled_party"] = obligation_party(parent["id"], obligation)
-                return obligation if not cash_line else None
-
-            def own_party_splits(row, source_id):
-                """Expand one aggregated journal line only when its own obligations conserve it."""
-                if source_id not in own_party_indexes:
-                    record = calculation(source_id)["decoded"]
-                    obligations, line_counts = defaultdict(list), defaultdict(int)
-                    for item in record["values"].get("obligations", ()):
-                        if item.get("amount_fen"):
-                            obligations[(item["account"], item["normal"])].append(item)
-                    for line in record["lines"]:
-                        amount = line["debit"] - line["credit"]
-                        if amount:
-                            line_counts[(line["account"], "debit" if amount > 0 else "credit")] += 1
-                    own_party_indexes[source_id] = obligations, line_counts
-                obligations, line_counts = own_party_indexes[source_id]
-                original_amount = row["amount"] * (-1 if row["reverses_id"] else 1)
-                key = (row["account"], "debit" if original_amount > 0 else "credit")
-                items = obligations.get(key, ())
-                if line_counts[key] != 1:
-                    return None
-                if not items and not any(account == row["account"] for account, _ in obligations):
-                    return None
-                valid = all(
-                    type(item["amount_fen"]) is int
-                    and item["amount_fen"] > 0
-                    and obligation_party(source_id, item) is not None
-                    for item in items
-                )
-                if (
-                    not items
-                    or not valid
-                    or len({item["key"] for item in items}) != len(items)
-                    or sum_fen(item["amount_fen"] for item in items) != abs(original_amount)
-                ):
-                    problems.append(
-                        issue(
-                            "report_source.obligations",
-                            "该往来汇总行的自身债权人、方向及金额未形成守恒明细",
-                            voucher_version_id=row["reverses_id"] or row["version_id"],
-                            line_no=row["line_no"],
-                        )
-                    )
-                    return None
-                sign = 1 if row["amount"] > 0 else -1
-                return tuple(
-                    (obligation_party(source_id, item), sign * item["amount_fen"]) for item in items
-                )
-
-            originals = {}
             for row in rows:
                 row["amount"] = row["debit"] - row["credit"]
                 source_id = row["calculation_id"]
@@ -757,17 +781,24 @@ class Reports:
                 key = row["reverses_id"] or row["version_id"]
                 row["classification"] = classifications.get(key)
                 row["cash_source"] = row["fact"]
-                settled_obligation = exact_payment_source(row, source_id)
+                resolution = relations(source_id)
+                related = [
+                    relation
+                    for relation in resolution["line_relations"]
+                    if relation["line_no"] == row["line_no"] and relation["state"] == "resolved"
+                ]
+                funds = next(
+                    (relation for relation in related if relation["role"] == "funds"), None
+                )
+                if funds is not None:
+                    row["cash_source"] = source_fact(funds["source_calculation_id"])
+                    row["cash_obligation"] = next(
+                        item
+                        for item in resolution["obligations"]
+                        if item["source_calculation_id"] == funds["source_calculation_id"]
+                        and item["key"] == funds["obligation_key"]
+                    )
                 if row["account"] in RECLASS:
-                    splits = None if settled_obligation else own_party_splits(row, source_id)
-                    if settled_obligation is not None:
-                        party = row["settled_party"]
-                        splits = ((party, row["amount"]),) if party else None
-                        choices = {party} if party else set()
-                    elif splits is not None:
-                        choices = {party for party, _ in splits}
-                    else:
-                        choices = party_candidates(source_id, row["account"]) - {None}
                     explicit = (
                         [
                             x.counterparty_id
@@ -777,109 +808,28 @@ class Reports:
                         if row["classification"]
                         else []
                     )
-                    if explicit:
-                        row["party"] = explicit[0]
-                        if splits is not None:
-                            row["party_splits"] = splits
-                        if choices and (len(choices) != 1 or row["party"] not in choices):
-                            problems.append(
-                                issue(
-                                    "counterparty_id",
-                                    "分类与已确认交易方不一致",
-                                    voucher_version_id=key,
-                                    line_no=row["line_no"],
-                                )
-                            )
-                    elif splits is not None:
-                        row["party_splits"] = splits
-                        row["party"] = next(iter(choices)) if len(choices) == 1 else None
-                    elif len(choices) == 1:
-                        row["party"] = next(iter(choices))
-                    else:
-                        row["party"] = ("unresolved", row["version_id"], row["line_no"])
-                        problems.append(
-                            issue(
-                                "report_classification.counterparty_id",
-                                "往来明细无法唯一归属交易方",
-                                voucher_version_id=key,
-                                line_no=row["line_no"],
-                            )
-                        )
-            classified_rows = defaultdict(list)
-            known_accounts = (
-                CASH_ACCOUNTS
-                | set(PROFIT_ACCOUNTS)
-                | set(DEBIT_BALANCE)
-                | set(CREDIT_BALANCE)
-                | TAX_ACCOUNTS
-                | set(RECLASS)
-            )
+                    party = report_party_splits(
+                        row,
+                        resolution,
+                        explicit_party_id=explicit[0] if len(explicit) == 1 else None,
+                    )
+                    row["party_state"] = party["state"]
+                    row["party_key"] = party["party_key"]
+                    row["party"] = party["party_id"]
+                    if party["splits"] is not None:
+                        row["party_splits"] = party["splits"]
+                    problems.extend(party["issues"])
             for row in rows:
-                classified_rows[row["reverses_id"] or row["version_id"]].append(row)
-                if row["account"] not in known_accounts:
+                if row["account"] not in _POSITION_ACCOUNTS:
                     problems.append(
                         issue("account_mapping", "非零凭证行尚未映射到三表", account=row["account"])
                     )
-            for key, fact in classifications.items():
-                if key not in classified_rows:
-                    header = connection.execute(
-                        "SELECT period FROM voucher_version WHERE id=?", (key,)
-                    ).fetchone()
-                    if header is None or header[0] != fact.period.ordinal:
-                        problems.append(
-                            issue(
-                                "report_classification.voucher_version_id",
-                                "分类必须引用本月已经存在的凭证版本",
-                                voucher_version_id=key,
-                            )
-                        )
-                    continue
-                related = classified_rows[key]
-                line_map = {r["line_no"]: r for r in related}
-                if fact.period.ordinal not in {
-                    r["period"] for r in related if r["reverses_id"] is None
-                }:
-                    problems.append(
-                        issue(
-                            "report_classification.period",
-                            "分类月份必须等于原凭证记账月份",
-                            voucher_version_id=key,
-                        )
-                    )
-                for detail in (*fact.profit_details, *fact.counterparties, *fact.cash_details):
-                    line = line_map.get(detail.line_no)
-                    if line is None:
-                        problems.append(
-                            issue(
-                                "report_classification.line_no",
-                                "分类引用不存在的凭证行",
-                                voucher_version_id=key,
-                            )
-                        )
-                    elif (
-                        (
-                            isinstance(detail, ProfitDetail)
-                            and line["account"] not in {"5403", "5601", "5602", "5603"}
-                        )
-                        or (
-                            isinstance(detail, CounterpartyDetail)
-                            and line["account"] not in RECLASS
-                        )
-                        or (isinstance(detail, CashDetail) and line["account"] not in CASH_ACCOUNTS)
-                    ):
-                        problems.append(
-                            issue(
-                                "report_classification.line_no",
-                                "该凭证行不接受此类报表分类",
-                                voucher_version_id=key,
-                            )
-                        )
-            opening_rows, opening_calculation = _opening_rows(
-                connection, self.store, closes, source, end
+            opening_rows, opening_calculation, unknown_opening_period = _opening_rows(
+                connection, self.engine, source, end, reads, problems
             )
             opening_source, new_company_opening = None, False
             if opening_calculation is not None:
-                opening_fact = self.store.fact(connection, opening_calculation["fact_id"])
+                opening_fact = reads.fact_version(opening_calculation["fact_id"])
                 references.add(opening_fact.id)
                 opening_source = {
                     "subject_id": opening_calculation["subject_id"],
@@ -906,7 +856,20 @@ class Reports:
             elif profile is not None and profile.fact.kind == ContinuationReportProfile.kind:
                 problems.append(issue("opening_package", "接续报表所采用的期初总清单尚未正式发布"))
             rows.extend(opening_rows)
-            statements = _statements(rows, start.ordinal, year_start.ordinal, end.ordinal, problems)
+            totals = {
+                cutoff: _account_totals(
+                    connection, cutoff, source, opening_rows, unknown_opening_period
+                )
+                for cutoff in {year_start.ordinal - 1, start.ordinal - 1, end.ordinal}
+            }
+            statements = _statements(
+                rows,
+                start.ordinal,
+                year_start.ordinal,
+                end.ordinal,
+                problems,
+                account_balances=totals,
+            )
             carry = None
             if (
                 opening_calculation is not None
@@ -972,12 +935,14 @@ class Reports:
                     )
                 if confirmed.calculation_id:
                     tax = calculation(confirmed.calculation_id)
-                    ids = {
-                        c
-                        for m, manifest in closes.items()
-                        if m <= month.ordinal
-                        for c in manifest.get("calculations", ())
-                    }
+                    from .read_indexes import verify_close_references
+
+                    frozen = connection.execute(
+                        "SELECT * FROM close_reference WHERE reference_type='calculation' "
+                        "AND reference_id=? AND close_period<=?",
+                        (tax["id"], month.ordinal),
+                    ).fetchall()
+                    verify_close_references(connection, frozen)
                     active = connection.execute(
                         "SELECT 1 FROM calculation_current WHERE calculation_id=?", (tax["id"],)
                     ).fetchone()
@@ -986,8 +951,8 @@ class Reports:
                         or tax["period"] != month.ordinal
                         or tax["decoded"]["values"]["cumulative_assessed_fen"]
                         != confirmed.cumulative_assessed_fen
-                        or (source == "closed" and tax["id"] not in ids)
-                        or (source == "open" and tax["id"] not in ids and not active)
+                        or (source == "closed" and not frozen)
+                        or (source == "open" and not frozen and not active)
                     ):
                         problems.append(
                             issue(
@@ -1016,7 +981,7 @@ class Reports:
             problems.append(issue("cross_checks", "三表勾稽未通过"))
         for statement in statements.values():
             if any(
-                abs(value) > TEMPLATE_MAX_FEN
+                value is not None and abs(value) > TEMPLATE_MAX_FEN
                 for row in statement.values()
                 for key, value in row.items()
                 if key.endswith("_fen")
@@ -1110,6 +1075,9 @@ class Reports:
                 "INSERT INTO jobs(id,kind,payload,status) VALUES(?,'report_export',?,'pending')",
                 (ident, canonical({"plan": plan, "output_directory": directory})),
             )
+            from .read_indexes import sync_job
+
+            sync_job(connection, ident)
             return {"status": "queued", "job_id": ident, "preview_digest": preview_digest}
 
         return self.engine._write(
@@ -1130,6 +1098,7 @@ class Reports:
         preview_digest: str,
         epochs: dict,
         request_id: str,
+        carry_forward_fact_id: str | None = None,
     ):
         """Queue the same frozen report in a service-owned directory for browser delivery."""
         root = self.store.path.parent.resolve()
@@ -1148,20 +1117,148 @@ class Reports:
             epochs=epochs,
             output_directory=str(directory),
             request_id=request_id,
+            carry_forward_fact_id=carry_forward_fact_id,
         )
+
+    def browser_report_details(self, plan, closed, *, connection=None, reads=None):
+        """Describe the sources actually used without changing the frozen report plan."""
+        external_connection = connection is not None
+        manager = (
+            nullcontext(connection)
+            if external_connection
+            else self.store.connection(read_only=True)
+        )
+        with manager as connection:
+            if not external_connection:
+                connection.execute("BEGIN")
+            from .query_reads import QueryReads
+
+            reads = reads or QueryReads(self.engine, connection)
+            fact_counts = dict(
+                connection.execute(
+                    "SELECT s.kind,count(*) FROM json_each(?) ids "
+                    "JOIN fact_revision f ON f.id=ids.value JOIN subject s ON s.id=f.subject_id "
+                    "GROUP BY s.kind",
+                    (canonical(plan["report_fact_ids"]),),
+                )
+            )
+            source = plan.get("opening_source")
+            choices = []
+            if source:
+                rows = connection.execute(
+                    "SELECT f.id FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
+                    "WHERE s.kind='report_carry_forward' AND f.period=? "
+                    "ORDER BY f.subject_id,f.revision",
+                    (YearMonth(source["period"]).ordinal,),
+                )
+                identifiers = [row[0] for row in rows]
+                versions = reads.fact_versions(identifiers)
+                for ident in identifiers:
+                    fact = versions[ident]
+                    if fact.fact.opening_package_id != source["subject_id"]:
+                        continue
+                    choices.append(
+                        {
+                            "fact_id": fact.id,
+                            "subject_id": fact.subject_id,
+                            "revision": fact.revision,
+                            "period": str(fact.fact.period),
+                            "label": (
+                                f"资料 {len(choices) + 1} · {fact.fact.period} "
+                                f"· 第 {fact.revision} 版"
+                            ),
+                            "evidence_count": len(fact.evidence),
+                            "used": fact.id in plan["report_fact_ids"],
+                        }
+                    )
+            issue_vouchers = reads.vouchers(
+                {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT id FROM voucher_version WHERE id IN "
+                        "(SELECT json_extract(value,'$.voucher_version_id') FROM json_each(?))",
+                        (canonical(plan["fact_issues"]),),
+                    )
+                }
+            )
+            issues = []
+            for issue in plan["fact_issues"]:
+                item = dict(issue)
+                if item.get("voucher_version_id"):
+                    voucher = issue_vouchers.get(item["voucher_version_id"])
+                    if voucher:
+                        item["voucher_number"] = voucher["number"]
+                        item["period"] = str(YearMonth.from_ordinal(voucher["period"]))
+                issues.append(item)
+        return {
+            "carry_forward_options": choices,
+            "classification_count": fact_counts.get(ReportClassification.kind, 0),
+            "income_tax_confirmation_count": fact_counts.get(ReportIncomeTaxConfirmation.kind, 0),
+            "issues": issues,
+            "close_state": "open"
+            if any(item["field"] in {"period", "closed_periods"} for item in closed["fact_issues"])
+            else "closed",
+        }
 
     def browser_job_results(self, jobs):
         """Expose a download only after the same checks used for file delivery."""
         result = []
         for job in jobs:
-            item = {**job, "download_available": False, "download_file_name": None}
+            item = {
+                **job,
+                "download_available": False,
+                "download_file_name": None,
+                "delivery_status": "pending"
+                if job["status"] in {"pending", "running"}
+                else "unavailable",
+                "delivery_message": None,
+            }
+            if job["kind"] == "report_export":
+                try:
+                    with self.store.connection(read_only=True) as connection:
+                        row = connection.execute(
+                            "SELECT payload FROM jobs WHERE id=?", (job["id"],)
+                        ).fetchone()
+                        payload = json.loads(row[0])
+                        plan = payload["plan"]
+                        carries = [
+                            ident
+                            for ident in plan["report_fact_ids"]
+                            if self.store.fact(connection, ident).fact.kind
+                            == ReportCarryForward.kind
+                        ]
+                    item["report_source"] = {
+                        "year": plan["period"]["year"],
+                        "quarter": plan["period"]["quarter"],
+                        "carry_forward_fact_id": carries[0] if len(carries) == 1 else None,
+                    }
+                except (ValueError, TypeError, KeyError):
+                    item.update(
+                        delivery_status="invalid",
+                        delivery_message="任务来源信息无法验证，请重新生成报表。",
+                    )
+                    result.append(item)
+                    continue
             if job["kind"] == "report_export" and job["status"] == "succeeded":
+                directory = payload.get("output_directory")
+                browser_root = (self.store.path.parent / "exports" / "browser-reports").resolve()
+                if isinstance(directory, str) and not Path(directory).resolve().is_relative_to(
+                    browser_root
+                ):
+                    item.update(
+                        delivery_status="external",
+                        delivery_message="此报表通过会计任务交付，未提供浏览器下载。",
+                    )
+                    result.append(item)
+                    continue
                 try:
                     name, _ = self.download_browser_report(job["id"])
-                except KernelError:
-                    pass
+                except KernelError as exc:
+                    item.update(delivery_status="invalid", delivery_message=str(exc))
                 else:
-                    item.update(download_available=True, download_file_name=name)
+                    item.update(
+                        download_available=True, download_file_name=name, delivery_status="verified"
+                    )
             result.append(item)
         return result
 
@@ -1229,7 +1326,8 @@ def _new_company_zero_opening(profile, fact, calculation):
     ):
         return False
     counts = fact.counts.model_dump()
-    values = json.loads(calculation["outcome"])["values"]
+    outcome = calculation["outcome"]
+    values = (json.loads(outcome) if isinstance(outcome, str) else outcome)["values"]
     return (
         fact.completeness_confirmed is True
         and all(count == 0 for count in counts.values())
@@ -1241,36 +1339,84 @@ def _new_company_zero_opening(profile, fact, calculation):
     )
 
 
-def _opening_rows(connection, store, closes, source, end):
-    sql = """SELECT DISTINCT c.* FROM period_close p,
-        json_each(p.manifest,'$.calculations') frozen JOIN calculation c ON c.id=frozen.value
-        WHERE p.period<=? AND c.kind='opening_package'"""
-    parameters = [end.ordinal]
-    if source == "open":
-        sql += """ UNION SELECT c.* FROM calculation_current a JOIN calculation c
-            ON c.id=a.calculation_id WHERE c.kind='opening_package' AND c.period<=?
-            AND NOT EXISTS(SELECT 1 FROM period_close p WHERE p.period=c.period)"""
-        parameters.append(end.ordinal)
-    records = connection.execute(sql, parameters).fetchall()
-    if not records:
-        return [], None
-    if len(records) != 1:
+def _opening_rows(connection, engine, source, end, reads, problems):
+    from .business_queries import BusinessQueries
+
+    selected = BusinessQueries(engine, reads=reads)._selected_accounting(
+        connection, None, str(end), kinds={"opening_package"}, include_vouchers=False
+    )["through_period"]
+    unresolved = selected["unestablished_state_selections"]
+    unknown_period = None
+    if unresolved:
+        for selection in unresolved:
+            candidates = selection["candidates"]
+            metadata = reads.metadata(item["calculation_id"] for item in candidates)
+            affected = min(YearMonth(item["period"]).ordinal - 1 for item in metadata.values())
+            unknown_period = affected if unknown_period is None else min(unknown_period, affected)
+            problems.append(
+                issue(
+                    "opening_package.selection",
+                    "冻结资料不能证明期初接续结果已被采用",
+                    reason=selection["reason"],
+                    candidates=candidates,
+                    trace_targets=[
+                        {"calculation_id": item["calculation_id"]} for item in candidates
+                    ],
+                )
+            )
+    identifiers = {
+        item["calculation_id"]
+        for item in selected["state_results"]
+        if source == "open" or item["selection_source"] == "close_manifest"
+    }
+    if not identifiers:
+        return [], None, unknown_period
+    if len(identifiers) != 1:
         raise KernelError("ambiguous_opening", "报表期间存在不唯一的期初接续版本")
-    record = dict(records[0])
-    decoded = json.loads(record["outcome"])
+    record = reads.calculation(next(iter(identifiers)))
+    decoded = record["outcome"]
+    record = record | {
+        "period": YearMonth(record["period"]).ordinal,
+        "digest": bytes.fromhex(record["result_digest"]),
+    }
     result = []
     for member in decoded["values"]["members"]:
         values = member["values"]
         for number, line in enumerate(member["opening_lines"], 1):
-            parties = {
-                item["counterparty_id"]
+            amount = line["debit"] - line["credit"]
+            normal = "debit" if amount > 0 else "credit"
+            obligations = [
+                item
                 for item in values.get("obligations", ())
-                if item["account"] == line["account"]
-            }
+                if item["account"] == line["account"] and item.get("normal") == normal
+            ]
+            valid_splits = (
+                obligations
+                and all(
+                    isinstance(item.get("counterparty_id"), str)
+                    and item["counterparty_id"]
+                    and type(item.get("amount_fen")) is int
+                    and item["amount_fen"] > 0
+                    for item in obligations
+                )
+                and sum(item["amount_fen"] for item in obligations) == abs(amount)
+            )
+            splits = (
+                tuple(
+                    (
+                        ("party", item["counterparty_id"]),
+                        item["amount_fen"] * (1 if amount > 0 else -1),
+                    )
+                    for item in obligations
+                )
+                if valid_splits
+                else None
+            )
+            party_key = splits[0][0] if splits is not None and len(splits) == 1 else None
             result.append(
                 {
                     **line,
-                    "amount": line["debit"] - line["credit"],
+                    "amount": amount,
                     "period": record["period"] - 1,
                     "kind": member["kind"],
                     "version_id": "opening:" + record["id"] + ":" + member["subject_id"],
@@ -1279,11 +1425,13 @@ def _opening_rows(connection, store, closes, source, end):
                     "fact": SimpleNamespace(**values),
                     "cash_source": SimpleNamespace(**values),
                     "classification": None,
-                    "party": next(iter(parties)) if len(parties) == 1 else None,
+                    "party_state": "resolved" if splits is not None else "unresolved",
+                    "party_key": party_key,
+                    "party_splits": splits,
                     "opening": True,
                 }
             )
-    return result, record
+    return result, record, unknown_period
 
 
 def _apply_carry_forward(statements, fact, opening_rows, quarter_start, book_start, problems):
@@ -1365,47 +1513,28 @@ def _apply_carry_forward(statements, fact, opening_rows, quarter_start, book_sta
                 )
 
 
-def _statements(rows, start, year_start, end, problems):
+def _statements(rows, start, year_start, end, problems, *, account_balances=None):
     def balance(as_of):
-        result = {line: 0 for line in BALANCE_NAMES}
-        accounts, parties = defaultdict(int), defaultdict(int)
-        for row in rows:
-            if row["period"] > as_of:
-                continue
-            account, amount = row["account"], row["amount"]
-            if account in RECLASS:
-                for party, part in row.get("party_splits", ((row["party"], amount),)):
-                    parties[(account, party)] += part
-            else:
-                accounts[account] += amount
-        for (account, _party), amount in parties.items():
-            result[RECLASS[account][0 if amount >= 0 else 1]] += abs(amount)
-        for account, amount in accounts.items():
-            if account in CASH_ACCOUNTS:
-                result[1] += amount
-            elif account in PROFIT_ACCOUNTS:
-                result[51] -= amount
-            elif account in DEBIT_BALANCE:
-                result[DEBIT_BALANCE[account]] += amount
-            elif account in CREDIT_BALANCE:
-                result[CREDIT_BALANCE[account]] += amount if account == "1702" else -amount
-            elif account in TAX_ACCOUNTS:
-                result[14 if amount > 0 else 36] += abs(amount)
-            elif amount:
-                problems.append(
-                    issue("account_mapping", "存在未映射的非零账户余额", account=account)
-                )
-        result[9] += sum(result[x] for x in (10, 11, 12, 13))
-        result[20] = result[18] - result[19]
-        result[15] = sum(result[x] for x in range(1, 10)) + result[14]
-        result[29] = sum(result[x] for x in (16, 17, 20, 21, 22, 23, 24, 25, 26, 27, 28))
-        result[30] = result[15] + result[29]
-        result[41] = sum(result[x] for x in range(31, 41))
-        result[46] = sum(result[x] for x in range(42, 46))
-        result[47] = result[41] + result[46]
-        result[52] = sum(result[x] for x in range(48, 52))
-        result[53] = result[47] + result[52]
-        return result
+        if account_balances is not None:
+            totals = account_balances[as_of]
+            if totals is None:
+                return {line: None for line in range(1, 54)}
+            selected = [
+                row
+                for row in rows
+                if row["period"] <= as_of
+                and (row["account"] in RECLASS or row["account"] not in _POSITION_ACCOUNTS)
+            ]
+            selected.extend(
+                {"account": account, "amount": amount}
+                for account, amount in sorted(totals.items())
+                if account not in RECLASS and account in _POSITION_ACCOUNTS
+            )
+        else:
+            selected = (row for row in rows if row["period"] <= as_of)
+        position = classify_financial_position(selected)
+        problems.extend(position["issues"])
+        return position["lines"]
 
     def profit(begin):
         result = {line: 0 for line in PROFIT_NAMES}
@@ -1577,10 +1706,18 @@ def _statements(rows, start, year_start, end, problems):
         result[13] = result[8] + result[9] + result[10] - result[11] - result[12]
         result[19] = result[14] + result[15] - result[16] - result[17] - result[18]
         result[20] = result[7] + result[13] + result[19]
-        result[21] = sum_fen(
-            r["amount"] for r in rows if r["account"] in CASH_ACCOUNTS and r["period"] < begin
-        )
-        result[22] = result[21] + result[20]
+        if account_balances is None:
+            result[21] = sum_fen(
+                r["amount"] for r in rows if r["account"] in CASH_ACCOUNTS and r["period"] < begin
+            )
+        else:
+            totals = account_balances[begin - 1]
+            result[21] = (
+                None
+                if totals is None
+                else sum_fen(totals.get(account, 0) for account in CASH_ACCOUNTS)
+            )
+        result[22] = None if result[21] is None else result[21] + result[20]
         return result
 
     balance_begin, balance_end = balance(year_start - 1), balance(end)
@@ -1606,8 +1743,18 @@ def _checks(statements):
     balance, profit, cash = (
         statements[x] for x in ("balance_sheet", "profit_statement", "cash_flow_statement")
     )
+
+    def equal(*values):
+        return None if any(value is None for value in values) else values[0] == values[1]
+
+    def equation(left, *parts):
+        return None if left is None or any(value is None for value in parts) else left == sum(parts)
+
     result = [
-        {"code": f"balance_{column}", "passed": balance["30"][column] == balance["53"][column]}
+        {
+            "code": f"balance_{column}",
+            "passed": equal(balance["30"][column], balance["53"][column]),
+        }
         for column in ("ending_fen", "beginning_fen")
     ]
     for column in ("current_fen", "year_to_date_fen"):
@@ -1615,16 +1762,24 @@ def _checks(statements):
             [
                 {
                     "code": f"profit_{column}",
-                    "passed": profit["32"][column] == profit["30"][column] - profit["31"][column],
+                    "passed": equation(
+                        profit["32"][column],
+                        profit["30"][column],
+                        -profit["31"][column],
+                    ),
                 },
                 {
                     "code": f"cash_{column}",
-                    "passed": cash["20"][column]
-                    == cash["7"][column] + cash["13"][column] + cash["19"][column],
+                    "passed": equation(
+                        cash["20"][column],
+                        cash["7"][column],
+                        cash["13"][column],
+                        cash["19"][column],
+                    ),
                 },
                 {
                     "code": f"cash_ending_{column}",
-                    "passed": cash["22"][column] == balance["1"]["ending_fen"],
+                    "passed": equal(cash["22"][column], balance["1"]["ending_fen"]),
                 },
             ]
         )

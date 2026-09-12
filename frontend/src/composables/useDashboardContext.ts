@@ -6,11 +6,18 @@ import { fetchDashboardContext, type DashboardContext } from "../api/context";
 const context = ref<DashboardContext | null>(null);
 const loading = ref(false);
 const error = ref("");
+const selectionNotice = ref("");
+function setSelectionNotice(message: string) { selectionNotice.value = message; }
 let pending: Promise<DashboardContext> | null = null;
 let controller: AbortController | null = null;
 let requestVersion = 0;
+let selectedCompany = "";
+
+function companySelection() { return new URLSearchParams(window.location.search).get("company_id") ?? ""; }
 
 async function load(force = false): Promise<DashboardContext> {
+  const company = companySelection();
+  if (selectedCompany !== company) { cancel(); selectedCompany = company; }
   if (context.value && !force) return context.value;
   if (pending && !force) return pending;
   loading.value = true;
@@ -18,18 +25,18 @@ async function load(force = false): Promise<DashboardContext> {
   controller?.abort();
   controller = new AbortController();
   const version = ++requestVersion;
-  if (force) context.value = null;
   pending = fetchDashboardContext(controller.signal)
     .then((value) => {
-      if (version === requestVersion) context.value = value;
+      if (version !== requestVersion || companySelection() !== company) throw new DOMException("Aborted", "AbortError");
+      context.value = value;
       return value;
     })
     .catch((caught: unknown) => {
-      if (version === requestVersion) error.value = dashboardErrorMessage(caught);
+      if (version === requestVersion && companySelection() === company) error.value = dashboardErrorMessage(caught);
       throw caught;
     })
     .finally(() => {
-      if (version === requestVersion) {
+      if (version === requestVersion && companySelection() === company) {
         loading.value = false;
         pending = null;
         controller = null;
@@ -47,12 +54,19 @@ function cancel() {
   loading.value = false;
 }
 
+function refresh(): Promise<DashboardContext> {
+  return load(true);
+}
+
 export function useDashboardContext() {
   return {
     context: readonly(context),
     loading: readonly(loading),
     error: readonly(error),
     load,
+    refresh,
     cancel,
+    selectionNotice: readonly(selectionNotice),
+    setSelectionNotice,
   };
 }

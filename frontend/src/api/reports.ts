@@ -1,5 +1,6 @@
 import { DashboardApiError, requestJson } from "./client";
 import { requestLocalJson, LocalApiError } from "./localKernel";
+import type { PeriodPreparation } from "./dashboardContracts";
 
 export type ReportStatus =
   | "ready"
@@ -12,6 +13,7 @@ export interface ReportReadinessDetail {
   primary: string;
   secondary: string;
   amount_fen?: string | null;
+  location?: { field: string; period?: string; voucher_number?: number; voucher_version_id?: string; line_no?: number; subject_id?: string; account?: string };
 }
 
 export interface ReportReadinessItem {
@@ -54,10 +56,11 @@ export interface ReportStatement {
 export interface ReportCheck {
   code: string;
   label: string;
-  passed: boolean;
+  passed: boolean | null;
 }
 
 export interface QuarterlyReport {
+  period_preparations: PeriodPreparation[];
   schema_version: 1;
   status: ReportStatus;
   status_label: string;
@@ -84,6 +87,12 @@ export interface QuarterlyReport {
     items: ReportCheck[];
   };
   draft: boolean;
+  close_state: "open" | "closed";
+  readiness_state: "ready" | "blocked";
+  carry_forward: {
+    selected_fact_id: string | null;
+    options: { fact_id: string; subject_id: string; revision: number; period: string; label: string; evidence_count: number; used: boolean }[];
+  };
   export: {
     available: boolean;
     file_name: string;
@@ -113,11 +122,13 @@ export async function fetchQuarterlyReport(
   year: number,
   quarter: number,
   signal?: AbortSignal,
+  carryForwardFactId?: string,
 ) {
   const query = new URLSearchParams({
     year: String(year),
     quarter: String(quarter),
   });
+  if (carryForwardFactId) query.set("carry_forward_fact_id", carryForwardFactId);
   const report = await requestJson<QuarterlyReport>(
     `/api/dashboard/quarterly-report?${query}`,
     { signal },
@@ -139,6 +150,7 @@ export async function requestQuarterlyExport(companyId: string, report: Quarterl
   const result = await requestLocalJson("/api/local/report-export", { method: "POST", signal, body: JSON.stringify({
     company_id: companyId, year: report.period.year, quarter: report.period.quarter,
     preview_digest: report.export.preview_digest, epochs: report.export.epochs, request_id: requestId,
+    ...(report.carry_forward.selected_fact_id ? { carry_forward_fact_id: report.carry_forward.selected_fact_id } : {}),
   }) });
   if (!result || typeof result !== "object" || !("job_id" in result) || typeof result.job_id !== "string") {
     throw new DashboardApiError(502, "REPORT_JOB_RESPONSE", "报表任务响应无法读取，请刷新后台任务核对。");
@@ -156,7 +168,8 @@ export async function fetchQuarterlyWorkbook(companyId: string, jobId: string, s
     if (response.status === 401) window.dispatchEvent(new Event("finance-session-expired"));
     const payload: unknown = await response.json().catch(() => null);
     const code = payload && typeof payload === "object" && "code" in payload && typeof payload.code === "string" ? payload.code : "REPORT_EXPORT_FAILED";
-    throw new LocalApiError(response.status, code, "报表文件尚不可下载，请刷新任务状态后重试。");
+    const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string" ? payload.message : "报表文件尚不可下载，请刷新任务状态后重试。";
+    throw new LocalApiError(response.status, code, message);
   }
   return response.blob();
 }

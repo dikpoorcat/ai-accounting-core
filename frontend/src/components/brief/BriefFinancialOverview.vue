@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { useRoute } from "vue-router";
 import type { BriefCash, BriefData, BriefPosition } from "../../api/brief";
 import { fen, formatFen, formatPositiveFen } from "../../utils/money";
 
 const props = defineProps<{
   cash: BriefCash;
+  funds: BriefData["funds_overview"];
   position: BriefPosition;
   unmatched: BriefData["unmatched_bank_activity"];
 }>();
+const route = useRoute();
 
 const components = [
   ["银行存款", "bank_fen"],
@@ -15,7 +18,8 @@ const components = [
   ["其他资产", "other_assets_fen"],
 ] as const;
 
-function componentRatio(value: string) {
+function componentRatio(value: string | null) {
+  if (value === null || props.position.assets_fen === null) return null;
   const total = fen(props.position.assets_fen);
   if (total <= 0n) return 0;
   return Math.max(0, Math.min(100, Number((fen(value) * 10_000n) / total) / 100));
@@ -26,11 +30,18 @@ function bankStateLabel(state: string) {
     {
       matched: "已匹配",
       unmatched: "待识别",
-      invalid_match: "原匹配已失效",
-      pending_late: "迟到流水待处理",
-      handled_late: "迟到流水已处理",
+      needs_review: "资料或核对结果待复核",
     }[state] || "待处理"
   );
+}
+
+function coverageLabel() {
+  return {
+    missing: "本月银行流水未提供",
+    partial: "仅列已提供部分，资料覆盖不完整或待复核",
+    complete: "本月各银行账户流水已提供",
+    not_applicable: "暂无公司银行账户",
+  }[props.cash.coverage_state];
 }
 
 function formatDate(value: string | null) {
@@ -46,10 +57,10 @@ function formatDate(value: string | null) {
     <div class="section-heading">
       <div>
         <p class="section-kicker">资金与资产负债</p>
-        <h2 id="financial-title">本月资金与财务位置</h2>
+        <h2 id="financial-title">资金与资产负债</h2>
       </div>
-      <span :class="['equation-status', { error: !position.equation_valid }]">
-        {{ position.equation_valid ? "资产负债表平衡" : "资产负债表不平衡" }}
+      <span v-if="position.equation_valid !== true" :class="['equation-status', { error: position.equation_valid === false }]">
+        {{ position.equation_valid === null ? '财务位置无法完整建立' : '资产负债金额需要核对' }}
       </span>
     </div>
 
@@ -57,14 +68,14 @@ function formatDate(value: string | null) {
       <summary>
         <span>
           <strong>{{ unmatched.count }} 笔资金动向待识别或处理</strong>
-          <small>尚不能当作已确认业务</small>
+          <small>原始流水与已入账业务仍需核对</small>
         </span>
         <span>
           流入 {{ formatFen(unmatched.inflow_fen) }} · 流出 {{ formatFen(unmatched.outflow_fen) }}
         </span>
       </summary>
       <ul>
-        <li v-for="item in unmatched.rows" :key="`${item.date}-${item.memo}`">
+        <li v-for="item in unmatched.rows" :key="item.id">
           <div>
             <small>{{ formatDate(item.date) }} · {{ item.party }}</small>
             <strong>{{ item.memo }}</strong>
@@ -73,78 +84,82 @@ function formatDate(value: string | null) {
           <b>{{ item.direction === "inflow" ? "+" : "−" }}{{ formatFen(item.amount_fen) }}</b>
         </li>
       </ul>
+      <p v-if="unmatched.rows_truncated">当前展示前 {{ unmatched.rows.length }} 笔。
+        <RouterLink :to="{ name: 'funds', query: route.query, hash: '#bank-details' }">查看全部银行流水</RouterLink>
+      </p>
     </details>
 
     <div class="overview-grid">
       <article class="overview-card cash-card">
         <header>
           <div>
-            <p>来自银行流水</p>
-            <h3>资金概览</h3>
+            <p>银行、现金及公司支付平台 · 已扣除账户互转</p>
+            <h3>本月公司收付款</h3>
           </div>
           <span class="state-chip">
-            {{ fen(cash.net_fen) > 0n ? "净流入" : fen(cash.net_fen) < 0n ? "净流出" : "无净变动" }}
+            {{ funds.net_change_fen === null ? "资金变动尚不能确认" : fen(funds.net_change_fen) > 0n ? "资金增加" : fen(funds.net_change_fen) < 0n ? "资金减少" : "资金无净变动" }}
           </span>
         </header>
         <div class="flow">
           <div>
-            <span>本月流入</span>
-            <strong>{{ formatFen(cash.inflow_fen) }}</strong>
+            <span>对外收款</span>
+            <strong>{{ formatFen(funds.inflow_fen) }}</strong>
           </div>
           <span aria-hidden="true">→</span>
           <div class="outflow">
-            <span>本月流出</span>
-            <strong>{{ formatFen(cash.outflow_fen) }}</strong>
+            <span>对外付款</span>
+            <strong>{{ formatFen(funds.outflow_fen) }}</strong>
           </div>
         </div>
         <dl class="summary-rows">
           <div>
-            <dt>流入 − 流出</dt>
-            <dd>
-              {{
-                fen(cash.net_fen) > 0n
-                  ? `净流入 ${formatFen(cash.net_fen)}`
-                  : fen(cash.net_fen) < 0n
-                    ? `净流出 ${formatPositiveFen(cash.net_fen)}`
-                    : `无净变动 ${formatFen(0)}`
-              }}
-            </dd>
+            <dt>月末账面资金</dt>
+            <dd>{{ formatFen(funds.total_fen) }}</dd>
           </div>
-          <div :class="{ subdued: !cash.ordinary_count }">
-            <dt>当前有效匹配</dt>
-            <dd>{{ cash.ordinary_count ? `${cash.matched_count} / ${cash.ordinary_count} 笔` : "本月无普通流水" }}</dd>
+          <div v-if="funds.internal_transfer_fen === null || fen(funds.internal_transfer_fen)">
+            <dt>公司账户间调拨</dt><dd>{{ formatFen(funds.internal_transfer_fen) }}</dd>
           </div>
         </dl>
+        <details class="bank-proof"><summary>银行流水核对：{{ coverageLabel() }}</summary>
+          <p>{{ cash.transaction_count }} 笔流水，{{ cash.matched_count }} 笔已核对。</p>
+          <p>已提供流水流入 {{ formatFen(cash.inflow_fen) }} · 流出 {{ formatFen(cash.outflow_fen) }}</p>
+          <RouterLink :to="{ name: 'funds', query: route.query, hash: '#bank-details' }">查看银行流水</RouterLink>
+        </details>
       </article>
 
       <details id="position-overview" class="overview-card position-card" tabindex="-1">
         <summary class="position-summary">
           <header>
             <div>
-              <p>公司目前有什么、欠什么</p>
-              <h3>财务位置</h3>
+              <p>所选月末的资产与负债</p>
+              <h3>月末资产与负债</h3>
             </div>
-            <strong>资产 {{ formatFen(position.assets_fen) }}</strong>
+            <strong>资产 {{ position.assets_fen === null ? '无法完整建立' : formatFen(position.assets_fen) }}</strong>
           </header>
           <div class="components">
             <div
               v-for="([label, key], index) in components"
               :key="key"
-              :class="['component-row', { subdued: !fen(position[key]) }]"
+              :class="['component-row', { subdued: position[key] !== null && !fen(position[key]) }]"
             >
               <span>{{ label }}</span>
-              <div class="track">
+              <div v-if="componentRatio(position[key]) !== null" class="track">
                 <span :style="{ width: `${componentRatio(position[key])}%` }" :data-index="index" />
               </div>
               <strong>{{ formatFen(position[key]) }}</strong>
             </div>
           </div>
-          <p class="equation">
+          <p>负债 {{ formatFen(position.liabilities_fen) }} · 展开查看金额构成</p>
+        </summary>
+          <p v-if="position.equation_valid !== null" class="equation">
             资产 {{ formatFen(position.assets_fen) }} = 负债 {{ formatFen(position.liabilities_fen) }} + 所有者权益
             {{ formatFen(position.capital_fen) }} {{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }} 累计差额
             {{ formatPositiveFen(position.cumulative_result_fen) }}
           </p>
-        </summary>
+        <p v-else>部分来源尚不能精确归属，暂不判断资产负债等式；已知分项仍列示。</p>
+        <ul v-if="position.issues?.length" class="proof">
+          <li v-for="(issue, index) in position.issues" :key="index">{{ issue.message }}</li>
+        </ul>
         <ul class="proof">
           <li><span>固定资产原值</span><strong>{{ formatFen(position.fixed_asset_cost_fen) }}</strong></li>
           <li><span>减：累计折旧</span><strong>{{ formatFen(position.accumulated_depreciation_fen) }}</strong></li>

@@ -1,0 +1,291 @@
+{
+  "task_id": "01a095d6-05dd-7c63-82eb-d29543bf6c48",
+  "architecture_task_id": "01a09416-a4e3-76b2-bf46-6387d8d47cfc",
+  "result_version": "production-v11-r1",
+  "completed_at": "2026-09-12T23:28:20.297836+08:00",
+  "status": "passed_pending_architecture_final_review",
+  "authorization": "User requested production update; architecture explicitly approved v11-r1 and cutover-r2 before execution",
+  "backend_build": "local-kernel-2:e8947512b388fb25714251b9459d5b697f3cf010fb95731409ea746ecccac1e8",
+  "service": {
+    "status": "ready",
+    "pid": 26596,
+    "port": 55427,
+    "build_id": "local-kernel-2:e8947512b388fb25714251b9459d5b697f3cf010fb95731409ea746ecccac1e8",
+    "new_main_source_process": true
+  },
+  "dashboard": {
+    "accepted_revision": "T6 r2",
+    "accepted_source_hashes_match": true,
+    "accepted_build_assets": 20,
+    "http_current_assets_checked": 18,
+    "http_old_assets_retained": 22,
+    "entry_routes_checked": [
+      "/",
+      "/local.html",
+      "/funds",
+      "/employees",
+      "/assets",
+      "/reports"
+    ],
+    "browser": {
+      "status": "passed",
+      "authenticated": true,
+      "core_card_count": 4,
+      "company_option_count": 2,
+      "checks": [
+        "Authenticated current service and rendered T6 four core cards with two existing companies",
+        "Module read succeeded: /funds",
+        "Module read succeeded: /employees",
+        "Module read succeeded: /assets",
+        "Module read succeeded: /reports",
+        "Module read succeeded: /",
+        "Second existing company brief read succeeded"
+      ],
+      "loaded_js_sha256": {
+        "assets/main-B6MLykgD.js": "3005d0a6511ec887776e389dcbe40870d2731bbb233b523eb2dd5e1222a47033",
+        "assets/index-qxZiwjLI.js": "7c15729188fe8bfd614c016c70466ec8142a5bc7c16c14694ba85d93c2dcce5d",
+        "assets/DashboardSectionNav-CRE837OA.js": "b63e139e752a3cc6567b58f1fef854a34f3256caee70cef3a208a9822a0f1bc2",
+        "assets/BriefView-C_BFzkXd.js": "39d4f5b5aeb9e72473d02b73a12d2b2b743933bea97210f2bb7f3872f299a75a",
+        "assets/PeriodPreparation-I4ZdXoje.js": "3a3d3d8c50045291f40f154e25c725aa9752359edadf2287336e1c67f7a1e341",
+        "assets/FundsView-dzasNGic.js": "af8370cdb4038475ec8633dae46ac1bec1471bdcb68275e6e655e5ca9844c2d8",
+        "assets/DashboardSourceHistory.vue_vue_type_script_setup_true_lang-8-OQF-VF.js": "4598064b733ba2d00ab71a35f5bbf130b6828e09a466852724557f3aab235b4a",
+        "assets/EmployeesView-D2ZFc4Rk.js": "1154bb0420b8e24284c3e380a1c43e2c4508d93b3aa87ec722705ab76ea6bc2c",
+        "assets/AssetsView-DO0CNuf6.js": "51d68dcdf6dca8a3f8d5c668b02ac59191d6c75d7730dacbe40f6c0411149a0c",
+        "assets/ReportsView-CAuCwV8T.js": "7fa87a6ee0e1de5253780f28df9455a44600d088baf6bba6cc5dfb1c89160bac"
+      },
+      "page_errors": [],
+      "api_failures": [],
+      "business_details_saved": false,
+      "owner_credentials_changed": false,
+      "temporary_browser_closed": true
+    }
+  },
+  "deployment": {
+    "resident_and_worker_exited_before_snapshot": true,
+    "maintenance_lock_held_through_upgrade": true,
+    "final_maintenance_snapshot_count": 3,
+    "snapshot_mechanism": "SQLite Online Backup with owner/SYSTEM ACL",
+    "snapshots_are_formal_company_zip_backups": false,
+    "full_installed_build_checked_before_first_company_migration": "local-kernel-2:e8947512b388fb25714251b9459d5b697f3cf010fb95731409ea746ecccac1e8",
+    "identity_and_preserved_target_paths_bound_before_migration": true,
+    "catalog_version": 3,
+    "company_versions": [
+      11,
+      11
+    ],
+    "source_files": [
+      {
+        "path": "src/ai_accounting/kernel/schema.py",
+        "before_sha256": "d4dc035e508f69408c13d8bf7a7df2762c1a996444afcd10aa53ba6eec3e322a",
+        "candidate_sha256": "c2bc0442a9512bbb6fdfe5dde115b027482a5e04e9ab6f5ac960dfab067fcbaf"
+      },
+      {
+        "path": "src/ai_accounting/kernel/versions.py",
+        "before_sha256": "d7c0deb9c0ca1663e88ac88d7fa6dcb2f977a7a4b9e2d09ca6d0d15b4e031ebc",
+        "candidate_sha256": "cd32d54ffa4d046ce8e4670f967288106cac180fb67066b08ef906ec0507bfaa"
+      },
+      {
+        "path": "src/ai_accounting/kernel/migrations/v11_business.json",
+        "before_sha256": null,
+        "candidate_sha256": "c1ddae868b0ecd18ad9cf8fceeadf6274025cfb4064524b38aced9357913ffdc"
+      },
+      {
+        "path": "src/ai_accounting/kernel/migrations/recorded_business_v10_pre_account_indexes.json",
+        "before_sha256": null,
+        "candidate_sha256": "df4b7d8d40f63fa98bba674f668bb3618a981eb99a9c8bdb49793cf17984836c"
+      },
+      {
+        "path": "tests/kernel/test_v11_recorded_contract.py",
+        "before_sha256": null,
+        "candidate_sha256": "3e096e0ab6ad28227b4b5a0714a7e96be7ce1500054d869f7481d0bb5a327791"
+      },
+      {
+        "path": "tests/kernel/test_v11_backup_restore.py",
+        "before_sha256": null,
+        "candidate_sha256": "78dd428fd087ccebe7e75dee84edebf24340140d06b5477a2419624e292f8059"
+      },
+      {
+        "path": "tests/kernel/test_read_indexes.py",
+        "before_sha256": "0f7c4733db9615820897d3d251dea6012bec1a7324f83c91b247e0ea3be8c50a",
+        "candidate_sha256": "40638f4e3a558c4a17099fe4632dc4f429285dfd1b93c437bf08a3f476b83858"
+      },
+      {
+        "path": "scripts/verify_local_package.py",
+        "before_sha256": "91ee09940b8a6c93c0ddf9d5c6174f8356c338984e0f6dc91cb2f5f5d12d1d7d",
+        "candidate_sha256": "243b31c5a60209231ea7ce73810c51f0690490071a3ca67367781b235623d385"
+      },
+      {
+        "path": "scripts/verify_t5_browser.py",
+        "before_sha256": "edfacd31cadff29c39ba765f80dc4f12cb58f5cf59078e9e89b59bb9148e93df",
+        "candidate_sha256": "d5939bceac1c6cecedaa96717fcbdc9c9e6c500b4f671957c31fb47059df79a5"
+      },
+      {
+        "path": "scripts/verify_t5_read_costs.py",
+        "before_sha256": "23de1cfa868e9b0260344eddbfafe259c8c85ad812aa7a1c79d82e19dbf132b0",
+        "candidate_sha256": "de847d114280cbd6383b34c6be07f0f3229faa028d9786810e07b0d4445a6711"
+      },
+      {
+        "path": "AGENTS.md",
+        "before_sha256": "8c14fb5459176cbede092db482e82d89b261dd3cddaf83ea068defba8a64fdb1",
+        "candidate_sha256": "1a2b5c1c55b35ec00aad73a356486338bbca7530b2cd0709a7480bf5560f3776"
+      },
+      {
+        "path": "docs/bounded-dashboard-queries.md",
+        "before_sha256": "fbeb0ce203c627d3f487de8d36263537eec5a90239202624d14b07619bb85999",
+        "candidate_sha256": "da0c3d937656807b3cb54c5864fcde5cb7d1c4efda9894651defede9ef355a7f"
+      }
+    ]
+  },
+  "company_content_preservation": [
+    {
+      "source_version": 10,
+      "target_version": 11,
+      "unchanged_business_tables": 186,
+      "table_count": 188,
+      "only_changed_tables": [
+        "identity",
+        "schema_history"
+      ],
+      "identity_only_schema_version_changed": true,
+      "old_history_rows_exactly_preserved": true,
+      "added_indexes": [
+        "calculation_obligations",
+        "dependency_scope_any_kind",
+        "voucher_line_account",
+        "voucher_version_reverses"
+      ],
+      "strict_schema": "passed",
+      "integrity_check": "ok",
+      "foreign_key_issues": 0,
+      "full_read_indexes": "passed",
+      "reference_source_count_unchanged": true,
+      "second_upgrade_noop": true,
+      "company_ordinal": 1
+    },
+    {
+      "source_version": 10,
+      "target_version": 11,
+      "unchanged_business_tables": 186,
+      "table_count": 188,
+      "only_changed_tables": [
+        "identity",
+        "schema_history"
+      ],
+      "identity_only_schema_version_changed": true,
+      "old_history_rows_exactly_preserved": true,
+      "added_indexes": [
+        "calculation_obligations",
+        "dependency_scope_any_kind",
+        "voucher_line_account",
+        "voucher_version_reverses"
+      ],
+      "strict_schema": "passed",
+      "integrity_check": "ok",
+      "foreign_key_issues": 0,
+      "full_read_indexes": "passed",
+      "reference_source_count_unchanged": true,
+      "second_upgrade_noop": true,
+      "company_ordinal": 2
+    }
+  ],
+  "post_browser_database_checks": [
+    {
+      "company_ordinal": 1,
+      "schema_version": 11,
+      "all_tables_match_immediately_after_upgrade": true,
+      "active_jobs": 0
+    },
+    {
+      "company_ordinal": 2,
+      "schema_version": 11,
+      "all_tables_match_immediately_after_upgrade": true,
+      "active_jobs": 0
+    }
+  ],
+  "frozen_contracts": [
+    {
+      "path": "src/ai_accounting/kernel/migrations/v1_business.json",
+      "sha256": "1473e12b1c6a903224c3625fbe6a10bc5a5166dfe9928c6bb85fc5b3f3617900"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v2_business.json",
+      "sha256": "7a89f8ea7baf722c20ecf6faa00c0c55670194e1debda318df8bf74f21819d65"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v3_business.json",
+      "sha256": "5a2e1bef930c0f646c70ebcf96da4e3ce82a7f61374f90c42ad0251dce9696aa"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v4_business.json",
+      "sha256": "bc20923c5f8886b48bf3d10e725cd1645c7954a3413c302c681f5f1bb63430dc"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v5_business.json",
+      "sha256": "02625c544df804086f9f289bf08a1fd8e0bcfdbcb249bf883f00da1090041ca8"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v6_business.json",
+      "sha256": "e4c0bfc2c771f84ff287f01afdda5121e700e4ec2eca54ebde9b28f3dbc97840"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v7_business.json",
+      "sha256": "ce4f78424567d8ce88648f80772ee50e4989fb18c59d90003eb6888633a49725"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v8_business.json",
+      "sha256": "3deb31126a287977d4daa11c89eb9eed2f3f4c55484f3cf6ce49fd25fb3499c7"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v9_business.json",
+      "sha256": "d40c2acb669b4e673aeeb22e7070972da353c479ab3e14458f7d9f5db1f8760c"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v10_business.json",
+      "sha256": "25d6ed414395fcdbdb20bbc74f279ab1fafb619d364a2acffbb3c47d68504e5a"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v1_catalog.json",
+      "sha256": "1cd1e9701f601dc6db3a5a0ab3ffca8f6ede05e1d5b0239dbd43fddbd22e61ca"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v2_catalog.json",
+      "sha256": "559a80dda160a026f06e1cdc76c0f8f1d0432b596163d45de1f7fb8079e98297"
+    },
+    {
+      "path": "src/ai_accounting/kernel/migrations/v3_catalog.json",
+      "sha256": "28c01841492b032e54646f07bc97d13b01c7b1fd66e738c4af6e732fe9e732ae"
+    }
+  ],
+  "necessary_validation": {
+    "targeted_migration_tests": 24,
+    "existing_read_index_migration_tests": 2,
+    "synthetic_backup_restore_tests": 1,
+    "company_snapshot_clones": 2,
+    "ruff": "passed for changed Python files",
+    "full_test_suite_run": false,
+    "historical_cost_matrix_run": false,
+    "full_software_package_chain_run": false
+  },
+  "business_fact_commands": [],
+  "financial_recalculation": false,
+  "history10_rewritten": false,
+  "git_commit_or_push": false,
+  "known_remaining_issue": "Existing nonblocking server-disconnect P3 WinError10053 remains outside this update; no claim of zero historical service log errors",
+  "evidence_sha256": {
+    ".tmp/t6-production-update-20260912/candidate-manifest.json": "94f732db986333bb3f6541fda27b66dad03e6090d9e147a925e303edbcd0b316",
+    ".tmp/t6-production-update-20260912/maintenance-helper-lock.json": "e998e21737b9d022a89fda340d3890631ee28142b570db7c2e75db20bbc5031a",
+    ".tmp/t6-production-update-20260912/cutover_v11.py": "f81fc9ce9f32c9f3538e1bb717985de4279300fea2471b0157eb22088b6ed318",
+    ".tmp/t6-production-update-20260912/verify_candidate_clones.py": "5aa0640247064d65de8fdf75005cba92370931d731b6f2dc2ee058621222f632",
+    ".tmp/t6-production-update-20260912/start_updated_service.py": "f217e55b3756444a0615dd3be4876441d1d82cb306a8cfbcda6f9391712288e8",
+    ".tmp/t6-production-update-20260912/candidate-clone-verification.json": "a6094c1a2564ad2003c665ca932d76b16600f9fabb4963369424661418f83942",
+    ".tmp/t6-production-update-20260912/cutover-result.json": "68b519f62a3a002c9931a410d184b7e8efb84a2382c50744fc0799c4743da444",
+    ".tmp/t6-production-update-20260912/restart-result.json": "1d9f94ebbab05b00134386c8c9baf92e6d5e6e017045ad3a23aa914f176f1c30",
+    ".tmp/t6-production-update-20260912/updated-verification.json": "baca373080f37985244a0f7fcdd022af8b55597c4540e54ef9850c6e4ebc7466",
+    ".tmp/t6-production-update-20260912/verify_updated_production.py": "354962f9ebd086324b61da2d72849771fe5a85d7fadef6c21ddaf4f2b3611467",
+    ".tmp/t6-production-update-20260912/verify_updated_browser.cjs": "9c28fc0e05132d0e7721b80e23fa6c83437fa8ed18ff61ef8f1ad1c9e79f497f",
+    ".tmp/t6-production-update-20260912/release-build.log": "b915b8db1884f672659f9468ee1f337a5c4f18630dd03a6047ef0c340b118505",
+    ".tmp/t6-production-update-20260912/candidate/tests/v11-targeted-results.xml": "40904bae655555930372c01b0a14d4cac15da3c4ad2893a8a9217d7097eb41f9",
+    ".tmp/t6-production-update-20260912/candidate/tests/v11-read-index-upgrade-results.xml": "7e59d16ed01650e1f3f0457460da8737bc095f5a300c89b6f3dc8d9223d06850",
+    ".tmp/t6-production-update-20260912/candidate/.tmp/v11-validation/backup-restore-test.log": "8936e35a0fc8f233d9d9b596910707d8068f92bc81b57e593ee571641d1d410d"
+  }
+}

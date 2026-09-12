@@ -362,6 +362,9 @@ class TaxImport:
                 "INSERT INTO jobs(id,kind,payload,status) VALUES(?,'tax_import',?,'pending')",
                 (job, canonical({"plan": plan, "output_directory": directory})),
             )
+            from .read_indexes import sync_job
+
+            sync_job(connection, job)
             return {
                 "status": "queued",
                 "job_id": job,

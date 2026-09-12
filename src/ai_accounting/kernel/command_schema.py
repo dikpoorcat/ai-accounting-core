@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal, get_type_hints
 from pydantic import ConfigDict, Field, TypeAdapter, ValidationError, create_model
 
 from .backup import run_backup_jobs
+from .business_queries import BusinessQueries
 from .catalog import Catalog
 from .contracts import KernelError, NeedsInformation
 from .discovery import Discovery
@@ -53,6 +54,8 @@ def command_models(registry):
         "overview": Engine.overview,
         "ledger": Engine.ledger,
         "trace": Engine.trace,
+        "business_status": BusinessQueries.business_status,
+        "period_readiness": BusinessQueries.period_readiness,
         "management": Periods.management,
         "inventory": Periods.inventory,
         "preview_close": Periods.preview_close,
@@ -98,6 +101,7 @@ def command_models(registry):
         "dashboard_funds": Dashboard.funds,
         "dashboard_employees": Dashboard.employees,
         "dashboard_assets": Dashboard.assets,
+        "dashboard_business_status": Dashboard.business_status,
         "dashboard_quarterly_report": Dashboard.quarterly_report,
         "preview_period_commentary": Display.preview_period_commentary,
         "update_period_commentary": Display.update_period_commentary,

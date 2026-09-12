@@ -1,0 +1,644 @@
+{
+  "employees": {
+    "schema_version": 2,
+    "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
+    "selected_period": {
+      "key": "2024-01",
+      "year": 2024,
+      "month": 1,
+      "label": "2024 年 1 月",
+      "short_label": "1 月",
+      "status": "closed",
+      "start_date": "2024-01-01",
+      "end_date": "2024-01-31",
+      "closed_at": null
+    },
+    "read_semantics": {
+      "knowledge": "current_knowledge",
+      "accounting": "frozen_close",
+      "display": "frozen_with_current_supplements",
+      "system_time_replay": false,
+      "recorded_at": "system_recording_time",
+      "recording_period": "business_recording_period",
+      "recorded_later": "business_recording_period_after_selected_period"
+    },
+    "data": {
+      "employees": {
+        "gross_salary_fen": null,
+        "annual_bonus_fen": null,
+        "employer_social_insurance_fen": null,
+        "employer_housing_fund_fen": null,
+        "employee_social_insurance_fen": null,
+        "employee_housing_fund_fen": null,
+        "individual_income_tax_fen": null,
+        "net_salary_fen": null,
+        "tax_reported_salary_fen": null,
+        "personal_deduction_fen": null,
+        "unestablished_count": 1,
+        "registered_count": 1,
+        "in_period_count": 0,
+        "unknown_period_count": 1,
+        "payroll_count": 0,
+        "without_payroll_count": 0,
+        "profile_missing_count": 0,
+        "contributions_only_count": 0,
+        "controlled_cost_fen": null,
+        "settlement_adjustment_fen": null,
+        "ledger_cost_fen": "0",
+        "detail_reconciled": null,
+        "breakdown_available": false,
+        "breakdown_reason": "部分员工来源的冻结采用未能证明，保留已证明月度账面金额与精确追溯。",
+        "items": [
+          {
+            "employee_id": "legacy-employee",
+            "name": "未提供姓名或名称",
+            "selection_status": "unestablished",
+            "candidate_selections": [
+              {
+                "event_type": "state_result_selection",
+                "status": "unestablished",
+                "reason": "manifest_state_adoption_not_proven",
+                "subject_id": "legacy-wage",
+                "posting_period": "2024-01",
+                "selection_source": "close_manifest",
+                "candidates": [
+                  {
+                    "calculation_id": "c_bc47d9c1721045c2bf8217cfb2b48697f780cc4a065f774303853b47021b358b",
+                    "fact_id": "02fec46b0463472fa48b2b0ee1508d54",
+                    "kind": "opening_payroll_payable",
+                    "result_digest": "c3403786916896fdb1e4d60be5e1ddbed5ea228171021192e318d80ffa0e9e8e",
+                    "has_journal_lines": false,
+                    "trace_only": true
+                  }
+                ]
+              }
+            ],
+            "trace_targets": [
+              {
+                "calculation_id": "c_bc47d9c1721045c2bf8217cfb2b48697f780cc4a065f774303853b47021b358b",
+                "voucher_version_id": null,
+                "fact_id": "02fec46b0463472fa48b2b0ee1508d54",
+                "result_digest": "c3403786916896fdb1e4d60be5e1ddbed5ea228171021192e318d80ffa0e9e8e",
+                "selection_status": "unestablished"
+              }
+            ],
+            "payroll_source_page": {
+              "total_count": 0,
+              "filtered_count": 0,
+              "returned_count": 0,
+              "has_more": false,
+              "next_cursor": null
+            },
+            "gross_salary_fen": null,
+            "annual_bonus_fen": null,
+            "employer_social_insurance_fen": null,
+            "employer_housing_fund_fen": null,
+            "employee_social_insurance_fen": null,
+            "employee_housing_fund_fen": null,
+            "individual_income_tax_fen": null,
+            "net_salary_fen": null,
+            "tax_reported_salary_fen": null,
+            "personal_deduction_fen": null,
+            "company_cost_fen": null,
+            "recorded_net_payments_fen": null,
+            "direct_net_payments_fen": null,
+            "other_net_settlements_fen": null
+          }
+        ],
+        "identity_note": "在册状态和入离职日期仅展示已确认的管理资料，不决定工资核算资格或个税起点。"
+      },
+      "collections": {
+        "employees": {
+          "items": [
+            {
+              "employee_id": "legacy-employee",
+              "name": "未提供姓名或名称",
+              "selection_status": "unestablished",
+              "candidate_selections": [
+                {
+                  "event_type": "state_result_selection",
+                  "status": "unestablished",
+                  "reason": "manifest_state_adoption_not_proven",
+                  "subject_id": "legacy-wage",
+                  "posting_period": "2024-01",
+                  "selection_source": "close_manifest",
+                  "candidates": [
+                    {
+                      "calculation_id": "c_bc47d9c1721045c2bf8217cfb2b48697f780cc4a065f774303853b47021b358b",
+                      "fact_id": "02fec46b0463472fa48b2b0ee1508d54",
+                      "kind": "opening_payroll_payable",
+                      "result_digest": "c3403786916896fdb1e4d60be5e1ddbed5ea228171021192e318d80ffa0e9e8e",
+                      "has_journal_lines": false,
+                      "trace_only": true
+                    }
+                  ]
+                }
+              ],
+              "trace_targets": [
+                {
+                  "calculation_id": "c_bc47d9c1721045c2bf8217cfb2b48697f780cc4a065f774303853b47021b358b",
+                  "voucher_version_id": null,
+                  "fact_id": "02fec46b0463472fa48b2b0ee1508d54",
+                  "result_digest": "c3403786916896fdb1e4d60be5e1ddbed5ea228171021192e318d80ffa0e9e8e",
+                  "selection_status": "unestablished"
+                }
+              ],
+              "payroll_source_page": {
+                "total_count": 0,
+                "filtered_count": 0,
+                "returned_count": 0,
+                "has_more": false,
+                "next_cursor": null
+              },
+              "gross_salary_fen": null,
+              "annual_bonus_fen": null,
+              "employer_social_insurance_fen": null,
+              "employer_housing_fund_fen": null,
+              "employee_social_insurance_fen": null,
+              "employee_housing_fund_fen": null,
+              "individual_income_tax_fen": null,
+              "net_salary_fen": null,
+              "tax_reported_salary_fen": null,
+              "personal_deduction_fen": null,
+              "company_cost_fen": null,
+              "recorded_net_payments_fen": null,
+              "direct_net_payments_fen": null,
+              "other_net_settlements_fen": null
+            }
+          ],
+          "page": {
+            "total_count": 1,
+            "filtered_count": 1,
+            "returned_count": 1,
+            "has_more": false,
+            "next_cursor": null
+          }
+        },
+        "labor_sources": {
+          "items": [],
+          "page": {
+            "total_count": 0,
+            "filtered_count": 0,
+            "returned_count": 0,
+            "has_more": false,
+            "next_cursor": null
+          }
+        }
+      },
+      "workforce_cost": {
+        "has_activity": false,
+        "total_fen": "0",
+        "capitalized_labor_fen": "0",
+        "employee": {
+          "has_activity": false,
+          "breakdown_available": false,
+          "reason": "部分员工来源的冻结采用未能证明，保留已证明月度账面金额与精确追溯。",
+          "total_fen": "0",
+          "controlled_total_fen": null,
+          "settlement_adjustment_fen": null,
+          "prior_period_settlement_adjustment_fen": "0",
+          "batch_count": 0,
+          "periods": [],
+          "gross_salary_fen": "0",
+          "annual_bonus_fen": "0",
+          "employer_social_insurance_fen": "0",
+          "employer_housing_fund_fen": "0",
+          "employee_social_insurance_fen": "0",
+          "employee_housing_fund_fen": "0",
+          "personal_withholding_fen": "0"
+        },
+        "personal_labor": {
+          "has_activity": false,
+          "breakdown_available": true,
+          "reason": null,
+          "total_fen": "0",
+          "gross_remuneration_fen": "0",
+          "theoretical_withholding_tax_fen": "0",
+          "booked_withholding_tax_fen": "0",
+          "unwithheld_tax_fen": "0",
+          "withholding_status": "none",
+          "withholding_note": "按核算事实确认扣税义务，实际付款及申报分别查看。",
+          "settlement_modes": [],
+          "batch_count": 0,
+          "periods": [],
+          "items": []
+        }
+      },
+      "period_preparation": {
+        "company_id": "bounded",
+        "database_id": "db",
+        "period": "2024-01",
+        "as_of": "2026-09-12",
+        "as_of_semantics": "current_knowledge",
+        "closure": {
+          "state": "exact_close",
+          "digest": "82d3c8ff40b3b09118c52cd6d9dd250fad56f65627159502127ee27850694459"
+        },
+        "read_semantics": {
+          "knowledge": "current_knowledge",
+          "frozen_readiness": "exact_period_manifest_only",
+          "current_followups": "never_changes_frozen_readiness"
+        },
+        "projection": "dashboard_period_preparation",
+        "frozen_readiness": {
+          "status": "ready",
+          "source": "exact_period_manifest",
+          "readiness": {
+            "status": "not_recorded"
+          },
+          "inventories": {
+            "status": "not_recorded"
+          },
+          "material_coverage": {
+            "status": "not_recorded"
+          },
+          "previous_close_digest": {
+            "status": "not_recorded"
+          }
+        },
+        "readiness": null,
+        "current_followups": {
+          "knowledge": "current_knowledge",
+          "affects_frozen_readiness": false,
+          "materials": {
+            "status": "needs_information",
+            "issues": [
+              {
+                "field": "materials.transactions",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.payroll",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.bank",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.tax",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.assets",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.financing",
+                "message": "需要资料覆盖或无业务确认"
+              }
+            ],
+            "inventory_count": 0,
+            "coverage_digest": "ccfd6e9af835b0d59a18152e629f90f0fc779bb21f58458d83ba4130ec1b3686"
+          },
+          "accounting": {
+            "status": "ready",
+            "issues": [],
+            "pending_subject_id": null,
+            "unpublished_count": 0
+          },
+          "close_requirements": {
+            "status": "ready",
+            "issues": []
+          },
+          "settlements": {
+            "status": "established",
+            "cutoff_period": "2024-01",
+            "current_cutoff_period": "2024-01",
+            "issues": [],
+            "obligation_count": 1,
+            "complete": true,
+            "unestablished_state_selection_count": 0,
+            "movement_count": 1,
+            "source_amount_fen": "100",
+            "paid_fen": "40",
+            "other_settled_fen": "0",
+            "remaining_fen": "60"
+          },
+          "external": {
+            "status": "unestablished",
+            "obligation_count": 0,
+            "completion_status_counts": {},
+            "basis_issue_count": 0,
+            "fact_issues": []
+          },
+          "file_jobs": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        }
+      }
+    }
+  },
+  "assets": {
+    "schema_version": 2,
+    "snapshot_version": "8bf36dfd0313775bf5ce46ccf6d91ac6855341cee38e80538d35f92c4139fe90",
+    "selected_period": {
+      "key": "2024-01",
+      "year": 2024,
+      "month": 1,
+      "label": "2024 年 1 月",
+      "short_label": "1 月",
+      "status": "closed",
+      "start_date": "2024-01-01",
+      "end_date": "2024-01-31",
+      "closed_at": null
+    },
+    "read_semantics": {
+      "knowledge": "current_knowledge",
+      "accounting": "frozen_close",
+      "display": "frozen_with_current_supplements",
+      "system_time_replay": false,
+      "recorded_at": "system_recording_time",
+      "recording_period": "business_recording_period",
+      "recorded_later": "business_recording_period_after_selected_period"
+    },
+    "data": {
+      "fixed_asset_cost_fen": "1000",
+      "accumulated_depreciation_fen": "8",
+      "fixed_asset_net_fen": "992",
+      "intangible_asset_cost_fen": "0",
+      "accumulated_amortization_fen": "0",
+      "intangible_asset_net_fen": "0",
+      "active_count": 0,
+      "registered_count": 1,
+      "unestablished_count": 1,
+      "ledger_cost_fen": "1000",
+      "ledger_accumulated_fen": "8",
+      "ledger_net_fen": "992",
+      "active_ledger_net_fen": "992",
+      "pending_intangible_count": 0,
+      "pending_intangible_cost_fen": "0",
+      "project_cost_fen": "0",
+      "projects": [],
+      "reconciliation_scope": "在用及待启用资产、尚未转出项目成本",
+      "card_cost_fen": null,
+      "card_accumulated_fen": null,
+      "card_net_fen": null,
+      "established_card_totals": {
+        "registered_count": 0,
+        "cost_fen": "0",
+        "accumulated_charge_fen": "0",
+        "book_value_fen": "0"
+      },
+      "pending_fixed_count": 0,
+      "pending_fixed_cost_fen": null,
+      "month_charge_fen": null,
+      "month_acquired_count": 0,
+      "month_acquired_fen": "0",
+      "month_cost_adjustment_fen": "0",
+      "month_activated_count": 0,
+      "month_exited_count": 0,
+      "reconciled": null,
+      "reconciliation_label": "资产卡片与账面差异需核对",
+      "differences": {
+        "cost_fen": null,
+        "accumulated_fen": null,
+        "net_fen": null
+      },
+      "fixed": {
+        "registered_count": 1,
+        "unestablished_count": 1,
+        "active_count": 0,
+        "items": [
+          {
+            "asset_id": "legacy-asset",
+            "asset_type": "fixed",
+            "name": "资产来源采用待核对",
+            "selection_status": "unestablished",
+            "candidate_selections": [
+              {
+                "event_type": "state_result_selection",
+                "status": "unestablished",
+                "reason": "manifest_state_adoption_not_proven",
+                "subject_id": "legacy-asset",
+                "posting_period": "2024-01",
+                "selection_source": "close_manifest",
+                "candidates": [
+                  {
+                    "calculation_id": "c_d7ca675c998053dd40a7b19c07dc28b2c9aab82f2417c30692ccd198c9f14723",
+                    "fact_id": "ca37ad65cdea414d9fc97e351608a985",
+                    "kind": "opening_asset",
+                    "result_digest": "e37f437eba103699a5c7a44f91455ec45a5102f53783fdfa6909a3339c69f816",
+                    "has_journal_lines": false,
+                    "trace_only": true
+                  }
+                ]
+              }
+            ],
+            "trace_targets": [
+              {
+                "calculation_id": "c_d7ca675c998053dd40a7b19c07dc28b2c9aab82f2417c30692ccd198c9f14723",
+                "voucher_version_id": null,
+                "fact_id": "ca37ad65cdea414d9fc97e351608a985",
+                "result_digest": "e37f437eba103699a5c7a44f91455ec45a5102f53783fdfa6909a3339c69f816",
+                "selection_status": "unestablished"
+              }
+            ],
+            "cost_fen": null,
+            "accumulated_charge_fen": null,
+            "month_charge_fen": null,
+            "book_value_fen": null
+          }
+        ],
+        "active_cost_fen": null,
+        "active_accumulated_fen": null,
+        "active_net_fen": null,
+        "pending_count": 0,
+        "pending_cost_fen": null,
+        "month_acquired_count": 0,
+        "month_acquired_fen": "0",
+        "month_cost_adjustment_fen": "0",
+        "month_depreciation_fen": null,
+        "disposed_count": 0,
+        "month_activated_count": 0,
+        "month_disposed_count": 0
+      },
+      "intangible": {
+        "registered_count": 0,
+        "unestablished_count": 0,
+        "active_count": 0,
+        "items": [],
+        "active_cost_fen": "0",
+        "active_accumulated_fen": "0",
+        "active_net_fen": "0",
+        "pending_count": 0,
+        "pending_cost_fen": "0",
+        "month_acquired_count": 0,
+        "month_acquired_fen": "0",
+        "month_cost_adjustment_fen": "0",
+        "month_amortization_fen": "0",
+        "retired_count": 0,
+        "month_retired_count": 0
+      },
+      "collections": {
+        "assets": {
+          "items": [
+            {
+              "asset_id": "legacy-asset",
+              "asset_type": "fixed",
+              "name": "资产来源采用待核对",
+              "selection_status": "unestablished",
+              "candidate_selections": [
+                {
+                  "event_type": "state_result_selection",
+                  "status": "unestablished",
+                  "reason": "manifest_state_adoption_not_proven",
+                  "subject_id": "legacy-asset",
+                  "posting_period": "2024-01",
+                  "selection_source": "close_manifest",
+                  "candidates": [
+                    {
+                      "calculation_id": "c_d7ca675c998053dd40a7b19c07dc28b2c9aab82f2417c30692ccd198c9f14723",
+                      "fact_id": "ca37ad65cdea414d9fc97e351608a985",
+                      "kind": "opening_asset",
+                      "result_digest": "e37f437eba103699a5c7a44f91455ec45a5102f53783fdfa6909a3339c69f816",
+                      "has_journal_lines": false,
+                      "trace_only": true
+                    }
+                  ]
+                }
+              ],
+              "trace_targets": [
+                {
+                  "calculation_id": "c_d7ca675c998053dd40a7b19c07dc28b2c9aab82f2417c30692ccd198c9f14723",
+                  "voucher_version_id": null,
+                  "fact_id": "ca37ad65cdea414d9fc97e351608a985",
+                  "result_digest": "e37f437eba103699a5c7a44f91455ec45a5102f53783fdfa6909a3339c69f816",
+                  "selection_status": "unestablished"
+                }
+              ],
+              "cost_fen": null,
+              "accumulated_charge_fen": null,
+              "month_charge_fen": null,
+              "book_value_fen": null
+            }
+          ],
+          "page": {
+            "total_count": 1,
+            "filtered_count": 1,
+            "returned_count": 1,
+            "has_more": false,
+            "next_cursor": null
+          }
+        },
+        "projects": {
+          "items": [],
+          "page": {
+            "total_count": 0,
+            "filtered_count": 0,
+            "returned_count": 0,
+            "has_more": false,
+            "next_cursor": null
+          }
+        }
+      },
+      "period_preparation": {
+        "company_id": "bounded",
+        "database_id": "db",
+        "period": "2024-01",
+        "as_of": "2026-09-12",
+        "as_of_semantics": "current_knowledge",
+        "closure": {
+          "state": "exact_close",
+          "digest": "82d3c8ff40b3b09118c52cd6d9dd250fad56f65627159502127ee27850694459"
+        },
+        "read_semantics": {
+          "knowledge": "current_knowledge",
+          "frozen_readiness": "exact_period_manifest_only",
+          "current_followups": "never_changes_frozen_readiness"
+        },
+        "projection": "dashboard_period_preparation",
+        "frozen_readiness": {
+          "status": "ready",
+          "source": "exact_period_manifest",
+          "readiness": {
+            "status": "not_recorded"
+          },
+          "inventories": {
+            "status": "not_recorded"
+          },
+          "material_coverage": {
+            "status": "not_recorded"
+          },
+          "previous_close_digest": {
+            "status": "not_recorded"
+          }
+        },
+        "readiness": null,
+        "current_followups": {
+          "knowledge": "current_knowledge",
+          "affects_frozen_readiness": false,
+          "materials": {
+            "status": "needs_information",
+            "issues": [
+              {
+                "field": "materials.transactions",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.payroll",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.bank",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.tax",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.assets",
+                "message": "需要资料覆盖或无业务确认"
+              },
+              {
+                "field": "materials.financing",
+                "message": "需要资料覆盖或无业务确认"
+              }
+            ],
+            "inventory_count": 0,
+            "coverage_digest": "ccfd6e9af835b0d59a18152e629f90f0fc779bb21f58458d83ba4130ec1b3686"
+          },
+          "accounting": {
+            "status": "ready",
+            "issues": [],
+            "pending_subject_id": null,
+            "unpublished_count": 0
+          },
+          "close_requirements": {
+            "status": "ready",
+            "issues": []
+          },
+          "settlements": {
+            "status": "established",
+            "cutoff_period": "2024-01",
+            "current_cutoff_period": "2024-01",
+            "issues": [],
+            "obligation_count": 1,
+            "complete": true,
+            "unestablished_state_selection_count": 0,
+            "movement_count": 1,
+            "source_amount_fen": "100",
+            "paid_fen": "40",
+            "other_settled_fen": "0",
+            "remaining_fen": "60"
+          },
+          "external": {
+            "status": "unestablished",
+            "obligation_count": 0,
+            "completion_status_counts": {},
+            "basis_issue_count": 0,
+            "fact_issues": []
+          },
+          "file_jobs": {
+            "total_count": 0,
+            "status_counts": {},
+            "issue_count": 0
+          }
+        }
+      }
+    }
+  }
+}

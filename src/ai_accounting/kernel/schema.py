@@ -10,7 +10,24 @@ from pydantic import BaseModel
 from .contracts import Registry
 from .types import YearMonth
 
-VERSION = 8
+VERSION = 11
+
+COMMENTARY_BASIS_DDL = """
+CREATE TABLE period_commentary_basis(commentary_id TEXT PRIMARY KEY
+ REFERENCES period_commentary_revision(id) DEFERRABLE INITIALLY DEFERRED,
+ contract TEXT NOT NULL,basis TEXT,content_digest BLOB,
+ CHECK((contract='legacy-context-v8' AND basis IS NULL AND content_digest IS NULL)
+ OR(contract='commentary-content-v1' AND basis IS NOT NULL AND json_valid(basis)
+ AND content_digest IS NOT NULL AND length(content_digest)=32))) STRICT;
+CREATE TRIGGER commentary_basis_before_record BEFORE INSERT ON period_commentary_basis
+ WHEN NEW.contract<>'commentary-content-v1' OR EXISTS(
+ SELECT 1 FROM period_commentary_revision WHERE id=NEW.commentary_id)
+ BEGIN SELECT RAISE(ABORT,'commentary basis must precede new commentary'); END;
+CREATE TRIGGER commentary_requires_basis BEFORE INSERT ON period_commentary_revision
+ WHEN NOT EXISTS(SELECT 1 FROM period_commentary_basis
+ WHERE commentary_id=NEW.id AND contract='commentary-content-v1')
+ BEGIN SELECT RAISE(ABORT,'commentary requires content basis'); END;
+"""
 DDL = """
 CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1), company_id TEXT NOT NULL,
  taxpayer_id TEXT NOT NULL, database_id TEXT NOT NULL, schema_version INTEGER NOT NULL) STRICT;
@@ -354,6 +371,7 @@ def _schema_for_models(models) -> str:
         )
     )
     from .display import DISPLAY_DDL
+    from .read_indexes import READ_INDEX_DDL
     from .security.schema import COMPANY_DDL
     from .versions import HISTORY_DDL
 
@@ -370,8 +388,11 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
 """
         + immutable_sql("company_note_revision")
         + DISPLAY_DDL
+        + COMMENTARY_BASIS_DDL
         + immutable_sql("display_profile_revision")
         + immutable_sql("period_commentary_revision")
+        + immutable_sql("period_commentary_basis")
+        + READ_INDEX_DDL
         + ";\n".join(COMPANY_DDL)
         + ";\n"
     )

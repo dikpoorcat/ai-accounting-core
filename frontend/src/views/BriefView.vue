@@ -2,9 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import { fetchBrief, type BriefData } from "../api/brief";
-import { dashboardErrorMessage } from "../api/client";
+import { fetchBrief, type BriefData, type BriefQuery } from "../api/brief";
+import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
+import PeriodPreparation from "../components/PeriodPreparation.vue";
+import DashboardPagination from "../components/DashboardPagination.vue";
+import DashboardBusinessRecords from "../components/DashboardBusinessRecords.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import BriefActivityWorkbench from "../components/brief/BriefActivityWorkbench.vue";
 import BriefFinancialOverview from "../components/brief/BriefFinancialOverview.vue";
@@ -13,7 +16,7 @@ import BriefWorkforceSection from "../components/brief/BriefWorkforceSection.vue
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
-type PriorityAction = "bank-details";
+type PriorityAction = "bank-details" | "validation";
 type PriorityItem = {
   title: string;
   note: string;
@@ -23,42 +26,61 @@ type PriorityItem = {
 
 const route = useRoute();
 const router = useRouter();
-const { context, load: loadContext } = useDashboardContext();
+const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
 const response = ref<Awaited<ReturnType<typeof fetchBrief>> | null>(null);
 const loading = ref(false);
-const loadingMore = ref(false);
-let pageController: AbortController | null = null;
+type BriefSection = NonNullable<BriefQuery["section"]>;
+const sectionLoading = ref<Partial<Record<BriefSection, boolean>>>({});
+const sectionErrors = ref<Partial<Record<BriefSection, string>>>({});
+const pageControllers = new Map<BriefSection, AbortController>();
+const updateNotice = ref("");
 const error = ref("");
 const activeSection = ref("overview");
 let controller: AbortController | null = null;
 let sectionSyncLocked = false;
 let initialized = false;
+let mounted = true;
+let requestGeneration = 0;
+const businessSections = [
+  { key: "businesses", label: "正式业务记录（含不产生凭证的结果）" }, { key: "open_items", label: "月末待收待付的完整来源" },
+  { key: "settlement_events", label: "相关后续收付款与抵销" }, { key: "external_followups", label: "相关外部办理" }, { key: "file_jobs", label: "相关文件任务" },
+] as const;
 
 const selectedPeriod = computed(() => response.value?.selected_period?.key || "");
 const periodOptions = computed(() => context.value?.periods || []);
 const data = computed<BriefData | null>(() => response.value?.data || null);
 const isClosed = computed(() => response.value?.selected_period?.status === "closed");
-const currentOutstanding = computed(
-  () => data.value?.open_items.current_outstanding || data.value?.open_items,
-);
 const sectionLinks = computed(() => {
   const links = [
     { id: "overview", label: "概览" },
+    { id: "open-items", label: "待收待付" },
     { id: "activity", label: "业务凭证" },
   ];
   if (data.value?.workforce_cost.has_activity) links.push({ id: "workforce", label: "用工" });
   links.push(
-    { id: "finance", label: "财务位置" },
-    { id: "open-items", label: "往来" },
-    { id: "validation", label: "校验" },
+    { id: "finance", label: "资金资产" },
+
+    { id: "validation", label: "资料核对" },
   );
   return links;
 });
 const priorities = computed(() => {
   if (!data.value || !response.value?.selected_period) return [];
   const items: PriorityItem[] = [];
-  if (!data.value.validation.integrity_valid) {
-    items.push({ title: "账务一致性异常", note: "请优先查看失败的校验项", state: "error" });
+  if (data.value.open_items.complete === false || data.value.open_items.unestablished_count) {
+    items.push({ title: "待收待付来源尚待核对", note: "已知金额不代表完整结果，查看精确来源与候选", state: "attention", action: "validation" });
+  }
+  if (data.value.validation.integrity_valid === false) {
+    items.push({ title: "账务金额需要核对", note: "查看具体差异及对应记录", state: "error", action: "validation" });
+  }
+  if (data.value.validation.integrity_valid === null) {
+    items.push({ title: "财务位置无法完整建立", note: "查看尚未明确的来源归属", state: "attention", action: "validation" });
+  }
+  if (data.value.validation.issues?.length) {
+    items.push({ title: `${data.value.validation.issues.length} 项当前核算资料需要核对`, note: "查看缺少的业务事实或待复核来源", state: "attention", action: "validation" });
+  }
+  if (["missing", "partial"].includes(data.value.cash.coverage_state)) {
+    items.push({ title: "银行流水资料尚不完整", note: "现有流水金额仅反映已提供的资料", state: "attention", action: "bank-details" });
   }
   if (data.value.cash.unmatched_count) {
     items.push({
@@ -68,25 +90,20 @@ const priorities = computed(() => {
       action: "bank-details",
     });
   }
-  if (data.value.cash.pending_late_count) {
+  if (data.value.cash.needs_review_count) {
     items.push({
-      title: `${data.value.cash.pending_late_count} 笔迟到流水待处理`,
-      note: "需按迟到证据流程处理",
+      title: `${data.value.cash.needs_review_count} 笔流水匹配需复核`,
+      note: "原匹配依据已发生变化",
       state: "attention",
+      action: "bank-details",
     });
   }
-  if (response.value.selected_period.status !== "closed") {
+  if (data.value.material_completeness?.issues.length) {
     items.push({
-      title: `${response.value.selected_period.short_label}尚未关账`,
-      note: "当前期间仍可补录或更正",
+      title: `${data.value.material_completeness.issues.length} 项资料需要核对`,
+      note: "查看来源文件和具体事项",
       state: "attention",
-    });
-  }
-  if (response.value.selected_period.status !== "closed" && currentOutstanding.value?.total_count) {
-    items.push({
-      title: "目前仍有待收待付",
-      note: `待收 ${formatFen(currentOutstanding.value.receivable_fen)} · 待付 ${formatFen(currentOutstanding.value.payable_fen)}`,
-      state: "neutral",
+      action: "validation",
     });
   }
   return items;
@@ -94,10 +111,10 @@ const priorities = computed(() => {
 const takeaway = computed(() => {
   if (!data.value) return "";
   const details = data.value.management_commentary_details;
-  if (details?.status === "stale") return "已有经营结论的依据发生变化，需要更新后再使用。";
   if (details?.current) return details.current.text;
   if (data.value.management_commentary) return data.value.management_commentary;
-  return "本月尚未提供经营结论。";
+  const result = data.value.position.month_result_fen;
+  return `本月已入账收入 ${formatFen(data.value.position.month_revenue_fen)}，费用 ${formatFen(data.value.position.month_expense_fen)}，${result === null ? '账面盈亏尚不能完整建立' : `${fen(result) < 0n ? '账面亏损' : '账面结余'} ${formatPositiveFen(result)}`}。月末账面资金 ${formatFen(data.value.funds_overview.total_fen)}。`;
 });
 
 function queryPeriod() {
@@ -105,44 +122,84 @@ function queryPeriod() {
 }
 
 async function loadData(period: string | null) {
+  const generation = ++requestGeneration;
+  const selection = selectionKey();
   controller?.abort();
-  pageController?.abort();
-  loadingMore.value = false;
+  for (const request of pageControllers.values()) request.abort();
+  pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
   const request = new AbortController();
   controller = request;
   loading.value = true;
+  response.value = null;
   error.value = "";
   try {
-    const result = await fetchBrief(period, request.signal);
-    if (!request.signal.aborted) response.value = result;
+    const target = typeof route.query.voucher === "string" ? route.query.voucher : undefined;
+    const result = await fetchBrief(period, request.signal, 0, undefined,
+      target ? /^\d+$/.test(target) ? { voucher_number: Number(target) } : { voucher_version_id: target } : {});
+    if (isCurrent(generation, selection) && controller === request) {
+      response.value = result;
+      if (target) { await nextTick(); if (isCurrent(generation, selection)) focusSection("activity"); }
+    }
   } catch (caught: unknown) {
-    if (caught instanceof DOMException && caught.name === "AbortError") return;
+    if (!isCurrent(generation, selection) || (caught instanceof DOMException && caught.name === "AbortError")) return;
     error.value = dashboardErrorMessage(caught);
   } finally {
-    if (controller === request) loading.value = false;
+    if (isCurrent(generation, selection) && controller === request) loading.value = false;
   }
 }
 
-async function loadMore() {
+async function loadMore(section: BriefSection = "vouchers", restart = false) {
   const current = response.value;
-  if (!current?.data?.voucher_page.has_more || loadingMore.value) return;
-  const request = new AbortController(); pageController = request; loadingMore.value = true;
+  const page = current?.data?.collections[section]?.page;
+  if (!current?.data || (!restart && page && (!page.has_more || !page.next_cursor)) || sectionLoading.value[section]) return;
+  const generation = requestGeneration, selection = selectionKey();
+  const request = new AbortController(); pageControllers.set(section, request);
+  sectionLoading.value[section] = true; sectionErrors.value[section] = "";
+  const valid = () => isCurrent(generation, selection) && pageControllers.get(section) === request;
   try {
-    const next = await fetchBrief(selectedPeriod.value, request.signal, current.data.voucher_page.next_after_number ?? 0);
-    if (request.signal.aborted || !next.data || response.value !== current) return;
-    const groups = next.data.activity_groups.map(group => {
-      const old = current.data!.activity_groups.find(item => item.key === group.key);
-      return { ...group, rows: [...(old?.rows ?? []), ...group.rows] };
-    });
-    for (const group of current.data.activity_groups) if (!groups.some(item => item.key === group.key)) groups.push(group);
-    response.value = { ...next, data: { ...next.data, vouchers: [...current.data.vouchers, ...next.data.vouchers], activity_groups: groups } };
-  } catch (caught) { if (!request.signal.aborted) error.value = dashboardErrorMessage(caught); }
-  finally { if (pageController === request) loadingMore.value = false; }
+    const next = await fetchBrief(selectedPeriod.value, request.signal, 0, current.snapshot_version, { section, cursor: restart ? undefined : page?.next_cursor ?? undefined });
+    if (!valid() || !next.data || !response.value?.data) return;
+    const latest = response.value, before = latest.data!;
+    const collection = next.data.collections[section];
+    const groups = (next.data.activity_groups ?? []).map(group => ({ ...group, rows: [...(before.activity_groups.find(item => item.key === group.key)?.rows ?? []), ...group.rows] }));
+    for (const group of before.activity_groups) if (!groups.some(item => item.key === group.key)) groups.push(group);
+    response.value = { ...latest, data: { ...before,
+      ...(section === "vouchers" ? { vouchers: [...before.vouchers, ...next.data.vouchers], voucher_page: next.data.voucher_page, activity_groups: groups } : {}),
+      ...(section === "file_jobs" ? { period_preparation: next.data.period_preparation } : {}),
+      collections: { ...before.collections, [section]: { ...collection, items: [...(restart ? [] : before.collections[section]?.items ?? []), ...collection.items] } },
+    } };
+  } catch (caught) {
+    if (!valid()) return;
+    if (isDashboardSnapshotChanged(caught)) {
+      updateNotice.value = "资料已更新，正在重新读取。";
+      if (section === "file_jobs" && !restart) {
+        sectionLoading.value[section] = false;
+        if (response.value?.data) { const collections = { ...response.value.data.collections }; delete collections.file_jobs; response.value = { ...response.value, data: { ...response.value.data, collections } }; }
+        await loadMore(section, true);
+      } else await refresh();
+    } else sectionErrors.value[section] = dashboardErrorMessage(caught);
+  } finally { if (valid()) { sectionLoading.value[section] = false; pageControllers.delete(section); } }
+}
+
+function openBusinessSection(event: Event, section: BriefQuery["section"]) {
+  if ((event.target as HTMLDetailsElement).open && !data.value?.collections[section!]) void loadMore(section);
+}
+
+async function refresh() {
+  invalidateRequests();
+  const generation = requestGeneration, selection = selectionKey();
+  try {
+    await refreshContext();
+    if (isCurrent(generation, selection)) await loadData(queryPeriod());
+  } catch (caught) { if (isCurrent(generation, selection)) error.value = dashboardErrorMessage(caught); }
 }
 
 async function initialize() {
+  initialized = true;
+  const generation = requestGeneration, selection = selectionKey();
   try {
     const loadedContext = await loadContext();
+    if (!isCurrent(generation, selection)) return;
     initialized = true;
     const requested = queryPeriod();
     const target = requested || loadedContext.default_period;
@@ -152,20 +209,22 @@ async function initialize() {
     }
     await loadData(target);
   } catch (caught: unknown) {
+    if (!isCurrent(generation, selection)) return;
     error.value = dashboardErrorMessage(caught);
     loading.value = false;
   }
 }
 
 function changePeriod(value: string) {
-  void router.push({ query: { ...route.query, period: value } });
+  void router.push({ query: { company_id: route.query.company_id, period: value }, hash: "" });
 }
 
 function runPriorityAction(action: PriorityAction) {
+  if (action === "validation") { focusSection("validation"); return; }
   if (action !== "bank-details") return;
   void router.push({
     name: "funds",
-    query: { ...route.query, period: selectedPeriod.value || undefined },
+    query: { company_id: route.query.company_id, period: selectedPeriod.value || undefined, funds_view: "bank" },
     hash: "#bank-details",
   });
 }
@@ -195,7 +254,7 @@ function positionSection(section: HTMLElement) {
   const previousBehavior = root.style.scrollBehavior;
   root.style.scrollBehavior = "auto";
   window.scrollTo({
-    top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - 78),
+    top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - (document.querySelector(".section-nav")?.getBoundingClientRect().height ?? 42) - 16),
     behavior: "auto",
   });
   root.style.scrollBehavior = previousBehavior;
@@ -215,7 +274,7 @@ function updateSectionFromScroll() {
   if (sectionSyncLocked) return;
   const links = sectionLinks.value;
   if (!links.length) return;
-  const probeTop = 80;
+  const probeTop = (document.querySelector(".section-nav")?.getBoundingClientRect().height ?? 42) + 16;
   let candidate = links[0].id;
   for (const link of links) {
     const section = document.getElementById(link.id);
@@ -251,54 +310,52 @@ function heroNote() {
   const period = response.value?.selected_period;
   if (!period) return "";
   if (period.status !== "closed") {
-    return "当前期间仍可补录或更正；已入账业务、待识别流水和期末待结事项分开展示。";
+    return "这里汇总本月已记账的业务，以及月底的资金、资产和待收待付。";
   }
   const closedAt = period.closed_at ? `${new Date(period.closed_at).toLocaleString("zh-CN")} ` : "";
-  return `${closedAt}完成关账；原凭证不可修改，后续更正以冲正方式保留。`;
+  return `${closedAt}完成关账；以下金额反映该月末情况。`;
 }
 
-function bankContext() {
-  if (!data.value) return "";
-  const net = fen(data.value.cash.net_fen);
-  const movement =
-    net > 0n
-      ? `流水净流入 ${formatFen(net)}`
-      : net < 0n
-        ? `流水净流出 ${formatPositiveFen(net)}`
-        : "流水无净变动";
-  return `${movement} · ${data.value.cash.matched_count}/${data.value.cash.ordinary_count} 已匹配`;
+function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
+function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
+function invalidateRequests() {
+  requestGeneration += 1;
+  controller?.abort();
+  for (const request of pageControllers.values()) request.abort();
+  pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
+  controller = null; response.value = null; loading.value = false;
 }
 
 watch(
-  () => route.query.company_id,
+  () => [route.query.company_id, route.query.period, route.query.voucher],
   (value, previous) => {
-    if (!initialized || value === previous) return;
-    controller?.abort();
-    response.value = null;
-    loading.value = false;
+    if (value.every((item, index) => item === previous[index])) return;
+    invalidateRequests();
   },
+  { flush: "sync" },
 );
 watch(
-  () => [context.value?.current_company?.company_id, route.query.period] as const,
-  ([orgId, period], [previousOrgId, previousPeriod]) => {
+  () => [context.value?.current_company?.company_id, route.query.period, route.query.voucher] as const,
+  ([orgId, period, voucher], [previousOrgId, previousPeriod, previousVoucher]) => {
     if (!initialized || !orgId) return;
-    if (orgId !== previousOrgId || period !== previousPeriod) {
+    if (orgId !== previousOrgId || period !== previousPeriod || voucher !== previousVoucher) {
       void loadData(typeof period === "string" ? period : null);
     }
   },
 );
-watch(data, async (value, previous) => {
-  const rememberedSection = activeSection.value;
-  lockSectionSync();
-  activeSection.value = sectionLinks.value.some((link) => link.id === rememberedSection)
-    ? rememberedSection
-    : "overview";
-  await nextTick();
-  if (value && previous && activeSection.value !== "overview") {
-    const section = document.getElementById(activeSection.value);
-    if (section) positionSection(section);
-  }
+watch(sectionLinks, (links) => {
+  if (!links.some((link) => link.id === activeSection.value)) activeSection.value = "overview";
 });
+async function revealCollection() {
+  const key = route.query.section;
+  if (typeof key !== "string" || !businessSections.some(item => item.key === key) || !data.value) return;
+  const generation = requestGeneration, selection = selectionKey();
+  await nextTick();
+  if (!isCurrent(generation, selection) || route.query.section !== key) return;
+  const detail = document.getElementById(`brief-${key}`) as HTMLDetailsElement | null;
+  if (detail) { detail.open = true; detail.scrollIntoView({ block: "start" }); detail.querySelector("summary")?.focus({ preventScroll: true }); }
+}
+watch(() => [route.query.section, !!data.value], () => { void revealCollection(); });
 onMounted(() => {
   window.addEventListener("scroll", updateSectionFromScroll, { passive: true });
   window.addEventListener("wheel", enableSectionSyncForUserScroll, { passive: true });
@@ -308,8 +365,8 @@ onMounted(() => {
   void initialize();
 });
 onBeforeUnmount(() => {
-  controller?.abort();
-  pageController?.abort();
+  mounted = false;
+  invalidateRequests();
   window.removeEventListener("scroll", updateSectionFromScroll);
   window.removeEventListener("wheel", enableSectionSyncForUserScroll);
   window.removeEventListener("touchmove", enableSectionSyncForUserScroll);
@@ -323,13 +380,13 @@ onBeforeUnmount(() => {
     <DashboardModuleHeader
       eyebrow="经营简报"
       title="月度经营与财务概览"
-      description="聚焦经营结果、资金动向、往来事项与账务可信度。"
+      description="了解本月赚亏、资金去向和待收待付。"
       :options="periodOptions"
       :selected="selectedPeriod"
       :loading="loading"
       select-label="查看月份"
       @change="changePeriod"
-      @refresh="loadData(queryPeriod())"
+      @refresh="refresh"
     />
 
     <div v-if="error" class="state-panel error" role="alert">
@@ -342,7 +399,7 @@ onBeforeUnmount(() => {
     </div>
     <div v-else-if="!data" class="state-panel">
       <h2>还没有可查看的月份</h2>
-      <p>生成首个会计期间后，这里会出现只读经营简报。</p>
+      <p>录入公司业务后，即可按月份查看经营情况。</p>
     </div>
 
     <template v-else>
@@ -350,11 +407,19 @@ onBeforeUnmount(() => {
         :items="sectionLinks"
         :active="activeSection"
         label="经营简报区段"
-        floating
         @select="focusSection"
       />
 
-      <section id="overview" class="cockpit section-anchor" tabindex="-1">
+      <p v-if="updateNotice" role="status" class="update-notice">{{ updateNotice }}</p>
+      <section id="overview" class="kpi-grid section-anchor" tabindex="-1" aria-label="本月核心指标">
+        <article :class="['kpi', 'result', { loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }]"><span class="kpi-label">本月账面盈亏</span><strong>{{ formatFen(data.position.month_result_fen) }}</strong><small>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</small></article>
+        <article class="kpi bank"><span class="kpi-label">月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金和支付平台的账面余额</small></article>
+        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ data.open_items.receivable_count }} 项来源 · 查看构成 ›</small></button>
+        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} 项来源 · 查看构成 ›</small></button>
+      </section>
+      <p class="metric-scope">以上为所选月末完整汇总。待收包含预付款待冲抵等事项，不代表预计或到期现金收付。</p>
+      <p v-if="data.position.complete === false || data.open_items.complete === false || data.open_items.unestablished_count" class="needs-check" role="status">部分来源尚待核对，已知金额也不能视为完整结论。<button type="button" @click="focusSection('validation')">查看依据与问题</button></p>
+      <section id="brief-conclusion" class="cockpit section-anchor" tabindex="-1">
         <div class="cockpit-copy">
           <div class="cockpit-meta">
             <span>{{ response?.selected_period?.short_label }}</span>
@@ -363,34 +428,37 @@ onBeforeUnmount(() => {
           <h2>{{ response?.selected_period?.short_label }}经营简报</h2>
           <p class="hero-note">{{ heroNote() }}</p>
           <div class="status-rail" aria-label="本月状态">
-            <span :class="['status-chip', { error: !data.validation.integrity_valid }]">
-              {{ data.validation.integrity_valid ? "账务一致" : "账务异常" }}
+            <span :class="['status-chip', { error: data.validation.integrity_valid === false }]">
+              {{ data.validation.integrity_valid === null ? "依据待核对" : data.validation.integrity_valid ? "账面平衡" : "账务异常" }}
             </span>
             <span
-              :class="['status-chip', { attention: data.cash.unmatched_count + data.cash.pending_late_count }]"
+              :class="['status-chip', { attention: data.cash.unmatched_count + data.cash.needs_review_count }]"
             >
               {{
-                data.cash.unmatched_count + data.cash.pending_late_count
-                  ? `${data.cash.unmatched_count + data.cash.pending_late_count} 笔流水待处理`
-                  : data.cash.transaction_count
+                data.cash.unmatched_count + data.cash.needs_review_count
+                  ? `${data.cash.unmatched_count + data.cash.needs_review_count} 笔流水待处理`
+                  : data.cash.coverage_state === 'missing' ? '银行流水未提供'
+                    : data.cash.coverage_state === 'partial' ? '流水资料尚不完整'
+                    : data.cash.coverage_state === 'not_applicable' ? '无银行账户'
+                    : data.cash.transaction_count
                     ? "银行流水已处理"
                     : "本月无银行流水"
               }}
             </span>
-            <span :class="['status-chip', { attention: response?.selected_period?.status !== 'closed' }]">
-              {{ response?.selected_period?.status === "closed" ? "期间已锁定" : "期间尚未关账" }}
+            <span class="status-chip">
+              {{ response?.selected_period?.status === "closed" ? "本月已关账" : "本月可继续补录" }}
             </span>
           </div>
           <div class="takeaway">
             <span>经营结论</span>
             <strong>{{ takeaway }}</strong>
             <details v-if="data.management_commentary_details?.status === 'stale' && data.management_commentary_details.latest">
-              <summary>查看已失效的旧结论</summary>
+              <summary>账务已更新，查看之前的经营说明</summary>
               <p>{{ data.management_commentary_details.latest.text }}</p>
             </details>
             <details v-if="data.management_commentary_details?.supplements.length">
-              <summary>后补说明（不改变关账时封存结论）</summary>
-              <p v-for="note in data.management_commentary_details.supplements" :key="note.id">第 {{ note.revision }} 版：{{ note.text }}</p>
+              <summary>关账后的补充说明</summary>
+              <p v-for="note in data.management_commentary_details.supplements" :key="note.id">{{ note.text }}</p>
             </details>
           </div>
         </div>
@@ -399,7 +467,7 @@ onBeforeUnmount(() => {
           <header>
             <span class="queue-title">需要处理</span>
             <span :class="['queue-count', { healthy: !priorities.length }]">
-              {{ priorities.length ? `${priorities.length}项` : "✓" }}
+              {{ priorities.length ? "分类提示" : "核对概况" }}
             </span>
           </header>
           <div v-if="priorities.length" class="priority-list">
@@ -425,41 +493,14 @@ onBeforeUnmount(() => {
         </aside>
       </section>
 
-      <section class="kpi-grid" aria-label="本月核心指标">
-        <article class="kpi bank">
-          <span class="kpi-label">账面银行余额</span>
-          <strong>{{ formatFen(data.position.bank_fen) }}</strong>
-          <small>{{ bankContext() }}</small>
-        </article>
-        <article :class="['kpi', 'result', { loss: fen(data.position.month_result_fen) < 0n }]">
-          <span class="kpi-label">本月账面损益</span>
-          <strong>{{ formatFen(data.position.month_result_fen) }}</strong>
-          <small>
-            收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用
-            {{ formatFen(data.position.month_expense_fen) }} · 按业务归属月
-          </small>
-        </article>
-        <button class="kpi asset" type="button" @click="focusSection('finance')">
-          <span class="kpi-label">长期资产净值</span>
-          <strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong>
-          <small>
-            固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形
-            {{ data.long_term_assets.intangible_active_count }} 项 <b>查看构成 ›</b>
-          </small>
-        </button>
-        <button class="kpi open" type="button" @click="focusSection('open-items')">
-          <span class="kpi-label">{{ isClosed ? "关账时点应收 / 应付" : "期末待收 / 待付" }}</span>
-          <strong>
-            {{ formatFen(data.open_items.receivable_fen) }} /
-            {{ formatFen(data.open_items.payable_fen) }}
-          </strong>
-          <small>
-            {{ isClosed ? "应收" : "待收" }} {{ data.open_items.receivable_count }} 项 ·
-            {{ isClosed ? "应付" : "待付" }} {{ data.open_items.payable_count }} 项
-            <b>{{ isClosed ? "查看历史快照" : "查看往来" }} ›</b>
-          </small>
-        </button>
-      </section>
+      <div id="open-items" class="section-anchor" tabindex="-1">
+        <BriefOpenItems
+          :open-items="data.open_items"
+          :period-label="response?.selected_period?.short_label || ''"
+          :period-status="response?.selected_period?.status || ''"
+          :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refresh"
+        />
+      </div>
 
       <div id="activity" class="section-anchor" tabindex="-1">
         <BriefActivityWorkbench
@@ -467,9 +508,10 @@ onBeforeUnmount(() => {
           :vouchers="data.vouchers"
           :voucher-count="data.voucher_count"
           :line-count="data.line_count"
+          :focused-voucher="data.focused_voucher"
         />
         <p class="muted">已加载 {{ data.vouchers.length }} / {{ data.voucher_count }} 张凭证；本页汇总按全月计算。</p>
-        <button v-if="data.voucher_page.has_more" class="dashboard-action" :disabled="loadingMore" @click="loadMore">{{ loadingMore ? "加载中…" : "加载更多业务与凭证" }}</button>
+        <DashboardPagination :page="data.collections.vouchers?.page" :loaded="data.vouchers.length" :loading="sectionLoading.vouchers" :error="sectionErrors.vouchers" @retry="loadMore()" @more="loadMore()" />
 
       </div>
 
@@ -484,36 +526,42 @@ onBeforeUnmount(() => {
       <div id="finance" class="section-anchor" tabindex="-1">
         <BriefFinancialOverview
           :cash="data.cash"
+          :funds="data.funds_overview"
           :position="data.position"
           :unmatched="data.unmatched_bank_activity"
         />
       </div>
 
-      <div id="open-items" class="section-anchor" tabindex="-1">
-        <BriefOpenItems
-          :open-items="data.open_items"
-          :period-label="response?.selected_period?.short_label || ''"
-          :period-status="response?.selected_period?.status || ''"
-        />
-      </div>
-
-      <div class="final-section-space">
+      <section class="collection-details" aria-label="业务与相关跟进明细"><h2>业务与相关跟进明细</h2>
+      <details v-for="section in businessSections" :key="section.key" :id="`brief-${section.key}`" class="brief-section" @toggle="openBusinessSection($event, section.key)">
+        <summary>{{ section.label }}</summary>
+        <template v-if="data.collections[section.key]">
+          <DashboardPagination :page="data.collections[section.key].page" :loaded="data.collections[section.key].items.length" :loading="sectionLoading[section.key]" :error="sectionErrors[section.key]" @retry="loadMore(section.key)" @more="loadMore(section.key)" />
+          <DashboardBusinessRecords :items="data.collections[section.key].items" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refresh" />
+        </template>
+        <p v-if="sectionErrors[section.key] && !data.collections[section.key]" role="alert">{{ sectionErrors[section.key] }}</p>
+        <button v-if="!data.collections[section.key]" type="button" :disabled="sectionLoading[section.key]" @click="loadMore(section.key)">{{ sectionLoading[section.key] ? "加载中…" : "读取明细" }}</button>
+      </details>
+      </section>
+      <div id="validation" class="final-section-space section-anchor" tabindex="-1">
+      <details v-if="data.position.issues.length" class="brief-section"><summary>财务位置来源问题 · {{ data.position.issues.length }} 条</summary><ul><li v-for="(issue, index) in data.position.issues" :key="index">{{ issue.message }}<details><summary>查看精确来源</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul></details>
+      <PeriodPreparation :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
       <footer
-        id="validation"
+        id="validation-checks"
         :class="['trust-footer', 'section-anchor', data.validation.state]"
         tabindex="-1"
       >
         <div class="trust-heading">
           <div>
-            <p>可信度校验</p>
+            <p>资料与账务核对</p>
             <h2>{{ data.validation.title }}</h2>
             <span>{{ data.validation.summary }}。</span>
           </div>
           <span :class="['trust-state', data.validation.state]">
-            {{ data.validation.integrity_valid ? "账务一致" : "需要复核" }}
+            {{ data.validation.state === 'complete' ? "本月核对完成" : "需要核对" }}
           </span>
         </div>
-        <div class="checks">
+        <details :open="data.validation.items.some(item => item.state !== 'pass')"><summary>{{ data.validation.items.every(item => item.state === 'pass') ? '本月检查已通过，查看详情' : '查看需要核对的项目' }}</summary><div class="checks">
           <article v-for="item in data.validation.items" :key="item.key" :class="item.state">
             <span class="check-mark">
               {{ item.state === "pass" ? "✓" : item.state === "error" ? "×" : item.state === "pending" ? "!" : "–" }}
@@ -523,7 +571,13 @@ onBeforeUnmount(() => {
               <small>{{ item.text }}</small>
             </div>
           </article>
-        </div>
+        </div></details>
+        <details v-if="data.validation.issues?.length" class="trust-proof" open>
+          <summary>{{ isClosed ? '当前需要跟进的事项（不改变原关账结论）' : '核算准备与待复核事项' }}</summary>
+          <ul>
+            <li v-for="(issue, index) in data.validation.issues" :key="index">{{ issue.message }}</li>
+          </ul>
+        </details>
         <details
           v-if="data.material_completeness && !data.material_completeness.closed"
           class="trust-proof"
@@ -544,7 +598,7 @@ onBeforeUnmount(() => {
           <dl>
             <div><dt>正式凭证 / 分录</dt><dd>{{ data.voucher_count }} 张 / {{ data.line_count }} 行</dd></div>
             <div><dt>借方合计 / 贷方合计</dt><dd>{{ formatFen(data.total_debit_fen) }} / {{ formatFen(data.total_credit_fen) }}</dd></div>
-            <div><dt>银行当前有效匹配</dt><dd>{{ data.cash.matched_count }} / {{ data.cash.ordinary_count }}</dd></div>
+            <div><dt>银行当前有效匹配</dt><dd>{{ data.cash.matched_count }} / {{ data.cash.transaction_count }}</dd></div>
             <div><dt>期间状态</dt><dd>{{ statusLabel(response?.selected_period?.status || "") }}</dd></div>
             <div><dt>页面数据生成时间</dt><dd>{{ generatedText() }}</dd></div>
           </dl>
@@ -556,6 +610,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.metric-scope, .update-notice { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.needs-check { padding: 12px; border-radius: 10px; color: var(--warning); background: var(--warning-soft); }
+.needs-check button { margin-left: 12px; cursor: pointer; background: transparent; border: 0; text-decoration: underline; }
+.collection-details { margin: 20px 0; }
+.collection-details > h2 { font-size: 19px; }
+.collection-details > details { padding: 14px 18px; margin: 8px 0; scroll-margin-top: 70px; }
+.collection-details summary { cursor: pointer; }
+
 .brief-page {
   --brief-page: var(--background);
   --brief-surface: var(--surface);
@@ -1101,11 +1163,12 @@ button.kpi:focus-visible {
   }
 
   .kpi-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .kpi {
     min-height: 116px;
+    padding: 12px;
   }
 
   .section-anchor {
@@ -1143,7 +1206,7 @@ button.kpi:focus-visible {
   }
 
   .kpi > strong {
-    font-size: 23px;
+    font-size: 20px;
   }
 }
 </style>

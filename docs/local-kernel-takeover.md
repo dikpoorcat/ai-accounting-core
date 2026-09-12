@@ -1,6 +1,6 @@
 # 新内核接管与退役验收记录
 
-2026-09-12 后续说明：本文保留 9 月 11 日的历史验收状态。原五页 Vue 看板现已恢复并接入新 SQLite 内核，负责人登录、核算依据和后台任务并入原界面；公司库已增加 v8 前向迁移。旧 PostgreSQL、ORM 和旧服务继续退役。当前交付见[看板 v8 运行包验收](local-kernel-dashboard-v8-package-verification.json)及[启动说明](local-kernel-startup.md)。
+2026-09-12 后续说明：本文保留 9 月 11 日的历史验收状态。原五页 Vue 看板已恢复并按现有 SQLite 内核修正展示口径，负责人登录、核算依据和后台任务并入原界面；公司库为 v8。旧 PostgreSQL、ORM 和旧服务继续退役。当前交付见[看板对齐说明](dashboard-kernel-alignment.md)、[运行包验收](local-kernel-dashboard-alignment-package-verification.json)及[启动说明](local-kernel-startup.md)。
 
 记录日期：2026-09-11。两家真实公司已按原件、旧回放补充事实及负责人确认重建，历史关账截至 **2026 年 7 月**，**8 月保持开放**。旧 ORM、业务服务、MCP、身份接续桥、Alembic、旧页面与本项目专属 PostgreSQL 容器、卷均已退役。旧结果备份在原件和事实依据保全、真实新账独立恢复通过后删除。
 
@@ -46,7 +46,7 @@
 
 ## 默认入口与验证
 
-唯一运行入口为 `finance-local` 与新 MCP 命令体系。Windows 启动器、项目 MCP 配置和两个会计 Skill 使用同一资料根目录。两个 HTML 入口加载同一个工作台，旧页面及 API 文件已移除。默认测试、CI、依赖和软件包使用新内核及明确保留的纯计算、解析和模板模块。
+唯一运行入口为 `finance-local` 与新 MCP 命令体系。Windows 启动器、项目 MCP 配置和两个会计 Skill 使用同一资料根目录。两个 HTML 入口现在加载恢复后的同一套五页看板；旧 PostgreSQL 后端 API 继续退役，由 SQLite 查询适配提供数据。默认测试、CI、依赖和软件包使用新内核及明确保留的纯计算、解析和模板模块。
 
 冻结计算构建为 `local-kernel-2:772c34dc9c637e2b04328c898db06361bb15aa8cea8fe4742c7fd2905512b7d2`。删除旧实现及旧数据库后的默认全量回归 **994 项通过，零失败、零跳过**，整个回归任务耗时 1,165.84 秒，运行前后构建相同。[最终验收报告](local-kernel-final-verification.json)另记录实际恢复和退役范围。本次实际扣税、事务发布、完整预览及公共回放保护共 **90 项定向测试通过**；前端 **9 项通过**，类型检查、发布构建、活动代码 lint 和依赖一致性检查通过。各组存在重叠，不相加为独立测试总数。
 

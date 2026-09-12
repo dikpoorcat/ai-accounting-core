@@ -50,22 +50,7 @@ function laborCostNote() {
   if (!labor.breakdown_available) {
     return labor.reason || "现有数据缺少可靠拆分依据，仅展示劳务报酬小计。";
   }
-  if (labor.withholding_status === "correction") {
-    return "本月个人劳务成本含冲正或更正，未将理论税额认定为新增实际代扣。";
-  }
-  if (labor.withholding_status === "partially_settled") {
-    const actual = fen(labor.actual_withholding_tax_fen);
-    return `劳务尚未全部付款；已付款部分${actual ? `实际代扣个人所得税 ${formatFen(actual)}` : "实际未代扣个人所得税"}，未付款部分仅有理论测算。`;
-  }
-  if (labor.withholding_status === "pending_payment") {
-    return "劳务尚未付款，个人所得税仅完成理论测算，未认定为实际代扣。";
-  }
-  if (fen(labor.actual_withholding_tax_fen)) {
-    return `实际从劳务毛额代扣个人所得税 ${formatFen(labor.actual_withholding_tax_fen)}，不增加公司用工成本。`;
-  }
-  return labor.withholding_status === "not_withheld"
-    ? "劳务报酬已按毛额支付，实际未代扣个人所得税，不影响用工成本。"
-    : "本月劳务报酬没有需要说明的实际代扣个人所得税。";
+  return labor.withholding_note;
 }
 </script>
 
@@ -98,6 +83,10 @@ function laborCostNote() {
           <div class="cost salary">
             <span>工资总额</span>
             <strong>{{ formatFen(workforce.employee.gross_salary_fen) }}</strong>
+          </div>
+          <div v-if="fen(workforce.employee.annual_bonus_fen)" class="cost salary">
+            <span>全年一次性奖金</span>
+            <strong>{{ formatFen(workforce.employee.annual_bonus_fen) }}</strong>
           </div>
           <div class="cost social">
             <span>公司承担社保医保</span>
@@ -176,6 +165,7 @@ function laborCostNote() {
         </div>
       </article>
     </div>
+    <p v-if="fen(workforce.capitalized_labor_fen)" class="payment-note">本月另有资本化劳务 {{ formatFen(workforce.capitalized_labor_fen) }}，计入项目或资产成本，不计入上述用工费用；可在员工与资产页面查看来源和清偿。</p>
     <p class="payment-note">
       工资、社保医保及个人劳务的实际付款只清偿已经确认的应付款，不会在付款时再次计入用工成本。
     </p>

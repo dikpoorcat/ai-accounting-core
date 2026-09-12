@@ -122,6 +122,8 @@ test("queued, running, failed and unknown jobs never imply completion", () => {
   assert.equal(api.localJobName("unknown"), "后台任务");
   assert.match(api.localJobMessage({ status: "failed", attempts: 3, last_error: "SECRET_RAW_ERROR" }), /自动重试次数已用尽/);
   assert.doesNotMatch(api.localJobMessage({ status: "failed", attempts: 1, last_error: "SECRET_RAW_ERROR" }), /SECRET_RAW_ERROR/);
+  assert.match(api.localJobMessage({ status: "succeeded", delivery_status: "invalid", delivery_message: "报表文件校验失败，请重新生成" }), /校验失败/);
+  assert.doesNotMatch(api.localJobMessage({ status: "succeeded", delivery_status: "invalid" }), /文件已生成/);
 });
 
 
@@ -134,7 +136,7 @@ test("an exact background job is queried even when outside the recent list", asy
 });
 
 test("missing money is explicitly unavailable rather than shown as zero", () => {
-  assert.equal(money.formatFen(null), "未提供");
+  assert.equal(money.formatFen(null), "暂无法确定");
   assert.equal(money.formatPositiveFen(undefined), "未提供");
   assert.equal(money.formatFen("0"), "¥0.00");
 });
@@ -142,6 +144,29 @@ test("missing money is explicitly unavailable rather than shown as zero", () => 
 test("report check counts remain integers while monetary totals require strings", () => {
   api.verifyMoneyStrings({ checks: { passed: 2, total: 3 }, summary: { current_net_profit_fen: "9007199254740993" } });
   assert.throws(() => api.verifyMoneyStrings({ checks: { passed: 2, total: 3 }, summary: { current_net_profit_fen: 100 } }), { code: "LOCAL_MONEY_FORMAT" });
+});
+
+test("employee field provenance is distinct from money while actual nested amounts remain strict", () => {
+  const provenance = (field) => ({ source_type: "fact", id: "synthetic-profile", revision: 1,
+    field, source: null, evidence_digest: null, evidence: [], basis: "frozen", recorded_at: null });
+  const employee = {
+    social_insurance_base_fen: "9007199254740993", housing_fund_base_fen: null, declared_tax_fen: "0",
+    field_sources: {
+      social_insurance_base_fen: provenance("social_insurance_base_fen"),
+      housing_fund_base_fen: provenance("housing_fund_base_fen"),
+      declared_tax_fen: provenance("declared_tax_fen"),
+    },
+  };
+  const payload = { data: { employees: { items: [employee] }, collections: { employees: { items: [employee] } } } };
+  const before = structuredClone(payload);
+  api.verifyMoneyStrings(payload);
+  assert.deepEqual(payload, before);
+  for (const invalid of [100, { source_type: "fact", id: "not-a-money-value" }]) {
+    assert.throws(() => api.verifyMoneyStrings({ social_insurance_base_fen: invalid }), { code: "LOCAL_MONEY_FORMAT" });
+  }
+  assert.throws(() => api.verifyMoneyStrings({ field_sources: {
+    social_insurance_base_fen: { ...provenance("social_insurance_base_fen"), source: { amount_fen: 100 } },
+  } }), { code: "LOCAL_MONEY_FORMAT" });
 });
 
 test("only successful report tasks explicitly approved by the service offer downloads", () => {

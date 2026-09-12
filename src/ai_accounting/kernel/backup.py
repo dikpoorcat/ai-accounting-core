@@ -115,6 +115,13 @@ def verify_file(
             raise BackupError("SQLite integrity check failed")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise BackupError("SQLite foreign-key check failed")
+        if identity["schema_version"] >= 10:
+            from .read_indexes import verify_read_indexes
+
+            try:
+                verify_read_indexes(connection)
+            except KernelError as exc:
+                raise BackupError(str(exc)) from exc
         evidence_count = 0
         for row in connection.execute("SELECT digest,content FROM evidence"):
             if hashlib.sha256(row["content"]).digest() != row["digest"]:

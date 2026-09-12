@@ -11,6 +11,7 @@ import base64
 import ctypes
 import hashlib
 import http.client
+import importlib
 import json
 import os
 import sqlite3
@@ -22,6 +23,48 @@ from pathlib import Path
 
 _SERVICES = {}
 _RUNNERS = {}
+
+
+def assert_current_contracts(app, company_id):
+    """Check installed modules and real synthetic database versions together."""
+    from ai_accounting.kernel.catalog import VERSION as CATALOG_VERSION
+    from ai_accounting.kernel.runtime import connect
+    from ai_accounting.kernel.schema import VERSION as BUSINESS_VERSION
+
+    assert (BUSINESS_VERSION, CATALOG_VERSION) == (11, 3)
+    with app.engine(company_id).store.connection(read_only=True) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert connection.execute("SELECT schema_version FROM identity").fetchone()[0] == 11
+    connection = connect(app.catalog.path, read_only=True)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        connection.close()
+
+
+def business_contract(value):
+    """Exclude file-task activity when comparing a backup and its restored source."""
+    assert value["read_semantics"]["knowledge"] == "current_knowledge"
+    assert value["review"]["status"] == "current"
+    obligations = value["settlements"]["obligations"]
+    assert len(obligations) == 1
+    assert type(obligations[0]["source_amount_fen"]) is int
+    assert obligations[0]["source_amount_fen"] == obligations[0]["remaining_fen"] == 123456
+    assert obligations[0]["settlement_status"] == "open"
+    return {
+        key: value[key]
+        for key in ("identity", "period", "as_of", "selected_accounting", "settlements")
+    }
+
+
+def readiness_contract(value):
+    assert value["as_of_semantics"] == "current_knowledge"
+    assert value["closure"]["state"] == "open"
+    assert value["current_followups"]["affects_frozen_readiness"] is False
+    return {
+        key: value[key]
+        for key in ("company_id", "database_id", "period", "as_of", "closure", "readiness")
+    }
 
 
 def start_resident(root, *, native_smoke=False):
@@ -167,6 +210,25 @@ def main():
     from ai_accounting.kernel.mcp import serve  # noqa: F401 - validate optional entry dependencies
 
     assert calculator_build_id() == manifest["runtime"]["build_id"]
+    required_modules = (
+        "business_queries",
+        "query_reads",
+        "dashboard_reads",
+        "read_indexes",
+        "versions",
+    )
+    for name in required_modules:
+        module = importlib.import_module("ai_accounting.kernel." + name)
+        assert Path(module.__file__).resolve().is_relative_to(package)
+        assert "kernel/" + name + ".py" in manifest["application_modules"]
+    for name in (
+        "v9_business.json",
+        "v10_business.json",
+        "v11_business.json",
+        "recorded_business_v10_pre_account_indexes.json",
+        "v3_catalog.json",
+    ):
+        assert (package / "app/ai_accounting/kernel/migrations" / name).is_file()
     assert sqlite3.sqlite_version == manifest["runtime"]["sqlite"] == "3.53.1"
     assert sys.version.split()[0] == manifest["runtime"]["python"] == "3.12.13"
     template_bytes = len(_template_bytes())
@@ -215,6 +277,7 @@ def main():
 
     schema = call("schema", {})
     assert {"expense", "cash_payment", "cash_funding", "labor"} <= schema["facts"].keys()
+    assert {"business_status", "period_readiness"} <= schema["command_schemas"].keys()
     company = call(
         "create_company", {"taxpayer_id": "91310000123456789A", "name": "运行包合成验证企业"}
     )
@@ -263,6 +326,15 @@ def main():
     overview = call("overview", overview_request)
     assert sum(row["debit"] for row in overview["accounts"]) == 123456
     assert sum(row["credit"] for row in overview["accounts"]) == 123456
+    business_request = {
+        **overview_request,
+        "subject_id": "synthetic-expense",
+        "as_of": "2026-09-30",
+    }
+    readiness_request = {**overview_request, "as_of": "2026-09-30"}
+    business = business_contract(call("business_status", business_request))
+    readiness = readiness_contract(call("period_readiness", readiness_request))
+    assert_current_contracts(_SERVICES[data_root][0], company_id)
     queued = call(
         "backup",
         {
@@ -294,6 +366,11 @@ def main():
     )
     assert restored["id"] == company_id and restored["database_id"] == company["database_id"]
     assert call("overview", overview_request, root=restored_root) == overview
+    assert_current_contracts(_SERVICES[restored_root][0], company_id)
+    restored_business = call("business_status", business_request, root=restored_root)
+    restored_readiness = call("period_readiness", readiness_request, root=restored_root)
+    assert business_contract(restored_business) == business
+    assert readiness_contract(restored_readiness) == readiness
 
     for launcher in (
         [str(package / "finance-local.cmd")],
@@ -357,6 +434,18 @@ def main():
                     if value is None:
                         value = json.loads("".join(item.text for item in result.content))
                     assert value["accounts"] == overview["accounts"]
+                    for command, payload, extract, expected in (
+                        ("business_status", business_request, business_contract, business),
+                        ("period_readiness", readiness_request, readiness_contract, readiness),
+                    ):
+                        result = await session.call_tool(
+                            "finance_local_command", {"command": command, "payload": payload}
+                        )
+                        assert not result.isError
+                        value = result.structuredContent
+                        if value is None:
+                            value = json.loads("".join(item.text for item in result.content))
+                        assert extract(value) == expected
 
     anyio.run(check_stdio_mcp)
 
@@ -389,13 +478,23 @@ def main():
         assert all(isinstance(row["debit"], str) for row in wire_overview["accounts"])
         assert sum(int(row["debit"]) for row in wire_overview["accounts"]) == 123456
         connection.close()
-        for action in ("context", "brief", "funds", "employees", "assets", "quarterly-report"):
+        for action in (
+            "context",
+            "brief",
+            "funds",
+            "employees",
+            "assets",
+            "quarterly-report",
+            "business-status",
+        ):
             query = f"company_id={company_id}"
             query += (
                 "&year=2026&quarter=3"
                 if action == "quarterly-report"
                 else ("" if action == "context" else "&period=2026-09")
             )
+            if action == "business-status":
+                query += "&subject_id=synthetic-expense&as_of=2026-09-30&limit=1"
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
             connection.request(
                 "GET",
@@ -405,11 +504,26 @@ def main():
             response = connection.getresponse()
             wire_dashboard = json.loads(response.read())
             assert response.status == 200, (action, wire_dashboard)
+            assert wire_dashboard["schema_version"] == (
+                1 if action in {"quarterly-report", "business-status"} else 2
+            )
             if action == "context":
                 assert wire_dashboard["current_company"]["company_id"] == company_id
             elif action == "brief":
                 assert isinstance(wire_dashboard["data"]["total_debit_fen"], str)
                 assert wire_dashboard["data"]["total_debit_fen"] == "123456"
+            if action in {"brief", "funds", "employees", "assets"}:
+                assert wire_dashboard["data"]["period_preparation"]["projection"] == (
+                    "dashboard_period_preparation"
+                )
+            if action == "business-status":
+                assert wire_dashboard["data"]["identity"] == business["identity"]
+                obligation = wire_dashboard["data"]["settlements"]["obligations"][0]
+                assert obligation["source_amount_fen"] == obligation["remaining_fen"] == "123456"
+            for collection in wire_dashboard.get("data", {}).get("collections", {}).values():
+                page = collection["page"]
+                assert len(collection["items"]) == page["returned_count"]
+                assert page["returned_count"] <= page["filtered_count"] <= page["total_count"]
             connection.close()
     finally:
         connection.close()
@@ -421,6 +535,7 @@ def main():
         and not Path(module.__file__).resolve().is_relative_to(package)
     }
     assert not outside, outside
+    stop_residents()
     print(
         json.dumps(
             {
@@ -439,7 +554,11 @@ def main():
                 "relative_imports_only": True,
                 "http_page_and_authenticated_api": True,
                 "dashboard_five_routes_and_legacy_entries": True,
-                "dashboard_six_authenticated_queries": True,
+                "dashboard_seven_authenticated_queries": True,
+                "business_schema_version": 11,
+                "catalog_schema_version": 3,
+                "cli_mcp_business_status_and_period_readiness": True,
+                "dashboard_current_schemas_and_collections": True,
                 "dashboard_integer_cent_strings": True,
                 "relative_cmd_and_powershell_launchers": True,
                 "stdio_mcp_handshake_and_query": True,
@@ -453,7 +572,6 @@ def main():
             indent=2,
         )
     )
-    stop_residents()
 
 
 if __name__ == "__main__":

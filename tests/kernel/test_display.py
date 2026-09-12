@@ -38,6 +38,7 @@ def database_state(engine):
                     "period_close",
                     "display_profile_revision",
                     "period_commentary_revision",
+                    "period_commentary_basis",
                     "audit",
                     "request",
                 )

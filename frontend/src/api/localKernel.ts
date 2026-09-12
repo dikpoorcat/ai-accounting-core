@@ -7,6 +7,12 @@ export class LocalApiError extends Error {
 
 export type LocalFen = string;
 
+export interface EvidenceDetails {
+  digest: string;
+  name: string;
+  media_type: string;
+}
+
 export interface LocalCompany {
   id: string;
   name: string;
@@ -44,6 +50,9 @@ export interface LocalJob {
   result: unknown;
   download_available?: boolean;
   download_file_name?: string | null;
+  delivery_status?: "pending" | "unavailable" | "external" | "invalid" | "verified";
+  delivery_message?: string | null;
+  report_source?: { year: number; quarter: number; carry_forward_fact_id: string | null };
 }
 
 export function localJobDownloadAvailable(job: LocalJob): boolean {
@@ -59,6 +68,8 @@ export function localJobStatus(status: string): string {
 }
 
 export function localJobMessage(job: LocalJob): string {
+  if (job.delivery_status === "invalid") return job.delivery_message || "文件校验未通过，不能交付。请到财务报表页重新生成。";
+  if (job.delivery_status === "external") return job.delivery_message || "此文件通过会计任务交付，未提供浏览器下载。";
   if (job.status === "pending") return "任务已排队，等待生成文件。";
   if (job.status === "running") return "正在生成并检查文件。";
   if (job.status === "succeeded") return localJobDownloadAvailable(job)
@@ -71,6 +82,9 @@ export function localJobMessage(job: LocalJob): string {
 }
 
 export interface LocalTrace {
+  evidence_details: EvidenceDetails[];
+  voucher?: { id: string; number: number; period: string; reverses_id: string | null; total: string } | null;
+  related_vouchers?: { id: string; number: number; period: string; role: "original" | "reversal" | "replacement"; label?: string; correction_of_voucher_id?: string; correction_of_number?: number; correction_group?: "current" | "next" }[];
   calculation: {
     id: string;
     subject_id: string;
@@ -96,6 +110,7 @@ export interface LocalTrace {
     evidence: string[];
   }[];
   upstream: string[];
+  upstream_details?: { id: string; label: string }[];
 }
 
 // These labels reuse the existing business presentation vocabulary. The new
@@ -203,7 +218,7 @@ export const localBusinessNames: Record<string, string> = {
   payroll_plan_bounded: "工资标准计划",
   payroll_change_notice_v2: "工资变动通知",
   payroll_no_change_v2: "工资无变动确认",
-  tax_import_identity_v2: "税务材料企业身份核对",
+  tax_import_identity_v2: "个税人员资料",
   tax_import_details_v2: "税务材料明细",
   tax_import_mapping_v2: "税务材料业务匹配",
 };
@@ -244,7 +259,9 @@ export function verifyMoneyStrings(value: unknown, parentKey = ""): void {
     value.forEach(item => verifyMoneyStrings(item, parentKey));
   } else if (record(value)) {
     for (const [key, field] of Object.entries(value)) {
-      if (field !== null && (key.endsWith("_fen") || ["debit", "credit", "amount"].includes(key) || (key === "total" && parentKey !== "checks"))) {
+      // field_sources maps displayed field names to provenance, not monetary values.
+      // Keep recursing so any actual amount inside a source still receives validation.
+      if (parentKey !== "field_sources" && field !== null && (key.endsWith("_fen") || ["debit", "credit", "amount"].includes(key) || (key === "total" && parentKey !== "checks"))) {
         const amountPattern = key.startsWith("unrounded_") ? /^-?\d+(\.\d+)?$/ : /^-?\d+$/;
         if (typeof field !== "string" || !amountPattern.test(field)) {
           throw new LocalApiError(502, "LOCAL_MONEY_FORMAT", "金额传输格式不正确，无法可靠展示。请更新本地内核后重试。");
@@ -324,6 +341,10 @@ export function fetchLocalLedger(companyId: string, period: string, afterNumber 
 
 export function fetchLocalTrace(companyId: string, calculationId: string, signal?: AbortSignal): Promise<LocalTrace> {
   return localRequest("trace", { company_id: companyId, calculation_id: calculationId }, signal);
+}
+
+export function fetchVoucherTrace(companyId: string, voucherVersionId: string, calculationId?: string, signal?: AbortSignal): Promise<LocalTrace> {
+  return localRequest("trace", { company_id: companyId, voucher_version_id: voucherVersionId, ...(calculationId ? { calculation_id: calculationId } : {}) }, signal);
 }
 
 export function fetchLocalJobs(companyId: string, signal?: AbortSignal): Promise<LocalJob[]> {

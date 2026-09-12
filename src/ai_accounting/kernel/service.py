@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .backup import run_backup_jobs
+from .business_queries import BusinessQueries
 from .catalog import Catalog
 from .contracts import KernelError, Registry
 from .discovery import Discovery
@@ -32,8 +33,14 @@ OPERATING_PROTOCOL = {
     "management": "管理说明、归集资料可后补，不把管理缺项当核算门禁，不以月末冒充实际日期。",
     "dashboard_management": (
         "看板名称、人员入离职资料与用途通过save_display_profile按明确来源追加管理版本；"
+        "登记业务时同步保存原件已明确的人员/往来方/账户/资产名称及业务用途说明，"
+        "复用稳定业务身份，记录证据文件名和具体来源位置；不只保留内部编号。"
+        "资料后补同时维护私有重放补充清单，不因展示资料缺项阻断核算。"
         "不从工资生效月推断入职日。月度经营结论先preview_period_commentary读取核算上下文，"
         "再用同一context_digest调用update_period_commentary；闭期补充显示为后补说明，"
+        "context_digest只用于提交并发校验；已存说明按独立content_digest及精确来源判断有效性，"
+        "内容相同不能绕过过期提交。历史展示field_sources分别说明冻结与当前后补来源，"
+        "recorded_at仅是系统确认时间，不能替代实际发生日或冒充负责人最早知悉日。"
         "不更改冻结凭证，不要求负责人补写AI应完成的经营说明。"
     ),
     "closing": "核对资料和处理结果及负责人确认依据；空数据库或零待匹配项不能证明无业务。",
@@ -59,6 +66,7 @@ def default_registry():
         workflow,
     )
     from .domains import (
+        accounting,
         adjustments,
         assets,
         banking,
@@ -112,6 +120,7 @@ def default_registry():
     payroll_preparation.register(registry)
     tax_import.register(registry)
     payroll_tax_declarations.register(registry)
+    accounting.register(registry)
     return registry
 
 
@@ -264,6 +273,7 @@ class LocalService:
         from .dashboard import Dashboard
 
         dashboard = Dashboard(engine)
+        business_queries = BusinessQueries(engine)
         payroll_preparation = PayrollPreparation(engine)
         tax_import = TaxImport(engine)
         reserves = Reserves(engine)
@@ -278,6 +288,8 @@ class LocalService:
             "retry_job": engine.retry_job,
             "ledger": engine.ledger,
             "trace": engine.trace,
+            "business_status": business_queries.business_status,
+            "period_readiness": business_queries.period_readiness,
             "management": periods.management,
             "inventory": periods.inventory,
             "preview_close": periods.preview_close,
@@ -311,6 +323,7 @@ class LocalService:
             "dashboard_funds": dashboard.funds,
             "dashboard_employees": dashboard.employees,
             "dashboard_assets": dashboard.assets,
+            "dashboard_business_status": dashboard.business_status,
             "dashboard_quarterly_report": dashboard.quarterly_report,
             "find_facts": discovery.find_facts,
             "payroll_reuse_basis": payroll_preparation.reuse_basis,

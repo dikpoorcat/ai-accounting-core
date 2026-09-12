@@ -1,3 +1,4 @@
+// Historical v1 response fixtures: not a current T4/T5 browser acceptance entrypoint.
 async page => {
   // Dedicated Vite test server; every API request uses synthetic fixture data.
   const base = "http://127.0.0.1:5178";

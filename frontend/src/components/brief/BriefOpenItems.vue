@@ -3,12 +3,17 @@ import { computed } from "vue";
 
 import type { BriefOpenItems } from "../../api/brief";
 import { formatFen } from "../../utils/money";
+import { businessStateLabel } from "../../api/dashboardContracts";
+import BusinessStatusDetails from "../BusinessStatusDetails.vue";
 
 const props = defineProps<{
   openItems: BriefOpenItems;
   periodLabel: string;
   periodStatus: string;
+  period: string;
+  snapshotVersion?: string | null;
 }>();
+defineEmits<{ changed: [] }>();
 
 const isClosed = computed(() => props.periodStatus === "closed");
 
@@ -18,6 +23,7 @@ function categoryLabel(label: string) {
 }
 
 function openStateLabel(direction: "receivable" | "payable", status: string) {
+  if (status !== "partial" && status !== "open") return businessStateLabel(status);
   if (direction === "receivable") {
     if (isClosed.value) return status === "partial" ? "关账时部分收回" : "关账时未收回";
     return status === "partial" ? "部分收回" : "待收回";
@@ -43,10 +49,10 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
     <div class="section-heading">
       <div>
         <p class="section-kicker">
-          {{ isClosed ? "已关账历史快照 · 不代表当前尚未结算" : "应收与应付分开，不互相抵销" }}
+          截至{{ periodLabel }}月末
         </p>
         <h2 id="open-items-title">
-          {{ isClosed ? `${periodLabel}关账时点往来余额` : "期末往来事项" }}
+          待收与待付
         </h2>
       </div>
       <strong>
@@ -55,9 +61,12 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
     </div>
 
     <p v-if="isClosed" class="historical-note">
-      以下仅反映该月关账时点的应收、应付余额；若要判断现在是否仍未结算，请查看最新期间。
+      以下为该月末余额；展开对应来源可分别查看月末情况与相关后来清偿。
     </p>
 
+    <p v-if="openItems.complete === false || openItems.unestablished_count" class="historical-note">部分来源尚待核对，已知金额也不能视为完整结论；请查看来源及未证明候选。</p>
+    <p class="historical-note">待收包含预付款待冲抵等，不代表预计或到期现金收付。以下来源明细为已加载部分。</p>
+    <details v-if="openItems.issues?.length"><summary>往来来源问题 · {{ openItems.issues.length }} 条</summary><ul><li v-for="(issue, index) in openItems.issues" :key="index"><p>{{ issue.message || '来源尚待核对' }}</p><BusinessStatusDetails v-if="issue.subject_id" :subject-id="issue.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="查看相关依据" @changed="$emit('changed')" /><details><summary>精确来源与候选依据</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul></details>
     <div class="open-summary" :aria-label="isClosed ? '关账时点往来汇总' : '期末往来汇总'">
       <article class="receivable">
         <span>{{ isClosed ? "关账时点应收" : "期末待收" }}</span>
@@ -103,24 +112,23 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
           <div class="table-wrap">
             <table>
               <colgroup>
-                <col class="voucher-column" />
                 <col class="party-column" />
                 <col class="description-column" />
                 <col class="status-column" />
                 <col class="amount-column" />
+                <col class="voucher-column" />
               </colgroup>
               <thead>
                 <tr>
-                  <th>凭证</th>
                   <th>往来对象</th>
                   <th>事项</th>
                   <th>状态</th>
                   <th class="number">{{ isClosed ? "关账时点金额" : "期末金额" }}</th>
+                  <th>凭证</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in category.items" :key="item.id">
-                  <td data-label="凭证">{{ item.voucher }}</td>
                   <td data-label="往来对象">{{ item.party }}</td>
                   <td data-label="事项">{{ item.description }}</td>
                   <td data-label="状态">
@@ -129,13 +137,14 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
                   <td class="number" :data-label="isClosed ? '关账时点金额' : '期末金额'">
                     {{ formatFen(item.outstanding_fen) }}
                   </td>
+                  <td data-label="来源"><BusinessStatusDetails v-if="item.source_business?.subject_id" :subject-id="item.source_business.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="查看来源与相关清偿" @changed="$emit('changed')" /><span v-else>{{ item.voucher }}</span></td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
       </details>
-      <p v-if="!openItems.total_count" class="empty">
+      <p v-if="!openItems.total_count && openItems.complete !== false && !openItems.unestablished_count" class="empty">
         {{ isClosed ? "该月关账时没有应收或应付余额。" : "期末没有未完全结清的应收或应付事项。" }}
       </p>
     </div>

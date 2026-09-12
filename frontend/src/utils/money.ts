@@ -10,7 +10,8 @@ export function fen(value: string | number | bigint | null | undefined): bigint 
 export function formatFen(
   value: string | number | bigint | null | undefined,
 ): string {
-  if (value === null || value === undefined || value === "") return "未提供";
+  if (value === null) return "暂无法确定";
+  if (value === undefined || value === "") return "未提供";
   const amount = fen(value);
   const negative = amount < 0n;
   const absolute = negative ? -amount : amount;
@@ -22,7 +23,8 @@ export function formatFen(
 export function formatPositiveFen(
   value: string | number | bigint | null | undefined,
 ): string {
-  if (value === null || value === undefined || value === "") return "未提供";
+  if (value === null) return "暂无法确定";
+  if (value === undefined || value === "") return "未提供";
   const amount = fen(value);
   return formatFen(amount < 0n ? -amount : amount);
 }

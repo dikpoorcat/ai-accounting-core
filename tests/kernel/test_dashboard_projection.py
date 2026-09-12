@@ -66,7 +66,12 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
     assert len(data["vouchers"]) == 500
     assert data["total_debit_fen"] == data["position"]["bank_fen"] == 501
     assert data["voucher_page"] == {"has_more": True, "next_after_number": 500, "total_count": 501}
-    following = dashboard.brief("2026-09", after_number=500, limit=500)["data"]
+    following = dashboard.brief(
+        "2026-09",
+        after_number=500,
+        limit=500,
+        expected_version=dashboard.brief("2026-09")["snapshot_version"],
+    )["data"]
     assert len(following["vouchers"]) == 1
     assert following["total_debit_fen"] == 501
     assert sum(group["event_count"] for group in following["activity_groups"]) == 501
@@ -75,7 +80,10 @@ def test_summary_and_detail_pages_do_not_truncate_financial_totals(bank_book):
     assert funds["total_fen"] == funds["inflow_fen"] == 501
     assert len(funds["movements"]) == 500
     following = dashboard.funds(
-        "2026-09", after_movement=funds["movement_page"]["next_cursor"], limit=500
+        "2026-09",
+        after_movement=funds["movement_page"]["next_cursor"],
+        limit=500,
+        expected_version=dashboard.funds("2026-09")["snapshot_version"],
     )["data"]
     assert len(following["movements"]) == 1
     assert following["inflow_fen"] == 501
@@ -102,7 +110,10 @@ def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
     assert data["accounts"][0]["reconciliation"]["state"] == "complete"
     assert data["accounts"][0]["active"] is None
     second = dashboard.funds(
-        "2026-09", after_statement=data["bank_statement"]["page"]["next_cursor"], limit=1
+        "2026-09",
+        after_statement=data["bank_statement"]["page"]["next_cursor"],
+        limit=1,
+        expected_version=dashboard.funds("2026-09")["snapshot_version"],
     )["data"]
     assert second["bank_statement"]["rows"][0]["signed_amount_fen"] == 600
     assert second["bank_statement"]["inflow_fen"] == 1000
@@ -125,7 +136,7 @@ def test_unpublished_or_missing_inventory_is_not_complete(bank_book):
     data = dashboard.brief("2026-09")["data"]
     assert data["voucher_count"] == 0
     assert not data["material_completeness"]["satisfied"]
-    assert any(issue["field"] == "charge" for issue in data["material_completeness"]["issues"])
+    assert any(issue["field"] == "charge" for issue in data["validation"]["issues"])
     commit("charge")
     data = dashboard.brief("2026-09")["data"]
     assert not data["material_completeness"]["satisfied"]
@@ -149,7 +160,10 @@ def test_closed_history_preserves_old_version_and_open_correction_delta(engine):
     assert january["total_debit_fen"] == before["total_debit_fen"] == 100
     assert january["vouchers"][0]["components"][0]["facts"]["amount"] == 100
     assert february["position"]["month_expense_fen"] == 25
-    assert february["position"]["liabilities_fen"] == 125
+    # This synthetic calculator supplies no creditor identity for its 2202 line.
+    assert february["position"]["liabilities_fen"] is None
+    assert february["position"]["equation_valid"] is None
+    assert february["position"]["issues"]
     assert sorted(v["components"][0]["facts"]["amount"] for v in february["vouchers"]) == [100, 125]
     with engine.store.connection(read_only=True) as connection:
         assert (
@@ -211,7 +225,7 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
     assert employee["declared_tax_fen"] is None
     assert employee["in_period"] is None
     assert data["employees"]["unknown_period_count"] == 1
-    assert data["employees"]["in_period_count"] is None
+    assert data["employees"]["in_period_count"] == 0
     assert data["employees"]["detail_reconciled"]
     assert wire_money(data)["employees"]["items"][0]["individual_income_tax_fen"] == "90000"
 
@@ -247,7 +261,7 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     assert january["current_outstanding"]["payable_fen"] == original["payable_fen"] - 907400
 
 
-def test_closed_actual_declaration_uses_frozen_management_fact(payroll_company):
+def test_closed_actual_declaration_shows_existing_correction_without_reposting(payroll_company):
     company = payroll_company
     company.publish("january", "february")
     declaration, _ = declare(company, extra=0)
@@ -256,6 +270,7 @@ def test_closed_actual_declaration_uses_frozen_management_fact(payroll_company):
         dashboard.employees("2026-01")["data"]["employees"]["items"][0]["declared_tax_fen"] == 12600
     )
     company.close("2026-01")
+    original_ledger = company.engine.ledger("2026-01")
     proof = company.engine.register_evidence(
         b"Synthetic correction: declared withholding 12700 fen",
         "text/plain",
@@ -272,8 +287,9 @@ def test_closed_actual_declaration_uses_frozen_management_fact(payroll_company):
         request_id=company.request(),
     )
     assert (
-        dashboard.employees("2026-01")["data"]["employees"]["items"][0]["declared_tax_fen"] == 12600
+        dashboard.employees("2026-01")["data"]["employees"]["items"][0]["declared_tax_fen"] == 12700
     )
+    assert company.engine.ledger("2026-01") == original_ledger
 
 
 def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path):

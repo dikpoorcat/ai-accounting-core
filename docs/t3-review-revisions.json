@@ -1,0 +1,307 @@
+{
+  "task_id": "01a094b8-eea3-72b0-bfb3-a1aea4a77bdb",
+  "execution_plan": "v2",
+  "review_revision": "r1",
+  "architecture_task_id": "01a09416-a4e3-76b2-bf46-6387d8d47cfc",
+  "recorded_at": "2026-09-12T09:55:56.433857+00:00",
+  "scope": "仅关闭架构首次验收退回的六项 P2；不扩展 T4/T5 范围",
+  "fixes": [
+    {
+      "id": 1,
+      "change": "冻结清单中的同业务无分录多候选标为 unestablished 并保留精确追溯；不进入有效事件或清偿累计。当前清偿独立采用当前头。",
+      "test": "test_closed_ambiguous_no_entry_states_are_trace_only",
+      "files": [
+        "src/ai_accounting/kernel/business_queries.py",
+        "tests/kernel/test_business_queries.py"
+      ]
+    },
+    {
+      "id": 2,
+      "change": "期间当前清偿跟进按截止期业务范围建立种子，纳入精确关联的后来发布与清偿，保留独立 current_cutoff_period；历史 business_status 截止不变。",
+      "test": "test_closed_period_current_followups_include_only_related_later_settlement",
+      "files": [
+        "src/ai_accounting/kernel/business_queries.py",
+        "tests/kernel/test_business_queries.py"
+      ]
+    },
+    {
+      "id": 3,
+      "change": "前期未关账时仍收集当前资料、未发布和领域缺项；仅关账顺序阻断保留 earlier_period_open。正式关闭入口不变。",
+      "files": [
+        "src/ai_accounting/kernel/workflow.py",
+        "tests/kernel/test_period_readiness.py"
+      ]
+    },
+    {
+      "id": 4,
+      "change": "报表默认筛选保留任何金额列为 null 的行，未知显示为破折号；已知零值普通行仍可隐藏。测试执行实际组件筛选。",
+      "files": [
+        "frontend/src/views/ReportsView.vue",
+        "frontend/tests/reports-adapter.test.mjs"
+      ]
+    },
+    {
+      "id": 5,
+      "change": "文件任务按明确计划合同验证集合及来源字段；损坏按任务局部返回问题或跳过，不污染其他任务，不将无效来源声明为精确直接关联。",
+      "test": "test_malformed_job_collections_are_isolated_to_the_associated_job",
+      "files": [
+        "src/ai_accounting/kernel/business_queries.py",
+        "tests/kernel/test_business_queries.py"
+      ]
+    },
+    {
+      "id": 6,
+      "change": "承接来源逐项交叉核对事实、冻结金额/义务、精确计算/事实及凭证行；错误声明原样保留并标为 unresolved，沿用备用金可省 source_fact_id 合同。",
+      "files": [
+        "src/ai_accounting/kernel/query_semantics.py",
+        "tests/kernel/test_query_semantics.py"
+      ]
+    }
+  ],
+  "revision_files": [
+    {
+      "path": "src/ai_accounting/kernel/business_queries.py",
+      "first_submission_sha256": "85e51c70bb87bd7c3ea3a28042dffd94feb46473eae99ea0c3d5bc4cdb316fa2",
+      "final_sha256": "a4a185cfb66129405ce51872b79cb0c23ae6ca70eca9abaf8cdac7bc4b14dec2"
+    },
+    {
+      "path": "src/ai_accounting/kernel/query_semantics.py",
+      "first_submission_sha256": "1e1bf2f557bb857182504d84c43052cbf4735013b4a693f06d27a53a14ba001f",
+      "final_sha256": "12b2820d1917abedea76d5d766f080fd8721577eeb798441a69e029b3e26734b"
+    },
+    {
+      "path": "src/ai_accounting/kernel/workflow.py",
+      "first_submission_sha256": "4558e5e5c091e6a56c67bfaca8ff083812a181d051f7e40560133a363ea95750",
+      "final_sha256": "24b9a5a343cb623bbd07825be2a1c3d53fe62b5547ab16857acc59472e9b30da"
+    },
+    {
+      "path": "tests/kernel/test_business_queries.py",
+      "first_submission_sha256": "75a7a4648961d746de108b370636ebe9dcd9b6497d2f754f1bcf9267730905ce",
+      "final_sha256": "fc8bc0a868a59c4be9a4d99c5e0e5eb80f137f57293ecbc5a76d5393f19b9d58"
+    },
+    {
+      "path": "tests/kernel/test_query_semantics.py",
+      "first_submission_sha256": "497636abafb859aa0d7fc25514ea29a17666a90c93d2615c4c005a66e4291338",
+      "final_sha256": "45204002d7027d52b5d3f0770fb07104c74c32acab41847a9dd6a9f77c288509"
+    },
+    {
+      "path": "tests/kernel/test_period_readiness.py",
+      "first_submission_sha256": "b557ff662d047455f6e0d8a494757c571e9cfa22a6d4070887e11061040e006c",
+      "final_sha256": "c6915ca1eb509ecd1ada1d70a834b6c2608ef464408fec72792aac1161c5053f"
+    },
+    {
+      "path": "frontend/src/views/ReportsView.vue",
+      "first_submission_sha256": "1a3472402cc1befafe187c66c9361eabb51243737d84419c5cffeb87e97dafcf",
+      "final_sha256": "20cf2f85e6fdf705102459a7dd9bc876903a0f953540e0697299ba039720cdb5"
+    },
+    {
+      "path": "frontend/tests/reports-adapter.test.mjs",
+      "first_submission_sha256": "d019bded4d84153b001dde1311cf754f912575b792ba6f14463911eb6c1beba8",
+      "final_sha256": "fe5eb35574765b789a299c6c01db8942930096392bc8aca52b0721dff1d0296d"
+    },
+    {
+      "path": "docs/unified-business-queries.md",
+      "first_submission_sha256": "8d3909378865e0d488970c21444095ad60d69f07e293432badf02772745c32c6",
+      "final_sha256": "89c942f214e433364529d71e4102ac2df6d5b53434d80ecb27f8f66925543874"
+    }
+  ],
+  "current_t3_files": [
+    {
+      "path": "docs/unified-business-queries.md",
+      "sha256": "89c942f214e433364529d71e4102ac2df6d5b53434d80ecb27f8f66925543874"
+    },
+    {
+      "path": "frontend/src/api/brief.ts",
+      "sha256": "09385836bb8246b608bad91fd08d7b92f1928446091a32c93e3cb394b317e0a6"
+    },
+    {
+      "path": "frontend/src/api/reports.ts",
+      "sha256": "076ac8a15382f0bbe08e675530bf10cb270b055d921993a8125f46cd614bb067"
+    },
+    {
+      "path": "frontend/src/components/brief/BriefFinancialOverview.vue",
+      "sha256": "63c8992ac83da30a761a0049efd7a1512c39c4ac960dfb6add661d699a724f69"
+    },
+    {
+      "path": "frontend/src/views/BriefView.vue",
+      "sha256": "36e450234b84852e376f2d2a5d25731ad682f943a1c92612cd7201ff84b633cb"
+    },
+    {
+      "path": "frontend/src/views/ReportsView.vue",
+      "sha256": "20cf2f85e6fdf705102459a7dd9bc876903a0f953540e0697299ba039720cdb5"
+    },
+    {
+      "path": "frontend/tests/brief-position.test.mjs",
+      "sha256": "f80c7172e84fbdb3ca64edfd39266df3b2bc2589e8659fe31b7903a5d7b7487a"
+    },
+    {
+      "path": "frontend/tests/reports-adapter.test.mjs",
+      "sha256": "fe5eb35574765b789a299c6c01db8942930096392bc8aca52b0721dff1d0296d"
+    },
+    {
+      "path": "src/ai_accounting/kernel/business_queries.py",
+      "sha256": "a4a185cfb66129405ce51872b79cb0c23ae6ca70eca9abaf8cdac7bc4b14dec2"
+    },
+    {
+      "path": "src/ai_accounting/kernel/command_schema.py",
+      "sha256": "cbcc1ebf891a8fbfa5ecd4dfa1c6a82a276c1b10cd78ddfc280704866b55763f"
+    },
+    {
+      "path": "src/ai_accounting/kernel/dashboard.py",
+      "sha256": "316c1bf454a25494889e1b0ec4d20150b6653d81367074449f577073febd7ac4"
+    },
+    {
+      "path": "src/ai_accounting/kernel/periods.py",
+      "sha256": "207e99454a3aff85d2e8b905e46044f71e4d3efdab8c655200411b8797a1932f"
+    },
+    {
+      "path": "src/ai_accounting/kernel/query_semantics.py",
+      "sha256": "12b2820d1917abedea76d5d766f080fd8721577eeb798441a69e029b3e26734b"
+    },
+    {
+      "path": "src/ai_accounting/kernel/reports.py",
+      "sha256": "09a3e5b27399f2fa90783d03df671586b1679df5d938c78caba431b365bb2b98"
+    },
+    {
+      "path": "src/ai_accounting/kernel/service.py",
+      "sha256": "13663c12537391632f1e07c0dea178b42be6844a6681a8d3ccf550a099abf9e5"
+    },
+    {
+      "path": "src/ai_accounting/kernel/workflow.py",
+      "sha256": "24b9a5a343cb623bbd07825be2a1c3d53fe62b5547ab16857acc59472e9b30da"
+    },
+    {
+      "path": "tests/kernel/test_business_queries.py",
+      "sha256": "fc8bc0a868a59c4be9a4d99c5e0e5eb80f137f57293ecbc5a76d5393f19b9d58"
+    },
+    {
+      "path": "tests/kernel/test_dashboard_business_queries.py",
+      "sha256": "f835fbdeb8baefd76d2462a77e500c2507d82f555c36d0092f1622eab50015d5"
+    },
+    {
+      "path": "tests/kernel/test_dashboard_projection.py",
+      "sha256": "a2ae48f7ee595a78ba63cdfbb4b49ce93d1e8299710222a07aec3d816b6304f2"
+    },
+    {
+      "path": "tests/kernel/test_period_readiness.py",
+      "sha256": "c6915ca1eb509ecd1ada1d70a834b6c2608ef464408fec72792aac1161c5053f"
+    },
+    {
+      "path": "tests/kernel/test_query_semantics.py",
+      "sha256": "45204002d7027d52b5d3f0770fb07104c74c32acab41847a9dd6a9f77c288509"
+    },
+    {
+      "path": "tests/kernel/test_report_source_resolution.py",
+      "sha256": "36482a4dd7e3d1b389d7cd073317677112516841e9938441288f0e72beb457eb"
+    }
+  ],
+  "reused_first_submission_validation": {
+    "record": "docs/t3-implementation-verification.json",
+    "record_sha256": "a899a78462493b5cf7e3edc34172dc82a3bc5a8fa482b04552c4e0ed12d92ba3",
+    "result": "248 passed; 23 targeted backend modules; first-submission frontend 25 tests and build passed",
+    "code_state_sha256": "137e010d46922867badf6cc12fb54e8eae329bc77420b8fa406a5f53d34c3b46",
+    "rerun": false,
+    "applicability_note": "仅适用于首次实现的已记录代码状态；本轮没有重跑该批次，也不将其声称为修正后全量通过。"
+  },
+  "revision_validation": [
+    {
+      "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_business_queries.py -q",
+      "result": "23 passed in 17.33s",
+      "exit_code": 0,
+      "applicable_file_sha256": {
+        "src/ai_accounting/kernel/business_queries.py": "a4a185cfb66129405ce51872b79cb0c23ae6ca70eca9abaf8cdac7bc4b14dec2",
+        "tests/kernel/test_business_queries.py": "fc8bc0a868a59c4be9a4d99c5e0e5eb80f137f57293ecbc5a76d5393f19b9d58"
+      },
+      "applicability_note": "架构修正完成并冻结后的完整业务查询测试模块；覆盖 balances-bearing 无分录歧义、旧无分录依赖与新凭证、相关后来清偿及损坏任务隔离。"
+    },
+    {
+      "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest -q tests/kernel/test_period_readiness.py",
+      "result": "5 passed",
+      "applicable_file_sha256": {
+        "src/ai_accounting/kernel/workflow.py": "24b9a5a343cb623bbd07825be2a1c3d53fe62b5547ab16857acc59472e9b30da",
+        "tests/kernel/test_period_readiness.py": "c6915ca1eb509ecd1ada1d70a834b6c2608ef464408fec72792aac1161c5053f"
+      }
+    },
+    {
+      "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest -q tests/kernel/test_workflow.py tests/kernel/test_workflow_confirmation_time.py tests/kernel/test_business_queries.py -k \"readiness or external or workflow\"",
+      "result": "48 passed, 15 deselected",
+      "applicable_file_sha256": {
+        "src/ai_accounting/kernel/workflow.py": "24b9a5a343cb623bbd07825be2a1c3d53fe62b5547ab16857acc59472e9b30da",
+        "tests/kernel/test_workflow.py": "5990629fcf399fd6cef36211d2065e36b19bebb314fa9eba1313d603884399ef",
+        "tests/kernel/test_workflow_confirmation_time.py": "11618f2e3837418a74c6221ee200c2e6ee0f83db3737fa8dd2e2465eb44dec5d"
+      },
+      "applicability_note": "Workflow 最终源码状态的相邻防回归；其中 BusinessQueries 当时仍在修订，其最终状态由本记录独立 BQ 测试与消费者检查覆盖。"
+    },
+    {
+      "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_query_semantics.py -q --tb=short -k \"accepted_source_uses_its_frozen_pointer_and_recipient or reimbursement_acceptance_preserves_and_rejects_wrong_frozen_declarations or managed_reserve_acceptance_requires_fact_and_frozen_amount_to_match\"",
+      "result": "6 passed, 9 deselected",
+      "applicable_file_sha256": {
+        "src/ai_accounting/kernel/query_semantics.py": "12b2820d1917abedea76d5d766f080fd8721577eeb798441a69e029b3e26734b",
+        "tests/kernel/test_query_semantics.py": "45204002d7027d52b5d3f0770fb07104c74c32acab41847a9dd6a9f77c288509"
+      }
+    },
+    {
+      "command": "node --test tests/reports-adapter.test.mjs (cwd=frontend)",
+      "result": "8 passed",
+      "applicable_file_sha256": {
+        "frontend/src/views/ReportsView.vue": "20cf2f85e6fdf705102459a7dd9bc876903a0f953540e0697299ba039720cdb5",
+        "frontend/tests/reports-adapter.test.mjs": "fe5eb35574765b789a299c6c01db8942930096392bc8aca52b0721dff1d0296d"
+      }
+    },
+    {
+      "command": "npm run build (cwd=frontend)",
+      "result": "vue-tsc --noEmit and vite build passed",
+      "applicable_file_sha256": {
+        "frontend/src/views/ReportsView.vue": "20cf2f85e6fdf705102459a7dd9bc876903a0f953540e0697299ba039720cdb5",
+        "frontend/src/api/reports.ts": "076ac8a15382f0bbe08e675530bf10cb270b055d921993a8125f46cd614bb067"
+      }
+    },
+    {
+      "command": [
+        "D:\\GitHub\\ai-accounting-core\\.tmp-kernel-venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests/kernel/test_dashboard_business_queries.py",
+        "-q",
+        "--junitxml=.tmp/t3-review-r1/consumer-results.xml"
+      ],
+      "summary": {
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "code_state_sha256": "adee3d703e918b6f348273136ffa9f945cfe2181bff76fcf43dbde8068fc64a3",
+      "code_unchanged_during_run": true
+    },
+    {
+      "command": "ruff check revision Python files; git -c core.safecrlf=false diff --check -- revision files",
+      "result": "passed"
+    }
+  ],
+  "final_code_state_sha256": "adee3d703e918b6f348273136ffa9f945cfe2181bff76fcf43dbde8068fc64a3",
+  "changed_code_files_since_first_submission": [
+    "frontend/src/views/ReportsView.vue",
+    "frontend/tests/reports-adapter.test.mjs",
+    "src/ai_accounting/kernel/business_queries.py",
+    "src/ai_accounting/kernel/query_semantics.py",
+    "src/ai_accounting/kernel/workflow.py",
+    "tests/kernel/test_business_queries.py",
+    "tests/kernel/test_period_readiness.py",
+    "tests/kernel/test_query_semantics.py"
+  ],
+  "unexpected_code_changes_since_first_submission": [],
+  "changed_since_final_consumer_check": [],
+  "constraints": [
+    "目录 v3 / 公司 v9 冻结结构不变",
+    "不修改真实数据库、原件或部署环境",
+    "T1/T2 内容采用与核算等价算法不变",
+    "全局回归留给 T5；五页全面接入及读取优化留给 T4"
+  ],
+  "handoff": {
+    "contract": "docs/unified-business-queries.md",
+    "unresolved_implementation_items": [],
+    "architecture_acceptance": "submitted_for_review"
+  }
+}

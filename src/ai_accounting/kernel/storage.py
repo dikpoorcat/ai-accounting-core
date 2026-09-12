@@ -59,6 +59,26 @@ class Store:
         self.registry = registry
         self.company_id, self.database_id = company_id, database_id
 
+    @staticmethod
+    def evidence_metadata(connection, digests):
+        """Read names from this company's immutable evidence without loading file bodies."""
+        result = []
+        for row in connection.execute(
+            "SELECT e.digest,e.name,e.media_type FROM json_each(?) j "
+            "JOIN evidence e ON e.digest=unhex(j.value) ORDER BY e.name,e.digest",
+            (json.dumps(sorted(set(digests))),),
+        ):
+            identity = row["digest"].hex()
+            name = row["name"].replace("\\", "/").rsplit("/", 1)[-1]
+            result.append(
+                {
+                    "digest": identity,
+                    "name": "" if name.lower() == identity else name,
+                    "media_type": row["media_type"],
+                }
+            )
+        return sorted(result, key=lambda item: (item["name"], item["digest"]))
+
     @classmethod
     def create(cls, path, registry, company_id, taxpayer_id, database_id):
         path = require_local_database(path)
@@ -135,6 +155,67 @@ class Store:
             model.model_validate_json(canonical(data)),
             evidence,
         )
+
+    def facts(self, connection, fact_ids) -> dict[str, FactVersion]:
+        """Load exact revisions in batches, including each kind's typed child tables."""
+        identifiers = sorted(set(fact_ids))
+        if not identifiers:
+            return {}
+        rows = list(
+            connection.execute(
+                "SELECT f.*,s.kind FROM json_each(?) ids JOIN fact_revision f ON f.id=ids.value "
+                "JOIN subject s ON s.id=f.subject_id",
+                (canonical(identifiers),),
+            )
+        )
+        if len(rows) != len(identifiers):
+            raise KernelError("unknown_fact", "fact revision does not exist")
+        evidence = {ident: [] for ident in identifiers}
+        for row in connection.execute(
+            "SELECT e.fact_id,e.evidence_digest FROM json_each(?) ids "
+            "JOIN fact_evidence e ON e.fact_id=ids.value ORDER BY e.fact_id,e.evidence_digest",
+            (canonical(identifiers),),
+        ):
+            evidence[row["fact_id"]].append(row["evidence_digest"].hex())
+        by_kind = {}
+        for row in rows:
+            by_kind.setdefault(row["kind"], []).append(row)
+        result = {}
+        for kind, revisions in by_kind.items():
+            model = self.registry.models[kind]
+            keys = canonical([row["id"] for row in revisions])
+            data = {}
+            for row in connection.execute(
+                f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)} f "
+                "ON f.revision_id=ids.value",
+                (keys,),
+            ):
+                values = dict(row)
+                ident = values.pop("revision_id")
+                data[ident] = decode_fields(model, values)
+            for name, info in model.model_fields.items():
+                item = sequence_model(info.annotation)
+                if item is None:
+                    continue
+                for values in data.values():
+                    values[name] = []
+                for row in connection.execute(
+                    f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)}_{name} f "
+                    "ON f.revision_id=ids.value ORDER BY f.revision_id,f.item_no",
+                    (keys,),
+                ):
+                    data[row["revision_id"]][name].append(
+                        decode_fields(item, {key: row[key] for key in item.model_fields})
+                    )
+            for row in revisions:
+                result[row["id"]] = FactVersion(
+                    row["id"],
+                    row["subject_id"],
+                    row["revision"],
+                    model.model_validate_json(canonical(data[row["id"]])),
+                    tuple(evidence[row["id"]]),
+                )
+        return result
 
     def current_fact(self, connection, subject_id):
         row = connection.execute(

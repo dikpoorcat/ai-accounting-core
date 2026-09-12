@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$DataRoot,
     [string]$PackageRoot,
@@ -28,7 +28,7 @@ if (-not (Test-Path -LiteralPath $kernelPython -PathType Leaf)) {
 
 # The managed daemon owns the service lock and starts hidden. This launcher only
 # validates the installed runtime, selects the explicit data root and opens its UI.
-& $kernelPython -I -X utf8 -c 'from ai_accounting.kernel.runtime import require_supported_runtime; from ai_accounting.kernel.http import dashboard_directory; require_supported_runtime(); assert all((dashboard_directory() / name).is_file() for name in ("index.html", "local.html")), "KERNEL_UI_MISSING: run npm run build:release in frontend"'
+& $kernelPython -I -X utf8 -c "from ai_accounting.kernel.runtime import require_supported_runtime; from ai_accounting.kernel.http import dashboard_directory; require_supported_runtime(); assert all((dashboard_directory() / name).is_file() for name in ('index.html', 'local.html')), 'KERNEL_UI_MISSING: run npm run build:release in frontend'"
 if ($LASTEXITCODE -ne 0) {
     throw 'KERNEL_INSTALLATION_INVALID: 运行时或工作台发布文件不可用，请按本地启动文档完成安装。'
 }

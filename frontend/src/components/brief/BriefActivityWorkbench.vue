@@ -4,17 +4,24 @@ import { computed, ref, watch } from "vue";
 import type { BriefActivityGroup, BriefVoucher } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
 import VoucherTrace from "./VoucherTrace.vue";
+import BusinessDetails from "./BusinessDetails.vue";
+import EvidenceList from "./EvidenceList.vue";
 
 const props = defineProps<{
   groups: BriefActivityGroup[];
   vouchers: BriefVoucher[];
   voucherCount: number;
   lineCount: number;
+  focusedVoucher?: BriefVoucher | null;
 }>();
 
 const mode = ref<"business" | "voucher">("business");
 const selectedBusinessKey = ref("");
 const selectedVoucherNumber = ref("");
+const voucherSections = computed(() => [
+  ...(props.focusedVoucher ? [{ label: "精确定位的凭证", items: [props.focusedVoucher] }] : []),
+  { label: "已加载的凭证", items: props.vouchers },
+]);
 
 const selectedBusiness = computed(
   () => props.groups.find((item) => item.key === selectedBusinessKey.value) || null,
@@ -24,7 +31,7 @@ function keepAvailableSelection() {
   if (!props.groups.some((item) => item.key === selectedBusinessKey.value)) {
     selectedBusinessKey.value = props.groups[0]?.key || "";
   }
-  if (!props.vouchers.some((item) => item.number === selectedVoucherNumber.value)) {
+  if (!props.vouchers.some((item) => item.number === selectedVoucherNumber.value) && props.focusedVoucher?.number !== selectedVoucherNumber.value) {
     selectedVoucherNumber.value = "";
   }
 }
@@ -61,6 +68,11 @@ function formatDate(value: string | null, recognition?: { label: string }) {
 }
 
 watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate: true });
+watch(() => props.focusedVoucher, () => {
+  if (props.focusedVoucher) {
+    mode.value = "voucher"; selectedVoucherNumber.value = props.focusedVoucher.number;
+  }
+}, { immediate: true });
 </script>
 
 <template>
@@ -69,7 +81,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
       <div>
         <p class="section-kicker">业务与凭证</p>
         <h2 id="activity-title">本月发生了什么</h2>
-        <p>{{ voucherCount }} 张正式凭证 · {{ groups.length }} 类业务 · {{ lineCount }} 行分录</p>
+        <p>{{ voucherCount }} 张凭证 · {{ groups.length }} 类业务</p>
       </div>
       <div class="view-switch" role="group" aria-label="本月业务查看方式">
         <button
@@ -124,75 +136,35 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
               <div>
                 <small>{{ formatDate(item.date, item.recognition) }} · {{ item.reference }}</small>
                 <span class="event-type">{{ item.title }}</span>
-                <strong class="event-subject">{{ item.subject || item.title }}</strong>
                 <span class="event-description">{{ item.display_description || item.description }}</span>
-                <details v-if="item.display_description && item.display_description !== item.description" class="disclosure">
-                  <summary>查看原始摘要（上方概述根据业务事实生成）</summary>
-                  <p>{{ item.description }}</p>
-                </details>
               </div>
-              <b>{{ formatFen(item.amount_fen) }}</b>
+              <div class="event-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen === null ? "见业务明细" : formatFen(item.amount_fen) }}</b></div>
             </div>
             <div class="event-meta">
               <span :class="['state', { correction: item.state.includes('冲正') }]">
                 {{ item.state }}
               </span>
-              <span>{{ item.party || "无往来对象" }}</span>
             </div>
-            <details v-if="item.components.length || item.funds.length" class="disclosure">
-              <summary>
-                查看 {{ item.components.length }} 个业务组件和 {{ item.funds.length }} 个资金项
-              </summary>
-              <ul class="component-list">
-                <li v-for="component in [...item.components, ...item.funds]" :key="component.id">
-                  <strong>{{ component.label }}</strong>
-                  <span v-if="component.recognition?.precision === 'month'">按月确认 · {{ component.recognition.period }}</span>
-                  <span v-if="component.description">{{ component.description }}</span>
-                  <span v-if="component.parties.length">往来：{{ component.parties.join("、") }}</span>
-                  <span v-if="component.management?.version">
-                    当前管理资料 · 第 {{ component.management.version }} 版
-                    <template v-if="component.management.display_names?.counterparty">
-                      · 往来对象：{{ component.management.display_names.counterparty }}
-                    </template>
-                    <template v-if="component.management.display_names?.beneficiary">
-                      · 受益人：{{ component.management.display_names.beneficiary }}
-                    </template>
-                    <template v-if="component.management.metadata.purpose">
-                      · 用途：{{ component.management.metadata.purpose }}
-                    </template>
-                    <template v-if="component.management.metadata.description">
-                      · 说明：{{ component.management.metadata.description }}
-                    </template>
-                  </span>
-                  <details class="disclosure">
-                    <summary>查看技术标识</summary>
-                    <p>组件键：{{ component.key }} · 类型代码：{{ component.kind }}</p>
-                    <p v-if="component.source_references.length">
-                      来源标识：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
-                    </p>
-                  </details>
-                </li>
-              </ul>
-            </details>
+            <BusinessDetails :components="item.components" :funds="item.funds" :settlements="item.settlements" />
             <details v-if="item.evidence.length" class="disclosure">
               <summary>查看 {{ item.evidence.length }} 份关联凭据</summary>
-              <ul>
-                <li v-for="evidence in item.evidence" :key="evidence">{{ evidence }}</li>
-              </ul>
+              <EvidenceList :items="item.evidence_details" />
             </details>
+            <VoucherTrace :calculation-id="item.calculation_id" :voucher-version-id="item.voucher_version_id" />
           </li>
         </ul>
       </div>
     </div>
 
-    <div v-else-if="mode === 'voucher' && vouchers.length" class="voucher-view">
+    <div v-else-if="mode === 'voucher' && (vouchers.length || focusedVoucher)" class="voucher-view">
       <div class="voucher-summary">
-        <span>点开凭证，可查看完整摘要、科目和借贷分录。</span>
+        <span>短摘要 · 完整摘要 · 凭证合计；展开查看分录和凭据。</span>
         <strong>{{ voucherCount }} 张凭证 · {{ lineCount }} 行分录</strong>
       </div>
-      <div class="voucher-list">
-        <template v-for="(voucher, index) in vouchers" :key="voucher.number">
-          <div v-if="index === 0 || vouchers[index - 1]?.date !== voucher.date" class="voucher-date">
+      <div v-for="section in voucherSections" :key="section.label" class="voucher-list">
+        <p v-if="section.items.length">{{ section.label }}</p>
+        <template v-for="(voucher, index) in section.items" :key="voucher.voucher_version_id">
+          <div v-if="index === 0 || section.items[index - 1]?.date !== voucher.date" class="voucher-date">
             {{ formatDate(voucher.date, voucher.recognition) }}
           </div>
           <button
@@ -202,8 +174,8 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
             @click="toggleVoucher(voucher.number, $event)"
           >
             <strong>{{ voucher.number }}</strong>
-            <span class="voucher-type" :title="voucher.type">{{ voucher.type }}</span>
-            <span class="voucher-row-summary">{{ voucher.list_summary || voucher.summary }}</span>
+            <span class="voucher-type" :title="voucher.list_summary">{{ voucher.list_summary }}</span>
+            <span class="voucher-row-summary">{{ voucher.display_summary }}</span>
             <strong class="voucher-row-amount">{{ formatFen(voucher.amount_fen) }}</strong>
             <span class="voucher-toggle">
               {{ selectedVoucherNumber === voucher.number ? "收起" : "展开" }}
@@ -219,11 +191,8 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
               <div class="voucher-description">
                 <span class="detail-label">凭证摘要</span>
                 <span class="voucher-detail-meta">凭证状态 · {{ voucher.state }}</span>
+                <p v-if="voucher.reverses_version_id">本凭证冲销原记录，金额反映更正影响。</p>
                 <p>{{ voucher.display_summary || voucher.summary }}</p>
-                <details v-if="voucher.display_summary && voucher.display_summary !== voucher.summary" class="disclosure">
-                  <summary>查看原始摘要（上方概述根据业务事实生成）</summary>
-                  <p>{{ voucher.summary }}</p>
-                </details>
               </div>
               <div class="voucher-balance">
                 <span>借方合计</span>
@@ -232,25 +201,7 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                 <strong>{{ formatFen(voucher.amount_fen) }}</strong>
               </div>
             </div>
-            <details v-if="voucher.components.length || voucher.funds.length" class="disclosure">
-              <summary>
-                查看 {{ voucher.components.length }} 个业务组件和 {{ voucher.funds.length }} 个资金项
-              </summary>
-              <ul class="component-list">
-                <li v-for="component in [...voucher.components, ...voucher.funds]" :key="component.id">
-                  <strong>{{ component.label }}</strong>
-                  <span v-if="component.recognition?.precision === 'month'">按月确认 · {{ component.recognition.period }}</span>
-                  <span v-if="component.description">{{ component.description }}</span>
-                  <details class="disclosure">
-                    <summary>查看技术标识</summary>
-                    <p>组件键：{{ component.key }} · 类型代码：{{ component.kind }}</p>
-                    <p v-if="component.source_references.length">
-                      来源标识：{{ component.source_references.map((ref) => `${ref.type}=${ref.value}`).join("；") }}
-                    </p>
-                  </details>
-                </li>
-              </ul>
-            </details>
+            <BusinessDetails :components="voucher.components" :funds="voucher.funds" :settlements="voucher.settlements" />
             <div class="table-wrap">
               <table>
                 <colgroup>
@@ -274,7 +225,11 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
                       <strong>{{ line.account }}</strong>
                     </td>
                     <td data-label="往来对象">
-                      <span :class="{ party: line.party }">{{ line.party || "—" }}</span>
+                      <template v-if="line.parties?.length > 1">
+                        <span v-for="(party, partyIndex) in line.parties" :key="`${party.id}-${partyIndex}`" class="line-party">{{ party.name }} · {{ formatFen(party.amount_fen) }}</span>
+                      </template>
+                      <span v-else :class="{ party: line.party }">{{ line.party || (line.party_state === 'unresolved' ? '见凭证业务说明' : '—') }}</span>
+                      <small v-if="line.source_label">业务来源：{{ line.source_label }}</small>
                     </td>
                     <td class="number" data-label="借方">
                       {{ fen(line.debit_fen) ? formatFen(line.debit_fen) : "—" }}
@@ -288,11 +243,9 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
             </div>
             <details v-if="voucher.evidence.length" class="disclosure">
               <summary>查看 {{ voucher.evidence.length }} 份关联凭据</summary>
-              <ul>
-                <li v-for="evidence in voucher.evidence" :key="evidence">{{ evidence }}</li>
-              </ul>
+              <EvidenceList :items="voucher.evidence_details" />
             </details>
-            <VoucherTrace v-if="voucher.calculation_id" :calculation-id="voucher.calculation_id" />
+            <VoucherTrace v-if="voucher.calculation_id" :calculation-id="voucher.calculation_id" :voucher-version-id="voucher.voucher_version_id" />
           </section>
         </template>
       </div>
@@ -305,6 +258,9 @@ watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate:
 </template>
 
 <style scoped>
+.event-money { display: grid; gap: 5px; text-align: right; flex-shrink: 0; }
+.event-money small { color: var(--brief-muted); font-weight: 400; }
+.line-party { display: block; margin-bottom: 4px; }
 .brief-section {
   padding: 20px;
   border: 1px solid var(--brief-line);

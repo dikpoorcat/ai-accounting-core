@@ -430,6 +430,9 @@ class Exports:
                 "VALUES(?, 'payment_export', ?, 'pending')",
                 (job_id, canonical(payload)),
             )
+            from .read_indexes import sync_job
+
+            sync_job(connection, job_id)
             return {
                 "status": "queued",
                 "job_id": job_id,

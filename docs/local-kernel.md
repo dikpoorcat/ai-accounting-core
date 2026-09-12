@@ -46,7 +46,7 @@
 开发环境可以先构建页面，再启动服务：
 
 ```powershell
-npm --prefix frontend run build
+npm --prefix frontend run build:release
 .\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data serve
 ```
 
@@ -106,6 +106,10 @@ STDIO MCP 使用同一服务：
 | `domains/` | 交易结算、薪酬、税费、资产融资、银行、现金与垫付的事实及计算器 |
 | `storage.py`、`schema.py` | 版本、证据、类型化字段与重复子记录的持久化和通用数据库保护 |
 | `engine.py` | 一致快照、依赖图、预览、幂等、统一发布、开放期替代和闭期补偿 |
+| `accounting.py`、`domains/accounting.py` | 核算等价及旧结果兼容；完整结果摘要和精确依据独立保留 |
+| `query_reads.py`、`query_semantics.py`、`business_queries.py` | 请求内精确读取、冻结采用证明及共同财务位置、清偿和期间准备 |
+| `read_indexes.py` | 与源事务同步的原始引用目录、命中核验和显式完整性验证 |
+| `dashboard*.py`、`display.py`、`provenance.py` | 五页只读投影、内容采用及历史补充资料的精确来源 |
 | `periods.py` | 资料覆盖、业务模块声明的月末义务、关账清单和冻结查询 |
 | `workflow.py` | 已确认外部义务、实际完成依据和跨月待办 |
 | `payroll_tax_declarations.py` | 实际工资申报税额及明确采用的代发口径，保留未代发差额 |
@@ -131,8 +135,11 @@ JSON 保存复合政策明细、正式计算解释和冻结清单。
 这些版本按主键加载，不会被同批次较新的计算覆盖，也不扫描全部历史版本。
 已经退出有效结果图的旧计算保留审计，不继续参与当前更正传播。
 
-新依据复核后，若完整计算结果与核算月份未变，保存新的计算依据及 `review_no_impact` 处置，
+新依据复核后，若核算意义与核算月份未变，保存新的计算依据及 `review_no_impact` 处置，
 沿用已封存凭证，不增加凭证或冲正；以后真正发生金额等变化时，仍能定位并更正原有效凭证。
+核算意义包含分录、义务身份、余额及后续计算状态，不仅比较金额。原完整 outcome、result_digest
+及精确引用保持不变；核算签名不能替代内容有效性、提交并发版本或真实办理依据。细则见
+[核算等价合同](accounting-equivalence.md)和[历史来源与内容版本](history-content-versions.md)。
 
 开放期通过新结果版本替代，保留凭证身份和编号。关闭截止线以内的账务保持不变，
 更正必须指定开放 `correction_period`，直接反向原凭证，再发布必要的新处理。
@@ -163,11 +170,22 @@ JSON 保存复合政策明细、正式计算解释和冻结清单。
 科目发生额、现金流和往来余额在发布事务内同步维护。
 更正减去旧影响、加上新影响；余额为零的投影行统一省略。
 `rebuild` 可从有效凭证和计算重建，验收逐分比较重建前后结果。
-看板只读汇总和有限待办；凭证按编号游标分页；证据正文按需加载。
+共同查询以稳定业务身份关联事实、计算、凭证、清偿与外部办理；看板在同一公司库读事务内
+返回版本、完整汇总及分页明细。目录库公司列表不承诺与公司库跨库原子读取。
+历史财务位置采用精确冻结 trial balance 及必要的同步增量，不以当前无期间余额代替。
+完整 CLI/MCP `business_status`、`period_readiness` 与页面投影复用共同含义；页面准备投影
+不能替代正式关账检查。详见[统一业务查询](unified-business-queries.md)。
+
+增长集合先选本页实体或来源再展开；游标绑定公司、期间、筛选、实体及快照版本，文件任务另
+绑定工作器状态版本。客户端不得把已加载页当作全部数据或拼接不同版本。
+无分录冻结采用须有完整相关证明；未证明状态继续为 `unestablished`，未知金额保持 `null`。
+有限期初包采用证明不推广到普通依赖，不用当前头或相同净额推定历史采用。
 
 关账检查资料覆盖和未处理事实，并调用业务模块声明的资产折旧、借款计息、银行对账等期间义务。
 已有业务的较早月份必须先关闭。冻结清单保存有效版本、来源、分类、资料依据、负责人确认及上一关账摘要。
-闭期查询沿冻结引用，不连接最新员工或政策资料。
+闭期核算沿精确冻结引用；历史页面可按明确身份补充现有管理资料，并逐字段标注实际来源与冲突，
+不把后来资料冒充当时采用的核算或经营说明。历史清偿截至所选月末，当前跟进仅纳入这些业务
+精确相关的后来事项；核算已冻结、外部办理完成和文件任务成功彼此独立。
 
 连续历史关账先用 `preview_close_range` 核对完整起止范围。多家公司可通过原生
 `approve_close_batches` 窗口一次密码确认各自的具体预览，再逐公司调用 `close_range`。
@@ -186,6 +204,8 @@ JSON 保存复合政策明细、正式计算解释和冻结清单。
 ## 外部义务与流程状态
 
 `workflow` 按 `period` 和明确的查询日 `as_of` 返回月度步骤及跨月义务；
+`as_of_semantics=current_knowledge` 表示按当前事实、正式复核及当前关账状态判断过去业务日，
+不是还原当时系统知识。当前已关账状态不按 `as_of` 截断，完成列表也不是全部历史修订。
 `obligation_basis` 按 `obligation_id` 返回可用于确认外部完成的当前正式计算集合。
 生成文件、资料齐全、工资计提和实际申报是独立事实，不能彼此代替完成状态。
 
@@ -203,7 +223,9 @@ JSON 保存复合政策明细、正式计算解释和冻结清单。
 查询确认日及之后可以显示已完成，查询更早日期则不能提前显示。没有对应确认审计时保持未建立。
 已知 `completion_date` 仍按实际业务日判断，不以较晚的录入时间替代。
 返回的 `recorded_completions` 分别提供 `basis_current`（依据是否仍有效）、`known_as_of`
-（查询日是否已能证明完成）和 `confirmation_recorded_at`（未知完成日所用的系统确认时间）。
+（按当前知识判断指定业务日是否已能证明完成）和 `confirmation_recorded_at`（精确事实的系统确认时间）。
+有实际完成日的记录也返回确认时间；`completion_time_basis` 指明采用实际日、确认时间或无法建立。
+该确认时间不代表负责人最早知悉日；无可信或唯一审计关联时为空。
 `completion_date` 始终保留原值；幂等重放及后续重算不会改写最初确认时间。
 已有完成记录但依据变化时，记录继续可见，义务的 `basis_review_required` 标明需要复核；
 查询时间元数据不进入纯业务计算结果，也不替代真实申报凭据。
@@ -215,7 +237,8 @@ JSON 保存复合政策明细、正式计算解释和冻结清单。
 `no_reportable_activity_confirmed=true`，该确认不能绕过已知缺失或未发布工资。
 
 重算保留原提交接受的版本和实际日期，只重新判断 `basis_current`。
-业务集合、类型、期间或完整结果摘要变化会显示需处理；只调整 `due_date` 不使原提交失效。
+核算等价判断遵循 [T1 合同](accounting-equivalence.md)，原完整结果摘要和真实已接受版本仍保留；
+只调整 `due_date` 不使原提交失效。
 结果等价的新计算版本经正式复核后，原提交仍有效：`accepted_calculations` 保留真实采用的旧版本，
 `reviewed_calculations` 单独记录此次复核的当前版本；未发布的复核不能消除待办或绕过关账检查。
 新的实际提交使用新业务身份，录入错误才使用有证据的 `amend_fact`，实际付款不随工资或流程重算改写。
@@ -247,13 +270,16 @@ JSON 保存复合政策明细、正式计算解释和冻结清单。
 
 ## 验证与性能口径
 
-本次最终测试与独立运行包的对应版本见 [验收记录](local-kernel-acceptance.md)。
+T1—T4 的批准边界见[架构总计划](architecture-roadmap.md)，T5 统一验证的代码状态、
+本次检查及复用证据见 [T5 结果](t5-implementation-result.md)。
+[较早验收记录](local-kernel-acceptance.md)仅适用于其记录的历史构建，不作为当前代码通过数量。
+按改动风险选择必要检查，以下是可用入口，不是每次修改的固定门禁：
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -m pytest --confcutdir=tests/kernel tests/kernel -q
+.\.tmp-kernel-venv\Scripts\python.exe -m pytest
 .\.tmp-kernel-venv\Scripts\python.exe -m ruff check src/ai_accounting/kernel tests/kernel scripts
-npm --prefix frontend run typecheck
-npm --prefix frontend run build
+npm --prefix frontend test
+npm --prefix frontend run build:release
 ```
 
 测试使用隔离公司文件，覆盖空范围来源后补、工资与付款联动、开放期保号、闭期冲正、
@@ -270,4 +296,10 @@ npm --prefix frontend run build
 百万凭证测试的普通入账仍是简单费用；大工资批次、复杂更正和备份属于单独的批量预算。
 当前按月过滤的游标查询仍受当月数据量影响。源码变更时应按 JSON 中的代码和 schema 摘要辨别测量版本。
 
-新公司格式当前为第 1 版；后续发布后的结构变化需要前向版本升级，不应改写已启用公司的建库格式。
+公司库当前 v10、目录库 v3；目录 v1—v3 和公司 v1—v10 合同均已冻结，后续结构变化追加前向
+事务迁移。v10 的 close/job/audit 目录只保存原始精确引用，不保存采用或完成结论。
+普通读取核验命中的源引用，不能发现任意删除后不再命中的遗漏；迁移及显式完整性验证比较
+完整引用多重集合，便携包验证同样检查。不得在每次连接时全库扫描或自动回填。
+
+有界读取限制无关历史装载和页外对象展开，不承诺总成本恒定。完整相关分类校验、历史现金
+汇总、相关清偿和完整冻结图保留真实输入成本；细则及测量限制见[有界看板查询](bounded-dashboard-queries.md)。

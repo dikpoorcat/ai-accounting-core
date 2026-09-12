@@ -1,0 +1,419 @@
+{
+  "task_id": "01a09521-a902-7ca2-9fbb-2d9ffa74f194",
+  "architecture_task_id": "01a09416-a4e3-76b2-bf46-6387d8d47cfc",
+  "review_revision": "r2",
+  "recorded_at": "2026-09-12T12:44:12.413775+00:00",
+  "scope": "Only architecture findings R1/R2/R3; approved to implement directly within existing T4 scope.",
+  "r1_preserved": {
+    "path": "docs/t4-implementation-verification.json",
+    "sha256": "f24ca46f2bc4150cc91fb4c8b8df13352fd7bec76510161ee68d79d5632c37c7",
+    "review_baseline": ".tmp/t4-r1-review-baseline/manifest.json",
+    "review_baseline_sha256": "80489cb8258d5307461aa3a98252c31f08180d0f63772972cc898dc57f350d67",
+    "baseline_note": "Captured before fixes. Unchanged pre-T4 files reconstruct from .tmp/t4-baseline; reviewed T4 files are preserved in the r1 copy. Architecture-owned document updates are marked separately.",
+    "reuse": "Architecture accepted r1 source/baseline/patch alignment, v10 index and migration boundaries, frozen contracts, historical selection/corrections, finite opening proof, main frontend paging/request generations and cost evidence. These batches are not rerun or added to r2 counts."
+  },
+  "changes": [
+    {
+      "path": "docs/architecture-task-prompts.md",
+      "r1_sha256": "f38bbc20c16db1de8726341fcfa8decdcbc6bfdb80e753b2f2930fe0126b7319",
+      "r2_sha256": "0e3c77c2be8d50de88a00edf906fe11d55707bb4e329f6fa173cd9e03da9300e",
+      "change": "modified",
+      "owner": "architecture_task"
+    },
+    {
+      "path": "docs/t4-review-r2.md",
+      "r1_sha256": null,
+      "r2_sha256": "0a734e110875b2459402b30da0dd457c320152f019de68afd873ac16dcae9f4f",
+      "change": "added",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "frontend/src/api/employees.ts",
+      "r1_sha256": "a109001ea54eb59ca5e132bcc35a5f84ec1a2254acbeca7edcbd0fcec6345464",
+      "r2_sha256": "b5a055bd5b47cc999bf185bf60bf16a306ee55c913faa9527cb4a1e53d9c4621",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "frontend/src/views/AssetsView.vue",
+      "r1_sha256": "a05617687e402db38af2c20638cae02c95723bc707d3205bc9e4129f21f58e97",
+      "r2_sha256": "29364348bb1ed5aee583daa488a3f02ec74a3cb1619677490e1eb43604a8e391",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "frontend/src/views/EmployeesView.vue",
+      "r1_sha256": "7834cc244ff2a8c99b301cf1cfea7689f80d94182e5f9c6710f626cac44b4711",
+      "r2_sha256": "66721141d83ee4ae51dc7652a7d3aa71ffa4f7adff298ef8c7ec673c4a67a6cb",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "frontend/tests/dashboard-render-v2.test.mjs",
+      "r1_sha256": "c4295d167aefc22d2d40dca29b42a3a18269a82a0c9d1ae6bbe7cbb2b723cc6a",
+      "r2_sha256": "83117a517b0f388e599a9586cf6aea26a6fcb75a8775a39ce64ecebf5c127265",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "src/ai_accounting/kernel/business_queries.py",
+      "r1_sha256": "5ee6a0a396e149e3f8449de4bbe7b55d59600e8ec0373546f48cca6224bf10c9",
+      "r2_sha256": "e469debb38c6d223feb62879c807c82c232bdd7f22fe9f8d2634bb4da13f3bbe",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "src/ai_accounting/kernel/http.py",
+      "r1_sha256": "3df227fe4499b214145eabae83005aaf66a3970d80c3a789bbd2f3fe2b47545f",
+      "r2_sha256": "91d3e0980c7c6b11112b43c8e8615b69594118de23f76c9e07eb08ecc2fc92c1",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "src/ai_accounting/kernel/reports.py",
+      "r1_sha256": "cc8637165301e1eda63c0e35ba28d2b1bd2585e98d8466976a8e30f605196432",
+      "r2_sha256": "3721e108d9e7941dcf5450e09bc4bd893cb805e794a50caabc1efe8862851d10",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "tests/kernel/test_dashboard_transport.py",
+      "r1_sha256": "4af484841be3c35911a6e2d2d7dfb7ff7125bb96fe23ee49757e26042bee025d",
+      "r2_sha256": "5560947dd68d5cbe756b4d25946008eef143fb16f13f49897ff185d612b111a6",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "tests/kernel/test_reports_bounded_reads.py",
+      "r1_sha256": "3be0fdb681bdf91ac6a3392bf8eafc249a05e8a26f40e19bef3ffa6fe10daf4f",
+      "r2_sha256": "28e64b30779d06c2ddcdbff8b1d776b76bc5196ef6ffeb452f48ce57b2c41f53",
+      "change": "modified",
+      "owner": "T4 r2"
+    },
+    {
+      "path": "tests/kernel/test_unresolved_settlement_reads.py",
+      "r1_sha256": null,
+      "r2_sha256": "c8ede34e0e6f0063a73940c8a17b4b24549b2a5b7f576e1d9dfb4a7282582e0f",
+      "change": "added",
+      "owner": "T4 r2"
+    }
+  ],
+  "incremental_patch": {
+    "path": ".tmp/t4-r2-delta.patch",
+    "sha256": "e3cb09c314c201f2fa19f5b7c3075899694f8a9e175b38f22e951924c53d722e"
+  },
+  "verification": [
+    {
+      "path": ".tmp/t4-r2-report-classification.json",
+      "sha256": "437916f80f99a66855e663d765a076e63b1a0d02ef2e9555e1fa5a72761b2e80",
+      "record": {
+        "task_id": "01a09521-a902-7ca2-9fbb-2d9ffa74f194",
+        "review": "r2 / architecture R1: report classification validation scope",
+        "date": "2026-09-12",
+        "environment": ".tmp-kernel-venv; synthetic company databases only; no service startup or real company access",
+        "baseline": ".tmp/t4-r1-review-baseline (preserved)",
+        "diff": ".tmp/t4-r2-report-classification.diff",
+        "diff_sha256": "ef5a8824e599bb8a2ed1d54891ae812c8be346d0de48194e2b934c40d08308a9",
+        "final_source_hashes": {
+          "src/ai_accounting/kernel/reports.py": "3721e108d9e7941dcf5450e09bc4bd893cb805e794a50caabc1efe8862851d10",
+          "tests/kernel/test_reports_bounded_reads.py": "28e64b30779d06c2ddcdbff8b1d776b76bc5196ef6ffeb452f48ce57b2c41f53"
+        },
+        "baseline_source_hashes": {
+          "src/ai_accounting/kernel/reports.py": "cc8637165301e1eda63c0e35ba28d2b1bd2585e98d8466976a8e30f605196432",
+          "tests/kernel/test_reports_bounded_reads.py": "3be0fdb681bdf91ac6a3392bf8eafc249a05e8a26f40e19bef3ffa6fe10daf4f"
+        },
+        "final_report_ast_sha256": "7833e79a2cc172d781c6117489948ce0b1532c7af695cffdd521bdfcad2b1d2f",
+        "change": [
+          "Keep the complete existing open/frozen report reference set and report_fact_ids. Read normalized classification scalar parents before selecting payloads, including missing or otherwise unused voucher references.",
+          "Resolve duplicate voucher references across that entire applicable set; retain the original conflict issue and suppress conflicting classification application.",
+          "Use the shared exact voucher selector on referenced voucher IDs plus indexed reversals; verify hit frozen voucher references. Never substitute current heads for frozen adoption.",
+          "One common Python validator checks period/reference existence and line/account compatibility for all adopted classifications. SQL only streams normalized child/line scalar data. The former payload-based duplicate validator is removed, so there is no parallel account rule.",
+          "Hydrate full typed classification content only for non-conflicting sources needed by the report detail rows. Unadopted but existing same-period versions keep the original reference-only validation behavior."
+        ],
+        "tests": [
+          {
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_reports_bounded_reads.py::test_unselected_classification_references_remain_validated -k missing -q",
+            "result": "1 failed, 2 deselected in 2.80s",
+            "state": "Before product fix, r1 reports.py; new regression assertion",
+            "finding": "Real scenario(book) + March classification pointing at v-does-not-exist returned ready instead of needs_information."
+          },
+          {
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_reports_bounded_reads.py -k \"unselected_classification or previous_year_classification\" -q",
+            "result": "8 passed, 5 deselected in 13.30s",
+            "state": "Initial helper implementation before formatting; preliminary checkpoint only",
+            "scope": "Missing reference plus registered readiness core; future voucher period mismatch; duplicate missing reference; prior-year valid/mismatched-period/missing-line/wrong-account/duplicate classification. Spies verify no complete irrelevant classification or calculation hydration."
+          },
+          {
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_reports_bounded_reads.py tests/kernel/test_reports.py::test_report_facts_required_before_close_without_filing_cycle tests/kernel/test_reports.py::test_closed_correction_uses_original_classification_in_next_quarter tests/kernel/test_reports.py::test_real_business_three_statements_and_template tests/kernel/test_report_source_resolution.py::test_conflicting_classification_sources_do_not_depend_on_last_fact -q",
+            "result": "1 failed, 18 passed in 30.04s",
+            "report_source_sha256": "3721e108d9e7941dcf5450e09bc4bd893cb805e794a50caabc1efe8862851d10",
+            "state": "Final product implementation; one newly added test fixture still used save_fact to replace an immutable cash_funding fact",
+            "failure": "test_classification_of_replaced_version_keeps_original_reference_only_validation stopped in fixture setup with immutable_fact before invoking the report. Fixture corrected to the authorized typed amend_fact API; no product change followed.",
+            "scope": "All bounded report tests plus close-readiness classification/tax blockers, frozen correction classification, open/closed three-statement XLSX export, and existing exact-party classification conflict."
+          },
+          {
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_reports_bounded_reads.py::test_classification_of_replaced_version_keeps_original_reference_only_validation -q",
+            "result": "1 passed in 2.89s",
+            "report_source_sha256": "3721e108d9e7941dcf5450e09bc4bd893cb805e794a50caabc1efe8862851d10",
+            "test_source_sha256": "28e64b30779d06c2ddcdbff8b1d776b76bc5196ef6ffeb452f48ce57b2c41f53",
+            "state": "Final product and test source; only prior fixture setup corrected",
+            "scope": "Actual typed immutable-record amendment creates a replaced version; same-period classification of that unadopted version keeps baseline reference-only validation."
+          },
+          {
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m ruff check src/ai_accounting/kernel/reports.py tests/kernel/test_reports_bounded_reads.py",
+            "result": "All checks passed!",
+            "state": "Final source"
+          },
+          {
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m ruff format --check src/ai_accounting/kernel/reports.py tests/kernel/test_reports_bounded_reads.py",
+            "result": "2 files already formatted",
+            "state": "Final source"
+          }
+        ],
+        "applicability": {
+          "counts_are_not_added": true,
+          "same_report_source_in_adjacent_and_corrected_fixture_runs": true,
+          "not_claimed": "No combined final-source 19-pass run is claimed; no T3/T4 previous run counts are combined. Previous r1 and T4 evidence remains intact.",
+          "reproduction_command_for_combined_scope": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_reports_bounded_reads.py tests/kernel/test_reports.py::test_report_facts_required_before_close_without_filing_cycle tests/kernel/test_reports.py::test_closed_correction_uses_original_classification_in_next_quarter tests/kernel/test_reports.py::test_real_business_three_statements_and_template tests/kernel/test_report_source_resolution.py::test_conflicting_classification_sources_do_not_depend_on_last_fact -q",
+          "readiness": "Missing-reference case calls the registered check_report_readiness core within one explicit read transaction; existing close tests verify actual period_not_ready gate. No readiness exemption added."
+        },
+        "cost_and_scope": [
+          "Complete applicable classification parent metadata and required validation issues can grow with history; they must not be truncated.",
+          "Line validation streams only normalized classification child keys and exact referenced line accounts. It does not construct full historical classifications, historical voucher line maps, or outcomes.",
+          "Exact adoption metadata work follows referenced voucher IDs and their indexed reversals; full content hydration remains restricted to the existing report detail candidate scope.",
+          "No schema, migration, shared business rule, current balance, display, or frontend change. No repeat of full T4 regression or cost suite."
+        ]
+      }
+    },
+    {
+      "path": ".tmp/t4-r2-voucher-number.json",
+      "sha256": "0dfd36fc6c48a37e57c6d35e93ac213eee17a0c2facecdc5c263a541c2af3aea",
+      "record": {
+        "task_id": "01a09521-a902-7ca2-9fbb-2d9ffa74f194",
+        "revision": "r2",
+        "item": "R2: numeric voucher deep link",
+        "change": "query_payload now parses voucher_number with the existing integer fields before strict command validation. No command schema, frontend contract, selector or database structure change.",
+        "before_fix": {
+          "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_dashboard_transport.py::test_numeric_voucher_deep_link_survives_real_http_parsing -q",
+          "result": "1 failed in 3.35s",
+          "observed": "HTTP 400 invalid_command, int_type at voucher_number, expected HTTP 200"
+        },
+        "after_fix": {
+          "scope": [
+            "Actual loopback HTTP parser, generated strict command schema and synthetic database projection",
+            "Numeric link targets voucher 2 while page limit 1 still returns voucher 1 separately",
+            "Version-ID link returns the same exact focused voucher",
+            "10009 parses as integer then correctly returns dashboard_voucher_not_found",
+            "Decimal/zero/duplicate/mutually-exclusive locators reject; existing after_number/version continuation remains valid"
+          ],
+          "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest tests/kernel/test_dashboard_transport.py::test_numeric_voucher_deep_link_survives_real_http_parsing tests/kernel/test_dashboard_transport.py::test_http_continuation_requires_the_same_published_snapshot -q",
+          "result": "2 passed in 6.27s"
+        },
+        "static": "Ruff and tracked diff whitespace check passed",
+        "files": [
+          {
+            "path": "src/ai_accounting/kernel/http.py",
+            "r1_sha256": "3df227fe4499b214145eabae83005aaf66a3970d80c3a789bbd2f3fe2b47545f",
+            "r2_sha256": "91d3e0980c7c6b11112b43c8e8615b69594118de23f76c9e07eb08ecc2fc92c1"
+          },
+          {
+            "path": "tests/kernel/test_dashboard_transport.py",
+            "r1_sha256": "4af484841be3c35911a6e2d2d7dfb7ff7125bb96fe23ee49757e26042bee025d",
+            "r2_sha256": "5560947dd68d5cbe756b4d25946008eef143fb16f13f49897ff185d612b111a6"
+          }
+        ]
+      }
+    },
+    {
+      "path": ".tmp/t4-r2-unresolved-settlements.json",
+      "sha256": "9787cc36655203d8420316ce7d2a305c97703ce3007b04a6b559fa5979325b56",
+      "record": {
+        "task_id": "01a09521-a902-7ca2-9fbb-2d9ffa74f194",
+        "review_revision": "T4 architecture r2, R3 unresolved settlement source visibility",
+        "recorded_at_utc": "2026-09-12T12:38:00.994969+00:00",
+        "r1_baseline": ".tmp/t4-r1-review-baseline",
+        "baseline_manifest_sha256": "80489cb8258d5307461aa3a98252c31f08180d0f63772972cc898dc57f350d67",
+        "files": {
+          "src/ai_accounting/kernel/business_queries.py": {
+            "sha256": "e469debb38c6d223feb62879c807c82c232bdd7f22fe9f8d2634bb4da13f3bbe",
+            "r1_sha256": "5ee6a0a396e149e3f8449de4bbe7b55d59600e8ec0373546f48cca6224bf10c9"
+          },
+          "tests/kernel/test_unresolved_settlement_reads.py": {
+            "sha256": "c8ede34e0e6f0063a73940c8a17b4b24549b2a5b7f576e1d9dfb4a7282582e0f",
+            "ast_sha256": "08333e70752b46671e8491a37c105d89f4f4bb5a4ab84baf4d2fc973a5db114b"
+          }
+        },
+        "changes": [
+          "Slot candidate SQL exposes declared and frozen source subjects independently, accepting their union; it does not coalesce away the declaration or rewrite the frozen source.",
+          "The shared reducer matches an existing indexed declaration even when the resolver retains a different frozen source identity. For an existing A obligation key, its established uncertain-payment path now runs and propagates null paid/period-paid/remaining amounts.",
+          "Every included unresolved movement marks the overall shared result partially_established. If B has no matching A obligation key, B's own known obligation remains paid=0, remaining=100 while the global summary reports incomplete.",
+          "A nonempty candidate selection with no relationship to the requested subject returns the existing empty summary with explicit zero business/movement/line-relation counts; unrelated C is not contaminated by A/B issues."
+        ],
+        "unchanged_shared_contracts": {
+          "src/ai_accounting/kernel/query_semantics.py": "500878dff0f1a8921d42c5518405e7997bba408dfe9b2bfa6a2c4eeb7cec2858",
+          "src/ai_accounting/kernel/query_reads.py": "5b5f812094ea99c4a7af32f6abc858b236338b4614c4a6ef17750e806a219040",
+          "src/ai_accounting/kernel/read_indexes.py": "cac3d603d05c73ec26e8f5be8b1fca57700e478ed41fb990e6d15b482b4ee8fc",
+          "src/ai_accounting/kernel/migrations/v10_business.json": "25d6ed414395fcdbdb20bbc74f279ab1fafb619d364a2acffbb3c47d68504e5a"
+        },
+        "contract_limits": "No response fields, settlement resolution rules, frozen adoption rules, source amounts, declaration kinds, or DDL were added. No current-head fallback replaces the exact frozen pointer. Existing enums and the existing unknown reducer are reused.",
+        "synthetic_fixture": {
+          "construction": "Start with a typed synthetic book containing A/B obligations of 100 fen and two valid A payments (40 and 20). Copy it into SQLite memory. Temporary shadow calculation/edge tables change only the 40-fen frozen pointer and edge to B, preserving declaration A and the A obligation key. Persistent source facts and the original synthetic database are not altered by fault injection.",
+          "scope": "This deliberately damaged retained-record state is not claimed to be constructible through normal business write APIs. Actual QueryReads, selected accounting, normalized slot SQL, resolver, collection pagination, full reducer and summary are invoked without mocking their business decisions.",
+          "expected": "A has two items across pages and unknown paid/remaining; B sees the same damaged event, retaining B calculation/fact trace and the raw 40-fen declaration, with B's known obligation unchanged. Union scope counts the event once. Historical and current views use the same semantics."
+        },
+        "sample": {
+          "path": ".tmp/t4-r2-unresolved-settlement-sample.json",
+          "sha256": "38c4da52d95d568bc54f22b713de3111126b3646b68720b4ba1d3da4d9d52bb7"
+        },
+        "validation": [
+          {
+            "phase": "r1 reproduction before production fix",
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest -q tests/kernel/test_unresolved_settlement_reads.py",
+            "result": "2 failed in 4.31s",
+            "findings": [
+              "A page total_count=1 instead of 2: damaged 40-fen slot missing",
+              "A full/summary status=established instead of partially_established"
+            ]
+          },
+          {
+            "phase": "final focused risk and semantic neighbors",
+            "command": ".tmp-kernel-venv/Scripts/python.exe -m pytest -q tests/kernel/test_unresolved_settlement_reads.py tests/kernel/test_query_reads.py::test_scoped_summary_includes_related_payments_and_keeps_month_amounts tests/kernel/test_query_reads.py::test_current_settlement_page_preserves_original_scope_and_slot_identity tests/kernel/test_query_reads.py::test_unknown_source_amount_is_not_a_zero_or_settled_state tests/kernel/test_business_queries.py::test_unresolved_settlement_does_not_claim_a_paid_balance tests/kernel/test_query_semantics.py::test_accepted_source_uses_its_frozen_pointer_and_recipient tests/kernel/test_query_semantics.py::test_reimbursement_acceptance_preserves_and_rejects_wrong_frozen_declarations[amount]",
+            "result": "8 passed in 7.24s",
+            "tested_production_sha256": "e469debb38c6d223feb62879c807c82c232bdd7f22fe9f8d2634bb4da13f3bbe",
+            "tested_test_sha256": "c8ede34e0e6f0063a73940c8a17b4b24549b2a5b7f576e1d9dfb4a7282582e0f",
+            "applicability": "Current final files including unrelated-C empty-summary count assertion. Earlier authoring/intermediate passes are not added to this result."
+          },
+          {
+            "phase": "final formatting",
+            "command": "ruff check and ruff format --check business_queries.py test_unresolved_settlement_reads.py; git diff --check on those paths",
+            "result": "Passed; 2 files already formatted"
+          }
+        ],
+        "evidence_policy": "This is a new r2 addendum. Existing r1 verification artifacts/baseline and prior T4 cost measurements were not modified or rerun. Counts from earlier code states are not added to this targeted result."
+      }
+    },
+    {
+      "path": ".tmp/t4-r2-unresolved-render.json",
+      "sha256": "944782f1df354170cb4380c878a1784f76925f81d73193f52b98875145613593",
+      "record": {
+        "task": "T4 r2 / R3",
+        "revision": "Visible unresolved relations in existing employee and asset source movement lists",
+        "recorded_at": "2026-09-12T12:43:55.125999+00:00",
+        "files": {
+          "frontend/src/api/employees.ts": {
+            "sha256": "b5a055bd5b47cc999bf185bf60bf16a306ee55c913faa9527cb4a1e53d9c4621",
+            "previous_sha256": "a109001ea54eb59ca5e132bcc35a5f84ec1a2254acbeca7edcbd0fcec6345464"
+          },
+          "frontend/src/views/EmployeesView.vue": {
+            "sha256": "66721141d83ee4ae51dc7652a7d3aa71ffa4f7adff298ef8c7ec673c4a67a6cb",
+            "previous_sha256": "7834cc244ff2a8c99b301cf1cfea7689f80d94182e5f9c6710f626cac44b4711"
+          },
+          "frontend/src/views/AssetsView.vue": {
+            "sha256": "29364348bb1ed5aee583daa488a3f02ec74a3cb1619677490e1eb43604a8e391",
+            "previous_sha256": "a05617687e402db38af2c20638cae02c95723bc707d3205bc9e4129f21f58e97"
+          },
+          "frontend/tests/dashboard-render-v2.test.mjs": {
+            "sha256": "83117a517b0f388e599a9586cf6aea26a6fcb75a8775a39ce64ecebf5c127265",
+            "previous_sha256": "c4295d167aefc22d2d40dca29b42a3a18269a82a0c9d1ae6bbe7cbb2b723cc6a"
+          }
+        },
+        "preserved_verification_sha256": "f24ca46f2bc4150cc91fb4c8b8df13352fd7bec76510161ee68d79d5632c37c7",
+        "fixture_sha256": "7d536c58f5230304a80a3f35088f29be95e162a48b23ce3df58b1acb777b7798",
+        "scope": "Frontend only: add existing backend relation_state to shared SettlementView movement type and directly render its unresolved value in two employee and three asset lists. No backend, accounting, amount/status derivation, pagination change or layout redesign.",
+        "projection": {
+          "field": "movement.relation_state",
+          "value": "unresolved",
+          "label": "清偿关系尚未确认，未计入已结金额。",
+          "null_amount": "Existing formatFen(null) remains 未提供",
+          "trace": "Existing source_calculation_id (exact B) and settlement calculation_id props to real VoucherTrace remain unchanged."
+        },
+        "validation": [
+          {
+            "command": "node --test --test-name-pattern=\"R2 unresolved source movements\" tests/dashboard-render-v2.test.mjs",
+            "cwd": "frontend",
+            "exit_code": 0,
+            "output": "TAP version 13\n# Subtest: actual v2 responses pass runtime consumers and all five pages render historical/current partitions\nok 1 - actual v2 responses pass runtime consumers and all five pages render historical/current partitions # SKIP test name does not match pattern\n  ---\n  duration_ms: 1.8203\n  ...\n# Subtest: business details visibly retain uncertain adopted candidates, historical debt and later settlement\nok 2 - business details visibly retain uncertain adopted candidates, historical debt and later settlement # SKIP test name does not match pattern\n  ---\n  duration_ms: 0.2107\n  ...\n# Subtest: unestablished employee and mixed-type asset placeholders keep exact candidates without adopted-card fields\nok 3 - unestablished employee and mixed-type asset placeholders keep exact candidates without adopted-card fields # SKIP test name does not match pattern\n  ---\n  duration_ms: 0.2652\n  ...\n# Subtest: historical source pages expose totals and use a separate historical continuation while preparation stays unknown\nok 4 - historical source pages expose totals and use a separate historical continuation while preparation stays unknown # SKIP test name does not match pattern\n  ---\n  duration_ms: 0.1428\n  ...\n# Subtest: R2 unresolved source movements remain visible with null amounts and exact B traces in all five lists\nok 5 - R2 unresolved source movements remain visible with null amounts and exact B traces in all five lists\n  ---\n  duration_ms: 1508.6483\n  ...\n1..5\n# tests 5\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 4\n# todo 0\n# duration_ms 2162.1766\n",
+            "applicability": "One SSR regression renders actual EmployeesView and AssetsView over the existing synthetic HTTP fixture shape. It seeds all five movement lists with one unresolved/null row and one resolved/known-amount control, asserts exactly one unresolved message per list, preserves known money formatting, and captures exact B/payment props received by the real VoucherTrace setup. No network/business writes; middleware-only SSR. Four existing tests skipped."
+          },
+          {
+            "command": "npm run build",
+            "cwd": "frontend",
+            "exit_code": 0,
+            "output_excerpt": "> ai-accounting-dashboard@0.1.0 build\n> npm run type-check && vite build\n\n> ai-accounting-dashboard@0.1.0 type-check\n> vue-tsc --noEmit\n\nvite v6.4.3 building for production...\n✓ 107 modules transformed.\n✓ built in 3.17s",
+            "applicability": "Final production source. Only test instrumentation changed afterwards: exact trace IDs are asserted at the real component prop boundary instead of expecting hidden IDs in collapsed SSR HTML."
+          },
+          {
+            "command": "git diff --check -- frontend/src/api/employees.ts frontend/src/views/EmployeesView.vue frontend/src/views/AssetsView.vue frontend/tests/dashboard-render-v2.test.mjs",
+            "exit_code": 0,
+            "output": "No whitespace errors. Git emitted its existing LF→CRLF normalization warning for employees.ts."
+          }
+        ],
+        "diagnostics": [
+          {
+            "command": "node --test --test-name-pattern=\"R2 unresolved source movements\" tests/dashboard-render-v2.test.mjs",
+            "result": "Initial test-only assertion failed because collapsed real VoucherTrace does not expose its internal exact ID in SSR HTML. The employee unresolved labels, null rendering and resolved control amounts were already correct. Replaced only the test assertion with captured component prop inputs, then reran the same single regression successfully."
+          }
+        ],
+        "evidence_policy": "Standalone r2 evidence. docs/t4-implementation-verification.json and prior r1 evidence retained untouched. Do not sum counts across source states. No full frontend suite or cost measurements run.",
+        "files_released": true
+      }
+    }
+  ],
+  "validation_policy": "Independent per-finding runs retain their own code hashes and applicability. No cumulative pass count, full kernel/T4 run or full cost measurement; no new DB structure or endpoint/schema version.",
+  "environment": "Repository .tmp-kernel-venv; temporary synthetic companies, actual loopback test HTTP and explicit synthetic malformed immutable-source cases. No formal company database, original material, installed service or deployment.",
+  "static": {
+    "scope": "Final r2 Python source and regression files; whitespace check across current tracked changes",
+    "commands": [
+      {
+        "command": [
+          "D:\\GitHub\\ai-accounting-core\\.tmp-kernel-venv\\Scripts\\python.exe",
+          "-m",
+          "ruff",
+          "check",
+          "src/ai_accounting/kernel/reports.py",
+          "src/ai_accounting/kernel/http.py",
+          "src/ai_accounting/kernel/business_queries.py",
+          "tests/kernel/test_reports_bounded_reads.py",
+          "tests/kernel/test_dashboard_transport.py",
+          "tests/kernel/test_unresolved_settlement_reads.py"
+        ],
+        "exit_code": 0,
+        "output": "All checks passed!\n"
+      },
+      {
+        "command": [
+          "D:\\GitHub\\ai-accounting-core\\.tmp-kernel-venv\\Scripts\\python.exe",
+          "-m",
+          "ruff",
+          "format",
+          "--check",
+          "src/ai_accounting/kernel/reports.py",
+          "src/ai_accounting/kernel/http.py",
+          "src/ai_accounting/kernel/business_queries.py",
+          "tests/kernel/test_reports_bounded_reads.py",
+          "tests/kernel/test_dashboard_transport.py",
+          "tests/kernel/test_unresolved_settlement_reads.py"
+        ],
+        "exit_code": 0,
+        "output": "6 files already formatted\n"
+      },
+      {
+        "command": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "exit_code": 0,
+        "output": "warning: LF will be replaced by CRLF in .agents/skills/accounting-operator/SKILL.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in AGENTS.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in FRONTEND.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in docs/empty-database-replay.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in docs/formal-empty-db-startup-checklist-template.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in docs/local-kernel-packaging.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in docs/local-kernel-startup.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in docs/local-kernel-takeover.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in docs/local-kernel.md.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/index.html.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/package.json.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/App.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/api/assets.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/api/brief.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/api/client.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/api/employees.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/api/funds.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/api/localKernel.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/api/reports.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/components/BackgroundJobsPanel.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/components/DashboardModuleHeader.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/components/brief/BriefActivityWorkbench.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/components/brief/BriefFinancialOverview.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/components/brief/BriefOpenItems.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/components/brief/BriefWorkforceSection.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/components/brief/VoucherTrace.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/composables/useDashboardContext.ts.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/views/BriefView.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/views/FundsView.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/src/views/ReportsView.vue.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in frontend/tests/local-kernel.test.mjs.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/backup.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/command_schema.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/contracts.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/dashboard.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/display.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/engine.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/exports.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/http.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/periods.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/schema.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/service.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/storage.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/tax_import.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/versions.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in src/ai_accounting/kernel/workflow.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/kernel/test_dashboard_projection.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/kernel/test_dashboard_transport.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/kernel/test_display.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/kernel/test_display_migrations.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/kernel/test_kernel_audit.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/kernel/test_report_source_resolution.py.\nThe file will have its original line endings in your working directory\nwarning: LF will be replaced by CRLF in tests/kernel/test_workflow_confirmation_time.py.\nThe file will have its original line endings in your working directory\n"
+      }
+    ],
+    "files": {
+      "src/ai_accounting/kernel/reports.py": "3721e108d9e7941dcf5450e09bc4bd893cb805e794a50caabc1efe8862851d10",
+      "src/ai_accounting/kernel/http.py": "91d3e0980c7c6b11112b43c8e8615b69594118de23f76c9e07eb08ecc2fc92c1",
+      "src/ai_accounting/kernel/business_queries.py": "e469debb38c6d223feb62879c807c82c232bdd7f22fe9f8d2634bb4da13f3bbe",
+      "tests/kernel/test_reports_bounded_reads.py": "28e64b30779d06c2ddcdbff8b1d776b76bc5196ef6ffeb452f48ce57b2c41f53",
+      "tests/kernel/test_dashboard_transport.py": "5560947dd68d5cbe756b4d25946008eef143fb16f13f49897ff185d612b111a6",
+      "tests/kernel/test_unresolved_settlement_reads.py": "c8ede34e0e6f0063a73940c8a17b4b24549b2a5b7f576e1d9dfb4a7282582e0f"
+    }
+  }
+}

@@ -3,7 +3,6 @@ defineProps<{
   items: readonly { id: string; label: string }[];
   active: string;
   label: string;
-  floating?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -12,7 +11,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <nav :class="['section-nav', { floating }]" :aria-label="label">
+  <nav class="section-nav" :aria-label="label">
     <button
       v-for="item in items"
       :key="item.id"
@@ -74,13 +73,6 @@ const emit = defineEmits<{
 .section-nav button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-}
-
-@media (min-width: 1280px) {
-  .section-nav.floating {
-    margin-top: -136px;
-    margin-bottom: 92px;
-  }
 }
 
 @media (max-width: 720px) {

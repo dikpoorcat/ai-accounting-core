@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useDashboardContext } from "../composables/useDashboardContext";
 
 interface Option {
   key: string;
@@ -18,13 +20,24 @@ const props = defineProps<{
 }>();
 
 const selectedStatus = computed(
-  () => props.options.find((item) => item.key === props.selected)?.status || "",
+  () => props.options.find((item) => item.key === displayedSelection.value)?.status || "",
 );
 
 const emit = defineEmits<{
   change: [value: string];
   refresh: [];
 }>();
+const route = useRoute();
+const router = useRouter();
+const displayedSelection = computed(() => props.selected || (props.options.find(item => item.key === (route.name === "reports" ? route.query.quarter : route.query.period))?.key ?? ""));
+const { context, cancel, selectionNotice, setSelectionNotice } = useDashboardContext();
+async function changeCompany(event: Event) {
+  const company = (event.target as HTMLSelectElement).value;
+  if (company === route.query.company_id) return;
+  setSelectionNotice("");
+  cancel();
+  await router.push({ query: { company_id: company, period: route.query.period }, hash: "" });
+}
 
 function handleChange(event: Event) {
   emit("change", (event.target as HTMLSelectElement).value);
@@ -33,17 +46,23 @@ function handleChange(event: Event) {
 
 <template>
   <header class="module-header" :aria-busy="loading">
-    <div>
+    <div class="module-heading">
       <p class="eyebrow">{{ eyebrow }}</p>
       <h1>{{ title }}</h1>
       <p class="description">{{ description }}</p>
     </div>
     <div class="toolbar">
+      <label v-if="context?.companies.length" class="company-control">
+        <span>公司</span>
+        <select class="control" :value="context.current_company?.company_id" aria-label="切换公司" @change="changeCompany">
+          <option v-for="company in context.companies" :key="company.company_id" :value="company.company_id">{{ company.name }}{{ company.status === 'archived' ? '（已归档）' : '' }}</option>
+        </select>
+      </label>
       <select
         class="control"
-        :value="selected"
+        :value="displayedSelection"
         :aria-label="selectLabel"
-        :disabled="loading || options.length === 0"
+        :disabled="options.length === 0"
         @change="handleChange"
       >
         <option v-for="option in options" :key="option.key" :value="option.key">
@@ -51,7 +70,7 @@ function handleChange(event: Event) {
         </option>
       </select>
       <span
-        v-if="selected"
+        v-if="displayedSelection"
         :class="['period-status', selectedStatus === 'closed' ? 'closed' : 'open']"
         role="status"
       >
@@ -61,6 +80,7 @@ function handleChange(event: Event) {
         {{ loading ? "加载中…" : "刷新数据" }}
       </button>
     </div>
+    <p v-if="selectionNotice" class="selection-notice" role="status">{{ selectionNotice }}</p>
     <span v-if="loading" class="header-progress" aria-hidden="true" />
   </header>
 </template>
@@ -71,10 +91,16 @@ function handleChange(event: Event) {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 28px;
+  flex-wrap: wrap;
+  gap: 12px 24px;
   margin-bottom: 22px;
   padding-bottom: 4px;
 }
+.module-heading { min-width: 0; }
+.company-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.company-control > span { font-size: 12px; color: var(--muted); }
+.company-control select { max-width: 260px; min-width: 0; }
+.selection-notice { width: 100%; margin: 0; color: var(--muted); font-size: 13px; }
 
 .eyebrow {
   margin: 0 0 5px;
@@ -87,7 +113,7 @@ function handleChange(event: Event) {
 
 h1 {
   margin: 0;
-  font-size: clamp(27px, 3vw, 36px);
+  font-size: clamp(24px, 2.4vw, 30px);
   line-height: 1.12;
   letter-spacing: -0.035em;
 }
@@ -101,7 +127,8 @@ h1 {
 
 .toolbar {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -157,8 +184,8 @@ select.control {
 }
 
 .period-status.open {
-  background: var(--warning-soft);
-  color: var(--warning);
+  background: var(--surface-soft);
+  color: var(--muted);
 }
 
 .header-progress {
@@ -210,6 +237,8 @@ select.control {
 }
 
 @media (max-width: 720px) {
+  .company-control { grid-column: 1 / -1; width: 100%; }
+  .company-control select { max-width: none; width: 100%; }
   .module-header {
     margin-bottom: 18px;
   }
@@ -219,7 +248,7 @@ select.control {
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
-  .toolbar select {
+  .toolbar > select {
     min-width: 0;
   }
 
@@ -233,7 +262,7 @@ select.control {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .toolbar select {
+  .toolbar > select {
     grid-column: 1 / -1;
   }
 

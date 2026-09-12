@@ -1,186 +1,317 @@
 <!-- @format -->
 
-# 组合协议空库重录与终态核对
+# SQLite 空库重录、完整恢复与结果核对
 
-目录库基线为 `0001_catalog_baseline_v2`，公司业务库基线为
-`0001_business_baseline_v4`，分别使用独立 PostgreSQL 17 数据库和迁移树。
-旧业务基线及至 `0006_pass_through` 的旧场景迁移不支持原地升级。
-2026-09-09 按负责人要求，将业务 v3 至 `0004_fact_precision` 的迁移归并为 v4。
-预付项目成本、必要事实与管理资料解耦和日期精度已包含在新基线中。业务库后续迁移为 `0002_atomic_corrections`（联动更正）、`0003_payroll_correction_uses`（扣除依据使用关系重建保护）、`0004_payroll_dependency_scope`（工资历史依赖范围）及 `0005_payroll_provenance`（计算来源溯源保护）。两棵迁移树分别执行至
-`head`；旧业务链不能原地升级，末版 `0004_fact_precision` 仍可作为只读导出来源。
+当前入口是 `finance-local` 和 `finance_local_*` MCP，目录库 v3、公司库 v11；读取结构与前向兼容见 [有界看板查询](bounded-dashboard-queries.md)。
+两类数据库分别检查结构合同并前向升级；不需要 PostgreSQL、ORM 或 Alembic。
+旧 `finance-replay`、`finance-backup`、`ai_accounting.replay_cli`、`finance_record_event`
+及组合协议回放包执行器已经退役，本文替代它们的操作说明。现在没有通用的“导出事实包后自动重放”命令。
 
-跨期预付款必须按真实日期先录预付、交付确认应付后再冲抵，不能把付款指向未来才形成的
-应付。真实阶段验收则先录项目成本及债务，交付时按来源结转资产；字段及示例见
-[供应商预付款与项目成本](purchase-project-components.md)。没有阶段验收证据时不改变为
-阶段成本路径，也不从旧库错误核销结果推断业务事实。
+## 1. 先选择本次任务
 
-本次修正版资料另存于 Git 忽略的 `outputs/`，保留原包及原始依据。修正版包先重新完成
-离线验包，再由执行器按影响范围判断能否沿用既有回放状态：空库初始化所用的公司、基础资料或
-科目配置发生变化，已完成操作的顺序或内容发生变化，新增引用需要状态中未保存的已完成结果，
-以及已完成整包后又出现待执行操作时，必须创建独立空目标及新的状态文件；仅未执行操作、核验
-资料或说明文件变化，且初始化投影与已完成操作前缀逐项一致时，可以更新包哈希绑定并断点续跑。
-每次接受替换都在状态中记录旧、新清单哈希和判定时间。包哈希和协议校验只代表资料结构有效；
-隔离测试数据回放成功也不代表试用公司已实际重录，仍须分别报告状态。
+| 任务 | 使用什么来源 | 当前操作 | 会保留什么 |
+| --- | --- | --- | --- |
+| 完整公司备份恢复 | 已验证的 `<统一社会信用代码>.finance-company.zip` | `restore_company` | 备份中的公司/数据库身份、事实版本、凭证、证据、管理资料及关账记录 |
+| 按原始资料空库重记 | 原始来件、明确补充事实和逐条来源清单 | `create_company` 后逐项 `evidence`、类型化保存、预览、确认 | 原件与已确认业务含义；新身份、事实版本和计算摘要在新库重新建立 |
+| 已有库重建汇总 | 该库已有正式凭证与计算结果 | `rebuild` | 原凭证和事实不变，重建月度发生额、现金流、往来及期初汇总 |
 
-## 1. 先保全最新事实
+`rebuild` 不会补回缺失原件、姓名、业务事实或经营说明，也不能把旧错误结果重算成正确账务。
+完整恢复不等于重新记账；不得先创建同一公司，再把便携包覆盖进去。
+便携包只包含公司资料库，负责人身份和会话在目录库管理，不通过公司包迁移。
 
-源数据库必须强制只读连接并在一致性事务中读取；不得仅凭旧回放包推断最新状态。
-逐公司保存业务事实、原始证据、银行流水、领域资料和终态快照，校验证据字节数及 SHA-256。
-不导出密码哈希、恢复码、会话令牌或数据库凭据。源 UUID 只供私有快照核验，执行清单使用
-业务稳定引用，实际重录时解析为新编号。
+执行真实重录前必须已经明确目标公司、资料范围及独立目标根目录。整理文件、修改程序或跑本页合成测试，
+都不等于授权向真实公司写入，也不会自动删除任何原库或原件。
 
-当前本机交付以 Git 忽略的 `outputs/README.md` 为索引；其中区分下一轮回放包、离线验证、
-清理记录和清理前恢复存档。旧数据的撤销、删除及冲正历史保留在恢复存档供核验，
-不机械重放已撤去的业务。保留原始来件；只有已经明确授权并保全恢复依据后，才清理旧资料。
+## 2. 保存原件和稳定引用
 
-当前运行工具只接受 `ai-accounting-composition-replay-v3`，不接受旧包协议或运行时转换。
-业务库从正式空库基线 `0001_business_baseline_v4` 初始化；后续变更使用前向迁移。
-从当前基线公司库或旧链末版 `0004_fact_precision` 只读刷新包使用：
+逐公司保存私有来源索引，至少记录：原始相对路径、原文件名、字节数、SHA-256、来源、允许的日期精度、
+稳定业务引用、依赖引用、明确确认的核算事实与尚待核对事项。身份证件、工资、账号、真实说明和完整响应
+只保存在已忽略的私有资料目录，不提交源码。
 
-```powershell
-.\.venv\Scripts\python.exe -m ai_accounting.replay_cli export-system `
-  --output .\outputs\composition-replay-YYYYMMDD
-```
+- 业务稳定引用可以是私有清单中的 `expense:2026-01:office:001`；它不是旧数据库 UUID。
+  为每个目标保存 `稳定引用 → 新 subject_id` 映射，员工、往来方、资金账户、资产引用也保持一致。
+- `fact_id`、计算 ID、凭证版本 ID、代发依据版本、报表依据版本、预览摘要和 `epochs` 以新库返回为准。
+  下游字段若要求版本 ID，就使用映射中的新返回值；若要求稳定业务 ID，则使用新 `subject_id`。
+  不把旧工资批次、资产来源、冲正引用或 `carry_forward_fact_id` 直接带入另一数据库。
+- `evidence` 首次登记时传原件字节及**原文件名**。当前按内容摘要去重，同字节再次登记不会覆盖首次名称；
+  同一内容的其他来件路径/别名保留在私有来源索引。不得为改名改变文件字节或伪造新原件。
+- 文件说明不能替代核算事实。原件只明确月份就保留月份；实际收付款需要真实日期时按来源提供，
+  不能补造月末日期。计算税额、实际扣税、实际申报、实际付款分别重建，不能互相代替。
+- 旧凭证、旧余额和旧计算结果可以解释历史差异，不作为原始事实重录输入。
+  只有本次明确选择正式期初接续时，才按 `opening_*` 和 `opening_package` 的当前类型化合同录入
+  有依据的期初项目；这不生成虚构的历史交易。
 
-## 2. 审阅逐条重录清单并离线验证
+## 3. 绑定隔离服务并取得当前合同
 
-逐公司清单按依赖排序，包括公司初始化、证据及人员资料、银行流水、业务入账、报表控制和
-期间处理。每条业务注明来源、日期、整数分金额、组件键、资金分配和核对点。缺口必须单列，
-不能用零额、推断税率、猜测债权人或默认现金用途补齐。
-
-单项和组合业务均调用 `finance_record_event`，提交 `components` 与 `funds`。
-工资、劳务、资产、借款和税务的必要试算、确认继续使用其专用流程；它们正式入账共用
-内核提交器。资金项引用组件键，跨业务来源使用稳定业务引用，不能携带任意凭证行。
-组合中需要确认的税务计算先调用 `finance_preview_event`，复核并提交返回的
-`reviewed_request`。工资、劳务使用在新库重新预览的批次及哈希，不能沿用旧库编号。
-同笔正常工资和合并计税奖金采用两级工资预览：先在新库预览正常工资，再用其新批次编号
-预览奖金，奖金组件通过 `regular_payroll_component_keys` 保留对正常工资组件的稳定依赖。
-随后统一调用 `finance_preview_event` 并只正式调用一次 `finance_record_event`。回放清单按依赖
-执行预览，即使来源组件在 `components` 数组中位于奖金之后，也不得带入旧库的批次、工资行
-或计算哈希。
-同笔固定资产购置或启用与首个应计月份折旧，使用 `activation_component_key` 或
-`activation_component_keys` 保留稳定依赖。新库回放时只提交这些组件键和业务事实，由
-`finance_preview_event` 重新生成资产、启用来源证明及折旧哈希；不得沿用旧库的资产、启用
-编号或计算哈希。来源组件即使在 `components` 数组中位于折旧之后，仍须先按依赖计算。
+以下示例用于 Windows PowerShell。把路径替换为本次已选定的独立资料根目录；整个操作期间都显式传同一 `--root`。
+开发环境使用仓库虚拟环境中的 `finance-local.exe`；独立运行包使用包根目录的 `finance-local.ps1` 或 `finance-local.cmd`，参数相同。
+输入 JSON 保存为 UTF-8 无 BOM。不要把密码、恢复码或 Cookie 写入 JSON、终端参数或断点文件。
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_accounting.replay_cli verify-package `
-  --package .\outputs\composition-replay-YYYYMMDD
+$replayRoot = "D:\accounting-replay\本次已确认的隔离目录"
+$financeLocal = (Resolve-Path ".\.tmp-kernel-venv\Scripts\finance-local.exe").Path
+# 使用独立运行包时改为：(Resolve-Path "D:\本地会计运行包\finance-local.ps1").Path
+& $financeLocal --root $replayRoot call schema
+& $financeLocal --root $replayRoot security status
+& $financeLocal --root $replayRoot security setup
 ```
 
-离线验证包括格式、完整清单、所有文件哈希、证据大小、操作次序与稳定引用、当前组件请求
-结构。它只证明资料包一致，不能代替在目标库逐条执行后的余额和领域核验。清单存在未决
-事实时必须先补充，不能称为已完成业务重录。
+`schema` 返回 `command_schemas`、`facts`、`security_request_schema` 和 `agent_operating_protocol`。
+如果当前目录已经设置负责人，使用 `security login`；首次设置和登录均在本机安全窗口完成。
+窗口请求返回不等于已登录，再用 `security status` 核对。首次使用新目录会初始化目录库，
+因此先确认路径，不能用默认正式目录代替隔离目标。
 
-## 3. 明确选定空目标后初始化和登录
+MCP 的对应操作是先 `finance_local_schema()`，再
+`finance_local_security(action="request", payload={"kind":"bootstrap_owner"})` 或 `{"kind":"login"}`；
+用 `finance_local_security(action="session_status", payload={})` 查会话。
+MCP 进程必须由 `finance-local --root <同一目标> mcp` 启动，不能用仍绑定正式目录的 MCP 执行隔离重录。
 
-后续实际重录须由负责人另行发起。目标配置使用 `.env`，不得将真实密码写在命令行。
-`DATABASE_URL` 指向独立目标目录库，公司运行、迁移和供应配置指向同一目标集群。
-停止连接目标库的写进程，确认源库和目标身份不同。未知历史、已有表或非空目标立即停止，
-不覆盖、不清理、不自动降级。
+取得公司列表；新录使用 `create_company`，完整恢复跳到第 8 节：
 
 ```powershell
-$replayState = ".\outputs\.composition-replay.state.json"
-.\.venv\Scripts\python.exe -m ai_accounting.replay_cli prepare-empty `
-  --package .\outputs\composition-replay-YYYYMMDD `
-  --state-file $replayState
+& $financeLocal --root $replayRoot call companies
+& $financeLocal --root $replayRoot call create_company --input .\inputs\company.json
+& $financeLocal --root $replayRoot call operations
 ```
 
-执行器先创建目录结构，再逐公司创建业务结构，核对独立 revision 和公司身份，并保存状态。
-随后自动请求原生“首次负责人设置”表单；`owner_security_window` 返回请求编号和状态。
-在窗口输入两次新密码并确认已保存恢复码后自动登录；旧身份凭据、会话及审批不回放。
-`starting` 仅代表正在启动，`waiting_for_user` 才表示表单已显示。
-弹窗失败不撤销初始化，继续使用同一包和状态运行 `replay` 即可重新请求设置或登录。
+`company.json` 的字段是 `{"taxpayer_id":"明确的统一社会信用代码","name":"明确的公司名称"}`。
+保存返回的公司 `id` 为之后的 `company_id`，核对 `companies` 的身份与路径。
+`create_company` / `restore_company` 通过持久操作记录处理重复调用，不接受 `request_id`；
+相同身份和参数的调用可查询原结果，非空目标或身份冲突不能用改文件、删记录绕过。
+
+MCP 业务调用统一为
+`finance_local_command(command="create_company", payload={...})`；后面的公司命令同样调用该工具，
+并在 `payload` 显式包含本公司的 `company_id`。MCP 对列表返回值加 `items` 包装。
+
+## 4. 原件、类型化事实和管理信息一起接回
+
+登记原件的 `evidence.json`：
+
+```json
+{
+  "company_id": "本次返回的公司ID",
+  "content_base64": "原件完整字节的Base64",
+  "media_type": "text/plain",
+  "name": "原始文件名.txt",
+  "request_id": "source:original:001:v1"
+}
+```
 
 ```powershell
-$primaryOrgId = "prepare-empty 返回的 primary_org_id"
-.\.venv\Scripts\python.exe -m ai_accounting.identity_cli setup `
-  --org-id $primaryOrgId --login-name owner
-.\.venv\Scripts\python.exe -m ai_accounting.identity_cli security-window-status `
-  --request-id "返回的 request_id"
+& $financeLocal --root $replayRoot call evidence --input .\inputs\evidence.json
 ```
 
-## 4. 逐条执行和期间处理
+Base64 是字节传输格式，不是脱敏；不要打印真实内容。单份原件上限 20 MiB。
+保存返回的 `digest`，后续 `evidence` 列表或 `evidence_digest` 引用这个摘要。
+多页/多行资料还要按当前 `inspect_material`、`receive_material`、`resolve_material` / `resolve_material_group`
+合同登记和处置；仅调用 `evidence` 不代表每行已处理。跨月原件先以 `preview_material_allocation` /
+`confirm_material_allocation` 明确逐项月份，再在各月处理相应业务。
+
+下例是**合成测试费用**的 `expense.json`，不是实际公司事实模板：
+
+```json
+{
+  "company_id": "本次返回的公司ID",
+  "kind": "expense",
+  "subject_id": "target-expense-2026-01-office-001",
+  "data": {
+    "period": "2026-01",
+    "counterparty_id": "target-supplier-office",
+    "amount_fen": 12500,
+    "expense_class": "administration",
+    "creditor_kind": "supplier"
+  },
+  "evidence": ["本次登记原件返回的digest"],
+  "expected_revision": 0,
+  "request_id": "fact:office:001:v1"
+}
+```
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_accounting.replay_cli replay `
-  --package .\outputs\composition-replay-YYYYMMDD `
-  --state-file $replayState
+& $financeLocal --root $replayRoot call save_fact --input .\inputs\expense.json
 ```
 
-回放先检查实际目录和公司身份是否与状态文件一致。身份设置或登录尚未完成时，返回
-`waiting_for_owner` 和当前目标库的窗口请求，不执行包内操作；失败返回 `blocked`。
-窗口返回成功后再次执行同一回放命令，由内核重新验证本机会话。
-每个目标实例独立保存会话；不要用仍连接现账库的 MCP 请求替代回放库窗口。
-先非默认公司、后默认公司；状态文件逐条记录成功结果和新编号，使用同一包及状态可断点续跑。
-执行时默认向 stderr 输出逐步 JSON 进度：当前公司、操作键、操作类型、已完成数量和耗时；
-stdout 仍只输出最终 JSON 结果。需要安静执行时加 `--quiet`。状态中的 `last_run_timing`
-和成功结果中的 `timing` 记录本次执行按操作类型汇总的耗时及检查点写入耗时，不包含启动、
-验包和登录等待；它们是运行诊断，不参与会计计算或包哈希。
+金额输入是整数分，不使用浮点元金额。批量保存使用 `save_facts`，把同结构记录放入 `facts`，
+每条含 `kind`、`subject_id`、`data`、`evidence`、`expected_revision`；批次统一 `company_id` 和 `request_id`。
+事实保存与正式发布是两步，不把 `saved` 当作已入账。不同公司的记录不能混成一批。
 
-检查点采用紧凑 JSON，每项成功后写入临时文件、刷新并原子替换；替换失败保留上一份完整
-状态，继续使用幂等键恢复。`replay` 和 `verify` 对同一状态文件互斥，重复启动立即返回
-`REPLAY_STATE_ALREADY_IN_USE`。旁边的 `.lock` 文件可长期保留，操作系统会在进程退出时
-释放锁，不能根据文件存在判断仍在运行，也不要在执行期间删除该文件。
+管理资料在正式事实之外追加；核算不需要的姓名、用途、显示编号等不塞入会计字段：
 
-历史银行匹配检查按业务和银行账户批量读取，合计仍包括同一业务跨月的所有有效匹配；
-预览和确认分别读取最新快照。历史关账范围检查只批量读取确认时间，往来余额检查避免
-额外加载整套凭证和证据。逐月顺序、余额校验、关账确认和每步持久化保持不变。
-证据、人员、合同、卡片、应收应付来源先于引用它们的付款或核销。重复同类业务可在一笔中
-出现，明确分配到同一笔实际收付；不同公司的事实不能组合。同笔组件依赖通过稳定键表达。
+| 内容 | 当前命令与关键字段 | 使用顺序 |
+| --- | --- | --- |
+| 公司业务背景 | `update_company_note`：`text`、`expected_revision`、`request_id`，可附 `evidence_digest` | 先 `company_context` 取得当前版本，按原件保存 |
+| 人员、往来方、资金账户、资产、业务展示档案 | `save_display_profile`：`profile`、`expected_revision`、`request_id` | `profile.kind` 为 `employee` / `counterparty` / `fund_account` / `asset` / `business`，`entity_id` 使用新映射 |
+| 名称、用途和说明 | 档案中的 `display_name`、`display_number`、`purpose`、`note`、`source`，可附 `evidence_digest` | 使用已提供资料；员工入离职精度与状态只按明确来源填写 |
+| 既有业务归集说明 | `management`：`subject_id`、`note`、`payment_period`、`payment_category`、`expected_revision`、`request_id` | 业务先存在；归集月份不改变入账月份 |
+| 实际收款人姓名与账户 | `save_payee`：`party_id`、`name`、`account`、`evidence_digest`、`expected_revision`、`request_id` | 只有确有收款账户依据时保存，不为填姓名编造账号 |
 
-每个期间先补齐内核实际要求的工资、折旧摊销、税务和报表事实，再对账、复核并关账。
-不能从缺少工资批次推断无工资。现有资料支持的历史控制按原依据重建，不伪造外部申报日期。
-未确认试算草稿不直接证明业务发生；管理解读、外部办理进度和逐项打卡不作为关账门禁。
-负责人针对本次快照确认完整性，授权、备份、已知应计、对账及账表一致性检查继续执行。
-受控历史测试关账模式只在已明确指定的可丢弃测试库使用，成功和失败后均关闭；普通现账
-关账继续使用密码复核和自动备份。任何失败保留状态和稳定错误码，不手工改库绕过。
+`display_profiles` 可查现行档案；带 `period` 时是对应历史月份的封存读取。
+看板会复用内核已有名称资料，展示档案补充其不足。未知人员状态保持 `unknown`，
+不由工资生效月份推断入职日期，也不为关账补造管理资料。
 
-## 5. 核对终态与正式启用
+## 5. 按依赖预览和确认，保存断点
+
+每笔先登记并发布所需来源，再处理依赖它的业务：合同/制度和期初来源 → 成本、工资、资产启用等 →
+付款/核销/折旧等后续事实。具体依赖取当前 `facts` 合同和预览返回的 `fact_issues`，不沿用旧组合组件协议。
 
 ```powershell
-.\.venv\Scripts\python.exe -m ai_accounting.replay_cli verify `
-  --package .\outputs\composition-replay-YYYYMMDD `
-  --state-file $replayState
+& $financeLocal --root $replayRoot call preview --input .\inputs\preview.json
+& $financeLocal --root $replayRoot call confirm --input .\inputs\confirm.json
 ```
 
-核对科目期末余额、未结往来及债权人、银行流水和匹配、工资税务、资产借款、期间和报表，
-并确认每张正式凭证借贷平衡、公司隔离、证据哈希完整。重组后不要求复现旧凭证编号、数量
-或已冲正历史形成的累计借贷发生额。原账错误的差异必须另列原因、证据及确认结果，不能
-照抄错误余额，也不能静默从检查点删除差异。
+`preview.json` 为 `{"company_id":"本公司ID","subjects":["新业务subject_id"]}`。
+逐项复核预览结果后，`confirm.json` 包含同一 `company_id`、`subjects`，以及刚返回的
+`preview_digest`（取预览的 `digest`）、完整 `epochs` 和本次稳定 `request_id`。
+浏览器看板只负责查看；上述命令经 CLI/MCP 提交类型化事实，不接受任意借贷分录。
 
-普通匿名往来按业务来源和稳定键核对，不要求先补对象。对象、用途、合同／项目标签和说明
-放入组件 `metadata`；不得为满足旧门禁补造受益人、垫付日期或管理编号。
-从新内核导出的资料包在会计业务及期间操作之后，通过 `finance_update_business_metadata`
-逐版本恢复管理资料；明确清除值使用 `null`，不改写已形成的关账会计快照。
+私有断点记录至少保存目标根目录、公司/数据库身份、原件摘要、稳定引用映射、每步输入、返回 ID、状态，
+以及**正式调用前**已保存的完整确认请求。逐步成功后再标记完成；写临时文件后原子替换可避免半份记录。
+这些是本次操作记录的做法，不代表仓库提供了旧版回放状态文件执行器。
 
-重新开始空库回放必须使用新状态文件，不能沿用上一轮已完成状态。新导出会保留负责人已
-确认的工资输入，并以来源组件解析资产卡片及工资、劳务往来键中的新编号。未获确认的
-业务事实仍须保持缺口，不能因初始化或资料整理补造日期、税务状态或项目验收事实。
+- 网络中断或进程退出，尚不能确定是否提交时，先在同一公司重发**原 payload 和原 request_id**。
+  已提交返回原结果，不会重复产生凭证；不得立即换请求号再做一笔。
+- 收到 `preview_expired` 且尚未成功时，重新读取来源并预览，复核新结果后保存新的确认步骤。
+  不把旧库或旧目标的预览摘要换个 `company_id` 后提交。
+- `idempotency_conflict` 表示同一请求号带了不同内容，先核对断点与原输入。
+  实际更正走 `amend_fact` 或当前更正合同；不能通过改稳定引用把同一笔业务伪装成新业务。
+- `expected_revision` 冲突先读取当前版本。相同请求重试保留原版本号，不盲目增加版本重写。
+- 登录失效重新在本机窗口登录，再继续同一目标和同一请求。会话密钥不写断点。
 
-“资料已整理并离线验证”“隔离库测试通过”“业务已实际重录并核验”是不同状态，交付报告
-必须分别说明。报告未通过不得启动正式服务。
+## 6. 经营结论与关账顺序
 
-重录通过后逐公司确认关账备份目录，调用 `finance_configure_close_backup` 和
-`finance_get_close_backup_configuration` 核验。源机备份路径只作为参考，不自动照搬。
+业务、资料处置和管理名称都更新完成后，再编写经营结论：
 
-当前本机正式回放完成后，使用负责人已确认的以下公司专属目录：
+```powershell
+& $financeLocal --root $replayRoot call preview_period_commentary --input .\inputs\period.json
+& $financeLocal --root $replayRoot call update_period_commentary --input .\inputs\commentary.json
+```
 
-| 公司 | 关账备份目录 |
-| --- | --- |
-| 魂道（杭州）科技有限责任公司 | `D:\OneDrive\11、魂DAO\ai-accounting-company-backups` |
-| 屋舍心声（杭州）房地产经纪有限责任公司 | `D:\OneDrive\12、屋舍心声\ai-accounting-company-backups` |
+`period.json` 为 `{"company_id":"本公司ID","period":"2026-01"}`。
+预览中的 `basis.accounting_summary` 给出当月收入、费用、损益、现金/银行/平台余额和业务分组，
+`basis.identity` 绑定本公司和本数据库。结合 `dashboard_brief` 逐笔资料、业务说明与实际原件写正文，
+不把数字模板、错误码或未确认的猜测当经营原因。汇总为空不证明没有业务。
 
-上述路径仅代表当前本机的负责人确认结果；切换主机、OneDrive 根目录或负责人另行变更位置时，
-必须重新确认并逐公司追加配置版本，不得把该表作为跨主机自动默认值。
+`commentary.json` 包含 `company_id`、`period`、`text`、`source`、预览的 `context_digest`、
+预览的 `revision` 作为 `expected_revision`、稳定 `request_id`，以及可选 `evidence_digest`。
+旧正文可作为待复核参考，但不能复用旧 `context_digest`；上下文变化先刷新再编写。
+v9 将提交并发令牌与已存说明的内容有效性分开，保存时仍严格检查当前预览；
+旧说明不得补绑当前内容依据，后补来源及时间含义见 [历史来源与内容版本](history-content-versions.md)。
+这是智能体应完成的阅读和分析工作，不要求负责人替智能体写一段经营总结。
 
-初始备份逐公司生成 `<统一社会信用代码>.finance-company.zip`，通过
-`finance-backup verify-portable` 后交付。原始来件和最新恢复依据继续保留；旧库及旧包的
-清理须明确指定范围，不作为回放命令的自动副作用。
+关账前依次完成：本期正式业务 → 来源逐项处置、资料完整性和实际对账 → 已知管理资料 →
+有效经营结论 → `preview_close` → 本机密码确认 → `close`。经营结论后再有来源/管理变动，
+应重新预览结论；失效正文不会冒充关账时有效的经营说明。管理缺项不新增会计关账阻断。
 
-## 原位更正与回放
+```powershell
+& $financeLocal --root $replayRoot call material_completeness --input .\inputs\period.json
+& $financeLocal --root $replayRoot call preview_close --input .\inputs\close-preview.json
+& $financeLocal --root $replayRoot security close --input .\inputs\close-window.json
+& $financeLocal --root $replayRoot call close --input .\inputs\close.json
+& $financeLocal --root $replayRoot call closed_report --input .\inputs\period.json
+```
 
-来源事实更正使用 `finance_preview_correction`／`finance_confirm_correction` 的 `preview_confirm` 操作，
-复用原业务引用，保留原凭证编号；具体协议和差额处理见[联动更正审查](atomic-corrections-review.md)。
-管理资料、错误码或未完成试算不构成冲正依据。真实历史中的冲正审计保留为核对资料，
-本次开发不会自动修复真实库、重置续跑状态或改写已完成操作。
+`close-preview.json` 增加 `owner_confirmation`，引用本次实际完整性确认的证据摘要。
+`close-window.json` 提供 `company_id`、`database_id`、`period`、`calculation_hash`（填关账预览
+`digest`）和完整 `epochs`；`database_id` 从本目标 `company_context.identity` 读取。
+CLI 的 `security close` 自动指定操作类型。完成窗口取得 `approval_id`；MCP 可用
+`finance_local_security(action="status", payload={"request_id":"窗口请求ID"})` 读取结果。
+`close.json` 使用同一月份、`owner_confirmation`、预览 `digest` 作为 `preview_digest`、`epochs`、
+`approval_id` 和 `request_id`。缺资料或核对失败按事实补齐，不通过空清单、零额或伪造无业务确认绕过。
+
+连续历史月份可用 `preview_close_range` →
+`finance_local_security(action="request", payload={"kind":"approve_close_batches","batches":[...]})`
+→ `close_range`，公司与范围必须与每份预览及批准完全一致。具体窗口结构取当前 schema，
+不得把一份公司的批准用于另一公司或扩大月份范围。
+每个 `batches` 项包含本目标 `company_id`、`database_id`、`from_period`、`through_period`、
+`calculation_hash`（范围预览 `digest`）及完整 `epochs`。
+
+新关账封存当时已有管理版本；闭期之后的 `update_period_commentary` 明确作为后补说明保存。
+既有关闭月份及其摘要不改写。完整恢复保留原封存；原件重记形成的是新库本次封存，
+不能宣称重现了旧库当时未保留的管理快照。
+
+重录清单还应区分“原时点已知事实/说明”“后来核实的录入修订”“后来实际发生的新业务”“关账后补充的管理资料”。
+有明确历史版本来源时按其实际顺序重录和核对，必要的会计更正使用当前类型化更正入口；
+不能只导入最新事实值就宣称原修订、撤销、冲正审计也已恢复。
+原有经营说明与名称先用本目标的新上下文复核；原时点已知资料才能放在该次关账之前。
+**最新才补齐的名称、用途或经营解读只能作为后补资料，不能为了看板完整把它重录成原关账前已知信息。**
+历史顺序或来源无法证明时保留缺口，不补造版本时间；需要原封保留全部历史应选择完整公司备份恢复。
+
+## 7. 看板核对与汇总重建
+
+```powershell
+& $financeLocal --root $replayRoot call dashboard_brief --input .\inputs\period.json
+& $financeLocal --root $replayRoot call dashboard_funds --input .\inputs\period.json
+& $financeLocal --root $replayRoot call dashboard_employees --input .\inputs\period.json
+& $financeLocal --root $replayRoot call dashboard_assets --input .\inputs\period.json
+& $financeLocal --root $replayRoot call overview --input .\inputs\period.json
+```
+
+按真实业务范围核对金额、往来名称、资金账户名、原件名、月份/日期精度、工资实际扣税和付款、
+资产及业务说明；经营结论必须与本次上下文一致。凭证追溯用 `trace` 并传对应 `voucher_version_id`。
+长明细按返回游标继续，并沿用首屏 `snapshot_version` 作为 `expected_version`；版本过期重读，
+不能把前 500 条当全量。季度查询 `dashboard_quarterly_report` 使用 `year` 和 `quarter`，
+不能直接传月度 `period.json`；需要接账前资料时选择新库实际登记的来源版本。
+
+只重建既有汇总时调用 `rebuild`，输入 `{"company_id":"本公司ID","request_id":"rebuild:本次操作:v1"}`。
+前后核对 `overview`、看板汇总和凭证；不把“重建成功”当原件已补齐、经营结论已生成或业务已重新计算。
+不要为追求旧数字一致修改新内核核算结果，差异按证据和计算依据说明。
+
+## 8. 逐公司备份和完整恢复
+
+先 `company_settings` 查询配置，再 `configure_backup` 提交本机明确选择的 `backup_directory` 和
+当前 `expected_revision`。配置调用不接受 `request_id`，中断时先读取配置核实；源机路径不自动照搬。
+初始备份调用：
+
+```powershell
+& $financeLocal --root $replayRoot call backup --input .\inputs\backup.json
+& $financeLocal --root $replayRoot call jobs --input .\inputs\backup-job.json
+```
+
+`backup.json` 为 `{"company_id":"本公司ID","directory":"本公司已配置的备份目录","request_id":"backup:initial:v1"}`。
+把返回的 `job_id` 放进 `backup-job.json`：`{"company_id":"本公司ID","job_id":"返回的job_id"}`。
+常驻服务自动执行任务；合成测试用公开 `run_jobs` 推进同一工作器。
+只有 `jobs.status == "succeeded"` 且 `result.path` 指向已验证 ZIP 才能交付。
+`pending`、中间 SQLite 或失败任务不算完成；首次文件为 `<统一社会信用代码>.finance-company.zip`，
+后续明确 `rollover:true` 的新备份才产生 `.previous.finance-company.zip`。
+失败后先核对该任务的 `last_error`；处理原因后可对失败 job_id 调用 `retry_job` 并提供新的稳定
+`request_id`，随后继续查询原任务。不要把创建任务时返回的 pending 响应反复当成最终结果。
+
+完整恢复使用另一个明确选定的目标根目录、目标负责人会话，然后执行：
+
+```powershell
+$restoreRoot = "D:\accounting-replay\本次已确认的恢复目录"
+& $financeLocal --root $restoreRoot security status
+& $financeLocal --root $restoreRoot security setup
+```
+
+先按第 3 节在本机窗口完成目标设置/登录，再执行：
+
+```powershell
+& $financeLocal --root $restoreRoot call restore_company --input .\inputs\restore.json
+& $financeLocal --root $restoreRoot call companies
+& $financeLocal --root $restoreRoot call operations
+```
+
+`restore.json` 字段是 `archive`（已成功生成的 ZIP 绝对路径）、`taxpayer_id` 和 `name`。
+恢复命令内部验证便携文件、结构、身份和证据，拒绝覆盖已有公司。
+随后核对看板、`company_context`、`display_profiles`、`closed_report` 和实际业务终态，重新选择目标机备份目录。
+公司备份中包含任务记录，但不保证旧机器的外部导出文件路径仍有效；需要交付的报表重新生成并验证。
+
+## 9. 当前已验证范围
+
+`tests/kernel/test_dashboard_empty_replay.py` 使用完全合成的临时 SQLite 公司，通过公开
+`LocalService.dispatch` 验证原件→出资/费用/付款→展示档案/公司说明→经营结论→汇总重建→便携恢复。
+它覆盖重复提交、确认响应丢失后继续、不同空目标的新 ID 映射、旧经营结论摘要拒绝，以及
+恢复后的金额、往来名称、资金账户名、原件名和经营说明一致。另一个复用隔离 `Display` / `Periods` 的
+无业务月份案例验证原时点说明→合成关账→后补说明的顺序，新目标必须重新预览，原时点说明保持冻结、
+后来资料仅保留为后补版本，源库前后两种上下文摘要均不能直接用于新目标。
+原生密码窗口、复杂公司全业务重录不属于这些案例；关账管理封存、失效上下文和迁移另由
+`test_display.py`、`test_display_migrations.py` 补充覆盖。
+
+```powershell
+.\.tmp-kernel-venv\Scripts\python.exe -m pytest tests/kernel/test_dashboard_empty_replay.py tests/kernel/test_display.py tests/kernel/test_display_migrations.py -q
+```
+
+这些测试证明程序路径，不证明任何真实公司资料完整或已重录。交付分别记录“私有资料已整理”、
+“隔离合成/公司重录核对通过”、“正式公司已实际写入核对”以及“备份已验证恢复”。
+逐公司核对清单见 [空库重录与恢复检查单](formal-empty-db-startup-checklist-template.md)。

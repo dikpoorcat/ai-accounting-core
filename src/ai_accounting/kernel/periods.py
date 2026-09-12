@@ -202,96 +202,18 @@ class Periods:
             "SELECT 1 FROM evidence WHERE digest=?", (bytes.fromhex(owner_confirmation),)
         ).fetchone():
             raise NeedsInformation("owner_confirmation", "需要负责人不可变确认依据")
-        if previous_close is _CURRENT_CLOSE:
-            previous_close = connection.execute(
-                "SELECT period,digest FROM period_close ORDER BY period DESC LIMIT 1"
-            ).fetchone()
-        cutoff = previous_close["period"] if previous_close else -1
-        if cutoff >= month:
-            raise KernelError("already_closed", "月份已经关账")
-        kinds = sorted(
-            kind
-            for kind in self.store.registry.evaluators
-            if self.store.registry.models[kind].lane != "management"
-        )
-        if kinds:
-            earlier = connection.execute(
-                "SELECT f.period FROM fact_revision f INDEXED BY fact_period "
-                "CROSS JOIN fact_current c CROSS JOIN subject s "
-                "WHERE f.period>? AND f.period<? AND c.fact_id=f.id AND s.id=f.subject_id "
-                f"AND s.kind IN({','.join('?' for _ in kinds)}) ORDER BY f.period LIMIT 1",
-                (cutoff, month, *kinds),
-            ).fetchone()
-            if earlier:
-                raise KernelError(
-                    "earlier_period_open",
-                    "须先处理并关闭前面有业务的月份",
-                    period=str(YearMonth.from_ordinal(earlier[0])),
-                )
-        from .materials import check_completeness
-
-        material_coverage = check_completeness(connection, month, self.store.registry)
-        inventories, issues, unpublished = self.completeness(
-            connection, month, self.store.registry, material_coverage=material_coverage
-        )
-        readiness = {}
-        for name, (required_reads, evaluate) in sorted(self.store.registry.readiness.items()):
-            reads = tuple(required_reads(YearMonth(period)))
-            context = Context({read: self.store.select(connection, read) for read in reads})
-            issues.extend(evaluate(YearMonth(period), context))
-            used = [item for read in context.used for item in context.selections[read]]
-            readiness[name] = {
-                "facts": sorted({item.id for item in used if isinstance(item, FactVersion)}),
-                "calculations": sorted({item.id for item in used if isinstance(item, Calculation)}),
-            }
-        for row in unpublished:
-            if row["kind"] in kinds:
-                issues.append({"field": row["id"], "message": "业务事实尚未正式处理"})
-        for checker in self.store.registry.snapshot_readiness.values():
-            issues.extend(checker(self.store, connection, YearMonth(period)))
-        bank_accounts = {
-            row[0]
-            for row in connection.execute(
-                "SELECT DISTINCT json_extract(b.value,'$.key') FROM calculation_current a "
-                "JOIN calculation c ON c.id=a.calculation_id,json_each(c.outcome,'$.balances') b "
-                "WHERE c.period=? AND json_extract(b.value,'$.category')='bank'",
-                (month,),
+        checked = self.check_readiness(connection, period, previous_close)
+        if checked["order_failure"]:
+            failure = checked["order_failure"]
+            raise KernelError(failure["code"], failure["message"], **failure["details"])
+        if checked["issues"]:
+            raise KernelError(
+                "period_not_ready", "关账条件尚未满足", fact_issues=checked["issues"]
             )
-        }
-        reconciled = {
-            row[0]
-            for row in connection.execute(
-                "SELECT "
-                "json_extract(c.outcome,'$.values.bank_account_id') "
-                "FROM calculation_current a "
-                "JOIN calculation c ON c.id=a.calculation_id WHERE "
-                "c.period=? AND c.kind='bank_reconciliation'",
-                (month,),
-            )
-        }
-        for account in sorted(bank_accounts - reconciled):
-            issues.append(
-                {
-                    "field": "bank_reconciliation",
-                    "bank_account_id": account,
-                    "message": "银行账户尚未完成对账",
-                }
-            )
-        pending = (
-            connection.execute(
-                "SELECT p.subject_id FROM pending p CROSS JOIN "
-                "fact_current c CROSS JOIN fact_revision f CROSS JOIN subject s "
-                "WHERE c.subject_id=p.subject_id AND f.id=c.fact_id AND s.id=c.subject_id "
-                f"AND s.kind IN({','.join('?' for _ in kinds)}) AND f.period<=? LIMIT 1",
-                (*kinds, month),
-            ).fetchone()
-            if kinds
-            else None
-        )
-        if pending:
-            issues.append({"field": pending[0], "message": "当前或前期存在待更正事项"})
-        if issues:
-            raise KernelError("period_not_ready", "关账条件尚未满足", fact_issues=issues)
+        previous_close = checked["previous_close"]
+        inventories = checked["materials"]["inventories"]
+        material_coverage = checked["materials"]["coverage"]
+        readiness = checked["close_requirements"]["readiness"]
         vouchers = [
             dict(r)
             for r in connection.execute(
@@ -358,6 +280,176 @@ class Periods:
             },
         }
 
+    def check_readiness(self, connection, period: str, previous_close=_CURRENT_CLOSE):
+        """Collect the exact close checks without requiring owner authorization."""
+
+        month = YearMonth(period).ordinal
+        if previous_close is _CURRENT_CLOSE:
+            previous_close = connection.execute(
+                "SELECT period,digest FROM period_close ORDER BY period DESC LIMIT 1"
+            ).fetchone()
+        cutoff = previous_close["period"] if previous_close else -1
+        if cutoff >= month:
+            return {
+                "period": period,
+                "previous_close": previous_close,
+                "order_failure": {
+                    "code": "already_closed",
+                    "message": "月份已经关账",
+                    "details": {},
+                },
+                "materials": None,
+                "accounting": None,
+                "close_requirements": None,
+                "issues": [],
+            }
+        kinds = sorted(
+            kind
+            for kind in self.store.registry.evaluators
+            if self.store.registry.models[kind].lane != "management"
+        )
+        if kinds:
+            earlier = connection.execute(
+                "SELECT f.period FROM fact_revision f INDEXED BY fact_period "
+                "CROSS JOIN fact_current c CROSS JOIN subject s "
+                "WHERE f.period>? AND f.period<? AND c.fact_id=f.id AND s.id=f.subject_id "
+                f"AND s.kind IN({','.join('?' for _ in kinds)}) ORDER BY f.period LIMIT 1",
+                (cutoff, month, *kinds),
+            ).fetchone()
+            if earlier:
+                return {
+                    "period": period,
+                    "previous_close": previous_close,
+                    "order_failure": {
+                        "code": "earlier_period_open",
+                        "message": "须先处理并关闭前面有业务的月份",
+                        "details": {"period": str(YearMonth.from_ordinal(earlier[0]))},
+                    },
+                    "materials": None,
+                    "accounting": None,
+                    "close_requirements": None,
+                    "issues": [],
+                }
+        collected = self.collect_current_readiness(connection, period)
+        return {
+            "period": period,
+            "previous_close": previous_close,
+            "order_failure": None,
+            "materials": collected["materials"],
+            "accounting": collected["accounting"],
+            "close_requirements": collected["close_requirements"],
+            "issues": collected["issues"],
+        }
+
+    def collect_current_readiness(self, connection, period: str):
+        """Collect current issues without interpreting a historical close boundary."""
+
+        month = YearMonth(period).ordinal
+        kinds = sorted(
+            kind
+            for kind in self.store.registry.evaluators
+            if self.store.registry.models[kind].lane != "management"
+        )
+        from .materials import check_completeness
+
+        material_coverage = check_completeness(connection, month, self.store.registry)
+        inventories, material_issues, unpublished = self.completeness(
+            connection, month, self.store.registry, material_coverage=material_coverage
+        )
+        issues = list(material_issues)
+        readiness = {}
+        readiness_issues = []
+        for name, (required_reads, evaluate) in sorted(self.store.registry.readiness.items()):
+            reads = tuple(required_reads(YearMonth(period)))
+            context = Context({read: self.store.select(connection, read) for read in reads})
+            found = list(evaluate(YearMonth(period), context))
+            readiness_issues.extend(found)
+            issues.extend(found)
+            used = [item for read in context.used for item in context.selections[read]]
+            readiness[name] = {
+                "facts": sorted({item.id for item in used if isinstance(item, FactVersion)}),
+                "calculations": sorted({item.id for item in used if isinstance(item, Calculation)}),
+            }
+        accounting_issues = [
+            issue for issue in readiness_issues if issue.get("domain") == "payroll"
+        ]
+        for row in unpublished:
+            if row["kind"] in kinds:
+                issue = {"field": row["id"], "message": "业务事实尚未正式处理"}
+                accounting_issues.append(issue)
+                issues.append(issue)
+        snapshot_issues = []
+        for checker in self.store.registry.snapshot_readiness.values():
+            found = list(checker(self.store, connection, YearMonth(period)))
+            snapshot_issues.extend(found)
+            issues.extend(found)
+        bank_accounts = {
+            row[0]
+            for row in connection.execute(
+                "SELECT DISTINCT json_extract(b.value,'$.key') FROM calculation_current a "
+                "JOIN calculation c ON c.id=a.calculation_id,json_each(c.outcome,'$.balances') b "
+                "WHERE c.period=? AND json_extract(b.value,'$.category')='bank'",
+                (month,),
+            )
+        }
+        reconciled = {
+            row[0]
+            for row in connection.execute(
+                "SELECT "
+                "json_extract(c.outcome,'$.values.bank_account_id') "
+                "FROM calculation_current a "
+                "JOIN calculation c ON c.id=a.calculation_id WHERE "
+                "c.period=? AND c.kind='bank_reconciliation'",
+                (month,),
+            )
+        }
+        for account in sorted(bank_accounts - reconciled):
+            issue = {
+                "field": "bank_reconciliation",
+                "bank_account_id": account,
+                "message": "银行账户尚未完成对账",
+            }
+            snapshot_issues.append(issue)
+            issues.append(issue)
+        pending = (
+            connection.execute(
+                "SELECT p.subject_id FROM pending p CROSS JOIN "
+                "fact_current c CROSS JOIN fact_revision f CROSS JOIN subject s "
+                "WHERE c.subject_id=p.subject_id AND f.id=c.fact_id AND s.id=c.subject_id "
+                f"AND s.kind IN({','.join('?' for _ in kinds)}) AND f.period<=? LIMIT 1",
+                (*kinds, month),
+            ).fetchone()
+            if kinds
+            else None
+        )
+        if pending:
+            issue = {"field": pending[0], "message": "当前或前期存在待更正事项"}
+            accounting_issues.append(issue)
+            issues.append(issue)
+        return {
+            "period": period,
+            "materials": {
+                "status": "needs_information" if material_issues else "ready",
+                "issues": material_issues,
+                "inventories": inventories,
+                "coverage": material_coverage,
+            },
+            "accounting": {
+                "status": "needs_information" if accounting_issues else "ready",
+                "issues": accounting_issues,
+                "unpublished": unpublished,
+                "pending_subject_id": pending[0] if pending else None,
+            },
+            "close_requirements": {
+                "status": "needs_information"
+                if readiness_issues or snapshot_issues
+                else "ready",
+                "issues": [*readiness_issues, *snapshot_issues],
+                "readiness": readiness,
+            },
+            "issues": issues,
+        }
+
     def preview_close(self, period: str, *, owner_confirmation: str):
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
@@ -408,6 +500,9 @@ class Periods:
                 "INSERT INTO period_close VALUES(?,?,?)",
                 (YearMonth(period).ordinal, canonical(manifest), digest(manifest)),
             )
+            from .read_indexes import sync_close
+
+            sync_close(connection, YearMonth(period).ordinal)
             job_id = None
             if backup_directory:
                 job_id = uuid.uuid4().hex
@@ -596,6 +691,9 @@ class Periods:
                     "INSERT INTO period_close VALUES(?,?,?)",
                     (YearMonth(manifest["period"]).ordinal, canonical(manifest), hashed_manifest),
                 )
+                from .read_indexes import sync_close
+
+                sync_close(connection, YearMonth(manifest["period"]).ordinal)
                 result = {"period": manifest["period"], "digest": hashed_manifest.hex()}
                 connection.execute(
                     "INSERT INTO audit(request_id,action,payload) VALUES(?,?,?)",

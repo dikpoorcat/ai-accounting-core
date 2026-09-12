@@ -10,9 +10,10 @@ from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
-from .contracts import Context, Fact, KernelError, NeedsInformation, Outcome, Read
+from .contracts import Fact, KernelError, NeedsInformation, Outcome, Read
 from .domains.payroll import PAYROLL_KINDS
 from .periods import Periods
+from .provenance import recorded_times
 from .types import ActualDate, YearMonth, digest
 
 ObligationKind = Literal[
@@ -239,7 +240,7 @@ def calculate_completion(version, context):
             "completion_status": fact.completion_status,
             "date_status": fact.date_status,
             "completion_date": fact.completion_date,
-            "basis_current": _result_basis(accepted) == _result_basis(basis)
+            "basis_current": _result_basis(accepted, context) == _result_basis(basis, context)
             and obligation.fact.applicability == "required",
             "accepted_calculations": [item.model_dump() for item in fact.accepted_calculations],
             "reviewed_calculations": _reviewed_basis(basis),
@@ -294,8 +295,15 @@ def _accepted_history(fact, select):
     return tuple(accepted)
 
 
-def _result_basis(calculations):
-    return {(item.subject_id, item.kind, item.period, item.result_digest) for item in calculations}
+def _result_basis(calculations, context):
+    """Compare accounting meaning without rewriting the exact submitted basis."""
+    result = set()
+    for item in calculations:
+        signature = context.accounting_signature(item)
+        result.add(
+            (item.subject_id, item.kind, item.period, signature["contract"], signature["digest"])
+        )
+    return result
 
 
 def _reviewed_basis(calculations):
@@ -440,34 +448,13 @@ def _matches_basis(obligation_version, completion_fact, completion, basis, issue
 
 
 def _completion_confirmation_times(connection, fact_ids):
-    """Read immutable confirmation metadata without adding it to business calculation.
-
-    A saved fact has one confirmation audit, including when saved in a batch or
-    with an actor envelope. Replays reuse that fact and amendments create a new
-    fact ID. Walk the audit primary key backwards and stop once all are found.
-    """
-    missing, found = set(fact_ids), {}
-    if not missing:
-        return found
-    rows = connection.execute(
-        "SELECT action,payload,created_at FROM audit WHERE action IN "
-        "('confirm_fact','confirm_facts','recording_correction') ORDER BY id DESC"
-    )
-    try:
-        for row in rows:
-            payload = json.loads(row["payload"])
-            result = payload.get("result", payload)
-            entries = result.get("results", ()) if row["action"] == "confirm_facts" else (result,)
-            for entry in entries:
-                fact_id = entry.get("fact_id")
-                if fact_id in missing:
-                    found[fact_id] = row["created_at"]
-                    missing.remove(fact_id)
-            if not missing:
-                break
-    finally:
-        rows.close()
-    return found
+    """Read exact, uniquely attributable confirmation times without changing outcomes."""
+    return {
+        ident: timestamp
+        for (_, ident), timestamp in recorded_times(
+            connection, (("fact", ident) for ident in fact_ids)
+        ).items()
+    }
 
 
 def _completion_known_as_of(completion_date, confirmed_at, as_of):
@@ -492,6 +479,7 @@ def register(registry):
     registry.register(FilingCalendarPolicy)
     registry.register(ExternalObligation)
     registry.register(ExternalCompletion, calculate_completion)
+    registry.register_accounting(ExternalCompletion.kind, compares_calculations=True)
     registry.register_readiness("payroll_presence", payroll_required_reads, payroll_required_work)
 
 
@@ -755,231 +743,328 @@ class Workflow:
             }
 
     def query(self, period: str, *, as_of: str):
-        month, day = YearMonth(period), ActualDate(as_of)
+        """Judge business dates using current knowledge, not historical system knowledge.
+
+        Current closed periods and reviewed calculation heads remain current.
+        as_of only bounds deadlines and when completion can be established.
+        """
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
-            closed = connection.execute(
-                "SELECT manifest FROM period_close WHERE period=?", (month.ordinal,)
-            ).fetchone()
-            _, issues, unpublished = Periods.completeness(
-                connection, month.ordinal, self.store.registry
-            )
-            pending = {
-                row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")
-            }
-            facts = self.store.select(connection, Read("fact", "external_obligation", "*"))
-            completion_calculations = self.store.select(
-                connection, Read("calculation", "external_completion", "*")
-            )
-            confirmation_times = _completion_confirmation_times(
-                connection,
-                (
-                    item.fact_id
-                    for item in completion_calculations
-                    if item.values["completion_date"] is None
-                ),
-            )
-            obligations = []
-            for version in facts:
-                fact = version.fact
-                basis, basis_issues = _basis_state(
-                    fact,
-                    lambda read: self.store.select(connection, read),
-                )
-                if pending.intersection(item.subject_id for item in basis):
-                    basis_issues.append({"field": "basis_pending", "message": "核算依据待更正"})
-                completions = self.store.select(
-                    connection,
-                    Read("calculation", "external_completion", "completion:" + version.subject_id),
-                )
-                completion_facts = {
-                    item.subject_id: item
-                    for item in self.store.select(
-                        connection,
-                        Read("fact", "external_completion", "completion:" + version.subject_id),
+            return self._query(connection, period, as_of=as_of)
+
+    def _external_obligations(
+        self,
+        connection,
+        period,
+        as_of,
+        *,
+        reads=None,
+        obligation_ids=None,
+        summary=False,
+    ):
+        """Use the established completion rule with a caller-selected identity set."""
+        from .query_reads import QueryReads
+
+        reads = reads or QueryReads(self.engine, connection)
+        month, day = YearMonth(period), ActualDate(as_of)
+        closed = connection.execute(
+            "SELECT 1 FROM period_close WHERE period=?", (month.ordinal,)
+        ).fetchone()
+        if obligation_ids is None:
+            facts = reads.select(Read("fact", "external_obligation", "*"))
+        else:
+            facts = tuple(
+                reads.fact_versions(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT a.fact_id FROM json_each(?) ids "
+                        "JOIN fact_current a ON a.subject_id=ids.value "
+                        "JOIN subject s ON s.id=a.subject_id WHERE s.kind='external_obligation'",
+                        (json.dumps(sorted(obligation_ids)),),
                     )
+                ).values()
+            )
+        facts = tuple(sorted(facts, key=lambda version: version.subject_id))
+        requested = tuple(
+            dict.fromkeys(
+                read
+                for version in facts
+                for read in (
+                    *version.fact.basis_reads(),
+                    Read("calculation", "external_completion", "completion:" + version.subject_id),
+                    Read("fact", "external_completion", "completion:" + version.subject_id),
+                )
+            )
+        )
+        reads.prime_select(requested)
+        candidates = {item.subject_id for read in requested for item in reads.select(read)}
+        pending = {
+            row[0]
+            for row in connection.execute(
+                "SELECT p.subject_id FROM json_each(?) ids "
+                "JOIN pending p ON p.subject_id=ids.value",
+                (json.dumps(sorted(candidates)),),
+            )
+        }
+        completion_calculations = [
+            item
+            for version in facts
+            for item in reads.select(
+                Read("calculation", "external_completion", "completion:" + version.subject_id)
+            )
+        ]
+        confirmation_times = _completion_confirmation_times(
+            connection, (item.fact_id for item in completion_calculations)
+        )
+        obligations = []
+        status_counts = {}
+        basis_issue_count = 0
+        for version in facts:
+            fact = version.fact
+            basis, basis_issues = _basis_state(
+                fact,
+                reads.select,
+            )
+            if pending.intersection(item.subject_id for item in basis):
+                basis_issues.append({"field": "basis_pending", "message": "核算依据待更正"})
+            completions = reads.select(
+                Read("calculation", "external_completion", "completion:" + version.subject_id),
+            )
+            completion_facts = {
+                item.subject_id: item
+                for item in reads.select(
+                    Read("fact", "external_completion", "completion:" + version.subject_id),
+                )
+            }
+            matching = [
+                item
+                for item in completions
+                if item.subject_id not in pending
+                and item.subject_id in completion_facts
+                and _matches_basis(
+                    version, completion_facts[item.subject_id], item, basis, basis_issues
+                )
+            ]
+            known_as_of = {
+                item.id: _completion_known_as_of(
+                    item.values["completion_date"], confirmation_times.get(item.fact_id), day
+                )
+                for item in completions
+            }
+            current = [item for item in matching if known_as_of[item.id]]
+            completion_status = (
+                "not_applicable"
+                if fact.applicability == "not_applicable"
+                else (
+                    "completed"
+                    if current
+                    else (
+                        "due" if fact.due_date is not None and fact.due_date <= day else "pending"
+                    )
+                )
+            )
+            status = completion_status
+            if (
+                closed
+                and fact.obligation_kind in MONTHLY_PAYROLL_OBLIGATIONS
+                and fact.end_period <= month
+            ):
+                status = "closed"
+            status_counts[completion_status] = status_counts.get(completion_status, 0) + 1
+            basis_issue_count += len(basis_issues)
+            if summary:
+                continue
+            obligations.append(
+                {
+                    "id": version.subject_id,
+                    "kind": fact.obligation_kind,
+                    "start_period": fact.start_period,
+                    "end_period": fact.end_period,
+                    "due_date": fact.due_date,
+                    "status": status,
+                    "completion_status": completion_status,
+                    "basis_review_required": any(known_as_of.values()) and not current,
+                    "completion_calculations": sorted(item.id for item in current),
+                    "basis_issues": basis_issues,
+                    "recorded_completions": [
+                        {
+                            "calculation_id": item.id,
+                            "status": item.values["completion_status"],
+                            "completion_date": item.values["completion_date"],
+                            "basis_current": item in matching,
+                            "known_as_of": known_as_of[item.id],
+                            "confirmation_recorded_at": confirmation_times.get(item.fact_id),
+                            "completion_time_basis": (
+                                "actual_date"
+                                if item.values["completion_date"] is not None
+                                else (
+                                    "confirmation_recorded_at"
+                                    if item.fact_id in confirmation_times
+                                    else "unestablished"
+                                )
+                            ),
+                        }
+                        for item in completions
+                    ],
                 }
+            )
+        if summary:
+            return {
+                "status": (
+                    "completed"
+                    if status_counts and set(status_counts) <= {"completed", "not_applicable"}
+                    else "followup_required"
+                    if status_counts
+                    else "unestablished"
+                ),
+                "obligation_count": len(facts),
+                "completion_status_counts": status_counts,
+                "basis_issue_count": basis_issue_count,
+            }
+        return obligations
+
+    def _query(self, connection, period: str, *, as_of: str, period_readiness=None, reads=None):
+        """Build the workflow view inside a caller-owned read snapshot."""
+        month, day = YearMonth(period), ActualDate(as_of)
+        closed = connection.execute(
+            "SELECT manifest FROM period_close WHERE period=?", (month.ordinal,)
+        ).fetchone()
+        accounting_closed = (
+            connection.execute(
+                "SELECT 1 FROM period_close WHERE period>=? LIMIT 1", (month.ordinal,)
+            ).fetchone()
+            is not None
+        )
+        if closed:
+            issues, unpublished, readiness_issues, period_issues = [], [], [], []
+        else:
+            periods = Periods(self.engine)
+            checked = period_readiness or periods.check_readiness(connection, period)
+            if checked.get("order_failure"):
+                failure = checked["order_failure"]
+                order_issue = {
+                    "field": "period",
+                    "code": failure["code"],
+                    "message": failure["message"],
+                    **failure["details"],
+                }
+                current = periods.collect_current_readiness(connection, period)
+                issues = current["materials"]["issues"]
+                unpublished = current["accounting"]["unpublished"]
+                readiness_issues = current["close_requirements"]["issues"]
+                period_issues = [*current["issues"], order_issue]
+            else:
+                issues = checked["materials"]["issues"]
+                unpublished = checked["accounting"]["unpublished"]
+                readiness_issues = checked["close_requirements"]["issues"]
+                period_issues = checked["issues"]
+        pending = {row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")}
+        obligations = self._external_obligations(connection, period, as_of, reads=reads)
+        labels = (
+            "银行流水",
+            "员工及工资变动",
+            "社保及公积金",
+            "个人所得税",
+            "票据及非银行业务",
+            "关账确认",
+        )
+        categories = ("bank", "payroll", "payroll", "payroll", "transactions", None)
+        steps = []
+        for number, (label, category) in enumerate(zip(labels, categories, strict=True), 1):
+            related = [
+                issue
+                for issue in issues
+                if category and issue["field"] in {"materials", f"materials.{category}"}
+            ]
+            if number in {1, 2, 5}:
+                relevant_kinds = {
+                    kind
+                    for kind, model in self.store.registry.models.items()
+                    if model.material_category == category
+                }
+                related.extend(
+                    {"field": row["id"], "message": "已确认业务尚未核算"}
+                    for row in unpublished
+                    if row["kind"] in relevant_kinds
+                    and row["kind"] in self.store.registry.evaluators
+                )
+                for kind in relevant_kinds:
+                    for row in self.store.select(connection, Read("fact", kind, str(month))):
+                        if row.subject_id in pending:
+                            related.append({"field": row.subject_id, "message": "核算待更正"})
+            if number == 2:
+                related.extend(
+                    issue for issue in readiness_issues if issue.get("domain") == "payroll"
+                )
+            declaration_kind = {3: "contribution_declaration", 4: "individual_income_tax"}.get(
+                number
+            )
+            not_applicable = False
+            if declaration_kind:
                 matching = [
                     item
-                    for item in completions
-                    if item.subject_id not in pending
-                    and item.subject_id in completion_facts
-                    and _matches_basis(
-                        version, completion_facts[item.subject_id], item, basis, basis_issues
-                    )
+                    for item in obligations
+                    if item["kind"] == declaration_kind
+                    and item["start_period"] <= month <= item["end_period"]
                 ]
-                known_as_of = {
-                    item.id: _completion_known_as_of(
-                        item.values["completion_date"], confirmation_times.get(item.fact_id), day
-                    )
-                    for item in completions
-                }
-                current = [item for item in matching if known_as_of[item.id]]
-                status = (
-                    "not_applicable"
-                    if fact.applicability == "not_applicable"
-                    else (
-                        "completed"
-                        if current
-                        else (
-                            "due"
-                            if fact.due_date is not None and fact.due_date <= day
-                            else "pending"
-                        )
-                    )
+                not_applicable = bool(matching) and all(
+                    item["status"] == "not_applicable" for item in matching
                 )
-                if (
-                    closed
-                    and fact.obligation_kind in MONTHLY_PAYROLL_OBLIGATIONS
-                    and fact.end_period <= month
-                ):
-                    status = "closed"
-                obligations.append(
-                    {
-                        "id": version.subject_id,
-                        "kind": fact.obligation_kind,
-                        "start_period": fact.start_period,
-                        "end_period": fact.end_period,
-                        "due_date": fact.due_date,
-                        "status": status,
-                        "basis_review_required": any(known_as_of.values()) and not current,
-                        "completion_calculations": sorted(item.id for item in current),
-                        "basis_issues": basis_issues,
-                        "recorded_completions": [
-                            {
-                                "calculation_id": item.id,
-                                "status": item.values["completion_status"],
-                                "completion_date": item.values["completion_date"],
-                                "basis_current": item in matching,
-                                "known_as_of": known_as_of[item.id],
-                                "confirmation_recorded_at": confirmation_times.get(item.fact_id),
-                            }
-                            for item in completions
-                        ],
-                    }
-                )
-            readiness_issues = []
-            if not closed:
-                for required_reads, evaluate in self.store.registry.readiness.values():
-                    context = Context(
+                if not matching:
+                    related.append(
                         {
-                            read: self.store.select(connection, read)
-                            for read in required_reads(month)
+                            "field": "external_obligation",
+                            "message": "需要明确申报适用范围或不适用事实",
                         }
                     )
-                    readiness_issues.extend(evaluate(month, context))
-            labels = (
-                "银行流水",
-                "员工及工资变动",
-                "社保及公积金",
-                "个人所得税",
-                "票据及非银行业务",
-                "关账确认",
-            )
-            categories = ("bank", "payroll", "payroll", "payroll", "transactions", None)
-            steps = []
-            for number, (label, category) in enumerate(zip(labels, categories, strict=True), 1):
-                related = [
-                    issue
-                    for issue in issues
-                    if category and issue["field"] in {"materials", f"materials.{category}"}
-                ]
-                if number in {1, 2, 5}:
-                    relevant_kinds = {
-                        kind
-                        for kind, model in self.store.registry.models.items()
-                        if model.material_category == category
-                    }
-                    related.extend(
-                        {"field": row["id"], "message": "已确认业务尚未核算"}
-                        for row in unpublished
-                        if row["kind"] in relevant_kinds
-                        and row["kind"] in self.store.registry.evaluators
+                elif any(
+                    item["status"] not in {"completed", "not_applicable", "closed"}
+                    for item in matching
+                ):
+                    related.append(
+                        {
+                            "field": "external_completion",
+                            "message": "需要与当前核算依据一致的真实申报完成凭据",
+                        }
                     )
-                    for kind in relevant_kinds:
-                        for row in self.store.select(connection, Read("fact", kind, str(month))):
-                            if row.subject_id in pending:
-                                related.append({"field": row.subject_id, "message": "核算待更正"})
-                if number == 2:
-                    related.extend(
-                        issue for issue in readiness_issues if issue.get("domain") == "payroll"
-                    )
-                declaration_kind = {3: "contribution_declaration", 4: "individual_income_tax"}.get(
-                    number
-                )
-                not_applicable = False
-                if declaration_kind:
-                    matching = [
-                        item
-                        for item in obligations
-                        if item["kind"] == declaration_kind
-                        and item["start_period"] <= month <= item["end_period"]
-                    ]
-                    not_applicable = bool(matching) and all(
-                        item["status"] == "not_applicable" for item in matching
-                    )
-                    if not matching:
-                        related.append(
-                            {
-                                "field": "external_obligation",
-                                "message": "需要明确申报适用范围或不适用事实",
-                            }
-                        )
-                    elif any(
-                        item["status"] not in {"completed", "not_applicable", "closed"}
-                        for item in matching
-                    ):
-                        related.append(
-                            {
-                                "field": "external_completion",
-                                "message": "需要与当前核算依据一致的真实申报完成凭据",
-                            }
-                        )
-                if number == 6:
-                    related = [
-                        *issues,
-                        *readiness_issues,
-                        *(
-                            {"field": row["id"], "message": "尚未核算"}
-                            for row in unpublished
-                            if row["kind"] in self.store.registry.evaluators
-                        ),
-                    ]
-                steps.append(
-                    {
-                        "number": number,
-                        "label": label,
-                        "status": "closed"
-                        if closed
+            if number == 6:
+                related = period_issues
+            steps.append(
+                {
+                    "number": number,
+                    "label": label,
+                    "status": "closed"
+                    if closed
+                    else (
+                        "needs_information"
+                        if related
                         else (
-                            "needs_information"
-                            if related
-                            else (
-                                "not_applicable"
-                                if not_applicable
-                                else ("completed" if declaration_kind else "ready")
-                            )
-                        ),
-                        "fact_issues": [] if closed else related,
-                    }
-                )
-            for number, kind in (
-                (7, "quarterly_tax_and_reports"),
-                (8, "annual_income_tax"),
-                (9, "annual_business_report"),
-            ):
-                due = [
-                    item
-                    for item in obligations
-                    if item["kind"] == kind
-                    and item["status"] not in {"completed", "not_applicable"}
-                ]
-                if due:
-                    steps.append({"number": number, "obligations": due})
-            return {
-                "period": period,
-                "as_of": day,
-                "steps": steps,
-                "obligations": obligations,
-                "fact_issues": [] if closed else readiness_issues,
-            }
+                            "not_applicable"
+                            if not_applicable
+                            else ("completed" if declaration_kind else "ready")
+                        )
+                    ),
+                    "fact_issues": [] if closed else related,
+                }
+            )
+        for number, kind in (
+            (7, "quarterly_tax_and_reports"),
+            (8, "annual_income_tax"),
+            (9, "annual_business_report"),
+        ):
+            due = [
+                item
+                for item in obligations
+                if item["kind"] == kind and item["status"] not in {"completed", "not_applicable"}
+            ]
+            if due:
+                steps.append({"number": number, "obligations": due})
+        return {
+            "period": period,
+            "as_of": day,
+            "as_of_semantics": "current_knowledge",
+            "accounting_closed": accounting_closed,
+            "steps": steps,
+            "obligations": obligations,
+            "fact_issues": [] if closed else period_issues,
+        }

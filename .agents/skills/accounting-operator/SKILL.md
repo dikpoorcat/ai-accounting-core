@@ -39,6 +39,8 @@ description: Operate real local accounting from invoices, bank records, payroll,
 
 Schema 标有 `x-registration-command` 的记录由对应类型化命令核对并生成，不通过通用事实保存入口自行构造。
 
+登记业务时同步检查原件已明确的人员、往来方、账户及资产名称，并通过 `save_display_profile` 复用同一业务身份保存名称、用途和说明。已有收款人或个税身份可直接复用；不从内部编号、同名或相同金额推断关联，不将批次对应关系拆成未经确认的逐项分摊。证据首次登记使用原文件名。管理资料后补不重算凭证，同时将来源、稳定业务引用及操作回执加入私有重放补充清单；空库操作按 `docs/empty-database-replay.md` 执行。
+
 ## 工资、付款与外部办理
 
 - 工资先检查 `payroll_reuse_basis` 和已确认本期方案。本期方案可复用；上期方案只有负责人明确确认本期无变化、且人员及扣除等来源检查通过后才复用。用 `prepare_payroll` / `confirm_payroll_preparation` 保存方案，再走统一计算发布。
