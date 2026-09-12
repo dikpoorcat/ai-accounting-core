@@ -49,6 +49,13 @@ export interface PeriodPreparation {
   read_semantics: Record<string, string>;
 }
 
+export interface DashboardReadContext {
+  read_version: string;
+  company_id: string;
+  database_id: string;
+  as_of: string;
+}
+
 export function businessStateLabel(status: string | null | undefined) {
   const labels: Record<string, string> = {
     ready: "准备就绪", completed: "已完成", not_applicable: "不适用", unestablished: "尚不能确认", not_established: "尚不能确认",
@@ -70,7 +77,7 @@ export interface DashboardPageQuery {
 
 const versions: Record<string, number> = {
   context: 2, brief: 2, funds: 2, employees: 2, assets: 2,
-  "quarterly-report": 1, "business-status": 1,
+  "quarterly-report": 1, "business-status": 1, "period-preparation": 1,
 };
 const primaryCollections: Record<string, string> = {
   brief: "vouchers", funds: "movements", employees: "employees", assets: "assets",
@@ -97,6 +104,26 @@ function validPreparation(value: unknown): boolean {
     && (value.frozen_readiness === null || record(value.frozen_readiness));
 }
 
+function validReadContext(value: unknown): value is DashboardReadContext & Record<string, unknown> {
+  return record(value) && ["read_version", "company_id", "database_id", "as_of"].every(key => typeof value[key] === "string" && value[key].length > 0);
+}
+
+function validCheckItems(value: unknown, keys: string[], pending = false): boolean {
+  return Array.isArray(value) && value.length === keys.length && keys.every(key => value.filter(item => record(item) && item.key === key).length === 1)
+    && value.every(item => record(item) && typeof item.label === "string" && typeof item.text === "string"
+      && (pending && item.key !== "balance" ? item.state === "pending" : ["pass", "pending", "error", "neutral"].includes(String(item.state))));
+}
+
+function validBriefChecks(value: unknown): boolean {
+  if (!record(value) || !record(value.material_completeness)) return false;
+  const material = value.material_completeness;
+  return typeof material.closed === "boolean" && typeof material.satisfied === "boolean" && Array.isArray(material.issues)
+    && material.issues.every(issue => record(issue) && typeof issue.code === "string" && typeof issue.message === "string")
+    && Array.isArray(value.issues) && value.issues.every(issue => record(issue) && typeof issue.message === "string")
+    && Number.isSafeInteger(value.attention_count) && Number(value.attention_count) >= 0
+    && validCheckItems(value.items, ["materials", "accounting", "close_requirements"]);
+}
+
 function validCollection(value: unknown): boolean {
   if (!record(value) || !Array.isArray(value.items) || !record(value.page)) return false;
   const page = value.page;
@@ -120,11 +147,34 @@ export function validDashboardContract(path: string, payload: unknown): boolean 
   const version = versions[endpoint];
   if (version === undefined) return true;
   if (!record(payload) || payload.schema_version !== version) return false;
-  if (endpoint === "quarterly-report") return Array.isArray(payload.period_preparations) && payload.period_preparations.every(validPreparation);
+  if (endpoint === "period-preparation") {
+    if (payload.projection !== "dashboard_period_preparation_result" || !validReadContext(payload.read_context)
+      || payload.period !== url.searchParams.get("period") || !record(payload.data) || !validPreparation(payload.data.period_preparation)
+      || !validBriefChecks(payload.data.brief_checks)) return false;
+    const context = payload.read_context, preparation = payload.data.period_preparation as Record<string, unknown>;
+    return context.company_id === url.searchParams.get("company_id") && context.read_version === url.searchParams.get("expected_read_version")
+      && context.as_of === url.searchParams.get("as_of") && preparation.period === payload.period
+      && ["company_id", "database_id", "as_of"].every(key => preparation[key] === context[key]);
+  }
+  const deferred = url.searchParams.get("preparation") === "deferred";
+  if (endpoint === "quarterly-report") return deferred
+    ? payload.projection === "dashboard_quarterly_report_deferred" && payload.period_preparations === null
+      && validReadContext(payload.read_context) && payload.read_context.company_id === url.searchParams.get("company_id")
+    : payload.projection === undefined && Array.isArray(payload.period_preparations) && payload.period_preparations.every(validPreparation);
+  if (endpoint === "brief" && deferred) {
+    if (payload.projection !== "dashboard_brief_deferred") return false;
+    if (payload.data === null) return payload.read_context === null;
+    if (!validReadContext(payload.read_context) || payload.read_context.company_id !== url.searchParams.get("company_id")
+      || !record(payload.data) || payload.data.period_preparation !== null || payload.data.material_completeness !== null
+      || !record(payload.data.validation) || !["pending", "attention", "error"].includes(String(payload.data.validation.state))
+      || !Number.isSafeInteger(payload.data.validation.attention_count) || Number(payload.data.validation.attention_count) < 0
+      || !(typeof payload.data.validation.integrity_valid === "boolean" || payload.data.validation.integrity_valid === null)
+      || !validCheckItems(payload.data.validation.items, ["balance", "materials", "accounting", "close_requirements"], true)) return false;
+  } else if (endpoint === "brief" && payload.projection !== undefined) return false;
   if (!(endpoint in primaryCollections) && endpoint !== "business-status") return true;
   if (payload.data === null) return true;
   if (!record(payload.data) || !record(payload.data.collections)) return false;
-  if (endpoint in primaryCollections && !validPreparation(payload.data.period_preparation)) return false;
+  if (endpoint in primaryCollections && !(endpoint === "brief" && deferred) && !validPreparation(payload.data.period_preparation)) return false;
   const collections = payload.data.collections;
   if (!Object.keys(collections).every(key => allowedCollections[endpoint]?.includes(key))) return false;
   const required = url.searchParams.get("section") ?? primaryCollections[endpoint];

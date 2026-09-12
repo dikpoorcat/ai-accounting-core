@@ -543,8 +543,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                     <summary>查看代发依据</summary>
                     <p v-if="!source.disbursements.length" class="muted">本来源没有已记录的代发方案。</p>
                     <dl v-for="basis in source.disbursements" :key="basis.calculation_id" class="employee-profile-grid">
-                      <div><dt>代发方案登记月份</dt><dd>{{ basis.recording_period }}{{ basis.needs_review ? " · 依据变化，需复核" : " · 已确认方案" }}</dd></div>
-                      <div v-if="!basis.matches_displayed_wage"><dt>工资来源说明</dt><dd>该方案采用后来更新的工资记录，请结合更正月份查看。</dd></div>
+                      <div><dt>代发方案登记月份</dt><dd>{{ basis.recording_period }}{{ basis.needs_review ? " · 方案依据需复核" : " · 已确认方案" }}</dd></div>
+                      <div v-if="!basis.matches_displayed_wage"><dt>工资来源说明</dt><dd>方案采用的工资来源与本页展示来源不同，请核对各自依据。</dd></div>
                       <div><dt>按申报额确定的拟发金额</dt><dd>{{ formatFen(basis.target_net_fen) }}</dd></div>
                       <div><dt>方案保留差额</dt><dd>{{ formatFen(basis.held_fen) }}</dd></div>
                     </dl>

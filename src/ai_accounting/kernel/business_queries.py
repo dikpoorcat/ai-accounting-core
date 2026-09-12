@@ -280,7 +280,7 @@ class BusinessQueries:
             if row["close_period"] is not None
         ]
         if frozen_vouchers:
-            from .read_indexes import CLOSE_VOUCHERS, verify_close_references
+            from .read_indexes import CLOSE_VOUCHERS
 
             references = connection.execute(
                 "SELECT r.* FROM json_each(?) ids JOIN close_reference r "
@@ -289,7 +289,7 @@ class BusinessQueries:
                 "WHERE r.path=?",
                 (json.dumps(frozen_vouchers), CLOSE_VOUCHERS),
             ).fetchall()
-            verify_close_references(connection, references)
+            reads.verify_close_references(references)
         represented.update(row["basis_calculation_id"] for row in selected_rows)
         if include_vouchers:
             lines = reads.voucher_lines(row["id"] for row in selected_rows) if include_lines else {}

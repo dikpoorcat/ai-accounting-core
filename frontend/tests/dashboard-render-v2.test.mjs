@@ -264,11 +264,11 @@ test("T6 preparation retains distinct source issues and exposes incomplete known
     assert.match(html, /所选期间相关的当前跟进/);
     assert.match(html, new RegExp(`全公司 · 截至 ${preparation.as_of} 的相关后续事项`));
     assert.match(html, /不改变所选月封存结果/);
-    assert.match(html, /当前资料核对 · 2 条问题/);
+    assert.match(html, /当前资料核对 · 2 条核对提示/);
     assert.match(html, /source-a/); assert.match(html, /source-b/);
     assert.match(html, /class="needs-check"[^>]*>当前款项金额尚不能完整建立/);
     assert.match(html, /123\.45/);
-    assert.match(html, /class="needs-check"[^>]*>3 项文件任务的来源待核对/);
+    assert.match(html, /class="needs-check"[^>]*>3 项文件任务结果或引用依据待核对/);
     assert.match(html, /另一业务尚未正式处理/);
     assert.match(html, /查看待更正业务依据/);
     assert.deepEqual(globalThis.t6PreparationTargets.toSorted(), ["source-a", "source-b", "explicit-accounting-source", "pending-correction"].toSorted());

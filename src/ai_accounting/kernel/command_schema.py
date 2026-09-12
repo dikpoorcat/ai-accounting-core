@@ -103,6 +103,7 @@ def command_models(registry):
         "dashboard_assets": Dashboard.assets,
         "dashboard_business_status": Dashboard.business_status,
         "dashboard_quarterly_report": Dashboard.quarterly_report,
+        "dashboard_period_preparation": Dashboard.period_preparation,
         "preview_period_commentary": Display.preview_period_commentary,
         "update_period_commentary": Display.update_period_commentary,
         "find_facts": Discovery.find_facts,

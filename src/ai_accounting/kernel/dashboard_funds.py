@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from .contracts import KernelError
 from .dashboard_reads import page_keys
-from .types import canonical
+from .types import YearMonth, canonical
 
 FUND_TYPES = {"bank": "bank", "cash": "cash", "platform": "payment_platform"}
 SECTIONS = {"accounts", "movements", "statements", "investment_products", "investment_events"}
@@ -66,6 +66,9 @@ class FundsRead:
         self.states = snap.reads.metadata(
             item["calculation_id"] for item in self.selected["state_results"]
         )
+        self.state_selections = {
+            item["calculation_id"]: item for item in self.selected["state_results"]
+        }
         self.opening_ids = [ident for ident, item in self.states.items() if item["opening"]]
         self.issues = self.selected["unestablished_state_selections"]
         self.account_rows = {}
@@ -348,6 +351,49 @@ class FundsRead:
             "component_kinds": [row["kind"]],
         }
 
+    def _closed_statement_parent(
+        self, statement, reconciliation, result, statement_results, parents
+    ):
+        """A frozen bank reconciliation can prove its exact statement source only.
+
+        The independent adoption comes from this response's shared selection.
+        Persistent metadata/edges alone never establish that adoption.
+        """
+        selected = self.state_selections[result["id"]]
+        if (
+            selected["selection_source"] != "close_manifest"
+            or selected["posting_period"] != self.snap.period
+        ):
+            return None, "unestablished", "对账结果在所选关账中的独立采用尚不能证明。"
+        manifest = self.snap.closes.get(YearMonth(selected["posting_period"]).ordinal)
+        members = set(manifest.get("calculations", ())) if manifest else set()
+        sources = [item for item in parents if item["kind"] == "bank_statement"]
+        if len(sources) != 1:
+            return (
+                None,
+                "conflict" if sources else "unestablished",
+                "对账采用的精确流水计算来源尚不能唯一确认。",
+            )
+        source = sources[0]
+        if result["id"] not in members or source["id"] not in members:
+            return None, "unestablished", "对账与流水来源未能在同一次关账采用记录中共同证明。"
+        if (
+            source["subject_id"] != statement["subject_id"]
+            or source["fact_id"] != statement["revision_id"]
+            or source["period"] != self.snap.period
+            or statement["fact_period"] != self.snap.month
+            or reconciliation["fact_period"] != self.snap.month
+            or reconciliation["statement_id"] != source["subject_id"]
+            or reconciliation["bank_account_id"] != statement["bank_account_id"]
+            or result["period"] != self.snap.period
+        ):
+            return None, "conflict", "对账采用的流水来源与当前展示的版本、账户或期间不一致。"
+        if statement_results and (
+            len(statement_results) != 1 or statement_results[0]["id"] != source["id"]
+        ):
+            return None, "conflict", "独立采用的流水计算与对账采用的流水计算不一致。"
+        return source, None, None
+
     def bank_summary(self):
         statement_ids = self.snap.fact_ids_of_kind("bank_statement", period=self.snap.period)
         reconciliation_ids = self.snap.fact_ids_of_kind(
@@ -357,7 +403,8 @@ class FundsRead:
             [
                 dict(row)
                 for row in self.connection.execute(
-                    "SELECT f.subject_id,f.revision,s.* FROM json_each(?) ids JOIN "
+                    "SELECT f.subject_id,f.revision,f.period fact_period,s.* "
+                    "FROM json_each(?) ids JOIN "
                     "fact_bank_statement s "
                     "ON s.revision_id=ids.value JOIN fact_revision f ON f.id=s.revision_id "
                     "ORDER BY f.subject_id",
@@ -371,7 +418,8 @@ class FundsRead:
             [
                 dict(row)
                 for row in self.connection.execute(
-                    "SELECT f.subject_id,f.revision,r.* FROM json_each(?) ids JOIN "
+                    "SELECT f.subject_id,f.revision,f.period fact_period,r.* "
+                    "FROM json_each(?) ids JOIN "
                     "fact_bank_reconciliation r "
                     "ON r.revision_id=ids.value JOIN fact_revision f ON f.id=r.revision_id",
                     (canonical(reconciliation_ids),),
@@ -393,16 +441,39 @@ class FundsRead:
             if not self.snap.close
             else set()
         )
-        states = {item["subject_id"]: item for item in self.states.values()}
+        states = {}
+        for item in self.states.values():
+            states.setdefault(item["subject_id"], []).append(item)
+        statement_subjects = {item["subject_id"] for item in statements}
+        month_results = {
+            result["id"]
+            for reconciliation in reconciliations
+            if reconciliation["statement_id"] in statement_subjects
+            for result in states.get(reconciliation["subject_id"], ())
+            if result["period"] == self.snap.period
+            and result["fact_id"] == reconciliation["revision_id"]
+        }
         balanced = {
             row[0]
             for row in self.connection.execute(
                 "SELECT c.id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
                 "WHERE json_extract(c.outcome,'$.values.balanced')=1",
-                (canonical(sorted(self.states)),),
+                (canonical(sorted(month_results)),),
             )
         }
+        parents_by_result = {}
+        if self.snap.close and balanced:
+            self.snap.reads.prime_parents(balanced)
+            parent_ids = {ident: self.snap.reads.parents(ident) for ident in balanced}
+            metadata = self.snap.reads.metadata(
+                {parent for identifiers in parent_ids.values() for parent in identifiers}
+            )
+            parents_by_result = {
+                ident: [metadata[parent] for parent in identifiers]
+                for ident, identifiers in parent_ids.items()
+            }
         provided, confirmed_accounts, headers = set(), set(), []
+        self.bank_source_checks = {}
         for statement in statements:
             ident = statement["bank_account_id"]
             provided.add(ident)
@@ -410,21 +481,107 @@ class FundsRead:
                 item for item in reconciliations if item["statement_id"] == statement["subject_id"]
             ]
             reconciliation = matches[0] if len(matches) == 1 else None
-            result = states.get(reconciliation["subject_id"]) if reconciliation else None
-            statement_result = states.get(statement["subject_id"])
+            results = states.get(reconciliation["subject_id"], []) if reconciliation else []
+            result = results[0] if len(results) == 1 else None
+            statement_results = states.get(statement["subject_id"], [])
+            statement_result = statement_results[0] if len(statement_results) == 1 else None
+            unique_statement = sum(item["bank_account_id"] == ident for item in statements) == 1
+            unique_reconciliation = (
+                sum(item["bank_account_id"] == ident for item in reconciliations) <= 1
+            )
             confirmed = bool(
                 statement_result
                 and statement_result["fact_id"] == statement["revision_id"]
                 and statement["subject_id"] not in pending
-                and sum(item["bank_account_id"] == ident for item in statements) == 1
+                and unique_statement
             )
-            valid = bool(
+            adopted_reconciliation = bool(
                 result
                 and result["fact_id"] == reconciliation["revision_id"]
-                and confirmed
+                and result["period"] == self.snap.period
+                and reconciliation["bank_account_id"] == ident
+                and unique_reconciliation
                 and reconciliation["subject_id"] not in pending
                 and result["id"] in balanced
             )
+            source = statement_result if confirmed else None
+            source_error = source_error_state = None
+            if self.snap.close and adopted_reconciliation:
+                source, source_error_state, source_error = self._closed_statement_parent(
+                    statement,
+                    reconciliation,
+                    result,
+                    statement_results,
+                    parents_by_result[result["id"]],
+                )
+                # A conflicting independently selected source cannot be bypassed
+                # by falling back to the reconciliation's dependency.
+                if source and unique_statement:
+                    confirmed = True
+            valid = bool(
+                confirmed
+                and adopted_reconciliation
+                and (not self.snap.close or source is not None and source_error is None)
+            )
+            review = bool(
+                not confirmed
+                or not unique_reconciliation
+                or len(matches) > 1
+                or (reconciliation and not valid)
+            )
+            selection = self.state_selections[result["id"]] if result else None
+            source_check = {
+                "state": "confirmed" if confirmed else "unestablished",
+                "message": "流水来源已确认。",
+                "statement_confirmed": confirmed,
+                "reconciliation_valid": valid,
+                "statement_calculation_id": source["id"] if source else None,
+                "selected_statement_calculation_ids": [item["id"] for item in statement_results],
+                "statement_fact_id": statement["revision_id"],
+                "reconciliation_calculation_id": result["id"] if result else None,
+                "reconciliation_fact_id": reconciliation["revision_id"] if reconciliation else None,
+                "selection_source": selection["selection_source"] if selection else None,
+                "selection_proof": selection["selection_proof"] if selection else None,
+                "proof_method": (
+                    "frozen_reconciliation_direct_statement"
+                    if self.snap.close and valid
+                    else "independent_statement_selection"
+                    if confirmed
+                    else None
+                ),
+            }
+            if (
+                not unique_statement
+                or not unique_reconciliation
+                or len(matches) > 1
+                or len(results) > 1
+            ):
+                source_check.update(
+                    state="conflict", message="同一账户的流水或对账采用关系不唯一，需核对来源。"
+                )
+            elif source_error:
+                source_check.update(state=source_error_state, message=source_error)
+            elif not confirmed:
+                source_check.update(
+                    state="unestablished" if self.snap.close else "needs_review",
+                    message="历史流水来源的采用尚不能证明，匹配状态待核对。"
+                    if self.snap.close
+                    else "当前流水资料尚待确认或复核，匹配状态待核对。",
+                )
+            elif valid:
+                source_check["message"] = (
+                    "所选关账对账已采用此精确流水来源，流水匹配已确认。"
+                    if self.snap.close
+                    else "当前流水来源与银行对账匹配已确认。"
+                )
+            elif reconciliation:
+                source_check.update(
+                    state="needs_review",
+                    message="流水来源已确认；对应对账的采用或有效性尚需核对。",
+                )
+            else:
+                source_check["message"] = "流水来源已确认，尚无本期已确认的银行对账匹配。"
+            self.bank_source_checks[statement["revision_id"]] = source_check
             if confirmed:
                 confirmed_accounts.add(ident)
             headers.append(
@@ -435,8 +592,7 @@ class FundsRead:
                     "reconciliation_id": reconciliation["revision_id"] if reconciliation else None,
                     "confirmed": confirmed,
                     "valid": valid,
-                    "review": not confirmed
-                    or bool(reconciliation and reconciliation["subject_id"] in pending),
+                    "review": review,
                 }
             )
             item = self.account_rows.get(("bank", ident))
@@ -444,7 +600,8 @@ class FundsRead:
                 item["statement"]["coverage_state"] = "complete" if confirmed else "partial"
                 item["reconciliation"] = {
                     "state": "complete" if valid else "attention",
-                    "label": "已完成银行对账" if valid else "流水尚未完整核对",
+                    "label": "已完成银行对账" if valid else "流水匹配状态待核对",
+                    "source_check": source_check,
                     "version": reconciliation["revision"] if reconciliation else None,
                     "statement_closing_fen": statement["closing_fen"],
                     "book_closing_fen": item["closing_fen"],
@@ -546,6 +703,7 @@ class FundsRead:
             "party": "未提供",
             "memo": row["description"] or "",
             "state": row["state"],
+            "source_check": self.bank_source_checks[row["revision_id"]],
         }
 
     def investment_source(self, *, current=False):

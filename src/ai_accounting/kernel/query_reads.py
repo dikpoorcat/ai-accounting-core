@@ -1,13 +1,15 @@
 """Exact, request-local batch reads shared by business queries and page projections.
 
-The caller owns the SQLite read transaction.  Caches never cross connections and
-hold immutable versions only; selecting current or frozen versions stays in the
-business query selector.
+Ordinary callers own their transaction. snapshot() owns a read-only transaction
+and scopes successful reference checks to that lifetime. Consumers read shared
+source objects without modifying them; selection rules stay in the business query.
 """
 
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import contextmanager
 
 from .contracts import KernelError
 from .query_semantics import SETTLEMENT_SOURCE_SLOTS, resolve_calculation_relations
@@ -132,6 +134,11 @@ def selected_voucher_sql(
 class QueryReads:
     def __init__(self, engine, connection):
         self.engine, self.store, self.connection = engine, engine.store, connection
+        self._reset()
+
+    def _reset(self):
+        self._snapshot_active = False
+        self._verified_close_references = set()
         self._fact_versions = {}
         self._facts = {}
         self._metadata = {}
@@ -149,6 +156,57 @@ class QueryReads:
         self._typed_calculations = {}
         self._jobs = {}
         self.job_plans = {}
+
+    @classmethod
+    @contextmanager
+    def snapshot(cls, engine):
+        """Own one read-only transaction; no memo survives an exit or transaction change."""
+        with engine.store.connection(read_only=True) as connection:
+            connection.execute("BEGIN")
+            reads = cls(engine, connection)
+
+            def keep_snapshot(action, *_):
+                # in_transaction alone cannot distinguish COMMIT followed by BEGIN.
+                # This connection is private to this scope; its consumers only read.
+                return (
+                    sqlite3.SQLITE_DENY
+                    if action in (sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT)
+                    else sqlite3.SQLITE_OK
+                )
+
+            connection.set_authorizer(keep_snapshot)
+            reads._snapshot_active = True
+            try:
+                yield reads
+            finally:
+                reads._reset()
+                connection.set_authorizer(None)
+
+    def verify_close_references(self, references):
+        """Reuse exact successful leaf checks, never an independent adoption proof."""
+        from .read_indexes import verify_close_references
+
+        references = list(references)
+        if not self._snapshot_active:
+            return verify_close_references(self.connection, references)
+        fields = (
+            "close_period",
+            "path",
+            "position",
+            "reference_type",
+            "reference_id",
+            "related_id",
+        )
+        pending, keys = [], set()
+        for reference in references:
+            # Types are part of identity too: e.g. False must not hit a verified 0.
+            key = tuple((type(reference[field]), reference[field]) for field in fields)
+            if key not in self._verified_close_references and key not in keys:
+                pending.append(reference)
+                keys.add(key)
+        if pending:
+            verify_close_references(self.connection, pending)
+            self._verified_close_references.update(keys)
 
     def fact_versions(self, identifiers):
         identifiers = set(identifiers)

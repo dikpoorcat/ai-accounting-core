@@ -1,6 +1,6 @@
 import { DashboardApiError, requestJson } from "./client";
 import { requestLocalJson, LocalApiError } from "./localKernel";
-import type { PeriodPreparation } from "./dashboardContracts";
+import type { DashboardReadContext, PeriodPreparation } from "./dashboardContracts";
 
 export type ReportStatus =
   | "ready"
@@ -143,7 +143,19 @@ export async function fetchQuarterlyReport(
   return report;
 }
 
-export async function requestQuarterlyExport(companyId: string, report: QuarterlyReport, requestId: string, signal?: AbortSignal): Promise<{ job_id: string }> {
+export type DeferredQuarterlyReport = Omit<QuarterlyReport, "period_preparations"> & {
+  projection: "dashboard_quarterly_report_deferred";
+  read_context: DashboardReadContext;
+  period_preparations: null;
+};
+
+export function fetchDeferredQuarterlyReport(companyId: string, year: number, quarter: number, signal?: AbortSignal, carryForwardFactId?: string) {
+  const query = new URLSearchParams({ company_id: companyId, year: String(year), quarter: String(quarter), preparation: "deferred" });
+  if (carryForwardFactId) query.set("carry_forward_fact_id", carryForwardFactId);
+  return requestJson<DeferredQuarterlyReport>(`/api/dashboard/quarterly-report?${query}`, { signal });
+}
+
+export async function requestQuarterlyExport(companyId: string, report: QuarterlyReport | DeferredQuarterlyReport, requestId: string, signal?: AbortSignal): Promise<{ job_id: string }> {
   if (!report.export.available || !report.export.preview_digest || !report.export.epochs) {
     throw new DashboardApiError(409, "REPORT_EXPORT_UNAVAILABLE", "季度报表尚未准备完成，当前不能导出。");
   }

@@ -40,7 +40,7 @@
 
 历史页面缺少姓名时，复用数据库已有的对应档案、收款人或个税导入身份，并保留资料来源。按月确认的资料明确显示月份；没有依据的旧栏目移除，不要求为适配界面补造资料。刷新会更新月份列表，分页遇到数据变化会重新加载，避免混合不同版本的明细。
 
-展示口径与回归入口见 [看板与内核对齐说明](docs/dashboard-kernel-alignment.md)。独立包及其历史验证记录仍见 [独立打包](docs/local-kernel-packaging.md)。
+展示口径与回归入口见 [看板与内核对齐说明](docs/dashboard-kernel-alignment.md)。运行包的构建和使用见 [独立打包](docs/local-kernel-packaging.md)。
 
 ## 已实现机制
 
@@ -58,7 +58,7 @@
 
 具体可用字段和边界以运行时 Schema 为准。缺少影响核算的事实返回 `needs_information`，管理资料后补不重新计算会计结果。
 
-核算等价、内容有效性和提交并发版本分别判断；完整结果及精确来源始终保留。共同业务查询统一财务位置、清偿、期间准备和来源追溯，五页在同一公司库快照中读取汇总与分页明细。未证明的冻结采用保持未知，历史核算与当前相关后来事项分别展示。具体边界见[核算等价](docs/accounting-equivalence.md)、[历史内容](docs/history-content-versions.md)、[统一业务查询](docs/unified-business-queries.md)和[有界读取](docs/bounded-dashboard-queries.md)。
+核算等价、内容有效性和提交并发版本分别判断；完整结果及精确来源始终保留。共同业务查询统一财务位置、清偿、期间准备和来源追溯，每次看板响应在同一公司库快照中读取汇总与明细。简报和季度报表先返回主数据，再按公司、数据库、数据版本及日期匹配后续月度准备结果。未证明的冻结采用保持未知，历史核算与当前相关后来事项分别展示。具体边界见[核算等价](docs/accounting-equivalence.md)、[历史内容](docs/history-content-versions.md)、[统一业务查询](docs/unified-business-queries.md)和[有界读取](docs/bounded-dashboard-queries.md)。
 
 ## 开发与验证
 
@@ -71,9 +71,9 @@
 
 默认测试仅运行新内核及保留的纯计算/解析/模板测试，不需要数据库服务或特殊隔离参数。前端执行 `npm test` 和 `npm run build:release`。运行包执行 `scripts/package-local-kernel.ps1`，实际验证移目录、原生窗口、Windows 凭据、CLI/MCP、记账及备份恢复。
 
-按当次风险选择必要检查，以上入口不构成每次修改的统一门禁。[T5 整体验证结果](docs/t5-implementation-result.md)区分本次运行与复用证据，并绑定工作树及候选产物哈希；历史批次通过数量不累计为当前结果。候选包验证与正式部署、真实公司迁移以及架构最终验收分别说明。
+按当次风险选择必要检查，以上入口不构成每次修改的统一门禁。复用仍有效的验证，跨任务检查在收口时集中执行；候选包验证与正式部署、真实公司迁移分别确认。
 
-保留已有[万级至百万凭证基准](docs/local-kernel-benchmark.md)、[工资基准](docs/local-payroll-benchmark.md)与[来源批次基准](docs/local-source-batch-benchmark.md)，这些是对应历史构建的测量。当前接管构建另有[资料及后台并行实测](docs/performance/kernel-takeover-20260911.md)。容量边界保持 20 MiB 单文件、10 万行银行文件和 5,000 条事实批次，不将合成测量当作更高容量承诺。
+容量边界为 20 MiB 单文件、10 万行银行文件和 5,000 条事实批次，不将合成测量当作更高容量承诺。
 
 ## 旧内核退役边界
 
@@ -81,4 +81,4 @@
 
 需要恢复或重新记账时，按 [SQLite 空库重录与完整恢复手册](docs/empty-database-replay.md) 选择路径：`restore_company` 恢复已验证的完整公司包；`create_company` 后经现行类型化命令按原件重录；`rebuild` 仅重建已有凭证的汇总。新目标须重建 ID 映射和预览摘要，首次登记原件保留原文件名，展示档案、公司说明及经营结论按实际来源和关账前后顺序恢复。当前没有旧 `finance-replay` 通用执行器；逐公司验收使用 [重录与恢复检查单](docs/formal-empty-db-startup-checklist-template.md)。
 
-两家公司的历史重建、截至 2026 年 7 月的关账、季度导出和独立恢复已完成，8 月保持开放。旧 ORM、业务服务、MCP、身份接续桥、Alembic 及本项目专属 PostgreSQL 容器和卷已退役；旧备份的原件与事实依据保全后，旧结果备份也已清理。原 Vue 五页看板保留并接入新 SQLite 内核，负责人登录、凭证追溯与后台任务并入同一界面。当前程序公司库合同 v11、目录库 v3；v8 增加版本化管理展示资料，v9 追加不可变经营说明内容依据，v10 增加精确引用目录与有界读取索引，v11 为精确识别的已登记 v10 历史形态补齐四个读取索引并保留原版本历史，标准 v10 同样通过前向事务升级。看板分页和历史／当前跟进合同见 [有界看板查询](docs/bounded-dashboard-queries.md)。内容有效性、历史后补及时间口径见 [历史来源与内容版本](docs/history-content-versions.md)。历史重建验收范围和限制见 [接管记录](docs/local-kernel-takeover.md)，看板启动见 [启动说明](docs/local-kernel-startup.md)。业务原件、公司说明及正式回执保存在资料目录，不进入源码。
+旧 ORM、业务服务、MCP、身份接续桥、Alembic 及本项目专属 PostgreSQL 容器和卷已退役。原 Vue 五页看板保留并接入新 SQLite 内核，负责人登录、凭证追溯与后台任务并入同一界面。当前程序公司库合同 v11、目录库 v3；v8 增加版本化管理展示资料，v9 追加不可变经营说明内容依据，v10 增加精确引用目录与有界读取索引，v11 为精确识别的已登记 v10 历史形态补齐四个读取索引并保留原版本历史，标准 v10 同样通过前向事务升级。看板分页和历史／当前跟进合同见 [有界看板查询](docs/bounded-dashboard-queries.md)。内容有效性、历史后补及时间口径见 [历史来源与内容版本](docs/history-content-versions.md)，看板启动见 [启动说明](docs/local-kernel-startup.md)。业务原件、公司说明及正式回执保存在资料目录，不进入源码。

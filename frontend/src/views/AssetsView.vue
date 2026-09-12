@@ -65,6 +65,7 @@ function clearPageRequests() {
 
 const periodOptions = computed(() => context.value?.periods ?? []);
 const data = computed(() => response.value?.data ?? null);
+const countQualifier = computed(() => data.value?.unestablished_count ? "已确认 " : "");
 const selectedPeriodView = computed(() => response.value?.selected_period ?? null);
 const allItems = computed<AssetItem[]>(() => {
   if (!data.value) return [];
@@ -405,7 +406,7 @@ onBeforeUnmount(() => {
             <strong class="assets-total">{{ formatFen(data.ledger_net_fen) }}</strong>
             <p class="hero-note">
               在用固定资产净值 {{ formatFen(data.fixed.active_net_fen) }} · 在用无形资产净值
-              {{ formatFen(data.intangible.active_net_fen) }} · 共 {{ data.active_count }} 项在用
+              {{ formatFen(data.intangible.active_net_fen) }} · {{ countQualifier || '共 ' }}{{ data.active_count }} 项在用
             </p>
             <p v-if="pendingCost() === null || pendingCost() || data.project_cost_fen === null || fen(data.project_cost_fen)" class="hero-note">
               另含待启用资产 {{ formatFen(pendingCost()) }}
@@ -455,9 +456,11 @@ onBeforeUnmount(() => {
           <article class="kpi">
             <span>待启用资产</span>
             <strong>{{ formatFen(pendingCost()) }}</strong>
-            <small>固定 {{ data.pending_fixed_count }} 项 · 无形 {{ data.pending_intangible_count }} 项</small>
+            <small>固定 {{ countQualifier }}{{ data.pending_fixed_count }} 项 · 无形 {{ countQualifier }}{{ data.pending_intangible_count }} 项</small>
           </article>
         </section>
+
+        <p v-if="data.unestablished_count" class="note" role="status">全公司有 {{ data.unestablished_count }} 项资产来源的冻结采用尚未建立；在用、待启用及本月变动数量仅列已确认部分，不代表完整数量。</p>
 
         <section id="assets-checks" class="assets-checks" tabindex="-1" aria-label="资产核对事项">
           <PeriodPreparation :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
@@ -465,7 +468,7 @@ onBeforeUnmount(() => {
           <section v-if="attentionItems.length" class="panel attention-panel" aria-labelledby="assets-attention-title">
             <div class="section-heading">
               <div><h2 id="assets-attention-title" tabindex="-1">资产关注事项</h2></div>
-              <span class="attention-count">{{ attentionItems.length }} 项</span>
+              <span class="attention-count">{{ attentionItems.length }} 条提示</span>
             </div>
             <ul><li v-for="item in attentionItems" :key="item">{{ item }}</li></ul>
           </section>
@@ -477,10 +480,10 @@ onBeforeUnmount(() => {
           </div>
           <div class="movement-grid">
             <article>
-              <span>本月新增</span><strong>{{ data.month_acquired_count }} 项</strong>
+              <span>本月新增</span><strong>{{ countQualifier }}{{ data.month_acquired_count }} 项</strong>
               <small>
                 新增卡片原值 {{ formatFen(data.month_acquired_fen) }} · 本月启用资产
-                {{ data.month_activated_count }} 项
+                {{ countQualifier }}{{ data.month_activated_count }} 项
               </small>
             </article>
             <article v-if="data.month_cost_adjustment_fen === null || fen(data.month_cost_adjustment_fen) !== 0n">
@@ -488,13 +491,13 @@ onBeforeUnmount(() => {
               <small>本月对原资产成本的调整，不计为新增资产</small>
             </article>
             <article>
-              <span>本月退出</span><strong>{{ data.month_exited_count }} 项</strong>
+              <span>本月退出</span><strong>{{ countQualifier }}{{ data.month_exited_count }} 项</strong>
               <small>已出售、报废或退役的资产卡片</small>
             </article>
             <article>
-              <span>当前在用</span><strong>{{ data.active_count }} 项</strong>
+              <span>当前在用</span><strong>{{ countQualifier }}{{ data.active_count }} 项</strong>
               <small>
-                固定 {{ data.fixed.active_count }} 项 · 无形 {{ data.intangible.active_count }} 项
+                固定 {{ countQualifier }}{{ data.fixed.active_count }} 项 · 无形 {{ countQualifier }}{{ data.intangible.active_count }} 项
               </small>
             </article>
           </div>
@@ -503,10 +506,11 @@ onBeforeUnmount(() => {
         <section class="panel">
           <div class="section-heading">
             <div><h2 id="asset-list-title" tabindex="-1">资产明细</h2></div>
-            <strong>{{ data.registered_count }} 项卡片</strong>
+            <strong>已识别 {{ data.registered_count }} 项卡片身份</strong>
           </div>
           <div class="asset-toolbar">
             <p>{{ filterLabel }} · 当前筛选共 {{ data.collections.assets.page.filtered_count }} 项，已加载 {{ filteredItems.length }} 项</p>
+            <p v-if="data.unestablished_count && ['active', 'pending', 'exited'].includes(filter)">状态筛选仅列已确认匹配项；全公司尚未确认的资产来源仍需单独核对。</p>
             <select v-model="filter" class="control" aria-label="筛选资产">
               <option v-for="item in filters" :key="item.value" :value="item.value">
                 {{ item.label }}

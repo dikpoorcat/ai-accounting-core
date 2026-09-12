@@ -166,4 +166,4 @@
 工资使用 `wage_tax_scope: wage_income | contributions_only` 表示所得适用性；不表示外部申报是否完成。
 首次工资扣除处理与社保实际数登记的申报日期选填。劳务明确总报酬 `gross_remuneration_fen`，
 固定报酬与佣金分解可一起省略；提供分解时校验合计，不将未知分项保存成零。
-逐规则处理和验证范围见 [必要事实审查清单](essential-accounting-review.md)。
+字段语义与缺项处理见 [核算事实要求与智能体追问契约](fact-requirements.md)。

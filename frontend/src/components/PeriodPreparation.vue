@@ -48,11 +48,11 @@ function collectionLink(section: string) {
     </div>
     <p v-if="preparation.current_followups.settlements.complete === false" class="needs-check" role="status">当前款项金额尚不能完整建立，已知金额仍需连同未知来源核对。</p>
     <p v-if="preparation.current_followups.settlements.unestablished_state_selection_count" class="needs-check">仍有 {{ preparation.current_followups.settlements.unestablished_state_selection_count }} 组来源尚不能证明已被封存采用，不能据此认定结清。</p>
-    <p v-if="preparation.current_followups.file_jobs.issue_count" class="needs-check">{{ preparation.current_followups.file_jobs.issue_count }} 项文件任务的来源待核对。<RouterLink :to="collectionLink('file_jobs')">查看任务明细</RouterLink></p>
+    <p v-if="preparation.current_followups.file_jobs.issue_count" class="needs-check">{{ preparation.current_followups.file_jobs.issue_count }} 项文件任务结果或引用依据待核对。<RouterLink :to="collectionLink('file_jobs')">查看任务明细</RouterLink></p>
     <p v-if="preparation.current_followups.external.obligation_count" class="scope-note">外部办理：{{ businessStateLabel(preparation.current_followups.external.status) }} · {{ preparation.current_followups.external.obligation_count }} 项义务 <RouterLink :to="collectionLink('external_followups')">查看办理明细</RouterLink></p>
     <div v-if="groups.length" class="issue-groups">
       <details v-for="group in groups" :key="group.key" class="issue-group">
-        <summary><strong>{{ group.label }} · {{ group.issues.length }} 条问题</strong><span class="first-issue">{{ group.issues[0].message || '相关依据需要核对' }}</span></summary>
+        <summary><strong>{{ group.label }} · {{ group.issues.length }} 条核对提示</strong><span class="first-issue">{{ group.issues[0].message || '相关依据需要核对' }}</span></summary>
         <ol><li v-for="(issue, index) in group.issues" :key="index">
           <p>{{ issue.message || '相关依据需要核对，见详细来源。' }}</p>
           <BusinessStatusDetails v-if="issue.subject_id" :subject-id="issue.subject_id" :period="preparation.period" :snapshot-version="snapshotVersion" summary-label="查看相关依据" @changed="$emit('changed')" />
@@ -73,7 +73,7 @@ function collectionLink(section: string) {
       </dl>
       <RouterLink :to="collectionLink('settlement_events')">查看相关清偿明细</RouterLink>
       <p>外部办理：{{ businessStateLabel(preparation.current_followups.external.status) }} · {{ preparation.current_followups.external.obligation_count }} 项义务 <RouterLink :to="collectionLink('external_followups')">查看办理明细</RouterLink></p>
-      <p>文件任务 {{ preparation.current_followups.file_jobs.total_count }} 项，其中 {{ preparation.current_followups.file_jobs.issue_count }} 项任务的来源待核对 <RouterLink :to="collectionLink('file_jobs')">查看任务明细</RouterLink></p>
+      <p>文件任务 {{ preparation.current_followups.file_jobs.total_count }} 项，其中 {{ preparation.current_followups.file_jobs.issue_count }} 项任务结果或引用依据待核对 <RouterLink :to="collectionLink('file_jobs')">查看任务明细</RouterLink></p>
       <p class="scope-note">明细分批读取；上述业务、义务和任务数量不等于待办总数。</p>
     </details>
     <details class="technical-details"><summary>技术状态与完整投影</summary><pre>{{ JSON.stringify(preparation, null, 2) }}</pre></details>

@@ -7,6 +7,7 @@ import itertools
 import json
 import shutil
 from contextlib import contextmanager
+from types import MappingProxyType
 
 import pytest
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
@@ -17,6 +18,7 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.read_indexes import sync_close, sync_job
 from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.storage import Store
@@ -224,6 +226,7 @@ def read_probe(layered_book, monkeypatch):
     engine = layered_book["engine"]
     snapshots, transactions = [], []
     original_snapshot, original_connection = dashboard_module._Snapshot, engine.store.connection
+    original_reset = QueryReads._reset
     original_loads = json.loads
     with original_connection(read_only=True) as connection:
         unrelated_outcomes = {
@@ -246,6 +249,26 @@ def read_probe(layered_book, monkeypatch):
         snapshots.append(result)
         return result
 
+    def reset(reads):
+        for captured in snapshots:
+            if captured.reads is reads:
+                # Keep only immutable observations before the production cache
+                # is cleared; an empty post-exit cache proves no read boundary.
+                captured.loaded_subjects = MappingProxyType(
+                    {
+                        "calculations": frozenset(
+                            row["subject_id"] for row in reads._calculations.values()
+                        ),
+                        "facts": frozenset(
+                            version.subject_id for version in reads._fact_versions.values()
+                        ),
+                        "metadata": frozenset(
+                            row["subject_id"] for row in reads._metadata.values()
+                        ),
+                    }
+                )
+        original_reset(reads)
+
     @contextmanager
     def connection(*, read_only=False):
         with original_connection(read_only=read_only) as opened:
@@ -256,6 +279,7 @@ def read_probe(layered_book, monkeypatch):
             yield opened
 
     monkeypatch.setattr(dashboard_module, "_Snapshot", snapshot)
+    monkeypatch.setattr(QueryReads, "_reset", reset)
     monkeypatch.setattr(engine.store, "connection", connection)
     monkeypatch.setattr(json, "loads", loads)
     return snapshots, transactions, decoded_unrelated
@@ -265,13 +289,10 @@ def read_probe(layered_book, monkeypatch):
 def test_dashboard_does_not_decode_unrelated_funding_history(layered_book, read_probe, endpoint):
     response = getattr(Dashboard(layered_book["engine"]), endpoint)("2026-01", limit=1)
     snapshots, transactions, decoded_unrelated = read_probe
-    reads = snapshots[-1].reads
+    loaded_subjects = snapshots[-1].loaded_subjects
     excluded = layered_book["funding_subjects"]
-    assert not excluded.intersection(item["subject_id"] for item in reads._calculations.values())
-    assert not excluded.intersection(
-        version.subject_id for version in reads._fact_versions.values()
-    )
-    assert not excluded.intersection(item["subject_id"] for item in reads._metadata.values())
+    assert any(loaded_subjects.values())
+    assert all(not excluded.intersection(subjects) for subjects in loaded_subjects.values())
     assert decoded_unrelated == []
     assert response["data"] is not None
     assert len(transactions) == 1
@@ -325,7 +346,7 @@ def test_business_and_source_collections_keep_month_and_entity_scope(layered_boo
     assert page["items"][0]["subject_id"] == "asset-0"
     for snapshot in read_probe[0]:
         assert not layered_book["funding_subjects"].intersection(
-            row["subject_id"] for row in snapshot.reads._calculations.values()
+            snapshot.loaded_subjects["calculations"]
         )
 
 

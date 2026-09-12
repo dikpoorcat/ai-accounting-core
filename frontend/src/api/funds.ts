@@ -12,7 +12,23 @@ export type BankStatementState =
   | "needs_review";
 export type BankCoverageState = "missing" | "partial" | "complete" | "not_applicable";
 
+export interface BankSourceCheck {
+  state: "confirmed" | "unestablished" | "needs_review" | "conflict";
+  message: string;
+  statement_confirmed?: boolean;
+  reconciliation_valid?: boolean;
+  selected_statement_calculation_ids?: string[];
+  statement_calculation_id: string | null;
+  reconciliation_calculation_id: string | null;
+  statement_fact_id: string;
+  reconciliation_fact_id: string | null;
+  selection_source: string | null;
+  selection_proof: Record<string, unknown> | null;
+  proof_method: string | null;
+}
+
 export interface FundReconciliation {
+  source_check?: BankSourceCheck;
   state:
     | "not_applicable"
     | "not_configured"
@@ -96,6 +112,7 @@ export interface BankStatementRow {
   party: string;
   memo: string;
   state: BankStatementState;
+  source_check?: BankSourceCheck;
 }
 
 export interface FundBankStatement {

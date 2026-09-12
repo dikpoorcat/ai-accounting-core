@@ -46,8 +46,8 @@ test("T6 funds keeps historical adoption warnings and exact candidates despite k
       await router.push("/funds?company_id=co&period=2026-11");
       const app = createSSRApp(component); app.use(router);
       const html = await renderToString(app), visible = html.replace(/<pre[^>]*>[\s\S]*?<\/pre>/g, "");
-      assert.match(visible, /1 组历史资金来源尚不能证明已被封存采用/);
-      assert.match(visible, /已有金额也应连同候选依据核对/);
+      assert.match(visible, /1 组历史资金来源尚不能证明独立封存采用/);
+      assert.match(visible, /具体金额与流水核对状态分别见对应区块/);
       assert.match(visible, /与当前跟进状态分别列示/);
       assert.match(visible, /款项：已结清/);
       if (total === null) assert.match(visible, /暂无法确定/);

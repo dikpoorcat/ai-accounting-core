@@ -124,37 +124,57 @@ test("T6 new company context keeps a supported month, falls back explicitly, and
   });
 });
 
-test("T6 App ignores a former company's late context and fallback after navigation", async () => {
-  const h = await harness();
-  try {
-    h.setAuthenticated(true);
-    const abandoned = h.calls[0];
-    h.navigate({ query: { company_id: "b", period: "2026-02" } });
-    const current = h.calls.at(-1);
-    assert.notEqual(current, abandoned);
-    current.resolve(context("b", ["2026-02"])); await flush();
-    const replacementCount = h.replacements.length;
-    abandoned.resolve(context("a", ["2025-12"])); await flush();
-    assert.equal(h.route.query.company_id, "b");
-    assert.equal(h.route.query.period, "2026-02");
-    assert.equal(h.replacements.length, replacementCount);
-    assert.equal(h.contextError.value, "");
-    // Settle any superseded B fetch produced by simultaneous company/month watchers.
-    for (const call of h.calls) if (call !== current && call !== abandoned) call.resolve(context("b", ["2026-02"]));
-    await flush();
-  } finally { h.close(); }
+test("T6 App ignores a former company's late context and fallback after navigation", async t => {
+  for (const [label, period] of [
+    ["company and period change in one navigation", "2026-02"],
+    ["company changes with unchanged period", "2026-01"],
+  ]) await t.test(label, async () => {
+    const h = await harness();
+    try {
+      h.setAuthenticated(true);
+      assert.equal(h.calls.length, 1);
+      const abandoned = h.calls[0];
+      h.navigate({ query: { company_id: "b", period } });
+      assert.equal(h.calls.length, 2, "one atomic navigation starts exactly one context request");
+      const current = h.calls[1];
+      assert.equal(abandoned.signal.aborted, true);
+      assert.equal(current.signal.aborted, false, "the new request survives the same route commit");
+      const latestQuery = { company_id: "b", period, voucher: "7", section: "activity" };
+      h.navigate({ query: latestQuery, hash: "#activity" });
+      assert.equal(h.calls.length, 2, "deep-link-only changes do not start another context request");
+      assert.equal(current.signal.aborted, false, "deep-link-only changes do not cancel context");
+      current.resolve(context("b", [period])); await flush();
+      assert.equal(h.calls.length, 2, "adopting the loaded context does not refetch it");
+      assert.equal(h.state.context.value.current_company.company_id, "b");
+      assert.equal(h.state.loading.value, false);
+      const replacementCount = h.replacements.length;
+      abandoned.resolve(context("a", ["2025-12"])); await flush();
+      assert.deepEqual(h.route.query, latestQuery);
+      assert.equal(h.route.hash, "#activity");
+      assert.equal(h.state.context.value.current_company.company_id, "b");
+      assert.equal(h.state.loading.value, false);
+      assert.equal(h.replacements.length, replacementCount);
+      assert.equal(h.contextError.value, "");
+      assert.equal(h.state.error.value, "");
+      assert.equal(h.calls.length, 2);
+    } finally { h.close(); }
+  });
 });
 
 test("T6 refresh replaces month options and safely reconciles an unavailable current month", async () => {
   const h = await harness();
   try {
     h.setAuthenticated(true);
+    assert.equal(h.calls.length, 1);
     h.calls.at(-1).resolve(context("a", ["2026-01"])); await flush();
+    assert.equal(h.calls.length, 1);
     const refreshed = h.state.refresh();
+    assert.equal(h.calls.length, 2, "an explicit refresh adds one context request");
     assert.equal(h.state.context.value.current_company.company_id, "a", "refresh keeps the mounted company while loading");
-    h.calls.at(-1).resolve(context("a", ["2026-02"])); await refreshed; await flush();
+    h.calls[1].resolve(context("a", ["2026-02"])); await refreshed; await flush();
     assert.equal(h.state.context.value.periods[0].key, "2026-02");
     assert.equal(h.route.query.period, "2026-02", "the URL must no longer point to a removed month");
+    assert.equal(h.calls.length, 2, "normalizing the refreshed period does not fetch context again");
   } finally { h.close(); }
 });
 
@@ -162,12 +182,19 @@ test("T6 month changes while refresh waits cannot be overwritten by an older sel
   const h = await harness();
   try {
     h.setAuthenticated(true);
+    assert.equal(h.calls.length, 1);
     h.calls.at(-1).resolve(context("a", ["2026-01", "2026-02"])); await flush();
+    assert.equal(h.calls.length, 1);
     const pending = h.state.refresh();
+    assert.equal(h.calls.length, 2);
+    const refreshed = h.calls[1];
     h.navigate({ query: { company_id: "a", period: "2026-02", employee_filter: "payroll" } });
-    h.calls.at(-1).resolve(context("a", ["2026-01", "2026-02"])); await pending; await flush();
+    assert.equal(h.calls.length, 2, "a month change with existing context does not start another refresh");
+    assert.equal(refreshed.signal.aborted, false);
+    refreshed.resolve(context("a", ["2026-01", "2026-02"])); await pending; await flush();
     assert.equal(h.route.query.period, "2026-02");
     assert.equal(h.route.query.employee_filter, "payroll");
+    assert.equal(h.calls.length, 2);
   } finally { h.close(); }
 });
 
@@ -175,11 +202,13 @@ test("T6 report fallback uses the latest available quarter month and names the a
   const h = await harness({ company_id: "b", period: "2025-12", quarter: "2026-Q1" }, "reports");
   try {
     h.setAuthenticated(true);
-    h.calls.at(-1).resolve(context("b", ["2026-01", "2026-03", "2026-02", "2026-06"], "2026-06")); await flush();
+    assert.equal(h.calls.length, 1);
+    h.calls[0].resolve(context("b", ["2026-01", "2026-03", "2026-02", "2026-06"], "2026-06")); await flush();
     assert.equal(h.route.query.period, "2026-03");
     assert.equal(h.route.query.quarter, "2026-Q1");
     assert.match(h.state.selectionNotice.value, /2026-03/);
     assert.doesNotMatch(h.state.selectionNotice.value, /2026-06/);
+    assert.equal(h.calls.length, 1, "the explicit quarter fallback uses the already loaded context");
   } finally { h.close(); }
 });
 
@@ -188,11 +217,42 @@ test("T6 an initial URL without company still restores the saved company before 
   try {
     h.environment.storage.setItem("finance-dashboard-company-id", "b");
     h.setAuthenticated(true);
-    h.calls.at(-1).resolve(context("a", ["2026-01"])); await flush();
+    assert.equal(h.calls.length, 1);
+    h.calls[0].resolve(context("a", ["2026-01"])); await flush();
     assert.equal(h.route.query.company_id, "b");
-    h.calls.at(-1).resolve(context("b", ["2026-03"])); await flush();
+    assert.equal(h.calls.length, 2, "restoring a saved company is a distinct legitimate context request");
+    assert.equal(new URLSearchParams(h.calls[1].query).get("company_id"), "b");
+    h.calls[1].resolve(context("b", ["2026-03"])); await flush();
     assert.equal(h.route.query.period, "2026-03");
     assert.equal(h.state.context.value.current_company.company_id, "b");
+    assert.equal(h.calls.length, 2, "selecting the saved company's month does not add a third request");
+  } finally { h.close(); }
+});
+
+test("T7 an initial pending context restarts once when only the period changes", async () => {
+  const h = await harness();
+  try {
+    h.setAuthenticated(true);
+    assert.equal(h.calls.length, 1);
+    const abandoned = h.calls[0];
+    h.navigate({ query: { company_id: "a", period: "2026-02" } });
+    assert.equal(h.calls.length, 2, "a new period without loaded context starts one replacement request");
+    const current = h.calls[1];
+    assert.equal(abandoned.signal.aborted, true);
+    assert.equal(current.signal.aborted, false);
+    abandoned.resolve(context("a", ["2026-01"])); await flush();
+    assert.equal(h.route.query.period, "2026-02");
+    assert.equal(h.state.context.value, null);
+    assert.equal(h.state.loading.value, true, "the abandoned finally cannot stop the replacement request");
+    assert.equal(h.contextError.value, "");
+    current.resolve(context("a", ["2026-01", "2026-02"])); await flush();
+    assert.equal(h.route.query.period, "2026-02");
+    assert.equal(h.state.context.value.current_company.company_id, "a");
+    assert.equal(h.state.loading.value, false);
+    assert.equal(h.contextError.value, "");
+    assert.equal(h.state.error.value, "");
+    assert.equal(current.signal.aborted, false);
+    assert.equal(h.calls.length, 2);
   } finally { h.close(); }
 });
 
@@ -260,15 +320,22 @@ test("T6 report company switch validates the shared month before choosing the ne
     const h = await harness({ company_id: "a", period: "2026-01", quarter: "2026-Q1", carry_forward_fact_id: "old-company-source" }, "reports");
     try {
       h.setAuthenticated(true);
-      h.calls.at(-1).resolve(context("a", ["2026-01"])); await flush();
+      assert.equal(h.calls.length, 1);
+      h.calls[0].resolve(context("a", ["2026-01"])); await flush();
+      assert.equal(h.calls.length, 1);
       await h.selectCompany("b");
-      h.calls.at(-1).resolve(context("b", periods, periods[0] ?? null)); await flush();
+      assert.equal(h.calls.length, 2, "the company and cleared quarter commit starts one request");
+      const current = h.calls[1];
+      assert.equal(current.signal.aborted, false);
+      current.resolve(context("b", periods, periods[0] ?? null)); await flush();
       assert.equal(h.route.query.period, expected);
       assert.equal(h.route.query.company_id, "b");
       assert.equal(h.route.query.quarter, undefined, "Reports must derive the new quarter from the validated shared month");
       assert.equal(h.route.query.carry_forward_fact_id, undefined);
       if (expected === "2026-06") assert.match(h.state.selectionNotice.value, /2026-06/);
       if (expected === undefined) assert.match(h.state.selectionNotice.value, /没有可查看的月份/);
+      assert.equal(current.signal.aborted, false);
+      assert.equal(h.calls.length, 2, "normalizing the company month does not fetch context again");
     } finally { h.close(); }
   });
 });

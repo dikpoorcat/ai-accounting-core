@@ -2,14 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
-import { DashboardApiError, dashboardErrorMessage } from "../api/client";
+import { DashboardApiError, dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
+import { fetchPeriodPreparation, type PeriodPreparationResult } from "../api/periodPreparation";
 import { businessStateLabel } from "../api/dashboardContracts";
 import { fetchLocalJob, LocalApiError } from "../api/localKernel";
 import {
-  fetchQuarterlyReport,
+  fetchDeferredQuarterlyReport,
   fetchQuarterlyWorkbook,
   requestQuarterlyExport,
-  type QuarterlyReport,
+  type DeferredQuarterlyReport,
   type ReportStatement,
   type ReportStatementRow,
 } from "../api/reports";
@@ -77,7 +78,12 @@ const route = useRoute();
 const router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
 const selectedQuarter = ref("");
-const report = ref<QuarterlyReport | null>(null);
+const report = ref<DeferredQuarterlyReport | null>(null);
+type MonthCheck = { period: string; status: "pending" | "loading" | "ready" | "error" | "stale"; message: string; result: PeriodPreparationResult | null };
+const monthChecks = ref<MonthCheck[]>([]);
+let preparationController: AbortController | null = null;
+let preparationAttempt = 0;
+const checkingMonths = computed(() => monthChecks.value.some(month => month.status === "loading"));
 const loading = ref(false);
 const exporting = ref(false);
 const needsRegeneration = ref(false);
@@ -97,6 +103,7 @@ function selectionKey() { return JSON.stringify([route.query.company_id, route.q
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selectionKey() === selection; }
 function invalidateRequests() {
   requestGeneration += 1;
+  resetPreparations();
   previewController?.abort(); exportController?.abort();
   previewController = null; exportController = null;
   report.value = null; loading.value = false; exporting.value = false;
@@ -116,11 +123,13 @@ const pendingReadiness = computed(() => report.value?.readiness.filter((item) =>
 const readinessGroups = computed(() => {
   const completed = report.value?.readiness.filter((item) => item.state === "pass") ?? [];
   return [
-    { key: "pending", label: `需要核对的事项（${pendingReadiness.value.length}）`, expanded: true, items: pendingReadiness.value },
+    { key: "pending", label: `需要核对的检查（${pendingReadiness.value.length}）`, expanded: true, items: pendingReadiness.value },
     { key: "completed", label: `已完成 ${completed.length} 项检查`, expanded: false, items: completed },
   ].filter((group) => group.items.length);
 });
-const monthlyPreparations = computed(() => (report.value?.period_preparations ?? []).map(preparation => {
+const monthlyPreparations = computed(() => monthChecks.value.map(month => {
+  const preparation = month.result?.data.period_preparation;
+  if (!preparation) return { ...month, preparation: null, closure: "", issueGroups: [], notices: [], statuses: "" };
   const current = preparation.current_followups;
   const issueGroups = [
     { label: "月末核算条件", issues: preparation.readiness?.issues ?? [] },
@@ -135,11 +144,11 @@ const monthlyPreparations = computed(() => (report.value?.period_preparations ??
   if (current.accounting.unpublished_count) notices.push(`${current.accounting.unpublished_count} 项业务尚未发布`);
   if (current.settlements.complete === false || [current.settlements.source_amount_fen, current.settlements.paid_fen, current.settlements.other_settled_fen, current.settlements.remaining_fen].some(value => value === null)) notices.push("相关款项金额尚不能完整确定");
   if (current.settlements.unestablished_state_selection_count) notices.push(`${current.settlements.unestablished_state_selection_count} 组来源尚不能证明封存采用`);
-  if (current.file_jobs.issue_count) notices.push(`${current.file_jobs.issue_count} 项文件任务来源待核对`);
+  if (current.file_jobs.issue_count) notices.push(`${current.file_jobs.issue_count} 项文件任务结果或引用依据待核对`);
   if (current.file_jobs.status_counts.failed) notices.push(`${current.file_jobs.status_counts.failed} 项文件任务失败`);
   const closure = preparation.closure.state === "exact_close" ? "已关账"
     : preparation.closure.state === "sealed_by_later_close" ? `由 ${preparation.closure.sealing_boundary} 后续关账封存` : "尚未关账";
-  return { preparation, closure, issueGroups, notices, statuses: [
+  return { ...month, preparation, closure, issueGroups, notices, statuses: [
     `资料：${businessStateLabel(current.materials.status)}`, `核算：${businessStateLabel(current.accounting.status)}`,
     `业务条件：${businessStateLabel(current.close_requirements.status)}`, `款项：${businessStateLabel(current.settlements.status)}`,
     `外部办理：${businessStateLabel(current.external.status)}`,
@@ -158,7 +167,7 @@ const { activeSection, focusSection } = useDashboardSections(sectionLinks, "repo
 const reportHeadline = computed(() => {
   if (needsRegeneration.value) return "报表需要重新生成";
   if (report.value?.export.available) return "本季度报表已准备好";
-  if (pendingReadiness.value.length) return `还有 ${pendingReadiness.value.length} 项需要核对`;
+  if (pendingReadiness.value.length) return `还有 ${pendingReadiness.value.length} 项检查需要核对`;
   if (report.value?.close_state === "open") return "相关月份结账后可下载报表";
   return "本季度报表暂时无法下载";
 });
@@ -329,6 +338,7 @@ async function synchronizeQuarter(force = false) {
     const currentContext = await loadContext();
     if (!isCurrent(generation, selection)) return;
     if (!currentContext.quarters.length) {
+      resetPreparations();
       previewController?.abort();
       exportController?.abort();
       selectedQuarter.value = "";
@@ -375,8 +385,43 @@ async function synchronizeQuarter(force = false) {
   }
 }
 
+function resetPreparations() {
+  preparationAttempt += 1;
+  preparationController?.abort(); preparationController = null;
+  monthChecks.value = [];
+}
+
+async function loadPreparations(retryPeriod?: string) {
+  const current = report.value;
+  if (!current || monthChecks.value.some(month => month.status === "stale")) return;
+  const generation = requestGeneration, selection = selectionKey(), attempt = ++preparationAttempt;
+  preparationController?.abort();
+  const controller = new AbortController(); preparationController = controller;
+  const valid = () => isCurrent(generation, selection) && preparationAttempt === attempt && preparationController === controller;
+  const queue = monthChecks.value.filter(month => retryPeriod ? month.period === retryPeriod && month.status === "error" : month.status === "pending");
+  for (const month of queue) {
+    if (!valid()) return;
+    month.status = "loading"; month.message = "";
+    try {
+      const result = await fetchPeriodPreparation(current.read_context, month.period, controller.signal);
+      if (!valid()) return;
+      month.result = result; month.status = "ready";
+    } catch (error) {
+      if (!valid() || (error instanceof DOMException && error.name === "AbortError")) return;
+      if (isDashboardSnapshotChanged(error)) {
+        for (const item of monthChecks.value) { item.status = "stale"; item.result = null; item.message = "资料已变化，本次检查已过期。请刷新报表后重新核对。"; }
+        break;
+      }
+      month.status = "error"; month.message = dashboardErrorMessage(error);
+    }
+  }
+  if (valid()) preparationController = null;
+}
+
 async function preview(quarterKey: string) {
   const generation = ++requestGeneration, selection = selectionKey();
+  const companyId = route.query.company_id;
+  resetPreparations();
   previewController?.abort();
   exportController?.abort();
   exportController = null; exporting.value = false;
@@ -394,7 +439,9 @@ async function preview(quarterKey: string) {
   needsRegeneration.value = false;
   loading.value = true;
   try {
-    const result = await fetchQuarterlyReport(
+    if (typeof companyId !== "string") throw new Error("No selected company");
+    const result = await fetchDeferredQuarterlyReport(
+      companyId,
       Number(match[1]),
       Number(match[2]),
       controller.signal,
@@ -402,10 +449,17 @@ async function preview(quarterKey: string) {
     );
     if (!isCurrent(generation, selection) || previewController !== controller) return;
     report.value = result;
+    const periods = [0, 1, 2].map(offset => `${result.period.year}-${String((result.period.quarter - 1) * 3 + offset + 1).padStart(2, "0")}`);
+    const focused = route.query.period;
+    periods.sort((left, right) => Number(right === focused) - Number(left === focused) || left.localeCompare(right));
+    monthChecks.value = periods.map(period => ({ period, status: "pending", message: "", result: null }));
+    loading.value = false;
     if (!result.statements.some((item) => item.key === activeStatementKey.value)) {
       activeStatementKey.value = "";
       statementsExpanded.value = false;
     }
+    await nextTick();
+    if (isCurrent(generation, selection) && previewController === controller) void loadPreparations();
   } catch (error: unknown) {
     if (isCurrent(generation, selection) && previewController === controller) {
       const message = dashboardErrorMessage(error);
@@ -745,15 +799,20 @@ onBeforeUnmount(() => {
 
         <section v-if="monthlyPreparations.length" id="report-months" class="monthly-preparations" tabindex="-1" aria-labelledby="report-months-title">
           <h3 id="report-months-title">各月核算与跟进</h3>
-          <p class="monthly-scope">全公司当月事项；问题、业务和文件任务分别计数。</p>
-          <details v-for="month in monthlyPreparations" :key="month.preparation.period" class="monthly-preparation">
+          <p class="monthly-scope">全公司当月事项；核对提示、业务和文件任务分别计数，不合计为待办总数。</p>
+          <details v-for="month in monthlyPreparations" :key="month.period" class="monthly-preparation" :open="month.status === 'error' || month.status === 'stale'">
             <summary>
-              <span class="monthly-heading"><strong>{{ month.preparation.period }} · {{ month.closure }}</strong><span>展开本月依据</span></span>
-              <span class="monthly-statuses">{{ month.statuses }}</span>
+              <span class="monthly-heading"><strong>{{ month.period }} · {{ month.status === 'ready' ? month.closure : month.status === 'stale' ? '准备检查已过期' : month.status === 'error' ? '准备检查读取失败' : month.status === 'loading' ? '正在核对准备事项' : '准备检查尚未加载' }}</strong><span>展开本月依据</span></span>
+              <span v-if="month.status === 'ready'" class="monthly-statuses">{{ month.statuses }}</span>
               <span v-if="month.notices.length" class="monthly-alert">{{ month.notices.join('；') }}</span>
-              <span v-for="group in month.issueGroups" :key="group.label" class="monthly-issue"><strong>{{ group.label }} · {{ group.issues.length }} 条问题：</strong>{{ group.issues[0].message || '相关来源需要核对，展开查看完整依据。' }}</span>
+              <span v-for="group in month.issueGroups" :key="group.label" class="monthly-issue"><strong>{{ group.label }} · {{ group.issues.length }} 条核对提示：</strong>{{ group.issues[0].message || '相关来源需要核对，展开查看完整依据。' }}</span>
             </summary>
-            <PeriodPreparation :preparation="month.preparation" @changed="refresh" />
+            <PeriodPreparation v-if="month.status === 'ready' && month.preparation" :preparation="month.preparation" @changed="refresh" />
+            <div v-else :role="month.status === 'error' || month.status === 'stale' ? 'alert' : 'status'">
+              <p>{{ month.message || '报表主数据已显示，本月准备检查尚未完成。' }}</p>
+              <button v-if="month.status === 'error'" type="button" :disabled="checkingMonths" @click="loadPreparations(month.period)">重试本月检查</button>
+              <button v-if="month.status === 'stale'" type="button" @click="refresh">刷新报表</button>
+            </div>
           </details>
         </section>
 

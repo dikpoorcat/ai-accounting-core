@@ -325,6 +325,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     "employees",
                     "assets",
                     "quarterly-report",
+                    "period-preparation",
                     "business-status",
                 }
                 action = url.path.removeprefix("/api/dashboard/")

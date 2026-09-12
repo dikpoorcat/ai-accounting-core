@@ -2,7 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import { fetchBrief, type BriefData, type BriefQuery } from "../api/brief";
+import { fetchDeferredBrief, type BriefQuery } from "../api/brief";
+import { fetchPeriodPreparation, type PeriodPreparationResult } from "../api/periodPreparation";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import PeriodPreparation from "../components/PeriodPreparation.vue";
@@ -28,7 +29,12 @@ type PriorityItem = {
 const route = useRoute();
 const router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
-const response = ref<Awaited<ReturnType<typeof fetchBrief>> | null>(null);
+const response = ref<Awaited<ReturnType<typeof fetchDeferredBrief>> | null>(null);
+const preparation = ref<PeriodPreparationResult | null>(null);
+const preparationStatus = ref<"pending" | "loading" | "ready" | "error" | "stale">("pending");
+const preparationError = ref("");
+let preparationController: AbortController | null = null;
+let preparationAttempt = 0;
 const loading = ref(false);
 type BriefSection = NonNullable<BriefQuery["section"]>;
 const sectionLoading = ref<Partial<Record<BriefSection, boolean>>>({});
@@ -47,7 +53,17 @@ const businessSections = [
 
 const selectedPeriod = computed(() => response.value?.selected_period?.key || "");
 const periodOptions = computed(() => context.value?.periods || []);
-const data = computed<BriefData | null>(() => response.value?.data || null);
+const data = computed(() => {
+  const main = response.value?.data;
+  if (!main || preparationStatus.value !== "ready" || !preparation.value) return main ?? null;
+  const checks = preparation.value.data.brief_checks;
+  const attention = main.validation.attention_count + checks.attention_count;
+  return { ...main, period_preparation: preparation.value.data.period_preparation, material_completeness: checks.material_completeness,
+    validation: { ...main.validation, title: "账务核对", summary: main.validation.integrity_valid === true ? "账务汇总平衡" : main.validation.integrity_valid === null ? "财务位置依据不完整" : "账务汇总需核对",
+      state: main.validation.integrity_valid === false ? "error" : attention || main.validation.integrity_valid === null ? "attention" : "complete",
+      attention_count: attention, issues: checks.issues, items: [...main.validation.items.filter(item => item.key === "balance"), ...checks.items] },
+  };
+});
 const isClosed = computed(() => response.value?.selected_period?.status === "closed");
 const sectionLinks = computed(() => {
   if (!data.value) return [];
@@ -78,10 +94,12 @@ const priorities = computed(() => {
     items.push({ title: "财务位置无法完整建立", note: "查看尚未明确的来源归属", state: "attention", action: "validation" });
   }
   if (data.value.validation.issues?.length) {
-    items.push({ title: `${data.value.validation.issues.length} 项当前核算资料需要核对`, note: "查看缺少的业务事实或待复核来源", state: "attention", action: "validation" });
+    items.push({ title: `${data.value.validation.issues.length} 条当前核算提示`, note: "查看具体检查结果与对应来源", state: "attention", action: "validation" });
   }
-  if (["missing", "partial"].includes(data.value.cash.coverage_state)) {
-    items.push({ title: "银行流水资料尚不完整", note: "现有流水金额仅反映已提供的资料", state: "attention", action: "bank-details" });
+  if (data.value.cash.missing_account_count) {
+    items.push({ title: `${data.value.cash.missing_account_count} 个银行账户尚未提供本月流水`, note: "不能据此判断没有收支，查看对应账户", state: "attention", action: "bank-details" });
+  } else if (["missing", "partial"].includes(data.value.cash.coverage_state)) {
+    items.push({ title: "银行流水覆盖尚不能完整确认", note: "查看各账户的资料与来源核对说明", state: "attention", action: "bank-details" });
   }
   if (data.value.cash.unmatched_count) {
     items.push({
@@ -94,14 +112,14 @@ const priorities = computed(() => {
   if (data.value.cash.needs_review_count) {
     items.push({
       title: `${data.value.cash.needs_review_count} 笔流水匹配需复核`,
-      note: "原匹配依据已发生变化",
+      note: "相关流水的匹配状态尚需核对",
       state: "attention",
       action: "bank-details",
     });
   }
   if (data.value.material_completeness?.issues.length) {
     items.push({
-      title: `${data.value.material_completeness.issues.length} 项资料需要核对`,
+      title: `${data.value.material_completeness.issues.length} 条资料核对提示`,
       note: "查看来源文件和具体事项",
       state: "attention",
       action: "validation",
@@ -122,9 +140,37 @@ function queryPeriod() {
   return typeof route.query.period === "string" ? route.query.period : null;
 }
 
+function resetPreparation() {
+  preparationAttempt += 1;
+  preparationController?.abort(); preparationController = null;
+  preparation.value = null; preparationStatus.value = "pending"; preparationError.value = "";
+}
+
+async function loadPreparation() {
+  const main = response.value;
+  if (!main?.data || !main.selected_period || preparationStatus.value === "stale") return;
+  const generation = requestGeneration, selection = selectionKey(), attempt = ++preparationAttempt;
+  const readContext = main.read_context, period = main.selected_period.key;
+  preparationController?.abort();
+  const request = new AbortController(); preparationController = request;
+  preparationStatus.value = "loading"; preparationError.value = "";
+  const valid = () => isCurrent(generation, selection) && preparationAttempt === attempt && preparationController === request;
+  try {
+    const result = await fetchPeriodPreparation(readContext, period, request.signal);
+    if (!valid()) return;
+    preparation.value = result; preparationStatus.value = "ready";
+  } catch (caught) {
+    if (!valid() || (caught instanceof DOMException && caught.name === "AbortError")) return;
+    preparationStatus.value = isDashboardSnapshotChanged(caught) ? "stale" : "error";
+    preparationError.value = preparationStatus.value === "stale" ? "资料已变化，本次检查已过期。请刷新简报后重新核对。" : dashboardErrorMessage(caught);
+  } finally { if (valid()) preparationController = null; }
+}
+
 async function loadData(period: string | null) {
   const generation = ++requestGeneration;
   const selection = selectionKey();
+  const companyId = route.query.company_id;
+  resetPreparation();
   controller?.abort();
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
@@ -134,12 +180,18 @@ async function loadData(period: string | null) {
   response.value = null;
   error.value = "";
   try {
+    if (typeof companyId !== "string") throw new Error("No selected company");
     const target = typeof route.query.voucher === "string" ? route.query.voucher : undefined;
-    const result = await fetchBrief(period, request.signal, 0, undefined,
+    const result = await fetchDeferredBrief(companyId, period, request.signal, undefined,
       target ? /^\d+$/.test(target) ? { voucher_number: Number(target) } : { voucher_version_id: target } : {});
     if (isCurrent(generation, selection) && controller === request) {
       response.value = result;
-      if (target) { await nextTick(); if (isCurrent(generation, selection)) focusSection("activity"); }
+      loading.value = false;
+      await nextTick();
+      if (isCurrent(generation, selection) && controller === request) {
+        if (target) focusSection("activity");
+        void loadPreparation();
+      }
     }
   } catch (caught: unknown) {
     if (!isCurrent(generation, selection) || (caught instanceof DOMException && caught.name === "AbortError")) return;
@@ -158,7 +210,7 @@ async function loadMore(section: BriefSection = "vouchers", restart = false) {
   sectionLoading.value[section] = true; sectionErrors.value[section] = "";
   const valid = () => isCurrent(generation, selection) && pageControllers.get(section) === request;
   try {
-    const next = await fetchBrief(selectedPeriod.value, request.signal, 0, current.snapshot_version, { section, cursor: restart ? undefined : page?.next_cursor ?? undefined });
+    const next = await fetchDeferredBrief(current.read_context.company_id, selectedPeriod.value, request.signal, current.snapshot_version, { section, cursor: restart ? undefined : page?.next_cursor ?? undefined });
     if (!valid() || !next.data || !response.value?.data) return;
     const latest = response.value, before = latest.data!;
     const collection = next.data.collections[section];
@@ -166,7 +218,6 @@ async function loadMore(section: BriefSection = "vouchers", restart = false) {
     for (const group of before.activity_groups) if (!groups.some(item => item.key === group.key)) groups.push(group);
     response.value = { ...latest, data: { ...before,
       ...(section === "vouchers" ? { vouchers: [...before.vouchers, ...next.data.vouchers], voucher_page: next.data.voucher_page, activity_groups: groups } : {}),
-      ...(section === "file_jobs" ? { period_preparation: next.data.period_preparation } : {}),
       collections: { ...before.collections, [section]: { ...collection, items: [...(restart ? [] : before.collections[section]?.items ?? []), ...collection.items] } },
     } };
   } catch (caught) {
@@ -259,6 +310,7 @@ function selectionKey() { return JSON.stringify([route.query.company_id, route.q
 function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
 function invalidateRequests() {
   requestGeneration += 1;
+  resetPreparation();
   controller?.abort();
   for (const request of pageControllers.values()) request.abort();
   pageControllers.clear(); sectionLoading.value = {}; sectionErrors.value = {};
@@ -356,12 +408,12 @@ onBeforeUnmount(() => {
             >
               {{
                 data.cash.unmatched_count + data.cash.needs_review_count
-                  ? `${data.cash.unmatched_count + data.cash.needs_review_count} 笔流水待处理`
-                  : data.cash.coverage_state === 'missing' ? '银行流水未提供'
-                    : data.cash.coverage_state === 'partial' ? '流水资料尚不完整'
+                  ? `${data.cash.unmatched_count + data.cash.needs_review_count} 笔匹配状态待核对`
+                  : data.cash.missing_account_count ? `${data.cash.missing_account_count} 个账户未提供流水`
+                    : ['missing', 'partial'].includes(data.cash.coverage_state) ? '流水覆盖尚不能完整确认'
                     : data.cash.coverage_state === 'not_applicable' ? '无银行账户'
                     : data.cash.transaction_count
-                    ? "银行流水已处理"
+                    ? "银行流水已匹配"
                     : "本月无银行流水"
               }}
             </span>
@@ -472,8 +524,14 @@ onBeforeUnmount(() => {
       </details>
       </section>
       <div id="validation" class="final-section-space section-anchor" tabindex="-1">
-      <details v-if="data.position.issues.length" class="brief-section"><summary>财务位置来源问题 · {{ data.position.issues.length }} 条</summary><ul><li v-for="(issue, index) in data.position.issues" :key="index">{{ issue.message }}<details><summary>查看精确来源</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul></details>
-      <PeriodPreparation :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
+      <details v-if="data.position.issues.length" class="brief-section"><summary>财务位置来源核对提示 · {{ data.position.issues.length }} 条</summary><ul><li v-for="(issue, index) in data.position.issues" :key="index">{{ issue.message }}<details><summary>查看精确来源</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul></details>
+      <PeriodPreparation v-if="preparationStatus === 'ready' && data.period_preparation" :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
+      <section v-else class="state-panel" :role="preparationStatus === 'error' || preparationStatus === 'stale' ? 'alert' : 'status'">
+        <strong>{{ preparationStatus === 'stale' ? '准备检查已过期' : preparationStatus === 'error' ? '准备检查读取失败' : '正在核对资料与期间准备' }}</strong>
+        <p>{{ preparationError || '主数据已显示，准备检查尚未完成。' }}</p>
+        <button v-if="preparationStatus === 'error'" type="button" @click="loadPreparation">重试准备检查</button>
+        <button v-if="preparationStatus === 'stale'" type="button" @click="refresh">刷新简报</button>
+      </section>
       <footer
         id="validation-checks"
         :class="['trust-footer', 'section-anchor', data.validation.state]"
@@ -486,10 +544,10 @@ onBeforeUnmount(() => {
             <span>{{ data.validation.summary }}。</span>
           </div>
           <span :class="['trust-state', data.validation.state]">
-            {{ data.validation.state === 'complete' ? "本月核对完成" : "需要核对" }}
+            {{ preparationStatus !== 'ready' ? '准备检查未完成' : data.validation.state === 'complete' ? "本月核对完成" : "需要核对" }}
           </span>
         </div>
-        <details :open="data.validation.items.some(item => item.state !== 'pass')"><summary>{{ data.validation.items.every(item => item.state === 'pass') ? '本月检查已通过，查看详情' : '查看需要核对的项目' }}</summary><div class="checks">
+        <details :open="data.validation.items.some(item => item.state !== 'pass')"><summary>{{ preparationStatus === 'ready' && data.validation.items.length > 0 && data.validation.items.every(item => item.state === 'pass') ? '本月检查已通过，查看详情' : '查看需要核对的项目' }}</summary><div class="checks">
           <article v-for="item in data.validation.items" :key="item.key" :class="item.state">
             <span class="check-mark">
               {{ item.state === "pass" ? "✓" : item.state === "error" ? "×" : item.state === "pending" ? "!" : "–" }}

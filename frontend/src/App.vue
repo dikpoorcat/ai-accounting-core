@@ -126,8 +126,20 @@ function setAuthenticated(value: boolean) {
   if (!value) { cancelContext(); showSecurity.value = true; }
 }
 function sessionExpired() { setAuthenticated(false); }
-watch([authenticated, () => route.query.company_id], () => { void loadCompanyContext(); }, { flush: "sync" });
-watch(() => [route.query.period, route.query.quarter], () => { contextGeneration += 1; if (authenticated.value && !context.value) void loadCompanyContext(); }, { flush: "sync" });
+watch(
+  [authenticated, () => route.query.company_id, () => route.query.period, () => route.query.quarter],
+  ([isAuthenticated, companyId, period, quarter], [wasAuthenticated, previousCompany, previousPeriod, previousQuarter]) => {
+    if (isAuthenticated !== wasAuthenticated || companyId !== previousCompany) {
+      void loadCompanyContext();
+      return;
+    }
+    if (period !== previousPeriod || quarter !== previousQuarter) {
+      contextGeneration += 1;
+      if (isAuthenticated && !context.value) void loadCompanyContext();
+    }
+  },
+  { flush: "sync" },
+);
 watch(context, async loaded => {
   // Initial company loads resolve selection in loadCompanyContext, including saved-company recovery.
   // An in-place page refresh reuses the loaded context and must not start another context fetch.

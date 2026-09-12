@@ -1,5 +1,5 @@
 import type { DashboardPeriod } from "./context";
-import { pageQuery, type DashboardCollections, type DashboardPageQuery, type PeriodPreparation, type BusinessIssue } from "./dashboardContracts";
+import { pageQuery, type DashboardCollections, type DashboardPageQuery, type PeriodPreparation, type BusinessIssue, type DashboardReadContext } from "./dashboardContracts";
 import { requestJson } from "./client";
 import type { EvidenceDetails } from "./localKernel";
 
@@ -125,6 +125,7 @@ export interface BriefCash {
   matched_count: number;
   unmatched_count: number;
   needs_review_count: number;
+  missing_account_count?: number;
   coverage_state: "missing" | "partial" | "complete" | "not_applicable";
   inflow_fen: string | null;
   outflow_fen: string | null;
@@ -334,6 +335,15 @@ export interface BriefResponse {
   data: BriefData | null;
 }
 
+export type DeferredBriefData = Omit<BriefData, "period_preparation" | "material_completeness" | "validation"> & {
+  period_preparation: null;
+  material_completeness: null;
+  validation: Omit<BriefValidation, "state"> & { state: "pending" | "attention" | "error" };
+};
+export type DeferredBriefResponse = Omit<BriefResponse, "data"> & {
+  projection: "dashboard_brief_deferred";
+} & ({ data: DeferredBriefData; read_context: DashboardReadContext } | { data: null; read_context: null });
+
 export interface BriefQuery extends DashboardPageQuery {
   section?: "vouchers" | "businesses" | "open_items" | "settlement_events" | "external_followups" | "file_jobs";
   voucher_version_id?: string;
@@ -346,4 +356,12 @@ export function fetchBrief(period: string | null, signal?: AbortSignal, afterNum
   if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
   if (options.voucher_number !== undefined) query.set("voucher_number", String(options.voucher_number));
   return requestJson<BriefResponse>(`/api/dashboard/brief?${query}`, { signal });
+}
+
+export function fetchDeferredBrief(companyId: string, period: string | null, signal?: AbortSignal, expectedVersion?: string | null, options: BriefQuery = {}) {
+  const query = new URLSearchParams({ company_id: companyId, preparation: "deferred", after_number: "0", ...(period ? { period } : {}), ...(expectedVersion ? { expected_version: expectedVersion } : {}) });
+  pageQuery(query, options);
+  if (options.voucher_version_id) query.set("voucher_version_id", options.voucher_version_id);
+  if (options.voucher_number !== undefined) query.set("voucher_number", String(options.voucher_number));
+  return requestJson<DeferredBriefResponse>(`/api/dashboard/brief?${query}`, { signal });
 }

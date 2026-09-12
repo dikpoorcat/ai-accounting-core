@@ -173,9 +173,9 @@ function changeAccountFilters() {
 
 function bankCoverageLabel() {
   const statement = funds.value?.bank_statement;
-  if (!statement) return "银行资料未提供";
-  if (statement.coverage_state === "missing") return "本月银行流水未提供";
-  if (statement.coverage_state === "partial") return "流水资料覆盖不完整或待复核";
+  if (!statement) return "银行资料尚未读取";
+  if (statement.missing_account_count) return `${statement.missing_account_count} 个银行账户尚未提供本月流水`;
+  if (["missing", "partial"].includes(statement.coverage_state)) return "流水覆盖或核对状态尚不能完整确认";
   if (statement.coverage_state === "not_applicable") return "暂无公司银行账户";
   if (!statement.transaction_count) return "完整流水已确认，本月无发生";
   return bankAttentionCount.value ? `${bankAttentionCount.value} 笔待核对` : "银行流水均已匹配";
@@ -569,9 +569,9 @@ onBeforeUnmount(() => {
           </article>
         </section>
 
-        <section v-if="funds.fact_issues?.length" class="historical-source-issues" aria-label="历史资金来源核对">
-          <p role="status">{{ funds.fact_issues.length }} 组历史资金来源尚不能证明已被封存采用；相关金额暂无法完整确定。已有金额也应连同候选依据核对。</p>
-          <p class="muted">以下为所选月末采用的历史来源问题，与当前跟进状态分别列示。</p>
+        <section v-if="funds.fact_issues?.length" class="historical-source-issues" aria-label="历史独立采用说明">
+          <p role="status">{{ funds.fact_issues.length }} 组历史资金来源尚不能证明独立封存采用。具体金额与流水核对状态分别见对应区块；作为其他结果的来源，不等于已独立采用。</p>
+          <p class="muted">以下保留所选月末独立采用尚未证明的来源与候选，与当前跟进状态分别列示。</p>
           <details v-for="(issue, issueIndex) in funds.fact_issues" :key="issueIndex">
             <summary>查看第 {{ issueIndex + 1 }} 组历史来源与精确候选</summary>
             <p>候选只供核对，不作为已采用金额累计。</p>
@@ -628,6 +628,10 @@ onBeforeUnmount(() => {
                 <template v-if="account.negative_balance">余额为负<template v-if="reconciliationAttention(account.reconciliation.state)"> · </template></template>
                 <template v-if="reconciliationAttention(account.reconciliation.state)">{{ account.reconciliation.label }}</template>
               </p>
+              <div v-if="account.reconciliation.source_check" class="source-check">
+                <p>{{ account.reconciliation.source_check.message }}</p>
+                <details><summary>查看账户来源引用与证明</summary><pre>{{ JSON.stringify(account.reconciliation.source_check, null, 2) }}</pre></details>
+              </div>
             </article>
           </div>
           <p v-else class="empty">本月暂无已入账的公司资金账户。</p>
@@ -833,7 +837,7 @@ onBeforeUnmount(() => {
                   <p class="muted">已提供 {{ funds.bank_statement.provided_account_count }} / {{ funds.bank_statement.expected_account_count }} 个银行账户资料。
                     已提供流水流入 {{ formatFen(funds.bank_statement.inflow_fen) }} · 流出 {{ formatFen(funds.bank_statement.outflow_fen) }}。
                     已匹配 {{ funds.bank_statement.matched_count }} / {{ funds.bank_statement.transaction_count }} 笔。
-                    流水资料不完整时，以上金额仅代表已提供部分。</p>
+                    以上金额按已提供流水列示；资料是否齐全与来源核对是否获证分别查看。</p>
                 </details>
               </div>
               <div class="account-selector">
@@ -851,7 +855,7 @@ onBeforeUnmount(() => {
             <div v-if="visibleBankRows.length" class="table-wrap movement-list" role="region" aria-label="银行流水明细" tabindex="0">
               <table class="bank-detail-table movement-table">
                 <colgroup><col class="date-column"><col class="account-column"><col><col class="direction-column"><col class="amount-column"><col class="state-column"></colgroup>
-                <thead><tr><th scope="col">日期</th><th scope="col">银行账户</th><th scope="col">对方与银行原始摘要</th><th scope="col">方向</th><th scope="col" class="number">金额</th><th scope="col">处理状态</th></tr></thead>
+                <thead><tr><th scope="col">日期</th><th scope="col">银行账户</th><th scope="col">对方与银行原始摘要</th><th scope="col">方向</th><th scope="col" class="number">金额</th><th scope="col">匹配状态</th></tr></thead>
                 <tbody>
                   <tr v-for="item in visibleBankRows" :key="item.id" class="movement-record" :class="{ 'attention-row': item.state !== 'matched' }">
                     <td data-label="日期">{{ formatDate(item.date) }}</td>
@@ -859,7 +863,7 @@ onBeforeUnmount(() => {
                     <td data-label="对方与银行原始摘要" class="movement-copy mobile-wide"><strong>{{ item.party || '对方名称未提供' }}</strong><p>{{ item.memo || '原始摘要未提供' }}</p></td>
                     <td data-label="方向"><span class="direction" :class="item.direction">{{ item.direction === 'inflow' ? '流入' : '流出' }}</span></td>
                     <td data-label="金额" class="number movement-amount">{{ movementAmount(item.direction, item.amount_fen) }}</td>
-                    <td data-label="处理状态" class="mobile-wide">{{ bankStateLabel(item.state) }}</td>
+                    <td data-label="匹配状态" class="mobile-wide">{{ bankStateLabel(item.state) }}<p v-if="item.source_check">{{ item.source_check.message }}</p><details v-if="item.source_check" class="source-check"><summary>查看流水来源引用与证明</summary><pre>{{ JSON.stringify(item.source_check, null, 2) }}</pre></details></td>
                   </tr>
                 </tbody>
               </table>
@@ -881,6 +885,9 @@ onBeforeUnmount(() => {
 .historical-source-issues > p:first-child { color: var(--warning); font-weight: 700; }
 .historical-source-issues summary { min-height: 36px; cursor: pointer; }
 .historical-source-issues pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.source-check { font-size: 12px; overflow-wrap: anywhere; }
+.source-check summary { min-height: 32px; cursor: pointer; }
+.source-check pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .funds-page {
   min-height: 100%;
 }

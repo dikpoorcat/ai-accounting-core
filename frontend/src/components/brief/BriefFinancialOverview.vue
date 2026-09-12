@@ -31,14 +31,15 @@ function bankStateLabel(state: string) {
       matched: "已匹配",
       unmatched: "待识别",
       needs_review: "资料或核对结果待复核",
-    }[state] || "待处理"
+    }[state] || "状态尚不能确认"
   );
 }
 
 function coverageLabel() {
+  if (props.cash.missing_account_count) return `${props.cash.missing_account_count} 个银行账户尚未提供本月流水`;
   return {
-    missing: "本月银行流水未提供",
-    partial: "仅列已提供部分，资料覆盖不完整或待复核",
+    missing: "银行流水覆盖尚不能完整确认",
+    partial: "流水覆盖或核对状态尚不能完整确认",
     complete: "本月各银行账户流水已提供",
     not_applicable: "暂无公司银行账户",
   }[props.cash.coverage_state];
@@ -66,7 +67,7 @@ function formatDate(value: string | null) {
     <details v-if="unmatched.count" class="pending-bank">
       <summary>
         <span>
-          <strong>{{ unmatched.count }} 笔资金动向待识别或处理</strong>
+          <strong>{{ unmatched.count }} 笔匹配状态待核对</strong>
           <small>原始流水与已入账业务仍需核对</small>
         </span>
         <span>
@@ -120,7 +121,7 @@ function formatDate(value: string | null) {
           </div>
         </dl>
         <details class="bank-proof"><summary>银行流水核对：{{ coverageLabel() }}</summary>
-          <p>{{ cash.transaction_count }} 笔流水，{{ cash.matched_count }} 笔已核对。</p>
+          <p>{{ cash.transaction_count }} 笔流水，{{ cash.matched_count }} 笔已匹配；{{ cash.unmatched_count }} 笔待识别，{{ cash.needs_review_count }} 笔需复核。</p>
           <p>已提供流水流入 {{ formatFen(cash.inflow_fen) }} · 流出 {{ formatFen(cash.outflow_fen) }}</p>
           <RouterLink :to="{ name: 'funds', query: route.query, hash: '#bank-details' }">查看银行流水</RouterLink>
         </details>

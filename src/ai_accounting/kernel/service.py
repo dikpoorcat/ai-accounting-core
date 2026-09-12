@@ -325,6 +325,7 @@ class LocalService:
             "dashboard_assets": dashboard.assets,
             "dashboard_business_status": dashboard.business_status,
             "dashboard_quarterly_report": dashboard.quarterly_report,
+            "dashboard_period_preparation": dashboard.period_preparation,
             "find_facts": discovery.find_facts,
             "payroll_reuse_basis": payroll_preparation.reuse_basis,
             "prepare_payroll": payroll_preparation.prepare,

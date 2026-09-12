@@ -1071,7 +1071,9 @@ def _allocation_proofs(connection, entries):
     }
 
 
-def _allocation_versions(connection, registry, source_id):
+def _allocation_versions(connection, registry, source_id, *, _reads=None):
+    if _reads is not None:
+        return _reads.facts(MaterialPeriodAllocation.kind, "material-source:" + source_id)
     return _facts(
         connection, registry, MaterialPeriodAllocation.kind, "material-source:" + source_id
     )
@@ -1132,7 +1134,26 @@ def _inspect_passages(raw, spec):
     }
 
 
-def _facts(connection, registry, kind, scope):
+class _CompletenessReads:
+    """Lazy reads owned by one completeness check on its supplied snapshot."""
+
+    def __init__(self, connection, registry):
+        self.connection, self.registry = connection, registry
+        self._versions, self._scopes = {}, {}
+
+    def fact(self, fact_id):
+        if fact_id not in self._versions:
+            self._versions[fact_id] = Store.fact(self, self.connection, fact_id)
+        return self._versions[fact_id]
+
+    def facts(self, kind, scope):
+        key = kind, scope
+        if key not in self._scopes:
+            self._scopes[key] = _facts(self.connection, self.registry, kind, scope, _reads=self)
+        return self._scopes[key]
+
+
+def _facts(connection, registry, kind, scope, *, _reads=None):
     if kind not in registry.models:
         return ()
     reader = SimpleNamespace(registry=registry)
@@ -1141,7 +1162,10 @@ def _facts(connection, registry, kind, scope):
         "WHERE s.kind=? AND s.scope_key=? ORDER BY c.subject_id",
         (kind, scope),
     ).fetchall()
-    return tuple(Store.fact(reader, connection, row[0]) for row in rows)
+    return tuple(
+        _reads.fact(row[0]) if _reads is not None else Store.fact(reader, connection, row[0])
+        for row in rows
+    )
 
 
 def _amount_basis(fact, calculation, path):
@@ -1237,10 +1261,15 @@ def _groups_cover_unknown(allocation, groups):
     return True
 
 
-def _group_issues(connection, registry, version, source, inspection, *, current=None):
+def _group_issues(connection, registry, version, source, inspection, *, current=None, _reads=None):
     """Validate a pool as a whole; its members never acquire invented individual links."""
     fact = version.fact
     issues = []
+    facts = (
+        _reads.facts
+        if _reads is not None
+        else lambda kind, scope: _facts(connection, registry, kind, scope)
+    )
 
     def problem(code, message, **details):
         issues.append(_issue(code, message, group_id=version.subject_id, **details))
@@ -1289,7 +1318,7 @@ def _group_issues(connection, registry, version, source, inspection, *, current=
                 "原行已有明确期间，联合组全部结果必须属于该期间",
                 location=member.location,
             )
-    allocations = _allocation_versions(connection, registry, fact.source_id)
+    allocations = _allocation_versions(connection, registry, fact.source_id, _reads=_reads)
     if len(allocations) != 1 or allocations[0].fact.source_fact_id != source.id:
         problem("material_allocation_required", "原件须先建立完整归属清单")
     else:
@@ -1310,7 +1339,7 @@ def _group_issues(connection, registry, version, source, inspection, *, current=
                 )
                 break
     for kind in (MaterialResolution.kind, MaterialGroupResolution.kind):
-        for other in _facts(connection, registry, kind, "material-source:" + fact.source_id):
+        for other in facts(kind, "material-source:" + fact.source_id):
             if other.subject_id == version.subject_id or other.fact.source_fact_id != source.id:
                 continue
             other_locations = (
@@ -1379,7 +1408,7 @@ def _group_issues(connection, registry, version, source, inspection, *, current=
     for (subject_id, basis), (original, calculation, capacity) in targets.items():
         allocated = totals[subject_id, basis]
         for kind in (MaterialResolution.kind, MaterialGroupResolution.kind):
-            for other in _facts(connection, registry, kind, "material-business:" + subject_id):
+            for other in facts(kind, "material-business:" + subject_id):
                 if other.subject_id == version.subject_id:
                     continue
                 active_source = connection.execute(
@@ -1412,10 +1441,8 @@ def _group_issues(connection, registry, version, source, inspection, *, current=
 def check_completeness(connection, month: int, registry) -> dict:
     """Read the bound snapshot; the returned digest belongs in the close manifest."""
     period = YearMonth.from_ordinal(month)
-    by_id = {
-        item.subject_id: item
-        for item in _facts(connection, registry, MaterialSource.kind, str(period))
-    }
+    reads = _CompletenessReads(connection, registry)
+    by_id = {item.subject_id: item for item in reads.facts(MaterialSource.kind, str(period))}
     current_sources = dict(
         connection.execute(
             "SELECT c.subject_id,c.fact_id FROM fact_current c JOIN subject s ON s.id=c.subject_id "
@@ -1423,26 +1450,19 @@ def check_completeness(connection, month: int, registry) -> dict:
             (MaterialSource.kind,),
         ).fetchall()
     )
-    group_cache = {}
 
     def source_groups(source_id):
-        if source_id not in group_cache:
-            group_cache[source_id] = _facts(
-                connection, registry, MaterialGroupResolution.kind, "material-source:" + source_id
-            )
-        return group_cache[source_id]
+        return reads.facts(MaterialGroupResolution.kind, "material-source:" + source_id)
 
     group_versions = {
         item.id: item
-        for item in _facts(
-            connection, registry, MaterialGroupResolution.kind, "material-period:" + str(period)
-        )
+        for item in reads.facts(MaterialGroupResolution.kind, "material-period:" + str(period))
         if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
     }
     allocation_versions = {
         item.id: item
         for scope in ("material-period:" + str(period), "material-period-unknown")
-        for item in _facts(connection, registry, MaterialPeriodAllocation.kind, scope)
+        for item in reads.facts(MaterialPeriodAllocation.kind, scope)
         if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
     }
     # A v2 source has no partition. A changed source invalidates its old partition.
@@ -1473,7 +1493,7 @@ def check_completeness(connection, month: int, registry) -> dict:
     resolution_versions = {
         item.id: item
         for scope in (str(period), "material-period:" + str(period))
-        for item in _facts(connection, registry, MaterialResolution.kind, scope)
+        for item in reads.facts(MaterialResolution.kind, scope)
         if item.fact.source_id in current_sources
     }
     unallocated = current_sources.keys() - mapped_sources
@@ -1502,7 +1522,7 @@ def check_completeness(connection, month: int, registry) -> dict:
         )
     }
     for evidence in sorted(legacy):
-        matches = _facts(connection, registry, MaterialSource.kind, "material-evidence:" + evidence)
+        matches = reads.facts(MaterialSource.kind, "material-evidence:" + evidence)
         if not matches:
             issues.append(
                 _issue(
@@ -1523,7 +1543,7 @@ def check_completeness(connection, month: int, registry) -> dict:
             continue
         loaded.add(source_id)
         if source_id not in by_id:
-            matches = _facts(connection, registry, MaterialSource.kind, "@" + source_id)
+            matches = reads.facts(MaterialSource.kind, "@" + source_id)
             if not matches:
                 issues.append(
                     _issue(
@@ -1538,9 +1558,7 @@ def check_completeness(connection, month: int, registry) -> dict:
         fact = version.fact
         if (
             len(
-                _facts(
-                    connection,
-                    registry,
+                reads.facts(
                     MaterialSource.kind,
                     "material-evidence:" + fact.evidence_digest,
                 )
@@ -1552,9 +1570,7 @@ def check_completeness(connection, month: int, registry) -> dict:
                     "material_duplicate_source", "同一原件只能有一个来源身份", source_id=source_id
                 )
             )
-        for item in _facts(
-            connection, registry, MaterialResolution.kind, "material-source:" + source_id
-        ):
+        for item in reads.facts(MaterialResolution.kind, "material-source:" + source_id):
             resolution_versions[item.id] = item
             if item.fact.treatment == "duplicate" and item.fact.duplicate_source_id:
                 queue.append(item.fact.duplicate_source_id)
@@ -1596,12 +1612,11 @@ def check_completeness(connection, month: int, registry) -> dict:
             key = group.fact.source_id, member.location
             by_group_member.setdefault(key, []).append(group)
             group_amounts[group.id, member.location] = member.amount_fen
-    reader = SimpleNamespace(registry=registry)
     current_cache, capacities, active_capacities, coverage = {}, {}, set(), []
     item_periods, partition_issues = {}, {}
     for source_id, inspection in parsed.items():
         source = by_id[source_id]
-        versions = _allocation_versions(connection, registry, source_id)
+        versions = _allocation_versions(connection, registry, source_id, _reads=reads)
         allocation_versions.update((item.id, item) for item in versions)
         if len(versions) == 1 and versions[0].fact.source_fact_id == source.id:
             allocation = versions[0]
@@ -1718,7 +1733,7 @@ def check_completeness(connection, month: int, registry) -> dict:
             if row is None:
                 current_cache[subject] = None
             else:
-                fact_version = Store.fact(reader, connection, row["current_fact_id"])
+                fact_version = reads.fact(row["current_fact_id"])
                 current_cache[subject] = fact_version, Store.calculation(row) if row["id"] else None
         return current_cache[subject]
 
@@ -1739,6 +1754,7 @@ def check_completeness(connection, month: int, registry) -> dict:
                 by_id.get(key[0]),
                 parsed.get(key[0], {}),
                 current=current,
+                _reads=reads,
             )
         return group_errors[group.id]
 
@@ -2050,7 +2066,7 @@ def check_completeness(connection, month: int, registry) -> dict:
         competitors = tuple(
             item
             for kind in (MaterialResolution.kind, MaterialGroupResolution.kind)
-            for item in _facts(connection, registry, kind, "material-business:" + key[0])
+            for item in reads.facts(kind, "material-business:" + key[0])
             if current_sources.get(item.fact.source_id) == item.fact.source_fact_id
         )
         resolution_versions.update((item.id, item) for item in competitors)

@@ -49,7 +49,7 @@ from .query_semantics import (
     report_party_splits,
 )
 from .reports import Reports, _workbook_name
-from .types import YearMonth, digest
+from .types import ActualDate, YearMonth, digest
 
 KIND_NAMES = {
     "external_completion": "外部办理完成依据",
@@ -284,7 +284,7 @@ def _source_list(source):
 
 
 class _Snapshot:
-    def __init__(self, engine, connection, period):
+    def __init__(self, engine, connection, period, reads=None):
         from .business_queries import _today_china
 
         self.engine = engine
@@ -292,7 +292,7 @@ class _Snapshot:
         self.month = YearMonth(period).ordinal
         self.as_of = _today_china()
         self.epochs = self.store.epochs(connection)
-        self.reads = QueryReads(engine, connection)
+        self.reads = reads or QueryReads(engine, connection)
         self.queries = BusinessQueries(engine, reads=self.reads)
         self.closes = ClosedPeriods(self)
         self.close = self.closes.get(self.month)
@@ -358,11 +358,7 @@ class _Snapshot:
             None,
             self.period,
             include_vouchers=False,
-            kinds={
-                kind
-                for kind in self.store.registry.models
-                if kind.startswith("opening_") or kind == "bank_opening"
-            },
+            kinds={kind for kind in self.store.registry.models if kind.startswith("opening_")},
         )["through_period"]
 
     @cached_property
@@ -1278,8 +1274,8 @@ class Dashboard:
 
     @contextmanager
     def _snapshot(self, period):
-        with self.store.connection(read_only=True) as connection:
-            connection.execute("BEGIN")
+        with QueryReads.snapshot(self.engine) as reads:
+            connection = reads.connection
             if period is None:
                 periods = self._periods(connection)
                 period = periods[0]["key"] if periods else None
@@ -1297,11 +1293,11 @@ class Dashboard:
                 ).fetchone()
                 if exists is None:
                     raise KernelError("dashboard_period_not_found", "没有找到所选会计月份")
-            yield _Snapshot(self.engine, connection, period) if period else None
+            yield _Snapshot(self.engine, connection, period, reads) if period else None
 
     def context(self):
-        with self.store.connection(read_only=True) as connection:
-            connection.execute("BEGIN")
+        with QueryReads.snapshot(self.engine) as reads:
+            connection = reads.connection
             periods = self._periods(connection)
             identity = dict(connection.execute("SELECT * FROM identity WHERE id=1").fetchone())
             companies = [
@@ -1327,19 +1323,16 @@ class Dashboard:
                 {(p["year"], (p["month"] - 1) // 3 + 1) for p in periods}, reverse=True
             )
             reports = Reports(self.engine)
-            report_periods_closed = {
-                (year, quarter): reports.closed_period_coverage(
-                    year, quarter, connection=connection
-                )["complete"]
-                for year, quarter in quarter_keys
-            }
+            coverage = reports.closed_period_coverages(
+                quarter_keys, connection=connection, reads=reads
+            )
             quarters = [
                 {
                     "key": f"{year}-Q{quarter}",
                     "year": year,
                     "quarter": quarter,
                     "label": f"{year} 年第 {quarter} 季度",
-                    "complete": report_periods_closed[(year, quarter)],
+                    "complete": coverage[year, quarter]["complete"],
                 }
                 for year, quarter in quarter_keys
             ]
@@ -1382,6 +1375,53 @@ class Dashboard:
             "data": data,
         }
 
+    def _read_context(self, connection, as_of):
+        from .engine import PROGRAM_VERSION
+
+        identity = dict(
+            connection.execute("SELECT company_id,database_id FROM identity WHERE id=1").fetchone()
+        )
+        epochs = self.store.epochs(connection)
+        context = {**identity, "as_of": str(ActualDate(as_of))}
+        return {
+            **context,
+            "read_version": digest(
+                {
+                    "protocol": "dashboard-deferred-read-v1",
+                    "build": PROGRAM_VERSION,
+                    **context,
+                    "epochs": epochs,
+                }
+            ).hex(),
+        }
+
+    def period_preparation(
+        self, period: YearMonth, *, expected_read_version: str, as_of: ActualDate
+    ):
+        from .business_queries import _today_china
+
+        period, as_of = str(YearMonth(period)), str(ActualDate(as_of))
+        with QueryReads.snapshot(self.engine) as reads:
+            current_as_of = _today_china()
+            context = self._read_context(reads.connection, current_as_of)
+            if as_of != current_as_of or expected_read_version != context["read_version"]:
+                raise KernelError(
+                    "dashboard_snapshot_changed", "资料或核对日期已变化，请刷新主数据后重新核对。"
+                )
+            prepared = BusinessQueries(self.engine, reads=reads)._period_readiness(
+                reads.connection, period, as_of=as_of, summary=True
+            )
+            return {
+                "schema_version": 1,
+                "projection": "dashboard_period_preparation_result",
+                "read_context": context,
+                "period": period,
+                "data": {
+                    "period_preparation": preparation_view(prepared),
+                    "brief_checks": _brief_checks(prepared),
+                },
+            }
+
     def brief(
         self,
         period: str | None = None,
@@ -1393,7 +1433,10 @@ class Dashboard:
         cursor: str | None = None,
         voucher_version_id: str | None = None,
         voucher_number: int | None = None,
+        preparation: Literal["complete", "deferred"] = "complete",
     ):
+        if preparation not in {"complete", "deferred"}:
+            raise ValueError("不支持的准备检查投影")
         validate_page("brief", section, cursor, limit)
         if type(after_number) is not int or after_number < 0:
             raise ValueError("凭证游标必须为非负整数")
@@ -1403,7 +1446,10 @@ class Dashboard:
             raise ValueError("凭证编号须为正整数")
         with self._snapshot(period) as snap:
             if snap is None:
-                return self._response(None, None)
+                response = self._response(None, None)
+                if preparation == "deferred":
+                    response.update(projection="dashboard_brief_deferred", read_context=None)
+                return response
             self._check_page_version(snap, cursor or after_number, expected_version)
             after = (
                 decode_cursor(snap, "brief", section, cursor, {})
@@ -1488,39 +1534,14 @@ class Dashboard:
             )
             bank = funds["bank_statement"]
             unmatched = bank["unmatched_totals"]
-            preparation = snap.preparation
-            followups = preparation["current_followups"]
-            materials = followups["materials"]
-            material = {
-                "closed": preparation["closure"]["state"] != "open",
-                "satisfied": materials["status"] == "ready",
-                "issues": materials["issues"],
-                "coverage_digest": materials["coverage"]["coverage_digest"],
-            }
-            preparation_issues = []
-            seen_issues = set()
-            for group in ("accounting", "close_requirements"):
-                for issue in followups[group]["issues"]:
-                    key = json.dumps(issue, sort_keys=True, ensure_ascii=False)
-                    if key not in seen_issues:
-                        preparation_issues.append(issue)
-                        seen_issues.add(key)
-            order_failure = (preparation["readiness"] or {}).get("order_failure")
-            if order_failure:
-                preparation_issues.insert(
-                    0,
-                    {
-                        "field": "close_order",
-                        **order_failure,
-                    },
-                )
+            prepared = snap.preparation if preparation == "complete" else None
+            checks = _brief_checks(prepared)
             journal_totals = snap.month_journal.totals()
             debit, credit = journal_totals["debit"], journal_totals["credit"]
             position = _position(snap)
             valid = debit == credit and position["equation_valid"]
             attention = (
-                len(material["issues"])
-                + len(preparation_issues)
+                checks["attention_count"]
                 + int(valid is None)
                 + unmatched["count"]
                 + int(bank["coverage_state"] in {"missing", "partial"})
@@ -1530,8 +1551,8 @@ class Dashboard:
                 "generated_at": datetime.now(UTC).isoformat(),
                 "management_commentary": (commentary or {}).get("text", ""),
                 "management_commentary_details": snap.commentary,
-                "material_completeness": material,
-                "period_preparation": preparation_view(preparation),
+                "material_completeness": checks["material_completeness"],
+                "period_preparation": preparation_view(prepared) if prepared is not None else None,
                 "voucher_count": len(snap.month_journal),
                 "line_count": journal_totals["line_count"],
                 "total_debit_fen": debit,
@@ -1566,6 +1587,7 @@ class Dashboard:
                         "unmatched_count",
                         "needs_review_count",
                         "coverage_state",
+                        "missing_account_count",
                         "inflow_fen",
                         "outflow_fen",
                     )
@@ -1582,7 +1604,7 @@ class Dashboard:
                 },
                 "open_items": _open_items(
                     snap,
-                    current=followups["settlements"],
+                    current=prepared["current_followups"]["settlements"] if prepared else None,
                     after=after if section == "open_items" else None,
                     limit=limit,
                     summary_only=section not in {None, "open_items"},
@@ -1604,6 +1626,8 @@ class Dashboard:
                     if valid is False
                     else "attention"
                     if attention
+                    else "pending"
+                    if preparation == "deferred"
                     else "complete",
                     "title": "账务核对",
                     "summary": "账务汇总平衡"
@@ -1613,7 +1637,7 @@ class Dashboard:
                     else "账务汇总需核对",
                     "integrity_valid": valid,
                     "voucher_balanced": debit == credit,
-                    "issues": preparation_issues,
+                    "issues": checks["issues"],
                     "attention_count": attention,
                     "items": [
                         {
@@ -1626,28 +1650,7 @@ class Dashboard:
                             else "error",
                             "text": "借贷及资产负债关系核对",
                         },
-                        {
-                            "key": "materials",
-                            "label": "资料完整性",
-                            "state": "pass" if material["satisfied"] else "pending",
-                            "text": "按逐项资料检查器核对",
-                        },
-                        {
-                            "key": "accounting",
-                            "label": "核算准备",
-                            "state": "pass"
-                            if followups["accounting"]["status"] == "ready"
-                            else "pending",
-                            "text": "包括应建业务、正式发布及待复核状态",
-                        },
-                        {
-                            "key": "close_requirements",
-                            "label": "期间准备",
-                            "state": "pending" if preparation_issues else "pass",
-                            "text": "已关闭期间的当前跟进不改变原冻结结论"
-                            if material["closed"]
-                            else "按关账业务检查核对",
-                        },
+                        *checks["items"],
                     ],
                 },
             }
@@ -1695,7 +1698,13 @@ class Dashboard:
                 data["collections"][section] = collection
             elif section == "external_followups":
                 data["collections"][section] = self._external_collection(snap, after, limit)
-            return self._response(snap, seal_collections(snap, "brief", data, {}))
+            response = self._response(snap, seal_collections(snap, "brief", data, {}))
+            if preparation == "deferred":
+                response.update(
+                    projection="dashboard_brief_deferred",
+                    read_context=self._read_context(snap.connection, snap.as_of),
+                )
+            return response
 
     def funds(
         self,
@@ -1993,14 +2002,22 @@ class Dashboard:
             return response
 
     def quarterly_report(
-        self, year: int, quarter: int, *, carry_forward_fact_id: str | None = None
+        self,
+        year: int,
+        quarter: int,
+        *,
+        carry_forward_fact_id: str | None = None,
+        preparation: Literal["complete", "deferred"] = "complete",
     ):
-        from .business_queries import BusinessQueries
+        from .business_queries import _today_china
+
+        if preparation not in {"complete", "deferred"}:
+            raise ValueError("不支持的准备检查投影")
 
         reports = Reports(self.engine)
-        with self.store.connection(read_only=True) as connection:
-            connection.execute("BEGIN")
-            reads = QueryReads(self.engine, connection)
+        with QueryReads.snapshot(self.engine) as reads:
+            connection = reads.connection
+            as_of = _today_china()
             opened = reports._report(
                 year,
                 quarter,
@@ -2024,14 +2041,74 @@ class Dashboard:
                 reports.browser_report_details(plan, closed, connection=connection),
                 carry_forward_fact_id,
             )
-            queries = BusinessQueries(self.engine, reads=reads)
-            response["period_preparations"] = [
-                preparation_view(
-                    queries._period_readiness(connection, f"{year}-{month:02}", summary=True)
+            if preparation == "deferred":
+                response.update(
+                    projection="dashboard_quarterly_report_deferred",
+                    read_context=self._read_context(connection, as_of),
+                    period_preparations=None,
                 )
-                for month in range(quarter * 3 - 2, quarter * 3 + 1)
-            ]
+            else:
+                queries = BusinessQueries(self.engine, reads=reads)
+                response["period_preparations"] = [
+                    preparation_view(
+                        queries._period_readiness(connection, f"{year}-{month:02}", summary=True)
+                    )
+                    for month in range(quarter * 3 - 2, quarter * 3 + 1)
+                ]
             return response
+
+
+def _brief_checks(prepared):
+    """The same checking projection for complete and deferred brief responses."""
+    material, issues = None, []
+    followups = prepared["current_followups"] if prepared is not None else None
+    if followups is not None:
+        materials = followups["materials"]
+        material = {
+            "closed": prepared["closure"]["state"] != "open",
+            "satisfied": materials["status"] == "ready",
+            "issues": materials["issues"],
+            "coverage_digest": materials["coverage"]["coverage_digest"],
+        }
+        seen = set()
+        for group in ("accounting", "close_requirements"):
+            for issue in followups[group]["issues"]:
+                key = json.dumps(issue, sort_keys=True, ensure_ascii=False)
+                if key not in seen:
+                    issues.append(issue)
+                    seen.add(key)
+        order_failure = (prepared["readiness"] or {}).get("order_failure")
+        if order_failure:
+            issues.insert(0, {"field": "close_order", **order_failure})
+    return {
+        "material_completeness": material,
+        "issues": issues,
+        "attention_count": len(material["issues"]) + len(issues) if material else 0,
+        "items": [
+            {
+                "key": "materials",
+                "label": "资料完整性",
+                "state": "pass" if material and material["satisfied"] else "pending",
+                "text": "按逐项资料检查器核对",
+            },
+            {
+                "key": "accounting",
+                "label": "核算准备",
+                "state": "pass"
+                if followups and followups["accounting"]["status"] == "ready"
+                else "pending",
+                "text": "包括应建业务、正式发布及待复核状态",
+            },
+            {
+                "key": "close_requirements",
+                "label": "期间准备",
+                "state": "pass" if prepared is not None and not issues else "pending",
+                "text": "已关闭期间的当前跟进不改变原冻结结论"
+                if material and material["closed"]
+                else "按关账业务检查核对",
+            },
+        ],
+    }
 
 
 def _position(snap):
@@ -3863,7 +3940,11 @@ def _assets(
         "month_activated_count": sum(row["month_activated"] for row in all_items),
         "month_exited_count": sum(row["month_exited"] for row in all_items),
         "reconciled": reconciled,
-        "reconciliation_label": "资产卡片与账面一致" if reconciled else "资产卡片与账面差异需核对",
+        "reconciliation_label": "资产卡片与账面一致"
+        if reconciled is True
+        else "资产卡片与账面差异需核对"
+        if reconciled is False
+        else "资产卡片与账面暂无法完整核对",
         "differences": differences,
         "fixed": fixed,
         "intangible": intangible,

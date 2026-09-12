@@ -316,14 +316,22 @@ def _periods(year, quarter):
     return start, end, YearMonth(f"{year:04d}-01")
 
 
-def _report_references(connection, end, source):
+def _closed_report_reference_rows(connection, end, reads=None):
     from .read_indexes import CLOSE_REPORT_FACTS, verify_close_references
 
     selected = connection.execute(
         "SELECT * FROM close_reference WHERE reference_type='fact' AND path=? AND close_period<=?",
         (CLOSE_REPORT_FACTS, end.ordinal),
     ).fetchall()
-    verify_close_references(connection, selected)
+    if reads is None:
+        verify_close_references(connection, selected)
+    else:
+        reads.verify_close_references(selected)
+    return selected
+
+
+def _report_references(connection, end, source, reads=None):
+    selected = _closed_report_reference_rows(connection, end, reads)
     references = {row["reference_id"] for row in selected}
     if source == "open":
         references.update(
@@ -375,8 +383,6 @@ def _report_vouchers(cutoff, source, **scope):
 
 def _report_classifications(connection, reads, references, source_vouchers, end, source, problems):
     """Validate all applicable references; decode only classifications used by rows."""
-    from .read_indexes import verify_close_references
-
     headers, conflicts = {}, set()
     for row in connection.execute(
         "SELECT c.revision_id,c.period,c.voucher_version_id,v.period AS voucher_period "
@@ -421,7 +427,7 @@ def _report_classifications(connection, reads, references, source_vouchers, end,
         "AND r.reference_id IN (SELECT value FROM json_each(?)) AND r.close_period<=?",
         (canonical(sorted(selected_ids)), end.ordinal),
     ).fetchall()
-    verify_close_references(connection, selected_references)
+    reads.verify_close_references(selected_references)
 
     detail_ids = []
     for key, row in headers.items():
@@ -539,34 +545,74 @@ class Reports:
 
     def closed_period_coverage(self, year, quarter, *, connection=None, reads=None):
         """The context selector's existing close test, without building statements."""
-        _, end, year_start = _periods(year, quarter)
-        manager = (
-            nullcontext(connection)
-            if connection is not None
-            else self.store.connection(read_only=True)
-        )
-        with manager as selected:
-            if connection is None:
-                selected.execute("BEGIN")
-            from .query_reads import QueryReads
+        return self.closed_period_coverages([(year, quarter)], connection=connection, reads=reads)[
+            year, quarter
+        ]
 
-            reads = reads or QueryReads(self.engine, selected)
-            references = _report_references(selected, end, "closed")
-            profiles = self._report_profiles(selected, references, end, reads)
-            profile = _applicable_profile(profiles, end)
-            book_start = profile.fact.bookkeeping_start if profile else year_start
+    def closed_period_coverages(self, quarters, *, connection=None, reads=None):
+        """Batch close coverage while retaining each quarter's exact source cutoff."""
+        from .query_reads import QueryReads
+
+        requested = {(year, quarter): _periods(year, quarter) for year, quarter in quarters}
+        if not requested:
+            return {}
+        latest_end = max(end for _, end, _ in requested.values())
+        manager = (
+            nullcontext(reads or QueryReads(self.engine, connection))
+            if connection is not None
+            else QueryReads.snapshot(self.engine)
+        )
+        with manager as reads:
+            selected = connection if connection is not None else reads.connection
+            references = _closed_report_reference_rows(selected, latest_end, reads)
+            first_close = {}
+            for row in references:
+                ident, month = row["reference_id"], row["close_period"]
+                first_close[ident] = min(month, first_close.get(ident, month))
+            candidates = sorted(
+                (max(row["period"], first_close[row["id"]]), row["period"], row["id"])
+                for row in selected.execute(
+                    "SELECT f.id,f.period FROM json_each(?) ids "
+                    "JOIN fact_revision f ON f.id=ids.value JOIN subject s ON s.id=f.subject_id "
+                    "WHERE s.kind IN (?,?) AND f.period<=?",
+                    (canonical(sorted(first_close)), *PROFILE_KINDS, latest_end.ordinal),
+                )
+            )
+            # A later close can first introduce an older fact. Its fact period
+            # alone must not make that source visible in an earlier quarter.
+            selected_profiles, latest_period, active_ids, position = {}, None, set(), 0
+            for key in sorted(requested, key=lambda key: requested[key][1].ordinal):
+                end = requested[key][1]
+                while position < len(candidates) and candidates[position][0] <= end.ordinal:
+                    _, fact_period, ident = candidates[position]
+                    if latest_period is None or fact_period > latest_period:
+                        latest_period, active_ids = fact_period, {ident}
+                    elif fact_period == latest_period:
+                        active_ids.add(ident)
+                    position += 1
+                selected_profiles[key] = set(active_ids)
+            profiles = reads.fact_versions(
+                {ident for identifiers in selected_profiles.values() for ident in identifiers}
+            )
             periods = {
                 row[0]
                 for row in selected.execute(
-                    "SELECT period FROM period_close WHERE period<=?", (end.ordinal,)
+                    "SELECT period FROM period_close WHERE period<=?", (latest_end.ordinal,)
                 )
             }
-            problems = _closed_period_issues(periods, book_start, year_start, end)
-            return {
-                "complete": not problems,
-                "fact_issues": problems,
-                "bookkeeping_start": str(book_start),
-            }
+            results = {}
+            for key, (_, end, year_start) in requested.items():
+                profile = _applicable_profile(
+                    [profiles[ident] for ident in selected_profiles[key]], end
+                )
+                book_start = profile.fact.bookkeeping_start if profile else year_start
+                problems = _closed_period_issues(periods, book_start, year_start, end)
+                results[key] = {
+                    "complete": not problems,
+                    "fact_issues": problems,
+                    "bookkeeping_start": str(book_start),
+                }
+            return results
 
     def _report_profiles(self, connection, references, end, reads):
         identifiers = {
@@ -618,7 +664,7 @@ class Reports:
             ).fetchall()
             closes = {r["period"] for r in close_rows}
             problems = []
-            references = _report_references(connection, end, source)
+            references = _report_references(connection, end, source, reads)
             facts = self._report_profiles(connection, references, end, reads)
             if carry_forward_fact_id is not None:
                 explicit = self.store.select(
@@ -706,15 +752,13 @@ class Reports:
                 canonical(sorted(_POSITION_ACCOUNTS)),
             ]
             rows = [dict(r) for r in connection.execute(sql, params)]
-            from .read_indexes import verify_close_references
-
             selected_references = connection.execute(
                 "SELECT r.* FROM close_reference r WHERE r.reference_type='voucher' "
                 "AND r.reference_id IN (SELECT value FROM json_each(?)) "
                 "AND r.close_period<=?",
                 (canonical(sorted({row["version_id"] for row in rows})), end.ordinal),
             ).fetchall()
-            verify_close_references(connection, selected_references)
+            reads.verify_close_references(selected_references)
             earliest = connection.execute(
                 "SELECT min(period) FROM monthly_account WHERE period<=? AND "
                 "(? OR EXISTS(SELECT 1 FROM period_close p WHERE p.period=monthly_account.period))",
@@ -935,14 +979,12 @@ class Reports:
                     )
                 if confirmed.calculation_id:
                     tax = calculation(confirmed.calculation_id)
-                    from .read_indexes import verify_close_references
-
                     frozen = connection.execute(
                         "SELECT * FROM close_reference WHERE reference_type='calculation' "
                         "AND reference_id=? AND close_period<=?",
                         (tax["id"], month.ordinal),
                     ).fetchall()
-                    verify_close_references(connection, frozen)
+                    reads.verify_close_references(frozen)
                     active = connection.execute(
                         "SELECT 1 FROM calculation_current WHERE calculation_id=?", (tax["id"],)
                     ).fetchone()
