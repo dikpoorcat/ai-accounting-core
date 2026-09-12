@@ -39,9 +39,17 @@ const {
   load: loadContext,
   cancel: cancelContext,
   loading: contextLoading,
+  selectionNotice,
   setSelectionNotice,
 } = useDashboardContext();
+let selectionNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+watch(selectionNotice, (message) => {
+  clearTimeout(selectionNoticeTimer);
+  if (message) selectionNoticeTimer = setTimeout(() => setSelectionNotice(""), 6000);
+}, { flush: "sync" });
+onBeforeUnmount(() => clearTimeout(selectionNoticeTimer));
 const companyName = computed(() => context.value?.company || "公司财务看板");
+const companies = computed(() => context.value?.companies ?? []);
 const currentCompany = computed(() => context.value?.current_company ?? null);
 const sidebarCollapsed = ref(
   localStorage.getItem("finance-dashboard-sidebar") === "collapsed",
@@ -158,9 +166,23 @@ function toggleSidebar() {
   );
 }
 
+async function selectCompany(companyId: string) {
+  if (route.query.company_id === companyId) return;
+  setSelectionNotice("");
+  cancelContext();
+  await router.push({
+    query: {
+      company_id: companyId,
+      period: route.query.period,
+    },
+    hash: "",
+  });
+}
+
 async function selectPeriod(periodKey: string) {
   const period = periods.value.find((item) => item.key === periodKey);
   if (!period) return;
+  setSelectionNotice("");
   const quarter =
     route.name === "reports"
       ? `${period.year}-Q${Math.ceil(period.month / 3)}`
@@ -208,7 +230,31 @@ async function selectPeriod(periodKey: string) {
       <div class="sidebar-scroll-area">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">{{ brandInitial }}</span>
-          <div class="brand-copy"><strong class="brand-name">{{ companyName }}</strong><small class="muted">财务看板</small></div>
+          <div v-if="companies.length" class="company-switcher">
+            <strong class="company-switcher-name" aria-hidden="true">{{ companyName }}</strong>
+            <select
+              :value="currentCompany?.company_id"
+              aria-label="切换公司"
+              @change="selectCompany(($event.target as HTMLSelectElement).value)"
+            >
+              <option
+                v-for="company in companies"
+                :key="company.company_id"
+                :value="company.company_id"
+              >
+                {{ company.name }}{{ company.status === "archived" ? "（已归档）" : "" }}
+              </option>
+            </select>
+            <small
+              v-if="currentCompany?.status === 'archived'"
+              class="archived-company-badge"
+            >
+              只读 · 已归档
+            </small>
+          </div>
+          <div v-else class="brand-copy">
+            <strong class="brand-name">{{ companyName }}</strong>
+          </div>
         </div>
 
         <nav v-if="authenticated" class="module-nav" aria-label="看板模块">
@@ -324,5 +370,11 @@ async function selectPeriod(periodKey: string) {
         <RouterView :key="currentCompany.company_id" />
       </template>
     </main>
+    <div class="selection-toast-region" role="status" aria-live="polite" aria-atomic="true">
+      <div v-if="authenticated && selectionNotice" class="selection-toast">
+        <span>{{ selectionNotice }}</span>
+        <button type="button" aria-label="关闭期间提示" @click="setSelectionNotice('')">×</button>
+      </div>
+    </div>
   </div>
 </template>

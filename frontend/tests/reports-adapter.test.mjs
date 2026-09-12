@@ -104,6 +104,7 @@ async function reportView(stubs) {
     const useRoute = () => ({ query: { company_id: 'company-a' } });
     const useRouter = () => ({ replace: async () => {}, push: async () => {} });
     const useDashboardContext = () => ({ context: ref(null), load: async () => ({}), refresh: async () => ({}) });
+    const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const formatFen = String;
   `;
   const { outputText } = ts.transpileModule(imports + source + "\nmounted = true; export { exportReport, report, needsRegeneration, exportNotice, visibleStatementRows, activeStatementKey, taxTemplateMode, statementValue };", {

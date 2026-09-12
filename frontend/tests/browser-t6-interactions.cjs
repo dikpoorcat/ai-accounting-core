@@ -48,14 +48,36 @@ async function run(config) {
     { key: "reports", path: "/reports", action: "quarterly-report", heading: "季度财务报表" },
   ];
   const url = (path, company = first.id, period = "2026-09", extra = "") => `${config.origin}${path}?company_id=${company}&period=${period}${extra}`;
-  const api = (action, predicate = () => true) => page.waitForResponse(response => {
-    const target = new URL(response.url());
-    return target.pathname === `/api/dashboard/${action}` && response.status() === 200 && predicate(target);
-  });
+  const api = (action, predicate = () => true) => {
+    const pending = page.waitForResponse(response => {
+      const target = new URL(response.url());
+      return target.pathname === `/api/dashboard/${action}` && response.status() === 200 && predicate(target);
+    });
+    // A UI assertion can fail before its paired response is awaited; keep that failure reportable.
+    void pending.catch(() => {});
+    return pending;
+  };
   async function ready(item) {
     await page.getByRole("heading", { name: item.heading, exact: true }).waitFor();
     await page.getByRole("button", { name: "刷新数据", exact: true }).waitFor({ state: "visible" });
     await page.waitForFunction(() => !document.querySelector('.module-header[aria-busy="true"]'));
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  }
+
+  async function navigationLayout(width) {
+    assert.equal(await page.locator(".module-header .eyebrow, .module-header .description").count(), 0);
+    const geometry = await page.locator(".section-nav").evaluate(nav => {
+      const box = element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+      const header = document.querySelector(".module-header");
+      return { nav: box(nav), parent: box(nav.parentElement), heading: box(header.querySelector(".module-heading")), toolbar: box(header.querySelector(".toolbar")), header: box(header), floating: nav.dataset.floating === "true" };
+    });
+    assert(Math.abs((geometry.nav.left + geometry.nav.right - geometry.parent.left - geometry.parent.right) / 2) < 2, "Navigation remains centered in the page");
+    if (width < 1280 || !geometry.floating) assert(geometry.nav.top >= geometry.header.bottom, "Flow navigation follows the complete header");
+    else {
+      assert(geometry.nav.right <= geometry.toolbar.left - 15 && geometry.nav.left >= geometry.heading.right + 15, "Floating navigation cannot cover heading or toolbar");
+      assert(geometry.nav.top <= 12, "Floating navigation starts at the page top");
+    }
+    if (width === 1440) assert(geometry.floating, "The five standard desktop headers fit the floating navigation");
   }
   async function dashboard(item, company = first.id, period = "2026-09", extra = "") {
     const pending = api(item.action, target => target.searchParams.get("company_id") === company);
@@ -199,7 +221,7 @@ async function run(config) {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
         await dashboard(pages[0]);
         await screenshot(`brief-${width}-default.png`);
-        if (width === 390) assert.equal(await page.locator("#overview > .kpi").evaluateAll(elements => new Set(elements.map(element => Math.round(element.getBoundingClientRect().top))).size), 2, "Mobile Brief should show its four cards in two rows");
+        if (width === 390) assert.equal(await page.locator(".kpi-grid > .kpi").evaluateAll(elements => new Set(elements.map(element => Math.round(element.getBoundingClientRect().top))).size), 4, "Mobile Brief should show its four cards in one column");
         await expand(pages[0]);
         await screenshot(`brief-${width}-expanded.png`, false);
         await dashboard(pages[1]);
@@ -223,7 +245,7 @@ async function run(config) {
       await page.setViewportSize({ width: 320, height: 800 });
       await dashboard(pages[0]);
       await screenshot("brief-320-default.png");
-      assert.equal(await page.locator("#overview > .kpi").evaluateAll(elements => new Set(elements.map(element => Math.round(element.getBoundingClientRect().top))).size), 2);
+      assert.equal(await page.locator(".kpi-grid > .kpi").evaluateAll(elements => new Set(elements.map(element => Math.round(element.getBoundingClientRect().top))).size), 4);
       await page.setViewportSize({ width: 1440, height: 1000 });
       for (const item of [pages[2], pages[3]]) await dashboard(item);
       const assetResults = await Promise.all(hashChecks);
@@ -233,7 +255,7 @@ async function run(config) {
       return {
         status: observations.pagination.jumpedBack || !filesVisible ? "failed" : "passed",
         message: observations.pagination.jumpedBack || !filesVisible ? "Brief data merge moved scroll away from the active pagination or requested file section" : "Navigation retained intended target",
-        checks: [...checks, "Brief pagination retains scroll and file deep link remains visible", "Brief four-card two-row layout at 390 and 320", "Brief/Funds/Reports default and expanded affected views at 1440 and 390", "Three report months collapsed with real preparation reachable; full report table visible", "Employees and Assets actual API/DOM smoke binds final loaded JS; prior visual evidence reused", "All fetched JS response bodies match current ordinary dist"],
+        checks: [...checks, "Brief pagination retains scroll and file deep link remains visible", "Brief four-card single-column layout at 390 and 320", "Brief/Funds/Reports default and expanded affected views at 1440 and 390", "Three report months collapsed with real preparation reachable; full report table visible", "Employees and Assets actual API/DOM smoke binds final loaded JS; prior visual evidence reused", "All fetched JS response bodies match current ordinary dist"],
         observations, screenshots, page_errors: errors, api_failures: apiFailures,
         loaded_scripts_sha256: Object.fromEntries(scripts),
       };
@@ -243,21 +265,53 @@ async function run(config) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
       for (const item of pages) {
         const response = await dashboard(item);
+        await navigationLayout(width);
         if (item.key === "brief") {
           const cards = page.getByRole("region", { name: "本月核心指标", exact: true });
           const cardText = await cards.innerText();
           for (const value of [response.data.position.month_result_fen, response.data.funds_overview.total_fen, response.data.open_items.receivable_fen, response.data.open_items.payable_fen]) assert(cardText.includes(money(value)), `Core card must match full API amount ${value}`);
+          assert(await page.evaluate(() => {
+            const overview = document.querySelector("#overview");
+            const metrics = document.querySelector(".kpi-grid");
+            return !!overview && !!metrics && !!(overview.compareDocumentPosition(metrics) & Node.DOCUMENT_POSITION_FOLLOWING);
+          }), "Operating overview must precede the four metric cards");
+          assert.equal(await page.locator('.module-header [aria-label="切换公司"]').count(), 0);
+          assert.equal(await page.locator('.company-switcher [aria-label="切换公司"]').count(), 1);
+          assert.equal(await page.getByText("财务看板", { exact: true }).count(), 0);
+          assert.equal(await page.getByText("了解本月赚亏、资金去向和待收待付。", { exact: true }).count(), 0);
+          assert.equal(await page.getByText("以上为所选月末完整汇总。待收包含预付款待冲抵等事项，不代表预计或到期现金收付。", { exact: true }).count(), 0);
+          if (width === 1440) {
+            assert(await page.locator(".month-picker").isVisible());
+            const navBox = await page.locator(".section-nav.floating").boundingBox();
+            assert(navBox && navBox.y <= 12, "Wide Brief navigation should float in the header space");
+          } else {
+            assert(await page.locator(".company-switcher").isVisible());
+            assert(await page.locator(".month-picker").isHidden());
+          }
         }
         if (item.key === "employees") assert(response.data.employees.items.length > 0);
         if (item.key === "assets") assert(response.data.collections.assets.items.length > 0);
         await screenshot(`${item.key}-${width}-default.png`);
         await expand(item);
         await screenshot(`${item.key}-${width}-expanded.png`, false);
+        const lastLink = page.locator(".section-nav button").last();
+        await lastLink.focus();
+        await page.keyboard.press("Enter");
+        const anchor = await page.evaluate(() => {
+          const target = document.activeElement?.getBoundingClientRect();
+          const nav = document.querySelector(".section-nav").getBoundingClientRect();
+          return { targetTop: target?.top, targetBottom: target?.bottom, navBottom: nav.bottom, selected: document.querySelector('.section-nav button[aria-current="location"]')?.textContent.trim() };
+        });
+        assert.equal(anchor.selected, (await lastLink.innerText()).trim());
+        assert(anchor.targetTop >= anchor.navBottom - 1 && anchor.targetTop < (width === 390 ? 780 : 1000), "Keyboard target stays visible below the sticky navigation");
+        await page.mouse.wheel(0, -1);
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+        await page.waitForFunction(() => document.querySelector('.section-nav button')?.getAttribute("aria-current") === "location");
       }
     }
     checks.push("five pages: default and expanded DOM/screenshots at 1440 and 390");
     await dashboard(pages[0]);
-    await page.locator("#brief-conclusion").scrollIntoViewIfNeeded();
+    await page.locator("#overview").scrollIntoViewIfNeeded();
     await screenshot("brief-390-operating-conclusion.png", false);
 
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -285,6 +339,13 @@ async function run(config) {
     checks.push("five pages company A-B-A and September-October-September (report quarter backfill)");
 
     const brief = await dashboard(pages[0]);
+    await page.getByRole("button", { name: "收起侧边栏", exact: true }).click();
+    assert(await page.locator(".company-switcher").isHidden());
+    assert(await page.locator(".month-picker").isHidden());
+    await page.getByRole("button", { name: "展开侧边栏", exact: true }).click();
+    assert(await page.locator(".company-switcher").isVisible());
+    assert(await page.locator(".month-picker").isVisible());
+    checks.push("restored sidebar company and month controls hide and return with desktop collapse");
     assert.equal(brief.data.vouchers.length, 100);
     assert.equal(brief.data.voucher_count, first.voucher_count);
     let continuation = brief;
@@ -310,7 +371,8 @@ async function run(config) {
     const filteredResponse = await (await filtered).json();
     assert(filteredResponse.data.movements.every(item => item.account_id === first.last_account_id));
     await page.waitForFunction(name => document.querySelector('[aria-label="筛选账面资金账户"]')?.selectedOptions[0]?.textContent.includes(name), first.last_account_name);
-    await page.locator("#fund-detail-panel-book summary").first().click();
+    const firstSummary = page.locator("#fund-detail-panel-book summary").first();
+    if (await firstSummary.count()) await firstSummary.click();
     const voucherLink = page.locator('#fund-detail-panel-book a[href*="voucher="]').first();
     const destination = new URL(await voucherLink.getAttribute("href"), config.origin);
     assert.equal(destination.searchParams.get("period"), filteredResponse.selected_period.key);
@@ -335,7 +397,7 @@ async function run(config) {
     await retry.waitFor();
     assert(await page.getByText(first.asset_name, { exact: true }).first().isVisible());
     const independent = api("assets", target => target.searchParams.get("section") === "settlement_events");
-    await page.getByText("当前后续事项 · 查看精确关联的清偿事件", { exact: true }).click();
+    await page.getByText("当前后续事项 · 关联清偿事件", { exact: true }).click();
     await independent;
     assert(await retry.isVisible(), "Independent settlement detail must not replace the source failure");
     await screenshot("assets-local-failure.png", false);
@@ -349,8 +411,34 @@ async function run(config) {
     await page.setViewportSize({ width: 320, height: 800 });
     await page.locator("summary.asset-card-summary").first().scrollIntoViewIfNeeded();
     await screenshot("assets-320-long-expanded.png", false);
+    for (const width of [1280, 1279, 1080, 900]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const item of pages) {
+        await dashboard(item);
+        await navigationLayout(width);
+        assert.equal(await page.locator(".month-picker").isVisible(), width > 900);
+        assert(await page.locator(".company-switcher").isVisible());
+        await screenshot(`${item.key}-${width}-default.png`);
+      }
+    }
+    for (const item of pages) {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await dashboard(item);
+      await page.getByRole("button", { name: "切换深色外观", exact: true }).click();
+      await screenshot(`${item.key}-1440-dark.png`);
+      await page.getByRole("button", { name: "切换浅色外观", exact: true }).click();
+    }
+    for (const [item, hash] of [[pages[1], "fund-accounts"], [pages[2], "employee-list-title"], [pages[3], "asset-list-title"], [pages[4], "report-statements"]]) {
+      await dashboard(item, first.id, "2026-09", `#${hash}`);
+      await page.waitForFunction(id => document.activeElement?.id === id, hash);
+      const position = await page.locator(`#${hash}`).boundingBox();
+      const navigation = await page.locator(".section-nav").boundingBox();
+      assert(position.y >= navigation.y + navigation.height - 1 && position.y < 900, `Asynchronous #${hash} remains visible after floating layout`);
+    }
     await page.setViewportSize({ width: 900, height: 900 });
     await dashboard(pages[0]);
+    assert(await page.locator(".company-switcher").isVisible());
+    assert(await page.locator(".month-picker").isHidden());
     await screenshot("brief-900-default.png");
     await page.getByRole("button", { name: "切换深色外观", exact: true }).click();
     await screenshot("brief-900-dark.png");
@@ -358,7 +446,7 @@ async function run(config) {
     const navigation = page.locator(".section-nav button").last();
     await navigation.focus(); await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.activeElement?.matches("h2, h3, [tabindex='-1']"));
-    checks.push("representative 900 shell, 320 long content, dark theme, keyboard section focus");
+    checks.push("representative 1279 document-flow navigation, 900 shell, 320 long content, dark theme, keyboard section focus");
 
     for (const path of ["/index.html", "/local.html"]) await dashboard({ ...pages[0], path });
     const refreshed = api("brief");

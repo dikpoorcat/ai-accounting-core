@@ -49,3 +49,11 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
     </template>
   </details>
 </template>
+
+<style scoped>
+details { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+summary { padding: 6px 0; cursor: pointer; color: var(--accent); }
+summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; }
+@media (max-width: 720px) { summary, button { min-height: 44px; } }
+</style>

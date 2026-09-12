@@ -1,17 +1,71 @@
 <script setup lang="ts">
-defineProps<{
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+
+const props = defineProps<{
   items: readonly { id: string; label: string }[];
   active: string;
   label: string;
+  floating?: boolean;
 }>();
 
 const emit = defineEmits<{
   select: [id: string];
 }>();
+const element = ref<HTMLElement | null>(null);
+const floatingActive = ref(false);
+let observer: ResizeObserver | undefined;
+let frame = 0;
+let disposed = false;
+
+function measure() {
+  frame = 0;
+  const nav = element.value, page = nav?.parentElement;
+  const header = page?.querySelector<HTMLElement>(".module-header");
+  if (!nav || !page || !header) return;
+  // Measure in normal flow, independently of the current sticky scroll position.
+  nav.style.position = "static";
+  nav.style.marginTop = "0px";
+  nav.style.marginBottom = window.innerWidth <= 720 ? "10px" : "12px";
+  const rect = nav.getBoundingClientRect(), pageRect = page.getBoundingClientRect();
+  const heading = header.querySelector(".module-heading")?.getBoundingClientRect();
+  const toolbar = header.querySelector(".toolbar")?.getBoundingClientRect();
+  const left = rect.left, right = rect.right;
+  const fits = !!props.floating && window.innerWidth >= 1280 && !!heading && !!toolbar
+    && left >= heading.right + 16 && right <= toolbar.left - 16;
+  if (fits) {
+    const lift = rect.top - pageRect.top - 8;
+    nav.style.marginTop = `${-lift}px`;
+    nav.style.marginBottom = `${lift - rect.height}px`;
+  }
+  floatingActive.value = fits;
+  nav.style.position = "sticky";
+}
+function scheduleMeasure() {
+  if (!frame && !disposed) frame = requestAnimationFrame(measure);
+}
+onMounted(() => {
+  const nav = element.value, page = nav?.parentElement;
+  observer = new ResizeObserver(scheduleMeasure);
+  if (nav) observer.observe(nav);
+  if (page) {
+    observer.observe(page);
+    page.querySelectorAll(".module-header, .module-heading, .toolbar").forEach(item => observer!.observe(item));
+  }
+  window.addEventListener("resize", scheduleMeasure);
+  void document.fonts.ready.then(scheduleMeasure);
+  scheduleMeasure();
+});
+watch(() => [props.items, props.floating], async () => { await nextTick(); scheduleMeasure(); });
+onBeforeUnmount(() => {
+  disposed = true;
+  observer?.disconnect();
+  cancelAnimationFrame(frame);
+  window.removeEventListener("resize", scheduleMeasure);
+});
 </script>
 
 <template>
-  <nav class="section-nav" :aria-label="label">
+  <nav ref="element" :class="['section-nav', { floating }]" :data-floating="floatingActive" :aria-label="label">
     <button
       v-for="item in items"
       :key="item.id"

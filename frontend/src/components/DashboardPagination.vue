@@ -17,4 +17,6 @@ defineEmits<{ more: []; retry: [] }>();
 .dashboard-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; color: var(--muted, #68766c); font-size: 13px; }
 button { padding: 7px 12px; border: 1px solid currentColor; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
 button:disabled { cursor: wait; opacity: .6; }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 720px) { button { min-height: 44px; } }
 </style>

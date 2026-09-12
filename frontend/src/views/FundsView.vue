@@ -17,6 +17,7 @@ import DashboardPagination from "../components/DashboardPagination.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import VoucherTrace from "../components/brief/VoucherTrace.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
+import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
 const route = useRoute();
@@ -47,9 +48,7 @@ const updateNotice = ref("");
 const loading = ref(false);
 const initializing = ref(true);
 const requestError = ref("");
-const activeSection = ref("funds-overview");
 let activeRequest: AbortController | null = null;
-let sectionSyncLocked = false;
 let mounted = true;
 let requestGeneration = 0;
 
@@ -112,6 +111,7 @@ const bankAttentionCount = computed(() => {
     : 0;
 });
 const sectionLinks = computed(() => {
+  if (!funds.value) return [];
   const links = [
     { id: "funds-overview", label: "概览" },
     { id: "fund-accounts", label: "账户" },
@@ -121,6 +121,8 @@ const sectionLinks = computed(() => {
   links.push({ id: "bank-details", label: "资金明细" });
   return links;
 });
+const { activeSection, focusSection, positionSection, lockSectionSync } =
+  useDashboardSections(sectionLinks, "funds-overview");
 
 function accountKey(type: string, id: string) {
   return `${type}:${id}`;
@@ -183,37 +185,6 @@ function routePeriod(): string | null {
   return typeof route.query.period === "string" ? route.query.period : null;
 }
 
-function lockSectionSync() {
-  sectionSyncLocked = true;
-}
-
-function enableSectionSyncForUserScroll() {
-  sectionSyncLocked = false;
-}
-
-function handleSectionScrollKey(event: KeyboardEvent) {
-  if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
-    enableSectionSyncForUserScroll();
-  }
-}
-
-function handleScrollbarPointer(event: PointerEvent) {
-  if (event.clientX >= document.documentElement.clientWidth) {
-    enableSectionSyncForUserScroll();
-  }
-}
-
-function positionSection(section: HTMLElement) {
-  const root = document.documentElement;
-  const previousBehavior = root.style.scrollBehavior;
-  root.style.scrollBehavior = "auto";
-  window.scrollTo({
-    top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - (document.querySelector(".section-nav")?.getBoundingClientRect().height ?? 48) - 16),
-    behavior: "auto",
-  });
-  root.style.scrollBehavior = previousBehavior;
-}
-
 async function revealBankDetails() {
   const generation = requestGeneration, selection = selectionKey();
   if (route.hash !== "#bank-details" || !funds.value) return;
@@ -225,36 +196,6 @@ async function revealBankDetails() {
   const section = document.getElementById("bank-details");
   if (section) positionSection(section);
   document.getElementById("fund-detail-tab-bank")?.focus({ preventScroll: true });
-}
-
-function focusSection(id: string) {
-  const section = document.getElementById(id);
-  if (!section) return;
-  lockSectionSync();
-  activeSection.value = id;
-  positionSection(section);
-  section.focus({ preventScroll: true });
-}
-
-function updateSectionFromScroll() {
-  if (sectionSyncLocked) return;
-  const links = sectionLinks.value;
-  if (!links.length) return;
-  const probeTop = 80;
-  let candidate = links[0].id;
-  for (const link of links) {
-    const section = document.getElementById(link.id);
-    if (!section || section.getBoundingClientRect().top > probeTop) break;
-    candidate = link.id;
-  }
-  if (candidate === activeSection.value) return;
-  const currentIndex = links.findIndex((link) => link.id === activeSection.value);
-  const candidateIndex = links.findIndex((link) => link.id === candidate);
-  if (candidateIndex < currentIndex) {
-    const currentSection = document.getElementById(activeSection.value);
-    if (currentSection && currentSection.getBoundingClientRect().top <= probeTop + 24) return;
-  }
-  activeSection.value = candidate;
 }
 
 async function loadFunds(periodKey: string) {
@@ -470,7 +411,7 @@ watch(
 watch(
   () => route.hash,
   () => void revealBankDetails(),
-  { immediate: true },
+  { immediate: true, flush: "post" },
 );
 watch(() => route.query.funds_view, () => {
   selectedDetailView.value = queryText("funds_view") === "bank" ? "bank" : "book";
@@ -520,11 +461,6 @@ watch(
 
 onMounted(async () => {
   const generation = requestGeneration, selection = selectionKey();
-  window.addEventListener("scroll", updateSectionFromScroll, { passive: true });
-  window.addEventListener("wheel", enableSectionSyncForUserScroll, { passive: true });
-  window.addEventListener("touchmove", enableSectionSyncForUserScroll, { passive: true });
-  window.addEventListener("keydown", handleSectionScrollKey);
-  window.addEventListener("pointerdown", handleScrollbarPointer);
   try {
     await loadContext();
   } catch {
@@ -537,11 +473,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   mounted = false;
   invalidateRequests();
-  window.removeEventListener("scroll", updateSectionFromScroll);
-  window.removeEventListener("wheel", enableSectionSyncForUserScroll);
-  window.removeEventListener("touchmove", enableSectionSyncForUserScroll);
-  window.removeEventListener("keydown", handleSectionScrollKey);
-  window.removeEventListener("pointerdown", handleScrollbarPointer);
 });
 </script>
 
@@ -549,9 +480,7 @@ onBeforeUnmount(() => {
   <div class="funds-page">
     <div class="page-content">
       <DashboardModuleHeader
-        eyebrow="资金"
         title="资金总览"
-        description="查看钱在哪些账户、本月收了多少、付了多少。"
         :options="periods"
         :selected="selectedPeriod"
         :loading="loading || contextLoading"
@@ -592,6 +521,7 @@ onBeforeUnmount(() => {
           :items="sectionLinks"
           :active="activeSection"
           label="资金页面区段"
+          floating
           @select="focusSection"
         />
 
@@ -661,7 +591,6 @@ onBeforeUnmount(() => {
         >
           <div class="section-heading">
             <div>
-              <p class="eyebrow">钱在哪些账户</p>
               <h2 id="fund-accounts-title">公司资金账户</h2>
             </div>
             <strong>{{ funds.account_count }} 个账户 · 期末 {{ formatFen(funds.total_fen) }}</strong>
@@ -715,8 +644,10 @@ onBeforeUnmount(() => {
           <p class="muted">本月确认收益 {{ formatFen(funds.investments.investment_income_fen) }} ·
             实际申购付款 {{ formatFen(funds.investments.actual_payments_fen) }} ·
             实际赎回到账 {{ formatFen(funds.investments.actual_receipts_fen) }}</p>
-          <div class="table-wrap">
-            <table><thead><tr><th>产品</th><th class="number">月末账面成本</th><th class="number">本月确认收益</th></tr></thead>
+          <div class="table-wrap" role="region" aria-label="基金产品汇总" tabindex="0">
+            <table class="investment-table investment-summary-table">
+              <colgroup><col><col class="investment-amount-column"><col class="investment-amount-column"></colgroup>
+              <thead><tr><th scope="col">产品</th><th scope="col" class="number">月末账面成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
               <tbody><tr v-for="item in funds.investments.products" :key="item.fund_id">
                 <td>{{ item.name }}</td><td class="number">{{ formatFen(item.closing_cost_fen) }}</td>
                 <td class="number">{{ formatFen(item.investment_income_fen) }}</td>
@@ -726,9 +657,11 @@ onBeforeUnmount(() => {
           <details class="investment-details">
           <summary>查看申购、赎回与收付款明细</summary>
           <p class="muted">确认金额与实际收付款分别列示，确认收益不等于已经到账。</p>
-          <div class="table-wrap">
-            <table><thead><tr><th>产品</th><th class="number">期初成本</th><th class="number">申购成本变动</th>
-              <th class="number">赎回成本变动</th><th class="number">期末成本</th><th class="number">本月确认收益</th></tr></thead>
+          <div class="table-wrap" role="region" aria-label="基金成本变动" tabindex="0">
+            <table class="investment-table investment-cost-table">
+              <colgroup><col><col v-for="column in 5" :key="column" class="investment-amount-column"></colgroup>
+              <thead><tr><th scope="col">产品</th><th scope="col" class="number">期初成本</th><th scope="col" class="number">申购成本变动</th>
+              <th scope="col" class="number">赎回成本变动</th><th scope="col" class="number">期末成本</th><th scope="col" class="number">本月确认收益</th></tr></thead>
               <tbody><tr v-for="item in funds.investments.products" :key="item.fund_id">
                 <td>{{ item.name }}<details><summary>查看产品标识</summary>{{ item.fund_id }}</details></td>
                 <td class="number">{{ formatFen(item.opening_cost_fen) }}</td>
@@ -739,9 +672,11 @@ onBeforeUnmount(() => {
               </tr></tbody></table>
           </div>
           <h3>本月确认及收付款</h3>
-          <div v-if="funds.investments.events.length" class="table-wrap">
-            <table><thead><tr><th>日期／所属月</th><th>产品及事项</th><th class="number">确认成本</th>
-              <th class="number">确认赎回净款</th><th class="number">确认收益</th><th class="number">实际收付款</th><th>凭证</th></tr></thead>
+          <div v-if="funds.investments.events.length" class="table-wrap" role="region" aria-label="基金确认及收付款明细" tabindex="0">
+            <table class="investment-table investment-events-table">
+              <colgroup><col class="date-column"><col><col v-for="column in 4" :key="column" class="investment-amount-column"><col class="reference-column"></colgroup>
+              <thead><tr><th scope="col">日期／所属月</th><th scope="col">产品及事项</th><th scope="col" class="number">确认成本</th>
+              <th scope="col" class="number">确认赎回净款</th><th scope="col" class="number">确认收益</th><th scope="col" class="number">实际收付款</th><th scope="col">凭证</th></tr></thead>
               <tbody><tr v-for="item in funds.investments.events" :key="item.id">
                 <td>{{ formatDate(item.date || item.period) }}</td><td>{{ item.name }} · {{ item.type }}</td>
                 <td class="number">{{ item.cost_fen === null ? "—" : formatFen(item.cost_fen) }}</td>
@@ -787,7 +722,6 @@ onBeforeUnmount(() => {
         >
           <div class="section-heading detail-heading">
             <div>
-              <p class="eyebrow">查看具体收付款</p>
               <h2 id="fund-details-title">资金明细</h2>
             </div>
             <div class="detail-switch" role="tablist" aria-label="选择资金明细口径">
@@ -847,21 +781,32 @@ onBeforeUnmount(() => {
               <small>账户选项已加载 {{ funds.accounts.length }} / {{ funds.account_count }}</small>
               </div>
             </div>
-            <div v-if="visibleMovements.length" class="movement-list" aria-label="账面资金明细">
-              <details v-for="item in visibleMovements" :key="item.id" class="movement-record">
-                <summary class="movement-summary">
-                  <span class="movement-date">{{ formatDate(item.date) }}</span>
-                  <span class="movement-copy"><strong>{{ item.list_summary || item.type }}</strong><small>{{ item.party }}<template v-if="item.internal_transfer"> · 账户互转</template></small></span>
-                  <span class="movement-amount"><strong>{{ movementAmount(item.direction, item.amount_fen) }}</strong><small>{{ item.direction === "inflow" ? "流入" : "流出" }} · 展开详情</small></span>
-                </summary>
-                <div class="movement-detail">
-                  <p>{{ item.display_summary || item.summary || item.type }}</p>
-                  <p>资金账户：{{ item.account_name }}（{{ item.account_code }}）</p>
-                  <p>往来对象：{{ item.party || '不适用' }}</p>
-                  <RouterLink v-if="voucherTarget(item.reference, responsePeriod)" :to="voucherTarget(item.reference, responsePeriod)!">查看凭证 {{ item.reference }}</RouterLink>
-                  <span v-else>凭证定位未提供</span>
-                </div>
-              </details>
+            <div v-if="visibleMovements.length" class="table-wrap movement-list" role="region" aria-label="账面资金明细" tabindex="0">
+              <table class="book-detail-table movement-table">
+                <colgroup><col class="date-column"><col class="account-column"><col><col class="party-column"><col class="direction-column"><col class="amount-column"><col class="reference-column"></colgroup>
+                <thead><tr><th scope="col">日期</th><th scope="col">账户</th><th scope="col">业务与摘要</th><th scope="col">往来对象</th><th scope="col">方向</th><th scope="col" class="number">金额</th><th scope="col">凭证</th></tr></thead>
+                <tbody>
+                  <tr v-for="item in visibleMovements" :key="item.id" class="movement-record">
+                    <td data-label="日期">{{ formatDate(item.date) }}</td>
+                    <td data-label="账户" class="mobile-wide">{{ item.account_name }}<small class="table-secondary">{{ item.account_code }}</small></td>
+                    <td data-label="业务与摘要" class="movement-copy mobile-wide">
+                      <strong>{{ item.list_summary || item.type }}</strong>
+                      <small v-if="item.internal_transfer" class="table-secondary">账户互转</small>
+                      <details v-if="(item.display_summary || item.summary) && (item.display_summary || item.summary) !== (item.list_summary || item.type)" class="movement-detail">
+                        <summary>完整摘要</summary>
+                        <p>{{ item.display_summary || item.summary }}</p>
+                      </details>
+                    </td>
+                    <td data-label="往来对象" class="mobile-wide">{{ item.party || '不适用' }}</td>
+                    <td data-label="方向"><span class="direction" :class="item.direction">{{ item.direction === 'inflow' ? '流入' : '流出' }}</span></td>
+                    <td data-label="金额" class="number movement-amount">{{ movementAmount(item.direction, item.amount_fen) }}</td>
+                    <td data-label="凭证" class="mobile-wide">
+                      <RouterLink v-if="voucherTarget(item.reference, responsePeriod)" :to="voucherTarget(item.reference, responsePeriod)!">查看凭证 {{ item.reference }}</RouterLink>
+                      <span v-else>凭证定位未提供</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
             <p v-else class="empty">{{ loading ? "正在读取资金明细…" : selectedAccount ? "该账户本月没有已入账资金变动。" : "本月没有已入账资金变动。" }}</p>
             <button v-if="!visibleMovements.length && selectedAccount" class="control" @click="selectedAccount = ''; changeAccountFilters()">清除账户筛选</button>
@@ -903,15 +848,21 @@ onBeforeUnmount(() => {
               <small>账户选项已加载 {{ funds.accounts.length }} / {{ funds.account_count }}</small>
               </div>
             </div>
-            <div v-if="visibleBankRows.length" class="movement-list" aria-label="银行流水明细">
-              <details v-for="item in visibleBankRows" :key="item.id" class="movement-record" :class="{ 'attention-row': item.state !== 'matched' }">
-                <summary class="movement-summary">
-                  <span class="movement-date">{{ formatDate(item.date) }}</span>
-                  <span class="movement-copy"><strong>{{ item.party || '对方名称未提供' }}</strong><small>{{ bankStateLabel(item.state) }}</small></span>
-                  <span class="movement-amount"><strong>{{ movementAmount(item.direction, item.amount_fen) }}</strong><small>{{ item.direction === 'inflow' ? '流入' : '流出' }} · 展开流水</small></span>
-                </summary>
-                <div class="movement-detail"><p>银行账户：{{ item.account_name }}（{{ item.account_code }}）</p><p>银行原始摘要：{{ item.memo || '未提供' }}</p><p>处理状态：{{ bankStateLabel(item.state) }}</p></div>
-              </details>
+            <div v-if="visibleBankRows.length" class="table-wrap movement-list" role="region" aria-label="银行流水明细" tabindex="0">
+              <table class="bank-detail-table movement-table">
+                <colgroup><col class="date-column"><col class="account-column"><col><col class="direction-column"><col class="amount-column"><col class="state-column"></colgroup>
+                <thead><tr><th scope="col">日期</th><th scope="col">银行账户</th><th scope="col">对方与银行原始摘要</th><th scope="col">方向</th><th scope="col" class="number">金额</th><th scope="col">处理状态</th></tr></thead>
+                <tbody>
+                  <tr v-for="item in visibleBankRows" :key="item.id" class="movement-record" :class="{ 'attention-row': item.state !== 'matched' }">
+                    <td data-label="日期">{{ formatDate(item.date) }}</td>
+                    <td data-label="银行账户" class="mobile-wide">{{ item.account_name }}<small class="table-secondary">{{ item.account_code }}</small></td>
+                    <td data-label="对方与银行原始摘要" class="movement-copy mobile-wide"><strong>{{ item.party || '对方名称未提供' }}</strong><p>{{ item.memo || '原始摘要未提供' }}</p></td>
+                    <td data-label="方向"><span class="direction" :class="item.direction">{{ item.direction === 'inflow' ? '流入' : '流出' }}</span></td>
+                    <td data-label="金额" class="number movement-amount">{{ movementAmount(item.direction, item.amount_fen) }}</td>
+                    <td data-label="处理状态" class="mobile-wide">{{ bankStateLabel(item.state) }}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
             <p v-else class="empty">{{ loading ? "正在读取银行流水…" : selectedBankAccount ? "该账户本月暂无可展示的银行流水，请结合资料提供情况查看。" : "本月没有可展示的银行流水。" }}</p>
             <button v-if="!visibleBankRows.length && selectedBankAccount" class="control" @click="selectedBankAccount = ''; changeAccountFilters()">清除账户筛选</button>
@@ -1399,16 +1350,76 @@ table {
 
 .account-selector { display: grid; min-width: 0; gap: 6px; }
 .account-selector select { max-width: 100%; }
-.movement-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.movement-record + .movement-record { border-top: 1px solid var(--line); }
-.movement-summary { display: grid; grid-template-columns: 90px minmax(0, 1fr) minmax(140px, auto); align-items: start; gap: 16px; min-height: 60px; padding: 14px; cursor: pointer; list-style: none; }
-.movement-summary::-webkit-details-marker { display: none; }
-.movement-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.movement-copy, .movement-amount { display: grid; min-width: 0; gap: 5px; overflow-wrap: anywhere; }
-.movement-date, .movement-summary small { color: var(--muted); font-size: 12px; }
-.movement-amount { text-align: right; font-variant-numeric: tabular-nums; }
-.movement-detail { padding: 0 14px 16px; overflow-wrap: anywhere; font-size: 13px; }
-.movement-detail a { display: inline-flex; min-height: 44px; align-items: center; color: var(--accent); }
+
+.movement-table,
+.investment-table {
+  table-layout: auto;
+}
+
+.book-detail-table { min-width: 1100px; }
+.bank-detail-table { min-width: 980px; }
+.date-column { width: 90px; }
+.account-column { width: 200px; }
+.party-column { width: 150px; }
+.direction-column { width: 64px; }
+.amount-column { width: 128px; }
+.reference-column { width: 100px; }
+.state-column { width: 110px; }
+.investment-amount-column { width: 140px; }
+.investment-summary-table { min-width: 500px; }
+.investment-cost-table { min-width: 920px; }
+.investment-events-table { min-width: 1040px; }
+
+.table-wrap:focus-visible,
+.movement-detail > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.movement-table td,
+.investment-table td {
+  overflow-wrap: anywhere;
+}
+
+.table-secondary {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.movement-copy > p,
+.movement-detail > p {
+  margin: 5px 0 0;
+}
+
+.movement-copy > strong,
+.movement-amount {
+  font-weight: 700;
+}
+
+.movement-detail {
+  margin-top: 5px;
+}
+
+.movement-detail > summary {
+  color: var(--accent);
+}
+
+.movement-table a,
+.investment-table a {
+  color: var(--accent);
+}
+
+.direction {
+  display: inline-flex;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.direction.inflow { color: var(--accent); background: var(--accent-soft); }
+.direction.outflow { color: var(--danger); background: var(--danger-soft); }
 
 th,
 td {
@@ -1432,6 +1443,7 @@ tbody tr:last-child td {
 .number {
   text-align: right;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .attention-row {
@@ -1453,8 +1465,69 @@ tbody tr:last-child td {
 }
 
 @media (max-width: 760px) {
-  .movement-summary { grid-template-columns: minmax(0, 1fr) minmax(110px, .8fr); gap: 8px 12px; }
-  .movement-date { grid-column: 1 / -1; }
+  .movement-list {
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+  }
+
+  .movement-table,
+  .movement-table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .movement-table colgroup,
+  .movement-table thead {
+    display: none;
+  }
+
+  .movement-table .movement-record {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 10px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .movement-table .attention-row {
+    border-color: color-mix(in srgb, var(--warning) 52%, var(--line));
+    background: color-mix(in srgb, var(--warning-soft) 46%, var(--surface));
+  }
+
+  .movement-table td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .movement-table td::before {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
+    content: attr(data-label);
+  }
+
+  .movement-table .mobile-wide {
+    grid-column: 1 / -1;
+  }
+
+  .movement-table a,
+  .movement-detail > summary {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+
   .account-selector { width: 100%; }
   .page-content {
     width: min(calc(100% - 24px), 1320px);

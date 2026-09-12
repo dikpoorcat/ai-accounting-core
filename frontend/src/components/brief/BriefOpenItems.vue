@@ -127,8 +127,8 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
                   <th>凭证</th>
                 </tr>
               </thead>
-              <tbody>
-                <tr v-for="item in category.items" :key="item.id">
+              <tbody v-for="item in category.items" :key="item.id">
+                <tr>
                   <td data-label="往来对象">{{ item.party }}</td>
                   <td data-label="事项">{{ item.description }}</td>
                   <td data-label="状态">
@@ -137,7 +137,12 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
                   <td class="number" :data-label="isClosed ? '关账时点金额' : '期末金额'">
                     {{ formatFen(item.outstanding_fen) }}
                   </td>
-                  <td data-label="来源"><BusinessStatusDetails v-if="item.source_business?.subject_id" :subject-id="item.source_business.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="查看来源与相关清偿" @changed="$emit('changed')" /><span v-else>{{ item.voucher }}</span></td>
+                  <td data-label="凭证">{{ item.voucher || "—" }}</td>
+                </tr>
+                <tr v-if="item.source_business?.subject_id" class="source-row">
+                  <td colspan="5" class="source-cell">
+                    <BusinessStatusDetails :subject-id="item.source_business.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="查看来源与相关清偿" @changed="$emit('changed')" />
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -382,6 +387,9 @@ th {
   white-space: nowrap;
 }
 
+.source-cell { padding: 0 8px 10px; }
+.source-cell :deep(> details > summary) { color: var(--brief-green); }
+
 td[data-label="凭证"] {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -507,5 +515,8 @@ td[data-label="事项"] {
     font-weight: 750;
     content: attr(data-label);
   }
+
+  .source-cell { display: block; padding: 0 0 8px; }
+  .source-cell::before { content: none; }
 }
 </style>

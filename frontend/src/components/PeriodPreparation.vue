@@ -39,7 +39,7 @@ function collectionLink(section: string) {
       </details>
     </header>
     <h3>所选期间相关的当前跟进</h3>
-    <p class="scope-note">全公司范围，未按页面筛选。按 {{ preparation.as_of }} 已知资料查看；仅纳入所选期间业务相关的后来事项，不改变原封存结果。</p>
+    <p class="scope-note">全公司 · 截至 {{ preparation.as_of }} 的相关后续事项 · 不改变所选月封存结果</p>
     <div class="followup-statuses">
       <span>资料：{{ businessStateLabel(preparation.current_followups.materials.status) }}</span>
       <span>核算：{{ businessStateLabel(preparation.current_followups.accounting.status) }}</span>
@@ -52,7 +52,7 @@ function collectionLink(section: string) {
     <p v-if="preparation.current_followups.external.obligation_count" class="scope-note">外部办理：{{ businessStateLabel(preparation.current_followups.external.status) }} · {{ preparation.current_followups.external.obligation_count }} 项义务 <RouterLink :to="collectionLink('external_followups')">查看办理明细</RouterLink></p>
     <div v-if="groups.length" class="issue-groups">
       <details v-for="group in groups" :key="group.key" class="issue-group">
-        <summary><strong>{{ group.label }} · {{ group.issues.length }} 条问题</strong><span class="first-issue">{{ group.issues[0].message || '相关依据需要核对' }}</span><span class="show-all">展开本组已返回的问题</span></summary>
+        <summary><strong>{{ group.label }} · {{ group.issues.length }} 条问题</strong><span class="first-issue">{{ group.issues[0].message || '相关依据需要核对' }}</span></summary>
         <ol><li v-for="(issue, index) in group.issues" :key="index">
           <p>{{ issue.message || '相关依据需要核对，见详细来源。' }}</p>
           <BusinessStatusDetails v-if="issue.subject_id" :subject-id="issue.subject_id" :period="preparation.period" :snapshot-version="snapshotVersion" summary-label="查看相关依据" @changed="$emit('changed')" />
@@ -90,10 +90,10 @@ p { margin: 5px 0; } p, dl, details { font-size: 13px; line-height: 1.65; }
 .issue-groups { display: grid; gap: 8px; margin: 12px 0; }
 .issue-group { padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--warning); border-radius: 8px; }
 summary { cursor: pointer; } summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-.first-issue { display: block; margin: 4px 0; overflow-wrap: anywhere; } .show-all { color: var(--accent); font-size: 12px; }
+.first-issue { display: block; margin: 3px 0 0; color: var(--muted); overflow-wrap: anywhere; }
 .issue-group[open] .first-issue { display: none; } li { margin: 10px 0; } ol { padding-left: 22px; }
 .followup-details, .technical-details { margin-top: 12px; }
 dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; } dt { color: var(--muted); } dd { margin: 0; }
 a { color: var(--accent); } pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (max-width: 720px) { .period-preparation { padding: 14px; } .preparation-heading { display: block; } .frozen-details { margin-top: 6px; } dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } summary { min-height: 32px; } }
+@media (max-width: 720px) { .period-preparation { padding: 14px; } .preparation-heading { display: block; } .frozen-details { margin-top: 6px; } dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } summary { min-height: 44px; } }
 </style>

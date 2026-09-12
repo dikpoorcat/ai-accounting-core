@@ -54,7 +54,8 @@ test("actual v2 responses pass runtime consumers and all five pages render histo
       assert.match(html, /当前后续事项/, name);
       if (name !== "Reports") assert.match(html, /完整总计.*筛选总计.*已加载/s, name);
       if (name === "Employees") assert.match(html, /暂无测算记录|未提供/, name);
-      if (name === "Employees" || name === "Assets") assert.match(html, /相关历史清偿（含关联来源，截至所选月末） · 完整总计/, name);
+      if (name === "Employees") assert.match(html, /相关来源历史清偿 · 截至所选月末 · 共 \d+ 项，已加载 \d+ 项/, name);
+      if (name === "Assets") assert.match(html, /相关历史清偿（含关联来源，截至所选月末） · 完整总计/, name);
     }
   } finally { await server.close(); delete globalThis.t4RenderFixtures; }
 });
@@ -177,9 +178,9 @@ test("historical source pages expose totals and use a separate historical contin
     const { default: component } = await server.ssrLoadModule("/src/views/EmployeesView.vue");
     const app = createSSRApp(component); app.use(router);
     const html = await renderToString(app), visible = html.replace(/<pre[^>]*>[\s\S]*?<\/pre>/g, "");
-    assert.match(visible, /相关历史清偿（含关联来源，截至所选月末） · 完整总计 120 项 · 已加载 1 项/);
+    assert.match(visible, /相关来源历史清偿 · 截至所选月末 · 共 120 项，已加载 1 项/);
     assert.match(visible, /查看更多历史清偿与精确来源/);
-    assert.match(visible, /明细包含关联来源/);
+    assert.match(visible, /含关联来源明细；本来源金额见上方汇总/);
     assert.match(visible, /查看精确来源业务/);
     assert.match(visible, /当前款项金额尚不能完整建立/);
     assert.match(visible, /仍有 2 组来源尚不能证明已被封存采用/);
@@ -261,7 +262,8 @@ test("T6 preparation retains distinct source issues and exposes incomplete known
     const app = createSSRApp(component, { preparation }); app.use(router);
     const html = await renderToString(app);
     assert.match(html, /所选期间相关的当前跟进/);
-    assert.match(html, /全公司范围，未按页面筛选/);
+    assert.match(html, new RegExp(`全公司 · 截至 ${preparation.as_of} 的相关后续事项`));
+    assert.match(html, /不改变所选月封存结果/);
     assert.match(html, /当前资料核对 · 2 条问题/);
     assert.match(html, /source-a/); assert.match(html, /source-b/);
     assert.match(html, /class="needs-check"[^>]*>当前款项金额尚不能完整建立/);

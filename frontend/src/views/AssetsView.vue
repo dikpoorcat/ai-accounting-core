@@ -12,6 +12,7 @@ import {
 } from "../api/assets";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
+import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import PeriodPreparation from "../components/PeriodPreparation.vue";
 import DashboardSourceHistory from "../components/DashboardSourceHistory.vue";
@@ -20,6 +21,7 @@ import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import VoucherTrace from "../components/brief/VoucherTrace.vue";
 import { localBusinessName } from "../api/localKernel";
 import { useDashboardContext } from "../composables/useDashboardContext";
+import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
 const filters = [
@@ -99,6 +101,14 @@ const attentionItems = computed(() => {
   }
   return alerts;
 });
+const sectionLinks = computed(() => data.value && selectedPeriodView.value ? [
+  { id: "assets-overview", label: "概览" },
+  { id: "assets-checks", label: "核对事项" },
+  { id: "asset-movements-title", label: "本月变动" },
+  { id: "asset-list-title", label: "资产卡片" },
+  { id: "asset-projects-title", label: "项目投入" },
+] : []);
+const { activeSection, focusSection, positionSection } = useDashboardSections(sectionLinks, "assets-overview");
 
 function routePeriod(): string | null {
   const value = route.query.period;
@@ -148,9 +158,9 @@ async function loadAssets(period: string) {
     const result = await fetchAssetsDashboard(period, controller.signal, { asset_filter: filter.value });
     if (isCurrent(generation, selection) && activeController === controller) { response.value = result; updateNotice.value = ""; }
     await nextTick();
-    if (isCurrent(generation, selection) && activeController === controller && ["#asset-list-title", "#asset-projects-title", "#asset-movements-title", "#assets-attention-title"].includes(route.hash)) {
+    if (isCurrent(generation, selection) && activeController === controller && route.hash === "#assets-attention-title") {
       const heading = document.getElementById(route.hash.slice(1));
-      heading?.scrollIntoView({ block: "start" }); heading?.focus({ preventScroll: true });
+      if (heading) { positionSection(heading); heading.focus({ preventScroll: true }); }
     }
   } catch (error: unknown) {
     if (isCurrent(generation, selection) && activeController === controller) errorMessage.value = dashboardErrorMessage(error);
@@ -358,9 +368,7 @@ onBeforeUnmount(() => {
   <section class="assets-page">
     <div class="assets-content">
       <DashboardModuleHeader
-        eyebrow="资产"
         title="长期资产概览"
-        description="按月查看资产价值、本月新增和折旧摊销，以及出售、报废和项目投入情况。"
         :options="periodOptions"
         :selected="selectedPeriod"
         :loading="loading"
@@ -368,6 +376,7 @@ onBeforeUnmount(() => {
         @change="changePeriod"
         @refresh="refresh"
       />
+      <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="资产内容导航" floating @select="focusSection" />
 
       <p v-if="updateNotice" class="note" role="status">{{ updateNotice }}</p>
       <section v-if="loading && !data" class="state-panel" aria-live="polite">
@@ -387,10 +396,10 @@ onBeforeUnmount(() => {
       </section>
 
       <template v-else>
-        <section class="assets-hero" aria-labelledby="assets-total-label">
+        <section id="assets-overview" class="assets-hero" tabindex="-1" aria-labelledby="assets-total-label">
           <div>
             <p class="eyebrow">
-              {{ selectedPeriodView.label }}期末 · 长期资产
+              {{ selectedPeriodView.label }}期末 · 全公司
             </p>
             <span id="assets-total-label">期末长期资产账面价值</span>
             <strong class="assets-total">{{ formatFen(data.ledger_net_fen) }}</strong>
@@ -450,25 +459,21 @@ onBeforeUnmount(() => {
           </article>
         </section>
 
-        <p class="note">以上为全公司长期资产汇总，未按资产筛选。</p>
-        <nav class="asset-sections" aria-label="资产内容导航">
-          <a href="#asset-list-title">资产卡片</a>
-          <a href="#asset-projects-title">项目投入 · {{ formatFen(data.project_cost_fen) }}</a>
-          <a href="#asset-movements-title">本月变动</a>
-        </nav>
-        <PeriodPreparation :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
+        <section id="assets-checks" class="assets-checks" tabindex="-1" aria-label="资产核对事项">
+          <PeriodPreparation :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
 
-        <section v-if="attentionItems.length" class="panel attention-panel" aria-labelledby="assets-attention-title">
-          <div class="section-heading">
-            <div><p class="eyebrow">需要核对</p><h2 id="assets-attention-title" tabindex="-1">资产关注事项</h2></div>
-            <span class="attention-count">{{ attentionItems.length }} 项</span>
-          </div>
-          <ul><li v-for="item in attentionItems" :key="item">{{ item }}</li></ul>
+          <section v-if="attentionItems.length" class="panel attention-panel" aria-labelledby="assets-attention-title">
+            <div class="section-heading">
+              <div><h2 id="assets-attention-title" tabindex="-1">资产关注事项</h2></div>
+              <span class="attention-count">{{ attentionItems.length }} 项</span>
+            </div>
+            <ul><li v-for="item in attentionItems" :key="item">{{ item }}</li></ul>
+          </section>
         </section>
 
         <section class="panel">
           <div class="section-heading">
-            <div><p class="eyebrow">本月变化</p><h2 id="asset-movements-title" tabindex="-1">资产变动摘要</h2></div>
+            <div><h2 id="asset-movements-title" tabindex="-1">资产变动摘要</h2></div>
           </div>
           <div class="movement-grid">
             <article>
@@ -497,7 +502,7 @@ onBeforeUnmount(() => {
 
         <section class="panel">
           <div class="section-heading">
-            <div><p class="eyebrow">逐项查看 · 账面口径</p><h2 id="asset-list-title" tabindex="-1">资产明细</h2></div>
+            <div><h2 id="asset-list-title" tabindex="-1">资产明细</h2></div>
             <strong>{{ data.registered_count }} 项卡片</strong>
           </div>
           <div class="asset-toolbar">
@@ -564,8 +569,8 @@ onBeforeUnmount(() => {
                   <dt>{{ row.label }}</dt><dd>{{ row.value }}</dd>
                 </div>
               </dl>
-              <DashboardSourceHistory endpoint="assets" section="source_history" :entity-id="item.asset_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" title="查看本项资产的来源历史" @changed="refresh" />
-              <DashboardSourceHistory endpoint="assets" section="settlement_events" :entity-id="item.asset_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" title="当前后续事项 · 查看精确关联的清偿事件" @changed="refresh" />
+              <DashboardSourceHistory class="asset-source-history" endpoint="assets" section="source_history" :entity-id="item.asset_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" title="查看本项资产的来源历史" @changed="refresh" />
+              <DashboardSourceHistory class="asset-source-history" endpoint="assets" section="settlement_events" :entity-id="item.asset_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" title="当前后续事项 · 关联清偿事件" @changed="refresh" />
               <details class="accounting-detail">
                 <summary>查看折旧摊销与核算说明</summary>
                 <p>{{ chargeNote(item) }}</p>
@@ -611,11 +616,14 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="panel">
-          <div class="section-heading"><div><p class="eyebrow">项目投入</p><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong>{{ formatFen(data.project_cost_fen) }}</strong></div>
+          <div class="section-heading"><div><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong>{{ formatFen(data.project_cost_fen) }}</strong></div>
           <p class="note">项目来源独立展示；整批结算不分摊为单卡付款。</p>
           <p v-if="!data.projects.length" class="note">本月没有可展示的项目来源。</p>
-          <details v-for="project in data.projects" :key="project.source_id" class="asset-card">
-            <summary>{{ project.period }} · {{ project.label }} · {{ project.party }} · 剩余项目成本 {{ formatFen(project.remaining_fen) }}</summary>
+          <details v-for="project in data.projects" :key="project.source_id" class="asset-card project-card">
+            <summary class="project-summary">
+              <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>展开查看来源与付款</small></span>
+              <span class="project-value"><span>剩余项目成本</span><strong>{{ formatFen(project.remaining_fen) }}</strong></span>
+            </summary>
             <div class="settlement-detail">
               <p v-for="(issue, issueIndex) in project.settlement.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本项目来源款项尚需核对，请查看精确依据。' }}</p>
               <p>该来源已计入项目成本 {{ formatFen(project.cost_fen) }}，付款情况单独列示。</p>
@@ -639,10 +647,19 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.asset-sections { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
-.asset-sections a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--accent); background: var(--surface); text-decoration: none; }
-.asset-sections a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-h2[id] { scroll-margin-top: 100px; }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+[id][tabindex="-1"] { scroll-margin-top: 76px; }
+.assets-checks { min-width: 0; }
+.asset-source-history { margin: 0 16px 12px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.asset-source-history :deep(summary) { min-height: 36px; align-content: center; cursor: pointer; color: var(--accent); }
+.asset-source-history :deep(summary:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.project-card { margin-top: 10px; }
+.project-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, auto); align-items: center; gap: 12px 24px; }
+.project-copy, .project-value { display: grid; min-width: 0; gap: 4px; }
+.project-copy > span, .project-value > span { color: var(--muted); font-size: 12px; }
+.project-copy > small { color: var(--accent); font-size: 11px; }
+.project-value { justify-items: end; font-variant-numeric: tabular-nums; }
+.project-value strong { color: var(--gold); font-size: 18px; }
 .source-issue { color: var(--warning); }
 .assets-total, .kpi strong, .book-value strong, .value-grid strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .asset-card > summary:not(.asset-card-summary) { min-height: 44px; padding: 16px; overflow-wrap: anywhere; cursor: pointer; }
@@ -660,7 +677,7 @@ h2[id] { scroll-margin-top: 100px; }
 .state-panel span, .state-panel button { color: var(--muted); }
 .state-panel.error { border-color: var(--danger); }
 .state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--accent); color: var(--surface); cursor: pointer; }
-.assets-hero { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .75fr); gap: 25px; min-height: 160px; padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow-soft); }
+.assets-hero { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .75fr); gap: 25px; min-height: 198px; padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface))); box-shadow: var(--shadow-soft); }
 .eyebrow { margin: 0 0 5px; color: var(--accent); font-size: 11px; font-weight: 850; letter-spacing: .08em; }
 .assets-hero > div:first-child > span { color: var(--muted); font-size: 12px; }
 .assets-total { display: block; margin: 7px 0 3px; color: var(--gold); font-size: clamp(31px, 4vw, 42px); line-height: 1.1; letter-spacing: -.035em; }
@@ -692,7 +709,7 @@ h2[id] { scroll-margin-top: 100px; }
 .section-heading h2 { font-size: 20px; }
 .section-heading > strong { color: var(--muted); font-size: 12px; }
 .attention-count { padding: 3px 9px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: 11px; font-weight: 800; }
-.movement-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-top: 14px; }
+.movement-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 7px; margin-top: 14px; }
 .movement-grid article { padding: 14px; border-radius: 11px; background: var(--surface-soft); }
 .movement-grid strong { display: block; margin: 5px 0 3px; font-size: 20px; }
 .asset-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0 12px; }
@@ -730,5 +747,5 @@ h2[id] { scroll-margin-top: 100px; }
 .empty-filter { padding: 24px; border-radius: 12px; background: var(--surface-soft); color: var(--muted); text-align: center; }
 .note { color: var(--muted); font-size: 13px; }
 @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .asset-grid { grid-template-columns: 1fr; } }
-@media (max-width: 720px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .value-grid { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head, .status-row { align-items: flex-start; flex-direction: column; } .control { width: 100%; min-height: 44px; } .book-value { justify-items: start; white-space: normal; } .asset-detail { grid-template-columns: 1fr; } .section-heading { flex-wrap: wrap; gap: 10px; } .asset-sections { align-items: stretch; } .asset-sections a { min-width: 0; overflow-wrap: anywhere; } }
+@media (max-width: 720px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .value-grid, .project-summary { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head, .status-row { align-items: flex-start; flex-direction: column; } .control { width: 100%; min-height: 44px; } .book-value, .project-value { justify-items: start; white-space: normal; } .asset-detail { grid-template-columns: 1fr; } .section-heading { flex-wrap: wrap; gap: 10px; } }
 </style>

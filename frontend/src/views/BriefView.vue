@@ -13,6 +13,7 @@ import BriefActivityWorkbench from "../components/brief/BriefActivityWorkbench.v
 import BriefFinancialOverview from "../components/brief/BriefFinancialOverview.vue";
 import BriefOpenItems from "../components/brief/BriefOpenItems.vue";
 import BriefWorkforceSection from "../components/brief/BriefWorkforceSection.vue";
+import { useDashboardSections } from "../composables/useDashboardSections";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
@@ -35,9 +36,7 @@ const sectionErrors = ref<Partial<Record<BriefSection, string>>>({});
 const pageControllers = new Map<BriefSection, AbortController>();
 const updateNotice = ref("");
 const error = ref("");
-const activeSection = ref("overview");
 let controller: AbortController | null = null;
-let sectionSyncLocked = false;
 let initialized = false;
 let mounted = true;
 let requestGeneration = 0;
@@ -51,6 +50,7 @@ const periodOptions = computed(() => context.value?.periods || []);
 const data = computed<BriefData | null>(() => response.value?.data || null);
 const isClosed = computed(() => response.value?.selected_period?.status === "closed");
 const sectionLinks = computed(() => {
+  if (!data.value) return [];
   const links = [
     { id: "overview", label: "概览" },
     { id: "open-items", label: "待收待付" },
@@ -64,6 +64,7 @@ const sectionLinks = computed(() => {
   );
   return links;
 });
+const { activeSection, focusSection } = useDashboardSections(sectionLinks, "overview");
 const priorities = computed(() => {
   if (!data.value || !response.value?.selected_period) return [];
   const items: PriorityItem[] = [];
@@ -229,68 +230,6 @@ function runPriorityAction(action: PriorityAction) {
   });
 }
 
-function lockSectionSync() {
-  sectionSyncLocked = true;
-}
-
-function enableSectionSyncForUserScroll() {
-  sectionSyncLocked = false;
-}
-
-function handleSectionScrollKey(event: KeyboardEvent) {
-  if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
-    enableSectionSyncForUserScroll();
-  }
-}
-
-function handleScrollbarPointer(event: PointerEvent) {
-  if (event.clientX >= document.documentElement.clientWidth) {
-    enableSectionSyncForUserScroll();
-  }
-}
-
-function positionSection(section: HTMLElement) {
-  const root = document.documentElement;
-  const previousBehavior = root.style.scrollBehavior;
-  root.style.scrollBehavior = "auto";
-  window.scrollTo({
-    top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - (document.querySelector(".section-nav")?.getBoundingClientRect().height ?? 42) - 16),
-    behavior: "auto",
-  });
-  root.style.scrollBehavior = previousBehavior;
-}
-
-function focusSection(id: string) {
-  const section = document.getElementById(id);
-  if (!section) return;
-  lockSectionSync();
-  activeSection.value = id;
-  positionSection(section);
-  const focusTarget = section.matches("[tabindex]") ? section : section.querySelector<HTMLElement>("[tabindex]");
-  focusTarget?.focus({ preventScroll: true });
-}
-
-function updateSectionFromScroll() {
-  if (sectionSyncLocked) return;
-  const links = sectionLinks.value;
-  if (!links.length) return;
-  const probeTop = (document.querySelector(".section-nav")?.getBoundingClientRect().height ?? 42) + 16;
-  let candidate = links[0].id;
-  for (const link of links) {
-    const section = document.getElementById(link.id);
-    if (!section || section.getBoundingClientRect().top > probeTop) break;
-    candidate = link.id;
-  }
-  if (candidate === activeSection.value) return;
-  const currentIndex = links.findIndex((link) => link.id === activeSection.value);
-  const candidateIndex = links.findIndex((link) => link.id === candidate);
-  if (candidateIndex < currentIndex) {
-    const currentSection = document.getElementById(activeSection.value);
-    if (currentSection && currentSection.getBoundingClientRect().top <= probeTop + 24) return;
-  }
-  activeSection.value = candidate;
-}
-
 function statusLabel(status: string) {
   return status === "closed" ? "已关账" : "未关账";
 }
@@ -310,7 +249,7 @@ function heroNote() {
   const period = response.value?.selected_period;
   if (!period) return "";
   if (period.status !== "closed") {
-    return "这里汇总本月已记账的业务，以及月底的资金、资产和待收待付。";
+    return "截至本月末 · 已入账记录";
   }
   const closedAt = period.closed_at ? `${new Date(period.closed_at).toLocaleString("zh-CN")} ` : "";
   return `${closedAt}完成关账；以下金额反映该月末情况。`;
@@ -357,31 +296,19 @@ async function revealCollection() {
 }
 watch(() => [route.query.section, !!data.value], () => { void revealCollection(); });
 onMounted(() => {
-  window.addEventListener("scroll", updateSectionFromScroll, { passive: true });
-  window.addEventListener("wheel", enableSectionSyncForUserScroll, { passive: true });
-  window.addEventListener("touchmove", enableSectionSyncForUserScroll, { passive: true });
-  window.addEventListener("keydown", handleSectionScrollKey);
-  window.addEventListener("pointerdown", handleScrollbarPointer);
   void initialize();
 });
 onBeforeUnmount(() => {
   mounted = false;
   invalidateRequests();
-  window.removeEventListener("scroll", updateSectionFromScroll);
-  window.removeEventListener("wheel", enableSectionSyncForUserScroll);
-  window.removeEventListener("touchmove", enableSectionSyncForUserScroll);
-  window.removeEventListener("keydown", handleSectionScrollKey);
-  window.removeEventListener("pointerdown", handleScrollbarPointer);
 });
 </script>
 
 <template>
   <section class="brief-page">
-    <DashboardModuleHeader
-      eyebrow="经营简报"
-      title="月度经营与财务概览"
-      description="了解本月赚亏、资金去向和待收待付。"
-      :options="periodOptions"
+      <DashboardModuleHeader
+        title="月度经营与财务概览"
+        :options="periodOptions"
       :selected="selectedPeriod"
       :loading="loading"
       select-label="查看月份"
@@ -407,19 +334,12 @@ onBeforeUnmount(() => {
         :items="sectionLinks"
         :active="activeSection"
         label="经营简报区段"
+        floating
         @select="focusSection"
       />
 
       <p v-if="updateNotice" role="status" class="update-notice">{{ updateNotice }}</p>
-      <section id="overview" class="kpi-grid section-anchor" tabindex="-1" aria-label="本月核心指标">
-        <article :class="['kpi', 'result', { loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }]"><span class="kpi-label">本月账面盈亏</span><strong>{{ formatFen(data.position.month_result_fen) }}</strong><small>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</small></article>
-        <article class="kpi bank"><span class="kpi-label">月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金和支付平台的账面余额</small></article>
-        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ data.open_items.receivable_count }} 项来源 · 查看构成 ›</small></button>
-        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} 项来源 · 查看构成 ›</small></button>
-      </section>
-      <p class="metric-scope">以上为所选月末完整汇总。待收包含预付款待冲抵等事项，不代表预计或到期现金收付。</p>
-      <p v-if="data.position.complete === false || data.open_items.complete === false || data.open_items.unestablished_count" class="needs-check" role="status">部分来源尚待核对，已知金额也不能视为完整结论。<button type="button" @click="focusSection('validation')">查看依据与问题</button></p>
-      <section id="brief-conclusion" class="cockpit section-anchor" tabindex="-1">
+      <section id="overview" class="cockpit section-anchor" tabindex="-1">
         <div class="cockpit-copy">
           <div class="cockpit-meta">
             <span>{{ response?.selected_period?.short_label }}</span>
@@ -492,6 +412,14 @@ onBeforeUnmount(() => {
           </div>
         </aside>
       </section>
+
+      <section class="kpi-grid" aria-label="本月核心指标">
+        <article :class="['kpi', 'result', { loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }]"><span class="kpi-label">本月账面盈亏</span><strong>{{ formatFen(data.position.month_result_fen) }}</strong><small>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</small></article>
+        <article class="kpi bank"><span class="kpi-label">月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金和支付平台的账面余额</small></article>
+        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ data.open_items.receivable_count }} 项来源 · 查看构成 ›</small></button>
+        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} 项来源 · 查看构成 ›</small></button>
+      </section>
+      <p v-if="data.position.complete === false || data.open_items.complete === false || data.open_items.unestablished_count" class="needs-check" role="status">部分来源尚待核对，已知金额也不能视为完整结论。<button type="button" @click="focusSection('validation')">查看依据与问题</button></p>
 
       <div id="open-items" class="section-anchor" tabindex="-1">
         <BriefOpenItems
@@ -610,7 +538,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.metric-scope, .update-notice { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.update-notice { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
 .needs-check { padding: 12px; border-radius: 10px; color: var(--warning); background: var(--warning-soft); }
 .needs-check button { margin-left: 12px; cursor: pointer; background: transparent; border: 0; text-decoration: underline; }
 .collection-details { margin: 20px 0; }
@@ -1163,7 +1091,7 @@ button.kpi:focus-visible {
   }
 
   .kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .kpi {
@@ -1206,7 +1134,7 @@ button.kpi:focus-visible {
   }
 
   .kpi > strong {
-    font-size: 20px;
+    font-size: 23px;
   }
 }
 </style>

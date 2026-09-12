@@ -56,7 +56,6 @@ function formatDate(value: string | null) {
   <section class="financial-section" aria-labelledby="financial-title">
     <div class="section-heading">
       <div>
-        <p class="section-kicker">资金与资产负债</p>
         <h2 id="financial-title">资金与资产负债</h2>
       </div>
       <span v-if="position.equation_valid !== true" :class="['equation-status', { error: position.equation_valid === false }]">

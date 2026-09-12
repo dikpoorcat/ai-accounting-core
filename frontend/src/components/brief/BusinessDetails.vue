@@ -20,5 +20,5 @@ const heading = computed(() => kind.value === "reimbursed_asset_batch" ? "整批
   </details>
 </template>
 <style scoped>
-.business-details { margin-top: 12px; font-size: 13px; color: var(--muted); } summary { cursor: pointer; } p { margin: 10px 0; } ul { padding-left: 18px; } li { padding: 6px 0; } strong { margin-left: 12px; color: var(--ink); white-space: nowrap; }
+.business-details { margin-top: 12px; font-size: 13px; color: var(--muted); } summary { cursor: pointer; } p { margin: 10px 0; } ul { padding-left: 18px; } li { padding: 6px 0; } strong { margin-left: 12px; color: var(--text); white-space: nowrap; }
 </style>

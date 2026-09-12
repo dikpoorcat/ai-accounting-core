@@ -14,14 +14,15 @@ import {
   type ReportStatementRow,
 } from "../api/reports";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
+import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import PeriodPreparation from "../components/PeriodPreparation.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
+import { useDashboardSections } from "../composables/useDashboardSections";
 import { formatFen } from "../utils/money";
 
 interface SummaryCard {
   source: string;
   label: string;
-  explanation: string;
   value: string;
   note: string;
 }
@@ -144,6 +145,16 @@ const monthlyPreparations = computed(() => (report.value?.period_preparations ??
     `外部办理：${businessStateLabel(current.external.status)}`,
   ].join(" · ") };
 }));
+const sectionLinks = computed(() => {
+  if (!report.value) return [];
+  return [
+    { id: "report-overview", label: "概览" },
+    ...(report.value.carry_forward.options.length || readinessGroups.value.length ? [{ id: "report-checks", label: "核对事项" }] : []),
+    ...(monthlyPreparations.value.length ? [{ id: "report-months", label: "各月跟进" }] : []),
+    ...(report.value.statements.length ? [{ id: "report-statements", label: "财务报表" }] : []),
+  ];
+});
+const { activeSection, focusSection } = useDashboardSections(sectionLinks, "report-overview");
 const reportHeadline = computed(() => {
   if (needsRegeneration.value) return "报表需要重新生成";
   if (report.value?.export.available) return "本季度报表已准备好";
@@ -152,10 +163,10 @@ const reportHeadline = computed(() => {
   return "本季度报表暂时无法下载";
 });
 const reportNextStep = computed(() => {
-  if (needsRegeneration.value) return "请查看下方提示，重新生成后即可再次下载。";
-  if (report.value?.export.available) return "可生成并下载 Excel 报表，使用前请复核。";
-  if (pendingReadiness.value.length) return "请先核对下方事项，处理后点击“刷新报表”查看结果。";
-  if (report.value?.close_state === "open") return "目前可查看试算金额；相关月份完成结账后，再刷新报表。";
+  if (needsRegeneration.value) return "请根据提示重新生成。";
+  if (report.value?.export.available) return "可下载 Excel 报表，使用前请复核。";
+  if (pendingReadiness.value.length) return "核对下方事项后刷新报表。";
+  if (report.value?.close_state === "open") return "当前为试算金额，相关月份结账后刷新。";
   return report.value?.message ?? "";
 });
 const needsCarryForward = computed(() => report.value?.technical.requirement_codes.includes("report_carry_forward") ?? false);
@@ -175,7 +186,6 @@ const summaryCards = computed<SummaryCard[]>(() => {
     {
       source: "资产负债表",
       label: "资产合计",
-      explanation: "公司资产的账面价值",
       primary: summary.assets_total_fen,
       noteLabel: "负债和所有者权益",
       secondary: summary.liabilities_equity_total_fen,
@@ -183,7 +193,6 @@ const summaryCards = computed<SummaryCard[]>(() => {
     {
       source: "利润表",
       label: "本季度净利润",
-      explanation: "本季度账面盈亏",
       primary: summary.current_net_profit_fen,
       noteLabel: "本年累计",
       secondary: summary.year_to_date_net_profit_fen,
@@ -191,7 +200,6 @@ const summaryCards = computed<SummaryCard[]>(() => {
     {
       source: "现金流量表",
       label: "本季度现金净增加额",
-      explanation: "本季度现金类资金增加或减少",
       primary: summary.current_cash_change_fen,
       noteLabel: "期末现金",
       secondary: summary.ending_cash_fen,
@@ -201,7 +209,6 @@ const summaryCards = computed<SummaryCard[]>(() => {
     .map((item) => ({
       source: item.source,
       label: item.label,
-      explanation: item.explanation,
       value: formatFen(item.primary),
       note: `${item.noteLabel} ${formatFen(item.secondary)}`,
     }));
@@ -344,7 +351,7 @@ async function synchronizeQuarter(force = false) {
       currentContext.default_period ??
       undefined;
     if (route.query.carry_forward_fact_id && selectedQuarter.value && target !== selectedQuarter.value) {
-      await router.replace({ query: { ...route.query, carry_forward_fact_id: undefined } });
+      await router.replace({ query: { ...route.query, carry_forward_fact_id: undefined }, hash: route.hash });
       return;
     }
     if (route.query.quarter !== target || route.query.period !== targetPeriod) {
@@ -354,6 +361,7 @@ async function synchronizeQuarter(force = false) {
           period: targetPeriod,
           quarter: target,
         },
+        hash: route.hash,
       });
       return;
     }
@@ -618,9 +626,7 @@ onBeforeUnmount(() => {
   <section class="reports-page">
     <div class="reports-content">
       <DashboardModuleHeader
-        eyebrow="财务报表"
         title="季度财务报表"
-        description="查看本季度资产、盈亏和现金变化，核对后下载财务报表。"
         :options="quarterOptions"
         :selected="selectedQuarter"
         :loading="loading"
@@ -628,6 +634,7 @@ onBeforeUnmount(() => {
         @change="changeQuarter"
         @refresh="refresh"
       />
+      <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="报表内容导航" floating @select="focusSection" />
 
       <section v-if="!quarterOptions.length && !loading" class="state-panel">
         <strong>还没有可查看的报表</strong>
@@ -647,7 +654,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-else-if="report" class="report-dashboard">
-        <section class="report-hero" aria-labelledby="report-readiness-title">
+        <section id="report-overview" class="report-hero" tabindex="-1" aria-labelledby="report-readiness-title">
           <div class="report-heading">
             <div>
               <p class="eyebrow">{{ report.period.label }}</p>
@@ -688,56 +695,57 @@ onBeforeUnmount(() => {
           <article v-for="item in summaryCards" :key="item.source">
             <span>{{ item.source }} · {{ item.label }}</span>
             <strong>{{ item.value }}</strong>
-            <span>{{ item.explanation }}</span>
             <span>{{ item.note }}</span>
           </article>
         </section>
 
-        <details v-if="report.carry_forward.options.length" class="panel report-source" :open="needsCarryForward">
-          <summary>报表来源{{ report.carry_forward.selected_fact_id ? ' · 已指定接账前资料' : '' }}</summary>
-          <label>接账前累计资料
-            <select :value="report.carry_forward.selected_fact_id || ''" :disabled="loading || exporting" @change="changeCarryForward(($event.target as HTMLSelectElement).value)">
-              <option value="">采用现有报表资料</option>
-              <option v-for="source in report.carry_forward.options" :key="source.fact_id" :value="source.fact_id">{{ source.label }} · {{ source.evidence_count }} 份附件</option>
-            </select>
-          </label>
-          <p>如果后来补充了接账前的报表，可在这里选择。本页金额和下载文件使用同一份资料。</p>
-          <details><summary>供核对的资料版本</summary><ul><li v-for="source in report.carry_forward.options" :key="source.fact_id">{{ source.label }}{{ source.used ? ' · 本次已采用' : '' }}：{{ source.fact_id }}</li></ul></details>
-        </details>
+        <section v-if="report.carry_forward.options.length || readinessGroups.length" id="report-checks" class="report-checks" tabindex="-1" aria-label="报表核对事项">
+          <details v-if="report.carry_forward.options.length" class="panel report-source" :open="needsCarryForward">
+            <summary>报表来源{{ report.carry_forward.selected_fact_id ? ' · 已指定接账前资料' : '' }}</summary>
+            <label>接账前累计资料
+              <select :value="report.carry_forward.selected_fact_id || ''" :disabled="loading || exporting" @change="changeCarryForward(($event.target as HTMLSelectElement).value)">
+                <option value="">采用现有报表资料</option>
+                <option v-for="source in report.carry_forward.options" :key="source.fact_id" :value="source.fact_id">{{ source.label }} · {{ source.evidence_count }} 份附件</option>
+              </select>
+            </label>
+            <p>页面与下载文件采用同一份资料。</p>
+            <details><summary>供核对的资料版本</summary><ul><li v-for="source in report.carry_forward.options" :key="source.fact_id">{{ source.label }}{{ source.used ? ' · 本次已采用' : '' }}：{{ source.fact_id }}</li></ul></details>
+          </details>
 
-        <details v-for="group in readinessGroups" :key="group.key" class="readiness-group" :open="group.expanded">
-          <summary>{{ group.label }}</summary>
-          <div class="readiness">
-          <article
-            v-for="item in group.items"
-            :key="item.key"
-            class="readiness-item"
-            :class="[item.state, { detailed: item.details.length }]"
-          >
-            <div class="readiness-head">
-              <span>{{ item.state === "pass" ? "✓" : item.state === "pending" ? "…" : "!" }}</span>
-              <strong>{{ item.label }}</strong>
+          <details v-for="group in readinessGroups" :key="group.key" class="readiness-group" :open="group.expanded">
+            <summary>{{ group.label }}</summary>
+            <div class="readiness">
+            <article
+              v-for="item in group.items"
+              :key="item.key"
+              class="readiness-item"
+              :class="item.state"
+            >
+              <div class="readiness-head">
+                <span>{{ item.state === "pass" ? "✓" : item.state === "pending" ? "…" : "!" }}</span>
+                <strong>{{ item.label }}</strong>
+              </div>
+              <p>{{ item.summary }}</p>
+              <ul v-if="item.details.length">
+                <li v-for="detail in item.details" :key="`${detail.primary}-${detail.secondary}`">
+                  <div><strong>{{ detail.primary }}</strong><span>{{ detail.secondary }}</span></div>
+                  <RouterLink v-if="detail.location?.voucher_number !== undefined && detail.location?.period" :to="{ path: '/', query: { company_id: route.query.company_id, period: detail.location.period, voucher: String(detail.location.voucher_number) } }">查看相关凭证</RouterLink>
+                  <details v-if="detail.location"><summary>供核对的详细信息</summary><pre>{{ JSON.stringify(detail.location, null, 2) }}</pre></details>
+                  <strong v-if="detail.amount_fen != null">{{ formatFen(detail.amount_fen) }}</strong>
+                </li>
+              </ul>
+            </article>
             </div>
-            <p>{{ item.summary }}</p>
-            <ul v-if="item.details.length">
-              <li v-for="detail in item.details" :key="`${detail.primary}-${detail.secondary}`">
-                <div><strong>{{ detail.primary }}</strong><span>{{ detail.secondary }}</span></div>
-                <RouterLink v-if="detail.location?.voucher_number !== undefined && detail.location?.period" :to="{ path: '/', query: { company_id: route.query.company_id, period: detail.location.period, voucher: String(detail.location.voucher_number) } }">查看相关凭证</RouterLink>
-                <details v-if="detail.location"><summary>供核对的详细信息</summary><pre>{{ JSON.stringify(detail.location, null, 2) }}</pre></details>
-                <strong v-if="detail.amount_fen != null">{{ formatFen(detail.amount_fen) }}</strong>
-              </li>
-            </ul>
-          </article>
-          </div>
-        </details>
+          </details>
+        </section>
 
         <p v-if="report.draft" class="draft-note">
-          以下为试算金额，后续记账或核对资料后可能变化，暂不能生成下载文件。
+          试算金额可能随资料变化，暂不能下载。
         </p>
 
-        <section class="monthly-preparations" aria-label="季度内各月核算与相关跟进">
-          <h3>季度内各月核算与相关跟进</h3>
-          <p class="monthly-scope">各月跟进为全公司范围，仅包含该期间相关事项。以下分别列出问题、业务及文件任务数量，不合计为待办总数。</p>
+        <section v-if="monthlyPreparations.length" id="report-months" class="monthly-preparations" tabindex="-1" aria-labelledby="report-months-title">
+          <h3 id="report-months-title">各月核算与跟进</h3>
+          <p class="monthly-scope">全公司当月事项；问题、业务和文件任务分别计数。</p>
           <details v-for="month in monthlyPreparations" :key="month.preparation.period" class="monthly-preparation">
             <summary>
               <span class="monthly-heading"><strong>{{ month.preparation.period }} · {{ month.closure }}</strong><span>展开本月依据</span></span>
@@ -749,11 +757,11 @@ onBeforeUnmount(() => {
           </details>
         </section>
 
-        <section v-if="report.statements.length" class="report-review">
+        <section v-if="report.statements.length" id="report-statements" class="report-review" tabindex="-1" aria-label="完整财务报表">
           <div class="review-heading">
             <div>
               <strong>完整财务报表</strong>
-              <span>选择一张报表查看明细；窄屏可在表内左右滑动。</span>
+              <span class="table-scroll-hint">表格可左右滑动</span>
             </div>
             <span class="check-summary">
               {{ report.checks.total ? `${report.checks.passed} / ${report.checks.total} 项数字核对通过` : "暂无数字核对结果" }}
@@ -966,7 +974,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .reports-page { min-height: 100%; }
-.report-source { padding: 18px; margin-top: 18px; }
+.report-source { padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.report-checks { display: grid; min-width: 0; gap: 12px; }
+[id][tabindex="-1"] { scroll-margin-top: 76px; }
+.table-scroll-hint { display: none; }
 .report-source > summary, .readiness-group > summary { color: var(--text); font-size: 13px; font-weight: 700; cursor: pointer; }
 .report-source label { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; font-weight: 700; }
 .report-source select { max-width: 100%; min-height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface); }
@@ -1013,12 +1024,12 @@ onBeforeUnmount(() => {
 .export-notice { margin-top: 8px; padding: 10px 13px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 12px; }
 .export-notice.attention { background: var(--warning-soft); color: var(--warning); }
 .export-notice.error { background: var(--danger-soft); color: var(--danger); }
-.readiness { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.readiness { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; }
 .readiness-item { position: relative; overflow: hidden; padding: 15px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-soft); }
 .readiness-item::before { position: absolute; top: 0; right: 0; left: 0; height: 3px; background: var(--accent); content: ""; }
 .readiness-item.pending::before { background: var(--info); }
 .readiness-item.attention::before { background: var(--warning); }
-.readiness-item.detailed { grid-column: span 2; }
+.readiness-item { min-width: 0; overflow-wrap: anywhere; }
 .readiness-head { display: flex; align-items: center; gap: 8px; }
 .readiness-head > span { display: grid; width: 23px; height: 23px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 850; }
 .readiness-item.pending .readiness-head > span { background: var(--info-soft); color: var(--info); }
@@ -1027,6 +1038,7 @@ onBeforeUnmount(() => {
 .readiness-item ul { display: grid; gap: 7px; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); list-style: none; }
 .readiness-item li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; }
 .readiness-item li div { display: grid; gap: 2px; min-width: 0; }
+.readiness-item li > a, .readiness-item li > details { grid-column: 1 / -1; min-width: 0; }
 .readiness-item li span { color: var(--muted); font-size: 11px; }
 .readiness-item li > strong { grid-row: 1 / 3; grid-column: 2; align-self: center; }
 .summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -1094,7 +1106,7 @@ tr.total td { background: var(--accent-soft); font-weight: 750; }
 .tax-template-table th:first-child { width: 46%; }
 .balance-template-table th:first-child, .balance-template-table th:nth-child(5) { width: 22%; }
 .balance-template-table th:nth-child(2), .balance-template-table th:nth-child(6) { width: 4.5%; }
-.balance-template-table th:nth-child(3), .balance-template-table th:nth-child(4), .balance-template-table th:nth-child(7), .balance-template-table th:nth-child(8) { width: 13.25%; }
+.balance-template-table th:nth-child(3), .balance-template-table th:nth-child(4), .balance-template-table th:nth-child(7), .balance-template-table th:nth-child(8) { width: 11.75%; }
 .tax-template-table .line { color: #171717; text-align: center; }
 .tax-template-table .number { color: #374151; text-align: right; }
 .tax-template-table .negative { color: #b42318; }
@@ -1113,6 +1125,6 @@ tr.total td { background: var(--accent-soft); font-weight: 750; }
 .technical dt { color: var(--muted); }
 .technical dd { margin: 0; overflow-wrap: anywhere; }
 .technical ul { margin: 0; padding-left: 20px; }
-@media (max-width: 960px) { .readiness { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-grid, .statement-buttons { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .readiness, .check-list { grid-template-columns: 1fr; } .readiness-item.detailed { grid-column: auto; } .report-review { padding: 14px; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .switch-copy { justify-items: start; } .statement-buttons button, .disclosure summary { min-height: 64px; } .technical dl { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .summary-grid, .statement-buttons { grid-template-columns: 1fr; } .table-scroll-hint { display: block; } }
+@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .readiness, .check-list { grid-template-columns: 1fr; } .report-review { padding: 14px; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .switch-copy { justify-items: start; } .statement-buttons button, .disclosure summary { min-height: 64px; } .technical dl { grid-template-columns: 1fr; } }
 </style>

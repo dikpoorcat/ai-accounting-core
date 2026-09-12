@@ -79,7 +79,6 @@ watch(() => props.focusedVoucher, () => {
   <section class="brief-section activity-section" aria-labelledby="activity-title">
     <div class="section-heading">
       <div>
-        <p class="section-kicker">业务与凭证</p>
         <h2 id="activity-title">本月发生了什么</h2>
         <p>{{ voucherCount }} 张凭证 · {{ groups.length }} 类业务</p>
       </div>

@@ -32,6 +32,7 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
     const navigate = async target => { globalThis.${key}.route.query = target.query; globalThis.${key}.route.hash = target.hash ?? ''; };
     const useRouter = () => ({ replace: navigate, push: navigate });
     const useDashboardContext = () => ({ context: globalThis.${key}.dashboardContext, load: async () => {}, refresh: globalThis.${key}.refreshContext });
+    const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
     const dashboardErrorMessage = String;
     const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = BigInt; const formatFen = String; const formatPositiveFen = String;

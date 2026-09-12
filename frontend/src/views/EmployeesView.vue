@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
@@ -11,6 +11,7 @@ import {
   type EmployeesQuery,
 } from "../api/employees";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
+import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import PeriodPreparation from "../components/PeriodPreparation.vue";
 import DashboardSourceHistory from "../components/DashboardSourceHistory.vue";
@@ -19,6 +20,7 @@ import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import VoucherTrace from "../components/brief/VoucherTrace.vue";
 import { localBusinessName } from "../api/localKernel";
 import { useDashboardContext } from "../composables/useDashboardContext";
+import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
 type EmployeeFilter = "all" | "in_period" | "payroll" | "no_payroll" | "ended" | "unknown";
@@ -52,6 +54,16 @@ function clearPageRequests() {
 const employees = computed(() => response.value?.data?.employees ?? null);
 const data = computed(() => response.value?.data ?? null);
 const workforce = computed(() => response.value?.data?.workforce_cost ?? null);
+const sectionLinks = computed(() => {
+  if (!employees.value || !response.value?.selected_period) return [];
+  return [
+    { id: "employees-overview", label: "概览" },
+    { id: "employees-readiness", label: "核对事项" },
+    { id: "employee-list-title", label: "员工明细" },
+    ...(workforce.value?.personal_labor.items.length ? [{ id: "labor-title", label: "个人劳务" }] : []),
+  ];
+});
+const { activeSection, focusSection } = useDashboardSections(sectionLinks, "employees-overview");
 const periodOptions = computed(() => context.value?.periods ?? []);
 const selectedPeriodKey = computed(
   () => response.value?.selected_period?.key ?? routePeriod() ?? "",
@@ -80,9 +92,9 @@ const costNote = computed(() => {
     return `逐人明细与账面成本相差 ${formatPositiveFen(reconciliationDifference.value)}`;
   }
   if (fen(data.settlement_adjustment_fen) !== 0n) {
-    return "含工资结算产生的成本调整，明细与账面记录一致";
+    return "含结算调整 · 明细与账面一致";
   }
-  return "逐人薪酬明细与账面记录一致";
+  return "明细与账面一致";
 });
 const attentionItems = computed(() => {
   const data = employees.value;
@@ -153,11 +165,6 @@ async function loadPeriod(periodKey: string | null) {
     const resolvedPeriod = result.selected_period?.key ?? null;
     if (resolvedPeriod && routePeriod() !== resolvedPeriod) {
       await router.replace({ query: { ...route.query, period: resolvedPeriod } });
-    }
-    await nextTick();
-    if (isCurrent(generation, selection) && controller === activeController && ["#employee-list-title", "#labor-title"].includes(route.hash)) {
-      const heading = document.getElementById(route.hash.slice(1));
-      heading?.scrollIntoView({ block: "start" }); heading?.focus({ preventScroll: true });
     }
   } catch (caught: unknown) {
     if (!isCurrent(generation, selection) || controller !== activeController) return;
@@ -287,15 +294,22 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 <template>
   <section class="employees-page">
     <DashboardModuleHeader
-      eyebrow="员工"
       title="员工与薪酬概览"
-      description="按月查看员工薪酬、公司承担的费用，以及每个人的工资和付款情况。"
       :options="periodOptions"
       :selected="selectedPeriodKey"
       :loading="loading"
       select-label="员工查看月份"
       @change="selectPeriod"
       @refresh="refresh"
+    />
+
+    <DashboardSectionNav
+      v-if="sectionLinks.length"
+      :items="sectionLinks"
+      :active="activeSection"
+      label="员工内容导航"
+      floating
+      @select="focusSection"
     />
 
     <p v-if="updateNotice" class="muted" role="status">{{ updateNotice }}</p>
@@ -316,11 +330,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
     </div>
 
     <template v-else-if="employees && response?.selected_period">
-      <section class="people-hero" aria-labelledby="people-headcount-label">
+      <section id="employees-overview" class="people-hero" aria-labelledby="people-headcount-label" tabindex="-1">
         <div>
-          <p class="eyebrow">
-            {{ response.selected_period.label }} · 员工与薪酬
-          </p>
           <span id="people-headcount-label">本月有工资记录</span>
           <strong class="people-headcount">{{ employees.payroll_count }}<small>人</small></strong>
           <p class="muted">
@@ -346,12 +357,10 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
           <small v-if="employees.annual_bonus_fen === null || fen(employees.annual_bonus_fen)">
             另有全年一次性奖金 {{ formatFen(employees.annual_bonus_fen) }}
           </small>
-          <small v-else>扣除个人社保公积金及个税前的工资</small>
         </article>
         <article class="people-kpi">
           <span>公司承担社保公积金</span>
           <strong>{{ formatFen(employerContribution) }}</strong>
-          <small>由公司承担，计入员工薪酬成本</small>
         </article>
         <article class="people-kpi">
           <span>个人社保公积金及个税</span>
@@ -361,31 +370,27 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
         <article class="people-kpi">
           <span>工资应付净额</span>
           <strong>{{ formatFen(employees.net_salary_fen) }}</strong>
-          <small>扣除后的应付金额，实际付款在员工详情中查看</small>
         </article>
       </section>
 
-      <p class="muted">以上为全公司本月薪酬汇总，未按员工筛选。</p>
-      <PeriodPreparation v-if="data" :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
+      <p class="scope-label">全公司 · 本月入账 · 未按员工筛选</p>
+      <section id="employees-readiness" aria-label="核对事项" tabindex="-1">
+        <PeriodPreparation v-if="data" :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
 
-      <section v-if="attentionItems.length" class="panel attention-panel" aria-labelledby="attention-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">需要核对</p>
+        <section v-if="attentionItems.length" class="panel attention-panel" aria-labelledby="attention-title">
+          <div class="section-heading">
             <h2 id="attention-title">薪酬核对事项</h2>
+            <span class="attention-count">{{ attentionItems.length }} 项</span>
           </div>
-          <span class="attention-count">{{ attentionItems.length }} 项</span>
-        </div>
-        <ul>
-          <li v-for="item in attentionItems" :key="item">{{ item }}</li>
-        </ul>
+          <ul>
+            <li v-for="item in attentionItems" :key="item">{{ item }}</li>
+          </ul>
+        </section>
       </section>
 
-      <nav class="employee-sections" aria-label="员工内容导航"><a href="#employee-list-title">员工与付款</a><a v-if="workforce?.personal_labor.items.length" href="#labor-title">个人劳务</a></nav>
       <section class="panel employee-section" aria-labelledby="employee-list-title">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">逐人查看</p>
             <h2 id="employee-list-title" tabindex="-1">员工明细</h2>
           </div>
           <strong>{{ employees.registered_count }} 人已登记</strong>
@@ -508,10 +513,9 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                 </dl>
                 <p class="muted">本月支付可包含以前月份的工资，各月份余额见下方详情。</p>
                 <h3>按工资来源期查看款项</h3>
-                <p class="muted">以下为来源义务截至所选月末的清偿；与本月发生的付款分别列示。</p>
+                <p class="scope-label">来源期款项 · 截至所选月末</p>
                 <details v-for="source in item.payroll_sources" :key="source.source_id" class="tax-details">
                   <summary>{{ source.period }} · {{ source.label }} · 查看月末款项</summary>
-                  <p class="muted">付款及余额截至所选月份末。</p>
                   <p v-for="(issue, issueIndex) in source.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本来源款项尚需核对，请查看精确依据。' }}</p>
                   <p v-if="source.opening_period" class="muted">期初接续月份 {{ source.opening_period }} · {{ obligationLabel(source.component ?? "primary") }}</p>
                   <dl v-for="obligation in source.obligations" :key="obligation.key" class="employee-profile-grid">
@@ -525,8 +529,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                     <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
                     <details><summary>查看精确来源业务</summary><p>来源业务：{{ localBusinessName(movement.source_business?.kind) }}</p><VoucherTrace v-if="movement.source_calculation_id" :calculation-id="movement.source_calculation_id" /><VoucherTrace v-if="movement.calculation_id" :calculation-id="movement.calculation_id" /></details>
                   </div>
-                  <p v-if="source.movements_page" class="muted">相关历史清偿（含关联来源，截至所选月末） · 完整总计 {{ source.movements_page.total_count }} 项 · 已加载 {{ source.movements.length }} 项</p>
-                  <p>明细包含关联来源；本来源付款及未结金额以上方款项汇总为准。</p>
+                  <p v-if="source.movements_page" class="scope-label">相关来源历史清偿 · 截至所选月末 · 共 {{ source.movements_page.total_count }} 项，已加载 {{ source.movements.length }} 项</p>
+                  <p class="muted">含关联来源明细；本来源金额见上方汇总。</p>
                   <BusinessStatusDetails v-if="source.movements_page?.has_more && source.subject_id" :subject-id="source.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" settlement-view="historical" @changed="refresh" />
                   <details v-if="source.kind === 'payroll' || source.kind === 'payroll_bounded'" class="tax-details">
                     <summary>查看实际申报记录</summary>
@@ -622,8 +626,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
       <DashboardPagination :page="data?.collections.employees?.page" :loaded="filteredEmployees.length" :loading="pageLoading[pageKey('employees')]" :error="pageErrors[pageKey('employees')]" @more="loadMore()" @retry="loadMore()" />
 
       <section v-if="workforce?.personal_labor.items.length" id="labor-sources" class="panel employee-section">
-        <div class="section-heading"><div><p class="eyebrow">报酬与付款</p><h2 id="labor-title" tabindex="-1">个人劳务</h2></div></div>
-        <p class="muted">本月计入费用 {{ formatFen(workforce.personal_labor.total_fen) }} · 本月计入资产或项目 {{ formatFen(workforce.capitalized_labor_fen) }}。</p>
+        <div class="section-heading"><h2 id="labor-title" tabindex="-1">个人劳务</h2></div>
+        <p class="scope-label">本月费用 {{ formatFen(workforce.personal_labor.total_fen) }} · 资产或项目 {{ formatFen(workforce.capitalized_labor_fen) }}</p>
         <details v-for="labor in workforce.personal_labor.items" :key="labor.source_id" class="employee-card">
           <summary>{{ labor.name }} · {{ labor.period }} · {{ labor.capitalized ? "计入资产或项目" : "计入费用" }} · 劳务报酬 {{ formatFen(labor.gross_fen) }}</summary>
           <div class="employee-profile">
@@ -639,8 +643,8 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
               <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
               <details><summary>查看精确来源业务</summary><p>来源业务：{{ localBusinessName(movement.source_business?.kind) }}</p><VoucherTrace v-if="movement.source_calculation_id" :calculation-id="movement.source_calculation_id" /><VoucherTrace v-if="movement.calculation_id" :calculation-id="movement.calculation_id" /></details>
             </div>
-            <p v-if="labor.movements_page" class="muted">相关历史清偿（含关联来源，截至所选月末） · 完整总计 {{ labor.movements_page.total_count }} 项 · 已加载 {{ labor.movements.length }} 项</p>
-            <p>明细包含关联来源；本来源付款及未结金额以上方款项汇总为准。</p>
+            <p v-if="labor.movements_page" class="scope-label">相关来源历史清偿 · 截至所选月末 · 共 {{ labor.movements_page.total_count }} 项，已加载 {{ labor.movements.length }} 项</p>
+            <p class="muted">含关联来源明细；本来源金额见上方汇总。</p>
             <BusinessStatusDetails v-if="labor.movements_page?.has_more && labor.subject_id" :subject-id="labor.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" settlement-view="historical" @changed="refresh" />
             <details class="tax-details">
               <summary>查看劳务扣税依据</summary>
@@ -667,10 +671,11 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
 </template>
 
 <style scoped>
-.employee-sections { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
-.employee-sections a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--accent); background: var(--surface); text-decoration: none; }
-.employee-sections a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-h2[id] { scroll-margin-top: 100px; }
+summary:focus-visible,
+.employee-results:focus-visible,
+[tabindex="-1"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+[id] { scroll-margin-top: var(--dashboard-section-offset, 72px); }
+.scope-label { margin: 10px 0; color: var(--muted); font-size: 12px; }
 .source-issue { color: var(--warning); }
 .employee-profile h3 { margin: 16px 0 10px; font-size: 14px; }
 .employee-profile-grid dd, .employee-pay-grid strong, .people-cost strong, .people-kpi strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
@@ -684,14 +689,6 @@ h2[id] { scroll-margin-top: 100px; }
 .muted,
 small {
   color: var(--muted);
-}
-
-.eyebrow {
-  margin: 0 0 5px;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 850;
-  letter-spacing: 0.08em;
 }
 
 .panel,
@@ -741,12 +738,21 @@ small {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.75fr);
   gap: 25px;
-  min-height: 160px;
   padding: 23px 25px;
   border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
   border-radius: 20px;
-  background: var(--surface);
+  background:
+    radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%),
+    linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));
   box-shadow: var(--shadow-soft);
+}
+
+.people-hero > div,
+.employee-name,
+.employee-results,
+.employee-profile-grid > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .people-hero p {
@@ -1019,6 +1025,10 @@ small {
   padding: 12px 17px;
 }
 
+.employee-list > article > .employee-list-summary {
+  padding: 12px 17px;
+}
+
 .employee-list .employee-profile-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -1041,7 +1051,8 @@ small {
 }
 
 .employee-list-header > span:not(:first-child):not(:last-child),
-.employee-list-summary > div:not(:first-child) {
+.employee-list-summary > div:not(:first-child),
+.employee-list-summary > strong {
   text-align: right;
 }
 
@@ -1059,6 +1070,8 @@ small {
 
 .employee-list-summary strong,
 .employee-list-summary h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -1098,6 +1111,12 @@ small {
   display: none;
 }
 
+.employee-card > summary:not(.employee-card-summary) {
+  padding: 16px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
 .employee-name,
 .employee-amount {
   display: grid;
@@ -1113,8 +1132,9 @@ small {
 }
 
 .employee-amount {
+  min-width: 0;
   justify-items: end;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .employee-amount strong {
@@ -1262,7 +1282,7 @@ small {
   font-size: 13px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
   .people-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1278,7 +1298,7 @@ small {
   .employee-list-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .employee-list-summary > .employee-list-identity, .employee-list-summary > div:first-child { grid-column: 1 / -1; }
   .employee-list-summary > div[data-label]::before, .employee-list-summary > strong[data-label]::before { display: block; content: attr(data-label); color: var(--muted); font-size: 11px; font-weight: normal; }
-  .employee-list-summary > div:not(:first-child) { text-align: left; }
+  .employee-list-summary > div[data-label]::before, .employee-list-summary > strong[data-label]::before { text-align: left; }
   .employee-list .employee-profile { margin-inline: 12px; }
   .employee-list .employee-card { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; }
   .employees-page {

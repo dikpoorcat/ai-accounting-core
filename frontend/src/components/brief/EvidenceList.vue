@@ -19,7 +19,7 @@ defineProps<{ items: EvidenceDetails[] }>();
 <style scoped>
 .evidence-list { padding-left: 20px; font-size: 13px; }
 li { margin: 8px 0; overflow-wrap: anywhere; }
-.evidence-name { color: var(--ink); }
+.evidence-name { color: var(--text); }
 .evidence-identity { margin-top: 4px; color: var(--muted); font-size: 12px; }
 summary { cursor: pointer; }
 code { display: block; margin-top: 6px; white-space: normal; overflow-wrap: anywhere; }

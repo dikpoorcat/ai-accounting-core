@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import { useDashboardContext } from "../composables/useDashboardContext";
 
 interface Option {
@@ -10,9 +10,7 @@ interface Option {
 }
 
 const props = defineProps<{
-  eyebrow: string;
   title: string;
-  description: string;
   options: readonly Option[];
   selected: string;
   loading?: boolean;
@@ -28,18 +26,11 @@ const emit = defineEmits<{
   refresh: [];
 }>();
 const route = useRoute();
-const router = useRouter();
 const displayedSelection = computed(() => props.selected || (props.options.find(item => item.key === (route.name === "reports" ? route.query.quarter : route.query.period))?.key ?? ""));
-const { context, cancel, selectionNotice, setSelectionNotice } = useDashboardContext();
-async function changeCompany(event: Event) {
-  const company = (event.target as HTMLSelectElement).value;
-  if (company === route.query.company_id) return;
-  setSelectionNotice("");
-  cancel();
-  await router.push({ query: { company_id: company, period: route.query.period }, hash: "" });
-}
+const { setSelectionNotice } = useDashboardContext();
 
 function handleChange(event: Event) {
+  setSelectionNotice("");
   emit("change", (event.target as HTMLSelectElement).value);
 }
 </script>
@@ -47,17 +38,9 @@ function handleChange(event: Event) {
 <template>
   <header class="module-header" :aria-busy="loading">
     <div class="module-heading">
-      <p class="eyebrow">{{ eyebrow }}</p>
       <h1>{{ title }}</h1>
-      <p class="description">{{ description }}</p>
     </div>
     <div class="toolbar">
-      <label v-if="context?.companies.length" class="company-control">
-        <span>公司</span>
-        <select class="control" :value="context.current_company?.company_id" aria-label="切换公司" @change="changeCompany">
-          <option v-for="company in context.companies" :key="company.company_id" :value="company.company_id">{{ company.name }}{{ company.status === 'archived' ? '（已归档）' : '' }}</option>
-        </select>
-      </label>
       <select
         class="control"
         :value="displayedSelection"
@@ -80,7 +63,6 @@ function handleChange(event: Event) {
         {{ loading ? "加载中…" : "刷新数据" }}
       </button>
     </div>
-    <p v-if="selectionNotice" class="selection-notice" role="status">{{ selectionNotice }}</p>
     <span v-if="loading" class="header-progress" aria-hidden="true" />
   </header>
 </template>
@@ -97,32 +79,12 @@ function handleChange(event: Event) {
   padding-bottom: 4px;
 }
 .module-heading { min-width: 0; }
-.company-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.company-control > span { font-size: 12px; color: var(--muted); }
-.company-control select { max-width: 260px; min-width: 0; }
-.selection-notice { width: 100%; margin: 0; color: var(--muted); font-size: 13px; }
-
-.eyebrow {
-  margin: 0 0 5px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
 
 h1 {
   margin: 0;
   font-size: clamp(24px, 2.4vw, 30px);
   line-height: 1.12;
   letter-spacing: -0.035em;
-}
-
-.description {
-  max-width: 720px;
-  margin: 7px 0 0;
-  color: var(--muted);
-  font-size: 14px;
 }
 
 .toolbar {
@@ -237,8 +199,6 @@ select.control {
 }
 
 @media (max-width: 720px) {
-  .company-control { grid-column: 1 / -1; width: 100%; }
-  .company-control select { max-width: none; width: 100%; }
   .module-header {
     margin-bottom: 18px;
   }

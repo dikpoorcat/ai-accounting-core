@@ -75,7 +75,7 @@ async function harness(query = { company_id: "a", period: "2026-01" }, name = "e
       const useRoute = () => environment.route, useRouter = () => environment.router;
       const useDashboardContext = () => environment.contextState;
       ${script}
-      return { setAuthenticated, loadCompanyContext, contextError, selectPeriod };
+      return { setAuthenticated, loadCompanyContext, contextError, selectCompany, selectPeriod };
     }
   `, environment);
   const scope = Vue.effectScope();
@@ -251,20 +251,6 @@ test("sidebar calendar month changes clear page state and align the report quart
   } finally { h.close(); }
 });
 
-async function headerFor(h) {
-    const script = withoutImports(source("../src/components/DashboardModuleHeader.vue").match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]);
-    const header = await compile(`
-      const { computed } = environment.Vue;
-      const defineProps = () => ({ options: [], selected: "2026-01" });
-      const defineEmits = () => () => {};
-      const useRoute = () => environment.route, useRouter = () => environment.router;
-      const useDashboardContext = () => environment.contextState;
-      ${script}
-      export { changeCompany };
-    `, h.environment);
-    return header;
-}
-
 test("T6 report company switch validates the shared month before choosing the new company default", async t => {
   for (const [label, periods, expected] of [
     ["missing month uses new default despite old quarter still existing", ["2026-06", "2026-03"], "2026-06"],
@@ -275,8 +261,7 @@ test("T6 report company switch validates the shared month before choosing the ne
     try {
       h.setAuthenticated(true);
       h.calls.at(-1).resolve(context("a", ["2026-01"])); await flush();
-      const header = await headerFor(h);
-      await header.changeCompany({ target: { value: "b" } });
+      await h.selectCompany("b");
       h.calls.at(-1).resolve(context("b", periods, periods[0] ?? null)); await flush();
       assert.equal(h.route.query.period, expected);
       assert.equal(h.route.query.company_id, "b");
@@ -288,16 +273,15 @@ test("T6 report company switch validates the shared month before choosing the ne
   });
 });
 
-test("T6 header changes company with shared selection only and clears page-specific state", async () => {
+test("T6 sidebar changes company with shared selection only and clears page-specific state", async () => {
   const h = await harness({ company_id: "a", period: "2026-01", employee_filter: "payroll", cursor: "never-transfer", voucher: "7" });
   try {
-    const header = await headerFor(h);
-    await header.changeCompany({ target: { value: "b" } });
+    await h.selectCompany("b");
     assert.deepEqual(h.pushes[0], { query: { company_id: "b", period: "2026-01" }, hash: "" });
     assert.equal(h.state.context.value, null);
     h.route.name = "reports";
     h.navigate({ query: { company_id: "b", period: "2026-01", quarter: "2026-Q1", carry_forward_fact_id: "do-not-transfer" } });
-    await header.changeCompany({ target: { value: "a" } });
+    await h.selectCompany("a");
     assert.deepEqual(h.pushes[1], { query: { company_id: "a", period: "2026-01" }, hash: "" });
   } finally { h.close(); }
 });

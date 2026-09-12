@@ -58,7 +58,6 @@ function laborCostNote() {
   <section class="brief-section workforce" aria-labelledby="workforce-title">
     <div class="section-heading">
       <div>
-        <p class="section-kicker">费用拆分</p>
         <h2 id="workforce-title">本月用工成本</h2>
       </div>
       <div class="total">
