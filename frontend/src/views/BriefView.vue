@@ -69,13 +69,12 @@ const sectionLinks = computed(() => {
   if (!data.value) return [];
   const links = [
     { id: "overview", label: "概览" },
-    { id: "open-items", label: "待收待付" },
     { id: "activity", label: "业务凭证" },
   ];
   if (data.value?.workforce_cost.has_activity) links.push({ id: "workforce", label: "用工" });
   links.push(
     { id: "finance", label: "资金资产" },
-
+    { id: "open-items", label: "待收待付" },
     { id: "validation", label: "资料核对" },
   );
   return links;
@@ -473,26 +472,17 @@ onBeforeUnmount(() => {
       </section>
       <p v-if="data.position.complete === false || data.open_items.complete === false || data.open_items.unestablished_count" class="needs-check" role="status">部分来源尚待核对，已知金额也不能视为完整结论。<button type="button" @click="focusSection('validation')">查看依据与问题</button></p>
 
-      <div id="open-items" class="section-anchor" tabindex="-1">
-        <BriefOpenItems
-          :open-items="data.open_items"
-          :period-label="response?.selected_period?.short_label || ''"
-          :period-status="response?.selected_period?.status || ''"
-          :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refresh"
-        />
-      </div>
-
       <div id="activity" class="section-anchor" tabindex="-1">
         <BriefActivityWorkbench
           :groups="data.activity_groups"
           :vouchers="data.vouchers"
           :voucher-count="data.voucher_count"
-          :line-count="data.line_count"
           :focused-voucher="data.focused_voucher"
-        />
-        <p class="muted">已加载 {{ data.vouchers.length }} / {{ data.voucher_count }} 张凭证；本页汇总按全月计算。</p>
-        <DashboardPagination :page="data.collections.vouchers?.page" :loaded="data.vouchers.length" :loading="sectionLoading.vouchers" :error="sectionErrors.vouchers" @retry="loadMore()" @more="loadMore()" />
-
+        >
+          <template #pagination>
+            <DashboardPagination compact item-label="张凭证" :page="data.collections.vouchers?.page" :loaded="data.vouchers.length" :loading="sectionLoading.vouchers" :error="sectionErrors.vouchers" @retry="loadMore()" @more="loadMore()" />
+          </template>
+        </BriefActivityWorkbench>
       </div>
 
       <div v-if="data.workforce_cost.has_activity" id="workforce" class="section-anchor" tabindex="-1">
@@ -509,6 +499,15 @@ onBeforeUnmount(() => {
           :funds="data.funds_overview"
           :position="data.position"
           :unmatched="data.unmatched_bank_activity"
+        />
+      </div>
+
+      <div id="open-items" class="section-anchor" tabindex="-1">
+        <BriefOpenItems
+          :open-items="data.open_items"
+          :period-label="response?.selected_period?.short_label || ''"
+          :period-status="response?.selected_period?.status || ''"
+          :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refresh"
         />
       </div>
 

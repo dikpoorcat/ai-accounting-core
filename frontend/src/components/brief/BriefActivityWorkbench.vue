@@ -1,31 +1,57 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 
-import type { BriefActivityGroup, BriefVoucher } from "../../api/brief";
+import type { BriefActivityGroup, BriefActivityRow, BriefVoucher, BriefVoucherLine } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
 import VoucherTrace from "./VoucherTrace.vue";
 import BusinessDetails from "./BusinessDetails.vue";
-import EvidenceList from "./EvidenceList.vue";
 
 const props = defineProps<{
   groups: BriefActivityGroup[];
   vouchers: BriefVoucher[];
   voucherCount: number;
-  lineCount: number;
   focusedVoucher?: BriefVoucher | null;
 }>();
 
 const mode = ref<"business" | "voucher">("business");
 const selectedBusinessKey = ref("");
 const selectedVoucherNumber = ref("");
-const voucherSections = computed(() => [
-  ...(props.focusedVoucher ? [{ label: "精确定位的凭证", items: [props.focusedVoucher] }] : []),
-  { label: "已加载的凭证", items: props.vouchers },
-]);
+const evidenceVoucherNumber = ref("");
+const BUSINESS_PAGE_SIZE = 10;
+const businessPage = ref(1);
+const VOUCHER_PAGE_SIZE = 10;
+const voucherPage = ref(1);
+const availableVouchers = computed(() => {
+  const focused = props.focusedVoucher;
+  return focused && !props.vouchers.some((item) => item.voucher_version_id === focused.voucher_version_id)
+    ? [focused, ...props.vouchers]
+    : props.vouchers;
+});
+const vouchersByNumber = computed(() => {
+  const result = new Map<string, BriefVoucher>();
+  for (const voucher of availableVouchers.value) {
+    if (!result.has(voucher.number)) result.set(voucher.number, voucher);
+  }
+  return result;
+});
+const voucherPageCount = computed(() => Math.max(1, Math.ceil(availableVouchers.value.length / VOUCHER_PAGE_SIZE)));
+const visibleVouchers = computed(() => {
+  const start = (voucherPage.value - 1) * VOUCHER_PAGE_SIZE;
+  return availableVouchers.value.slice(start, start + VOUCHER_PAGE_SIZE);
+});
+const visibleVoucherStart = computed(() => availableVouchers.value.length ? (voucherPage.value - 1) * VOUCHER_PAGE_SIZE + 1 : 0);
+const visibleVoucherEnd = computed(() => Math.min(voucherPage.value * VOUCHER_PAGE_SIZE, availableVouchers.value.length));
 
 const selectedBusiness = computed(
   () => props.groups.find((item) => item.key === selectedBusinessKey.value) || null,
 );
+const businessPageCount = computed(() => Math.max(1, Math.ceil((selectedBusiness.value?.rows.length || 0) / BUSINESS_PAGE_SIZE)));
+const visibleBusinessRows = computed(() => {
+  const start = (businessPage.value - 1) * BUSINESS_PAGE_SIZE;
+  return selectedBusiness.value?.rows.slice(start, start + BUSINESS_PAGE_SIZE) || [];
+});
+const visibleBusinessStart = computed(() => selectedBusiness.value?.rows.length ? (businessPage.value - 1) * BUSINESS_PAGE_SIZE + 1 : 0);
+const visibleBusinessEnd = computed(() => Math.min(businessPage.value * BUSINESS_PAGE_SIZE, selectedBusiness.value?.rows.length || 0));
 
 function keepAvailableSelection() {
   if (!props.groups.some((item) => item.key === selectedBusinessKey.value)) {
@@ -44,33 +70,109 @@ function selectMode(value: "business" | "voucher") {
   }
 }
 
-function toggleVoucher(number: string, event: MouseEvent) {
-  const selection = window.getSelection();
-  const target = event.currentTarget;
-  if (
-    event.detail > 0 &&
-    selection &&
-    !selection.isCollapsed &&
-    target instanceof Node &&
-    (target.contains(selection.anchorNode) || target.contains(selection.focusNode))
-  ) {
-    return;
+function selectBusiness(key: string) {
+  selectedBusinessKey.value = key;
+}
+
+function changeBusinessPage(page: number) {
+  businessPage.value = Math.min(Math.max(page, 1), businessPageCount.value);
+}
+
+function activityName(item: BriefActivityRow) {
+  const party = item.party.trim();
+  return party && party !== "—" && !party.includes("未提供") ? party : item.title;
+}
+
+function activityMeta(item: BriefActivityRow) {
+  const primary = activityName(item);
+  const context = primary === item.title
+    ? (item.subject !== item.title ? item.subject : "")
+    : item.title;
+  return [context, item.evidence.length ? `${item.evidence.length} 份凭据` : ""].filter(Boolean).join(" · ");
+}
+
+function voucherContext(voucher: BriefVoucher) {
+  const title = voucher.list_summary.trim();
+  let detail = (voucher.display_summary || voucher.summary).trim();
+  if (!detail || detail === title) return "";
+  if (title && detail.startsWith(title)) {
+    detail = detail.slice(title.length).trim();
+    detail = detail.replace(/^[（(][^）)]*[）)]\s*/, "");
+    detail = detail.replace(/^[·•；;：:\-—\s]+/, "");
   }
-  selectedVoucherNumber.value = selectedVoucherNumber.value === number ? "" : number;
+  return detail === title ? "" : detail;
+}
+
+function voucherForReference(reference: string) {
+  return vouchersByNumber.value.get(reference) || null;
+}
+
+function activityVoucherDate(item: BriefActivityRow) {
+  const voucher = voucherForReference(item.reference);
+  if (voucher) return compactVoucherDate(voucher);
+  if (item.date && /^\d{4}-\d{2}-\d{2}/.test(item.date)) return item.date.slice(0, 10);
+  return item.recognition?.period || item.date || "日期未提供";
+}
+
+function voucherLineAmount(line: BriefVoucherLine) {
+  return fen(line.debit_fen)
+    ? `借 ${formatFen(line.debit_fen)}`
+    : `贷 ${formatFen(line.credit_fen)}`;
+}
+
+function compactVoucherDate(voucher: BriefVoucher) {
+  if (voucher.date && /^\d{4}-\d{2}-\d{2}/.test(voucher.date)) return voucher.date.slice(0, 10);
+  return voucher.recognition?.period || voucher.date || "日期未提供";
+}
+
+async function openVoucher(number: string) {
+  mode.value = "voucher";
+  const index = availableVouchers.value.findIndex((item) => item.number === number);
+  if (index >= 0) voucherPage.value = Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
+  selectedVoucherNumber.value = number;
+  await nextTick();
+  document.querySelector<HTMLElement>(".activity-section .voucher-card.is-open")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function selectVoucher(number: string) {
+  const opening = selectedVoucherNumber.value !== number;
+  selectedVoucherNumber.value = opening ? number : "";
+  if (!opening) return;
+  await nextTick();
+  const block = window.matchMedia("(max-width: 760px)").matches ? "start" : "nearest";
+  document.querySelector<HTMLElement>(".activity-section .voucher-card.is-open")?.scrollIntoView({ behavior: "smooth", block });
+}
+
+function changeVoucherPage(page: number) {
+  voucherPage.value = Math.min(Math.max(page, 1), voucherPageCount.value);
+  selectedVoucherNumber.value = "";
+}
+
+function toggleVoucherEvidence(number: string) {
+  evidenceVoucherNumber.value = evidenceVoucherNumber.value === number ? "" : number;
 }
 
 function formatDate(value: string | null, recognition?: { label: string }) {
   if (recognition?.label) return recognition.label;
   if (!value) return "日期未提供";
   if (/^\d{4}-\d{2}$/.test(value)) return `${value} · 按月确认`;
-  const [, month, day] = value.slice(0, 10).split("-");
-  return `${Number(month)} 月 ${Number(day)} 日`;
+  const [year, month, day] = value.slice(0, 10).split("-");
+  return `${year} 年 ${Number(month)} 月 ${Number(day)} 日`;
 }
 
 watch(() => [props.groups, props.vouchers], keepAvailableSelection, { immediate: true });
+watch(selectedBusinessKey, () => { businessPage.value = 1; });
+watch(selectedVoucherNumber, (number) => {
+  if (evidenceVoucherNumber.value !== number) evidenceVoucherNumber.value = "";
+});
+watch(businessPageCount, (count) => { businessPage.value = Math.min(businessPage.value, count); });
+watch(voucherPageCount, (count) => { voucherPage.value = Math.min(voucherPage.value, count); });
 watch(() => props.focusedVoucher, () => {
   if (props.focusedVoucher) {
-    mode.value = "voucher"; selectedVoucherNumber.value = props.focusedVoucher.number;
+    mode.value = "voucher";
+    selectedVoucherNumber.value = props.focusedVoucher.number;
+    const index = availableVouchers.value.findIndex((item) => item.voucher_version_id === props.focusedVoucher?.voucher_version_id);
+    if (index >= 0) voucherPage.value = Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
   }
 }, { immediate: true });
 </script>
@@ -88,14 +190,14 @@ watch(() => props.focusedVoucher, () => {
           :aria-pressed="mode === 'business'"
           @click="selectMode('business')"
         >
-          按业务看
+          按业务
         </button>
         <button
           type="button"
           :aria-pressed="mode === 'voucher'"
           @click="selectMode('voucher')"
         >
-          按凭证看
+          按凭证
         </button>
       </div>
     </div>
@@ -107,7 +209,7 @@ watch(() => props.focusedVoucher, () => {
           :key="group.key"
           type="button"
           :aria-current="selectedBusinessKey === group.key ? 'true' : undefined"
-          @click="selectedBusinessKey = group.key"
+          @click="selectBusiness(group.key)"
         >
           <span>
             <strong>{{ group.label }}</strong>
@@ -119,88 +221,108 @@ watch(() => props.focusedVoucher, () => {
 
       <div v-if="selectedBusiness" class="detail" aria-live="polite">
         <header class="detail-heading">
-          <div>
-            <span>业务分类</span>
-            <h3>{{ selectedBusiness.label }}</h3>
-          </div>
-            <strong>全月 {{ selectedBusiness.event_count }} 项 · 已加载 {{ selectedBusiness.rows.length }} 项</strong>
+          <h3>{{ selectedBusiness.label }}</h3>
+          <strong>
+            本月 {{ selectedBusiness.event_count }} 项
+            <template v-if="selectedBusiness.rows.length < selectedBusiness.event_count">· 已加载 {{ selectedBusiness.rows.length }} 项</template>
+          </strong>
         </header>
-        <ul class="event-list">
-          <li
-            v-for="item in selectedBusiness.rows"
-            :key="`${item.reference}-${item.title}`"
-            class="event-row"
-          >
-            <div class="event-top">
-              <div>
-                <small>{{ formatDate(item.date, item.recognition) }} · {{ item.reference }}</small>
-                <span class="event-type">{{ item.title }}</span>
-                <span class="event-description">{{ item.display_description || item.description }}</span>
-              </div>
-              <div class="event-money"><small>{{ item.amount_label }}</small><b>{{ item.amount_fen === null ? "见业务明细" : formatFen(item.amount_fen) }}</b></div>
-            </div>
-            <div class="event-meta">
-              <span :class="['state', { correction: item.state.includes('冲正') }]">
-                {{ item.state }}
+        <ul class="event-list" aria-label="本月业务明细">
+          <li v-for="item in visibleBusinessRows" :key="`${item.reference}-${item.title}`" class="event-row">
+            <span class="event-reference">{{ formatDate(item.date, item.recognition) }}</span>
+            <span class="event-copy">
+              <strong>{{ activityName(item) }}</strong>
+              <small v-if="activityMeta(item)">{{ activityMeta(item) }}</small>
+            </span>
+            <span :class="['state', { correction: item.state.includes('冲正') }]">{{ item.state }}</span>
+            <span class="event-money">
+              <small>{{ item.amount_label }}</small>
+              <b>{{ item.amount_fen === null ? "见凭证" : formatFen(item.amount_fen) }}</b>
+            </span>
+            <span class="event-voucher-link">
+              <button
+                type="button"
+                class="event-voucher-button"
+                :aria-label="`打开凭证 ${item.reference}：${activityName(item)}`"
+                :aria-describedby="`voucher-preview-${item.voucher_version_id}`"
+                @click="openVoucher(item.reference)"
+              >
+                凭证 {{ item.reference }}
+              </button>
+              <span :id="`voucher-preview-${item.voucher_version_id}`" class="event-voucher-preview" role="tooltip">
+                <span class="voucher-preview-heading">
+                  <span>
+                    <small>凭证 {{ item.reference }} · {{ activityVoucherDate(item) }}</small>
+                    <strong>{{ voucherForReference(item.reference)?.list_summary || item.title }}</strong>
+                  </span>
+                  <b>{{ formatFen(voucherForReference(item.reference)?.amount_fen || item.journal_total_fen) }}</b>
+                </span>
+                <span v-if="voucherForReference(item.reference)?.lines.length" class="voucher-preview-lines">
+                  <span
+                    v-for="line in voucherForReference(item.reference)?.lines.slice(0, 3)"
+                    :key="line.line_number"
+                  >
+                    <span>{{ line.account }}</span>
+                    <strong>{{ voucherLineAmount(line) }}</strong>
+                  </span>
+                </span>
+                <span v-else class="voucher-preview-empty">完整分录将在打开凭证后显示</span>
+                <span class="voucher-preview-footer">
+                  <span :class="['state', { correction: item.state.includes('冲正') }]">{{ item.state }}</span>
+                  <small v-if="(voucherForReference(item.reference)?.lines.length || 0) > 3">
+                    另有 {{ (voucherForReference(item.reference)?.lines.length || 0) - 3 }} 条
+                  </small>
+                  <small v-else>点击打开完整凭证</small>
+                </span>
               </span>
-            </div>
-            <BusinessDetails :components="item.components" :funds="item.funds" :settlements="item.settlements" />
-            <details v-if="item.evidence.length" class="disclosure">
-              <summary>查看 {{ item.evidence.length }} 份关联凭据</summary>
-              <EvidenceList :items="item.evidence_details" />
-            </details>
-            <VoucherTrace :calculation-id="item.calculation_id" :voucher-version-id="item.voucher_version_id" />
+            </span>
           </li>
         </ul>
+        <footer v-if="selectedBusiness.rows.length > BUSINESS_PAGE_SIZE" class="business-pagination" aria-label="已加载业务分页">
+          <span>第 {{ visibleBusinessStart }}–{{ visibleBusinessEnd }} 项 · 已加载 {{ selectedBusiness.rows.length }} 项</span>
+          <div>
+            <button type="button" :disabled="businessPage === 1" @click="changeBusinessPage(businessPage - 1)">上一页</button>
+            <strong>{{ businessPage }} / {{ businessPageCount }}</strong>
+            <button type="button" :disabled="businessPage === businessPageCount" @click="changeBusinessPage(businessPage + 1)">下一页</button>
+          </div>
+        </footer>
       </div>
     </div>
 
-    <div v-else-if="mode === 'voucher' && (vouchers.length || focusedVoucher)" class="voucher-view">
-      <div class="voucher-summary">
-        <span>短摘要 · 完整摘要 · 凭证合计；展开查看分录和凭据。</span>
-        <strong>{{ voucherCount }} 张凭证 · {{ lineCount }} 行分录</strong>
-      </div>
-      <div v-for="section in voucherSections" :key="section.label" class="voucher-list">
-        <p v-if="section.items.length">{{ section.label }}</p>
-        <template v-for="(voucher, index) in section.items" :key="voucher.voucher_version_id">
-          <div v-if="index === 0 || section.items[index - 1]?.date !== voucher.date" class="voucher-date">
-            {{ formatDate(voucher.date, voucher.recognition) }}
-          </div>
+    <div v-else-if="mode === 'voucher' && availableVouchers.length" class="voucher-view">
+      <div class="voucher-list" aria-label="凭证清单">
+        <article
+          v-for="voucher in visibleVouchers"
+          :key="voucher.voucher_version_id"
+          :class="['voucher-card', { 'is-open': selectedVoucherNumber === voucher.number }]"
+        >
           <button
-            class="voucher-row"
             type="button"
+            class="voucher-row"
             :aria-expanded="selectedVoucherNumber === voucher.number"
-            @click="toggleVoucher(voucher.number, $event)"
+            @click="selectVoucher(voucher.number)"
           >
-            <strong>{{ voucher.number }}</strong>
-            <span class="voucher-type" :title="voucher.list_summary">{{ voucher.list_summary }}</span>
-            <span class="voucher-row-summary">{{ voucher.display_summary }}</span>
-            <strong class="voucher-row-amount">{{ formatFen(voucher.amount_fen) }}</strong>
-            <span class="voucher-toggle">
-              {{ selectedVoucherNumber === voucher.number ? "收起" : "展开" }}
+            <span class="voucher-reference">
+              <strong>凭证 {{ voucher.number }}</strong>
+              <small>{{ compactVoucherDate(voucher) }}</small>
             </span>
+            <span class="voucher-copy">
+              <strong>{{ voucher.list_summary }}</strong>
+              <small v-if="voucherContext(voucher)">{{ voucherContext(voucher) }}</small>
+            </span>
+            <span :class="['state', { correction: voucher.state.includes('冲正') }]">{{ voucher.state }}</span>
+            <strong class="voucher-row-amount">{{ formatFen(voucher.amount_fen) }}</strong>
+            <span class="voucher-chevron" aria-hidden="true"></span>
           </button>
 
           <section
             v-if="selectedVoucherNumber === voucher.number"
-            class="voucher-detail"
+            class="voucher-inline-detail"
             :aria-label="`${voucher.number} 凭证明细`"
           >
-            <div class="voucher-detail-top">
-              <div class="voucher-description">
-                <span class="detail-label">凭证摘要</span>
-                <span class="voucher-detail-meta">凭证状态 · {{ voucher.state }}</span>
-                <p v-if="voucher.reverses_version_id">本凭证冲销原记录，金额反映更正影响。</p>
-                <p>{{ voucher.display_summary || voucher.summary }}</p>
-              </div>
-              <div class="voucher-balance">
-                <span>借方合计</span>
-                <span>贷方合计</span>
-                <strong>{{ formatFen(voucher.amount_fen) }}</strong>
-                <strong>{{ formatFen(voucher.amount_fen) }}</strong>
-              </div>
-            </div>
-            <BusinessDetails :components="voucher.components" :funds="voucher.funds" :settlements="voucher.settlements" />
+            <p v-if="voucher.reverses_version_id" class="voucher-correction">本凭证用于冲销原记录。</p>
+            <BusinessDetails plain :components="voucher.components" :funds="voucher.funds" :settlements="voucher.settlements" />
+
             <div class="table-wrap">
               <table>
                 <colgroup>
@@ -230,35 +352,68 @@ watch(() => props.focusedVoucher, () => {
                       <span v-else :class="{ party: line.party }">{{ line.party || (line.party_state === 'unresolved' ? '见凭证业务说明' : '—') }}</span>
                       <small v-if="line.source_label">业务来源：{{ line.source_label }}</small>
                     </td>
-                    <td class="number" data-label="借方">
-                      {{ fen(line.debit_fen) ? formatFen(line.debit_fen) : "—" }}
-                    </td>
-                    <td class="number" data-label="贷方">
-                      {{ fen(line.credit_fen) ? formatFen(line.credit_fen) : "—" }}
-                    </td>
+                    <td class="number" data-label="借方">{{ fen(line.debit_fen) ? formatFen(line.debit_fen) : "—" }}</td>
+                    <td class="number" data-label="贷方">{{ fen(line.credit_fen) ? formatFen(line.credit_fen) : "—" }}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <details v-if="voucher.evidence.length" class="disclosure">
-              <summary>查看 {{ voucher.evidence.length }} 份关联凭据</summary>
-              <EvidenceList :items="voucher.evidence_details" />
-            </details>
-            <VoucherTrace v-if="voucher.calculation_id" :calculation-id="voucher.calculation_id" :voucher-version-id="voucher.voucher_version_id" />
+
+            <div v-if="voucher.evidence_details?.length || voucher.calculation_id" class="voucher-actions">
+              <button
+                v-if="voucher.evidence_details?.length"
+                type="button"
+                class="voucher-action"
+                :aria-expanded="evidenceVoucherNumber === voucher.number"
+                @click="toggleVoucherEvidence(voucher.number)"
+              >
+                关联凭据 <span>{{ voucher.evidence_details.length }} 份</span>
+              </button>
+              <VoucherTrace
+                v-if="voucher.calculation_id"
+                compact
+                :calculation-id="voucher.calculation_id"
+                :voucher-version-id="voucher.voucher_version_id"
+              />
+              <section v-if="evidenceVoucherNumber === voucher.number" class="voucher-evidence" aria-label="关联凭据">
+                <ul>
+                  <li
+                    v-for="item in voucher.evidence_details"
+                    :key="item.digest"
+                    :title="item.name.trim() || '原文件名未保存'"
+                  >
+                    {{ item.name.trim() || "原文件名未保存" }}
+                  </li>
+                </ul>
+              </section>
+            </div>
           </section>
-        </template>
+        </article>
       </div>
+      <footer v-if="availableVouchers.length > VOUCHER_PAGE_SIZE" class="business-pagination voucher-pagination" aria-label="已加载凭证分页">
+        <span>第 {{ visibleVoucherStart }}–{{ visibleVoucherEnd }} 张 · 已加载 {{ availableVouchers.length }} 张</span>
+        <div>
+          <button type="button" :disabled="voucherPage === 1" @click="changeVoucherPage(voucherPage - 1)">上一页</button>
+          <strong>{{ voucherPage }} / {{ voucherPageCount }}</strong>
+          <button type="button" :disabled="voucherPage === voucherPageCount" @click="changeVoucherPage(voucherPage + 1)">下一页</button>
+        </div>
+      </footer>
     </div>
 
     <p v-else class="empty">
       {{ mode === "business" ? "本月没有正式凭证业务。" : "本月没有凭证。" }}
     </p>
+
+    <div class="activity-pagination">
+      <slot name="pagination" />
+    </div>
   </section>
 </template>
 
 <style scoped>
-.event-money { display: grid; gap: 5px; text-align: right; flex-shrink: 0; }
+.event-money { display: grid; min-width: 0; gap: 2px; text-align: right; }
 .event-money small { color: var(--brief-muted); font-weight: 400; }
+.event-money b { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .line-party { display: block; margin-bottom: 4px; }
 .brief-section {
   padding: 20px;
@@ -269,8 +424,7 @@ watch(() => props.focusedVoucher, () => {
 }
 
 .section-heading,
-.detail-heading,
-.event-top {
+.detail-heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -280,15 +434,6 @@ watch(() => props.focusedVoucher, () => {
 .section-heading {
   align-items: flex-end;
   margin-bottom: 14px;
-}
-
-.section-kicker,
-.detail-heading > div > span {
-  margin: 0 0 4px;
-  color: var(--brief-green);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
 }
 
 h2,
@@ -307,8 +452,7 @@ h3 {
   margin-bottom: 0;
 }
 
-.section-heading p:last-child,
-.voucher-heading p {
+.section-heading p:last-child {
   margin-bottom: 0;
   color: var(--brief-muted);
   font-size: 13px;
@@ -346,8 +490,7 @@ h3 {
 .workbench {
   display: grid;
   grid-template-columns: 270px minmax(0, 1fr);
-  min-height: 330px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--brief-line);
   border-radius: 16px;
   background: var(--brief-soft);
@@ -355,12 +498,11 @@ h3 {
 
 .index {
   display: flex;
-  max-height: 560px;
   flex-direction: column;
   gap: 4px;
-  overflow-y: auto;
   padding: 8px;
   border-right: 1px solid var(--brief-line);
+  border-radius: 15px 0 0 15px;
 }
 
 .index button {
@@ -428,6 +570,7 @@ h3 {
 .detail {
   min-width: 0;
   padding: 15px;
+  border-radius: 0 15px 15px 0;
   background: var(--brief-surface);
 }
 
@@ -441,71 +584,256 @@ h3 {
   font-size: 13px;
 }
 
-.event-list,
-.disclosure ul {
-  display: grid;
-  gap: 6px;
+.event-list {
+  overflow: visible;
   margin: 10px 0 0;
   padding: 0;
+  border: 1px solid var(--brief-line);
+  border-radius: 12px;
   list-style: none;
 }
 
-.component-list li {
-  display: grid;
-  gap: 2px;
-}
-
-.component-list span {
-  color: var(--brief-muted);
+.event-list > li + li {
+  border-top: 1px solid var(--brief-line);
 }
 
 .event-row {
-  padding: 10px 12px;
-  border: 1px solid var(--brief-line);
-  border-radius: 12px;
-  background: var(--brief-surface);
-}
-
-.event-top > div {
+  position: relative;
   display: grid;
-  gap: 3px;
+  min-height: 54px;
+  grid-template-columns: minmax(90px, 0.55fr) minmax(160px, 1.5fr) auto minmax(104px, 0.6fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--brief-surface);
+  transition: background 140ms ease;
 }
 
-.event-top small,
-.event-meta {
+.event-row:first-child {
+  border-radius: 11px 11px 0 0;
+}
+
+.event-row:last-child {
+  border-radius: 0 0 11px 11px;
+}
+
+.event-row:only-child {
+  border-radius: 11px;
+}
+
+.event-row:hover,
+.event-row:focus-within {
+  z-index: 4;
+  background: color-mix(in srgb, var(--brief-green-soft) 38%, var(--brief-surface));
+}
+
+.event-reference {
+  min-width: 0;
+  overflow: hidden;
   color: var(--brief-muted);
-  font-size: 12px;
-}
-
-.event-type {
-  margin-top: 3px;
-  color: var(--brief-green);
   font-size: 11px;
-  font-weight: 800;
-}
-
-.event-subject {
-  font-size: 16px;
-  line-height: 1.35;
-}
-
-.event-description {
-  color: var(--brief-muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.event-top > b {
-  font-size: 16px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.event-meta {
+.event-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.event-copy strong,
+.event-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-copy strong {
+  font-size: 13px;
+}
+
+.event-copy small {
+  color: var(--brief-muted);
+  font-size: 11px;
+}
+
+.event-voucher-button {
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--brief-green);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.event-voucher-button:hover,
+.event-voucher-button:focus-visible {
+  background: var(--brief-green-soft);
+}
+
+.event-voucher-link {
+  position: relative;
+  justify-self: end;
+}
+
+.event-voucher-preview {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 10px);
+  z-index: 30;
+  display: grid;
+  width: min(330px, calc(100vw - 48px));
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
+  border-radius: 12px;
+  background: var(--brief-surface);
+  box-shadow: 0 18px 42px rgb(18 45 31 / 16%);
+  opacity: 0;
+  color: var(--brief-text);
+  pointer-events: none;
+  text-align: left;
+  transform: translate(8px, -50%);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  visibility: hidden;
+}
+
+.event-voucher-preview::after {
+  position: absolute;
+  top: calc(50% - 5px);
+  right: -6px;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
+  border-right: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
+  background: var(--brief-surface);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.event-voucher-link:hover .event-voucher-preview,
+.event-voucher-link:focus-within .event-voucher-preview {
+  opacity: 1;
+  transform: translate(0, -50%);
+  visibility: visible;
+}
+
+.voucher-preview-heading,
+.voucher-preview-footer,
+.voucher-preview-lines > span {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
   align-items: center;
-  margin-top: 8px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.voucher-preview-heading > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.voucher-preview-heading small,
+.voucher-preview-footer small,
+.voucher-preview-empty {
+  color: var(--brief-muted);
+  font-size: 10px;
+}
+
+.voucher-preview-heading strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voucher-preview-heading b {
+  flex: none;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.voucher-preview-lines {
+  display: grid;
+  gap: 5px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: var(--brief-soft);
+}
+
+.voucher-preview-lines > span {
+  min-width: 0;
+  color: var(--brief-muted);
+  font-size: 11px;
+}
+
+.voucher-preview-lines > span > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voucher-preview-lines strong {
+  flex: none;
+  color: var(--brief-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.voucher-preview-footer > .state {
+  min-height: 20px;
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+.business-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px 0;
+  color: var(--brief-muted);
+  font-size: 12px;
+}
+
+.business-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.business-pagination button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--brief-line);
+  border-radius: 8px;
+  background: var(--brief-surface);
+  color: var(--brief-green);
+  font: inherit;
+  cursor: pointer;
+}
+
+.business-pagination button:hover:not(:disabled) {
+  border-color: var(--brief-green);
+  background: var(--brief-green-soft);
+}
+
+.business-pagination button:disabled {
+  color: var(--brief-muted);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.business-pagination strong {
+  min-width: 42px;
+  color: var(--brief-text);
+  text-align: center;
 }
 
 .state,
@@ -520,150 +848,227 @@ h3 {
   font-weight: 750;
 }
 
+.event-row > .state {
+  min-height: 21px;
+  padding: 1px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .state.correction {
   background: var(--brief-amber-soft);
   color: var(--brief-amber);
 }
 
-.voucher-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 10px;
-  color: var(--brief-muted);
-  font-size: 12px;
-}
-
-.voucher-summary strong {
-  color: var(--brief-text);
-  white-space: nowrap;
+.voucher-view {
+  min-width: 0;
 }
 
 .voucher-list {
   display: grid;
-  gap: 6px;
+  gap: 7px;
 }
 
-.voucher-date {
-  padding: 8px 12px 2px;
-  color: var(--brief-muted);
-  font-size: 11px;
-  font-weight: 800;
+.voucher-card {
+  overflow: hidden;
+  border: 1px solid var(--brief-line);
+  border-radius: 12px;
+  background: var(--brief-surface);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.voucher-card:hover {
+  border-color: var(--brief-line-strong);
+}
+
+.voucher-card.is-open {
+  border-color: color-mix(in srgb, var(--brief-green) 42%, var(--brief-line));
+  box-shadow: 0 7px 18px rgb(18 45 31 / 6%);
 }
 
 .voucher-row {
   display: grid;
   width: 100%;
-  min-height: 48px;
-  grid-template-columns: 125px 150px minmax(0, 1fr) 130px 42px;
-  gap: 12px;
+  min-height: 62px;
+  grid-template-columns: 132px minmax(180px, 1fr) auto 132px 16px;
+  grid-template-areas: "reference copy state amount chevron";
+  gap: 14px;
   align-items: center;
-  padding: 10px 12px;
-  border: 1px solid var(--brief-line);
-  border-radius: 11px;
-  background: var(--brief-surface);
+  padding: 9px 13px;
+  border: 0;
+  background: transparent;
   color: var(--brief-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  user-select: text;
 }
 
-.voucher-type {
+.voucher-row:hover {
+  background: color-mix(in srgb, var(--brief-green-soft) 48%, var(--brief-surface));
+}
+
+.voucher-card.is-open > .voucher-row {
+  background: color-mix(in srgb, var(--brief-green-soft) 34%, var(--brief-surface));
+}
+
+.voucher-reference,
+.voucher-copy {
+  display: grid;
   min-width: 0;
-  color: var(--brief-muted);
+  gap: 3px;
+}
+
+.voucher-reference {
+  grid-area: reference;
+}
+
+.voucher-reference strong {
+  color: var(--brief-green);
   font-size: 12px;
-  overflow-wrap: anywhere;
 }
 
-.voucher-row:hover,
-.voucher-row[aria-expanded="true"] {
-  border-color: var(--brief-green);
-  background: color-mix(in srgb, var(--brief-green-soft) 42%, var(--brief-surface));
-}
-
-.voucher-row-summary {
-  min-width: 0;
+.voucher-reference small,
+.voucher-copy small {
   overflow: hidden;
+  color: var(--brief-muted);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.voucher-copy {
+  grid-area: copy;
+}
+
+.voucher-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voucher-row > .state {
+  grid-area: state;
+  min-height: 21px;
+  padding: 1px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .voucher-row-amount {
+  grid-area: amount;
+  font-size: 14px;
   text-align: right;
   white-space: nowrap;
 }
 
-.voucher-toggle {
-  color: var(--brief-green);
-  font-size: 11px;
-  font-weight: 750;
-  text-align: right;
+.voucher-chevron {
+  width: 7px;
+  height: 7px;
+  grid-area: chevron;
+  border-right: 1.5px solid var(--brief-muted);
+  border-bottom: 1.5px solid var(--brief-muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 140ms ease;
 }
 
-.voucher-detail {
+.voucher-card.is-open .voucher-chevron {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.voucher-pagination {
+  padding-top: 12px;
+}
+
+.voucher-inline-detail {
   --voucher-account-width: 35%;
   --voucher-party-width: 33%;
   --voucher-amount-width: 16%;
-  margin: -2px 0 8px;
-  padding: 16px;
-  border: 1px solid var(--brief-green);
-  border-radius: 11px;
+  min-width: 0;
+  margin: 0 13px;
+  padding: 2px 0 16px;
+  border-top: 1px solid var(--brief-line);
+}
+
+.voucher-correction {
+  margin: 12px 0 0;
+  color: var(--brief-amber);
+  font-size: 12px;
+}
+
+.voucher-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+  margin-top: 10px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  background: var(--brief-soft);
+}
+
+.voucher-action,
+.voucher-actions :deep(.trace-details.compact > .trace-button) {
+  flex: 0 0 auto;
+  order: 1;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--brief-green);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.voucher-action:hover,
+.voucher-actions :deep(.trace-details.compact > .trace-button:hover) {
   background: var(--brief-green-soft);
 }
 
-.voucher-detail-top {
-  display: grid;
-  grid-template-columns:
-    var(--voucher-account-width)
-    var(--voucher-party-width)
-    var(--voucher-amount-width)
-    var(--voucher-amount-width);
-  gap: 0;
-  margin-bottom: 12px;
-}
-
-.voucher-description {
-  grid-column: 1 / 3;
-  padding: 0 9px;
-}
-
-.detail-label {
-  color: var(--brief-green);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-}
-
-.voucher-detail-meta {
-  display: block;
-  margin-top: 2px;
+.voucher-action span {
+  margin-left: 3px;
   color: var(--brief-muted);
-  font-size: 11px;
+  font-weight: 500;
 }
 
-.voucher-description p {
-  margin: 4px 0 0;
-  font-size: 13px;
+.voucher-actions :deep(.trace-details.compact) {
+  display: contents;
 }
 
-.voucher-balance {
+.voucher-actions :deep(.trace-details.compact > .trace-content) {
+  flex: 1 0 100%;
+  order: 3;
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.voucher-evidence {
+  flex: 1 0 100%;
+  order: 2;
+  min-width: 0;
+  padding: 6px 8px 2px;
+}
+
+.voucher-evidence ul {
   display: grid;
-  grid-column: 3 / 5;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px 12px;
-  align-content: start;
-  text-align: right;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.voucher-balance span {
+.voucher-evidence li {
+  overflow: hidden;
   color: var(--brief-muted);
-  font-size: 11px;
-}
-
-.voucher-balance strong {
-  font-size: 15px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .voucher-account-column {
@@ -692,44 +1097,47 @@ table {
 th,
 td {
   padding: 10px 9px;
-  border-bottom: 1px solid var(--brief-line);
   text-align: left;
+  vertical-align: top;
 }
 
 th {
+  background: var(--brief-soft);
   color: var(--brief-muted);
   font-size: 11px;
 }
 
-td:first-child {
-  display: grid;
-  gap: 2px;
+th:first-child {
+  border-radius: 8px 0 0 8px;
+}
+
+th:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--brief-soft) 55%, transparent);
+}
+
+td:first-child small,
+td:first-child strong {
+  display: block;
 }
 
 td:first-child small {
+  margin-bottom: 2px;
+  color: var(--brief-muted);
+}
+
+td:nth-child(2) > small {
+  display: block;
+  margin-top: 4px;
   color: var(--brief-muted);
 }
 
 .number {
   text-align: right;
   white-space: nowrap;
-}
-
-.disclosure {
-  margin-top: 10px;
-}
-
-.disclosure summary {
-  color: var(--brief-green);
-  font-size: 12px;
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.disclosure ul {
-  gap: 3px;
-  color: var(--brief-muted);
-  font-size: 12px;
 }
 
 .empty {
@@ -739,6 +1147,21 @@ td:first-child small {
   border-radius: 14px;
   color: var(--brief-muted);
   text-align: center;
+}
+
+.activity-pagination:empty {
+  display: none;
+}
+
+.activity-pagination {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--brief-line);
+}
+
+.activity-pagination :deep(.dashboard-pagination) {
+  padding: 0;
+  color: var(--brief-muted);
 }
 
 @media (max-width: 760px) {
@@ -771,6 +1194,7 @@ td:first-child small {
     overflow-x: auto;
     border-right: 0;
     border-bottom: 1px solid var(--brief-line);
+    border-radius: 15px 15px 0 0;
     scroll-snap-type: x proximity;
   }
 
@@ -780,85 +1204,91 @@ td:first-child small {
     scroll-snap-align: start;
   }
 
-  .voucher-summary {
+  .detail {
+    padding: 12px;
+    border-radius: 0 0 15px 15px;
+  }
+
+  .detail-heading {
     align-items: flex-start;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
+  }
+
+  .event-row {
+    min-height: 78px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 10px;
+    padding: 9px 10px;
+  }
+
+  .event-reference {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .event-copy {
+    grid-row: 2;
+    grid-column: 1 / 3;
+  }
+
+  .event-row > .state {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .event-money {
+    grid-row: 3;
+    grid-column: 1;
+    text-align: left;
+  }
+
+  .event-voucher-link {
+    grid-row: 3;
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .event-voucher-preview {
+    display: none;
+  }
+
+  .business-pagination {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .voucher-row {
-    min-height: 72px;
-    grid-template-columns: 92px minmax(0, 1fr) auto;
-    gap: 5px 9px;
-    padding: 10px;
+    min-height: 74px;
+    grid-template-columns: minmax(0, 1fr) auto 14px;
+    grid-template-areas:
+      "reference amount chevron"
+      "copy state chevron";
+    gap: 6px 10px;
+    padding: 10px 11px;
   }
 
-  .voucher-type {
-    grid-row: 1;
-    grid-column: 2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .voucher-reference {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
   }
 
-  .voucher-row-summary {
-    display: -webkit-box;
-    grid-row: 2;
-    grid-column: 1 / 3;
-    overflow: hidden;
-    white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+  .voucher-row > .state {
+    justify-self: end;
   }
 
   .voucher-row-amount {
-    grid-row: 1;
-    grid-column: 3;
+    font-size: 13px;
   }
 
-  .voucher-toggle {
-    grid-row: 2;
-    grid-column: 3;
+  .voucher-inline-detail {
+    margin: 0 11px;
+    padding-bottom: 13px;
   }
 
-  .detail {
-    padding: 15px;
-  }
-
-  .disclosure summary {
-    display: flex;
-    min-height: 44px;
-    align-items: center;
-  }
-
-  .event-top {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .event-top {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .voucher-detail {
-    padding: 14px;
-  }
-
-  .voucher-detail-top {
-    grid-template-columns: 1fr;
-  }
-
-  .voucher-description,
-  .voucher-balance {
-    grid-column: 1;
-    padding: 0;
-  }
-
-  .voucher-balance {
-    width: min(100%, 300px);
-    margin-top: 12px;
-    text-align: left;
+  .voucher-evidence ul {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   table,
@@ -873,9 +1303,16 @@ td:first-child small {
     display: none;
   }
 
+  tbody {
+    display: grid;
+    gap: 6px;
+  }
+
   tr {
     padding: 8px 0;
-    border-bottom: 1px solid var(--brief-line);
+    border: 0;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--brief-soft) 62%, transparent);
   }
 
   td,

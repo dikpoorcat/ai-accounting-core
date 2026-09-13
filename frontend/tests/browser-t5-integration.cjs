@@ -54,7 +54,7 @@ async function run(config) {
     const continuation = await (await continued).json();
     assert.equal(continuation.snapshot_version, brief.snapshot_version);
     assert.equal(continuation.data.collections.vouchers.page.has_more, false);
-    await page.getByText(`已加载 ${first.voucher_count} / ${first.voucher_count} 张凭证；本页汇总按全月计算。`, { exact: true }).waitFor();
+    await page.locator("#activity .dashboard-pagination").waitFor({ state: "detached" });
     const focused = await dashboard("/", "brief", "月度经营与财务概览", first.id, "2026-09", `&voucher=${first.target_number}`);
     assert.equal(focused.data.focused_voucher.voucher_version_id, first.target_version_id);
     assert(!focused.data.vouchers.some(item => item.voucher_version_id === first.target_version_id));

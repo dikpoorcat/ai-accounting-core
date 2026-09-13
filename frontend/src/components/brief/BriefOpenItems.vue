@@ -60,12 +60,6 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
       </strong>
     </div>
 
-    <p v-if="isClosed" class="historical-note">
-      以下为该月末余额；展开对应来源可分别查看月末情况与相关后来清偿。
-    </p>
-
-    <p v-if="openItems.complete === false || openItems.unestablished_count" class="historical-note">部分来源尚待核对，已知金额也不能视为完整结论；请查看来源及未证明候选。</p>
-    <p class="historical-note">待收包含预付款待冲抵等，不代表预计或到期现金收付。以下来源明细为已加载部分。</p>
     <details v-if="openItems.issues?.length"><summary>往来来源问题 · {{ openItems.issues.length }} 条</summary><ul><li v-for="(issue, index) in openItems.issues" :key="index"><p>{{ issue.message || '来源尚待核对' }}</p><BusinessStatusDetails v-if="issue.subject_id" :subject-id="issue.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="查看相关依据" @changed="$emit('changed')" /><details><summary>精确来源与候选依据</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul></details>
     <div class="open-summary" :aria-label="isClosed ? '关账时点往来汇总' : '期末往来汇总'">
       <article class="receivable">
@@ -200,17 +194,6 @@ h2 {
 .section-heading > strong {
   color: var(--brief-muted);
   font-size: 13px;
-}
-
-.historical-note {
-  margin: -3px 0 12px;
-  padding: 9px 12px;
-  border-left: 3px solid var(--brief-blue);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--brief-blue-soft) 62%, var(--brief-surface));
-  color: var(--brief-muted);
-  font-size: 12px;
-  line-height: 1.55;
 }
 
 .open-summary {

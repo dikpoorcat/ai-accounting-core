@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import type { DashboardPage } from "../api/dashboardContracts";
-defineProps<{ page?: DashboardPage; loaded: number; loading?: boolean; error?: string }>();
+withDefaults(defineProps<{ page?: DashboardPage; loaded: number; loading?: boolean; error?: string; compact?: boolean; itemLabel?: string }>(), {
+  compact: false,
+  itemLabel: "项",
+});
 defineEmits<{ more: []; retry: [] }>();
 </script>
 
 <template>
-  <div v-if="page || error" class="dashboard-pagination" :aria-busy="loading">
-    <span v-if="page">完整总计 {{ page.total_count }} 项 · 筛选总计 {{ page.filtered_count }} 项 · 已加载 {{ loaded }} 项</span>
+  <div v-if="error || (page && (!compact || page.has_more))" class="dashboard-pagination" :aria-busy="loading">
+    <span v-if="page && (!compact || page.has_more)">
+      <template v-if="compact">已加载 {{ loaded }} / {{ page.filtered_count }} {{ itemLabel }}</template>
+      <template v-else>完整总计 {{ page.total_count }} 项 · 筛选总计 {{ page.filtered_count }} 项 · 已加载 {{ loaded }} 项</template>
+    </span>
     <p v-if="error" role="alert">{{ error }} <button type="button" :disabled="loading" @click="$emit('retry')">重试读取</button></p>
     <button v-else-if="page?.has_more" type="button" :disabled="loading" @click="$emit('more')">{{ loading ? "加载中…" : "加载更多" }}</button>
     <span v-else-if="page && loaded > 0">本次筛选已全部加载</span>

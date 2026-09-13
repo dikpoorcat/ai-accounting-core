@@ -189,7 +189,7 @@ async function run(config) {
     }
 
     if (config.scenario === "navigation") {
-      await dashboard(pages[0]);
+      const brief = await dashboard(pages[0]);
       await page.getByRole("navigation", { name: "经营简报区段", exact: true }).getByRole("button", { name: "业务凭证", exact: true }).click();
       const pagination = page.locator("#activity .dashboard-pagination");
       await pagination.scrollIntoViewIfNeeded();
@@ -197,9 +197,11 @@ async function run(config) {
       const before = await page.evaluate(() => ({ scroll: scrollY, targetTop: document.querySelector('#activity .dashboard-pagination').getBoundingClientRect().top }));
       const continuation = api("brief", target => target.searchParams.has("cursor"));
       await pagination.getByRole("button", { name: "加载更多", exact: true }).click();
-      await (await continuation).json();
+      const continuationData = await (await continuation).json();
       await page.waitForFunction(() => !document.querySelector('#activity .dashboard-pagination[aria-busy="true"]'));
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const loadedVouchers = brief.data.vouchers.length + continuationData.data.vouchers.length;
+      await pagination.getByText(`已加载 ${loadedVouchers} / ${brief.data.voucher_count} 张凭证`, { exact: true }).waitFor();
       const after = await page.evaluate(() => ({ scroll: scrollY, targetTop: document.querySelector('#activity .dashboard-pagination').getBoundingClientRect().top }));
       await screenshot("navigation-pagination-after.png", false);
       await page.getByText("查看相关款项、外部办理与文件任务", { exact: true }).click();
@@ -220,6 +222,17 @@ async function run(config) {
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
         await dashboard(pages[0]);
+        assert(await page.evaluate(() => {
+          const activity = document.querySelector('#activity');
+          const finance = document.querySelector('#finance');
+          const openItems = document.querySelector('#open-items');
+          return !!activity && !!finance && !!openItems
+            && !!(activity.compareDocumentPosition(finance) & Node.DOCUMENT_POSITION_FOLLOWING)
+            && !!(finance.compareDocumentPosition(openItems) & Node.DOCUMENT_POSITION_FOLLOWING);
+        }), "Brief sections should place activity before finance and open items after finance");
+        const businessRows = page.locator("#activity .event-row");
+        const visibleBusinessCount = await businessRows.count();
+        assert(visibleBusinessCount > 0 && visibleBusinessCount <= 10, "Business mode should page compact rows instead of rendering the whole loaded set");
         await screenshot(`brief-${width}-default.png`);
         if (width === 390) assert.equal(await page.locator(".kpi-grid > .kpi").evaluateAll(elements => new Set(elements.map(element => Math.round(element.getBoundingClientRect().top))).size), 4, "Mobile Brief should show its four cards in one column");
         await expand(pages[0]);
@@ -355,7 +368,7 @@ async function run(config) {
       continuation = await (await next).json();
       assert.equal(continuation.snapshot_version, brief.snapshot_version);
     }
-    await page.getByText(`已加载 ${first.voucher_count} / ${first.voucher_count} 张凭证；本页汇总按全月计算。`, { exact: true }).waitFor();
+    await page.locator("#activity .dashboard-pagination").waitFor({ state: "detached" });
     const focused = await dashboard(pages[0], first.id, "2026-09", `&voucher=${first.target_number}`);
     assert.equal(focused.data.focused_voucher.voucher_version_id, first.target_version_id);
     assert(!focused.data.vouchers.some(item => item.voucher_version_id === first.target_version_id));
