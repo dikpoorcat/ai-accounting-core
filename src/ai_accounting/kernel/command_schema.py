@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal, get_type_hints
 
 from pydantic import ConfigDict, Field, TypeAdapter, ValidationError, create_model
 
+from .asset_batches import AssetBatches
 from .backup import run_backup_jobs
 from .business_queries import BusinessQueries
 from .catalog import Catalog
@@ -110,6 +111,10 @@ def command_models(registry):
         "payroll_reuse_basis": PayrollPreparation.reuse_basis,
         "prepare_payroll": PayrollPreparation.prepare,
         "confirm_payroll_preparation": PayrollPreparation.confirm,
+        "prepare_asset_activation_batch": AssetBatches.prepare_activation_batch,
+        "confirm_asset_activation_batch": AssetBatches.confirm_activation_batch,
+        "prepare_asset_consumption_month": AssetBatches.prepare_consumption_month,
+        "confirm_asset_consumption_month": AssetBatches.confirm_consumption_month,
         "preview_managed_reserve_settlement": Reserves.preview_settlement,
         "confirm_managed_reserve_settlement": Reserves.confirm_settlement,
         "preview_tax_import": TaxImport.preview,

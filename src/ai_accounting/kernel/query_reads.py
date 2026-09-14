@@ -155,6 +155,7 @@ class QueryReads:
         self._selections = {}
         self._typed_calculations = {}
         self._jobs = {}
+        self._asset_members = {}
         self.job_plans = {}
 
     @classmethod
@@ -332,14 +333,28 @@ class QueryReads:
                 "p.posting_period,p.voucher_id,"
                 + expressions
                 + "FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
-                "JOIN calculation_publication p ON p.calculation_id=c.id "
+                "LEFT JOIN calculation_publication p ON p.calculation_id=c.id "
                 "JOIN fact_revision f ON f.id=c.fact_id",
                 (canonical(sorted(missing)),),
             ):
                 value = dict(row)
+                if value["posting_period"] is None and value["kind"] not in {
+                    "asset_activation",
+                    "asset_consumption",
+                }:
+                    raise KernelError(
+                        "unknown_calculation", "计算版本没有正式发布或资产批次采用记录"
+                    )
                 value["result_digest"] = value.pop("digest").hex()
                 value["period"] = str(YearMonth.from_ordinal(value["period"]))
-                value["posting_period"] = str(YearMonth.from_ordinal(value["posting_period"]))
+                value["publication_role"] = (
+                    "independent" if value["posting_period"] is not None else "asset_member"
+                )
+                value["posting_period"] = (
+                    str(YearMonth.from_ordinal(value["posting_period"]))
+                    if value["posting_period"] is not None
+                    else None
+                )
                 if not state:
                     value.pop("line_count")
                     value.pop("opening")
@@ -347,6 +362,16 @@ class QueryReads:
             if missing - self._metadata.keys():
                 raise KernelError("unknown_calculation", "计算版本不存在")
         return {ident: self._metadata[ident] for ident in identifiers}
+
+    def asset_members(self, owner_calculation_id):
+        """Read the exact immutable adoption, never a current member replacement."""
+        if owner_calculation_id not in self._asset_members:
+            from .asset_batches import frozen_members
+
+            self._asset_members[owner_calculation_id] = tuple(
+                frozen_members(self.connection, owner_calculation_id)
+            )
+        return self._asset_members[owner_calculation_id]
 
     def calculations(self, identifiers):
         identifiers = set(identifiers)

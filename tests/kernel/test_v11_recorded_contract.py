@@ -11,7 +11,7 @@ import ai_accounting
 from ai_accounting.kernel import read_indexes
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.runtime import connect
-from ai_accounting.kernel.schema import initialize, schema_sql
+from ai_accounting.kernel.schema import VERSION, initialize, schema_sql
 from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.versions import (
     contract,
@@ -87,10 +87,12 @@ def create_recorded_file(path, *, variant=True, alteration=None, taxpayer_id="sy
         connection.commit()
 
 
-def table_digest(connection, *, include_metadata=False):
+def table_digest(connection, *, include_metadata=False, table_names=None):
     retained = {}
     for item in objects(connection):
         if item["type"] != "table":
+            continue
+        if table_names is not None and item["name"] not in table_names:
             continue
         if not include_metadata and item["name"] in {"identity", "schema_history"}:
             continue
@@ -102,10 +104,12 @@ def table_digest(connection, *, include_metadata=False):
 def test_frozen_contracts_and_recorded_source_are_exact():
     standard = known_contracts("business")[10]
     recorded = recorded_business_v10_variant()
-    assert current_version("business") == 11
+    assert current_version("business") == VERSION
     assert current_version("catalog") == 3
     assert standard["objects"] == known_contracts("business")[11]["objects"]
-    assert contract(schema_sql(default_registry())) == standard["objects"]
+    assert contract(schema_sql(default_registry())) == known_contracts("business")[VERSION][
+        "objects"
+    ]
     assert recorded["sha256"] == "45dd0bba8f9668b552859ff7beea612a8c51fd9838f1a3d9785c76771bc08266"
     assert fingerprint(recorded["objects"]).hex() == recorded["sha256"]
     assert recorded["objects"] == [
@@ -133,29 +137,43 @@ def test_v10_upgrade_keeps_business_tables_and_original_history(tmp_path, monkey
         )
         identity = tuple(connection.execute("SELECT * FROM identity").fetchone())
         previous_objects = objects(connection)
+        previous_tables = {item["name"] for item in previous_objects if item["type"] == "table"}
         assert verify_schema(connection, allow_previous=True) == 10
         with pytest.raises(KernelError, match="数据库版本"):
             verify_schema(connection)
         assert upgrade(connection, registry=default_registry())
-        assert verify_schema(connection) == 11
-        assert table_digest(connection) == before
+        assert verify_schema(connection) == VERSION
+        assert table_digest(connection, table_names=previous_tables) == before
         assert (
             tuple(connection.execute("SELECT * FROM schema_history WHERE version=10").fetchone())
             == history
         )
         assert tuple(connection.execute("SELECT * FROM identity").fetchone()) == (
             *identity[:-1],
-            11,
+            VERSION,
         )
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == VERSION
         assert [
             row[0]
             for row in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [10, 11]
-        added = {item["name"] for item in objects(connection) if item not in previous_objects}
-        assert added == (MISSING_INDEXES if variant else set())
+        ] == [10, VERSION]
+        # The recorded v10 repair remains exact, while later versions may append
+        # their own tables and replace explicitly declared triggers.
+        previous_map = {(item["type"], item["name"]): item for item in previous_objects}
+        current_map = {(item["type"], item["name"]): item for item in objects(connection)}
+        for key, item in previous_map.items():
+            if item["type"] != "trigger":
+                assert current_map[key] == item
+        for name in MISSING_INDEXES:
+            assert current_map[("index", name)] in known_contracts("business")[11]["objects"]
+        for item in objects(connection):
+            if item["type"] == "table" and item["name"] not in previous_tables:
+                rows = connection.execute(
+                    'SELECT count(*) FROM "' + item["name"] + '"'
+                ).fetchone()[0]
+                assert rows == 0
         assert not upgrade(connection)
-        assert table_digest(connection) == before
+        assert table_digest(connection, table_names=previous_tables) == before
 
 
 @pytest.mark.parametrize("variant", [False, True])
@@ -216,8 +234,11 @@ def test_new_v11_is_strict_and_has_only_v11_history(tmp_path):
             "synthetic-taxpayer",
             "synthetic-db",
         )
-        assert verify_schema(connection) == 11
-        assert [row[0] for row in connection.execute("SELECT version FROM schema_history")] == [11]
+        assert verify_schema(connection) == VERSION
+        versions = [
+            row[0] for row in connection.execute("SELECT version FROM schema_history")
+        ]
+        assert versions == [VERSION]
         for name in MISSING_INDEXES:
             connection.execute('DROP INDEX "' + name + '"')
         for allow_previous in (False, True):

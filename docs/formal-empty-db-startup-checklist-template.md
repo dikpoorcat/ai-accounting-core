@@ -12,7 +12,7 @@
 - [ ] 已明确本次目标公司、来源范围和独立目标根目录；全部 CLI 显式使用该 `--root`，MCP 绑定同一目录。
 - [ ] 原库、原件和可恢复依据已保全；本次操作不自动清理原资源。
 - [ ] 已从 `schema` / `finance_local_schema` 取得当前命令和事实合同。
-- [ ] 当前环境为 SQLite 目录库 v3、公司库 v11；不使用已退役 PostgreSQL / Alembic / `finance-replay` 命令。
+- [ ] 当前环境为 SQLite 目录库 v3、公司库 v12；不使用已退役 PostgreSQL / Alembic / `finance-replay` 命令。
 - [ ] 已通过本机安全窗口设置或登录目标负责人；没有复制身份密钥、会话或旧批准记录。
 
 ## 原始资料空库重记

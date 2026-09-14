@@ -29,6 +29,15 @@ interface AssetItemBase {
   month_charge_fen: string | null;
   book_value_fen: string | null;
   latest_charge_period: string | null;
+  charge_state_label?: string | null;
+  batch_references?: Array<{
+    calculation_id: string;
+    owner_calculation_id: string;
+    voucher_version_id: string | null;
+    voucher_number: number | null;
+    period: string;
+    label: string;
+  }>;
   benefit_area_label: string | null;
   useful_life_months: number | null;
   acquisition_reference: string;

@@ -22,6 +22,7 @@ AUDIT_ACTIONS = (
     "payee",
 )
 CLOSE_CALCULATIONS = "calculations[*]"
+CLOSE_ASSET_ADOPTIONS = "asset_batch_adoptions[*].owner_calculation_id"
 CLOSE_VOUCHERS = "vouchers[*].id"
 CLOSE_VOUCHER_CALCULATIONS = "vouchers[*].calculation_id"
 CLOSE_REPORT_FACTS = "readiness.financial_reports.facts[*]"
@@ -31,6 +32,7 @@ CLOSE_MANAGEMENT = "management_snapshot.management[*].id"
 CLOSE_PAYEES = "management_snapshot.payees[*].id"
 _CLOSE_PATH_TYPES = {
     CLOSE_CALCULATIONS: "calculation",
+    CLOSE_ASSET_ADOPTIONS: "calculation",
     CLOSE_VOUCHERS: "voucher",
     CLOSE_VOUCHER_CALCULATIONS: "calculation",
     CLOSE_REPORT_FACTS: "fact",
@@ -139,6 +141,9 @@ def _close_references(row):
 
     for pos, ident in _items(manifest.get("calculations")):
         add("calculations[*]", pos, "calculation", ident)
+    for pos, reference in _items(manifest.get("asset_batch_adoptions")):
+        if isinstance(reference, dict):
+            add(CLOSE_ASSET_ADOPTIONS, pos, "calculation", reference.get("owner_calculation_id"))
     for pos, reference in _items(manifest.get("vouchers")):
         if isinstance(reference, dict):
             add(

@@ -411,6 +411,12 @@ class Engine:
             facts = {
                 sid: v for sid, v in facts.items() if v.fact.kind in self.store.registry.evaluators
             }
+            from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
+
+            if any(v.fact.kind in MEMBER_KINDS | OWNER_KINDS for v in facts.values()):
+                raise KernelError(
+                    "asset_batch_command_required", "包含资产卡片或汇总的变更须通过资产专用编排预览"
+                )
             reads = {
                 read
                 for version in facts.values()
@@ -448,6 +454,9 @@ class Engine:
             accounting.load(self.store, connection, comparison_ids)
             connection.commit()
         return epochs, facts, selections, pending, closed, previous, accounting
+
+    def _evaluate(self, version, context):
+        return asdict(self.store.registry.evaluators[version.fact.kind](version, context))
 
     def _prepare(self, subjects, correction_period=None):
         epochs, facts, selections, pending, closed, previous, accounting = self._snapshot(subjects)
@@ -526,8 +535,7 @@ class Engine:
                 blocked.add(sid)
                 continue
             try:
-                evaluator = self.store.registry.evaluators[version.fact.kind]
-                outcome = asdict(evaluator(version, context))
+                outcome = self._evaluate(version, context)
             except KernelError as exc:
                 if exc.code != "accounting_compatibility_required":
                     raise
@@ -673,6 +681,60 @@ class Engine:
             checked_lanes=public["checked_lanes"],
         )
 
+    def _record_prepared(self, connection, prepared):
+        version, cid, outcome = prepared.version, prepared.calculation_id, prepared.outcome
+        outcome_digest = digest(outcome)
+        if connection.execute("SELECT 1 FROM calculation WHERE id=?", (cid,)).fetchone():
+            return
+        connection.execute(
+            "INSERT INTO calculation VALUES(?,?,?,?,?,?,?,?)",
+            (
+                cid,
+                version.subject_id,
+                version.id,
+                version.fact.kind,
+                version.fact.period.ordinal,
+                canonical(outcome),
+                outcome_digest,
+                PROGRAM_VERSION,
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO calculation_scope VALUES(?,?,?)",
+            [
+                (cid, version.fact.kind, key)
+                for key in sorted(
+                    set(version.fact.scopes_for(version.subject_id))
+                    | {"@" + version.subject_id, str(version.fact.period)}
+                )
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO dependency_scope VALUES(?,?,?,?,?)",
+            [
+                (
+                    cid,
+                    r.source,
+                    r.kind,
+                    r.key,
+                    r.before_period.ordinal if r.before_period else 119988,
+                )
+                for r in sorted(prepared.context.used, key=repr)
+            ],
+        )
+        fact_ids = {version.id}
+        calc_ids = set()
+        for read in prepared.context.used:
+            for item in prepared.context.selections[read]:
+                (fact_ids if read.source == "fact" else calc_ids).add(item.id)
+        connection.executemany(
+            "INSERT INTO dependency_fact VALUES(?,?)", [(cid, fid) for fid in sorted(fact_ids)]
+        )
+        connection.executemany(
+            "INSERT INTO dependency_calculation VALUES(?,?)",
+            [(cid, upstream) for upstream in sorted(calc_ids) if upstream != cid],
+        )
+
     def _publish(self, connection, prepared, correction_period):
         version, cid, outcome = prepared.version, prepared.calculation_id, prepared.outcome
         old = connection.execute(
@@ -690,7 +752,6 @@ class Engine:
             if old
             else None
         )
-        outcome_digest = digest(outcome)
         no_impact = prepared.impact == "review_no_impact"
         if outcome.get("opening") and old is None:
             if (
@@ -725,56 +786,17 @@ class Engine:
             ).fetchone()
         ):
             posting = old_publication["posting_period"]
-        is_new = not connection.execute("SELECT 1 FROM calculation WHERE id=?", (cid,)).fetchone()
+        if not no_impact and not outcome["lines"] and connection.execute(
+            "SELECT 1 FROM period_close WHERE period>=?", (posting,)
+        ).fetchone():
+            if correction_period is None:
+                raise KernelError("closed_correction_required", "已关账结果须指定开放期冲正")
+            posting = YearMonth(correction_period).ordinal
+        is_new = not connection.execute(
+            "SELECT 1 FROM calculation_seal WHERE calculation_id=?", (cid,)
+        ).fetchone()
         if is_new:
-            connection.execute(
-                "INSERT INTO calculation VALUES(?,?,?,?,?,?,?,?)",
-                (
-                    cid,
-                    version.subject_id,
-                    version.id,
-                    version.fact.kind,
-                    version.fact.period.ordinal,
-                    canonical(outcome),
-                    outcome_digest,
-                    PROGRAM_VERSION,
-                ),
-            )
-            connection.executemany(
-                "INSERT INTO calculation_scope VALUES(?,?,?)",
-                [
-                    (cid, version.fact.kind, key)
-                    for key in sorted(
-                        set(version.fact.scopes_for(version.subject_id))
-                        | {"@" + version.subject_id, str(version.fact.period)}
-                    )
-                ],
-            )
-            connection.executemany(
-                "INSERT INTO dependency_scope VALUES(?,?,?,?,?)",
-                [
-                    (
-                        cid,
-                        r.source,
-                        r.kind,
-                        r.key,
-                        r.before_period.ordinal if r.before_period else 119988,
-                    )
-                    for r in sorted(prepared.context.used, key=repr)
-                ],
-            )
-            fact_ids = {version.id}
-            calc_ids = set()
-            for read in prepared.context.used:
-                for item in prepared.context.selections[read]:
-                    (fact_ids if read.source == "fact" else calc_ids).add(item.id)
-            connection.executemany(
-                "INSERT INTO dependency_fact VALUES(?,?)", [(cid, fid) for fid in sorted(fact_ids)]
-            )
-            connection.executemany(
-                "INSERT INTO dependency_calculation VALUES(?,?)",
-                [(cid, upstream) for upstream in sorted(calc_ids) if upstream != cid],
-            )
+            self._record_prepared(connection, prepared)
         voucher_number = None
         if no_impact:
             # The accounting result is unchanged. Keep its sealed voucher, while
@@ -807,7 +829,7 @@ class Engine:
                             "closed_correction_required", "已关账结果须指定开放期冲正"
                         )
                     posting = YearMonth(correction_period).ordinal
-                    voucher_key = cid + ":replacement"
+                    voucher_key = cid + ":replacement" if outcome["lines"] else None
                     original = [
                         dict(r)
                         for r in connection.execute(
@@ -863,7 +885,11 @@ class Engine:
                         YearMonth(correction_period).ordinal,
                         cid + ":replacement",
                     )
-                voucher_key = voucher_key or "v:" + version.subject_id
+                voucher_key = voucher_key or (
+                    cid + ":replacement" if old_publication
+                    and old_publication["posting_period"] != version.fact.period.ordinal
+                    else "v:" + version.subject_id
+                )
                 voucher_number = self._journal(
                     connection, voucher_key, cid, posting, outcome["lines"]
                 )
@@ -883,6 +909,11 @@ class Engine:
                 "INSERT INTO calculation_publication VALUES(?,?,?)", (cid, posting, voucher_key)
             )
             connection.execute("INSERT INTO calculation_seal VALUES(?)", (cid,))
+        return self._finish_prepared(connection, prepared, voucher_number)
+
+    def _finish_prepared(self, connection, prepared, voucher_number=None):
+        version, cid = prepared.version, prepared.calculation_id
+        no_impact = prepared.impact == "review_no_impact"
         connection.execute(
             "INSERT INTO calculation_current VALUES(?,?) ON CONFLICT(subject_id) "
             "DO UPDATE SET calculation_id=excluded.calculation_id",
@@ -1064,7 +1095,8 @@ class Engine:
             balances = {}
             for row in connection.execute(
                 "SELECT outcome,c.period FROM calculation_current a JOIN "
-                "calculation c ON c.id=a.calculation_id"
+                "calculation c ON c.id=a.calculation_id "
+                "JOIN calculation_publication p ON p.calculation_id=c.id"
             ):
                 outcome = json.loads(row[0])
                 self._opening_projection(connection, row[1], outcome.get("opening_lines", ()), 1)
@@ -1313,6 +1345,49 @@ class Engine:
             ).fetchone()
             if not row:
                 raise KernelError("unknown_calculation", "计算版本不存在")
+            from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
+            from .asset_batches import frozen_members
+
+            def batch_header(owner):
+                publication = connection.execute(
+                    "SELECT p.posting_period,p.voucher_id,v.number "
+                    "FROM calculation_publication p LEFT JOIN voucher v ON v.id=p.voucher_id "
+                    "WHERE p.calculation_id=?",
+                    (owner["id"],),
+                ).fetchone()
+                return {
+                    "owner_calculation_id": owner["id"],
+                    "owner_subject_id": owner["subject_id"],
+                    "kind": owner["kind"],
+                    "calculation_period": str(YearMonth.from_ordinal(owner["period"])),
+                    "posting_period": (
+                        str(YearMonth.from_ordinal(publication["posting_period"]))
+                        if publication
+                        else None
+                    ),
+                    "voucher_id": publication["voucher_id"] if publication else None,
+                    "voucher_number": publication["number"] if publication else None,
+                }
+
+            asset_batch, asset_batch_owners = None, []
+            if row["kind"] in OWNER_KINDS:
+                asset_batch = {
+                    **batch_header(row),
+                    "members": frozen_members(connection, row["id"]),
+                }
+            elif row["kind"] in MEMBER_KINDS:
+                for owner in connection.execute(
+                    "SELECT DISTINCT c.* FROM asset_batch_member m "
+                    "JOIN calculation c ON c.id=m.owner_calculation_id "
+                    "WHERE m.member_calculation_id=? ORDER BY c.period,c.id",
+                    (row["id"],),
+                ):
+                    member = next(
+                        item
+                        for item in frozen_members(connection, owner["id"])
+                        if item["member_calculation_id"] == row["id"]
+                    )
+                    asset_batch_owners.append({**batch_header(owner), "member": member})
             facts = [
                 self.store.fact(connection, r[0])
                 for r in connection.execute(
@@ -1336,6 +1411,8 @@ class Engine:
             ]
             return {
                 "voucher": voucher,
+                "asset_batch": asset_batch,
+                "asset_batch_owners": asset_batch_owners,
                 "upstream_details": upstream_details,
                 "related_vouchers": related,
                 "evidence_details": self.store.evidence_metadata(
@@ -1370,6 +1447,13 @@ class Engine:
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             fact = self.store.current_fact(connection, subject_id)
+            from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
+
+            if fact.fact.kind in MEMBER_KINDS | OWNER_KINDS:
+                raise KernelError(
+                    "asset_batch_command_required",
+                    "资产汇总及成员须通过资产专用撤回入口处理",
+                )
             if fact.fact.immutable and recording_error_evidence is None:
                 raise KernelError("immutable_fact", "实际资金或原始流水须通过明确的后续业务处理")
             if (

@@ -156,6 +156,8 @@ export const localBusinessNames: Record<string, string> = {
   money_fund_redemption: "货币基金赎回确认",
   asset_activation: "资产启用",
   asset_consumption: "折旧与摊销",
+  asset_activation_batch: "资产批次启用",
+  asset_consumption_month: "月度折旧摊销",
   asset_disposal: "资产处置",
   loan_agreement: "借款合同",
   loan_drawdown: "借款到账",

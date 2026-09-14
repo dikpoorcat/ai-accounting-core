@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useRoute } from "vue-router";
-import type { BriefCash, BriefData, BriefPosition } from "../../api/brief";
+import type { BriefData, BriefPosition } from "../../api/brief";
 import { fen, formatFen, formatPositiveFen } from "../../utils/money";
 
 const props = defineProps<{
-  cash: BriefCash;
   funds: BriefData["funds_overview"];
   position: BriefPosition;
   unmatched: BriefData["unmatched_bank_activity"];
@@ -18,11 +18,37 @@ const components = [
   ["其他资产", "other_assets_fen"],
 ] as const;
 
-function componentRatio(value: string | null) {
-  if (value === null || props.position.assets_fen === null) return null;
-  const total = fen(props.position.assets_fen);
-  if (total <= 0n) return 0;
-  return Math.max(0, Math.min(100, Number((fen(value) * 10_000n) / total) / 100));
+function magnitude(value: string | null) {
+  if (value === null) return 0n;
+  const amount = fen(value);
+  return amount < 0n ? -amount : amount;
+}
+
+const positionScale = computed(() => {
+  let positiveMax = 0n;
+  for (const [, key] of components) {
+    const amount = magnitude(props.position[key]);
+    if (amount > positiveMax) positiveMax = amount;
+  }
+  const negativeMax = magnitude(props.position.liabilities_fen);
+  const total = positiveMax + negativeMax;
+  return {
+    axis: total ? Number((negativeMax * 10_000n) / total) / 100 : 50,
+    total,
+  };
+});
+
+const equityTotal = computed(() => {
+  if (props.position.equity_fen !== undefined) return props.position.equity_fen;
+  if (props.position.capital_fen === null || props.position.cumulative_result_fen === null) return null;
+  return (fen(props.position.capital_fen) + fen(props.position.cumulative_result_fen)).toString();
+});
+
+function positionBarWidth(value: string | null) {
+  if (value === null) return null;
+  const total = positionScale.value.total;
+  if (!total) return 0;
+  return Math.min(100, Number((magnitude(value) * 10_000n) / total) / 100);
 }
 
 function bankStateLabel(state: string) {
@@ -35,14 +61,53 @@ function bankStateLabel(state: string) {
   );
 }
 
-function coverageLabel() {
-  if (props.cash.missing_account_count) return `${props.cash.missing_account_count} 个银行账户尚未提供本月流水`;
-  return {
-    missing: "银行流水覆盖尚不能完整确认",
-    partial: "流水覆盖或核对状态尚不能完整确认",
-    complete: "本月各银行账户流水已提供",
-    not_applicable: "暂无公司银行账户",
-  }[props.cash.coverage_state];
+function hasAssetBreakdown(...values: Array<string | null>) {
+  return values.every((value) => value !== null);
+}
+
+function hasBankCalculation() {
+  const calculation = props.position.bank_calculation;
+  if (
+    !calculation
+    || calculation.opening_fen === null
+    || calculation.inflow_fen === null
+    || calculation.outflow_fen === null
+  ) return false;
+  return (
+    fen(calculation.opening_fen) + fen(calculation.inflow_fen) - fen(calculation.outflow_fen)
+    === fen(props.position.bank_fen)
+  );
+}
+
+function hasLiabilityCalculation() {
+  const calculation = props.position.liability_calculation;
+  if (
+    !calculation
+    || calculation.current_fen === null
+    || calculation.non_current_fen === null
+    || props.position.liabilities_fen === null
+  ) return false;
+  return (
+    fen(calculation.current_fen) + fen(calculation.non_current_fen)
+    === fen(props.position.liabilities_fen)
+  );
+}
+
+function hasOtherAssetsCalculation() {
+  return (
+    props.position.other_assets_fen !== null
+    && props.funds.cash_fen !== null
+    && props.funds.payment_platform_fen !== null
+  );
+}
+
+function remainingOtherAssets() {
+  if (
+    props.position.other_assets_fen === null
+    || props.funds.cash_fen === null
+    || props.funds.payment_platform_fen === null
+  ) return null;
+  return fen(props.position.other_assets_fen) - fen(props.funds.cash_fen) - fen(props.funds.payment_platform_fen);
 }
 
 function formatDate(value: string | null) {
@@ -90,85 +155,211 @@ function formatDate(value: string | null) {
     </details>
 
     <div class="overview-grid">
-      <article class="overview-card cash-card">
-        <header>
-          <div>
-            <p>银行、现金及公司支付平台 · 已扣除账户互转</p>
-            <h3>本月公司收付款</h3>
+      <article class="overview-card cash-card selectable-card" tabindex="-1">
+        <div class="cash-body">
+          <header>
+            <div>
+              <p>银行、现金及公司支付平台 · 已扣除账户互转</p>
+              <h3>本月公司收付款</h3>
+            </div>
+            <div class="cash-actions">
+              <span class="state-chip">
+                {{ funds.net_change_fen === null ? "资金变动尚不能确认" : fen(funds.net_change_fen) > 0n ? "资金增加" : fen(funds.net_change_fen) < 0n ? "资金减少" : "资金无净变动" }}
+              </span>
+              <RouterLink class="bank-details-link" :to="{ name: 'funds', query: route.query, hash: '#bank-details' }">查看流水明细</RouterLink>
+            </div>
+          </header>
+          <div class="flow">
+            <div>
+              <span>对外收款</span>
+              <strong>{{ formatFen(funds.inflow_fen) }}</strong>
+            </div>
+            <span aria-hidden="true">→</span>
+            <div class="outflow">
+              <span>对外付款</span>
+              <strong>{{ formatFen(funds.outflow_fen) }}</strong>
+            </div>
           </div>
-          <span class="state-chip">
-            {{ funds.net_change_fen === null ? "资金变动尚不能确认" : fen(funds.net_change_fen) > 0n ? "资金增加" : fen(funds.net_change_fen) < 0n ? "资金减少" : "资金无净变动" }}
-          </span>
-        </header>
-        <div class="flow">
-          <div>
-            <span>对外收款</span>
-            <strong>{{ formatFen(funds.inflow_fen) }}</strong>
-          </div>
-          <span aria-hidden="true">→</span>
-          <div class="outflow">
-            <span>对外付款</span>
-            <strong>{{ formatFen(funds.outflow_fen) }}</strong>
-          </div>
+          <dl class="summary-rows">
+            <div>
+              <dt>月末账面资金</dt>
+              <dd>{{ formatFen(funds.total_fen) }}</dd>
+            </div>
+            <div v-if="funds.internal_transfer_fen === null || fen(funds.internal_transfer_fen)">
+              <dt>公司账户间调拨</dt><dd>{{ formatFen(funds.internal_transfer_fen) }}</dd>
+            </div>
+          </dl>
         </div>
-        <dl class="summary-rows">
-          <div>
-            <dt>月末账面资金</dt>
-            <dd>{{ formatFen(funds.total_fen) }}</dd>
-          </div>
-          <div v-if="funds.internal_transfer_fen === null || fen(funds.internal_transfer_fen)">
-            <dt>公司账户间调拨</dt><dd>{{ formatFen(funds.internal_transfer_fen) }}</dd>
-          </div>
-        </dl>
-        <details class="bank-proof"><summary>银行流水核对：{{ coverageLabel() }}</summary>
-          <p>{{ cash.transaction_count }} 笔流水，{{ cash.matched_count }} 笔已匹配；{{ cash.unmatched_count }} 笔待识别，{{ cash.needs_review_count }} 笔需复核。</p>
-          <p>已提供流水流入 {{ formatFen(cash.inflow_fen) }} · 流出 {{ formatFen(cash.outflow_fen) }}</p>
-          <RouterLink :to="{ name: 'funds', query: route.query, hash: '#bank-details' }">查看银行流水</RouterLink>
-        </details>
       </article>
 
-      <details id="position-overview" class="overview-card position-card" tabindex="-1">
-        <summary class="position-summary">
+      <article id="position-overview" class="overview-card position-card selectable-card" tabindex="-1">
+        <div class="position-body">
           <header>
             <div>
               <p>所选月末的资产与负债</p>
               <h3>月末资产与负债</h3>
             </div>
-            <strong>资产 {{ position.assets_fen === null ? '无法完整建立' : formatFen(position.assets_fen) }}</strong>
+            <span class="balance-insight">
+              <button type="button" class="balance-trigger" aria-describedby="balance-tooltip">
+                资产 {{ position.assets_fen === null ? '无法完整建立' : formatFen(position.assets_fen) }}
+              </button>
+              <span id="balance-tooltip" class="balance-tooltip" role="tooltip">
+                <span v-if="position.equation_valid !== null" class="equation">
+                  <strong>平衡关系</strong>
+                  <span class="equation-copy">
+                    <span class="equation-line">
+                      资产 {{ formatFen(position.assets_fen) }} = 负债 {{ formatFen(position.liabilities_fen) }} +
+                      所有者权益 {{ formatFen(equityTotal) }}
+                    </span>
+                    <span class="equation-line">
+                      所有者权益 {{ formatFen(equityTotal) }} = 资本及公积 {{ formatFen(position.capital_fen) }}
+                      {{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }}
+                      {{ fen(position.cumulative_result_fen) < 0n ? "未弥补亏损" : "未分配利润" }}
+                      {{ formatPositiveFen(position.cumulative_result_fen) }}
+                    </span>
+                  </span>
+                </span>
+                <span v-else class="equation">
+                  <strong>平衡关系</strong>
+                  <span>部分来源尚不能精确归属，暂不判断资产负债等式。</span>
+                </span>
+                <span v-if="position.issues?.length" class="position-issues">
+                  <span v-for="(issue, index) in position.issues" :key="index">{{ issue.message }}</span>
+                </span>
+              </span>
+            </span>
           </header>
-          <div class="components">
+          <div class="components" :style="{ '--position-axis': `${positionScale.axis}%` }">
             <div
               v-for="([label, key], index) in components"
               :key="key"
               :class="['component-row', { subdued: position[key] !== null && !fen(position[key]) }]"
             >
               <span>{{ label }}</span>
-              <div v-if="componentRatio(position[key]) !== null" class="track">
-                <span :style="{ width: `${componentRatio(position[key])}%` }" :data-index="index" />
+              <div v-if="positionBarWidth(position[key]) !== null" class="track">
+                <span :style="{ width: `${positionBarWidth(position[key])}%` }" :data-index="index" />
               </div>
-              <strong>{{ formatFen(position[key]) }}</strong>
+              <span class="component-value">
+                <button
+                  v-if="key === 'bank_fen'"
+                  type="button"
+                  class="component-value-trigger"
+                  aria-describedby="bank-asset-tooltip"
+                >
+                  {{ formatFen(position[key]) }}
+                </button>
+                <button
+                  v-else-if="key === 'fixed_asset_net_fen'"
+                  type="button"
+                  class="component-value-trigger"
+                  aria-describedby="fixed-asset-tooltip"
+                >
+                  {{ formatFen(position[key]) }}
+                </button>
+                <button
+                  v-else-if="key === 'intangible_asset_net_fen'"
+                  type="button"
+                  class="component-value-trigger"
+                  aria-describedby="intangible-asset-tooltip"
+                >
+                  {{ formatFen(position[key]) }}
+                </button>
+                <button
+                  v-else-if="key === 'other_assets_fen'"
+                  type="button"
+                  class="component-value-trigger"
+                  aria-describedby="other-assets-tooltip"
+                >
+                  {{ formatFen(position[key]) }}
+                </button>
+                <strong v-else>{{ formatFen(position[key]) }}</strong>
+                <span
+                  v-if="key === 'bank_fen'"
+                  id="bank-asset-tooltip"
+                  class="component-tooltip"
+                  role="tooltip"
+                >
+                  <strong>银行存款</strong>
+                  <span>
+                    <template v-if="hasBankCalculation()">
+                      期初 {{ formatFen(position.bank_calculation?.opening_fen) }} + 本月流入
+                      {{ formatFen(position.bank_calculation?.inflow_fen) }} − 本月流出
+                      {{ formatFen(position.bank_calculation?.outflow_fen) }} = 期末 {{ formatFen(position.bank_fen) }}
+                    </template>
+                    <template v-else>期初及本月收支构成暂不能完整建立，当前期末余额为 {{ formatFen(position.bank_fen) }}。</template>
+                  </span>
+                </span>
+                <span
+                  v-if="key === 'fixed_asset_net_fen'"
+                  id="fixed-asset-tooltip"
+                  class="component-tooltip"
+                  role="tooltip"
+                >
+                  <strong>固定资产净值</strong>
+                  <span>
+                    <template v-if="hasAssetBreakdown(position.fixed_asset_cost_fen, position.accumulated_depreciation_fen, position.fixed_asset_net_fen)">
+                      原值 {{ formatFen(position.fixed_asset_cost_fen) }} − 累计折旧
+                      {{ formatFen(position.accumulated_depreciation_fen) }} = 净值 {{ formatFen(position.fixed_asset_net_fen) }}
+                    </template>
+                    <template v-else>原值、累计折旧与净值暂不能完整建立。</template>
+                  </span>
+                </span>
+                <span
+                  v-if="key === 'intangible_asset_net_fen'"
+                  id="intangible-asset-tooltip"
+                  class="component-tooltip"
+                  role="tooltip"
+                >
+                  <strong>无形资产净值</strong>
+                  <span>
+                    <template v-if="hasAssetBreakdown(position.intangible_asset_cost_fen, position.accumulated_amortization_fen, position.intangible_asset_net_fen)">
+                      原值 {{ formatFen(position.intangible_asset_cost_fen) }} − 累计摊销
+                      {{ formatFen(position.accumulated_amortization_fen) }} = 净值 {{ formatFen(position.intangible_asset_net_fen) }}
+                    </template>
+                    <template v-else>原值、累计摊销与净值暂不能完整建立。</template>
+                  </span>
+                </span>
+                <span
+                  v-if="key === 'other_assets_fen'"
+                  id="other-assets-tooltip"
+                  class="component-tooltip"
+                  role="tooltip"
+                >
+                  <strong>其他资产</strong>
+                  <span>
+                    <template v-if="hasOtherAssetsCalculation()">
+                      库存现金 {{ formatFen(funds.cash_fen) }} + 支付平台 {{ formatFen(funds.payment_platform_fen) }}
+                      + 其余资产 {{ formatFen(remainingOtherAssets()) }} = {{ formatFen(position.other_assets_fen) }}
+                    </template>
+                    <template v-else>库存现金、支付平台与其余资产的构成暂不能完整建立。</template>
+                  </span>
+                </span>
+              </span>
+            </div>
+            <div :class="['component-row', 'liability-row', { subdued: position.liabilities_fen !== null && !fen(position.liabilities_fen) }]">
+              <span>负债</span>
+              <div v-if="positionBarWidth(position.liabilities_fen) !== null" class="track liability-track">
+                <span :style="{ width: `${positionBarWidth(position.liabilities_fen)}%` }" />
+              </div>
+              <span class="component-value liability-value">
+                <button type="button" class="component-value-trigger" aria-describedby="liability-tooltip">
+                  {{ formatFen(position.liabilities_fen) }}
+                </button>
+                <span id="liability-tooltip" class="component-tooltip" role="tooltip">
+                  <strong>负债</strong>
+                  <span>
+                    <template v-if="hasLiabilityCalculation()">
+                      流动负债 {{ formatFen(position.liability_calculation?.current_fen) }} + 非流动负债
+                      {{ formatFen(position.liability_calculation?.non_current_fen) }} = {{ formatFen(position.liabilities_fen) }}
+                    </template>
+                    <template v-else>流动负债与非流动负债的构成暂不能完整建立。</template>
+                  </span>
+                </span>
+              </span>
             </div>
           </div>
-          <p>负债 {{ formatFen(position.liabilities_fen) }} · 展开查看金额构成</p>
-        </summary>
-          <p v-if="position.equation_valid !== null" class="equation">
-            资产 {{ formatFen(position.assets_fen) }} = 负债 {{ formatFen(position.liabilities_fen) }} + 所有者权益
-            {{ formatFen(position.capital_fen) }} {{ fen(position.cumulative_result_fen) < 0n ? "−" : "+" }} 累计差额
-            {{ formatPositiveFen(position.cumulative_result_fen) }}
-          </p>
-        <p v-else>部分来源尚不能精确归属，暂不判断资产负债等式；已知分项仍列示。</p>
-        <ul v-if="position.issues?.length" class="proof">
-          <li v-for="(issue, index) in position.issues" :key="index">{{ issue.message }}</li>
-        </ul>
-        <ul class="proof">
-          <li><span>固定资产原值</span><strong>{{ formatFen(position.fixed_asset_cost_fen) }}</strong></li>
-          <li><span>减：累计折旧</span><strong>{{ formatFen(position.accumulated_depreciation_fen) }}</strong></li>
-          <li><span>固定资产净值</span><strong>{{ formatFen(position.fixed_asset_net_fen) }}</strong></li>
-          <li><span>无形资产原值</span><strong>{{ formatFen(position.intangible_asset_cost_fen) }}</strong></li>
-          <li><span>减：累计摊销</span><strong>{{ formatFen(position.accumulated_amortization_fen) }}</strong></li>
-          <li><span>无形资产净值</span><strong>{{ formatFen(position.intangible_asset_net_fen) }}</strong></li>
-        </ul>
-      </details>
+        </div>
+      </article>
     </div>
   </section>
 </template>
@@ -263,8 +454,7 @@ h3 {
   font-weight: 500;
 }
 
-.pending-bank ul,
-.proof {
+.pending-bank ul {
   display: grid;
   gap: 7px;
   margin: 12px 0 0;
@@ -301,7 +491,7 @@ h3 {
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+  align-items: stretch;
   gap: 12px;
 }
 
@@ -313,26 +503,54 @@ h3 {
   background: var(--brief-soft);
 }
 
+.cash-card,
 .position-card {
+  display: flex;
+  flex-direction: column;
   padding: 0;
 }
 
-.position-card:hover,
-.position-card:focus-within,
-.position-card[open] {
-  border-color: color-mix(in srgb, var(--brief-green) 48%, var(--brief-line));
+.position-card {
+  position: relative;
 }
 
-.position-summary {
+.cash-body,
+.position-body {
   display: block;
   padding: 15px;
   border-radius: inherit;
-  cursor: pointer;
-  list-style: none;
 }
 
-.position-summary::-webkit-details-marker {
-  display: none;
+.position-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.cash-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+
+.bank-details-link {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: var(--brief-green);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.bank-details-link:hover,
+.bank-details-link:focus-visible {
+  background: var(--brief-green-soft);
+  outline: none;
 }
 
 .overview-card header > strong {
@@ -390,36 +608,60 @@ h3 {
   font-weight: 800;
 }
 
-.subdued {
+.component-row.subdued > span:first-child,
+.component-row.subdued > .track,
+.component-row.subdued > .component-value > .component-value-trigger,
+.component-row.subdued > .component-value > strong {
   opacity: 0.56;
 }
 
+.component-row.subdued > .component-value > .component-value-trigger:hover,
+.component-row.subdued > .component-value > .component-value-trigger:focus-visible {
+  opacity: 1;
+}
+
 .components {
+  --component-gap: 9px;
+  --component-label-width: 86px;
+  --component-value-width: 104px;
+
   display: grid;
-  gap: 10px;
-  margin: 12px 0;
+  gap: 9px;
+  margin: 13px 0 0;
+  padding: 2px 0;
 }
 
 .component-row {
   display: grid;
-  grid-template-columns: 86px minmax(60px, 1fr) auto;
-  gap: 9px;
+  min-height: 17px;
+  grid-template-columns: var(--component-label-width) minmax(60px, 1fr) var(--component-value-width);
+  gap: var(--component-gap);
   align-items: center;
   font-size: 12px;
 }
 
+.component-row > span {
+  color: var(--brief-muted);
+}
+
+.component-row > strong {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .track {
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--brief-surface);
+  position: relative;
+  height: 8px;
 }
 
 .track > span {
-  display: block;
-  height: 100%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--position-axis);
   min-width: 1px;
-  border-radius: inherit;
+  border-radius: 0 999px 999px 0;
   background: var(--brief-green);
 }
 
@@ -435,29 +677,202 @@ h3 {
   background: var(--brief-muted);
 }
 
+.liability-track > span {
+  right: calc(100% - var(--position-axis));
+  left: auto;
+  border-radius: 999px 0 0 999px;
+  background: var(--brief-red);
+}
+
+.liability-row > span,
+.liability-row > strong {
+  color: var(--brief-red);
+}
+
+.liability-value .component-value-trigger,
+.liability-value > strong {
+  color: var(--brief-red);
+}
+
+.liability-value .component-value-trigger:hover,
+.liability-value .component-value-trigger:focus-visible {
+  background: color-mix(in srgb, var(--brief-red) 8%, transparent);
+  color: var(--brief-red);
+}
+
+.balance-insight {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.balance-trigger {
+  margin: -3px -6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--brief-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.balance-trigger:hover,
+.balance-trigger:focus-visible {
+  background: var(--brief-green-soft);
+  color: var(--brief-green);
+  outline: none;
+}
+
+.balance-tooltip {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  width: min(430px, calc(100vw - 64px));
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
+  border-radius: 12px;
+  background: var(--brief-surface);
+  box-shadow: 0 16px 38px rgb(18 45 31 / 14%);
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-5px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  visibility: hidden;
+}
+
+.balance-tooltip::after {
+  position: absolute;
+  top: -6px;
+  right: 24px;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
+  border-left: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
+  background: var(--brief-surface);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.balance-insight:hover .balance-tooltip,
+.balance-insight:focus-within .balance-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.component-value {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+.component-value > strong,
+.component-value-trigger {
+  color: var(--brief-text);
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.component-value-trigger {
+  margin: -2px -5px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: help;
+}
+
+.component-value-trigger:hover,
+.component-value-trigger:focus-visible {
+  background: var(--brief-green-soft);
+  color: var(--brief-green);
+  outline: none;
+}
+
+.component-tooltip {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 28;
+  display: grid;
+  width: max-content;
+  max-width: min(380px, calc(100vw - 64px));
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--brief-green) 18%, var(--brief-line));
+  border-radius: 9px;
+  background: var(--brief-surface);
+  box-shadow: 0 10px 26px rgb(18 45 31 / 12%);
+  opacity: 0;
+  color: var(--brief-text);
+  font-size: 11px;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+  visibility: hidden;
+}
+
+.component-tooltip > span {
+  color: var(--brief-muted);
+  line-height: 1.5;
+}
+
+.component-value:hover .component-tooltip,
+.component-value:focus-within .component-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
 .equation {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
   margin: 0;
   padding: 10px 11px;
   border-radius: 10px;
-  background: var(--brief-surface);
+  background: var(--brief-soft);
   color: var(--brief-muted);
   font-size: 11px;
   line-height: 1.55;
 }
 
-.proof {
-  margin: 0 15px 15px;
-  padding-top: 12px;
-  border-top: 1px solid var(--brief-line);
+.equation strong {
+  color: var(--brief-green);
+  white-space: nowrap;
 }
 
-.proof li {
-  display: flex;
-  justify-content: space-between;
-  gap: 15px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--brief-line);
-  font-size: 12px;
+.equation-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.equation-line {
+  color: var(--brief-muted);
+  font-size: 11px;
+}
+
+.position-issues {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--brief-amber-soft);
+  color: var(--brief-amber);
+  font-size: 11px;
 }
 
 @media (max-width: 900px) {
@@ -485,11 +900,34 @@ h3 {
   }
 
   .component-row {
-    grid-template-columns: 80px minmax(50px, 1fr);
+    grid-template-columns: 72px minmax(50px, 1fr) 86px;
+    gap: 7px;
   }
 
   .component-row strong {
-    grid-column: 1 / -1;
+    grid-column: auto;
+    font-size: 11px;
+  }
+
+  .components {
+    --component-gap: 7px;
+    --component-label-width: 72px;
+    --component-value-width: 86px;
+  }
+
+  .equation {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .balance-tooltip {
+    right: auto;
+    left: 0;
+  }
+
+  .balance-tooltip::after {
+    right: auto;
+    left: 24px;
   }
 
 }

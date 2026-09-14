@@ -2,7 +2,7 @@
 
 # SQLite 空库重录、完整恢复与结果核对
 
-当前入口是 `finance-local` 和 `finance_local_*` MCP，目录库 v3、公司库 v11；读取结构与前向兼容见 [有界看板查询](bounded-dashboard-queries.md)。
+当前入口是 `finance-local` 和 `finance_local_*` MCP，目录库 v3、公司库 v12；读取结构与前向兼容见 [有界看板查询](bounded-dashboard-queries.md)。
 两类数据库分别检查结构合同并前向升级；不需要 PostgreSQL、ORM 或 Alembic。
 旧 `finance-replay`、`finance-backup`、`ai_accounting.replay_cli`、`finance_record_event`
 及组合协议回放包执行器已经退役，本文替代它们的操作说明。现在没有通用的“导出事实包后自动重放”命令。
@@ -135,6 +135,14 @@ Base64 是字节传输格式，不是脱敏；不要打印真实内容。单份�
 每条含 `kind`、`subject_id`、`data`、`evidence`、`expected_revision`；批次统一 `company_id` 和 `request_id`。
 事实保存与正式发布是两步，不把 `saved` 当作已入账。不同公司的记录不能混成一批。
 
+资产启用和折旧摊销使用资产专用预览确认命令。取得来源先按普通类型化事实发布；随后：
+
+- 同一确认批次调用 `prepare_asset_activation_batch`，显式提交每张卡片的原 `AssetActivation` 类型化资料及预期版本；复核后以相同参数调用 `confirm_asset_activation_batch`，并增加返回的 `preview_digest`、`epochs` 和稳定 `request_id`。
+- 每个核算月调用 `prepare_asset_consumption_month`。调用方只提供月份、依据及批次预期版本，成员由内核按完整资产生命周期确定；复核后调用 `confirm_asset_consumption_month`。
+- 单卡启用和单卡折旧摊销不能通过 `save_fact`、通用 `preview` 或通用 `confirm` 绕开批次发布。凭证按批次或月份生成，卡片计算和分录归属仍可追溯。
+- 同月更正重新提交完整启用批次；省略的旧成员只有在没有真实下游依赖时才会作为误记撤回，批次继续使用原凭证号。跨月移动当前明确拒绝，不能拆成两个非原子批次调用模拟。
+- 已关账更正须指定开放的 `correction_period`，由内核完整冲正原批次并发布替代结果；不得提交差额或自由分录。
+
 管理资料在正式事实之外追加；核算不需要的姓名、用途、显示编号等不塞入会计字段：
 
 | 内容 | 当前命令与关键字段 | 使用顺序 |
@@ -151,8 +159,8 @@ Base64 是字节传输格式，不是脱敏；不要打印真实内容。单份�
 
 ## 5. 按依赖预览和确认，保存断点
 
-每笔先登记并发布所需来源，再处理依赖它的业务：合同/制度和期初来源 → 成本、工资、资产启用等 →
-付款/核销/折旧等后续事实。具体依赖取当前 `facts` 合同和预览返回的 `fact_issues`，不沿用旧组合组件协议。
+每笔先登记并发布所需来源，再处理依赖它的业务：合同/制度和期初来源 → 成本、工资、资产启用批次等 →
+付款/核销、月度折旧摊销等后续事实。具体依赖取当前 `facts` 合同和预览返回的 `fact_issues`，不沿用旧组合组件协议。
 
 ```powershell
 & $financeLocal --root $replayRoot call preview --input .\inputs\preview.json

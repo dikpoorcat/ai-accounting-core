@@ -1,26 +1,11 @@
 <script setup lang="ts">
-import type { BriefWorkforceCost, WorkforcePeriod } from "../../api/brief";
+import type { BriefWorkforceCost } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
 
 const props = defineProps<{
   workforce: BriefWorkforceCost;
-  periodKey: string;
   periodLabel: string;
 }>();
-
-function costPeriodLabel(
-  period: WorkforcePeriod,
-  key: "payroll_period" | "remuneration_period",
-) {
-  const sourcePeriod = period[key];
-  if (!sourcePeriod) return "来源月份未展示";
-  const sourceMonth = Number(sourcePeriod.slice(5));
-  const label =
-    sourcePeriod === props.periodKey
-      ? `${sourceMonth} 月本月计提`
-      : `${sourceMonth} 月${period.has_reversal ? "补记/调整" : "补记"}`;
-  return `${label}${period.has_amendment ? "（原凭证已更正）" : period.has_reversal ? "（含冲正）" : ""}`;
-}
 
 function employeeCostNote() {
   const employee = props.workforce.employee;
@@ -61,13 +46,21 @@ function laborCostNote() {
         <h2 id="workforce-title">本月用工成本</h2>
       </div>
       <div class="total">
-        <span>公司本月用工成本</span>
+        <span class="total-help">
+          <button type="button" class="total-help-trigger" aria-describedby="workforce-payment-help">
+            公司本月用工成本
+            <span aria-hidden="true">i</span>
+          </button>
+          <span id="workforce-payment-help" class="total-help-content" role="tooltip">
+            这里展示本月确认的用工成本。工资、社保医保及个人劳务的实际付款只清偿已确认的应付款，不会在付款时再次计入成本。
+          </span>
+        </span>
         <strong>{{ formatFen(workforce.total_fen) }}</strong>
       </div>
     </div>
 
     <div class="workforce-grid">
-      <article class="workforce-card" aria-labelledby="employee-title">
+      <article class="workforce-card selectable-card" aria-labelledby="employee-title" tabindex="-1">
         <header>
           <div>
             <h3 id="employee-title">正式员工</h3>
@@ -122,18 +115,9 @@ function laborCostNote() {
         <p :class="['note', { attention: !workforce.employee.breakdown_available }]">
           {{ employeeCostNote() }}
         </p>
-        <div v-if="workforce.employee.periods.length" class="periods">
-          <span
-            v-for="period in workforce.employee.periods"
-            :key="`${period.payroll_period}-${period.total_fen}`"
-          >
-            {{ costPeriodLabel(period, "payroll_period") }}
-            <strong>{{ formatFen(period.total_fen) }}</strong>
-          </span>
-        </div>
       </article>
 
-      <article class="workforce-card" aria-labelledby="labor-title">
+      <article class="workforce-card selectable-card" aria-labelledby="labor-title" tabindex="-1">
         <header>
           <div>
             <h3 id="labor-title">非员工个人劳务</h3>
@@ -153,21 +137,9 @@ function laborCostNote() {
         <p :class="['note', { attention: !workforce.personal_labor.breakdown_available }]">
           {{ laborCostNote() }}
         </p>
-        <div v-if="workforce.personal_labor.periods.length" class="periods">
-          <span
-            v-for="period in workforce.personal_labor.periods"
-            :key="`${period.remuneration_period}-${period.total_fen}`"
-          >
-            {{ costPeriodLabel(period, "remuneration_period") }}
-            <strong>{{ formatFen(period.total_fen) }}</strong>
-          </span>
-        </div>
       </article>
     </div>
     <p v-if="fen(workforce.capitalized_labor_fen)" class="payment-note">本月另有资本化劳务 {{ formatFen(workforce.capitalized_labor_fen) }}，计入项目或资产成本，不计入上述用工费用；可在员工与资产页面查看来源和清偿。</p>
-    <p class="payment-note">
-      工资、社保医保及个人劳务的实际付款只清偿已经确认的应付款，不会在付款时再次计入用工成本。
-    </p>
   </section>
 </template>
 
@@ -224,7 +196,7 @@ h3 {
   white-space: nowrap;
 }
 
-.total span,
+.total > span,
 .subtotal span,
 .workforce-card header p,
 .cost span {
@@ -234,6 +206,72 @@ h3 {
 
 .total strong {
   font-size: 23px;
+}
+
+.total-help {
+  position: relative;
+}
+
+.total-help-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brief-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: help;
+}
+
+.total-help-trigger > span {
+  display: inline-grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border: 1px solid var(--brief-line-strong);
+  border-radius: 50%;
+  color: var(--brief-green);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.total-help-trigger:focus-visible {
+  outline: 2px solid var(--brief-green);
+  outline-offset: 3px;
+}
+
+.total-help-content {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: min(360px, calc(100vw - 48px));
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--brief-green) 24%, var(--brief-line));
+  border-radius: 10px;
+  background: var(--brief-surface);
+  box-shadow: 0 12px 30px rgb(18 45 31 / 14%);
+  opacity: 0;
+  color: var(--brief-text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.total-help:hover .total-help-content,
+.total-help:focus-within .total-help-content {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
 }
 
 .subtotal strong {
@@ -351,25 +389,6 @@ h3 {
   color: var(--brief-amber);
 }
 
-.periods {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 9px;
-}
-
-.periods > span {
-  display: inline-flex;
-  min-height: 27px;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border: 1px solid var(--brief-line);
-  border-radius: 999px;
-  background: var(--brief-surface);
-  font-size: 11px;
-}
-
 .payment-note {
   margin-bottom: 0;
   padding-left: 2px;
@@ -396,6 +415,11 @@ h3 {
   .total,
   .subtotal {
     justify-items: start;
+  }
+
+  .total-help-content {
+    right: auto;
+    left: 0;
   }
 
   .cost-grid {

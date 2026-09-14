@@ -175,6 +175,9 @@ export interface FundsData {
   collections: DashboardCollections;
   total_fen: FenValue;
   bank_fen: FenValue;
+  bank_opening_fen: FenValue | null;
+  bank_inflow_fen: FenValue | null;
+  bank_outflow_fen: FenValue | null;
   cash_fen: FenValue;
   payment_platform_fen: FenValue;
   opening_fen: FenValue;

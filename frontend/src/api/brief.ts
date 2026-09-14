@@ -14,6 +14,7 @@ export interface BriefVoucherLine {
   party_state: "known" | "multiple" | "name_missing" | "not_applicable" | "unresolved";
   parties: { id: string; name: string; amount_fen: string }[];
   component_id: string | null;
+  asset?: BriefAssetReference & { calculation_id: string };
 }
 
 export interface BriefComponent {
@@ -54,6 +55,13 @@ export interface BriefSettlement {
   source_label?: string;
 }
 
+export interface BriefAssetReference {
+  asset_id: string;
+  asset_type: "fixed" | "intangible";
+  name: string | null;
+  code: string | null;
+}
+
 export interface BriefVoucher {
   calculation_id: string;
   voucher_version_id: string;
@@ -70,6 +78,15 @@ export interface BriefVoucher {
   summary: string;
   display_summary: string;
   list_summary: string;
+  asset?: BriefAssetReference | null;
+  asset_members?: Array<BriefAssetReference & {
+    calculation_id: string;
+    owner_calculation_id: string;
+    amount_fen: string | null;
+    amount_label: string;
+    line_start: number | null;
+    line_count: number;
+  }>;
   amount_fen: string;
   evidence: string[];
   evidence_details: EvidenceDetails[];
@@ -90,6 +107,7 @@ export interface BriefActivityRow {
   subject: string;
   description: string;
   display_description: string;
+  asset?: BriefAssetReference | null;
   amount_fen: string | null;
   journal_total_fen: string;
   state: string;
@@ -136,7 +154,17 @@ export interface BriefPosition {
   assets_fen: string | null;
   liabilities_fen: string | null;
   capital_fen: string | null;
+  equity_fen?: string | null;
   bank_fen: string;
+  bank_calculation?: {
+    opening_fen: string | null;
+    inflow_fen: string | null;
+    outflow_fen: string | null;
+  };
+  liability_calculation?: {
+    current_fen: string | null;
+    non_current_fen: string | null;
+  };
   fixed_asset_cost_fen: string;
   accumulated_depreciation_fen: string;
   fixed_asset_net_fen: string | null;

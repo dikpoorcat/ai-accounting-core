@@ -47,9 +47,13 @@ const selectedPeriod = ref("");
 const response = ref<AssetsDashboardResponse | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+const focusedAssetId = computed(() => typeof route.query.asset_id === "string" ? route.query.asset_id : "");
 const filter = computed<AssetFilter>({
   get: () => filters.find(item => item.value === route.query.asset_filter)?.value ?? "all",
-  set: value => { void router.push({ query: { ...route.query, asset_filter: value === "all" ? undefined : value } }); },
+  set: value => { void router.push({
+    query: { ...route.query, asset_filter: value === "all" ? undefined : value, asset_id: undefined },
+    hash: "",
+  }); },
 });
 let mounted = false;
 let activeController: AbortController | null = null;
@@ -73,7 +77,9 @@ const allItems = computed<AssetItem[]>(() => {
 });
 const filteredItems = computed(() => allItems.value);
 const filterLabel = computed(
-  () => filters.find((item) => item.value === filter.value)?.label ?? "全部资产卡片",
+  () => focusedAssetId.value
+    ? "已定位资产卡片"
+    : filters.find((item) => item.value === filter.value)?.label ?? "全部资产卡片",
 );
 const attentionItems = computed(() => {
   const assets = data.value;
@@ -156,12 +162,23 @@ async function loadAssets(period: string) {
   errorMessage.value = "";
   loading.value = true;
   try {
-    const result = await fetchAssetsDashboard(period, controller.signal, { asset_filter: filter.value });
+    const result = await fetchAssetsDashboard(period, controller.signal, {
+      asset_filter: filter.value,
+      asset_id: focusedAssetId.value || undefined,
+    });
     if (isCurrent(generation, selection) && activeController === controller) { response.value = result; updateNotice.value = ""; }
     await nextTick();
     if (isCurrent(generation, selection) && activeController === controller && route.hash === "#assets-attention-title") {
       const heading = document.getElementById(route.hash.slice(1));
       if (heading) { positionSection(heading); heading.focus({ preventScroll: true }); }
+    }
+    if (isCurrent(generation, selection) && activeController === controller && route.hash === "#asset-card-target") {
+      const card = document.getElementById("asset-card-target");
+      if (card instanceof HTMLDetailsElement) card.open = true;
+      if (card) {
+        positionSection(card);
+        card.querySelector<HTMLElement>("summary, [tabindex]")?.focus({ preventScroll: true });
+      }
     }
   } catch (error: unknown) {
     if (isCurrent(generation, selection) && activeController === controller) errorMessage.value = dashboardErrorMessage(error);
@@ -189,7 +206,7 @@ async function refresh() {
   }
 }
 
-function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, filter.value]); }
+function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, filter.value, focusedAssetId.value]); }
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selection === selectionKey(); }
 function invalidateRequests() {
   requestGeneration += 1;
@@ -345,7 +362,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [route.query.company_id, route.query.period, filter.value],
+  () => [route.query.company_id, route.query.period, filter.value, focusedAssetId.value],
   (value, previous) => {
     if (value.every((item, index) => item === previous[index])) return;
     invalidateRequests();
@@ -353,7 +370,7 @@ watch(
   { flush: "sync" },
 );
 watch(
-  () => [context.value?.current_company?.company_id, route.query.period, filter.value] as const,
+  () => [context.value?.current_company?.company_id, route.query.period, filter.value, focusedAssetId.value] as const,
   ([orgId], [previousOrgId]) => {
     if (mounted && orgId && orgId === route.query.company_id) void synchronizePeriod(orgId !== previousOrgId);
   },
@@ -521,12 +538,18 @@ onBeforeUnmount(() => {
           <p v-if="data.unestablished_count">完整范围内 {{ data.unestablished_count }} 项资产来源的冻结采用未建立，相关金额保持未知。</p>
           <div v-if="filteredItems.length" class="asset-grid">
             <template v-for="item in filteredItems" :key="item.asset_id">
-            <article v-if="item.selection_status === 'unestablished'" class="asset-card">
+            <article
+              v-if="item.selection_status === 'unestablished'"
+              :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
+              class="asset-card"
+            >
               <DashboardBusinessRecords :items="[item]" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" :show-business="false" />
             </article>
             <details v-else
+              :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
               class="asset-card"
               :class="item.status"
+              :open="focusedAssetId === item.asset_id"
             >
               <summary class="asset-card-summary">
                 <div class="asset-card-head">
@@ -578,6 +601,11 @@ onBeforeUnmount(() => {
               <details class="accounting-detail">
                 <summary>查看折旧摊销与核算说明</summary>
                 <p>{{ chargeNote(item) }}</p>
+                <p v-if="item.charge_state_label">{{ item.charge_state_label }}</p>
+                <div v-for="batch in item.batch_references ?? []" :key="batch.owner_calculation_id">
+                  <p>{{ batch.label }} · {{ batch.period }} · {{ batch.voucher_number ? `汇总凭证 ${batch.voucher_number}` : '零额计算，无凭证' }}</p>
+                  <VoucherTrace :calculation-id="batch.owner_calculation_id" :voucher-version-id="batch.voucher_version_id ?? undefined" />
+                </div>
                 <dl v-if="accountingDetails(item).length" class="asset-detail">
                   <div v-for="row in accountingDetails(item)" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
                 </dl>
@@ -722,6 +750,7 @@ summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
 .asset-card { padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
 .asset-card:hover, .asset-card:focus-within, .asset-card[open] { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); }
+.asset-card:target { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
 .asset-card-summary { display: block; padding: 16px; border-radius: inherit; cursor: pointer; list-style: none; }
 .asset-card-summary::-webkit-details-marker { display: none; }
 .asset-card.pending_activation { border-style: dashed; border-color: var(--accent); }

@@ -7,8 +7,9 @@ from test_v11_recorded_contract import create_recorded_file, table_digest
 from ai_accounting.kernel.backup import create_portable, verify_file, verify_portable
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.runtime import connect
+from ai_accounting.kernel.schema import VERSION
 from ai_accounting.kernel.service import default_registry
-from ai_accounting.kernel.versions import verify_schema
+from ai_accounting.kernel.versions import objects, verify_schema
 
 
 def test_recorded_v10_portable_restores_through_catalog_to_v11(tmp_path):
@@ -18,6 +19,7 @@ def test_recorded_v10_portable_restores_through_catalog_to_v11(tmp_path):
     with closing(connect(source, read_only=True)) as connection:
         assert verify_schema(connection, allow_previous=True) == 10
         before = table_digest(connection)
+        previous_tables = {item["name"] for item in objects(connection) if item["type"] == "table"}
         history = tuple(
             connection.execute("SELECT * FROM schema_history WHERE version=10").fetchone()
         )
@@ -35,8 +37,14 @@ def test_recorded_v10_portable_restores_through_catalog_to_v11(tmp_path):
     )
     store = catalog.bind(company["id"])
     with store.connection(read_only=True) as connection:
-        assert verify_schema(connection) == 11
-        assert table_digest(connection) == before
+        assert verify_schema(connection) == VERSION
+        assert table_digest(connection, table_names=previous_tables) == before
+        for item in objects(connection):
+            if item["type"] == "table" and item["name"] not in previous_tables:
+                rows = connection.execute(
+                    'SELECT count(*) FROM "' + item["name"] + '"'
+                ).fetchone()[0]
+                assert rows == 0
         assert (
             tuple(connection.execute("SELECT * FROM schema_history WHERE version=10").fetchone())
             == history
@@ -44,8 +52,8 @@ def test_recorded_v10_portable_restores_through_catalog_to_v11(tmp_path):
         assert [
             row[0]
             for row in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [10, 11]
-    assert verify_file(store.path)["identity"]["schema_version"] == 11
+        ] == [10, VERSION]
+    assert verify_file(store.path)["identity"]["schema_version"] == VERSION
 
     # Backup and restore must not upgrade the protected source or rewrite its original archive.
     with closing(connect(source, read_only=True)) as connection:

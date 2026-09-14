@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 
-import type { BriefActivityGroup, BriefActivityRow, BriefVoucher, BriefVoucherLine } from "../../api/brief";
+import type { BriefActivityGroup, BriefActivityRow, BriefAssetReference, BriefVoucher, BriefVoucherLine } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
 import VoucherTrace from "./VoucherTrace.vue";
 import BusinessDetails from "./BusinessDetails.vue";
@@ -12,6 +13,7 @@ const props = defineProps<{
   voucherCount: number;
   focusedVoucher?: BriefVoucher | null;
 }>();
+const route = useRoute();
 
 const mode = ref<"business" | "voucher">("business");
 const selectedBusinessKey = ref("");
@@ -19,13 +21,20 @@ const selectedVoucherNumber = ref("");
 const evidenceVoucherNumber = ref("");
 const BUSINESS_PAGE_SIZE = 10;
 const businessPage = ref(1);
-const VOUCHER_PAGE_SIZE = 10;
+const VOUCHER_PAGE_SIZE = 15;
+const voucherDisplayMode = ref<"paged" | "all">("paged");
 const voucherPage = ref(1);
 const availableVouchers = computed(() => {
   const focused = props.focusedVoucher;
   return focused && !props.vouchers.some((item) => item.voucher_version_id === focused.voucher_version_id)
     ? [focused, ...props.vouchers]
     : props.vouchers;
+});
+const voucherPageCount = computed(() => Math.max(1, Math.ceil(availableVouchers.value.length / VOUCHER_PAGE_SIZE)));
+const visibleVouchers = computed(() => {
+  if (voucherDisplayMode.value === "all") return availableVouchers.value;
+  const start = (voucherPage.value - 1) * VOUCHER_PAGE_SIZE;
+  return availableVouchers.value.slice(start, start + VOUCHER_PAGE_SIZE);
 });
 const vouchersByNumber = computed(() => {
   const result = new Map<string, BriefVoucher>();
@@ -34,14 +43,6 @@ const vouchersByNumber = computed(() => {
   }
   return result;
 });
-const voucherPageCount = computed(() => Math.max(1, Math.ceil(availableVouchers.value.length / VOUCHER_PAGE_SIZE)));
-const visibleVouchers = computed(() => {
-  const start = (voucherPage.value - 1) * VOUCHER_PAGE_SIZE;
-  return availableVouchers.value.slice(start, start + VOUCHER_PAGE_SIZE);
-});
-const visibleVoucherStart = computed(() => availableVouchers.value.length ? (voucherPage.value - 1) * VOUCHER_PAGE_SIZE + 1 : 0);
-const visibleVoucherEnd = computed(() => Math.min(voucherPage.value * VOUCHER_PAGE_SIZE, availableVouchers.value.length));
-
 const selectedBusiness = computed(
   () => props.groups.find((item) => item.key === selectedBusinessKey.value) || null,
 );
@@ -63,7 +64,10 @@ function keepAvailableSelection() {
 }
 
 function selectMode(value: "business" | "voucher") {
-  if (value === "voucher" && mode.value !== value) selectedVoucherNumber.value = "";
+  if (value === "voucher" && mode.value !== value) {
+    selectedVoucherNumber.value = "";
+    voucherPage.value = 1;
+  }
   mode.value = value;
   if (value === "business" && !selectedBusiness.value) {
     selectedBusinessKey.value = props.groups[0]?.key || "";
@@ -78,17 +82,64 @@ function changeBusinessPage(page: number) {
   businessPage.value = Math.min(Math.max(page, 1), businessPageCount.value);
 }
 
+async function toggleVoucherDisplayMode() {
+  voucherDisplayMode.value = voucherDisplayMode.value === "paged" ? "all" : "paged";
+  if (voucherDisplayMode.value === "paged" && selectedVoucherNumber.value) {
+    const index = availableVouchers.value.findIndex((item) => item.number === selectedVoucherNumber.value);
+    if (index >= 0) voucherPage.value = Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
+  }
+  await nextTick();
+  document.getElementById("activity")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function changeVoucherPage(page: number) {
+  voucherPage.value = Math.min(Math.max(page, 1), voucherPageCount.value);
+  selectedVoucherNumber.value = "";
+  await nextTick();
+  document.getElementById("activity")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function activityName(item: BriefActivityRow) {
+  if (item.asset) return assetReferenceName(item.asset);
   const party = item.party.trim();
   return party && party !== "—" && !party.includes("未提供") ? party : item.title;
 }
 
 function activityMeta(item: BriefActivityRow) {
+  if (item.asset) {
+    return [
+      item.title,
+      item.asset.name?.trim() && item.asset.code?.trim() ? item.asset.code.trim() : "",
+      item.evidence.length ? `${item.evidence.length} 份凭据` : "",
+    ].filter(Boolean).join(" · ");
+  }
   const primary = activityName(item);
   const context = primary === item.title
     ? (item.subject !== item.title ? item.subject : "")
     : item.title;
   return [context, item.evidence.length ? `${item.evidence.length} 份凭据` : ""].filter(Boolean).join(" · ");
+}
+
+function assetReferenceName(asset: BriefAssetReference) {
+  return asset.name?.trim() || (asset.code?.trim() ? `资产卡片 ${asset.code.trim()}` : "未命名资产卡片");
+}
+
+function assetReferenceLabel(asset: BriefAssetReference) {
+  const name = asset.name?.trim();
+  const code = asset.code?.trim();
+  return name && code ? `${name}（${code}）` : name || (code ? `资产卡片 ${code}` : "未命名资产卡片");
+}
+
+function assetCardTarget(asset: BriefAssetReference) {
+  return {
+    name: "assets",
+    query: {
+      company_id: typeof route.query.company_id === "string" ? route.query.company_id : undefined,
+      period: typeof route.query.period === "string" ? route.query.period : undefined,
+      asset_id: asset.asset_id,
+    },
+    hash: "#asset-card-target",
+  };
 }
 
 function voucherContext(voucher: BriefVoucher) {
@@ -105,6 +156,13 @@ function voucherContext(voucher: BriefVoucher) {
 
 function voucherForReference(reference: string) {
   return vouchersByNumber.value.get(reference) || null;
+}
+
+function voucherPreviewTitle(item: BriefActivityRow) {
+  const voucher = voucherForReference(item.reference);
+  return voucher?.asset
+    ? `${voucher.list_summary} · ${assetReferenceLabel(voucher.asset)}`
+    : voucher?.list_summary || item.title;
 }
 
 function activityVoucherDate(item: BriefActivityRow) {
@@ -127,8 +185,10 @@ function compactVoucherDate(voucher: BriefVoucher) {
 
 async function openVoucher(number: string) {
   mode.value = "voucher";
-  const index = availableVouchers.value.findIndex((item) => item.number === number);
-  if (index >= 0) voucherPage.value = Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
+  if (voucherDisplayMode.value === "paged") {
+    const index = availableVouchers.value.findIndex((item) => item.number === number);
+    if (index >= 0) voucherPage.value = Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
+  }
   selectedVoucherNumber.value = number;
   await nextTick();
   document.querySelector<HTMLElement>(".activity-section .voucher-card.is-open")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -141,11 +201,6 @@ async function selectVoucher(number: string) {
   await nextTick();
   const block = window.matchMedia("(max-width: 760px)").matches ? "start" : "nearest";
   document.querySelector<HTMLElement>(".activity-section .voucher-card.is-open")?.scrollIntoView({ behavior: "smooth", block });
-}
-
-function changeVoucherPage(page: number) {
-  voucherPage.value = Math.min(Math.max(page, 1), voucherPageCount.value);
-  selectedVoucherNumber.value = "";
 }
 
 function toggleVoucherEvidence(number: string) {
@@ -171,8 +226,10 @@ watch(() => props.focusedVoucher, () => {
   if (props.focusedVoucher) {
     mode.value = "voucher";
     selectedVoucherNumber.value = props.focusedVoucher.number;
-    const index = availableVouchers.value.findIndex((item) => item.voucher_version_id === props.focusedVoucher?.voucher_version_id);
-    if (index >= 0) voucherPage.value = Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
+    if (voucherDisplayMode.value === "paged") {
+      const index = availableVouchers.value.findIndex((item) => item.voucher_version_id === props.focusedVoucher?.voucher_version_id);
+      if (index >= 0) voucherPage.value = Math.floor(index / VOUCHER_PAGE_SIZE) + 1;
+    }
   }
 }, { immediate: true });
 </script>
@@ -184,21 +241,36 @@ watch(() => props.focusedVoucher, () => {
         <h2 id="activity-title">本月发生了什么</h2>
         <p>{{ voucherCount }} 张凭证 · {{ groups.length }} 类业务</p>
       </div>
-      <div class="view-switch" role="group" aria-label="本月业务查看方式">
-        <button
-          type="button"
-          :aria-pressed="mode === 'business'"
-          @click="selectMode('business')"
-        >
-          按业务
-        </button>
-        <button
-          type="button"
-          :aria-pressed="mode === 'voucher'"
-          @click="selectMode('voucher')"
-        >
-          按凭证
-        </button>
+      <div class="heading-controls">
+        <div v-if="mode === 'voucher'" class="voucher-display-toggle">
+          <span :class="{ active: voucherDisplayMode === 'paged' }">分页</span>
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="voucherDisplayMode === 'all'"
+            :aria-label="voucherDisplayMode === 'paged' ? '改为全部显示凭证' : '改为分页显示凭证'"
+            @click="toggleVoucherDisplayMode"
+          >
+            <span aria-hidden="true"></span>
+          </button>
+          <span :class="{ active: voucherDisplayMode === 'all' }">全部</span>
+        </div>
+        <div class="view-switch" role="group" aria-label="本月业务查看方式">
+          <button
+            type="button"
+            :aria-pressed="mode === 'business'"
+            @click="selectMode('business')"
+          >
+            按业务
+          </button>
+          <button
+            type="button"
+            :aria-pressed="mode === 'voucher'"
+            @click="selectMode('voucher')"
+          >
+            按凭证
+          </button>
+        </div>
       </div>
     </div>
 
@@ -253,13 +325,13 @@ watch(() => props.focusedVoucher, () => {
                 <span class="voucher-preview-heading">
                   <span>
                     <small>凭证 {{ item.reference }} · {{ activityVoucherDate(item) }}</small>
-                    <strong>{{ voucherForReference(item.reference)?.list_summary || item.title }}</strong>
+                    <strong>{{ voucherPreviewTitle(item) }}</strong>
                   </span>
                   <b>{{ formatFen(voucherForReference(item.reference)?.amount_fen || item.journal_total_fen) }}</b>
                 </span>
                 <span v-if="voucherForReference(item.reference)?.lines.length" class="voucher-preview-lines">
                   <span
-                    v-for="line in voucherForReference(item.reference)?.lines.slice(0, 3)"
+                    v-for="line in voucherForReference(item.reference)?.lines"
                     :key="line.line_number"
                   >
                     <span>{{ line.account }}</span>
@@ -269,10 +341,7 @@ watch(() => props.focusedVoucher, () => {
                 <span v-else class="voucher-preview-empty">完整分录将在打开凭证后显示</span>
                 <span class="voucher-preview-footer">
                   <span :class="['state', { correction: item.state.includes('冲正') }]">{{ item.state }}</span>
-                  <small v-if="(voucherForReference(item.reference)?.lines.length || 0) > 3">
-                    另有 {{ (voucherForReference(item.reference)?.lines.length || 0) - 3 }} 条
-                  </small>
-                  <small v-else>点击打开完整凭证</small>
+                  <small>点击打开凭证详情</small>
                 </span>
               </span>
             </span>
@@ -294,7 +363,8 @@ watch(() => props.focusedVoucher, () => {
         <article
           v-for="voucher in visibleVouchers"
           :key="voucher.voucher_version_id"
-          :class="['voucher-card', { 'is-open': selectedVoucherNumber === voucher.number }]"
+          :class="['voucher-card', 'selectable-card', { 'is-open': selectedVoucherNumber === voucher.number }]"
+          tabindex="-1"
         >
           <button
             type="button"
@@ -321,6 +391,16 @@ watch(() => props.focusedVoucher, () => {
             :aria-label="`${voucher.number} 凭证明细`"
           >
             <p v-if="voucher.reverses_version_id" class="voucher-correction">本凭证用于冲销原记录。</p>
+            <RouterLink
+              v-if="voucher.asset"
+              class="voucher-asset-link"
+              :to="assetCardTarget(voucher.asset)"
+              :aria-label="`查看资产卡片：${assetReferenceLabel(voucher.asset)}`"
+            >
+              <span>对应资产</span>
+              <strong>{{ assetReferenceLabel(voucher.asset) }}</strong>
+              <small>查看资产卡片 <span aria-hidden="true">→</span></small>
+            </RouterLink>
             <BusinessDetails plain :components="voucher.components" :funds="voucher.funds" :settlements="voucher.settlements" />
 
             <div class="table-wrap">
@@ -344,6 +424,7 @@ watch(() => props.focusedVoucher, () => {
                     <td data-label="科目">
                       <small>{{ line.code }}</small>
                       <strong>{{ line.account }}</strong>
+                      <RouterLink v-if="line.asset" :to="assetCardTarget(line.asset)" :aria-label="`查看资产卡片：${assetReferenceLabel(line.asset)}`">{{ assetReferenceLabel(line.asset) }}</RouterLink>
                     </td>
                     <td data-label="往来对象">
                       <template v-if="line.parties?.length > 1">
@@ -390,8 +471,7 @@ watch(() => props.focusedVoucher, () => {
           </section>
         </article>
       </div>
-      <footer v-if="availableVouchers.length > VOUCHER_PAGE_SIZE" class="business-pagination voucher-pagination" aria-label="已加载凭证分页">
-        <span>第 {{ visibleVoucherStart }}–{{ visibleVoucherEnd }} 张 · 已加载 {{ availableVouchers.length }} 张</span>
+      <footer v-if="voucherDisplayMode === 'paged' && voucherPageCount > 1" class="business-pagination voucher-pagination" aria-label="凭证分页">
         <div>
           <button type="button" :disabled="voucherPage === 1" @click="changeVoucherPage(voucherPage - 1)">上一页</button>
           <strong>{{ voucherPage }} / {{ voucherPageCount }}</strong>
@@ -456,6 +536,70 @@ h3 {
   margin-bottom: 0;
   color: var(--brief-muted);
   font-size: 13px;
+}
+
+.heading-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+}
+
+.voucher-display-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--brief-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.voucher-display-toggle > span {
+  transition: color 140ms ease;
+}
+
+.voucher-display-toggle > span.active {
+  color: var(--brief-text);
+  font-weight: 750;
+}
+
+.voucher-display-toggle button {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--brief-line-strong);
+  border-radius: 999px;
+  background: var(--brief-soft);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.voucher-display-toggle button > span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--brief-surface);
+  box-shadow: 0 1px 4px rgb(18 45 31 / 20%);
+  transition: transform 140ms ease;
+}
+
+.voucher-display-toggle button[aria-checked="true"] {
+  border-color: var(--brief-green);
+  background: var(--brief-green);
+}
+
+.voucher-display-toggle button[aria-checked="true"] > span {
+  transform: translateX(16px);
+}
+
+.voucher-display-toggle button:focus-visible {
+  outline: 2px solid var(--brief-green);
+  outline-offset: 2px;
 }
 
 .view-switch {
@@ -688,7 +832,7 @@ h3 {
   right: calc(100% + 10px);
   z-index: 30;
   display: grid;
-  width: min(330px, calc(100vw - 48px));
+  width: min(380px, calc(100vw - 48px));
   gap: 10px;
   padding: 13px;
   border: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
@@ -747,10 +891,8 @@ h3 {
 }
 
 .voucher-preview-heading strong {
-  overflow: hidden;
   font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .voucher-preview-heading b {
@@ -768,15 +910,15 @@ h3 {
 }
 
 .voucher-preview-lines > span {
+  align-items: flex-start;
   min-width: 0;
   color: var(--brief-muted);
   font-size: 11px;
 }
 
 .voucher-preview-lines > span > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .voucher-preview-lines strong {
@@ -867,6 +1009,10 @@ h3 {
 .voucher-list {
   display: grid;
   gap: 7px;
+}
+
+.voucher-pagination {
+  justify-content: flex-end;
 }
 
 .voucher-card {
@@ -977,10 +1123,6 @@ h3 {
   transform: rotate(225deg) translate(-1px, -1px);
 }
 
-.voucher-pagination {
-  padding-top: 12px;
-}
-
 .voucher-inline-detail {
   --voucher-account-width: 35%;
   --voucher-party-width: 33%;
@@ -995,6 +1137,48 @@ h3 {
   margin: 12px 0 0;
   color: var(--brief-amber);
   font-size: 12px;
+}
+
+.voucher-asset-link {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+  margin: 10px 0 2px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--brief-soft);
+  color: var(--brief-text);
+  text-decoration: none;
+}
+
+.voucher-asset-link > span {
+  flex: none;
+  color: var(--brief-muted);
+  font-size: 11px;
+}
+
+.voucher-asset-link > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.voucher-asset-link > small {
+  flex: none;
+  margin-left: auto;
+  color: var(--brief-green);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.voucher-asset-link:hover {
+  background: var(--brief-green-soft);
+}
+
+.voucher-asset-link:focus-visible {
+  outline: 2px solid var(--brief-green);
+  outline-offset: 2px;
 }
 
 .voucher-actions {
@@ -1178,6 +1362,16 @@ td:nth-child(2) > small {
 
   .view-switch {
     width: 100%;
+  }
+
+  .heading-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .heading-controls .view-switch {
+    flex: 1 1 220px;
+    width: auto;
   }
 
   .view-switch button {

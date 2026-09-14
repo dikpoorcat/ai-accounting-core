@@ -106,7 +106,11 @@ class CalculationView(dict):
         self.snapshot = snapshot
         self["digest"] = bytes.fromhex(self["result_digest"])
         self["period"] = YearMonth(self["period"]).ordinal
-        self["posting_period"] = YearMonth(self["posting_period"]).ordinal
+        self["posting_period"] = (
+            YearMonth(self["posting_period"]).ordinal
+            if self["posting_period"] is not None
+            else None
+        )
 
     def __getitem__(self, key):
         if key == "fact" and key not in self:
@@ -313,6 +317,27 @@ class Calculations(Mapping):
                     old["fact_revision"],
                 ):
                     heads[record["subject_id"]] = record
+            member_events = self.snapshot.queries._selected_asset_members(
+                self.snapshot.connection, self.snapshot.period, kinds=kinds, subjects=subjects
+            )
+            member_metadata = self.snapshot.reads.metadata(
+                item["calculation_id"] for item in member_events
+            )
+            member_heads = {}
+            for event in member_events:
+                if event["direction"] < 0:
+                    # A reversal removes exactly its adopted member, not a later
+                    # replacement already selected through another batch.
+                    old = member_heads.get(event["subject_id"])
+                    if old and old["calculation_id"] == event["calculation_id"]:
+                        member_heads.pop(event["subject_id"])
+                    continue
+                member_heads[event["subject_id"]] = event
+            for subject, event in member_heads.items():
+                record = member_metadata[event["calculation_id"]]
+                old = heads.get(subject)
+                if old is None or event["adoption_period"] >= old["posting_period"]:
+                    heads[subject] = record
             self.cache[key] = {
                 subject: self.snapshot.calculation(record["id"])
                 for subject, record in heads.items()

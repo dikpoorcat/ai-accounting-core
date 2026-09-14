@@ -360,6 +360,7 @@ def _acquisitions(ctx, asset_id):
 
 class AssetActivation(Fact):
     kind: ClassVar[str] = "asset_activation"
+    registration_command: ClassVar[str] = "prepare_asset_activation_batch"
     identity_fields: ClassVar[tuple[str, ...]] = ("asset_id",)
     asset_id: Identifier
     in_use_date: ActualDate
@@ -435,6 +436,7 @@ def calculate_activation(version: FactVersion, ctx: Context) -> Outcome:
 
 class AssetConsumption(Fact):
     kind: ClassVar[str] = "asset_consumption"
+    registration_command: ClassVar[str] = "prepare_asset_consumption_month"
     identity_fields: ClassVar[tuple[str, ...]] = ("asset_id", "period")
     asset_id: Identifier
 
@@ -550,7 +552,8 @@ def calculate_consumption(version: FactVersion, ctx: Context) -> Outcome:
         )
         expenses = {"administration": "560202", "sales": "560102", "service": "540102"}
     return Outcome(
-        (Line(expenses[activation.benefit_area], debit=amount), Line(accumulated, credit=amount)),
+        (Line(expenses[activation.benefit_area], debit=amount), Line(accumulated, credit=amount))
+        if amount else (),
         {
             "asset_id": fact.asset_id,
             "consumption_fen": amount,
@@ -559,7 +562,7 @@ def calculate_consumption(version: FactVersion, ctx: Context) -> Outcome:
             "carrying_fen": asset.cost_fen - closing,
             "rounding_policy": activation.rounding_policy,
         },
-        (BalanceEffect(f"asset:{fact.asset_id}:carrying", -amount, "asset"),),
+        (BalanceEffect(f"asset:{fact.asset_id}:carrying", -amount, "asset"),) if amount else (),
     )
 
 
@@ -1214,6 +1217,8 @@ def _required_loan_work(period, rows):
 
 
 def register(registry: Registry) -> None:
+    from ..asset_batch_models import register as register_asset_batches
+
     for model, evaluator in (
         (AssetAcquisition, calculate_acquisition),
         (ReimbursedAsset, calculate_reimbursed_asset),
@@ -1227,3 +1232,4 @@ def register(registry: Registry) -> None:
     ):
         registry.register(model, evaluator)
     registry.register_readiness("assets_and_financing", required_reads, required_work)
+    register_asset_batches(registry)

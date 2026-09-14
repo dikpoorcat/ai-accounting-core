@@ -858,12 +858,16 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
     bank = read.bank_summary()
     investments = read.investment_summary()
     accounts = list(read.account_rows.values())
+    bank_accounts = [item for item in accounts if item["type"] == "bank"]
     totals = {key: _sum(accounts, key) for key in ("opening_fen", "net_change_fen")}
     data = (
         totals
         | movement_totals
         | {
             "total_fen": _sum(accounts, "closing_fen"),
+            "bank_opening_fen": _sum(bank_accounts, "opening_fen"),
+            "bank_inflow_fen": _sum(bank_accounts, "inflow_fen"),
+            "bank_outflow_fen": _sum(bank_accounts, "outflow_fen"),
             **{
                 FUND_TYPES[category] + "_fen": _sum(
                     [item for item in accounts if item["type"] == FUND_TYPES[category]],

@@ -448,17 +448,35 @@ class Display:
             )
         ]
         calculations.update(row["calculation_id"] for row in voucher_rows)
+        asset_members = []
+        if "asset_consumption_month" in registry.models:
+            from .asset_batches import frozen_members
+
+            owners = connection.execute(
+                "SELECT c.id FROM json_each(?) ids JOIN calculation c ON c.id=ids.value "
+                "WHERE c.kind IN ('asset_activation_batch','asset_consumption_month') "
+                "ORDER BY c.id", (canonical(sorted(calculations)),),
+            ).fetchall()
+            for owner in owners:
+                asset_members.extend(
+                    {"owner_calculation_id": owner["id"], **member}
+                    for member in frozen_members(connection, owner["id"])
+                )
+            calculations.update(item["member_calculation_id"] for item in asset_members)
         calculation_rows = [
             Display._record(row)
             for row in connection.execute(
                 "SELECT c.id,c.subject_id,c.fact_id,c.kind,c.period,c.digest,p.posting_period "
                 "FROM calculation c JOIN json_each(?) ids ON ids.value=c.id "
-                "JOIN calculation_publication p ON p.calculation_id=c.id ORDER BY c.id",
+                "LEFT JOIN calculation_publication p ON p.calculation_id=c.id ORDER BY c.id",
                 (canonical(sorted(calculations)),),
             )
         ]
         for row in calculation_rows:
-            row["posting_period"] = str(YearMonth.from_ordinal(row["posting_period"]))
+            row["posting_period"] = (
+                str(YearMonth.from_ordinal(row["posting_period"]))
+                if row["posting_period"] is not None else None
+            )
         fact_ids.update(row["fact_id"] for row in calculation_rows)
         dependencies = [
             dict(row)
@@ -577,6 +595,7 @@ class Display:
                 "facts": sorted(fact_ids),
                 "dependencies": dependencies,
                 "upstream": upstream,
+                **({"asset_batch_members": asset_members} if asset_members else {}),
             },
             "current_facts": current_facts,
             "current_heads": heads,

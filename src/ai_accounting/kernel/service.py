@@ -6,6 +6,7 @@ import base64
 from contextlib import contextmanager
 from pathlib import Path
 
+from .asset_batches import AssetBatches
 from .backup import run_backup_jobs
 from .business_queries import BusinessQueries
 from .catalog import Catalog
@@ -29,6 +30,11 @@ OPERATING_PROTOCOL = {
     "typed_facts": "只提交类型化业务事实，不编造科目、借贷或缺失的核算事实。金额使用整数分。",
     "missing_information": "根据fact_issues核对可复用来源后再补充，不把错误码直接变成负责人追问。",
     "publication": "保存事实与发布结果分开；预览后用同一摘要和相关版本确认，重试沿用同一请求键。",
+    "asset_batches": (
+        "资产启用通过prepare_asset_activation_batch/confirm_asset_activation_batch按确认批次处理；"
+        "折旧摊销通过prepare_asset_consumption_month/confirm_asset_consumption_month由内核确定完整月度成员。"
+        "不得直接登记或发布单卡启用、单卡折旧摊销，也不得提交自由科目、分录或月度成员排除清单。"
+    ),
     "correction": "录入错误用amend_fact并明确依据；新实际行为用新身份；已闭期会计更正指定开放期。",
     "management": "管理说明、归集资料可后补，不把管理缺项当核算门禁，不以月末冒充实际日期。",
     "dashboard_management": (
@@ -275,6 +281,7 @@ class LocalService:
         dashboard = Dashboard(engine)
         business_queries = BusinessQueries(engine)
         payroll_preparation = PayrollPreparation(engine)
+        asset_batches = AssetBatches(engine)
         tax_import = TaxImport(engine)
         reserves = Reserves(engine)
         actions = {
@@ -330,6 +337,10 @@ class LocalService:
             "payroll_reuse_basis": payroll_preparation.reuse_basis,
             "prepare_payroll": payroll_preparation.prepare,
             "confirm_payroll_preparation": payroll_preparation.confirm,
+            "prepare_asset_activation_batch": asset_batches.prepare_activation_batch,
+            "confirm_asset_activation_batch": asset_batches.confirm_activation_batch,
+            "prepare_asset_consumption_month": asset_batches.prepare_consumption_month,
+            "confirm_asset_consumption_month": asset_batches.confirm_consumption_month,
             "preview_managed_reserve_settlement": reserves.preview_settlement,
             "confirm_managed_reserve_settlement": reserves.confirm_settlement,
             "preview_tax_import": tax_import.preview,

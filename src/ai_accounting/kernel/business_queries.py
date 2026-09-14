@@ -361,6 +361,8 @@ class BusinessQueries:
             independent_proofs = {}
             for ident in manifest_ids:
                 row = metadata[ident]
+                if row["posting_period"] is None:
+                    continue
                 if YearMonth(row["posting_period"]).ordinal != close_period:
                     continue
                 if ident in voucher_roots:
@@ -369,6 +371,26 @@ class BusinessQueries:
                     ident not in dependency_ids and YearMonth(row["period"]).ordinal == close_period
                 ):
                     independent_proofs[ident] = {"basis": "manifest_lineage_root"}
+            for adoption in manifest.get("asset_batch_adoptions", ()):
+                ident = adoption.get("owner_calculation_id")
+                if ident not in manifest_ids or ident not in metadata:
+                    continue
+                row = metadata[ident]
+                if row["kind"] not in {"asset_activation_batch", "asset_consumption_month"}:
+                    continue
+                from .asset_batches import frozen_members
+
+                frozen_members(connection, ident)
+                outcome = reads.calculations({ident})[ident]["outcome"]
+                membership_digest = outcome["values"]["membership_digest"]
+                if adoption.get("membership_digest") != membership_digest:
+                    raise KernelError(
+                        "asset_batch_digest", "关账采用的资产汇总成员摘要不匹配"
+                    )
+                independent_proofs[ident] = {
+                    "basis": "manifest_asset_batch_adoption",
+                    "membership_digest": membership_digest,
+                }
             # Domain adoption receives the complete independently proven graph;
             # page kind/subject filters must never remove its downstream proof.
             if any(metadata[ident]["kind"] == "opening_package" for ident in manifest_ids):
@@ -387,7 +409,10 @@ class BusinessQueries:
             by_subject = {}
             for ident in manifest_ids:
                 row = metadata[ident]
-                if YearMonth(row["posting_period"]).ordinal == close_period:
+                if (
+                    row["posting_period"] is not None
+                    and YearMonth(row["posting_period"]).ordinal == close_period
+                ):
                     by_subject.setdefault(row["subject_id"], set()).add(ident)
             reads.closed_accounting_contexts[close_period] = (by_subject, independent_proofs)
             for candidate_subject in by_subject if subjects is None else subjects:
@@ -520,6 +545,71 @@ class BusinessQueries:
             },
         }
 
+    def _selected_asset_members(
+        self, connection, period, *, kinds=None, subjects=None, current_heads=False
+    ):
+        """Asset state is adopted by a selected owner, not independently posted.
+
+        Keep these records outside voucher_events/state_results: their complete
+        Outcomes are contributions already included in their owner's postings.
+        """
+        member_kinds = {"asset_activation", "asset_consumption"}
+        kinds = member_kinds if kinds is None else member_kinds & set(kinds)
+        if not kinds or "asset_consumption_month" not in self.store.registry.models:
+            return []
+        subjects = {subjects} if isinstance(subjects, str) else subjects
+        query = (
+            "SELECT DISTINCT owner.subject_id FROM asset_batch_member m "
+            "JOIN calculation owner ON owner.id=m.owner_calculation_id "
+            "JOIN calculation member ON member.id=m.member_calculation_id "
+            "WHERE member.kind IN (SELECT value FROM json_each(?))"
+        )
+        parameters = [json.dumps(sorted(kinds))]
+        if subjects is not None:
+            query += " AND m.member_subject_id IN (SELECT value FROM json_each(?))"
+            parameters.append(json.dumps(sorted(subjects)))
+        owners = {row[0] for row in connection.execute(query, parameters)}
+        if not owners:
+            return []
+        selected = self._selected_accounting(
+            connection, owners, period, current_heads=current_heads,
+            kinds={"asset_activation_batch", "asset_consumption_month"}, include_lines=False,
+        )["through_period"]
+        reads = self._reads(connection)
+        result = []
+        for event in (*selected["voucher_events"], *selected["state_results"]):
+            owner_id = event["calculation_id"]
+            members = reads.asset_members(owner_id)
+            metadata = reads.metadata(item["member_calculation_id"] for item in members)
+            for member in members:
+                calc = metadata[member["member_calculation_id"]]
+                if calc["kind"] not in kinds or (
+                    subjects is not None and calc["subject_id"] not in subjects
+                ):
+                    continue
+                result.append({
+                    "event_type": "asset_member", "status": "established",
+                    "calculation_id": calc["id"], "subject_id": calc["subject_id"],
+                    "fact_id": calc["fact_id"], "kind": calc["kind"],
+                    "calculation_period": calc["period"], "posting_period": None,
+                    "adoption_period": event["posting_period"],
+                    "result_digest": calc["result_digest"], "asset_id": member["asset_id"],
+                    "owner_calculation_id": owner_id,
+                    "voucher_version_id": event.get("voucher_version_id"),
+                    "voucher_number": event.get("voucher_number"),
+                    "direction": event.get("direction", 1), "role": event.get("role", "state"),
+                    "line_start": member["line_start"], "line_count": member["line_count"],
+                    "selection_source": event["selection_source"],
+                    "selection_proof": {
+                        "basis": "asset_batch_member",
+                        "owner_calculation_id": owner_id,
+                    },
+                })
+        return sorted(result, key=lambda item: (
+            item["adoption_period"], item["voucher_number"] or 0,
+            item["owner_calculation_id"], item["asset_id"],
+        ))
+
     @staticmethod
     def _state_metadata(calc, selection_source, selection_proof):
         return {
@@ -563,6 +653,26 @@ class BusinessQueries:
         if row is None:
             return None
         calc = self._calculation(connection, row["id"])
+        if calc.get("publication_role") == "asset_member":
+            owners = connection.execute(
+                "SELECT m.owner_calculation_id FROM asset_batch_member m "
+                "JOIN calculation_current a ON a.calculation_id=m.owner_calculation_id "
+                "WHERE m.member_calculation_id=? ORDER BY m.owner_calculation_id",
+                (calc["id"],),
+            ).fetchall()
+            for owner in owners:
+                self._reads(connection).asset_members(owner[0])
+            if not owners:
+                return None
+            return {
+                "status": "adopted", "knowledge": "current_knowledge", "calculation": calc,
+                "publication": {
+                    "role": "asset_member", "posting_period": None, "voucher_id": None,
+                    "has_journal_lines": False,
+                    "owner_calculation_ids": [owner[0] for owner in owners],
+                },
+                "voucher_versions": [], "current_voucher_version_id": None,
+            }
         vouchers = [
             self._voucher(connection, item["id"], "current_publication")
             for item in connection.execute(
@@ -1446,6 +1556,13 @@ class BusinessQueries:
         selected = self._selected_accounting(
             connection, subject_id, period, include_lines=not summary
         )
+        asset_members = self._selected_asset_members(
+            connection, period, kinds={subject["kind"]}, subjects={subject_id}
+        )
+        if asset_members:
+            selected["through_period"]["asset_member_results"] = asset_members
+            if selected["through_period"]["status"] == "not_established":
+                selected["through_period"]["status"] = "established"
         pending = [
             {"cause_fact_id": row["cause_id"]}
             for row in connection.execute(
@@ -1490,9 +1607,10 @@ class BusinessQueries:
         for item in (
             *selected["through_period"]["voucher_events"],
             *selected["through_period"]["state_results"],
+            *asset_members,
         ):
             target = {
-                "calculation_id": item["calculation_id"],
+                "calculation_id": item.get("owner_calculation_id", item["calculation_id"]),
                 "voucher_version_id": item.get("voucher_version_id"),
             }
             key = (target["calculation_id"], target["voucher_version_id"])
@@ -1572,6 +1690,8 @@ class BusinessQueries:
                     through["unestablished_state_selections"]
                 ),
                 "state_results": through["state_results"],
+                **({"asset_member_results": through["asset_member_results"]}
+                   if "asset_member_results" in through else {}),
                 "unestablished_state_selections": through["unestablished_state_selections"],
             },
         }

@@ -92,6 +92,8 @@ KIND_NAMES = {
     "reimbursed_asset_batch": "整批资产验收",
     "asset_activation": "资产启用",
     "asset_consumption": "折旧与摊销",
+    "asset_activation_batch": "资产批次启用",
+    "asset_consumption_month": "月度折旧摊销",
     "asset_disposal": "资产处置",
     "loan_drawdown": "借款到账",
     "loan_interest": "借款利息计提",
@@ -902,7 +904,43 @@ class _Snapshot:
             key=lambda item: (item["name"], item["digest"]),
         )
 
-    def business_summary(self, calc, sign=1, relations=None, *, include_sources=False):
+    def asset_reference(self, calc):
+        if calc["kind"] not in {"asset_activation", "asset_consumption"}:
+            return None
+        asset_id = calc["fact"]["data"].get("asset_id") or calc["outcome"].get(
+            "values", {}
+        ).get("asset_id")
+        if not isinstance(asset_id, str) or not asset_id:
+            return None
+        profile = self.profile("asset", asset_id)
+        accounts = {line.get("account") for line in calc["outcome"].get("lines", ())}
+        asset_type = calc["outcome"].get("values", {}).get("asset_type")
+        if asset_type not in {"fixed", "intangible"}:
+            asset_type = "intangible" if accounts & {"1701", "1702"} else "fixed"
+        return {
+            "asset_id": asset_id,
+            "asset_type": asset_type,
+            "name": profile.get("display_name"),
+            "code": profile.get("display_number"),
+            "field_sources": _display_sources(
+                profile, name="display_name", code="display_number"
+            ),
+        }
+
+    @staticmethod
+    def asset_reference_label(asset):
+        name, code = asset.get("name"), asset.get("code")
+        if name and code:
+            return f"{name}（{code}）"
+        if name:
+            return name
+        if code:
+            return f"资产卡片 {code}"
+        return "未命名资产卡片"
+
+    def business_summary(
+        self, calc, sign=1, relations=None, *, include_sources=False, asset_reference=None
+    ):
         """Owner-facing wording from exact selected facts, without inferred business causes."""
         data, kind = calc["fact"]["data"], calc["kind"]
         profile = self.profile("business", calc["fact"]["subject_id"])
@@ -918,6 +956,8 @@ class _Snapshot:
             "reimbursement_acceptance": "确认代付款",
             "settlement": "款项抵销",
             "asset_consumption": "折旧摊销",
+            "asset_activation_batch": "启用整批资产",
+            "asset_consumption_month": "计提月度折旧摊销",
             "reimbursed_asset_batch": "验收整批资产",
             "reimbursed_asset": "确认报销资产",
             "labor": "确认劳务报酬",
@@ -953,6 +993,12 @@ class _Snapshot:
                 "retained_verification_payment": "确认验证款收入",
                 "bank_promotion_reward": "奖励到账",
             }.get(data.get("income_kind"), short)
+        if asset_reference and kind == "asset_consumption":
+            short = (
+                "计提摊销"
+                if asset_reference["asset_type"] == "intangible"
+                else "计提折旧"
+            )
         if profile.get("display_name"):
             short = profile["display_name"]
         ids = [
@@ -982,7 +1028,18 @@ class _Snapshot:
         # Preserve different identities even when their display names happen to be equal.
         who = "、".join(names[:3]) + (f"等{len(names)}个对象" if len(names) > 3 else "")
         when = "、".join(sorted(periods)) if periods else period
-        detail = f"{short}（{when}）" + (f" · {who}" if who else "")
+        asset_label = (
+            self.asset_reference_label(asset_reference) if asset_reference else ""
+        )
+        detail = (
+            f"{short}（{when}）"
+            + (f" · {asset_label}" if asset_label else "")
+            + (f" · {who}" if who else "")
+        )
+        if kind in {"asset_activation_batch", "asset_consumption_month"}:
+            count = calc["outcome"].get("values", {}).get("member_count")
+            if type(count) is int:
+                detail += f" · {count} 张资产卡片"
         purposes = [
             profile.get("purpose"),
             profile.get("note"),
@@ -1005,6 +1062,12 @@ class _Snapshot:
             for party in named_parties:
                 source = party.get("field_sources", {}).get("name")
                 sources.extend(source if isinstance(source, list) else [source] if source else [])
+            if asset_reference:
+                for field in ("name", "code"):
+                    source = asset_reference["field_sources"].get(field)
+                    sources.extend(
+                        source if isinstance(source, list) else [source] if source else []
+                    )
             return (
                 short,
                 detail,
@@ -1033,6 +1096,8 @@ class _Snapshot:
             "reimbursed_asset_batch": ("cost_fen", "整批确认成本"),
             "asset_activation": ("cost_fen", "启用资产成本"),
             "asset_consumption": ("consumption_fen", "本期折旧摊销"),
+            "asset_activation_batch": ("amount_fen", "本批启用资产成本"),
+            "asset_consumption_month": ("amount_fen", "本月折旧摊销"),
             "asset_disposal": ("gross_proceeds_fen", "处置确认价款"),
             "loan_interest": ("interest_fen", "本期确认利息"),
             "loan_drawdown": ("principal_fen", "借款本金"),
@@ -1077,8 +1142,13 @@ class _Snapshot:
         management = self.management.get(fact["subject_id"])
         note = profile.get("note") or (management["note"] if management else None) or ""
         relations = self.voucher_relations(calc, row["sign"])
+        asset_reference = self.asset_reference(calc)
         short_summary, summary, summary_sources = self.business_summary(
-            calc, row["sign"], relations, include_sources=True
+            calc,
+            row["sign"],
+            relations,
+            include_sources=True,
+            asset_reference=asset_reference,
         )
         note_source = profile["field_sources"].get("note")
         if not note_source and management and management.get("note"):
@@ -1125,6 +1195,38 @@ class _Snapshot:
                 }
             )
         evidence = set(fact["evidence"])
+        asset_members = []
+        asset_lines = {}
+        if kind in {"asset_activation_batch", "asset_consumption_month"}:
+            # A reviewed owner may reuse a voucher. Its displayed line sources
+            # remain those of the actual voucher, including a reversal's source.
+            frozen_owner = row["voucher_calculation_id"]
+            if row["reverses_id"]:
+                frozen_owner = self.connection.execute(
+                    "SELECT calculation_id FROM voucher_version WHERE id=?",
+                    (row["reverses_id"],),
+                ).fetchone()[0]
+            for member in self.reads.asset_members(frozen_owner):
+                contribution = self.calculation(member["member_calculation_id"])
+                reference = self.asset_reference(contribution)
+                member_amount, member_label = self.business_amount(contribution)
+                detail = {
+                    **reference,
+                    "calculation_id": contribution["id"],
+                    "owner_calculation_id": frozen_owner,
+                    "amount_fen": (
+                        row["sign"] * member_amount if member_amount is not None else None
+                    ),
+                    "amount_label": member_label,
+                    "line_start": member["line_start"], "line_count": member["line_count"],
+                }
+                asset_members.append(detail)
+                evidence.update(contribution["fact"]["evidence"])
+                if member["line_start"] is not None:
+                    for number in range(
+                        member["line_start"], member["line_start"] + member["line_count"]
+                    ):
+                        asset_lines[number] = detail
         for ref in self.connection.execute(
             "SELECT fact_id FROM dependency_fact WHERE calculation_id=?", (calc["id"],)
         ):
@@ -1173,6 +1275,8 @@ class _Snapshot:
             "display_summary": summary,
             "list_summary": short_summary,
             "field_sources": summary_sources,
+            "asset": asset_reference,
+            **({"asset_members": asset_members} if asset_members else {}),
             "amount_fen": row["total"],
             "business_amount_fen": row["sign"] * amount if amount is not None else None,
             "business_amount_label": amount_label,
@@ -1195,7 +1299,13 @@ class _Snapshot:
                     "debit_fen": line["debit"],
                     "credit_fen": line["credit"],
                     "party": self.line_party(line, relations),
-                    "source_label": self.line_source(line, relations),
+                    "source_label": (
+                        self.asset_reference_label(asset_lines[line["line_no"]])
+                        if line["line_no"] in asset_lines
+                        else self.line_source(line, relations)
+                    ),
+                    **({"asset": asset_lines[line["line_no"]]}
+                       if line["line_no"] in asset_lines else {}),
                     "field_sources": {
                         field: [
                             source
@@ -1462,15 +1572,25 @@ class Dashboard:
                 )
             else:
                 rows, page = [], page_keys([], limit=limit, total_count=len(snap.month_journal))[1]
-            vouchers = [snap.voucher(row) for row in rows]
-            focused = None
+            focused_row = None
             if voucher_version_id is not None or voucher_number is not None:
                 found, _ = snap.month_journal.page(
                     0, 1, voucher_number=voucher_number, voucher_version_id=voucher_version_id
                 )
                 if not found:
                     raise KernelError("dashboard_voucher_not_found", "所选月份没有这张精确凭证")
-                focused = snap.voucher(found[0])
+                focused_row = found[0]
+            profile_rows = [*rows, *([focused_row] if focused_row else [])]
+            asset_ids = {
+                row["basis"]["fact"]["data"]["asset_id"]
+                for row in profile_rows
+                if row["basis"]["kind"] == "asset_consumption"
+                and isinstance(row["basis"]["fact"]["data"].get("asset_id"), str)
+            }
+            if asset_ids:
+                snap.metadata.prime_profiles("asset", asset_ids)
+            vouchers = [snap.voucher(row) for row in rows]
+            focused = snap.voucher(focused_row) if focused_row else None
             groups = []
             kind_counts = snap.month_journal.kind_counts()
             for key, label in GROUPS.items():
@@ -1504,6 +1624,7 @@ class Dashboard:
                                 "subject": v["type"],
                                 "description": v["display_summary"],
                                 "display_description": v["display_summary"],
+                                "asset": v["asset"],
                                 "field_sources": {
                                     "display_description": v["field_sources"]["display_summary"],
                                     **(
@@ -1539,6 +1660,11 @@ class Dashboard:
             journal_totals = snap.month_journal.totals()
             debit, credit = journal_totals["debit"], journal_totals["credit"]
             position = _position(snap)
+            position["bank_calculation"] = {
+                "opening_fen": funds["bank_opening_fen"],
+                "inflow_fen": funds["bank_inflow_fen"],
+                "outflow_fen": funds["bank_outflow_fen"],
+            }
             valid = debit == credit and position["equation_valid"]
             attention = (
                 checks["attention_count"]
@@ -2221,8 +2347,6 @@ def _position(snap):
         )
         position.update(assets_fen=None, liabilities_fen=None, equation_valid=None, complete=False)
     assets, liabilities = position["assets_fen"], position["liabilities_fen"]
-    capital = -sum(value for account, value in balances.items() if account.startswith("3"))
-
     def result(values):
         revenue = -sum(
             value
@@ -2237,13 +2361,17 @@ def _position(snap):
         return revenue, expense, revenue - expense
 
     revenue, expense, monthly = result(snap.month_accounts)
-    cumulative = result(balances)[2]
     fixed, intangible = balances["1601"] + balances["1602"], balances["1701"] + balances["1702"]
     return {
         "assets_fen": assets,
         "liabilities_fen": liabilities,
-        "capital_fen": capital,
+        "capital_fen": position["capital_fen"],
+        "equity_fen": position["equity_fen"],
         "bank_fen": balances["1002"],
+        "liability_calculation": {
+            "current_fen": position["lines"][41],
+            "non_current_fen": position["lines"][46],
+        },
         "fixed_asset_cost_fen": balances["1601"],
         "accumulated_depreciation_fen": -balances["1602"],
         "fixed_asset_net_fen": fixed,
@@ -2256,7 +2384,7 @@ def _position(snap):
         "month_revenue_fen": revenue,
         "month_expense_fen": expense,
         "month_result_fen": monthly,
-        "cumulative_result_fen": cumulative,
+        "cumulative_result_fen": position["cumulative_result_fen"],
         "equation_valid": position["equation_valid"],
         "complete": position["complete"] and not source_issues,
         "issues": [*source_issues, *position["issues"]],
@@ -3426,6 +3554,36 @@ def _assets(
             charges[row["asset_id"]] = row["total"]
             monthly_charges[row["asset_id"]] = row["monthly"]
             latest_charge[row["asset_id"]] = str(YearMonth.from_ordinal(row["latest"]))
+    batch_events = snap.queries._selected_asset_members(snap.connection, snap.period)
+    batch_references, latest_states = {}, {}
+    for event in batch_events:
+        ident = event["asset_id"]
+        if event["kind"] == "asset_consumption":
+            contribution = snap.calculation(event["calculation_id"])
+            amount = contribution["outcome"]["values"]["consumption_fen"] * event["direction"]
+            charges[ident] += amount
+            if event["adoption_period"] == snap.period:
+                monthly_charges[ident] += amount
+            latest_charge[ident] = max(
+                latest_charge.get(ident, event["calculation_period"]), event["calculation_period"]
+            )
+            if event["direction"] > 0:
+                latest_states[ident] = contribution["outcome"]["values"].get("zero_reason")
+        if event["direction"] > 0:
+            # Keep activation and the latest monthly adoption on the card; the
+            # complete history remains available through its source history.
+            batch_references[ident, event["kind"]] = {
+                "calculation_id": event["calculation_id"],
+                "owner_calculation_id": event["owner_calculation_id"],
+                "voucher_version_id": event["voucher_version_id"],
+                "voucher_number": event["voucher_number"],
+                "period": event["adoption_period"], "label": _name(event["kind"]),
+            }
+        elif (
+            batch_references.get((ident, event["kind"]), {}).get("calculation_id")
+            == event["calculation_id"]
+        ):
+            batch_references.pop((ident, event["kind"]), None)
     all_items = []
     for ident, calc in sorted(acquisitions.items()):
         data = scalar[calc["fact_id"]] | asset_details.get(ident, {})
@@ -3531,6 +3689,10 @@ def _assets(
             calc["subject_id"]
             for calc in consumptions
             if consumption_scalar[calc["fact_id"]]["asset_id"] == asset_id
+        )
+        entity_sources.update(
+            snap.calculation(event["owner_calculation_id"])["subject_id"]
+            for event in batch_events if event["asset_id"] == asset_id
         )
     settlement_subjects = {
         calc["subject_id"] for ident, calc in acquisitions.items() if ident in selected
@@ -3670,6 +3832,13 @@ def _assets(
             "month_charge_fen": monthly_charges[ident],
             "book_value_fen": 0 if disposal else cost - accumulated,
             "latest_charge_period": latest_charge.get(ident),
+            "charge_state_label": {
+                "before_consumption_start": "尚未到开始计提月份",
+                "fully_consumed": "已完成折旧摊销",
+            }.get(latest_states.get(ident)),
+            "batch_references": [
+                ref for (asset, _), ref in batch_references.items() if asset == ident
+            ],
             "benefit_area_label": {
                 "administration": "管理",
                 "sales": "销售",

@@ -168,7 +168,9 @@ class Periods:
             "SELECT s.id,s.kind FROM subject s JOIN fact_current f "
             "ON f.subject_id=s.id JOIN fact_revision r "
             "ON r.id=f.fact_id LEFT JOIN calculation_current c ON c.subject_id=s.id "
-            "WHERE r.period=? AND c.subject_id IS NULL",
+            "WHERE r.period=? AND c.subject_id IS NULL AND NOT(s.kind='asset_consumption' "
+            "AND EXISTS(SELECT 1 FROM disposition d WHERE d.subject_id=s.id "
+            "AND d.cause_id=f.fact_id AND d.action='asset_derived_removed'))",
             (month,),
         ).fetchall()
         for row in connection.execute(
@@ -228,21 +230,49 @@ class Periods:
  WHERE c.period=?
           UNION SELECT v.calculation_id FROM voucher_version v JOIN voucher_current a ON
  a.version_id=v.id WHERE v.period=?
+          UNION SELECT c.id FROM calculation c JOIN calculation_current a ON a.calculation_id=c.id
+ JOIN calculation_publication p ON p.calculation_id=c.id WHERE p.posting_period=?
+ AND c.kind IN('asset_activation_batch','asset_consumption_month')
         ), lineage(id) AS (SELECT id FROM roots UNION
           SELECT d.upstream_id FROM dependency_calculation d JOIN lineage l ON
  l.id=d.calculation_id)
         """
         calculations = {
-            r[0] for r in connection.execute(lineage + "SELECT id FROM lineage", (month, month))
+            r[0]
+            for r in connection.execute(
+                lineage + "SELECT id FROM lineage", (month, month, month)
+            )
         }
         facts = {
             r[0]
             for r in connection.execute(
                 lineage + "SELECT DISTINCT d.fact_id FROM dependency_fact d "
                 "JOIN lineage l ON l.id=d.calculation_id",
-                (month, month),
+                (month, month, month),
             )
         }
+        from .asset_batches import frozen_members
+
+        asset_adoptions = []
+        for row in connection.execute(
+            "SELECT DISTINCT c.id,c.outcome FROM calculation c WHERE "
+            "c.kind IN('asset_activation_batch','asset_consumption_month') AND ("
+            "EXISTS(SELECT 1 FROM calculation_current a JOIN calculation_publication p "
+            "ON p.calculation_id=a.calculation_id WHERE a.calculation_id=c.id "
+            "AND p.posting_period=?) "
+            "OR EXISTS(SELECT 1 FROM voucher_current a JOIN voucher_version v ON v.id=a.version_id "
+            "WHERE v.calculation_id=c.id AND v.period=?)) ORDER BY c.id",
+            (month, month),
+        ):
+            frozen_members(connection, row["id"])
+            asset_adoptions.append(
+                {
+                    "owner_calculation_id": row["id"],
+                    "membership_digest": json.loads(row["outcome"])["values"][
+                        "membership_digest"
+                    ],
+                }
+            )
         trial_balance = [
             dict(r)
             for r in connection.execute(
@@ -260,6 +290,7 @@ class Periods:
             "database_id": self.store.database_id,
             "vouchers": vouchers,
             "calculations": sorted(calculations),
+            "asset_batch_adoptions": asset_adoptions,
             "facts": sorted(facts),
             "inventories": {key: row["id"] for key, row in sorted(inventories.items())},
             "owner_confirmation": owner_confirmation,

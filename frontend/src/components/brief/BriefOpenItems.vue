@@ -62,12 +62,12 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
 
     <details v-if="openItems.issues?.length"><summary>往来来源问题 · {{ openItems.issues.length }} 条</summary><ul><li v-for="(issue, index) in openItems.issues" :key="index"><p>{{ issue.message || '来源尚待核对' }}</p><BusinessStatusDetails v-if="issue.subject_id" :subject-id="issue.subject_id" :period="period" :snapshot-version="snapshotVersion" summary-label="查看相关依据" @changed="$emit('changed')" /><details><summary>精确来源与候选依据</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul></details>
     <div class="open-summary" :aria-label="isClosed ? '关账时点往来汇总' : '期末往来汇总'">
-      <article class="receivable">
+      <article class="receivable selectable-card" tabindex="-1">
         <span>{{ isClosed ? "关账时点应收" : "期末待收" }}</span>
         <strong>{{ formatFen(openItems.receivable_fen) }}</strong>
         <small>{{ openItems.receivable_count }} 项</small>
       </article>
-      <article class="payable">
+      <article class="payable selectable-card" tabindex="-1">
         <span>{{ isClosed ? "关账时点应付" : "期末待付" }}</span>
         <strong>{{ formatFen(openItems.payable_fen) }}</strong>
         <small>{{ openItems.payable_count }} 项</small>
@@ -78,7 +78,8 @@ function groupStateLabel(direction: "receivable" | "payable", openCount: number,
       <details
         v-for="category in openItems.categories.filter((item) => item.count)"
         :key="category.key"
-        class="category"
+        class="category selectable-card"
+        tabindex="-1"
       >
         <summary>
           <span class="category-name">
@@ -209,6 +210,7 @@ h2 {
   gap: 2px 14px;
   align-items: center;
   padding: 13px 15px;
+  border: 1px solid transparent;
   border-radius: 13px;
 }
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from .contracts import Registry
 from .types import YearMonth
 
-VERSION = 11
+VERSION = 12
 
 COMMENTARY_BASIS_DDL = """
 CREATE TABLE period_commentary_basis(commentary_id TEXT PRIMARY KEY
@@ -352,6 +352,7 @@ def schema_sql(registry: Registry) -> str:
 
 @lru_cache(maxsize=32)
 def _schema_for_models(models) -> str:
+    from .asset_batch_schema import ASSET_BATCH_DDL
     registry = Registry()
     registry.models = dict(models)
     script = DDL + "\n" + "\n".join(immutable_sql(t) for t in IMMUTABLE) + fact_ddl(registry)
@@ -393,6 +394,7 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + immutable_sql("period_commentary_revision")
         + immutable_sql("period_commentary_basis")
         + READ_INDEX_DDL
+        + ASSET_BATCH_DDL
         + ";\n".join(COMPANY_DDL)
         + ";\n"
     )

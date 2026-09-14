@@ -280,6 +280,14 @@ function runPriorityAction(action: PriorityAction) {
   });
 }
 
+function focusSelectedCard(event: MouseEvent) {
+  if (!(event.target instanceof Element)) return;
+  const card = event.target.closest<HTMLElement>(".selectable-card");
+  if (!card) return;
+  if (event.target.closest("button, a, summary, input, select, textarea")) return;
+  card.focus({ preventScroll: true });
+}
+
 function statusLabel(status: string) {
   return status === "closed" ? "已关账" : "未关账";
 }
@@ -356,7 +364,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="brief-page">
+  <section class="brief-page" @click="focusSelectedCard">
       <DashboardModuleHeader
         title="月度经营与财务概览"
         :options="periodOptions"
@@ -434,7 +442,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <aside class="action-queue" aria-label="需要处理">
+        <aside class="action-queue selectable-card" aria-label="需要处理" tabindex="-1">
           <header>
             <span class="queue-title">需要处理</span>
             <span :class="['queue-count', { healthy: !priorities.length }]">
@@ -465,12 +473,37 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="kpi-grid" aria-label="本月核心指标">
-        <article :class="['kpi', 'result', { loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }]"><span class="kpi-label">本月账面盈亏</span><strong>{{ formatFen(data.position.month_result_fen) }}</strong><small>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</small></article>
-        <article class="kpi bank"><span class="kpi-label">月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金和支付平台的账面余额</small></article>
-        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待收</span><strong>{{ formatFen(data.open_items.receivable_fen) }}</strong><small>{{ data.open_items.receivable_count }} 项来源 · 查看构成 ›</small></button>
-        <button class="kpi open" type="button" @click="focusSection('open-items')"><span class="kpi-label">月末待付</span><strong>{{ formatFen(data.open_items.payable_fen) }}</strong><small>{{ data.open_items.payable_count }} 项来源 · 查看构成 ›</small></button>
+        <article :class="['kpi', 'result', 'selectable-card', { loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }]" tabindex="-1"><span class="kpi-label">本月账面盈亏</span><strong>{{ formatFen(data.position.month_result_fen) }}</strong><small>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</small></article>
+        <article class="kpi bank selectable-card" tabindex="-1"><span class="kpi-label">月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金和支付平台的账面余额</small></article>
+        <button class="kpi asset selectable-card" type="button" @click="focusSection('finance')">
+          <span class="kpi-label">长期资产净值</span>
+          <strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong>
+          <small>固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形 {{ data.long_term_assets.intangible_active_count }} 项 · 查看构成 ›</small>
+        </button>
+        <button class="kpi open combined-open selectable-card" type="button" @click="focusSection('open-items')">
+          <span class="kpi-label">{{ isClosed ? "关账时点应收 / 应付" : "月末待收 / 待付" }}</span>
+          <span class="open-values">
+            <span>
+              <small>{{ isClosed ? "应收" : "待收" }}</small>
+              <strong>{{ formatFen(data.open_items.receivable_fen) }}</strong>
+            </span>
+            <span>
+              <small>{{ isClosed ? "应付" : "待付" }}</small>
+              <strong>{{ formatFen(data.open_items.payable_fen) }}</strong>
+            </span>
+          </span>
+          <small>{{ data.open_items.receivable_count }} 项{{ isClosed ? "应收" : "待收" }} · {{ data.open_items.payable_count }} 项{{ isClosed ? "应付" : "待付" }} · 查看构成 ›</small>
+        </button>
       </section>
       <p v-if="data.position.complete === false || data.open_items.complete === false || data.open_items.unestablished_count" class="needs-check" role="status">部分来源尚待核对，已知金额也不能视为完整结论。<button type="button" @click="focusSection('validation')">查看依据与问题</button></p>
+
+      <div id="finance" class="section-anchor" tabindex="-1">
+        <BriefFinancialOverview
+          :funds="data.funds_overview"
+          :position="data.position"
+          :unmatched="data.unmatched_bank_activity"
+        />
+      </div>
 
       <div id="activity" class="section-anchor" tabindex="-1">
         <BriefActivityWorkbench
@@ -488,17 +521,7 @@ onBeforeUnmount(() => {
       <div v-if="data.workforce_cost.has_activity" id="workforce" class="section-anchor" tabindex="-1">
         <BriefWorkforceSection
           :workforce="data.workforce_cost"
-          :period-key="selectedPeriod"
           :period-label="response?.selected_period?.short_label || ''"
-        />
-      </div>
-
-      <div id="finance" class="section-anchor" tabindex="-1">
-        <BriefFinancialOverview
-          :cash="data.cash"
-          :funds="data.funds_overview"
-          :position="data.position"
-          :unmatched="data.unmatched_bank_activity"
         />
       </div>
 
@@ -626,6 +649,16 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   padding: 25px 0 46px;
   color: var(--brief-text);
+}
+
+.brief-page :deep(.selectable-card) {
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.brief-page :deep(.selectable-card:focus),
+.brief-page :deep(.selectable-card:focus-within) {
+  border-color: color-mix(in srgb, var(--brief-green) 48%, var(--brief-line));
 }
 
 .state-panel {
@@ -901,6 +934,10 @@ onBeforeUnmount(() => {
   background: var(--brief-blue);
 }
 
+.kpi.combined-open::before {
+  background: linear-gradient(90deg, var(--brief-blue) 0 50%, var(--brief-amber) 50%);
+}
+
 .kpi.asset::before {
   background: var(--brief-gold);
 }
@@ -957,6 +994,40 @@ button.kpi:focus-visible {
 
 .kpi small b {
   color: var(--brief-green);
+}
+
+.open-values {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.open-values > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.open-values > span > small {
+  font-size: 10px;
+}
+
+.open-values strong {
+  overflow: hidden;
+  font-size: clamp(16px, 1.35vw, 20px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.open-values > span:first-child strong {
+  color: var(--brief-blue);
+}
+
+.open-values > span:last-child strong {
+  color: var(--brief-amber);
 }
 
 .kpi-grid + .section-anchor,
