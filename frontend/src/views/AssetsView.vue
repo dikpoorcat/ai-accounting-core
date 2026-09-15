@@ -9,14 +9,12 @@ import {
   type AssetsDashboardResponse,
   type FixedAssetItem,
   type AssetsQuery,
+  type UnestablishedAssetItem,
 } from "../api/assets";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
-import PeriodPreparation from "../components/PeriodPreparation.vue";
-import DashboardSourceHistory from "../components/DashboardSourceHistory.vue";
-import DashboardBusinessRecords from "../components/DashboardBusinessRecords.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
 import VoucherTrace from "../components/brief/VoucherTrace.vue";
 import { localBusinessName } from "../api/localKernel";
@@ -25,7 +23,7 @@ import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
 
 const filters = [
-  { value: "all", label: "全部资产卡片" },
+  { value: "all", label: "全部资产" },
   { value: "active", label: "当前在用" },
   { value: "fixed", label: "固定资产" },
   { value: "intangible", label: "无形资产" },
@@ -35,9 +33,11 @@ const filters = [
 
 type AssetFilter = (typeof filters)[number]["value"];
 
-interface DetailRow {
+interface AssetPaymentSummary {
   label: string;
   value: string;
+  detail: string;
+  tone: "settled" | "attention" | "neutral";
 }
 
 const route = useRoute();
@@ -85,7 +85,7 @@ const attentionItems = computed(() => {
   const assets = data.value;
   if (!assets) return [];
   const alerts: string[] = [];
-  if (assets.reconciled === null) alerts.push("部分资产来源尚不能确认，账面价值与明细暂无法完整核对。请查看资产卡片中的候选依据及下方具体问题。");
+  if (assets.reconciled === null) alerts.push("部分资产资料尚未确认，因此资产数量和金额可能不完整；由 AI 会计核对。");
   if (!assets.reconciled) {
     if (assets.differences.cost_fen !== null && fen(assets.differences.cost_fen)) {
       alerts.push(
@@ -110,7 +110,7 @@ const attentionItems = computed(() => {
 });
 const sectionLinks = computed(() => data.value && selectedPeriodView.value ? [
   { id: "assets-overview", label: "概览" },
-  { id: "assets-checks", label: "核对事项" },
+  ...(attentionItems.value.length ? [{ id: "assets-checks", label: "资产核对" }] : []),
   { id: "asset-movements-title", label: "本月变动" },
   { id: "asset-list-title", label: "资产卡片" },
   { id: "asset-projects-title", label: "项目投入" },
@@ -174,10 +174,9 @@ async function loadAssets(period: string) {
     }
     if (isCurrent(generation, selection) && activeController === controller && route.hash === "#asset-card-target") {
       const card = document.getElementById("asset-card-target");
-      if (card instanceof HTMLDetailsElement) card.open = true;
       if (card) {
         positionSection(card);
-        card.querySelector<HTMLElement>("summary, [tabindex]")?.focus({ preventScroll: true });
+        card.focus({ preventScroll: true });
       }
     }
   } catch (error: unknown) {
@@ -248,24 +247,108 @@ function assetTypeLabel(item: EstablishedAssetItem) {
   return isFixedAsset(item) ? "固定资产" : "无形资产";
 }
 
-function availabilityLabel(item: EstablishedAssetItem) {
-  if (item.status === "pending_activation") return "";
-  if (isFixedAsset(item)) {
-    return item.in_service_date ? `开始使用 ${dateLabel(item.in_service_date)}` : "";
+function unresolvedAssetTypeLabel(item: UnestablishedAssetItem) {
+  if (item.asset_type === "fixed") return "固定资产";
+  if (item.asset_type === "intangible") return "无形资产";
+  return "资产类型待确认";
+}
+
+function assetDisplayName(item: { name: string | null }) {
+  const name = item.name?.trim();
+  return !name || name === "未提供资产名称" ? "资产名称待补充" : name;
+}
+
+function assetNameNeedsAttention(item: { name: string | null }) {
+  const name = item.name?.trim();
+  return !name || name === "未提供资产名称";
+}
+
+function assetCategoryLabel(item: EstablishedAssetItem) {
+  return item.category_label && item.category_label !== assetTypeLabel(item) ? item.category_label : "";
+}
+
+function monthEventLabel(item: EstablishedAssetItem) {
+  if (item.month_exited) return "本月退出";
+  if (item.month_acquired && item.month_activated) return "本月新增并启用";
+  if (item.month_acquired) return "本月新增";
+  if (item.month_activated) return "本月启用";
+  return "";
+}
+
+function assetTimeline(item: EstablishedAssetItem) {
+  const exit = exitInformation(item);
+  if (exit) {
+    const action = isFixedAsset(item) && item.disposal?.kind === "sale" ? "出售" : isFixedAsset(item) ? "报废" : "退役";
+    return `${dateLabel(exit.date)} 已${action} · 取得于 ${item.recognition_label}`;
   }
-  return item.available_for_use_date ? `可供使用 ${dateLabel(item.available_for_use_date)}` : "";
+  if (item.status === "pending_activation") return `${item.recognition_label} 取得 · 尚未启用`;
+  const useDate = isFixedAsset(item) ? item.in_service_date : item.available_for_use_date;
+  if (!useDate) return `${item.recognition_label} 取得 · 启用时间待补充`;
+  const useLabel = dateLabel(useDate);
+  const useAction = isFixedAsset(item) ? "投入使用" : "可供使用";
+  return useLabel === item.recognition_label
+    ? `${useLabel} 取得并${useAction}`
+    : `${item.recognition_label} 取得 · ${useLabel} ${useAction}`;
+}
+
+function chargeVerb(item: EstablishedAssetItem) {
+  return isFixedAsset(item) ? "折旧" : "摊销";
+}
+
+function chargeProgressText(item: EstablishedAssetItem) {
+  if (item.status === "pending_activation") return `启用后开始${chargeVerb(item)}`;
+  const progress = chargeProgress(item);
+  if (progress === null) return "价值构成待核对";
+  const value = Number.isInteger(progress) ? progress.toFixed(0) : progress.toFixed(1);
+  return `已${chargeVerb(item)} ${value}%`;
+}
+
+function paymentScopeLabel(item: EstablishedAssetItem) {
+  return ({
+    "本资产结算": "本项付款",
+    "本验收批次结算": "整批付款",
+    "成本来源结算（不分摊为本资产付款）": "项目来源款项",
+  } as Record<string, string>)[item.settlement_scope] ?? "相关款项";
+}
+
+function assetPaymentSummary(item: EstablishedAssetItem): AssetPaymentSummary {
+  const obligations = new Map<string, EstablishedAssetItem["settlements"][number]["obligations"][number]>();
+  let issueCount = 0;
+  for (const source of item.settlements) {
+    issueCount += source.issues?.length ?? 0;
+    for (const obligation of source.obligations) obligations.set(obligation.key, obligation);
+  }
+  const rows = [...obligations.values()];
+  const label = paymentScopeLabel(item);
+  if (!rows.length) {
+    return {
+      label,
+      value: issueCount ? `${issueCount} 项待核对` : "未列付款事项",
+      detail: issueCount ? "付款依据需要 AI 会计确认" : "点击查看取得来源",
+      tone: issueCount ? "attention" : "neutral",
+    };
+  }
+  const totals = rows.reduce((current, row) => ({
+    amount: current.amount + fen(row.amount_fen),
+    paid: current.paid + fen(row.paid_fen),
+    other: current.other + fen(row.other_settled_fen),
+    remaining: current.remaining + fen(row.remaining_fen),
+  }), { amount: 0n, paid: 0n, other: 0n, remaining: 0n });
+  const details: string[] = [];
+  if (totals.paid) details.push(`公司已付 ${formatFen(totals.paid)}`);
+  if (totals.other) details.push(`抵销等 ${formatFen(totals.other)}`);
+  if (!details.length) details.push(`相关应付 ${formatFen(totals.amount)}`);
+  if (issueCount) details.push(`${issueCount} 项关系待核对`);
+  return {
+    label,
+    value: totals.remaining ? `月末待付 ${formatFen(totals.remaining)}` : issueCount ? `${issueCount} 项待核对` : "月末已结清",
+    detail: details.join(" · "),
+    tone: totals.remaining || issueCount ? "attention" : "settled",
+  };
 }
 
 function dateLabel(value: string) {
   return value.length === 7 ? `${value}（按月确认）` : value;
-}
-
-function settlementTitle(item: EstablishedAssetItem) {
-  return ({
-    "本资产结算": "本项资产付款",
-    "本验收批次结算": "整批付款",
-    "成本来源结算（不分摊为本资产付款）": "项目来源付款",
-  } as Record<string, string>)[item.settlement_scope] ?? item.settlement_scope;
 }
 
 function obligationLabel(name: string) {
@@ -293,67 +376,6 @@ function pendingCost() {
 
 function exitInformation(item: EstablishedAssetItem) {
   return isFixedAsset(item) ? item.disposal : item.retirement;
-}
-
-function chargeNote(item: EstablishedAssetItem) {
-  if (item.status === "pending_activation") return "当前状态为待启用。";
-  const exit = exitInformation(item);
-  if (exit) {
-    return `退出日期 ${dateLabel(exit.date)} · 退出前账面价值 ${formatFen(exit.book_value_fen)}`;
-  }
-  return item.latest_charge_period
-    ? `最近记录折旧或摊销的月份：${item.latest_charge_period}`
-    : "暂无折旧或摊销记录";
-}
-
-function assetDetails(item: EstablishedAssetItem): DetailRow[] {
-  const rows: DetailRow[] = [
-    { label: "取得来源", value: item.source_label },
-  ];
-  if (item.acquisition_reference) rows.push({ label: "购置凭证", value: item.acquisition_reference });
-  if (item.source_parties) rows.push({ label: item.source_party_label, value: item.source_parties });
-  if (isFixedAsset(item)) {
-    if (item.disposal) {
-      rows.push(
-        {
-          label: "退出方式",
-          value: item.disposal.kind === "sale" ? "出售" : "报废",
-        },
-        { label: "退出凭证", value: item.disposal.reference || "未展示" },
-        { label: item.disposal.kind === "sale" ? "出售应收金额" : "报废回收金额", value: formatFen(item.disposal.gross_proceeds_fen) },
-        {
-          label: "处置损益",
-          value: item.disposal.gain_fen === null || item.disposal.loss_fen === null ? "尚不能完整确认" : fen(item.disposal.gain_fen)
-            ? `收益 ${formatFen(item.disposal.gain_fen)}`
-            : fen(item.disposal.loss_fen)
-              ? `损失 ${formatFen(item.disposal.loss_fen)}`
-              : formatFen(0),
-        },
-      );
-    }
-  } else {
-    if (item.rights_description && item.rights_description !== "未提供") rows.push({ label: "权利内容", value: item.rights_description });
-    if (item.retirement) {
-      rows.push({ label: "退役凭证", value: item.retirement.reference || "未展示" });
-    }
-  }
-  return rows;
-}
-
-function accountingDetails(item: EstablishedAssetItem): DetailRow[] {
-  const pending = item.status === "pending_activation";
-  const rows: DetailRow[] = [];
-  if (item.benefit_area_label || !pending) rows.push({ label: "费用归属", value: item.benefit_area_label || "未提供" });
-  if (item.useful_life_months !== null || !pending) rows.push({ label: isFixedAsset(item) ? "折旧期限" : "摊销期限", value: item.useful_life_months === null ? "未提供" : `${item.useful_life_months} 个月` });
-  if (isFixedAsset(item)) {
-    if (item.depreciation_method_label || !pending) rows.push({ label: "折旧方法", value: item.depreciation_method_label || "未提供" });
-    if (item.residual_value_fen !== null || !pending) rows.push({ label: "预计净残值", value: formatFen(item.residual_value_fen) });
-    if (item.rounding_policy_label) rows.push({ label: "整分处理", value: item.rounding_policy_label });
-  } else {
-    if (item.life_basis_label && item.life_basis_label !== "未提供") rows.push({ label: "期限依据", value: item.life_basis_label });
-    if (item.life_basis_explanation && item.life_basis_explanation !== "未提供") rows.push({ label: "期限说明", value: item.life_basis_explanation });
-  }
-  return rows;
 }
 
 onMounted(() => {
@@ -393,8 +415,12 @@ onBeforeUnmount(() => {
         select-label="资产查看月份"
         @change="changePeriod"
         @refresh="refresh"
-      />
-      <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="资产内容导航" floating @select="focusSection" />
+      >
+        <template #navigation>
+          <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="资产内容导航" @select="focusSection" />
+        </template>
+      </DashboardModuleHeader>
+
 
       <p v-if="updateNotice" class="note" role="status">{{ updateNotice }}</p>
       <section v-if="loading && !data" class="state-panel" aria-live="polite">
@@ -415,17 +441,18 @@ onBeforeUnmount(() => {
 
       <template v-else>
         <section id="assets-overview" class="assets-hero" tabindex="-1" aria-labelledby="assets-total-label">
-          <div>
-            <p class="eyebrow">
+          <p class="dashboard-hero-eyebrow">
               {{ selectedPeriodView.label }}期末 · 全公司
             </p>
+          <div>
+
             <span id="assets-total-label">期末长期资产账面价值</span>
-            <strong class="assets-total">{{ formatFen(data.ledger_net_fen) }}</strong>
-            <p class="hero-note">
+            <strong class="assets-total dashboard-hero-title">{{ formatFen(data.ledger_net_fen) }}</strong>
+            <p class="dashboard-hero-note">
               在用固定资产净值 {{ formatFen(data.fixed.active_net_fen) }} · 在用无形资产净值
               {{ formatFen(data.intangible.active_net_fen) }} · {{ countQualifier || '共 ' }}{{ data.active_count }} 项在用
             </p>
-            <p v-if="pendingCost() === null || pendingCost() || data.project_cost_fen === null || fen(data.project_cost_fen)" class="hero-note">
+            <p v-if="pendingCost() === null || pendingCost() || data.project_cost_fen === null || fen(data.project_cost_fen)" class="dashboard-hero-note">
               另含待启用资产 {{ formatFen(pendingCost()) }}
               <span v-if="data.project_cost_fen === null || fen(data.project_cost_fen)"> · 尚未计入资产卡片的项目投入 {{ formatFen(data.project_cost_fen) }}</span>
             </p>
@@ -434,7 +461,7 @@ onBeforeUnmount(() => {
             <span>资产明细与账面记录</span>
             <strong>{{ data.reconciled === null ? "尚不能完整核对" : data.reconciled ? "核对一致" : "存在差异" }}</strong>
             <small v-if="!data.reconciled">
-              <a href="#assets-attention-title">查看核对说明</a> · <a href="#asset-list-title">查看卡片与候选依据</a>
+              <a href="#assets-attention-title">查看需要关注的事项</a> · <a href="#asset-list-title">查看相关资产卡片</a>
             </small>
             <details class="reconciliation-details">
               <summary>查看核对说明</summary>
@@ -444,8 +471,6 @@ onBeforeUnmount(() => {
               <p>账面价值 {{ formatFen(data.ledger_net_fen) }} · 明细价值 {{ formatFen(data.card_net_fen) }}</p>
             </details>
           </div>
-        </section>
-
         <section class="kpi-grid" aria-label="资产核心指标">
           <article class="kpi">
             <span>资产及项目账面成本</span>
@@ -476,19 +501,22 @@ onBeforeUnmount(() => {
             <small>固定 {{ countQualifier }}{{ data.pending_fixed_count }} 项 · 无形 {{ countQualifier }}{{ data.pending_intangible_count }} 项</small>
           </article>
         </section>
-
-        <p v-if="data.unestablished_count" class="note" role="status">全公司有 {{ data.unestablished_count }} 项资产来源的冻结采用尚未建立；在用、待启用及本月变动数量仅列已确认部分，不代表完整数量。</p>
-
-        <section id="assets-checks" class="assets-checks" tabindex="-1" aria-label="资产核对事项">
-          <PeriodPreparation :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
-
-          <section v-if="attentionItems.length" class="panel attention-panel" aria-labelledby="assets-attention-title">
-            <div class="section-heading">
-              <div><h2 id="assets-attention-title" tabindex="-1">资产关注事项</h2></div>
-              <span class="attention-count">{{ attentionItems.length }} 条提示</span>
-            </div>
-            <ul><li v-for="item in attentionItems" :key="item">{{ item }}</li></ul>
           </section>
+
+        <p v-if="data.unestablished_count" class="note" role="status">全公司有 {{ data.unestablished_count }} 项资产资料尚未确认；在用、待启用及本月变动数量仅列已确认部分，不代表完整数量。</p>
+
+        <section
+          v-if="attentionItems.length"
+          id="assets-checks"
+          class="assets-checks panel attention-panel"
+          tabindex="-1"
+          aria-labelledby="assets-attention-title"
+        >
+          <div class="section-heading">
+            <div><h2 id="assets-attention-title" tabindex="-1">资产关注事项</h2></div>
+            <span class="attention-count">{{ attentionItems.length }} 条提示</span>
+          </div>
+          <ul><li v-for="item in attentionItems" :key="item">{{ item }}</li></ul>
         </section>
 
         <section class="panel">
@@ -522,128 +550,94 @@ onBeforeUnmount(() => {
 
         <section class="panel">
           <div class="section-heading">
-            <div><h2 id="asset-list-title" tabindex="-1">资产明细</h2></div>
-            <strong>已识别 {{ data.registered_count }} 项卡片身份</strong>
-          </div>
-          <div class="asset-toolbar">
-            <p>{{ filterLabel }} · 当前筛选共 {{ data.collections.assets.page.filtered_count }} 项，已加载 {{ filteredItems.length }} 项</p>
-            <p v-if="data.unestablished_count && ['active', 'pending', 'exited'].includes(filter)">状态筛选仅列已确认匹配项；全公司尚未确认的资产来源仍需单独核对。</p>
-            <select v-model="filter" class="control" aria-label="筛选资产">
-              <option v-for="item in filters" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
+            <div>
+              <h2 id="asset-list-title" tabindex="-1">资产明细</h2>
+              <p class="list-caption"><strong>{{ data.unestablished_count ? "已确认" : "共" }} {{ data.registered_count }}</strong> 项资产 · {{ filterLabel }} · 已加载 {{ filteredItems.length }} 项</p>
+            </div>
+            <div class="asset-toolbar">
+              <p v-if="data.unestablished_count && ['active', 'pending', 'exited'].includes(filter)">当前筛选只显示资料已确认的资产；待确认项目会另行提示。</p>
+              <select v-model="filter" class="control" aria-label="筛选资产">
+                <option v-for="item in filters" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </option>
+              </select>
+            </div>
           </div>
 
-          <p v-if="data.unestablished_count">完整范围内 {{ data.unestablished_count }} 项资产来源的冻结采用未建立，相关金额保持未知。</p>
+          <p v-if="data.unestablished_count">另有 {{ data.unestablished_count }} 项资产资料尚未确认，暂不计入资产数量和金额。</p>
           <div v-if="filteredItems.length" class="asset-grid">
             <template v-for="item in filteredItems" :key="item.asset_id">
             <article
               v-if="item.selection_status === 'unestablished'"
               :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
-              class="asset-card"
+              class="asset-card asset-unestablished dashboard-record-card"
+              tabindex="-1"
             >
-              <DashboardBusinessRecords :items="[item]" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" :show-business="false" />
-            </article>
-            <details v-else
-              :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
-              class="asset-card"
-              :class="item.status"
-              :open="focusedAssetId === item.asset_id"
-            >
-              <summary class="asset-card-summary">
+              <div class="asset-card-summary">
+                <div class="asset-card-topline">
+                  <span class="asset-classification">{{ unresolvedAssetTypeLabel(item) }}</span>
+                </div>
                 <div class="asset-card-head">
                   <div class="asset-name">
-                    <span>{{ assetTypeLabel(item) }} · {{ item.code }}</span><h3>{{ item.name }}</h3>
+                    <h3>{{ assetDisplayName(item) }}</h3>
+                    <span class="asset-status needs-attention">资料待确认</span>
+                  </div>
+                  <div class="book-value unknown">
+                    <span>所选月末还值</span>
+                    <strong>暂无法确定</strong>
+                  </div>
+                </div>
+                <p class="asset-unestablished-note">该项资料尚未确认，暂不计入资产数量和金额；由 AI 会计核对。</p>
+              </div>
+            </article>
+            <article v-else
+              :id="focusedAssetId === item.asset_id ? 'asset-card-target' : undefined"
+              class="asset-card dashboard-record-card"
+              :class="item.status"
+              tabindex="-1"
+            >
+              <div class="asset-card-summary">
+                <div class="asset-card-topline">
+                  <span class="asset-classification">
+                    {{ assetTypeLabel(item) }}<template v-if="assetCategoryLabel(item)"> · {{ assetCategoryLabel(item) }}</template> · {{ item.code }}
+                  </span>
+                </div>
+                <div class="asset-card-head">
+                  <div class="asset-name">
+                    <h3 :class="{ 'needs-attention': assetNameNeedsAttention(item) }">{{ assetDisplayName(item) }}</h3>
+                    <div class="asset-badges">
+                      <span class="asset-status" :class="item.status">{{ item.status_label }}</span>
+                      <span v-if="monthEventLabel(item)" class="asset-event">{{ monthEventLabel(item) }}</span>
+                    </div>
+                    <p class="asset-timeline">{{ assetTimeline(item) }}</p>
                   </div>
                   <div class="book-value">
-                    <span>期末账面价值</span><strong>{{ formatFen(item.book_value_fen) }}</strong>
+                    <span>所选月末还值</span>
+                    <strong>{{ formatFen(item.book_value_fen) }}</strong>
+                    <small>{{ chargeProgressText(item) }}</small>
                   </div>
                 </div>
-                <div class="asset-meta">
-                  <span>{{ item.category_label }}</span>
-                  <span>取得 {{ item.recognition_label }}</span>
-                  <span v-if="availabilityLabel(item)">{{ availabilityLabel(item) }}</span>
-                </div>
-                <div class="value-grid">
-                  <div><span>资产原值</span><strong>{{ formatFen(item.cost_fen) }}</strong></div>
+                <div class="owner-value-grid">
+                  <div>
+                    <span>取得成本</span>
+                    <strong>{{ formatFen(item.cost_fen) }}</strong>
+                  </div>
                   <div>
                     <span>{{ chargeLabel(item) }}</span>
                     <strong>{{ formatFen(item.accumulated_charge_fen) }}</strong>
+                    <small>本月{{ chargeVerb(item) }} {{ formatFen(item.month_charge_fen) }}</small>
                   </div>
-                  <div>
-                    <span>{{ chargeLabel(item, true) }}</span>
-                    <strong>{{ formatFen(item.month_charge_fen) }}</strong>
+                  <div class="payment-state" :class="assetPaymentSummary(item).tone">
+                    <span>{{ assetPaymentSummary(item).label }}</span>
+                    <strong>{{ assetPaymentSummary(item).value }}</strong>
+                    <small>{{ assetPaymentSummary(item).detail }}</small>
                   </div>
                 </div>
-                <div v-if="chargeProgress(item) !== null"
-                  class="progress"
-                  role="progressbar"
-                  aria-label="累计折旧或摊销占资产原值比例"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  :aria-valuenow="chargeProgress(item) ?? undefined"
-                >
-                  <span :style="{ width: `${chargeProgress(item)}%` }"></span>
-                </div>
-                <div class="status-row">
-                  <span class="asset-status" :class="item.status">{{ item.status_label }}</span>
-                  <span>展开查看来源与付款</span>
-                </div>
-              </summary>
-              <dl class="asset-detail">
-                <div v-for="row in assetDetails(item)" :key="row.label">
-                  <dt>{{ row.label }}</dt><dd>{{ row.value }}</dd>
-                </div>
-              </dl>
-              <DashboardSourceHistory class="asset-source-history" endpoint="assets" section="source_history" :entity-id="item.asset_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" title="查看本项资产的来源历史" @changed="refresh" />
-              <DashboardSourceHistory class="asset-source-history" endpoint="assets" section="settlement_events" :entity-id="item.asset_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" title="当前后续事项 · 关联清偿事件" @changed="refresh" />
-              <details class="accounting-detail">
-                <summary>查看折旧摊销与核算说明</summary>
-                <p>{{ chargeNote(item) }}</p>
-                <p v-if="item.charge_state_label">{{ item.charge_state_label }}</p>
-                <div v-for="batch in item.batch_references ?? []" :key="batch.owner_calculation_id">
-                  <p>{{ batch.label }} · {{ batch.period }} · {{ batch.voucher_number ? `汇总凭证 ${batch.voucher_number}` : '零额计算，无凭证' }}</p>
-                  <VoucherTrace :calculation-id="batch.owner_calculation_id" :voucher-version-id="batch.voucher_version_id ?? undefined" />
-                </div>
-                <dl v-if="accountingDetails(item).length" class="asset-detail">
-                  <div v-for="row in accountingDetails(item)" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
-                </dl>
-              </details>
-              <div v-if="item.settlements.length" class="settlement-detail">
-                <h3>{{ settlementTitle(item) }}</h3>
-                <p v-if="item.settlement_scope === '本验收批次结算'">以下为整批资产的付款记录，不能作为本项资产的单独已付金额。</p>
-                <p v-else-if="item.settlement_scope === '成本来源结算（不分摊为本资产付款）'">以下按项目成本来源查看付款，未分摊为本项资产的已付金额。</p>
-                <details v-for="source in item.settlements" :key="source.source_id">
-                  <summary>{{ source.label }} · 查看付款记录</summary>
-                  <p v-for="(issue, issueIndex) in source.issues ?? []" :key="`issue-${issueIndex}`" class="source-issue">{{ issue.message || '本来源款项尚需核对，请查看精确依据。' }}</p>
-                  <p v-for="obligation in source.obligations" :key="obligation.key">{{ obligationLabel(obligation.name) }} {{ formatFen(obligation.amount_fen) }} · 公司实际付款 {{ formatFen(obligation.paid_fen) }} · 代付、抵销等 {{ formatFen(obligation.other_settled_fen) }} · 月末未结金额 {{ formatFen(obligation.remaining_fen) }}</p>
-                  <div v-for="movement in source.movements" :key="movement.id">
-                    <p>{{ movement.date || `${movement.period}（按月确认）` }} · {{ movement.label }}{{ movement.reversal ? "（冲正）" : "" }} · {{ movement.party }} · {{ formatFen(movement.amount_fen) }}</p>
-                    <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
-                    <details><summary>查看精确来源业务</summary><p>来源业务：{{ localBusinessName(movement.source_business?.kind) }}</p><VoucherTrace v-if="movement.source_calculation_id" :calculation-id="movement.source_calculation_id" /><VoucherTrace v-if="movement.calculation_id" :calculation-id="movement.calculation_id" /></details>
-                  </div>
-                  <p v-if="source.movements_page">相关历史清偿（含关联来源，截至所选月末） · 完整总计 {{ source.movements_page.total_count }} 项 · 已加载 {{ source.movements.length }} 项</p>
-                  <p>明细包含关联来源；本来源付款及未结金额以上方款项汇总为准。</p>
-                  <BusinessStatusDetails v-if="source.movements_page?.has_more && source.subject_id" :subject-id="source.subject_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" settlement-view="historical" @changed="refresh" />
-                </details>
               </div>
-              <div v-if="exitInformation(item)?.settlement.obligations.length" class="settlement-detail">
-                <h3>处置款项收回</h3>
-                <p v-for="obligation in exitInformation(item)?.settlement.obligations" :key="obligation.key">处置应收 {{ formatFen(obligation.amount_fen) }} · 已收款 {{ formatFen(obligation.paid_fen) }} · 尚未收回 {{ formatFen(obligation.remaining_fen) }}</p>
-                <div v-for="movement in exitInformation(item)?.settlement.movements" :key="movement.id">
-                  <p>{{ movement.date || `${movement.period}（按月确认）` }} · {{ movement.label }} · {{ formatFen(movement.amount_fen) }}</p>
-                  <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
-                  <details><summary>查看精确来源业务</summary><p>来源业务：{{ localBusinessName(movement.source_business?.kind) }}</p><VoucherTrace v-if="movement.source_calculation_id" :calculation-id="movement.source_calculation_id" /><VoucherTrace v-if="movement.calculation_id" :calculation-id="movement.calculation_id" /></details>
-                </div>
-                <p v-if="exitInformation(item)?.settlement.movements_page">相关历史清偿（含关联来源，截至所选月末） · 完整总计 {{ exitInformation(item)!.settlement.movements_page.total_count }} 项 · 已加载 {{ exitInformation(item)!.settlement.movements.length }} 项</p>
-                <p>明细包含关联来源；本来源付款及未结金额以上方款项汇总为准。</p>
-                <BusinessStatusDetails v-if="exitInformation(item)?.settlement.movements_page?.has_more && exitInformation(item)?.settlement.subject_id" :subject-id="exitInformation(item)!.settlement.subject_id" :period="selectedPeriod" :snapshot-version="response!.snapshot_version" settlement-view="historical" @changed="refresh" />
-              </div>
-            </details>
+            </article>
             </template>
           </div>
-          <div v-else class="empty-filter">{{ filter === 'all' ? '本月没有资产卡片，项目投入另列。' : '当前筛选条件下没有资产卡片。' }} <button v-if="filter !== 'all'" class="control" type="button" @click="filter = 'all'">查看全部资产</button></div>
+          <div v-else class="empty-filter">{{ filter === 'all' ? '本月没有资产，项目投入另列。' : '当前筛选条件下没有资产。' }} <button v-if="filter !== 'all'" class="control" type="button" @click="filter = 'all'">查看全部资产</button></div>
           <DashboardPagination :page="data.collections.assets?.page" :loaded="filteredItems.length" :loading="pageLoading.assets" :error="pageErrors.assets" @more="loadMore()" @retry="loadMore()" />
         </section>
 
@@ -651,7 +645,7 @@ onBeforeUnmount(() => {
           <div class="section-heading"><div><h2 id="asset-projects-title" tabindex="-1">尚未计入资产卡片的项目投入</h2></div><strong>{{ formatFen(data.project_cost_fen) }}</strong></div>
           <p class="note">项目来源独立展示；整批结算不分摊为单卡付款。</p>
           <p v-if="!data.projects.length" class="note">本月没有可展示的项目来源。</p>
-          <details v-for="project in data.projects" :key="project.source_id" class="asset-card project-card">
+          <details v-for="project in data.projects" :key="project.source_id" class="asset-card dashboard-record-card project-card">
             <summary class="project-summary">
               <span class="project-copy"><strong>{{ project.label }}</strong><span>{{ project.period }}<template v-if="project.party"> · {{ project.party }}</template></span><small>展开查看来源与付款</small></span>
               <span class="project-value"><span>剩余项目成本</span><strong>{{ formatFen(project.remaining_fen) }}</strong></span>
@@ -682,9 +676,6 @@ onBeforeUnmount(() => {
 summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 [id][tabindex="-1"] { scroll-margin-top: 76px; }
 .assets-checks { min-width: 0; }
-.asset-source-history { margin: 0 16px 12px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
-.asset-source-history :deep(summary) { min-height: 36px; align-content: center; cursor: pointer; color: var(--accent); }
-.asset-source-history :deep(summary:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .project-card { margin-top: 10px; }
 .project-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, auto); align-items: center; gap: 12px 24px; }
 .project-copy, .project-value { display: grid; min-width: 0; gap: 4px; }
@@ -693,47 +684,57 @@ summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .project-value { justify-items: end; font-variant-numeric: tabular-nums; }
 .project-value strong { color: var(--gold); font-size: 18px; }
 .source-issue { color: var(--warning); }
-.assets-total, .kpi strong, .book-value strong, .value-grid strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.assets-total, .kpi strong, .book-value strong, .owner-value-grid strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .asset-card > summary:not(.asset-card-summary) { min-height: 44px; padding: 16px; overflow-wrap: anywhere; cursor: pointer; }
 .reconciliation-details { min-width: 0; margin-top: 10px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.reconciliation-details summary, .accounting-detail > summary { color: var(--accent); font-size: 12px; font-weight: 750; cursor: pointer; }
-.accounting-detail { margin: 0 16px 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
-.accounting-detail > p { color: var(--muted); }
-.accounting-detail > .asset-detail { margin: 12px 0 0; padding-top: 0; border-top: 0; }
+.reconciliation-details summary { color: var(--accent); font-size: 12px; font-weight: 750; cursor: pointer; }
 .settlement-detail { padding: 16px; border-top: 1px solid var(--line); overflow-wrap: anywhere; font-size: 12px; }
 .settlement-detail h3 { font-size: 14px; }
 .assets-page { min-height: 100%; }
 .assets-content { width: min(calc(100% - 48px), 1320px); margin: 0 auto; padding: 25px 0 46px; }
-.state-panel, .panel { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-soft); }
+.state-panel, .panel { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);  }
 .state-panel { display: grid; gap: 7px; padding: 28px; }
 .state-panel span, .state-panel button { color: var(--muted); }
 .state-panel.error { border-color: var(--danger); }
-.state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--accent); color: var(--surface); cursor: pointer; }
-.assets-hero { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .75fr); gap: 25px; min-height: 198px; padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface))); box-shadow: var(--shadow-soft); }
-.eyebrow { margin: 0 0 5px; color: var(--accent); font-size: 11px; font-weight: 850; letter-spacing: .08em; }
-.assets-hero > div:first-child > span { color: var(--muted); font-size: 12px; }
-.assets-total { display: block; margin: 7px 0 3px; color: var(--gold); font-size: clamp(31px, 4vw, 42px); line-height: 1.1; letter-spacing: -.035em; }
-.hero-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
-.reconciliation { display: grid; align-content: center; align-self: stretch; padding: 14px; border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: 15px; background: color-mix(in srgb, var(--surface) 83%, transparent); }
-.reconciliation.attention { border-color: var(--warning); }
+.state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: var(--radius-control); background: var(--accent); color: var(--surface); cursor: pointer; }
+.assets-hero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 40px; min-height: 198px; padding: 25px 28px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));  }
+.assets-hero > div > span { color: var(--muted); font-size: 12px; font-weight: 750; }
+.assets-total { color: var(--gold); }
+.reconciliation { display: grid; align-content: start; align-self: stretch; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.reconciliation.attention strong { color: var(--warning); }
 .reconciliation span, .reconciliation strong, .reconciliation small { display: block; }
 .reconciliation span { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
 .reconciliation strong { color: var(--accent); font-size: 20px; }
 .reconciliation small { margin-top: 6px; color: var(--muted); font-size: 11px; }
-.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
-.kpi { position: relative; display: grid; min-width: 0; min-height: 126px; align-content: space-between; gap: 4px; overflow: hidden; padding: 15px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-soft); }
-.kpi::before { position: absolute; top: 0; right: 0; left: 0; height: 3px; background: var(--accent); content: ""; }
-.kpi:nth-child(1)::before { background: var(--gold); }
-.kpi:nth-child(2)::before { background: var(--info); }
-.kpi:nth-child(4)::before { background: var(--warning); }
+.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 28px; margin-top: 8px;
+  overflow: visible;
+
+  border: 0;
+
+  border-radius: 0;
+
+  background: transparent;
+
+  grid-column: 1 / -1;
+}
+.kpi { position: relative; display: grid; min-width: 0; min-height: 0; align-content: start; gap: 6px; overflow: hidden; padding: 0; border: 0; border-radius: 0; background: transparent;
+  border-left: 0;
+
+  grid-template-rows: auto auto 1fr;
+}
 .kpi span, .kpi small, .movement-grid span, .movement-grid small { color: var(--muted); }
 .kpi span, .movement-grid span { display: block; font-size: 12px; font-weight: 750; }
 .kpi small, .movement-grid small { font-size: 11px; }
-.kpi strong { display: block; margin: 4px 0; color: var(--accent); font-size: clamp(20px, 2vw, 27px); line-height: 1.15; letter-spacing: -.025em; }
-.kpi:nth-child(1) strong { color: var(--gold); }
-.kpi:nth-child(2) strong { color: var(--info); }
-.kpi:nth-child(4) strong { color: var(--warning); }
-.panel { margin-top: 12px; padding: 18px; }
+.kpi strong { display: block; margin: 4px 0; color: var(--text); font-size: clamp(20px, 2vw, 26px); line-height: 1.15; letter-spacing: -.025em;
+  font-variant-numeric: tabular-nums;
+
+  overflow-wrap: anywhere;
+}
+.panel { margin-top: 40px; padding: 0;
+  border: 0;
+
+  background: transparent;
+}
 .attention-panel { border-color: color-mix(in srgb, var(--warning) 52%, var(--line)); }
 .attention-panel ul { display: grid; gap: 8px; margin: 14px 0 0; padding-left: 20px; color: var(--muted); }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
@@ -741,44 +742,69 @@ summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .section-heading h2 { font-size: 20px; }
 .section-heading > strong { color: var(--muted); font-size: 12px; }
 .attention-count { padding: 3px 9px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: 11px; font-weight: 800; }
-.movement-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 7px; margin-top: 14px; }
-.movement-grid article { padding: 14px; border-radius: 11px; background: var(--surface-soft); }
+.movement-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px; margin-top: 14px;
+  padding: 12px;
+
+  border: 1px solid var(--line);
+
+  border-radius: var(--radius-panel);
+
+  background: var(--surface);
+}
+.movement-grid article { padding: 14px; }
 .movement-grid strong { display: block; margin: 5px 0 3px; font-size: 20px; }
-.asset-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0 12px; }
+.asset-toolbar { display: flex; align-items: center; flex: none; justify-content: flex-end; gap: 14px; margin: 0; }
+/* 与小字同组的标题行：下对齐，并与下方卡片保持 16px 间距。 */
+.section-heading:has(.list-caption) { align-items: flex-end; margin-bottom: 16px; }
 .asset-toolbar p { margin: 0; color: var(--muted); }
-.control { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); }
-.asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
-.asset-card { padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
-.asset-card:hover, .asset-card:focus-within, .asset-card[open] { border-color: color-mix(in srgb, var(--accent) 48%, var(--line)); }
+/* 与资金、员工页标题下那行小字同一套：13px / --muted / 行高 1.5。 */
+.list-caption { margin: 3px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.list-caption strong { font-weight: inherit; }
+.control { min-height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--text); }
+.asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; }
 .asset-card:target { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
-.asset-card-summary { display: block; padding: 16px; border-radius: inherit; cursor: pointer; list-style: none; }
-.asset-card-summary::-webkit-details-marker { display: none; }
 .asset-card.pending_activation { border-style: dashed; border-color: var(--accent); }
 .asset-card.disposed, .asset-card.retired { opacity: .82; }
-.asset-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.asset-name { display: grid; min-width: 0; gap: 2px; }
-.asset-name span, .book-value span { color: var(--muted); font-size: 12px; }
-.asset-name h3 { overflow-wrap: anywhere; }
-.book-value { display: grid; justify-items: end; gap: 2px; white-space: nowrap; }
-.book-value strong { font-size: 21px; }
-.asset-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 11px 0; color: var(--muted); font-size: 12px; }
-.value-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; overflow: hidden; padding: 1px; border-radius: 9px; background: var(--line); }
-.value-grid div { display: grid; gap: 2px; padding: 10px; background: var(--surface); }
-.value-grid span { color: var(--muted); font-size: 11px; }
-.value-grid strong { font-size: 14px; }
-.progress { height: 6px; overflow: hidden; margin-top: 11px; border-radius: 999px; background: var(--line); }
-.progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
-.status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; color: var(--muted); font-size: 12px; }
-.asset-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.asset-status::before { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--accent); content: ""; }
-.asset-status.pending_activation::before { background: var(--info); }
-.asset-status.disposed::before, .asset-status.retired::before { background: var(--muted); }
-.asset-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0 16px 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-.asset-detail div { display: grid; gap: 2px; }
-.asset-detail dt { color: var(--muted); font-size: 11px; }
-.asset-detail dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 700; }
-.empty-filter { padding: 24px; border-radius: 12px; background: var(--surface-soft); color: var(--muted); text-align: center; }
+.asset-card-summary { min-height: 228px; padding: 17px 18px 18px; }
+.asset-card-topline { display: flex; align-items: center; gap: 12px; margin-bottom: 11px; }
+.asset-classification { min-width: 0; color: var(--muted); font-size: 11px; font-weight: 720; }
+.asset-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.asset-name { display: grid; min-width: 0; gap: 7px; }
+.asset-name h3 { overflow-wrap: anywhere; font-size: 20px; line-height: 1.2; }
+.asset-name h3.needs-attention { color: var(--warning); }
+.asset-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.asset-status, .asset-event { display: inline-flex; width: fit-content; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 780; white-space: nowrap; }
+.asset-status { background: var(--accent-soft); color: var(--accent); }
+.asset-status.pending_activation { background: var(--info-soft); color: var(--info); }
+.asset-status.disposed, .asset-status.retired { background: var(--surface-soft); color: var(--muted); }
+.asset-status.needs-attention { background: var(--warning-soft); color: var(--warning); }
+.asset-event { background: color-mix(in srgb, var(--gold) 12%, var(--surface)); color: var(--gold); }
+.asset-timeline { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.book-value { display: grid; min-width: 140px; justify-items: end; gap: 2px; text-align: right; white-space: nowrap; }
+.book-value span, .book-value small { color: var(--muted); font-size: 11px; }
+.book-value strong { color: var(--text); font-size: 22px; line-height: 1.2; }
+.book-value small { color: var(--accent); font-weight: 720; }
+.book-value.unknown strong { color: var(--warning); font-size: 17px; }
+.owner-value-grid { display: grid; grid-template-columns: .85fr .9fr 1.35fr; margin-top: 16px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: 11px; background: var(--surface-soft); }
+.owner-value-grid > div { display: grid; min-width: 0; align-content: start; gap: 3px; padding: 11px 12px; }
+.owner-value-grid > div + div { border-left: 1px solid var(--line); }
+.owner-value-grid span, .owner-value-grid small { color: var(--muted); font-size: 10.5px; line-height: 1.35; }
+.owner-value-grid strong { color: var(--text); font-size: 14px; line-height: 1.35; }
+.owner-value-grid .payment-state.settled strong { color: var(--accent); }
+.owner-value-grid .payment-state.attention strong { color: var(--warning); }
+.asset-unestablished { border-color: color-mix(in srgb, var(--warning) 46%, var(--line)); }
+.asset-unestablished .asset-card-summary { min-height: 190px; background: linear-gradient(135deg, color-mix(in srgb, var(--warning-soft) 42%, var(--surface)), var(--surface)); }
+.asset-unestablished-note { margin: 16px 0 0; padding: 11px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warning-soft) 60%, var(--surface)); color: var(--muted); font-size: 12px; line-height: 1.5; }
+.empty-filter { padding: 24px; border-radius: var(--radius-control); background: var(--surface-soft); color: var(--muted); text-align: center; }
 .note { color: var(--muted); font-size: 13px; }
 @media (max-width: 900px) { .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .asset-grid { grid-template-columns: 1fr; } }
-@media (max-width: 720px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .value-grid, .project-summary { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head, .status-row { align-items: flex-start; flex-direction: column; } .control { width: 100%; min-height: 44px; } .book-value, .project-value { justify-items: start; white-space: normal; } .asset-detail { grid-template-columns: 1fr; } .section-heading { flex-wrap: wrap; gap: 10px; } }
+@media (max-width: 720px) { .assets-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .assets-hero, .kpi-grid, .movement-grid, .project-summary, .owner-value-grid { grid-template-columns: 1fr; } .assets-hero { gap: 13px; padding: 19px; border-radius: 17px; } .asset-toolbar, .asset-card-head { align-items: flex-start; flex-direction: column; } .asset-card-summary { min-height: 0; } .control { width: 100%; min-height: 44px; } .book-value, .project-value { min-width: 0; justify-items: start; text-align: left; white-space: normal; } .owner-value-grid > div + div { border-top: 1px solid var(--line); border-left: 0; } .section-heading { flex-wrap: wrap; gap: 10px; } }
+
+.assets-hero > .dashboard-hero-eyebrow { grid-column: 1 / -1; margin: 0 0 -12px; }
+
+.assets-hero .kpi-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
+.assets-hero .kpi-grid strong { font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .assets-hero .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+}
 </style>

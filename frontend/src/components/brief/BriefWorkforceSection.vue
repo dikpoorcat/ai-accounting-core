@@ -48,14 +48,12 @@ function laborCostNote() {
       <div class="total">
         <span class="total-help">
           <button type="button" class="total-help-trigger" aria-describedby="workforce-payment-help">
-            公司本月用工成本
-            <span aria-hidden="true">i</span>
+            {{ formatFen(workforce.total_fen) }}
           </button>
           <span id="workforce-payment-help" class="total-help-content" role="tooltip">
             这里展示本月确认的用工成本。工资、社保医保及个人劳务的实际付款只清偿已确认的应付款，不会在付款时再次计入成本。
           </span>
         </span>
-        <strong>{{ formatFen(workforce.total_fen) }}</strong>
       </div>
     </div>
 
@@ -72,19 +70,19 @@ function laborCostNote() {
           </div>
         </header>
         <div v-if="workforce.employee.breakdown_available" class="cost-grid">
-          <div class="cost salary">
+          <div class="cost">
             <span>工资总额</span>
             <strong>{{ formatFen(workforce.employee.gross_salary_fen) }}</strong>
           </div>
-          <div v-if="fen(workforce.employee.annual_bonus_fen)" class="cost salary">
+          <div v-if="fen(workforce.employee.annual_bonus_fen)" class="cost">
             <span>全年一次性奖金</span>
             <strong>{{ formatFen(workforce.employee.annual_bonus_fen) }}</strong>
           </div>
-          <div class="cost social">
+          <div class="cost">
             <span>公司承担社保医保</span>
             <strong>{{ formatFen(workforce.employee.employer_social_insurance_fen) }}</strong>
           </div>
-          <div v-if="fen(workforce.employee.employer_housing_fund_fen)" class="cost fund">
+          <div v-if="fen(workforce.employee.employer_housing_fund_fen)" class="cost">
             <span>公司承担住房公积金</span>
             <strong>{{ formatFen(workforce.employee.employer_housing_fund_fen) }}</strong>
           </div>
@@ -129,7 +127,7 @@ function laborCostNote() {
           </div>
         </header>
         <div v-if="workforce.personal_labor.breakdown_available" class="cost-grid single">
-          <div class="cost labor">
+          <div class="cost">
             <span>个人劳务报酬 / 佣金毛额</span>
             <strong>{{ formatFen(workforce.personal_labor.gross_remuneration_fen) }}</strong>
           </div>
@@ -145,11 +143,7 @@ function laborCostNote() {
 
 <style scoped>
 .brief-section {
-  padding: 20px;
-  border: 1px solid var(--brief-line);
-  border-radius: 20px;
-  background: var(--brief-surface);
-  box-shadow: var(--brief-shadow);
+  padding: 0;
 }
 
 .section-heading,
@@ -162,7 +156,8 @@ function laborCostNote() {
 
 .section-heading {
   align-items: flex-end;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+  padding: 0 2px;
 }
 
 .section-kicker {
@@ -181,7 +176,7 @@ p {
 
 h2 {
   margin-bottom: 0;
-  font-size: 23px;
+  font-size: 22px;
   letter-spacing: -0.025em;
 }
 
@@ -204,10 +199,6 @@ h3 {
   font-size: 12px;
 }
 
-.total strong {
-  font-size: 23px;
-}
-
 .total-help {
   position: relative;
 }
@@ -215,27 +206,14 @@ h3 {
 .total-help-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--brief-muted);
+  color: var(--brief-text);
   font: inherit;
-  font-size: 12px;
+  font-size: 23px;
+  font-weight: 700;
   cursor: help;
-}
-
-.total-help-trigger > span {
-  display: inline-grid;
-  width: 15px;
-  height: 15px;
-  place-items: center;
-  border: 1px solid var(--brief-line-strong);
-  border-radius: 50%;
-  color: var(--brief-green);
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
 }
 
 .total-help-trigger:focus-visible {
@@ -253,7 +231,7 @@ h3 {
   border: 1px solid color-mix(in srgb, var(--brief-green) 24%, var(--brief-line));
   border-radius: 10px;
   background: var(--brief-surface);
-  box-shadow: 0 12px 30px rgb(18 45 31 / 14%);
+  box-shadow: var(--brief-overlay-shadow, var(--shadow-overlay));
   opacity: 0;
   color: var(--brief-text);
   font-size: 12px;
@@ -286,21 +264,23 @@ h3 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .workforce-card {
   padding: 15px;
   border: 1px solid var(--brief-line);
-  border-radius: 16px;
-  background: var(--brief-soft);
+  border-radius: var(--brief-panel-radius, 14px);
+  background: var(--brief-surface);
 }
 
 .cost-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 11px;
+  margin-top: 13px;
+  border-radius: var(--brief-control-radius, 9px);
+  background: var(--brief-metric-surface);
 }
 
 .cost-grid.single {
@@ -309,33 +289,15 @@ h3 {
 
 .cost {
   display: grid;
-  gap: 3px;
-  padding: 10px;
-  border-radius: 12px;
-  background: var(--brief-surface);
+  min-width: 0;
+  gap: 4px;
+  padding: 12px;
+  color: var(--brief-text);
 }
 
 .cost strong {
-  font-size: 18px;
-}
-
-.cost.salary {
-  background: var(--brief-blue-soft);
-  color: var(--brief-blue);
-}
-
-.cost.social {
-  background: var(--brief-green-soft);
-  color: var(--brief-green);
-}
-
-.cost.fund {
-  background: var(--brief-gold-soft);
-  color: var(--brief-gold);
-}
-
-.cost.labor {
-  background: color-mix(in srgb, var(--brief-blue-soft) 58%, var(--brief-green-soft));
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
 }
 
 .reconciliation {
@@ -347,7 +309,7 @@ h3 {
   padding: 8px 10px;
   border: 1px solid var(--brief-line);
   border-radius: 11px;
-  background: var(--brief-surface);
+  background: var(--brief-soft);
 }
 
 .reconciliation div {
@@ -379,12 +341,13 @@ h3 {
 }
 
 .note {
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--brief-surface);
+  padding: 9px 0 0;
 }
 
 .note.attention {
+  padding: 8px 10px;
+  border-top: 0;
+  border-radius: var(--brief-control-radius, 9px);
   background: var(--brief-amber-soft);
   color: var(--brief-amber);
 }
@@ -401,11 +364,6 @@ h3 {
 }
 
 @media (max-width: 560px) {
-  .brief-section {
-    padding: 17px;
-    border-radius: 17px;
-  }
-
   .section-heading,
   .workforce-card header {
     align-items: flex-start;

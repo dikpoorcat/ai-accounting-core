@@ -36,10 +36,11 @@ function handleChange(event: Event) {
 </script>
 
 <template>
-  <header class="module-header" :aria-busy="loading">
+  <header class="module-header" :class="{ 'with-navigation': $slots.navigation }" data-section-header :aria-busy="loading">
     <div class="module-heading">
       <h1>{{ title }}</h1>
     </div>
+    <slot name="navigation" />
     <div class="toolbar">
       <select
         class="control"
@@ -75,8 +76,8 @@ function handleChange(event: Event) {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px 24px;
-  margin-bottom: 22px;
-  padding-bottom: 4px;
+  margin-bottom: 12px;
+  padding: 0 2px 4px;
 }
 .module-heading { min-width: 0; }
 
@@ -99,7 +100,7 @@ h1 {
 .period-status {
   min-height: 38px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-control, 9px);
   background: var(--surface);
   color: var(--text);
 }
@@ -239,5 +240,48 @@ select.control {
   .header-progress::after {
     animation-duration: 2.4s;
   }
+}
+
+.module-header.with-navigation {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px 24px;
+  margin: 0 0 14px;
+  padding: 10px 2px;
+  background: color-mix(in srgb, var(--background) 96%, transparent);
+  backdrop-filter: blur(12px);
+}
+.with-navigation h1 { font-size: 26px; white-space: nowrap; }
+.with-navigation .toolbar { grid-row: 1; grid-column: 3; width: auto; flex-wrap: nowrap; }
+.with-navigation :deep(.section-nav) {
+  position: static;
+  min-width: 0;
+  width: auto;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+.with-navigation :deep(.section-nav button) { min-height: 42px; }
+.with-navigation :deep(.section-nav button[aria-current="location"]::after) { bottom: 0; }
+.with-navigation .header-progress { bottom: 0; }
+@media (max-width: 1199px) {
+  .module-header.with-navigation { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; }
+  .with-navigation .toolbar { grid-column: 2; }
+  .with-navigation :deep(.section-nav) { grid-row: 2; grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  .module-header.with-navigation { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 2px; }
+  .with-navigation h1 { font-size: 24px; }
+  .with-navigation .toolbar { display: flex; grid-row: 2; grid-column: 1; gap: 6px; }
+  .with-navigation .toolbar select { min-width: 0; width: 0; flex: 1; }
+  .with-navigation :deep(.section-nav) { grid-row: 3; grid-column: 1; gap: 14px; }
+  .with-navigation .period-status { flex: none; padding: 3px 7px; font-size: 11px; }
 }
 </style>

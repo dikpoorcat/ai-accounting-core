@@ -923,7 +923,16 @@ class Workflow:
             }
         return obligations
 
-    def _query(self, connection, period: str, *, as_of: str, period_readiness=None, reads=None):
+    def _query(
+        self,
+        connection,
+        period: str,
+        *,
+        as_of: str,
+        period_readiness=None,
+        reads=None,
+        obligation_ids=None,
+    ):
         """Build the workflow view inside a caller-owned read snapshot."""
         month, day = YearMonth(period), ActualDate(as_of)
         closed = connection.execute(
@@ -959,7 +968,13 @@ class Workflow:
                 readiness_issues = checked["close_requirements"]["issues"]
                 period_issues = checked["issues"]
         pending = {row[0] for row in connection.execute("SELECT DISTINCT subject_id FROM pending")}
-        obligations = self._external_obligations(connection, period, as_of, reads=reads)
+        obligations = self._external_obligations(
+            connection,
+            period,
+            as_of,
+            reads=reads,
+            obligation_ids=obligation_ids,
+        )
         labels = (
             "银行流水",
             "员工及工资变动",

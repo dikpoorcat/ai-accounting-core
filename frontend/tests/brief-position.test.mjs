@@ -7,7 +7,7 @@ import { createSSRApp } from "vue";
 import { renderToString } from "@vue/server-renderer";
 import { createMemoryHistory, createRouter } from "vue-router";
 
-test("an incomplete position keeps known money and renders neither a zero total nor a ratio", async () => {
+test("an incomplete position keeps known components without inventing totals or unknown amounts", async () => {
   const server = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)),
     configFile: false,
@@ -39,7 +39,9 @@ test("an incomplete position keeps known money and renders neither a zero total 
     assert.match(html, /资产 无法完整建立/);
     assert.match(html, /123\.45/);
     assert.match(html, /往来余额缺少精确稳定归属/);
-    assert.doesNotMatch(html, /class="track"/);
+    assert.equal((html.match(/class="track"/g) ?? []).length, 3);
+    assert.match(html, /其他资产[\s\S]*?暂无法确定/);
+    assert.match(html, /负债[\s\S]*?暂无法确定/);
     assert.doesNotMatch(html, /资产 0\.00/);
     assert.doesNotMatch(html, /资产负债金额需要核对/);
   } finally {

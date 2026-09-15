@@ -97,6 +97,7 @@ def test_frozen_reconciliation_proves_source_not_independent_adoption_and_pages(
 
     dashboard = Dashboard(engine)
     first = dashboard.funds(MONTH, limit=1)
+    assert first["data"]["fact_issues"] == []
     bank = first["data"]["bank_statement"]
     assert (bank["transaction_count"], bank["matched_count"], bank["needs_review_count"]) == (
         3,
@@ -258,3 +259,43 @@ def test_incomplete_or_conflicting_bank_proof_does_not_spread_to_other_accounts(
             check = read.bank_source_checks[source["fact_id"]]
             assert not check["reconciliation_valid"], case
             assert check["state"] in {"unestablished", "conflict"}, case
+            assert any(
+                source["id"]
+                in {candidate["calculation_id"] for candidate in issue["candidates"]}
+                for issue in read.issues
+            ), case
+
+
+def test_prior_frozen_reconciliations_resolve_accumulated_bank_source_warnings(bank_book):
+    engine, save, publish, proof = bank_book
+    banking.opening(save, publish)
+    banking.funding(save, publish)
+    banking.statement(save, publish, [banking.entry()])
+    banking.reconciliation(save, publish, [banking.match()])
+    banking.close_month(
+        banking.inventories(engine, proof, MONTH, {"bank", "transactions"}), proof, MONTH
+    )
+    banking.statement(
+        save,
+        publish,
+        [],
+        subject="october-statement",
+        month="2026-10",
+        initial=1000,
+    )
+    banking.reconciliation(
+        save,
+        publish,
+        [],
+        subject="october-reconciliation",
+        statement_id="october-statement",
+        month="2026-10",
+    )
+    banking.close_month(
+        banking.inventories(engine, proof, "2026-10", {"bank"}), proof, "2026-10"
+    )
+
+    data = Dashboard(engine).funds("2026-10")["data"]
+
+    assert data["bank_statement"]["coverage_state"] == "complete"
+    assert data["fact_issues"] == []

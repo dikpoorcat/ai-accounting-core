@@ -273,6 +273,15 @@ class Periods:
                     ],
                 }
             )
+        from .asset_card_adoption import build_asset_card_adoptions
+        from .query_reads import QueryReads
+
+        asset_card_adoptions = build_asset_card_adoptions(
+            QueryReads(self.engine, connection),
+            close_period=month,
+            calculation_ids=calculations,
+            voucher_calculation_ids={row["calculation_id"] for row in vouchers},
+        )
         trial_balance = [
             dict(r)
             for r in connection.execute(
@@ -291,6 +300,7 @@ class Periods:
             "vouchers": vouchers,
             "calculations": sorted(calculations),
             "asset_batch_adoptions": asset_adoptions,
+            "asset_card_adoptions": asset_card_adoptions,
             "facts": sorted(facts),
             "inventories": {key: row["id"] for key, row in sorted(inventories.items())},
             "owner_confirmation": owner_confirmation,

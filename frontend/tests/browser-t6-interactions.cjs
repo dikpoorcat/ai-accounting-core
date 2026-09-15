@@ -375,25 +375,71 @@ async function run(config) {
     await page.locator("#activity").getByText("精确定位的凭证", { exact: true }).waitFor();
     checks.push(`actual ${first.voucher_count} vouchers: continuation snapshot and off-page numeric deep link`);
 
-    await dashboard(pages[1]);
+    const fundsSnapshot = await dashboard(pages[1]);
+    const initialFundPanelHeights = await page.locator(".fund-detail-panels").evaluate(container => {
+      const book = container.querySelector("#fund-detail-panel-book").getBoundingClientRect();
+      const bank = container.querySelector("#fund-detail-panel-bank").getBoundingClientRect();
+      return { book: book.height, bank: bank.height };
+    });
+    assert.equal(initialFundPanelHeights.book, initialFundPanelHeights.bank);
+    assert(initialFundPanelHeights.book >= 480);
     const accounts = api("funds", target => target.searchParams.get("section") === "accounts");
     await page.getByRole("button", { name: "继续加载账户选项", exact: true }).first().click();
     await accounts;
-    const filtered = api("funds", target => target.searchParams.get("movement_account_id") === first.last_account_id);
-    await page.getByLabel("筛选账面资金账户", { exact: true }).selectOption(`bank:${first.last_account_id}`);
-    const filteredResponse = await (await filtered).json();
-    assert(filteredResponse.data.movements.every(item => item.account_id === first.last_account_id));
-    await page.waitForFunction(name => document.querySelector('[aria-label="筛选账面资金账户"]')?.selectedOptions[0]?.textContent.includes(name), first.last_account_name);
+    const movementAccounts = [...new Map(fundsSnapshot.data.movements.map(item => [item.account_id, item])).values()];
+    const targetMovement = movementAccounts[1] ?? movementAccounts[0];
+    assert(targetMovement, "The funds snapshot exposes at least one cached movement account");
+    let filterRequests = 0;
+    const observeFilterRequest = request => {
+      const target = new URL(request.url());
+      if (target.pathname === "/api/dashboard/funds" && (
+        target.searchParams.has("movement_account_id") || target.searchParams.has("statement_account_id")
+      )) filterRequests += 1;
+    };
+    page.on("request", observeFilterRequest);
+    await page.locator("#fund-detail-panel-book .fund-account-index > button").filter({ hasText: targetMovement.account_name }).click();
+    await page.waitForFunction(name => [...document.querySelectorAll("#fund-detail-panel-book .fund-account-index > button")]
+      .some(button => button.getAttribute("aria-current") === "true" && button.textContent.includes(name)), targetMovement.account_name);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(filterRequests, 0);
+    assert.equal(new URL(page.url()).searchParams.get("movement_account_id"), null);
+    assert.equal(
+      await page.locator("#fund-detail-panel-book .book-activity-row").count(),
+      fundsSnapshot.data.movements.filter(item => item.account_id === targetMovement.account_id && item.account_type === targetMovement.account_type).length,
+    );
     const firstSummary = page.locator("#fund-detail-panel-book summary").first();
     if (await firstSummary.count()) await firstSummary.click();
     const voucherLink = page.locator('#fund-detail-panel-book a[href*="voucher="]').first();
     const destination = new URL(await voucherLink.getAttribute("href"), config.origin);
-    assert.equal(destination.searchParams.get("period"), filteredResponse.selected_period.key);
+    assert.equal(destination.searchParams.get("period"), fundsSnapshot.selected_period.key);
+    page.off("request", observeFilterRequest);
     await voucherLink.click(); await ready(pages[0]);
-    const back = api("funds", target => target.searchParams.get("movement_account_id") === first.last_account_id);
+    const back = api("funds", target => !target.searchParams.has("movement_account_id"));
     await page.goBack(); await back; await ready(pages[1]);
-    assert.equal(await page.getByLabel("筛选账面资金账户", { exact: true }).inputValue(), `bank:${first.last_account_id}`);
-    checks.push("off-page account name survives filter; voucher uses posting period; browser back restores filter with fresh API");
+    assert.equal(await page.locator("#fund-detail-panel-book .fund-account-index > button[aria-current='true']").count(), 1);
+
+    await page.getByRole("tab", { name: "按流水", exact: true }).click();
+    const switchedFundPanelHeights = await page.locator(".fund-detail-panels").evaluate(container => {
+      const book = container.querySelector("#fund-detail-panel-book").getBoundingClientRect();
+      const bank = container.querySelector("#fund-detail-panel-bank").getBoundingClientRect();
+      return { book: book.height, bank: bank.height };
+    });
+    assert.deepEqual(switchedFundPanelHeights, initialFundPanelHeights);
+    const targetStatement = fundsSnapshot.data.bank_statement.rows[0];
+    if (targetStatement) {
+      filterRequests = 0;
+      page.on("request", observeFilterRequest);
+      await page.getByLabel("筛选银行流水账户", { exact: true }).selectOption(targetStatement.account_id);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(filterRequests, 0);
+      assert.equal(new URL(page.url()).searchParams.get("statement_account_id"), null);
+      assert.equal(
+        await page.locator("#fund-detail-panel-bank .bank-activity-item").count(),
+        fundsSnapshot.data.bank_statement.rows.filter(item => item.account_id === targetStatement.account_id).length,
+      );
+      page.off("request", observeFilterRequest);
+    }
+    checks.push("fund account buttons and bank dropdown filter cached rows locally; voucher uses posting period");
 
     await dashboard(pages[3]);
     await expand(pages[3]);

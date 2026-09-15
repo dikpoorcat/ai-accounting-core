@@ -28,7 +28,8 @@ async function harness(name, refreshContext = async () => {}) {
     const useRouter = () => ({ replace: async value => environment.replaces.push(value), push: async () => {} });
     const useDashboardContext = () => ({ context: ref(null), load: environment.refreshContext, refresh: environment.refreshContext });
     const useDashboardSections = (_items, initialId) => ({ activeSection: ref(initialId), focusSection() {}, positionSection() {}, lockSectionSync() {} });
-    const fetchEmployeesDashboard = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchBrief = environment.fetch, fetchQuarterlyReport = environment.fetch, fetchFundsDashboard = environment.fetch;
+    const fetchEmployeesDashboard = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchDeferredBrief = environment.fetch, fetchDeferredQuarterlyReport = environment.fetch, fetchFundsDashboard = environment.fetch;
+    const fetchPeriodPreparation = () => new Promise(() => {});
     const dashboardErrorMessage = error => error.message; const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = value => BigInt(value ?? 0), formatFen = String, formatPositiveFen = String;
   `;

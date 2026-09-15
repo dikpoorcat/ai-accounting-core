@@ -2,9 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
-import { DashboardApiError, dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
-import { fetchPeriodPreparation, type PeriodPreparationResult } from "../api/periodPreparation";
-import { businessStateLabel } from "../api/dashboardContracts";
+import { DashboardApiError, dashboardErrorMessage } from "../api/client";
 import { fetchLocalJob, LocalApiError } from "../api/localKernel";
 import {
   fetchDeferredQuarterlyReport,
@@ -16,7 +14,6 @@ import {
 } from "../api/reports";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
-import PeriodPreparation from "../components/PeriodPreparation.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { formatFen } from "../utils/money";
@@ -79,11 +76,6 @@ const router = useRouter();
 const { context, load: loadContext, refresh: refreshContext } = useDashboardContext();
 const selectedQuarter = ref("");
 const report = ref<DeferredQuarterlyReport | null>(null);
-type MonthCheck = { period: string; status: "pending" | "loading" | "ready" | "error" | "stale"; message: string; result: PeriodPreparationResult | null };
-const monthChecks = ref<MonthCheck[]>([]);
-let preparationController: AbortController | null = null;
-let preparationAttempt = 0;
-const checkingMonths = computed(() => monthChecks.value.some(month => month.status === "loading"));
 const loading = ref(false);
 const exporting = ref(false);
 const needsRegeneration = ref(false);
@@ -103,7 +95,6 @@ function selectionKey() { return JSON.stringify([route.query.company_id, route.q
 function isCurrent(generation: number, selection: string) { return mounted && generation === requestGeneration && selectionKey() === selection; }
 function invalidateRequests() {
   requestGeneration += 1;
-  resetPreparations();
   previewController?.abort(); exportController?.abort();
   previewController = null; exportController = null;
   report.value = null; loading.value = false; exporting.value = false;
@@ -118,7 +109,6 @@ const quarterOptions = computed(() =>
       ? report.value.close_state : quarter.complete ? "closed" : "open",
   })),
 );
-const reportStateClass = computed(() => report.value?.status.replace("_", "-") ?? "");
 const pendingReadiness = computed(() => report.value?.readiness.filter((item) => item.state !== "pass") ?? []);
 const readinessGroups = computed(() => {
   const completed = report.value?.readiness.filter((item) => item.state === "pass") ?? [];
@@ -127,46 +117,18 @@ const readinessGroups = computed(() => {
     { key: "completed", label: `已完成 ${completed.length} 项检查`, expanded: false, items: completed },
   ].filter((group) => group.items.length);
 });
-const monthlyPreparations = computed(() => monthChecks.value.map(month => {
-  const preparation = month.result?.data.period_preparation;
-  if (!preparation) return { ...month, preparation: null, closure: "", issueGroups: [], notices: [], statuses: "" };
-  const current = preparation.current_followups;
-  const issueGroups = [
-    { label: "月末核算条件", issues: preparation.readiness?.issues ?? [] },
-    { label: "资料", issues: current.materials.issues },
-    { label: "核算", issues: current.accounting.issues },
-    { label: "业务条件", issues: current.close_requirements.issues },
-    { label: "款项来源", issues: current.settlements.issues ?? [] },
-    { label: "外部办理", issues: current.external.fact_issues ?? [] },
-  ].filter(group => group.issues.length);
-  const notices: string[] = [];
-  if (preparation.readiness?.order_failure) notices.push("月末核算顺序尚需核对");
-  if (current.accounting.unpublished_count) notices.push(`${current.accounting.unpublished_count} 项业务尚未发布`);
-  if (current.settlements.complete === false || [current.settlements.source_amount_fen, current.settlements.paid_fen, current.settlements.other_settled_fen, current.settlements.remaining_fen].some(value => value === null)) notices.push("相关款项金额尚不能完整确定");
-  if (current.settlements.unestablished_state_selection_count) notices.push(`${current.settlements.unestablished_state_selection_count} 组来源尚不能证明封存采用`);
-  if (current.file_jobs.issue_count) notices.push(`${current.file_jobs.issue_count} 项文件任务结果或引用依据待核对`);
-  if (current.file_jobs.status_counts.failed) notices.push(`${current.file_jobs.status_counts.failed} 项文件任务失败`);
-  const closure = preparation.closure.state === "exact_close" ? "已关账"
-    : preparation.closure.state === "sealed_by_later_close" ? `由 ${preparation.closure.sealing_boundary} 后续关账封存` : "尚未关账";
-  return { ...month, preparation, closure, issueGroups, notices, statuses: [
-    `资料：${businessStateLabel(current.materials.status)}`, `核算：${businessStateLabel(current.accounting.status)}`,
-    `业务条件：${businessStateLabel(current.close_requirements.status)}`, `款项：${businessStateLabel(current.settlements.status)}`,
-    `外部办理：${businessStateLabel(current.external.status)}`,
-  ].join(" · ") };
-}));
 const sectionLinks = computed(() => {
   if (!report.value) return [];
   return [
     { id: "report-overview", label: "概览" },
     ...(report.value.carry_forward.options.length || readinessGroups.value.length ? [{ id: "report-checks", label: "核对事项" }] : []),
-    ...(monthlyPreparations.value.length ? [{ id: "report-months", label: "各月跟进" }] : []),
     ...(report.value.statements.length ? [{ id: "report-statements", label: "财务报表" }] : []),
   ];
 });
 const { activeSection, focusSection } = useDashboardSections(sectionLinks, "report-overview");
 const reportHeadline = computed(() => {
   if (needsRegeneration.value) return "报表需要重新生成";
-  if (report.value?.export.available) return "本季度报表已准备好";
+  if (report.value?.export.available) return "已就绪";
   if (pendingReadiness.value.length) return `还有 ${pendingReadiness.value.length} 项检查需要核对`;
   if (report.value?.close_state === "open") return "相关月份结账后可下载报表";
   return "本季度报表暂时无法下载";
@@ -191,36 +153,26 @@ const checkedAt = computed(() => {
 const summaryCards = computed<SummaryCard[]>(() => {
   const summary = report.value?.summary;
   if (!summary) return [];
-  const cards = [
+  return [
     {
       source: "资产负债表",
       label: "资产合计",
-      primary: summary.assets_total_fen,
-      noteLabel: "负债和所有者权益",
-      secondary: summary.liabilities_equity_total_fen,
+      value: formatFen(summary.assets_total_fen),
+      note: `负债合计 ${formatFen(summary.liabilities_total_fen)}`,
     },
     {
       source: "利润表",
       label: "本季度净利润",
-      primary: summary.current_net_profit_fen,
-      noteLabel: "本年累计",
-      secondary: summary.year_to_date_net_profit_fen,
+      value: formatFen(summary.current_net_profit_fen),
+      note: `本年累计 ${formatFen(summary.year_to_date_net_profit_fen)}`,
     },
     {
       source: "现金流量表",
       label: "本季度现金净增加额",
-      primary: summary.current_cash_change_fen,
-      noteLabel: "期末现金",
-      secondary: summary.ending_cash_fen,
+      value: formatFen(summary.current_cash_change_fen),
+      note: `期末现金 ${formatFen(summary.ending_cash_fen)}`,
     },
   ];
-  return cards
-    .map((item) => ({
-      source: item.source,
-      label: item.label,
-      value: formatFen(item.primary),
-      note: `${item.noteLabel} ${formatFen(item.secondary)}`,
-    }));
 });
 const activeStatement = computed<ReportStatement | null>(() => {
   if (!report.value) return null;
@@ -338,8 +290,7 @@ async function synchronizeQuarter(force = false) {
     const currentContext = await loadContext();
     if (!isCurrent(generation, selection)) return;
     if (!currentContext.quarters.length) {
-      resetPreparations();
-      previewController?.abort();
+          previewController?.abort();
       exportController?.abort();
       selectedQuarter.value = "";
       report.value = null;
@@ -385,43 +336,9 @@ async function synchronizeQuarter(force = false) {
   }
 }
 
-function resetPreparations() {
-  preparationAttempt += 1;
-  preparationController?.abort(); preparationController = null;
-  monthChecks.value = [];
-}
-
-async function loadPreparations(retryPeriod?: string) {
-  const current = report.value;
-  if (!current || monthChecks.value.some(month => month.status === "stale")) return;
-  const generation = requestGeneration, selection = selectionKey(), attempt = ++preparationAttempt;
-  preparationController?.abort();
-  const controller = new AbortController(); preparationController = controller;
-  const valid = () => isCurrent(generation, selection) && preparationAttempt === attempt && preparationController === controller;
-  const queue = monthChecks.value.filter(month => retryPeriod ? month.period === retryPeriod && month.status === "error" : month.status === "pending");
-  for (const month of queue) {
-    if (!valid()) return;
-    month.status = "loading"; month.message = "";
-    try {
-      const result = await fetchPeriodPreparation(current.read_context, month.period, controller.signal);
-      if (!valid()) return;
-      month.result = result; month.status = "ready";
-    } catch (error) {
-      if (!valid() || (error instanceof DOMException && error.name === "AbortError")) return;
-      if (isDashboardSnapshotChanged(error)) {
-        for (const item of monthChecks.value) { item.status = "stale"; item.result = null; item.message = "资料已变化，本次检查已过期。请刷新报表后重新核对。"; }
-        break;
-      }
-      month.status = "error"; month.message = dashboardErrorMessage(error);
-    }
-  }
-  if (valid()) preparationController = null;
-}
-
 async function preview(quarterKey: string) {
   const generation = ++requestGeneration, selection = selectionKey();
   const companyId = route.query.company_id;
-  resetPreparations();
   previewController?.abort();
   exportController?.abort();
   exportController = null; exporting.value = false;
@@ -449,17 +366,12 @@ async function preview(quarterKey: string) {
     );
     if (!isCurrent(generation, selection) || previewController !== controller) return;
     report.value = result;
-    const periods = [0, 1, 2].map(offset => `${result.period.year}-${String((result.period.quarter - 1) * 3 + offset + 1).padStart(2, "0")}`);
-    const focused = route.query.period;
-    periods.sort((left, right) => Number(right === focused) - Number(left === focused) || left.localeCompare(right));
-    monthChecks.value = periods.map(period => ({ period, status: "pending", message: "", result: null }));
     loading.value = false;
     if (!result.statements.some((item) => item.key === activeStatementKey.value)) {
       activeStatementKey.value = "";
       statementsExpanded.value = false;
     }
     await nextTick();
-    if (isCurrent(generation, selection) && previewController === controller) void loadPreparations();
   } catch (error: unknown) {
     if (isCurrent(generation, selection) && previewController === controller) {
       const message = dashboardErrorMessage(error);
@@ -687,8 +599,12 @@ onBeforeUnmount(() => {
         select-label="季度报表期间"
         @change="changeQuarter"
         @refresh="refresh"
-      />
-      <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="报表内容导航" floating @select="focusSection" />
+      >
+        <template #navigation>
+          <DashboardSectionNav v-if="sectionLinks.length" :items="sectionLinks" :active="activeSection" label="报表内容导航" @select="focusSection" />
+        </template>
+      </DashboardModuleHeader>
+
 
       <section v-if="!quarterOptions.length && !loading" class="state-panel">
         <strong>还没有可查看的报表</strong>
@@ -711,9 +627,26 @@ onBeforeUnmount(() => {
         <section id="report-overview" class="report-hero" tabindex="-1" aria-labelledby="report-readiness-title">
           <div class="report-heading">
             <div>
-              <p class="eyebrow">{{ report.period.label }}</p>
-              <h2 id="report-readiness-title" aria-live="polite">{{ reportHeadline }}</h2>
-              <p>{{ reportNextStep }}</p>
+              <p class="dashboard-hero-eyebrow">{{ report.period.label }} · 更新于 {{ checkedAt }}</p>
+              <h2
+                id="report-readiness-title"
+                :class="['dashboard-hero-title', 'report-readiness-title', { ready: report.export.available }]"
+                aria-live="polite"
+              >
+                <span class="report-readiness-help">
+                  <button type="button" class="report-readiness-trigger" aria-describedby="report-readiness-tooltip">
+                    {{ reportHeadline }}
+                  </button>
+                  <span id="report-readiness-tooltip" class="report-readiness-tooltip" role="tooltip">
+                    <strong>
+                      {{ report.close_state === "closed" ? "相关月份已结账" : "相关月份尚未全部结账" }} ·
+                      {{ report.readiness_state === "ready" ? "报表资料已核对" : "报表资料待核对" }}
+                    </strong>
+                    <span>{{ report.message }}</span>
+                  </span>
+                </span>
+              </h2>
+              <p class="dashboard-hero-note">{{ reportNextStep }}</p>
             </div>
             <div class="report-actions">
               <button class="secondary" type="button" :disabled="loading" @click="refresh">
@@ -729,29 +662,19 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="status-meta">
-            <span class="status-badge" :class="reportStateClass">{{ report.export.available ? "可生成下载" : "暂不可下载" }}</span>
-            <span>更新于 {{ checkedAt }}</span>
-          </div>
-
-          <details class="report-state" :class="reportStateClass">
-            <summary>查看报表准备详情</summary>
-            <p>{{ report.close_state === "closed" ? "相关月份已结账" : "相关月份尚未全部结账" }} · {{ report.readiness_state === "ready" ? "报表资料已核对" : "报表资料待核对" }}</p>
-            <p>{{ report.message }}</p>
-          </details>
-
           <div v-if="exportNotice" class="export-notice" :class="exportNoticeKind" role="status">
             {{ exportNotice }}
           </div>
-        </section>
-
         <section v-if="summaryCards.length" class="summary-grid" aria-label="季度报表摘要">
           <article v-for="item in summaryCards" :key="item.source">
             <span>{{ item.source }} · {{ item.label }}</span>
             <strong>{{ item.value }}</strong>
-            <span>{{ item.note }}</span>
+            <small>{{ item.note }}</small>
           </article>
         </section>
+          </section>
+
+
 
         <section v-if="report.carry_forward.options.length || readinessGroups.length" id="report-checks" class="report-checks" tabindex="-1" aria-label="报表核对事项">
           <details v-if="report.carry_forward.options.length" class="panel report-source" :open="needsCarryForward">
@@ -796,25 +719,6 @@ onBeforeUnmount(() => {
         <p v-if="report.draft" class="draft-note">
           试算金额可能随资料变化，暂不能下载。
         </p>
-
-        <section v-if="monthlyPreparations.length" id="report-months" class="monthly-preparations" tabindex="-1" aria-labelledby="report-months-title">
-          <h3 id="report-months-title">各月核算与跟进</h3>
-          <p class="monthly-scope">全公司当月事项；核对提示、业务和文件任务分别计数，不合计为待办总数。</p>
-          <details v-for="month in monthlyPreparations" :key="month.period" class="monthly-preparation" :open="month.status === 'error' || month.status === 'stale'">
-            <summary>
-              <span class="monthly-heading"><strong>{{ month.period }} · {{ month.status === 'ready' ? month.closure : month.status === 'stale' ? '准备检查已过期' : month.status === 'error' ? '准备检查读取失败' : month.status === 'loading' ? '正在核对准备事项' : '准备检查尚未加载' }}</strong><span>展开本月依据</span></span>
-              <span v-if="month.status === 'ready'" class="monthly-statuses">{{ month.statuses }}</span>
-              <span v-if="month.notices.length" class="monthly-alert">{{ month.notices.join('；') }}</span>
-              <span v-for="group in month.issueGroups" :key="group.label" class="monthly-issue"><strong>{{ group.label }} · {{ group.issues.length }} 条核对提示：</strong>{{ group.issues[0].message || '相关来源需要核对，展开查看完整依据。' }}</span>
-            </summary>
-            <PeriodPreparation v-if="month.status === 'ready' && month.preparation" :preparation="month.preparation" @changed="refresh" />
-            <div v-else :role="month.status === 'error' || month.status === 'stale' ? 'alert' : 'status'">
-              <p>{{ month.message || '报表主数据已显示，本月准备检查尚未完成。' }}</p>
-              <button v-if="month.status === 'error'" type="button" :disabled="checkingMonths" @click="loadPreparations(month.period)">重试本月检查</button>
-              <button v-if="month.status === 'stale'" type="button" @click="refresh">刷新报表</button>
-            </div>
-          </details>
-        </section>
 
         <section v-if="report.statements.length" id="report-statements" class="report-review" tabindex="-1" aria-label="完整财务报表">
           <div class="review-heading">
@@ -1033,7 +937,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .reports-page { min-height: 100%; }
-.report-source { padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.report-source { padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
 .report-checks { display: grid; min-width: 0; gap: 12px; }
 [id][tabindex="-1"] { scroll-margin-top: 76px; }
 .table-scroll-hint { display: none; }
@@ -1044,50 +948,56 @@ onBeforeUnmount(() => {
 .readiness pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .readiness-group > summary { padding: 8px 0; }
 .reports-content { width: min(calc(100% - 48px), 1320px); margin: 0 auto; padding: 25px 0 46px; }
-.state-panel { display: grid; gap: 7px; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-soft); }
+.state-panel { display: grid; gap: 7px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);  }
 .state-panel span { color: var(--muted); }
 .state-panel.error { border-color: var(--danger); }
-.state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--accent); color: var(--surface); cursor: pointer; }
-.monthly-preparations > h3 { font-size: 16px; margin: 8px 0; }
-.monthly-scope, .monthly-statuses { color: var(--muted); font-size: 12px; line-height: 1.6; }
-.monthly-scope { margin: 6px 0 10px; }
-.monthly-preparation { margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
-.monthly-preparation > summary { padding: 12px 14px; cursor: pointer; overflow-wrap: anywhere; }
-.monthly-preparation > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.monthly-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 14px; min-height: 28px; font-size: 14px; }
-.monthly-heading > span { color: var(--accent); font-size: 12px; }
-.monthly-statuses, .monthly-alert, .monthly-issue { display: block; margin-top: 5px; }
-.monthly-alert, .monthly-issue { color: var(--warning); font-size: 12px; line-height: 1.6; }
-.monthly-preparation > :deep(.period-preparation) { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; }
+.state-panel button { width: fit-content; min-height: 40px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: var(--radius-control); background: var(--accent); color: var(--surface); cursor: pointer; }
 .report-dashboard { display: grid; min-width: 0; gap: 12px; }
-.report-hero { padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface))); box-shadow: var(--shadow-soft); }
+.report-hero { padding: 23px 25px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%), linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));  }
 .report-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
-.eyebrow { margin: 0 0 5px; color: var(--accent); font-size: 11px; font-weight: 850; letter-spacing: .08em; }
-.report-heading h2 { margin: 0; font-size: clamp(25px, 2.8vw, 34px); letter-spacing: -.04em; }
-.report-heading p { max-width: 710px; margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.report-heading .dashboard-hero-note { max-width: 710px; }
+.report-readiness-title { font-size: clamp(28px, 3.3vw, 36px); }
+.report-readiness-title.ready { color: color-mix(in srgb, var(--accent) 82%, var(--text)); }
 .report-actions { display: flex; flex: 0 0 auto; gap: 8px; }
-.report-actions button { min-height: 38px; padding: 0 13px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent); color: var(--surface); cursor: pointer; font-weight: 750; }
+.report-actions button { min-height: 38px; padding: 0 13px; border: 1px solid var(--accent); border-radius: var(--radius-control); background: var(--accent); color: var(--surface); cursor: pointer; font-weight: 750; }
 .report-actions button.secondary { background: var(--surface); color: var(--accent); }
 .report-actions button:disabled { cursor: default; opacity: .5; }
-.status-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 13px; padding-top: 11px; border-top: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); color: var(--muted); font-size: 11px; }
-.status-badge { padding: 2px 8px; border-radius: 999px; background: var(--surface-soft); color: var(--muted); font-weight: 800; }
-.status-badge.ready { background: var(--accent-soft); color: var(--accent); }
-.status-badge.blocked, .status-badge.error { background: var(--danger-soft); color: var(--danger); }
-.report-state { margin-top: 8px; padding: 11px 13px; border-radius: 11px; background: var(--surface-soft); }
-.report-state.ready { background: var(--accent-soft); color: var(--accent); }
-.report-state.in-progress { background: var(--info-soft); color: var(--info); }
-.report-state.blocked { background: var(--warning-soft); color: var(--warning); }
-.report-state.error { background: var(--danger-soft); color: var(--danger); }
-.report-state p { margin: 3px 0 0; font-size: 12px; }
-.report-state summary { font-size: 12px; cursor: pointer; }
-.export-notice { margin-top: 8px; padding: 10px 13px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 12px; }
+.report-readiness-help { position: relative; display: inline-block; }
+.report-readiness-trigger { padding: 0; border: 0; background: transparent; color: inherit; cursor: help; font: inherit; letter-spacing: inherit; text-align: left; }
+.report-readiness-trigger:focus-visible { border-radius: 4px; outline: 2px solid var(--accent); outline-offset: 3px; }
+.report-readiness-tooltip {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  width: min(420px, calc(100vw - 48px));
+  gap: 5px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+  opacity: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.55;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  visibility: hidden;
+}
+.report-readiness-tooltip > span { color: var(--muted); }
+.report-readiness-help:hover .report-readiness-tooltip,
+.report-readiness-help:focus-within .report-readiness-tooltip { opacity: 1; transform: translateY(0); visibility: visible; }
+.export-notice { margin-top: 8px; padding: 10px 13px; border-radius: var(--radius-control); background: var(--accent-soft); color: var(--accent); font-size: 12px; }
 .export-notice.attention { background: var(--warning-soft); color: var(--warning); }
 .export-notice.error { background: var(--danger-soft); color: var(--danger); }
 .readiness { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; }
-.readiness-item { position: relative; overflow: hidden; padding: 15px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-soft); }
-.readiness-item::before { position: absolute; top: 0; right: 0; left: 0; height: 3px; background: var(--accent); content: ""; }
-.readiness-item.pending::before { background: var(--info); }
-.readiness-item.attention::before { background: var(--warning); }
+.readiness-item { position: relative; overflow: hidden; padding: 15px 16px; border: 0; border-radius: var(--radius-control); background: var(--surface-soft);  }
 .readiness-item { min-width: 0; overflow-wrap: anywhere; }
 .readiness-head { display: flex; align-items: center; gap: 8px; }
 .readiness-head > span { display: grid; width: 23px; height: 23px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 850; }
@@ -1100,27 +1010,48 @@ onBeforeUnmount(() => {
 .readiness-item li > a, .readiness-item li > details { grid-column: 1 / -1; min-width: 0; }
 .readiness-item li span { color: var(--muted); font-size: 11px; }
 .readiness-item li > strong { grid-row: 1 / 3; grid-column: 2; align-self: center; }
-.summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.summary-grid article { position: relative; display: grid; min-height: 116px; align-content: space-between; gap: 4px; overflow: hidden; padding: 15px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-soft); }
-.summary-grid article::before { position: absolute; top: 0; right: 0; left: 0; height: 3px; background: var(--info); content: ""; }
-.summary-grid article:nth-child(2)::before { background: var(--accent); }
-.summary-grid article:nth-child(3)::before { background: var(--gold); }
-.summary-grid span { color: var(--muted); font-size: 11px; }
-.summary-grid strong { color: var(--info); font-size: clamp(20px, 2vw, 27px); }
-.summary-grid article:nth-child(2) strong { color: var(--accent); }
-.summary-grid article:nth-child(3) strong { color: var(--gold); }
-.draft-note { margin: 0; padding: 10px 13px; border-radius: 10px; background: var(--warning-soft); color: var(--warning); font-size: 12px; }
-.report-review { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-soft); }
+.summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 28px;
+  overflow: visible;
+
+  border: 0;
+
+  border-radius: 0;
+
+  background: transparent;
+
+  grid-column: 1 / -1;
+
+  margin-top: 8px;
+}
+.summary-grid article { position: relative; display: grid; min-height: 0; align-content: start; gap: 6px; overflow: hidden; padding: 0; border: 0; border-radius: 0; background: transparent;
+  min-width: 0;
+
+  border-left: 0;
+
+  grid-template-rows: auto auto 1fr;
+}
+.summary-grid span, .summary-grid small { color: var(--muted); }
+.summary-grid span { display: block; font-size: 12px; font-weight: 750; }
+.summary-grid small { font-size: 11px; }
+.summary-grid strong { display: block; margin: 4px 0; color: var(--text); font-size: clamp(20px, 2vw, 26px); line-height: 1.15; letter-spacing: -.025em;
+  font-variant-numeric: tabular-nums;
+
+  overflow-wrap: anywhere;
+}
+.draft-note { margin: 0; padding: 10px 13px; border-radius: var(--radius-control); background: var(--warning-soft); color: var(--warning); font-size: 12px; }
+.report-review { min-width: 0; padding: 0; border: 0; border-radius: var(--radius-panel); background: transparent;
+  margin-top: 28px;
+}
 .review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; }
 .review-heading > div { display: grid; gap: 3px; }
 .review-heading > div > strong { color: var(--text); font-size: 16px; }
 .check-summary { padding: 5px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 750; }
 .statement-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
-.statement-buttons button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 88px; align-items: center; gap: 12px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-soft); color: var(--text); cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
-.statement-buttons button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); transform: translateY(-1px); }
+.statement-buttons button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 88px; align-items: center; gap: 12px; padding: 14px 15px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface-soft); color: var(--text); cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.statement-buttons button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); transform: none; }
 .statement-buttons button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 2px; }
 .statement-buttons button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.statement-number { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 850; }
+.statement-number { display: grid; width: 38px; height: 38px; place-items: center; border-radius: var(--radius-control); background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 850; }
 .statement-buttons button.active .statement-number { background: var(--accent); color: var(--surface); }
 .statement-button-copy { display: grid; gap: 4px; min-width: 0; }
 .statement-button-copy strong { font-size: 16px; }
@@ -1139,15 +1070,15 @@ onBeforeUnmount(() => {
 .template-switch input:checked + .switch-track { border-color: var(--accent); background: var(--accent); }
 .template-switch input:checked + .switch-track span { background: var(--surface); transform: translateX(18px); }
 .template-switch input:focus-visible + .switch-track { outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 2px; }
-.table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-control); }
 table { width: 100%; min-width: 650px; border-collapse: collapse; background: var(--surface); font-size: 12px; }
 th, td { padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }
 th { position: sticky; top: 0; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
 th:first-child { width: 54%; }
 .line { width: 58px; color: var(--muted); text-align: center; }
 .number { text-align: right; font-variant-numeric: tabular-nums; }
-tr.total td { background: var(--accent-soft); font-weight: 750; }
-.template-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding: 14px; border: 1px solid #cbd5e1; border-radius: 10px; background: #e9edf1; }
+tr.total td { background: var(--surface-soft); font-weight: 750; }
+.template-wrap { min-width: 0; max-width: 100%; overflow-x: auto; padding: 14px; border: 1px solid #cbd5e1; border-radius: var(--radius-control); background: #e9edf1; }
 .tax-template-sheet { width: 780px; box-sizing: border-box; padding: 26px 30px 32px; background: #fff; color: #171717; box-shadow: 0 2px 10px rgb(15 23 42 / 10%); font-family: SimSun, "Songti SC", serif; }
 .tax-template-sheet.balance-sheet { width: 1120px; }
 .template-title-row { position: relative; display: flex; min-height: 76px; align-items: center; justify-content: center; padding-bottom: 14px; }
@@ -1184,6 +1115,15 @@ tr.total td { background: var(--accent-soft); font-weight: 750; }
 .technical dt { color: var(--muted); }
 .technical dd { margin: 0; overflow-wrap: anywhere; }
 .technical ul { margin: 0; padding-left: 20px; }
-@media (max-width: 960px) { .summary-grid, .statement-buttons { grid-template-columns: 1fr; } .table-scroll-hint { display: block; } }
-@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .readiness, .check-list { grid-template-columns: 1fr; } .report-review { padding: 14px; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .switch-copy { justify-items: start; } .statement-buttons button, .disclosure summary { min-height: 64px; } .technical dl { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .statement-buttons { grid-template-columns: 1fr; } .table-scroll-hint { display: block; } }
+@media (max-width: 900px) { .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .reports-content { width: min(calc(100% - 24px), 1320px); padding: 16px 0 24px; } .report-hero { padding: 19px; border-radius: 17px; } .report-heading { flex-direction: column; gap: 13px; } .report-actions { width: 100%; } .report-actions button { min-height: 44px; flex: 1; } .readiness, .check-list { grid-template-columns: 1fr; } .report-review { padding: 0; } .review-heading, .table-toolbar { align-items: flex-start; flex-direction: column; } .switch-copy { justify-items: start; } .statement-buttons button, .disclosure summary { min-height: 64px; } .technical dl { grid-template-columns: 1fr; } }
+
+
+.report-hero .summary-grid { margin-top: 32px; }
+.report-hero .summary-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
+.report-hero .summary-grid strong { font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .report-hero .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+}
 </style>

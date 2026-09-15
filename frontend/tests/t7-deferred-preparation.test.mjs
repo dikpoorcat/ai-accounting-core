@@ -81,7 +81,7 @@ async function viewHarness(kind) {
   const script = withoutImports(parse(source(`../src/views/${kind}View.vue`)).descriptor.scriptSetup.content);
   const names = kind === "Brief"
     ? "response, data, loading, error, preparation, preparationStatus, preparationError, loadData, loadMore, loadPreparation, refresh, invalidateRequests"
-    : "report, loading, errorMessage, monthChecks, monthlyPreparations, reportHeadline, preview, loadPreparations, refresh, exportReport, invalidateRequests";
+    : "report, loading, errorMessage, reportHeadline, preview, refresh, exportReport, invalidateRequests";
   const module = await compile(`export function instantiate() {
     const { computed, ref, watch } = environment.Vue;
     const { nextTick, fetchDeferredBrief, fetchDeferredQuarterlyReport, fetchPeriodPreparation, requestQuarterlyExport } = environment;
@@ -209,60 +209,28 @@ test("Brief empty main and main failures do not start preparation requests", asy
   } finally { h.close(); }
 });
 
-test("Reports checks the focused month first and serializes all three months independently", async () => {
+test("Reports uses its own readiness without loading company-wide month followups", async () => {
   const h = await viewHarness("Reports");
   try {
-    const pending = h.preview("2026-Q1"); h.calls.main[0].resolve(report()); await pending;
-    assert.deepEqual(h.trace, ["main", "paint", "checks"]); assert.equal(h.loading.value, false);
-    assert.equal(h.calls.checks.length, 1); assert.equal(h.calls.checks[0].args[1], "2026-02");
-    assert.deepEqual(h.monthChecks.value.map(month => month.status), ["loading", "pending", "pending"]);
-    h.calls.checks[0].reject(new Error("二月失败")); await flush();
-    assert.equal(h.calls.checks.length, 2); assert.equal(h.calls.checks[1].args[1], "2026-01");
-    h.calls.checks[1].resolve(preparation("2026-01")); await flush();
-    assert.equal(h.calls.checks[2].args[1], "2026-03"); h.calls.checks[2].resolve(preparation("2026-03")); await flush();
-    assert.deepEqual(h.monthChecks.value.map(month => month.status), ["error", "ready", "ready"]);
-    assert.equal(h.errorMessage.value, ""); assert.equal(h.reportHeadline.value, "本季度报表已准备好");
-    void h.exportReport(); assert.equal(h.calls.exports.length, 1, "monthly followup failure cannot change export eligibility");
-    const retry = h.loadPreparations("2026-02"); assert.equal(h.calls.main.length, 1);
-    h.calls.checks[3].resolve(preparation()); await retry;
-    assert(h.monthChecks.value.every(month => month.status === "ready"));
+    const pending = h.preview("2026-Q1");
+    h.calls.main[0].resolve(report());
+    await pending;
+    assert.deepEqual(h.trace, ["main", "paint"]);
+    assert.equal(h.calls.checks.length, 0);
+    assert.equal(h.loading.value, false);
+    assert.equal(h.reportHeadline.value, "已就绪");
+    void h.exportReport();
+    assert.equal(h.calls.exports.length, 1);
   } finally { h.close(); }
 });
 
-test("Reports stale version stops the queue and requires a manual refresh", async () => {
-  const h = await viewHarness("Reports");
-  try {
-    const pending = h.preview("2026-Q1"); h.calls.main[0].resolve(report()); await pending;
-    h.calls.checks[0].reject(stale()); await flush();
-    assert(h.monthChecks.value.every(month => month.status === "stale"));
-    await h.loadPreparations(); assert.equal(h.calls.checks.length, 1); assert.equal(h.calls.main.length, 1);
-    assert.equal(h.report.value.export.available, true); assert.equal(h.reportHeadline.value, "本季度报表已准备好");
-  } finally { h.close(); }
-});
-
-test("Reports navigation and unmount abort old queues including ignored abort responses", async () => {
-  const h = await viewHarness("Reports");
-  try {
-    const first = h.preview("2026-Q1"); h.calls.main[0].resolve(report()); await first;
-    const old = h.calls.checks[0];
-    h.navigate({ company_id: "b", period: "2026-02", quarter: "2026-Q1", carry_forward_fact_id: "source-b" });
-    assert(old.args[2].aborted); assert.equal(h.monthChecks.value.length, 0);
-    const second = h.preview("2026-Q1"); h.calls.main[1].resolve(report(readContext("b"))); await second;
-    old.resolve(preparation()); await flush();
-    assert.equal(h.calls.checks.length, 2, "the old queue does not request its next month");
-    assert.equal(h.calls.main[1].args[4], "source-b");
-    h.close(); assert(h.calls.checks[1].args[2].aborted);
-    h.calls.checks[1].resolve(preparation("2026-02", readContext("b"))); await flush();
-    assert.equal(h.calls.checks.length, 2); assert.equal(h.monthChecks.value.length, 0);
-  } finally { h.close(); }
-});
-
-test("both view templates compile and require ready preparation before rendering its details", () => {
-  for (const name of ["Brief", "Reports"]) {
+test("only Brief renders the shared company-wide period preparation", () => {
+  for (const name of ["Brief", "Funds", "Employees", "Assets", "Reports"]) {
     const { descriptor } = parse(source(`../src/views/${name}View.vue`));
     const compiled = compileTemplate({ source: descriptor.template.content, filename: `${name}View.vue`, id: `test-${name}` });
     assert.deepEqual(compiled.errors, []);
-    assert.match(descriptor.template.content, /<PeriodPreparation v-if="[^"]*=== 'ready'/);
+    if (name === "Brief") assert.match(descriptor.template.content, /<PeriodPreparation\s+v-if="[^"]*=== 'ready'/);
+    else assert.doesNotMatch(descriptor.template.content, /<PeriodPreparation/);
   }
   const text = source("../src/views/BriefView.vue");
   assert.match(text, /preparationStatus === 'ready' && data.validation.items.length > 0 && data.validation.items.every/);

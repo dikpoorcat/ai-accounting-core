@@ -39,8 +39,8 @@ export interface FundReconciliation {
   label: string;
   version?: number;
   statement_closing_fen?: FenValue;
-  book_closing_fen?: FenValue;
-  difference_fen?: FenValue;
+  book_closing_fen?: FenValue | null;
+  difference_fen?: FenValue | null;
   unmatched_count?: number;
   needs_review_count?: number;
   warning_count?: number;
@@ -68,11 +68,11 @@ export interface FundAccount {
   name: string;
   type: "bank" | "cash" | "payment_platform";
   active: boolean | null;
-  opening_fen: FenValue;
+  opening_fen: FenValue | null;
   inflow_fen: FenValue;
   outflow_fen: FenValue;
   net_change_fen: FenValue;
-  closing_fen: FenValue;
+  closing_fen: FenValue | null;
   movement_count: number;
   last_activity_date: string | null;
   negative_balance: boolean;
@@ -100,9 +100,21 @@ export interface FundMovement {
   component_kinds: string[];
 }
 
+export interface BankBatchPaymentItem {
+  party: string;
+  amount_fen: FenValue;
+}
+
+export interface BankBatchPayment {
+  bank_row_count: number;
+  total_fen: FenValue;
+  items: BankBatchPaymentItem[];
+}
+
 export interface BankStatementRow {
   id: string;
   date: string | null;
+  reference: string;
   account_id: string;
   account_code: string;
   account_name: string;
@@ -113,6 +125,7 @@ export interface BankStatementRow {
   memo: string;
   state: BankStatementState;
   source_check?: BankSourceCheck;
+  batch_payment?: BankBatchPayment;
 }
 
 export interface FundBankStatement {
@@ -173,14 +186,14 @@ export interface FundsData {
   fact_issues: UnestablishedSelection[];
   period_preparation: PeriodPreparation;
   collections: DashboardCollections;
-  total_fen: FenValue;
-  bank_fen: FenValue;
+  total_fen: FenValue | null;
+  bank_fen: FenValue | null;
   bank_opening_fen: FenValue | null;
   bank_inflow_fen: FenValue | null;
   bank_outflow_fen: FenValue | null;
-  cash_fen: FenValue;
-  payment_platform_fen: FenValue;
-  opening_fen: FenValue;
+  cash_fen: FenValue | null;
+  payment_platform_fen: FenValue | null;
+  opening_fen: FenValue | null;
   inflow_fen: FenValue;
   outflow_fen: FenValue;
   net_change_fen: FenValue;
@@ -227,6 +240,31 @@ export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, op
 // Keep selector labels across source navigation without adding cached rows to a page.
 let accountLabelScope = "";
 const accountLabels = new Map<string, string>();
+
+export function fundAccountDisplayName(name: string, code: string): string {
+  const normalizedName = name.trim();
+  const normalizedCode = code.trim();
+  if (!normalizedName || !normalizedCode) return normalizedName;
+  const trailingDigits = normalizedCode.match(/\d{3,}$/)?.[0];
+  const suffixes = [...new Set([normalizedCode, trailingDigits ? `尾号${trailingDigits}` : ""].filter(Boolean))]
+    .flatMap(suffix => [`（${suffix}）`, `(${suffix})`, suffix]);
+  for (const suffix of suffixes) {
+    if (!normalizedName.endsWith(suffix)) continue;
+    const base = normalizedName.slice(0, -suffix.length).replace(/[（(·\-—\s]+$/u, "").trim();
+    if (base) return base;
+  }
+  return normalizedName;
+}
+
+export function fundAccountDisplayLabel(name: string, code: string): string {
+  const displayName = fundAccountDisplayName(name, code);
+  const normalizedCode = code.trim();
+  if (!normalizedCode) return displayName;
+  const trailingDigits = normalizedCode.match(/\d{3,}$/)?.[0];
+  if (displayName.includes(normalizedCode) || (trailingDigits && displayName.includes(trailingDigits))) return displayName;
+  return `${displayName}（${normalizedCode}）`;
+}
+
 export function fundAccountLabel(company: string, period: string, type: string, id: string): string | undefined {
   const scope = JSON.stringify([company, period]);
   if (scope !== accountLabelScope) { accountLabels.clear(); accountLabelScope = scope; }
@@ -234,5 +272,5 @@ export function fundAccountLabel(company: string, period: string, type: string, 
 }
 export function rememberFundAccounts(company: string, period: string, accounts: FundAccount[]) {
   fundAccountLabel(company, period, "", "");
-  for (const account of accounts) accountLabels.set(JSON.stringify([company, account.type, account.account_id]), `${account.name}（${account.code}）`);
+  for (const account of accounts) accountLabels.set(JSON.stringify([company, account.type, account.account_id]), fundAccountDisplayLabel(account.name, account.code));
 }

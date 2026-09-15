@@ -26,6 +26,7 @@ export interface ReportReadinessItem {
 
 export interface ReportSummary {
   assets_total_fen: string | null;
+  liabilities_total_fen: string | null;
   liabilities_equity_total_fen: string | null;
   current_net_profit_fen: string | null;
   year_to_date_net_profit_fen: string | null;

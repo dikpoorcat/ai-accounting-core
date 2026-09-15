@@ -5,6 +5,8 @@ from test_banking import book as book
 from test_banking import entry, funding, match, opening, reconciliation, statement
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
+from ai_accounting.kernel.dashboard import Dashboard
+from ai_accounting.kernel.display import Display
 
 
 def batch_payment(save, publish, *, bank="bank-a", posted=True):
@@ -90,6 +92,53 @@ def test_one_published_batch_matches_original_rows_without_recipient_subrow_mapp
             ("second", "payment", "batch"),
         ]
     assert not engine.overview("2026-09")["pending"]
+
+
+def test_dashboard_keeps_original_bank_rows_and_nests_whole_batch_recipients(book):
+    engine, save, publish, _ = book
+    batch_payment(save, publish)
+    display = Display(engine)
+    for index, (entity_id, name) in enumerate((("alice", "张三"), ("bob", "李四"))):
+        display.save_display_profile(
+            {
+                "kind": "employee",
+                "entity_id": entity_id,
+                "display_name": name,
+                "source": "合成人员资料",
+            },
+            expected_revision=0,
+            request_id=f"batch-party-{index}",
+        )
+    statement(save, publish, group_entries())
+    reconciliation(save, publish, group_matches())
+
+    dashboard = Dashboard(engine)
+    first = dashboard.funds("2026-09", limit=2)
+    bank = first["data"]["bank_statement"]
+    following = dashboard.funds(
+        "2026-09",
+        limit=2,
+        after_statement=bank["page"]["next_cursor"],
+        expected_version=first["snapshot_version"],
+    )
+    rows = [*bank["rows"], *following["data"]["bank_statement"]["rows"]]
+    assert [(row["reference"], row["signed_amount_fen"]) for row in rows] == [
+        ("receipt", 1000),
+        ("first", -130),
+        ("second", -170),
+    ]
+    batch_rows = [row for row in rows if row.get("batch_payment")]
+    assert [row["party"] for row in batch_rows] == ["批量付款 · 2 项"] * 2
+    assert all("张三、李四" not in row["party"] for row in batch_rows)
+    expected = {
+        "bank_row_count": 2,
+        "total_fen": 300,
+        "items": [
+            {"party": "张三", "amount_fen": 100},
+            {"party": "李四", "amount_fen": 200},
+        ],
+    }
+    assert [row["batch_payment"] for row in batch_rows] == [expected, expected]
 
 
 @pytest.mark.parametrize(

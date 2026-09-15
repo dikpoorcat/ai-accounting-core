@@ -102,11 +102,22 @@ def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
             {"reference": "second", "source_kind": "funding", "source_id": "funding"},
         ],
     )
+    Display(book).save_display_profile(
+        {
+            "kind": "counterparty",
+            "entity_id": "owner",
+            "display_name": "明确出资人",
+            "source": "合成展示资料",
+        },
+        expected_revision=0,
+        request_id="bank-row-owner",
+    )
     dashboard = Dashboard(book)
     data = dashboard.funds("2026-09", limit=1)["data"]
     assert data["bank_statement"]["matched_count"] == 2
     assert data["bank_statement"]["transaction_count"] == 2
     assert len(data["bank_statement"]["rows"]) == 1
+    assert data["bank_statement"]["rows"][0]["party"] == "明确出资人"
     assert data["accounts"][0]["reconciliation"]["state"] == "complete"
     assert data["accounts"][0]["active"] is None
     second = dashboard.funds(
@@ -116,6 +127,7 @@ def test_bank_matching_counts_original_rows_not_payment_groups(bank_book):
         expected_version=dashboard.funds("2026-09")["snapshot_version"],
     )["data"]
     assert second["bank_statement"]["rows"][0]["signed_amount_fen"] == 600
+    assert second["bank_statement"]["rows"][0]["party"] == "明确出资人"
     assert second["bank_statement"]["inflow_fen"] == 1000
 
 
@@ -230,6 +242,39 @@ def test_actual_payroll_tax_and_unknown_management_stay_distinct(tmp_path):
     assert wire_money(data)["employees"]["items"][0]["individual_income_tax_fen"] == "90000"
 
 
+def test_payroll_open_items_show_the_employee_for_every_payroll_component(payroll_company):
+    company = payroll_company
+    company.publish("january")
+    profile = Display(company.engine).save_display_profile(
+        {
+            "kind": "employee",
+            "entity_id": "employee",
+            "display_name": "测试员工",
+            "source": "合成人员资料",
+        },
+        expected_revision=0,
+        request_id="open-items-employee-profile",
+    )
+
+    categories = Dashboard(company.engine).brief("2026-01")["data"]["open_items"]["categories"]
+    payroll_items = next(item for item in categories if item["key"] == "payroll_payables")[
+        "items"
+    ]
+    by_component = {item["name"]: item for item in payroll_items}
+
+    assert set(by_component) == {"net", "tax", "employee_social", "employer_social"}
+    assert {item["party"] for item in payroll_items} == {"测试员工"}
+    assert {item["party_key"] for item in payroll_items} == {"employee"}
+    assert {name: item["description"] for name, item in by_component.items()} == {
+        "net": "实发工资",
+        "tax": "代扣个人所得税",
+        "employee_social": "个人社保",
+        "employer_social": "单位社保",
+    }
+    assert by_component["employee_social"]["creditor_id"] is None
+    assert by_component["employee_social"]["field_sources"]["party"]["id"] == profile["id"]
+
+
 def test_bonus_remains_separate_from_regular_wages(tmp_path):
     company = Company(tmp_path / "bonus.sqlite")
     for source in bonus_sources():
@@ -251,6 +296,15 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     company.publish("january", "february")
     dashboard = Dashboard(company.engine)
     original = dashboard.brief("2026-01")["data"]["open_items"]
+    original_net = next(
+        item
+        for category in original["categories"]
+        for item in category["items"]
+        if item["name"] == "net"
+    )
+    assert original_net["status"] == "open"
+    assert original_net["current_status"] == "open"
+    assert original_net["current_outstanding_fen"] == original_net["outstanding_fen"]
     company.save(payment(), "salary-payment")
     company.publish("salary-payment")
     february = dashboard.employees("2026-02")["data"]["employees"]["items"][0]
@@ -259,6 +313,15 @@ def test_cross_month_payments_follow_source_employee_and_keep_month_end_outstand
     january = dashboard.brief("2026-01")["data"]["open_items"]
     assert january["payable_fen"] == original["payable_fen"]
     assert january["current_outstanding"]["payable_fen"] == original["payable_fen"] - 907400
+    january_net = next(
+        item
+        for category in january["categories"]
+        for item in category["items"]
+        if item["name"] == "net"
+    )
+    assert january_net["status"] == "open"
+    assert january_net["current_status"] == "settled"
+    assert january_net["current_outstanding_fen"] == 0
 
 
 def test_closed_actual_declaration_shows_existing_correction_without_reposting(payroll_company):
@@ -436,6 +499,10 @@ def test_quarterly_closed_display_and_export_share_frozen_plan(report_book):
     assert (
         data["summary"]["assets_total_fen"]
         == expected["statements"]["balance_sheet"]["30"]["ending_fen"]
+    )
+    assert (
+        data["summary"]["liabilities_total_fen"]
+        == expected["statements"]["balance_sheet"]["47"]["ending_fen"]
     )
 
 

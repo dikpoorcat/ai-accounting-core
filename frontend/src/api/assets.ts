@@ -30,6 +30,9 @@ interface AssetItemBase {
   book_value_fen: string | null;
   latest_charge_period: string | null;
   charge_state_label?: string | null;
+  month_acquired?: boolean;
+  month_activated?: boolean;
+  month_exited?: boolean;
   batch_references?: Array<{
     calculation_id: string;
     owner_calculation_id: string;

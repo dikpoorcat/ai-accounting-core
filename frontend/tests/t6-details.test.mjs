@@ -20,6 +20,7 @@ async function harness(component, exported, suppliedProps = {}) {
     const onBeforeUnmount = callback => environment.cleanup.push(callback);
     const useRoute = () => environment.route;
     const defineProps = () => environment.props;
+    const withDefaults = (value, defaults) => Object.assign({}, defaults, value);
     const defineEmits = () => (...args) => environment.events.push(args);
     const fetchBusinessStatus = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchEmployeesDashboard = environment.fetch;
     const fetchLocalTrace = environment.fetch, fetchVoucherTrace = environment.fetch;

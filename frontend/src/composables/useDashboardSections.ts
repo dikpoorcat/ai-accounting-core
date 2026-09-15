@@ -11,7 +11,8 @@ export function useDashboardSections(items: MaybeRefOrGetter<readonly SectionLin
   let mounted = false;
   function offset() {
     const nav = document.querySelector<HTMLElement>(".section-nav");
-    return nav ? nav.getBoundingClientRect().height + (parseFloat(getComputedStyle(nav).top) || 0) + 8 : 16;
+    const sticky = nav?.closest<HTMLElement>("[data-section-header]") ?? nav;
+    return sticky ? sticky.getBoundingClientRect().height + (parseFloat(getComputedStyle(sticky).top) || 0) + 8 : 16;
   }
   function lockSectionSync() { locked = true; }
   function positionSection(section: HTMLElement) {

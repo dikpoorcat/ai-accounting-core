@@ -876,6 +876,49 @@ def test_period_readiness_uses_exact_close_without_erasing_current_followups(eng
     assert result["current_followups"]["affects_frozen_readiness"] is False
 
 
+def test_period_readiness_external_followups_exclude_other_months(domain_book):
+    engine, save_fact, _publish_businesses, close_period, *_ = domain_book
+    close_period("2026-01")
+    save_fact(
+        "external_obligation",
+        "february-obligation",
+        {
+            "period": "2026-02",
+            "obligation_kind": "individual_income_tax",
+            "start_period": "2026-02",
+            "end_period": "2026-02",
+            "due_date": "2026-03-20",
+            "applicability_confirmed": True,
+            "applicability": "required",
+        },
+    )
+
+    queries = BusinessQueries(engine)
+    full = queries.period_readiness("2026-01", as_of="2026-03-25")
+    with engine.store.connection(read_only=True) as connection:
+        connection.execute("BEGIN")
+        summary = queries._period_readiness(
+            connection, "2026-01", as_of="2026-03-25", summary=True
+        )
+
+    for external in (
+        full["current_followups"]["external"],
+        summary["current_followups"]["external"],
+    ):
+        assert external["scope_period"] == "2026-01"
+        assert external["scope_semantics"] == (
+            "obligation_interval_includes_selected_period"
+        )
+    assert full["current_followups"]["external"]["obligations"] == []
+    assert summary["current_followups"]["external"]["obligation_count"] == 0
+    assert summary["current_followups"]["external"]["completion_status_counts"] == {}
+
+    february = queries.period_readiness("2026-02", as_of="2026-03-25")
+    assert [
+        item["id"] for item in february["current_followups"]["external"]["obligations"]
+    ] == ["february-obligation"]
+
+
 def test_period_readiness_marks_legacy_manifest_fields_not_recorded(engine):
     with engine.store.connection() as connection:
         connection.execute("BEGIN")

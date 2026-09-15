@@ -23,6 +23,8 @@ AUDIT_ACTIONS = (
 )
 CLOSE_CALCULATIONS = "calculations[*]"
 CLOSE_ASSET_ADOPTIONS = "asset_batch_adoptions[*].owner_calculation_id"
+CLOSE_ASSET_CARD_ADOPTIONS = "asset_card_adoptions[*].calculation_id"
+CLOSE_ASSET_CARD_ACCEPTANCES = "asset_card_adoptions[*].acceptance_calculation_id"
 CLOSE_VOUCHERS = "vouchers[*].id"
 CLOSE_VOUCHER_CALCULATIONS = "vouchers[*].calculation_id"
 CLOSE_REPORT_FACTS = "readiness.financial_reports.facts[*]"
@@ -33,6 +35,8 @@ CLOSE_PAYEES = "management_snapshot.payees[*].id"
 _CLOSE_PATH_TYPES = {
     CLOSE_CALCULATIONS: "calculation",
     CLOSE_ASSET_ADOPTIONS: "calculation",
+    CLOSE_ASSET_CARD_ADOPTIONS: "calculation",
+    CLOSE_ASSET_CARD_ACCEPTANCES: "calculation",
     CLOSE_VOUCHERS: "voucher",
     CLOSE_VOUCHER_CALCULATIONS: "calculation",
     CLOSE_REPORT_FACTS: "fact",
@@ -144,6 +148,15 @@ def _close_references(row):
     for pos, reference in _items(manifest.get("asset_batch_adoptions")):
         if isinstance(reference, dict):
             add(CLOSE_ASSET_ADOPTIONS, pos, "calculation", reference.get("owner_calculation_id"))
+    for pos, reference in _items(manifest.get("asset_card_adoptions")):
+        if isinstance(reference, dict):
+            add(CLOSE_ASSET_CARD_ADOPTIONS, pos, "calculation", reference.get("calculation_id"))
+            add(
+                CLOSE_ASSET_CARD_ACCEPTANCES,
+                pos,
+                "calculation",
+                reference.get("acceptance_calculation_id"),
+            )
     for pos, reference in _items(manifest.get("vouchers")):
         if isinstance(reference, dict):
             add(

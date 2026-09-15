@@ -242,6 +242,11 @@ def test_aggregate_batch_credit_keeps_each_creditor_and_accepted_amount(asset_bo
     engine, save, publish = asset_book
     for ident, name in (("alice", "甲垫付人"), ("bob", "乙垫付人")):
         display_profile(engine, "employee", ident, display_name=name)
+    for ident, name, code in (
+        ("computer", "办公电脑", "FA-001"),
+        ("chair", "办公椅", "FA-002"),
+    ):
+        display_profile(engine, "asset", ident, display_name=name, display_number=code)
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
     save("reimbursed_asset", "chair", batch_card(30000))
@@ -257,6 +262,15 @@ def test_aggregate_batch_credit_keeps_each_creditor_and_accepted_amount(asset_bo
     assert credit["party"] == "甲垫付人、乙垫付人"
     assert row["funds"] == []
     assert all(line["parties"] == [] for line in row["lines"] if line["code"] != "224101")
+    assert row["asset"] is None
+    assert [
+        (item["asset_id"], item["name"], item["code"], item["amount_fen"])
+        for item in row["asset_members"]
+    ] == [
+        ("computer", "办公电脑", "FA-001", 120000),
+        ("chair", "办公椅", "FA-002", 30000),
+    ]
+    assert "2 张资产卡片：办公电脑（FA-001）、办公椅（FA-002）" in row["display_summary"]
 
 
 def test_offset_changes_obligations_without_presenting_company_money(bank_book):

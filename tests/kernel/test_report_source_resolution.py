@@ -277,6 +277,7 @@ def test_unknown_creditor_propagates_nullable_balance_and_check(book, monkeypatc
     )
     view = Dashboard(engine).quarterly_report(2026, 1)
     assert view["summary"]["assets_total_fen"] is None
+    assert view["summary"]["liabilities_total_fen"] is None
     assert view["checks"]["passed"] == sum(
         item["passed"] is True for item in view["checks"]["items"]
     )

@@ -2,13 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import { fetchDeferredBrief, type BriefQuery } from "../api/brief";
+import { fetchDeferredBrief, type BriefQuery, type BriefValidationItem } from "../api/brief";
 import { fetchPeriodPreparation, type PeriodPreparationResult } from "../api/periodPreparation";
 import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client";
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import PeriodPreparation from "../components/PeriodPreparation.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
-import DashboardBusinessRecords from "../components/DashboardBusinessRecords.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import BriefActivityWorkbench from "../components/brief/BriefActivityWorkbench.vue";
 import BriefFinancialOverview from "../components/brief/BriefFinancialOverview.vue";
@@ -16,7 +15,7 @@ import BriefOpenItems from "../components/brief/BriefOpenItems.vue";
 import BriefWorkforceSection from "../components/brief/BriefWorkforceSection.vue";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { useDashboardContext } from "../composables/useDashboardContext";
-import { fen, formatFen, formatPositiveFen } from "../utils/money";
+import { fen, formatFen } from "../utils/money";
 
 type PriorityAction = "bank-details" | "validation";
 type PriorityItem = {
@@ -42,17 +41,18 @@ const sectionErrors = ref<Partial<Record<BriefSection, string>>>({});
 const pageControllers = new Map<BriefSection, AbortController>();
 const updateNotice = ref("");
 const error = ref("");
+const openItemsFocusRequest = ref(0);
 let controller: AbortController | null = null;
 let initialized = false;
 let mounted = true;
 let requestGeneration = 0;
-const businessSections = [
-  { key: "businesses", label: "正式业务记录（含不产生凭证的结果）" }, { key: "open_items", label: "月末待收待付的完整来源" },
-  { key: "settlement_events", label: "相关后续收付款与抵销" }, { key: "external_followups", label: "相关外部办理" }, { key: "file_jobs", label: "相关文件任务" },
-] as const;
-
 const selectedPeriod = computed(() => response.value?.selected_period?.key || "");
 const periodOptions = computed(() => context.value?.periods || []);
+const briefTitle = computed(() => {
+  const period = selectedPeriod.value || (typeof route.query.period === "string" ? route.query.period : "");
+  const month = /^\d{4}-(\d{2})$/.exec(period)?.[1];
+  return month ? `${Number(month)} 月经营简报` : "经营简报";
+});
 const data = computed(() => {
   const main = response.value?.data;
   if (!main || preparationStatus.value !== "ready" || !preparation.value) return main ?? null;
@@ -75,11 +75,16 @@ const sectionLinks = computed(() => {
   links.push(
     { id: "finance", label: "资金资产" },
     { id: "open-items", label: "待收待付" },
-    { id: "validation", label: "资料核对" },
+    { id: "validation", label: "账务与待办" },
   );
   return links;
 });
 const { activeSection, focusSection } = useDashboardSections(sectionLinks, "overview");
+
+function focusOutstandingItems() {
+  focusSection("open-items");
+  openItemsFocusRequest.value += 1;
+}
 const priorities = computed(() => {
   if (!data.value || !response.value?.selected_period) return [];
   const items: PriorityItem[] = [];
@@ -131,12 +136,35 @@ const takeaway = computed(() => {
   const details = data.value.management_commentary_details;
   if (details?.current) return details.current.text;
   if (data.value.management_commentary) return data.value.management_commentary;
-  const result = data.value.position.month_result_fen;
-  return `本月已入账收入 ${formatFen(data.value.position.month_revenue_fen)}，费用 ${formatFen(data.value.position.month_expense_fen)}，${result === null ? '账面盈亏尚不能完整建立' : `${fen(result) < 0n ? '账面亏损' : '账面结余'} ${formatPositiveFen(result)}`}。月末账面资金 ${formatFen(data.value.funds_overview.total_fen)}。`;
+  return "";
 });
+
+const hasOverviewNotes = computed(() => Boolean(takeaway.value
+  || (data.value?.management_commentary_details?.status === "stale" && data.value.management_commentary_details.latest)
+  || data.value?.management_commentary_details?.supplements.length));
 
 function queryPeriod() {
   return typeof route.query.period === "string" ? route.query.period : null;
+}
+
+function ownerCheckLabel(item: BriefValidationItem) {
+  return ({
+    balance: "账面平衡",
+    materials: "资料齐全",
+    accounting: "业务已处理",
+    close_requirements: "月末条件",
+  } as Record<string, string>)[item.key] ?? item.label;
+}
+
+function ownerCheckText(item: BriefValidationItem) {
+  const copy: Record<string, [string, string]> = {
+    balance: ["借贷和资产负债关系一致", "凭证或余额关系需要核对"],
+    materials: ["本月资料已逐项核对", "还有资料需要补充或确认"],
+    accounting: ["应处理业务均已正式入账", "仍有业务未发布或待复核"],
+    close_requirements: ["银行与业务条件已满足", "还有月末条件未满足"],
+  };
+  const message = copy[item.key];
+  return message ? message[item.state === "pass" ? 0 : 1] : item.text;
 }
 
 function resetPreparation() {
@@ -232,10 +260,6 @@ async function loadMore(section: BriefSection = "vouchers", restart = false) {
   } finally { if (valid()) { sectionLoading.value[section] = false; pageControllers.delete(section); } }
 }
 
-function openBusinessSection(event: Event, section: BriefQuery["section"]) {
-  if ((event.target as HTMLDetailsElement).open && !data.value?.collections[section!]) void loadMore(section);
-}
-
 async function refresh() {
   invalidateRequests();
   const generation = requestGeneration, selection = selectionKey();
@@ -303,16 +327,6 @@ function generatedText() {
   }).format(new Date(data.value.generated_at));
 }
 
-function heroNote() {
-  const period = response.value?.selected_period;
-  if (!period) return "";
-  if (period.status !== "closed") {
-    return "截至本月末 · 已入账记录";
-  }
-  const closedAt = period.closed_at ? `${new Date(period.closed_at).toLocaleString("zh-CN")} ` : "";
-  return `${closedAt}完成关账；以下金额反映该月末情况。`;
-}
-
 function selectionKey() { return JSON.stringify([route.query.company_id, route.query.period, route.query.voucher]); }
 function isCurrent(generation: number, selection: string) { return mounted && requestGeneration === generation && selectionKey() === selection; }
 function invalidateRequests() {
@@ -344,16 +358,6 @@ watch(
 watch(sectionLinks, (links) => {
   if (!links.some((link) => link.id === activeSection.value)) activeSection.value = "overview";
 });
-async function revealCollection() {
-  const key = route.query.section;
-  if (typeof key !== "string" || !businessSections.some(item => item.key === key) || !data.value) return;
-  const generation = requestGeneration, selection = selectionKey();
-  await nextTick();
-  if (!isCurrent(generation, selection) || route.query.section !== key) return;
-  const detail = document.getElementById(`brief-${key}`) as HTMLDetailsElement | null;
-  if (detail) { detail.open = true; detail.scrollIntoView({ block: "start" }); detail.querySelector("summary")?.focus({ preventScroll: true }); }
-}
-watch(() => [route.query.section, !!data.value], () => { void revealCollection(); });
 onMounted(() => {
   void initialize();
 });
@@ -365,15 +369,27 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="brief-page" @click="focusSelectedCard">
-      <DashboardModuleHeader
-        title="月度经营与财务概览"
-        :options="periodOptions"
+    <DashboardModuleHeader
+      class="brief-header"
+      data-section-header
+      :title="briefTitle"
+      :options="periodOptions"
       :selected="selectedPeriod"
       :loading="loading"
       select-label="查看月份"
       @change="changePeriod"
       @refresh="refresh"
-    />
+    >
+      <template #navigation>
+        <DashboardSectionNav
+          v-if="data"
+          :items="sectionLinks"
+          :active="activeSection"
+          label="经营简报区段"
+          @select="focusSection"
+        />
+      </template>
+    </DashboardModuleHeader>
 
     <div v-if="error" class="state-panel error" role="alert">
       <h2>经营简报加载失败</h2>
@@ -389,29 +405,16 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
-      <DashboardSectionNav
-        :items="sectionLinks"
-        :active="activeSection"
-        label="经营简报区段"
-        floating
-        @select="focusSection"
-      />
-
       <p v-if="updateNotice" role="status" class="update-notice">{{ updateNotice }}</p>
-      <section id="overview" class="cockpit section-anchor" tabindex="-1">
-        <div class="cockpit-copy">
-          <div class="cockpit-meta">
-            <span>{{ response?.selected_period?.short_label }}</span>
-            <span>数据生成于 {{ generatedText() }}</span>
-          </div>
-          <h2>{{ response?.selected_period?.short_label }}经营简报</h2>
-          <p class="hero-note">{{ heroNote() }}</p>
+      <section id="overview" class="brief-hero section-anchor" aria-label="本月核心指标" tabindex="-1">
+        <div class="brief-hero-topline">
+          <p class="dashboard-hero-eyebrow">{{ response?.selected_period?.label }}期末 · 全公司</p>
           <div class="status-rail" aria-label="本月状态">
-            <span :class="['status-chip', { error: data.validation.integrity_valid === false }]">
+            <span :class="['status-chip', { error: data.validation.integrity_valid === false, attention: data.validation.integrity_valid === null }]">
               {{ data.validation.integrity_valid === null ? "依据待核对" : data.validation.integrity_valid ? "账面平衡" : "账务异常" }}
             </span>
             <span
-              :class="['status-chip', { attention: data.cash.unmatched_count + data.cash.needs_review_count }]"
+              :class="['status-chip', { attention: data.cash.unmatched_count + data.cash.needs_review_count || data.cash.missing_account_count || ['missing', 'partial'].includes(data.cash.coverage_state) }]"
             >
               {{
                 data.cash.unmatched_count + data.cash.needs_review_count
@@ -424,13 +427,43 @@ onBeforeUnmount(() => {
                     : "本月无银行流水"
               }}
             </span>
-            <span class="status-chip">
-              {{ response?.selected_period?.status === "closed" ? "本月已关账" : "本月可继续补录" }}
-            </span>
           </div>
-          <div class="takeaway">
-            <span>经营结论</span>
-            <strong>{{ takeaway }}</strong>
+        </div>
+        <div class="hero-metric">
+          <h2>本月账面盈亏</h2>
+          <strong class="dashboard-hero-title" :class="{ loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }">{{ formatFen(data.position.month_result_fen) }}</strong>
+          <p class="dashboard-hero-note">=收入 {{ formatFen(data.position.month_revenue_fen) }} - 费用 {{ formatFen(data.position.month_expense_fen) }}</p>
+        </div>
+        <section class="kpi-grid" aria-label="资金、资产与往来概况">
+          <button class="kpi funds selectable-card" type="button" @click="router.push({ name: 'funds', query: { company_id: route.query.company_id, period: selectedPeriod || undefined }, hash: '#funds-overview' })">
+            <span class="kpi-label">月末账面资金</span>
+            <strong>{{ formatFen(data.funds_overview.total_fen) }}</strong>
+            <small>银行、现金和支付平台的账面余额</small>
+          </button>
+          <button class="kpi asset selectable-card" type="button" @click="router.push({ name: 'assets', query: { company_id: route.query.company_id, period: selectedPeriod || undefined }, hash: '#assets-overview' })">
+            <span class="kpi-label">长期资产净值</span>
+            <strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong>
+            <small>固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形 {{ data.long_term_assets.intangible_active_count }} 项</small>
+          </button>
+          <button class="kpi receivable selectable-card" type="button" @click="focusSection('open-items')">
+            <span class="kpi-label">{{ isClosed ? "关账时待收" : "月末待收" }}</span>
+            <strong>{{ formatFen(data.open_items.receivable_fen) }}</strong>
+            <small>{{ data.open_items.receivable_count }} 项</small>
+          </button>
+          <button class="kpi payable selectable-card" type="button" @click="focusSection('open-items')">
+            <span class="kpi-label">{{ isClosed ? "关账时待付" : "月末待付" }}</span>
+            <strong>{{ formatFen(data.open_items.payable_fen) }}</strong>
+            <small>{{ data.open_items.payable_count }} 项</small>
+          </button>
+        </section>
+      </section>
+      <section v-if="priorities.length || hasOverviewNotes" :class="['cockpit', { 'has-actions': priorities.length, 'has-notes': hasOverviewNotes, 'has-details': priorities.length || hasOverviewNotes }]" aria-label="经营说明与提示">
+        <div v-if="hasOverviewNotes" class="cockpit-copy">
+          <div v-if="hasOverviewNotes" class="takeaway">
+            <template v-if="takeaway">
+              <span>经营说明</span>
+              <p>{{ takeaway }}</p>
+            </template>
             <details v-if="data.management_commentary_details?.status === 'stale' && data.management_commentary_details.latest">
               <summary>账务已更新，查看之前的经营说明</summary>
               <p>{{ data.management_commentary_details.latest.text }}</p>
@@ -442,14 +475,12 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <aside class="action-queue selectable-card" aria-label="需要处理" tabindex="-1">
+        <aside v-if="priorities.length" class="action-queue selectable-card" aria-label="需要处理" tabindex="-1">
           <header>
             <span class="queue-title">需要处理</span>
-            <span :class="['queue-count', { healthy: !priorities.length }]">
-              {{ priorities.length ? "分类提示" : "核对概况" }}
-            </span>
+            <span class="queue-count">{{ priorities.length }} 项提示</span>
           </header>
-          <div v-if="priorities.length" class="priority-list">
+          <div class="priority-list">
             <component
               :is="item.action ? 'button' : 'article'"
               v-for="item in priorities"
@@ -465,39 +496,13 @@ onBeforeUnmount(() => {
               </div>
             </component>
           </div>
-          <div v-else class="healthy-summary">
-            <strong>{{ data.validation.title }}</strong>
-            <span>{{ data.validation.summary }}。</span>
-          </div>
         </aside>
       </section>
 
-      <section class="kpi-grid" aria-label="本月核心指标">
-        <article :class="['kpi', 'result', 'selectable-card', { loss: data.position.month_result_fen !== null && fen(data.position.month_result_fen) < 0n }]" tabindex="-1"><span class="kpi-label">本月账面盈亏</span><strong>{{ formatFen(data.position.month_result_fen) }}</strong><small>收入 {{ formatFen(data.position.month_revenue_fen) }} · 费用 {{ formatFen(data.position.month_expense_fen) }}</small></article>
-        <article class="kpi bank selectable-card" tabindex="-1"><span class="kpi-label">月末账面资金</span><strong>{{ formatFen(data.funds_overview.total_fen) }}</strong><small>银行、现金和支付平台的账面余额</small></article>
-        <button class="kpi asset selectable-card" type="button" @click="focusSection('finance')">
-          <span class="kpi-label">长期资产净值</span>
-          <strong>{{ formatFen(data.long_term_assets.net_fen) }}</strong>
-          <small>固定 {{ data.long_term_assets.fixed_active_count }} 项 · 无形 {{ data.long_term_assets.intangible_active_count }} 项 · 查看构成 ›</small>
-        </button>
-        <button class="kpi open combined-open selectable-card" type="button" @click="focusSection('open-items')">
-          <span class="kpi-label">{{ isClosed ? "关账时点应收 / 应付" : "月末待收 / 待付" }}</span>
-          <span class="open-values">
-            <span>
-              <small>{{ isClosed ? "应收" : "待收" }}</small>
-              <strong>{{ formatFen(data.open_items.receivable_fen) }}</strong>
-            </span>
-            <span>
-              <small>{{ isClosed ? "应付" : "待付" }}</small>
-              <strong>{{ formatFen(data.open_items.payable_fen) }}</strong>
-            </span>
-          </span>
-          <small>{{ data.open_items.receivable_count }} 项{{ isClosed ? "应收" : "待收" }} · {{ data.open_items.payable_count }} 项{{ isClosed ? "应付" : "待付" }} · 查看构成 ›</small>
-        </button>
-      </section>
+
       <p v-if="data.position.complete === false || data.open_items.complete === false || data.open_items.unestablished_count" class="needs-check" role="status">部分来源尚待核对，已知金额也不能视为完整结论。<button type="button" @click="focusSection('validation')">查看依据与问题</button></p>
 
-      <div id="finance" class="section-anchor" tabindex="-1">
+      <div id="finance" class="brief-content-section section-anchor" tabindex="-1">
         <BriefFinancialOverview
           :funds="data.funds_overview"
           :position="data.position"
@@ -505,7 +510,7 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <div id="activity" class="section-anchor" tabindex="-1">
+      <div id="activity" class="brief-content-section section-anchor" tabindex="-1">
         <BriefActivityWorkbench
           :groups="data.activity_groups"
           :vouchers="data.vouchers"
@@ -518,101 +523,118 @@ onBeforeUnmount(() => {
         </BriefActivityWorkbench>
       </div>
 
-      <div v-if="data.workforce_cost.has_activity" id="workforce" class="section-anchor" tabindex="-1">
+      <div v-if="data.workforce_cost.has_activity" id="workforce" class="brief-content-section section-anchor" tabindex="-1">
         <BriefWorkforceSection
           :workforce="data.workforce_cost"
           :period-label="response?.selected_period?.short_label || ''"
         />
       </div>
 
-      <div id="open-items" class="section-anchor" tabindex="-1">
+      <div id="open-items" class="brief-content-section section-anchor" tabindex="-1">
         <BriefOpenItems
           :open-items="data.open_items"
           :period-label="response?.selected_period?.short_label || ''"
           :period-status="response?.selected_period?.status || ''"
-          :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refresh"
+          :period="selectedPeriod"
+          :snapshot-version="response?.snapshot_version"
+          :focus-request="openItemsFocusRequest"
+          @changed="refresh"
         />
       </div>
 
-      <section class="collection-details" aria-label="业务与相关跟进明细"><h2>业务与相关跟进明细</h2>
-      <details v-for="section in businessSections" :key="section.key" :id="`brief-${section.key}`" class="brief-section" @toggle="openBusinessSection($event, section.key)">
-        <summary>{{ section.label }}</summary>
-        <template v-if="data.collections[section.key]">
-          <DashboardPagination :page="data.collections[section.key].page" :loaded="data.collections[section.key].items.length" :loading="sectionLoading[section.key]" :error="sectionErrors[section.key]" @retry="loadMore(section.key)" @more="loadMore(section.key)" />
-          <DashboardBusinessRecords :items="data.collections[section.key].items" :period="selectedPeriod" :snapshot-version="response?.snapshot_version" @changed="refresh" />
-        </template>
-        <p v-if="sectionErrors[section.key] && !data.collections[section.key]" role="alert">{{ sectionErrors[section.key] }}</p>
-        <button v-if="!data.collections[section.key]" type="button" :disabled="sectionLoading[section.key]" @click="loadMore(section.key)">{{ sectionLoading[section.key] ? "加载中…" : "读取明细" }}</button>
-      </details>
-      </section>
-      <div id="validation" class="final-section-space section-anchor" tabindex="-1">
-      <details v-if="data.position.issues.length" class="brief-section"><summary>财务位置来源核对提示 · {{ data.position.issues.length }} 条</summary><ul><li v-for="(issue, index) in data.position.issues" :key="index">{{ issue.message }}<details><summary>查看精确来源</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul></details>
-      <PeriodPreparation v-if="preparationStatus === 'ready' && data.period_preparation" :preparation="data.period_preparation" :snapshot-version="response?.snapshot_version" @changed="refresh" />
-      <section v-else class="state-panel" :role="preparationStatus === 'error' || preparationStatus === 'stale' ? 'alert' : 'status'">
-        <strong>{{ preparationStatus === 'stale' ? '准备检查已过期' : preparationStatus === 'error' ? '准备检查读取失败' : '正在核对资料与期间准备' }}</strong>
-        <p>{{ preparationError || '主数据已显示，准备检查尚未完成。' }}</p>
-        <button v-if="preparationStatus === 'error'" type="button" @click="loadPreparation">重试准备检查</button>
-        <button v-if="preparationStatus === 'stale'" type="button" @click="refresh">刷新简报</button>
-      </section>
-      <footer
-        id="validation-checks"
-        :class="['trust-footer', 'section-anchor', data.validation.state]"
-        tabindex="-1"
-      >
-        <div class="trust-heading">
+      <section id="validation" class="monthly-review brief-content-section section-anchor" tabindex="-1" aria-labelledby="monthly-review-title">
+        <header class="monthly-review-heading">
           <div>
-            <p>资料与账务核对</p>
-            <h2>{{ data.validation.title }}</h2>
-            <span>{{ data.validation.summary }}。</span>
+            <p>月度收尾</p>
+            <h2 id="monthly-review-title">{{ response?.selected_period?.short_label }} · 账务与待办</h2>
+            <span>先确认账上的数字是否可靠，再看现在还有什么需要处理。</span>
           </div>
-          <span :class="['trust-state', data.validation.state]">
-            {{ preparationStatus !== 'ready' ? '准备检查未完成' : data.validation.state === 'complete' ? "本月核对完成" : "需要核对" }}
-          </span>
-        </div>
-        <details :open="data.validation.items.some(item => item.state !== 'pass')"><summary>{{ preparationStatus === 'ready' && data.validation.items.length > 0 && data.validation.items.every(item => item.state === 'pass') ? '本月检查已通过，查看详情' : '查看需要核对的项目' }}</summary><div class="checks">
-          <article v-for="item in data.validation.items" :key="item.key" :class="item.state">
-            <span class="check-mark">
-              {{ item.state === "pass" ? "✓" : item.state === "error" ? "×" : item.state === "pending" ? "!" : "–" }}
-            </span>
-            <div>
-              <strong>{{ item.label }}</strong>
-              <small>{{ item.text }}</small>
+          <span class="monthly-review-scope">{{ isClosed ? "当月结果已封存" : "当月仍可继续完善" }}</span>
+        </header>
+
+        <div class="monthly-review-grid">
+          <article
+            id="validation-checks"
+            :class="['trust-footer', 'section-anchor', data.validation.state]"
+            tabindex="-1"
+          >
+            <div class="trust-heading">
+              <div>
+                <p>账务可靠性</p>
+                <h3>这些数字可以放心看吗？</h3>
+                <span v-if="preparationStatus !== 'ready'">主数据已显示，完整检查仍在进行。</span>
+                <span v-else-if="data.validation.state === 'complete'">凭证、资料、核算与期间条件均已通过。</span>
+                <span v-else>{{ data.validation.summary }}，请查看下面标出的项目。</span>
+              </div>
+              <span :class="['trust-state', data.validation.state]">
+                {{ preparationStatus !== 'ready' ? '检查中' : data.validation.state === 'complete' ? "已通过" : "需核对" }}
+              </span>
             </div>
+            <details :open="data.validation.items.some(item => item.state !== 'pass')"><summary>{{ preparationStatus === 'ready' && data.validation.items.length > 0 && data.validation.items.every(item => item.state === 'pass') ? `${data.validation.items.length} 项关键检查均已通过` : '查看需要核对的检查' }}</summary><div class="checks">
+              <article v-for="item in data.validation.items" :key="item.key" :class="item.state">
+                <span class="check-mark">
+                  {{ item.state === "pass" ? "✓" : item.state === "error" ? "×" : item.state === "pending" ? "!" : "–" }}
+                </span>
+                <div>
+                  <strong>{{ ownerCheckLabel(item) }}</strong>
+                  <small>{{ ownerCheckText(item) }}</small>
+                </div>
+              </article>
+            </div></details>
+            <details v-if="data.position.issues.length" class="trust-proof" open>
+              <summary>财务位置有 {{ data.position.issues.length }} 条来源需要核对</summary>
+              <ul><li v-for="(issue, index) in data.position.issues" :key="index">{{ issue.message }}<details><summary>查看精确来源</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details></li></ul>
+            </details>
+            <details v-if="data.validation.issues?.length" class="trust-proof" open>
+              <summary>{{ isClosed ? '当前仍需完善的核算依据' : '关账前需要处理的核算事项' }}</summary>
+              <ul>
+                <li v-for="(issue, index) in data.validation.issues" :key="index">{{ issue.message }}</li>
+              </ul>
+            </details>
+            <details
+              v-if="data.material_completeness && !data.material_completeness.closed"
+              class="trust-proof"
+              :open="!data.material_completeness.satisfied"
+            >
+              <summary>本月资料：{{ data.material_completeness.satisfied ? "已逐项核对" : "还有待处理项目" }}</summary>
+              <ul v-if="data.material_completeness.issues.length">
+                <li v-for="(issue, index) in data.material_completeness.issues" :key="index">
+                  <strong v-if="issue.location">{{ issue.source_name }} {{ issue.location }}：</strong>{{ issue.message }}
+                  <span v-if="issue.excerpt"> {{ issue.excerpt }}</span>
+                  <span v-if="issue.difference_fen != null">差额 {{ formatFen(issue.difference_fen) }} 元</span>
+                </li>
+              </ul>
+              <p v-if="data.material_completeness.company_notes">公司业务说明：{{ data.material_completeness.company_notes.path }}</p>
+            </details>
+            <details class="trust-proof">
+              <summary>查看检查依据</summary>
+              <dl>
+                <div><dt>正式凭证 / 分录</dt><dd>{{ data.voucher_count }} 张 / {{ data.line_count }} 行</dd></div>
+                <div><dt>借方合计 / 贷方合计</dt><dd>{{ formatFen(data.total_debit_fen) }} / {{ formatFen(data.total_credit_fen) }}</dd></div>
+                <div><dt>银行当前有效匹配</dt><dd>{{ data.cash.matched_count }} / {{ data.cash.transaction_count }}</dd></div>
+                <div><dt>期间状态</dt><dd>{{ statusLabel(response?.selected_period?.status || "") }}</dd></div>
+                <div><dt>页面数据生成时间</dt><dd>{{ generatedText() }}</dd></div>
+              </dl>
+            </details>
           </article>
-        </div></details>
-        <details v-if="data.validation.issues?.length" class="trust-proof" open>
-          <summary>{{ isClosed ? '当前需要跟进的事项（不改变原关账结论）' : '核算准备与待复核事项' }}</summary>
-          <ul>
-            <li v-for="(issue, index) in data.validation.issues" :key="index">{{ issue.message }}</li>
-          </ul>
-        </details>
-        <details
-          v-if="data.material_completeness && !data.material_completeness.closed"
-          class="trust-proof"
-          :open="!data.material_completeness.satisfied"
-        >
-          <summary>关账前资料核对：{{ data.material_completeness.satisfied ? "已逐项核对" : "还有待处理项目" }}</summary>
-          <ul v-if="data.material_completeness.issues.length">
-            <li v-for="(issue, index) in data.material_completeness.issues" :key="index">
-              <strong v-if="issue.location">{{ issue.source_name }} {{ issue.location }}：</strong>{{ issue.message }}
-              <span v-if="issue.excerpt"> {{ issue.excerpt }}</span>
-              <span v-if="issue.difference_fen != null">差额 {{ formatFen(issue.difference_fen) }} 元</span>
-            </li>
-          </ul>
-          <p v-if="data.material_completeness.company_notes">公司业务说明：{{ data.material_completeness.company_notes.path }}</p>
-        </details>
-        <details class="trust-proof">
-          <summary>查看本月校验依据</summary>
-          <dl>
-            <div><dt>正式凭证 / 分录</dt><dd>{{ data.voucher_count }} 张 / {{ data.line_count }} 行</dd></div>
-            <div><dt>借方合计 / 贷方合计</dt><dd>{{ formatFen(data.total_debit_fen) }} / {{ formatFen(data.total_credit_fen) }}</dd></div>
-            <div><dt>银行当前有效匹配</dt><dd>{{ data.cash.matched_count }} / {{ data.cash.transaction_count }}</dd></div>
-            <div><dt>期间状态</dt><dd>{{ statusLabel(response?.selected_period?.status || "") }}</dd></div>
-            <div><dt>页面数据生成时间</dt><dd>{{ generatedText() }}</dd></div>
-          </dl>
-        </details>
-      </footer>
-      </div>
+
+          <PeriodPreparation
+            v-if="preparationStatus === 'ready' && data.period_preparation"
+            :preparation="data.period_preparation"
+            :snapshot-version="response?.snapshot_version"
+            owner-navigation
+            @changed="refresh"
+            @focus-settlements="focusOutstandingItems"
+          />
+          <section v-else class="state-panel preparation-state" :role="preparationStatus === 'error' || preparationStatus === 'stale' ? 'alert' : 'status'">
+            <strong>{{ preparationStatus === 'stale' ? '待办检查已过期' : preparationStatus === 'error' ? '待办检查读取失败' : '正在检查后续待办' }}</strong>
+            <p>{{ preparationError || '账务主数据已显示，后续事项正在读取。' }}</p>
+            <button v-if="preparationStatus === 'error'" type="button" @click="loadPreparation">重新检查</button>
+            <button v-if="preparationStatus === 'stale'" type="button" @click="refresh">刷新简报</button>
+          </section>
+        </div>
+      </section>
+
     </template>
   </section>
 </template>
@@ -621,18 +643,78 @@ onBeforeUnmount(() => {
 .update-notice { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
 .needs-check { padding: 12px; border-radius: 10px; color: var(--warning); background: var(--warning-soft); }
 .needs-check button { margin-left: 12px; cursor: pointer; background: transparent; border: 0; text-decoration: underline; }
-.collection-details { margin: 20px 0; }
-.collection-details > h2 { font-size: 19px; }
-.collection-details > details { padding: 14px 18px; margin: 8px 0; scroll-margin-top: 70px; }
-.collection-details summary { cursor: pointer; }
+.monthly-review {
+  margin-top: 24px;
+}
+
+.monthly-review-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 14px;
+  padding: 0 2px;
+}
+
+.monthly-review-heading p {
+  margin: 0 0 3px;
+  color: var(--brief-green);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.monthly-review-heading h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.monthly-review-heading div > span {
+  display: block;
+  margin-top: 3px;
+  color: var(--brief-muted);
+  font-size: 13px;
+}
+
+.monthly-review-scope {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--brief-green-soft);
+  color: var(--brief-green);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.monthly-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+}
+
+.monthly-review-grid > * {
+  min-width: 0;
+}
+
+.monthly-review-grid :deep(.period-preparation) {
+  height: auto;
+  margin: 0;
+}
+
+.preparation-state {
+  min-height: 220px;
+}
 
 .brief-page {
   --brief-page: var(--background);
+  --brief-anchor-offset: 78px;
   --brief-surface: var(--surface);
-  --brief-soft: var(--surface-soft);
+  --brief-soft: color-mix(in srgb, var(--text) 3%, var(--surface));
+  --brief-metric-surface: var(--brief-soft);
   --brief-text: var(--text);
   --brief-muted: var(--muted);
-  --brief-line: var(--line);
+  --brief-line: color-mix(in srgb, var(--text) 12%, var(--surface));
   --brief-line-strong: var(--line-strong);
   --brief-green: var(--accent);
   --brief-green-soft: var(--accent-soft);
@@ -644,10 +726,13 @@ onBeforeUnmount(() => {
   --brief-amber-soft: var(--warning-soft);
   --brief-red: var(--danger);
   --brief-red-soft: var(--danger-soft);
-  --brief-shadow: var(--shadow-soft);
+  --brief-panel-radius: var(--radius-panel, 14px);
+  --brief-control-radius: var(--radius-control, 9px);
+  --brief-shadow: none;
+  --brief-overlay-shadow: var(--shadow-overlay);
   width: min(calc(100% - 48px), 1320px);
   margin: 0 auto;
-  padding: 25px 0 46px;
+  padding: 26px 0 56px;
   color: var(--brief-text);
 }
 
@@ -664,9 +749,8 @@ onBeforeUnmount(() => {
 .state-panel {
   padding: 28px;
   border: 1px solid var(--brief-line);
-  border-radius: 18px;
+  border-radius: var(--brief-panel-radius);
   background: var(--brief-surface);
-  box-shadow: var(--brief-shadow);
 }
 
 .state-panel h2,
@@ -688,57 +772,127 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.section-anchor {
-  scroll-margin-top: 78px;
+.brief-page :deep(.section-anchor),
+.brief-page :deep(.voucher-card) {
+  scroll-margin-top: var(--brief-anchor-offset);
 }
 
-.cockpit {
+
+
+
+
+
+
+.brief-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.75fr);
-  gap: 25px;
+  gap: 24px 40px;
   min-height: 198px;
-  padding: 23px 25px;
-  border: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
+  padding: 25px 28px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
   border-radius: 20px;
   background:
-    radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--brief-green) 11%, transparent), transparent 32%),
-    linear-gradient(125deg, var(--brief-surface), color-mix(in srgb, var(--brief-green-soft) 66%, var(--brief-surface)));
-  box-shadow: var(--brief-shadow);
+    radial-gradient(circle at 7% 12%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32%),
+    linear-gradient(125deg, var(--surface), color-mix(in srgb, var(--accent-soft) 66%, var(--surface)));
 }
 
-.cockpit-meta,
+.brief-hero-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 28px;
+  margin-bottom: -12px;
+}
+
+.brief-hero-topline > .dashboard-hero-eyebrow {
+  flex: none;
+  margin: 0;
+}
+
+.hero-metric { min-width: 0; }
+.hero-metric h2 {
+  margin: 0;
+  color: var(--brief-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+.hero-metric strong {
+  color: var(--brief-green);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.hero-metric strong.loss { color: var(--brief-red); }
+.hero-metric p {
+  color: var(--brief-muted);
+  line-height: 1.6;
+}
+.brief-hero .status-rail { justify-content: flex-end; }
+
+.cockpit {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 28px;
+  padding: 0 2px;
+}
+
+.cockpit.has-details {
+  padding: 20px 24px;
+  border: 1px solid var(--brief-line);
+  border-radius: var(--brief-panel-radius);
+  background: var(--brief-surface);
+}
+
+.cockpit.has-actions.has-notes {
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.85fr);
+}
+
+.cockpit-copy {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.cockpit.has-actions .cockpit-copy {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  gap: 14px;
+}
+
 .status-rail {
   display: flex;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 7px 13px;
-  color: var(--brief-muted);
-  font-size: 11px;
+  gap: 8px 18px;
 }
 
-.cockpit-meta span:first-child {
-  color: var(--brief-green);
-  font-weight: 850;
-  letter-spacing: 0.06em;
+.cockpit.has-details .status-rail {
+  justify-content: flex-start;
 }
 
-.cockpit h2 {
-  margin: 7px 0 3px;
-  font-size: clamp(25px, 2.8vw, 34px);
-  letter-spacing: -0.04em;
-}
-
-.hero-note {
-  margin: 0;
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--brief-muted);
   font-size: 12px;
 }
 
-.status-rail {
-  margin-top: 11px;
+.status-chip::before {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--brief-green);
+  content: "";
 }
 
-.status-chip,
-.queue-count,
+.status-chip.attention { color: var(--brief-amber); }
+.status-chip.attention::before { background: var(--brief-amber); }
+.status-chip.error { color: var(--brief-red); }
+.status-chip.error::before { background: var(--brief-red); }
+
 .trust-state {
   display: inline-flex;
   min-height: 25px;
@@ -751,13 +905,11 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 
-.status-chip.attention,
 .trust-state.attention {
   background: var(--brief-amber-soft);
   color: var(--brief-amber);
 }
 
-.status-chip.error,
 .trust-state.error {
   background: var(--brief-red-soft);
   color: var(--brief-red);
@@ -765,35 +917,34 @@ onBeforeUnmount(() => {
 
 .takeaway {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-  margin-top: 13px;
-  padding-top: 11px;
-  border-top: 1px solid color-mix(in srgb, var(--brief-green) 18%, var(--brief-line));
+  grid-column: 1 / -1;
+  gap: 6px;
+  max-width: 80ch;
 }
 
-.takeaway span {
-  color: var(--brief-green);
+.takeaway > span {
+  color: var(--brief-muted);
   font-size: 11px;
-  font-weight: 850;
-  white-space: nowrap;
 }
 
-.takeaway details { grid-column: 1 / -1; font-size: 13px; }
+.takeaway > p {
+  margin: 0;
+  color: var(--brief-text);
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.takeaway details { font-size: 13px; }
 .takeaway summary { cursor: pointer; color: var(--muted); }
-
-.takeaway strong {
-  font-size: 14px;
-  line-height: 1.55;
-}
 
 .action-queue {
   min-width: 0;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--brief-line) 82%, transparent);
-  border-radius: 15px;
-  background: color-mix(in srgb, var(--brief-surface) 83%, transparent);
+  align-self: start;
+  padding: 14px 16px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--brief-amber-soft) 38%, var(--brief-surface));
 }
 
 .action-queue header {
@@ -803,23 +954,21 @@ onBeforeUnmount(() => {
   gap: 13px;
 }
 
-.queue-title,
-.healthy-summary span,
+.queue-title {
+  color: var(--brief-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.queue-count,
 .priority-list small {
   color: var(--brief-muted);
   font-size: 11px;
 }
 
-.queue-count {
-  min-width: 27px;
-  justify-content: center;
-  background: var(--brief-amber-soft);
-  color: var(--brief-amber);
-}
-
-.queue-count.healthy {
-  background: var(--brief-green-soft);
-  color: var(--brief-green);
+.cockpit:not(.has-notes) .priority-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
 }
 
 .priority-list {
@@ -835,10 +984,10 @@ onBeforeUnmount(() => {
   gap: 9px;
   align-items: center;
   width: 100%;
-  padding: 7px 9px;
+  padding: 9px 0;
   border: 0;
-  border-radius: 9px;
-  background: var(--brief-soft);
+  border-radius: 6px;
+  background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
@@ -876,84 +1025,90 @@ onBeforeUnmount(() => {
 }
 
 .priority-list article > div,
-.priority-list .priority-action > div,
-.healthy-summary {
+.priority-list .priority-action > div {
   display: grid;
+  gap: 4px;
 }
 
 .priority-list strong {
   font-size: 12px;
 }
 
-.healthy-summary {
-  gap: 4px;
-  margin-top: 17px;
-  padding: 13px;
-  border-radius: 11px;
-  background: var(--brief-green-soft);
-  color: var(--brief-green);
-}
-
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 10px;
+  gap: 20px 28px;
+  margin-top: 8px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+
+  grid-column: 1 / -1;
 }
 
 .kpi {
-  position: relative;
   display: grid;
   min-width: 0;
-  min-height: 126px;
-  align-content: space-between;
-  gap: 4px;
-  overflow: hidden;
-  padding: 15px 16px;
-  border: 1px solid var(--brief-line);
-  border-radius: 16px;
-  background: var(--brief-surface);
+  min-height: 0;
+  grid-template-rows: auto auto 1fr;
+  gap: 6px;
+  align-content: start;
+  padding: 0;
+  border: 0;
+  border-left: 0;
+  background: transparent;
   color: var(--brief-text);
-  box-shadow: var(--brief-shadow);
   font: inherit;
   text-align: left;
+
+  border-radius: 0;
 }
 
-.kpi::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 3px;
-  background: var(--brief-green);
-  content: "";
-}
-
-.kpi.bank::before,
-.kpi.open::before {
-  background: var(--brief-blue);
-}
-
-.kpi.combined-open::before {
-  background: linear-gradient(90deg, var(--brief-blue) 0 50%, var(--brief-amber) 50%);
-}
-
-.kpi.asset::before {
-  background: var(--brief-gold);
-}
-
-.kpi.result.loss::before {
-  background: var(--brief-red);
+.kpi:first-child {
+  border-left: 0;
 }
 
 button.kpi {
+  position: relative;
+  border-radius: var(--brief-control-radius);
   cursor: pointer;
+  transition: background-color 150ms ease;
 }
 
 button.kpi:hover,
 button.kpi:focus-visible {
-  border-color: var(--brief-green);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--brief-soft) 72%, transparent);
+}
+
+button.kpi:hover > strong {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+button.kpi:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 6px;
+}
+
+button.kpi::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  color: var(--brief-muted);
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+  transform: translateX(-3px);
+  transition: opacity 150ms ease, transform 150ms ease;
+  content: "›";
+}
+
+button.kpi:hover::after,
+button.kpi:focus-visible::after {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .kpi-label {
@@ -964,98 +1119,49 @@ button.kpi:focus-visible {
 
 .kpi > strong {
   overflow-wrap: anywhere;
-  font-size: clamp(20px, 2vw, 27px);
+  font-size: clamp(20px, 2vw, 26px);
   line-height: 1.15;
   letter-spacing: -0.025em;
-}
-
-.kpi.result:not(.loss) > strong {
-  color: var(--brief-green);
-}
-
-.kpi.result.loss > strong {
-  color: var(--brief-red);
 }
 
 .kpi.asset > strong {
   color: var(--brief-gold);
 }
 
-.kpi.bank > strong,
-.kpi.open > strong {
+.kpi.funds > strong {
+  color: var(--brief-green);
+}
+
+.kpi.receivable > strong {
   color: var(--brief-blue);
+}
+
+.kpi.payable > strong {
+  color: var(--brief-amber);
 }
 
 .kpi small {
   color: var(--brief-muted);
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .kpi small b {
   color: var(--brief-green);
 }
 
-.open-values {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.open-values > span {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.open-values > span > small {
-  font-size: 10px;
-}
-
-.open-values strong {
-  overflow: hidden;
-  font-size: clamp(16px, 1.35vw, 20px);
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.open-values > span:first-child strong {
-  color: var(--brief-blue);
-}
-
-.open-values > span:last-child strong {
-  color: var(--brief-amber);
-}
-
-.kpi-grid + .section-anchor,
-.section-anchor + .section-anchor {
-  margin-top: 12px;
-}
-
-.final-section-space {
-  min-height: calc(100vh - 80px);
+.brief-content-section {
+  margin-top: 40px;
 }
 
 .trust-footer {
-  margin-top: 12px;
-  padding: 15px 18px;
+  margin: 0;
+  padding: 19px 20px;
   border: 1px solid var(--brief-line);
-  border-left: 3px solid var(--brief-green);
-  border-radius: 16px;
+  border-radius: var(--brief-panel-radius);
   background: var(--brief-surface);
-  box-shadow: var(--brief-shadow);
 }
 
-.trust-footer.attention {
-  border-left-color: var(--brief-amber);
-}
-
-.trust-footer.error {
-  border-left-color: var(--brief-red);
-}
 
 .trust-heading {
   display: flex;
@@ -1066,25 +1172,37 @@ button.kpi:focus-visible {
 
 .trust-heading p {
   margin: 0 0 3px;
-  color: var(--brief-green);
+  color: var(--brief-muted);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
 
-.trust-heading h2 {
+.trust-heading h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .trust-heading > div > span {
   color: var(--brief-muted);
+  font-size: 13px;
+}
+
+.trust-footer > details:first-of-type {
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+.trust-footer > details:first-of-type > summary {
+  color: var(--brief-green);
   font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
 }
 
 .checks {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   margin-top: 9px;
 }
@@ -1094,8 +1212,8 @@ button.kpi:focus-visible {
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
-  padding: 7px 8px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: var(--brief-control-radius);
   background: var(--brief-soft);
 }
 
@@ -1132,21 +1250,19 @@ button.kpi:focus-visible {
 }
 
 .checks strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .checks small {
-  overflow: hidden;
   color: var(--brief-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .trust-proof {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid var(--brief-line);
 }
 
 .trust-proof summary {
@@ -1182,9 +1298,48 @@ button.kpi:focus-visible {
   text-align: right;
 }
 
+@media (max-width: 1199px) {
+  .brief-page {
+    --brief-anchor-offset: 124px;
+  }
+
+.brief-header :deep(.toolbar) {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+}
+
+@media (max-width: 720px) {
+  .brief-page {
+    --brief-anchor-offset: 174px;
+  }
+
+.brief-header :deep(h1) {
+    font-size: 24px;
+  }
+
+.brief-header :deep(.toolbar select) {
+    min-width: 0;
+    width: 0;
+    flex: 1;
+  }
+
+.brief-header :deep(.period-status) {
+    flex: none;
+    padding: 3px 7px;
+    font-size: 11px;
+  }
+}
+
 @media (max-width: 1080px) {
-  .cockpit {
+  .cockpit.has-actions.has-notes {
     grid-template-columns: minmax(0, 1.3fr) minmax(275px, 0.8fr);
+  }
+
+  .cockpit-copy {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
 
   .kpi-grid {
@@ -1194,19 +1349,35 @@ button.kpi:focus-visible {
   .checks {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .monthly-review-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
+  .brief-hero { padding: 20px; border-radius: 17px; }
+
+  .brief-hero-topline {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .brief-hero .status-rail { justify-content: flex-start; }
+
   .brief-page {
     width: min(calc(100% - 24px), 1320px);
     padding: 16px 0 24px;
   }
 
-  .cockpit {
+  .cockpit,
+  .cockpit.has-actions.has-notes {
     grid-template-columns: 1fr;
     gap: 13px;
-    padding: 19px;
-    border-radius: 17px;
+  }
+
+  .cockpit.has-details {
+    padding: 16px;
   }
 
   .takeaway {
@@ -1214,8 +1385,12 @@ button.kpi:focus-visible {
     gap: 3px;
   }
 
+  .cockpit:not(.has-notes) .priority-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .action-queue {
-    padding: 12px;
+    padding: 12px 14px;
   }
 
   .kpi-grid {
@@ -1223,12 +1398,22 @@ button.kpi:focus-visible {
   }
 
   .kpi {
-    min-height: 116px;
-    padding: 12px;
+    min-height: 104px;
+    padding: 14px;
+    border-left: 0;
   }
 
-  .section-anchor {
-    scroll-margin-top: 68px;
+  .kpi + .kpi {
+    border-top: 1px solid var(--brief-line);
+  }
+
+  .monthly-review-heading {
+    display: block;
+  }
+
+  .monthly-review-scope {
+    display: inline-block;
+    margin-top: 9px;
   }
 
   .trust-footer {
@@ -1240,13 +1425,17 @@ button.kpi:focus-visible {
     gap: 8px;
   }
 
-  .checks,
   .trust-proof dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .checks {
+    grid-template-columns: 1fr;
+  }
+
   .checks small {
     white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .trust-proof summary {
@@ -1257,12 +1446,14 @@ button.kpi:focus-visible {
 }
 
 @media (max-width: 430px) {
-  .cockpit h2 {
-    font-size: 26px;
-  }
-
   .kpi > strong {
     font-size: 23px;
   }
+}
+
+.brief-hero .kpi-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
+.brief-hero .kpi-grid strong { font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) {
+  .brief-hero .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 }
 </style>

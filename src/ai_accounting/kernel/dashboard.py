@@ -198,6 +198,13 @@ for _prefix, _label in (("5401", "主营业务成本"), ("5601", "销售费用")
 PAYROLL_KINDS = {"payroll", "payroll_bounded", "annual_bonus"}
 LABOR_KINDS = {"labor", "labor_accrual"}
 ASSET_KINDS = {"asset", "reimbursed_asset", "opening_asset"}
+ASSET_LIFECYCLE_KINDS = {
+    *ASSET_KINDS,
+    "asset_activation",
+    "asset_consumption",
+    "asset_disposal",
+}
+ASSET_BATCH_OWNER_KINDS = {"asset_activation_batch", "asset_consumption_month"}
 FUND_TYPES = {"bank": "bank", "cash": "cash", "platform": "payment_platform"}
 
 
@@ -904,28 +911,94 @@ class _Snapshot:
             key=lambda item: (item["name"], item["digest"]),
         )
 
-    def asset_reference(self, calc):
-        if calc["kind"] not in {"asset_activation", "asset_consumption"}:
-            return None
-        asset_id = calc["fact"]["data"].get("asset_id") or calc["outcome"].get(
-            "values", {}
-        ).get("asset_id")
-        if not isinstance(asset_id, str) or not asset_id:
-            return None
-        profile = self.profile("asset", asset_id)
+    @staticmethod
+    def asset_identities(calc):
+        """Return only card identities explicitly carried by this typed calculation."""
+        kind, fact = calc["kind"], calc["fact"]
+        data = fact["data"]
+        identities = []
+        if kind in ASSET_KINDS:
+            identities.append((fact["subject_id"], data.get("asset_type")))
+        elif kind in ASSET_LIFECYCLE_KINDS:
+            identities.append(
+                (
+                    data.get("asset_id")
+                    or calc["outcome"].get("values", {}).get("asset_id"),
+                    data.get("asset_type")
+                    or calc["outcome"].get("values", {}).get("asset_type"),
+                )
+            )
+        elif kind == "reimbursed_asset_batch":
+            identities.extend(
+                (item.get("asset_id"), item.get("asset_type"))
+                for item in data.get("assets", ())
+            )
+        if not identities:
+            return ()
+
         accounts = {line.get("account") for line in calc["outcome"].get("lines", ())}
-        asset_type = calc["outcome"].get("values", {}).get("asset_type")
-        if asset_type not in {"fixed", "intangible"}:
-            asset_type = "intangible" if accounts & {"1701", "1702"} else "fixed"
-        return {
-            "asset_id": asset_id,
-            "asset_type": asset_type,
-            "name": profile.get("display_name"),
-            "code": profile.get("display_number"),
-            "field_sources": _display_sources(
-                profile, name="display_name", code="display_number"
-            ),
-        }
+        account_type = (
+            "intangible"
+            if accounts & {"1701", "1702", "189901"}
+            else "fixed"
+            if accounts & {"1601", "1602", "1604"}
+            else None
+        )
+        result = []
+        for asset_id, asset_type in identities:
+            if not isinstance(asset_id, str) or not asset_id:
+                continue
+            resolved_type = asset_type if asset_type in {"fixed", "intangible"} else account_type
+            if resolved_type not in {"fixed", "intangible"}:
+                # Every supported fact has a typed source. Keep the response contract
+                # stable if an older zero-line calculation omitted the derived type.
+                resolved_type = "fixed"
+            item = (asset_id, resolved_type)
+            if item not in result:
+                result.append(item)
+        return tuple(result)
+
+    def asset_references(self, calc):
+        references = []
+        for asset_id, asset_type in self.asset_identities(calc):
+            profile = self.profile("asset", asset_id)
+            references.append(
+                {
+                    "asset_id": asset_id,
+                    "asset_type": asset_type,
+                    "name": profile.get("display_name"),
+                    "code": profile.get("display_number"),
+                    "field_sources": _display_sources(
+                        profile, name="display_name", code="display_number"
+                    ),
+                }
+            )
+        return references
+
+    def asset_reference(self, calc):
+        references = self.asset_references(calc)
+        return references[0] if len(references) == 1 else None
+
+    def asset_member_contributions(self, row):
+        """Resolve an owner voucher's frozen members once for display and profile priming."""
+        if row["basis"]["kind"] not in ASSET_BATCH_OWNER_KINDS:
+            return None, ()
+        cached = row.get("_dashboard_asset_members")
+        if cached is not None:
+            return cached
+        frozen_owner = row["voucher_calculation_id"]
+        if row["reverses_id"]:
+            frozen_owner = self.connection.execute(
+                "SELECT calculation_id FROM voucher_version WHERE id=?",
+                (row["reverses_id"],),
+            ).fetchone()[0]
+        members = tuple(
+            (member, self.calculation(member["member_calculation_id"]))
+            for member in self.reads.asset_members(frozen_owner)
+        )
+        cached = (frozen_owner, members)
+        row["_dashboard_asset_members"] = cached
+        return cached
 
     @staticmethod
     def asset_reference_label(asset):
@@ -936,10 +1009,20 @@ class _Snapshot:
             return name
         if code:
             return f"资产卡片 {code}"
-        return "未命名资产卡片"
+        return f"资产卡片 {asset['asset_id']}"
+
+    def asset_references_label(self, assets):
+        unique = list({item["asset_id"]: item for item in assets}.values())
+        if not unique:
+            return ""
+        if len(unique) == 1:
+            return self.asset_reference_label(unique[0])
+        labels = "、".join(self.asset_reference_label(item) for item in unique[:2])
+        suffix = "等" if len(unique) > 2 else ""
+        return f"{len(unique)} 张资产卡片：{labels}{suffix}"
 
     def business_summary(
-        self, calc, sign=1, relations=None, *, include_sources=False, asset_reference=None
+        self, calc, sign=1, relations=None, *, include_sources=False, asset_references=()
     ):
         """Owner-facing wording from exact selected facts, without inferred business causes."""
         data, kind = calc["fact"]["data"], calc["kind"]
@@ -955,11 +1038,15 @@ class _Snapshot:
             "employee_advance": "个人代付",
             "reimbursement_acceptance": "确认代付款",
             "settlement": "款项抵销",
+            "asset": "购置资产",
+            "asset_activation": "启用资产",
             "asset_consumption": "折旧摊销",
+            "asset_disposal": "处置资产",
             "asset_activation_batch": "启用整批资产",
             "asset_consumption_month": "计提月度折旧摊销",
             "reimbursed_asset_batch": "验收整批资产",
             "reimbursed_asset": "确认报销资产",
+            "opening_asset": "接续资产卡片",
             "labor": "确认劳务报酬",
             "labor_accrual": "确认劳务报酬",
             "labor_project_cost": "确认项目劳务",
@@ -993,12 +1080,14 @@ class _Snapshot:
                 "retained_verification_payment": "确认验证款收入",
                 "bank_promotion_reward": "奖励到账",
             }.get(data.get("income_kind"), short)
-        if asset_reference and kind == "asset_consumption":
+        if asset_references and kind == "asset_consumption":
             short = (
                 "计提摊销"
-                if asset_reference["asset_type"] == "intangible"
+                if asset_references[0]["asset_type"] == "intangible"
                 else "计提折旧"
             )
+        elif kind == "asset_disposal":
+            short = "出售资产" if data.get("disposal_kind") == "sale" else "报废资产"
         if profile.get("display_name"):
             short = profile["display_name"]
         ids = [
@@ -1028,15 +1117,13 @@ class _Snapshot:
         # Preserve different identities even when their display names happen to be equal.
         who = "、".join(names[:3]) + (f"等{len(names)}个对象" if len(names) > 3 else "")
         when = "、".join(sorted(periods)) if periods else period
-        asset_label = (
-            self.asset_reference_label(asset_reference) if asset_reference else ""
-        )
+        asset_label = self.asset_references_label(asset_references)
         detail = (
             f"{short}（{when}）"
             + (f" · {asset_label}" if asset_label else "")
             + (f" · {who}" if who else "")
         )
-        if kind in {"asset_activation_batch", "asset_consumption_month"}:
+        if kind in ASSET_BATCH_OWNER_KINDS and not asset_references:
             count = calc["outcome"].get("values", {}).get("member_count")
             if type(count) is int:
                 detail += f" · {count} 张资产卡片"
@@ -1062,7 +1149,7 @@ class _Snapshot:
             for party in named_parties:
                 source = party.get("field_sources", {}).get("name")
                 sources.extend(source if isinstance(source, list) else [source] if source else [])
-            if asset_reference:
+            for asset_reference in asset_references:
                 for field in ("name", "code"):
                     source = asset_reference["field_sources"].get(field)
                     sources.extend(
@@ -1142,13 +1229,68 @@ class _Snapshot:
         management = self.management.get(fact["subject_id"])
         note = profile.get("note") or (management["note"] if management else None) or ""
         relations = self.voucher_relations(calc, row["sign"])
-        asset_reference = self.asset_reference(calc)
+        asset_references = self.asset_references(calc)
+        asset_reference = asset_references[0] if len(asset_references) == 1 else None
+        asset_members = []
+        asset_lines = {}
+        member_evidence = set()
+        if kind in ASSET_BATCH_OWNER_KINDS:
+            # A reviewed owner may reuse a voucher. Its displayed line sources
+            # remain those of the actual voucher, including a reversal's source.
+            frozen_owner, contributions = self.asset_member_contributions(row)
+            for member, contribution in contributions:
+                reference = self.asset_reference(contribution)
+                if reference is None:
+                    raise KernelError(
+                        "dashboard_asset_reference_missing",
+                        "资产批次成员缺少精确资产卡片身份",
+                    )
+                member_amount, member_label = self.business_amount(contribution)
+                detail = {
+                    **reference,
+                    "calculation_id": contribution["id"],
+                    "owner_calculation_id": frozen_owner,
+                    "amount_fen": (
+                        row["sign"] * member_amount if member_amount is not None else None
+                    ),
+                    "amount_label": member_label,
+                    "line_start": member["line_start"],
+                    "line_count": member["line_count"],
+                }
+                asset_members.append(detail)
+                member_evidence.update(contribution["fact"]["evidence"])
+                if member["line_start"] is not None:
+                    for number in range(
+                        member["line_start"], member["line_start"] + member["line_count"]
+                    ):
+                        asset_lines[number] = detail
+        elif kind == "reimbursed_asset_batch" and len(asset_references) > 1:
+            costs = {
+                item["asset_id"]: item["cost_fen"]
+                for item in data.get("assets", ())
+                if isinstance(item.get("asset_id"), str)
+                and type(item.get("cost_fen")) is int
+            }
+            asset_members = [
+                {
+                    **reference,
+                    "calculation_id": calc["id"],
+                    "owner_calculation_id": calc["id"],
+                    "amount_fen": row["sign"] * costs[reference["asset_id"]],
+                    "amount_label": "已确认资产成本",
+                    "line_start": None,
+                    "line_count": 0,
+                }
+                for reference in asset_references
+                if reference["asset_id"] in costs
+            ]
+        summary_asset_references = asset_references or asset_members
         short_summary, summary, summary_sources = self.business_summary(
             calc,
             row["sign"],
             relations,
             include_sources=True,
-            asset_reference=asset_reference,
+            asset_references=summary_asset_references,
         )
         note_source = profile["field_sources"].get("note")
         if not note_source and management and management.get("note"):
@@ -1194,39 +1336,7 @@ class _Snapshot:
                     "amount_fen": abs(change),
                 }
             )
-        evidence = set(fact["evidence"])
-        asset_members = []
-        asset_lines = {}
-        if kind in {"asset_activation_batch", "asset_consumption_month"}:
-            # A reviewed owner may reuse a voucher. Its displayed line sources
-            # remain those of the actual voucher, including a reversal's source.
-            frozen_owner = row["voucher_calculation_id"]
-            if row["reverses_id"]:
-                frozen_owner = self.connection.execute(
-                    "SELECT calculation_id FROM voucher_version WHERE id=?",
-                    (row["reverses_id"],),
-                ).fetchone()[0]
-            for member in self.reads.asset_members(frozen_owner):
-                contribution = self.calculation(member["member_calculation_id"])
-                reference = self.asset_reference(contribution)
-                member_amount, member_label = self.business_amount(contribution)
-                detail = {
-                    **reference,
-                    "calculation_id": contribution["id"],
-                    "owner_calculation_id": frozen_owner,
-                    "amount_fen": (
-                        row["sign"] * member_amount if member_amount is not None else None
-                    ),
-                    "amount_label": member_label,
-                    "line_start": member["line_start"], "line_count": member["line_count"],
-                }
-                asset_members.append(detail)
-                evidence.update(contribution["fact"]["evidence"])
-                if member["line_start"] is not None:
-                    for number in range(
-                        member["line_start"], member["line_start"] + member["line_count"]
-                    ):
-                        asset_lines[number] = detail
+        evidence = set(fact["evidence"]) | member_evidence
         for ref in self.connection.execute(
             "SELECT fact_id FROM dependency_fact WHERE calculation_id=?", (calc["id"],)
         ):
@@ -1581,12 +1691,17 @@ class Dashboard:
                     raise KernelError("dashboard_voucher_not_found", "所选月份没有这张精确凭证")
                 focused_row = found[0]
             profile_rows = [*rows, *([focused_row] if focused_row else [])]
-            asset_ids = {
-                row["basis"]["fact"]["data"]["asset_id"]
-                for row in profile_rows
-                if row["basis"]["kind"] == "asset_consumption"
-                and isinstance(row["basis"]["fact"]["data"].get("asset_id"), str)
-            }
+            asset_ids = set()
+            for row in profile_rows:
+                asset_ids.update(
+                    asset_id for asset_id, _ in snap.asset_identities(row["basis"])
+                )
+                _, contributions = snap.asset_member_contributions(row)
+                for _, contribution in contributions:
+                    asset_ids.update(
+                        asset_id
+                        for asset_id, _ in snap.asset_identities(contribution)
+                    )
             if asset_ids:
                 snap.metadata.prime_profiles("asset", asset_ids)
             vouchers = [snap.voucher(row) for row in rows]
@@ -2456,8 +2571,27 @@ def _open_items(snap, *, historical=None, current=None, after=None, limit=100, s
         )
 
     sources = outstanding(historical)
+    current_by_key = {row["key"]: row for row in current["obligations"]}
     selected, page = page_keys([row["key"] for row in sources], after, limit)
     selected = set(selected) if not summary_only else set()
+    payroll_components = {
+        "net": "实发工资",
+        "tax": "代扣个人所得税",
+        "withheld_tax": "代扣个人所得税",
+        "employee_social": "个人社保",
+        "employee_housing": "个人公积金",
+        "employer_social": "单位社保",
+        "employer_housing": "单位公积金",
+    }
+    payroll_fact_ids = {
+        source["source_fact_id"]
+        for source in sources
+        if source["key"] in selected
+        and (source.get("source_business") or {}).get("kind")
+        in PAYROLL_KINDS | {"opening_payroll_payable"}
+        and source.get("source_fact_id")
+    }
+    payroll_facts = snap.reads.facts(payroll_fact_ids) if payroll_fact_ids else {}
     buckets, categories, items = defaultdict(list), [], []
     for source in sources:
         buckets[category(source)].append(source)
@@ -2469,12 +2603,29 @@ def _open_items(snap, *, historical=None, current=None, after=None, limit=100, s
         for source in sources_in_category:
             if source["key"] not in selected:
                 continue
+            current_source = current_by_key.get(source["key"])
             business = source.get("source_business") or {}
-            party_id = (
+            settlement_party_id = (
                 source.get("creditor_id")
                 or source.get("counterparty_id")
                 or source.get("recipient_id")
             )
+            source_fact = payroll_facts.get(source.get("source_fact_id"), {})
+            fact_data = source_fact.get("data", {})
+            component = (
+                fact_data.get("component")
+                if business.get("kind") == "opening_payroll_payable"
+                else source.get("name")
+            )
+            employee_id = fact_data.get("employee_id")
+            party_id = (
+                employee_id
+                if component in payroll_components and isinstance(employee_id, str)
+                else settlement_party_id
+            )
+            description = payroll_components.get(component, _name(business.get("kind", "")))
+            if business.get("kind") == "annual_bonus" and component in {"net", "tax"}:
+                description = "实发奖金" if component == "net" else "奖金代扣个税"
             row = {
                 **source,
                 "id": source["key"],
@@ -2482,9 +2633,15 @@ def _open_items(snap, *, historical=None, current=None, after=None, limit=100, s
                 "voucher": "查看精确来源",
                 "party_key": party_id or source["key"],
                 **snap.party_field(party_id),
-                "description": _name(business.get("kind", "")),
+                "description": description,
                 "status": source["settlement_status"],
                 "outstanding_fen": source["remaining_fen"],
+                "current_status": (
+                    current_source.get("settlement_status") if current_source is not None else None
+                ),
+                "current_outstanding_fen": (
+                    current_source.get("remaining_fen") if current_source is not None else None
+                ),
                 "subject_id": business.get("subject_id"),
             }
             rows.append(row)
@@ -4235,6 +4392,7 @@ def _quarterly_view(plan, closed, details=None, carry_forward_fact_id=None):
         "readiness": readiness,
         "summary": {
             "assets_total_fen": statements["balance_sheet"]["30"]["ending_fen"],
+            "liabilities_total_fen": statements["balance_sheet"]["47"]["ending_fen"],
             "liabilities_equity_total_fen": statements["balance_sheet"]["53"]["ending_fen"],
             "current_net_profit_fen": statements["profit_statement"]["32"]["current_fen"],
             "year_to_date_net_profit_fen": statements["profit_statement"]["32"]["year_to_date_fen"],

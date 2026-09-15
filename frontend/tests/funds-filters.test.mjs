@@ -27,7 +27,7 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
     const { computed, nextTick, ref, watch } = globalThis.${key}.Vue;
     const onMounted = () => {}; const onBeforeUnmount = () => {};
     const { fetchFundsDashboard } = globalThis.${key};
-    const { fundAccountLabel, rememberFundAccounts } = globalThis.${key}.api;
+    const { fundAccountDisplayLabel, fundAccountDisplayName, fundAccountLabel, rememberFundAccounts } = globalThis.${key}.api;
     const useRoute = () => globalThis.${key}.route;
     const navigate = async target => { globalThis.${key}.route.query = target.query; globalThis.${key}.route.hash = target.hash ?? ''; };
     const useRouter = () => ({ replace: navigate, push: navigate });
@@ -37,7 +37,7 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
     const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
     const fen = BigInt; const formatFen = String; const formatPositiveFen = String;
   `;
-  const exported = "\nexport { loadFunds, loadMore, refresh, funds, snapshotVersion, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, loading, pageStates, requestError, accountOptions, responsePeriod, voucherTarget, changeAccountFilters, selectDetailView, updateNotice };";
+  const exported = "\nexport { loadFunds, loadMore, refresh, funds, snapshotVersion, selectedPeriod, selectedAccount, selectedBankAccount, selectedDetailView, visibleMovements, visibleBankRows, loading, pageStates, requestError, accountOptions, responsePeriod, voucherTarget, selectMovementAccount, selectDetailView, updateNotice };";
   const { outputText } = ts.transpileModule(imports + source + exported, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
@@ -49,7 +49,10 @@ async function fundsView(fetchFundsDashboard, refreshContext = async () => {}, q
 function data(account = "bank-a", next = "next") {
   const page = { has_more: !!next, next_cursor: next, total_count: 2, filtered_count: 2, returned_count: 1 };
   const value = {
-    accounts: ["bank-a", "bank-b"].map(account_id => ({ type: "bank", account_id, code: account_id, name: account_id, reconciliation: { state: "complete" } })),
+    accounts: ["bank-a", "bank-b"].map(account_id => ({
+      type: "bank", account_id, code: account_id, name: account_id, movement_count: 2,
+      statement: { transaction_count: 2 }, reconciliation: { state: "complete" },
+    })),
     movements: [{ id: `${account}-first`, account_type: "bank", account_id: account }],
     movement_page: { ...page }, movement_count: 4,
     bank_statement: { rows: [{ id: "old-statement" }], page: { ...page }, transaction_count: 4 },
@@ -67,34 +70,39 @@ function response(value, snapshot = "version") {
   return { schema_version: 2, snapshot_version: snapshot, selected_period: { key: "2026-09", label: "2026 年 9 月" }, data: value };
 }
 
-test("account changes clear every old page and reject an earlier continuation", async () => {
-  const calls = [];
-  const view = await fundsView((period, signal, query) => new Promise(resolve => calls.push({ period, signal, query, resolve })));
-  view.selectedAccount.value = "bank:bank-a";
-  view.selectedBankAccount.value = "bank-a";
-  view.funds.value = data();
-  view.snapshotVersion.value = "version";
-  const earlier = view.loadMore("book");
-  assert.equal(calls[0].query.cursor, "next");
-  assert.equal(calls[0].query.section, "movements");
-  assert.equal(calls[0].query.movement_account_id, "bank-a");
-  assert.equal(calls[0].query.statement_account_id, "bank-a");
-  assert.equal(calls[0].query.expected_version, "version");
+test("account clicks switch cached movement groups without a request or route change", async () => {
+  let requested = 0;
+  const view = await fundsView(async () => { requested += 1; return response(data()); });
+  const cached = data();
+  cached.movements.push({ id: "bank-b-first", account_type: "bank", account_id: "bank-b" });
+  cached.collections.movements.items = cached.movements;
+  view.funds.value = cached;
+  view.selectMovementAccount("bank:bank-a");
+  assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-a-first"]);
+  const sameSnapshot = view.funds.value;
+  view.selectMovementAccount("bank:bank-b");
+  assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-b-first"]);
+  view.selectMovementAccount("");
+  assert.deepEqual(view.visibleMovements.value.map(row => row.id), ["bank-a-first", "bank-b-first"]);
+  assert.equal(view.funds.value, sameSnapshot);
+  assert.equal(view.route.query.movement_account_id, undefined);
+  assert.equal(requested, 0);
+});
 
-  view.selectedAccount.value = "bank:bank-b";
-  const changed = view.loadFunds("2026-09");
-  assert.equal(calls[0].signal.aborted, true);
-  assert.equal(view.funds.value, null);
-  assert.equal(view.snapshotVersion.value, "");
-  assert.equal(calls[1].query.movement_account_id, "bank-b");
-  assert.equal(calls[1].query.after_movement, undefined);
-  calls[0].resolve(response(data("bank-a", null)));
-  await earlier;
-  assert.equal(view.funds.value, null);
-  calls[1].resolve(response(data("bank-b", null), "new-version"));
-  await changed;
-  assert.deepEqual(view.funds.value.movements.map(row => row.account_id), ["bank-b"]);
-  assert.equal(view.snapshotVersion.value, "new-version");
+test("bank account dropdown filters cached statement rows without a request or route change", async () => {
+  let requested = 0;
+  const view = await fundsView(async () => { requested += 1; return response(data()); });
+  const cached = data();
+  cached.bank_statement.rows = [
+    { id: "statement-a", account_id: "bank-a" },
+    { id: "statement-b", account_id: "bank-b" },
+  ];
+  cached.collections.statements.items = cached.bank_statement.rows;
+  view.funds.value = cached;
+  view.selectedBankAccount.value = "bank-b";
+  assert.deepEqual(view.visibleBankRows.value.map(row => row.id), ["statement-b"]);
+  assert.equal(view.route.query.statement_account_id, undefined);
+  assert.equal(requested, 0);
 });
 
 test("a late first page cannot replace a later account selection", async () => {
@@ -167,7 +175,7 @@ test("independent continuations merge into the latest snapshot and failures stay
   assert.equal(view.funds.value.bank_statement.rows.length, 2);
 });
 
-test("route restoration preserves account filters and view while retrieving a fresh first page", async () => {
+test("legacy account routes select the cached group once and are then removed", async () => {
   const calls = [];
   const view = await fundsView(async (period, signal, query) => { calls.push(query); return response(data()); }, undefined,
     { movement_account_type: "bank", movement_account_id: "bank-b", statement_account_id: "bank-b", funds_view: "bank" });
@@ -176,11 +184,16 @@ test("route restoration preserves account filters and view while retrieving a fr
   assert.equal(view.selectedAccount.value, "bank:bank-b");
   assert.equal(view.selectedBankAccount.value, "bank-b");
   assert.equal(view.selectedDetailView.value, "bank");
-  assert.equal(calls[0].movement_account_id, "bank-b");
+  assert.equal(calls[0].movement_account_id, undefined);
+  assert.equal(calls[0].statement_account_id, undefined);
   assert.equal(calls[0].cursor, undefined);
-  view.selectedAccount.value = "bank:bank-a"; view.changeAccountFilters();
+  assert.equal(view.route.query.movement_account_id, undefined);
+  assert.equal(view.route.query.statement_account_id, undefined);
+  view.selectMovementAccount("bank:bank-a");
   await Vue.nextTick(); await Vue.nextTick();
-  assert.equal(view.route.query.movement_account_id, "bank-a");
+  assert.equal(view.selectedAccount.value, "bank:bank-a");
+  assert.equal(view.route.query.movement_account_id, undefined);
+  assert.equal(calls.length, 1);
   assert.equal(view.funds.value !== null, true);
   view.selectDetailView("book");
   assert.equal(view.route.query.funds_view, "book");

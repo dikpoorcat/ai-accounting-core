@@ -174,8 +174,7 @@ function formatDate(value: string | null) {
               <span>对外收款</span>
               <strong>{{ formatFen(funds.inflow_fen) }}</strong>
             </div>
-            <span aria-hidden="true">→</span>
-            <div class="outflow">
+            <div>
               <span>对外付款</span>
               <strong>{{ formatFen(funds.outflow_fen) }}</strong>
             </div>
@@ -366,11 +365,7 @@ function formatDate(value: string | null) {
 
 <style scoped>
 .financial-section {
-  padding: 20px;
-  border: 1px solid var(--brief-line);
-  border-radius: 20px;
-  background: var(--brief-surface);
-  box-shadow: var(--brief-shadow);
+  padding: 0;
 }
 
 .section-heading,
@@ -385,16 +380,16 @@ function formatDate(value: string | null) {
 
 .section-heading {
   align-items: flex-end;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+  padding: 0 2px;
 }
 
 .section-kicker,
 .overview-card header p {
   margin: 0 0 4px;
-  color: var(--brief-green);
+  color: var(--brief-muted);
   font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-weight: 500;
 }
 
 h2,
@@ -405,7 +400,7 @@ p {
 
 h2 {
   margin-bottom: 0;
-  font-size: 23px;
+  font-size: 22px;
   letter-spacing: -0.025em;
 }
 
@@ -499,8 +494,8 @@ h3 {
   min-width: 0;
   padding: 15px;
   border: 1px solid var(--brief-line);
-  border-radius: 16px;
-  background: var(--brief-soft);
+  border-radius: var(--brief-panel-radius, 14px);
+  background: var(--brief-surface);
 }
 
 .cash-card,
@@ -560,23 +555,19 @@ h3 {
 
 .flow {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 10px;
-  align-items: center;
-  margin: 11px 0 9px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+  margin: 13px 0 9px;
+  border-radius: var(--brief-control-radius, 9px);
+  background: var(--brief-metric-surface);
 }
 
 .flow > div {
   display: grid;
+  min-width: 0;
   gap: 4px;
-  padding: 11px;
-  border-radius: 12px;
-  background: var(--brief-blue-soft);
-  color: var(--brief-blue);
-}
-
-.flow > div.outflow {
-  background: var(--brief-surface);
+  padding: 12px;
   color: var(--brief-text);
 }
 
@@ -587,6 +578,7 @@ h3 {
 }
 
 .flow strong {
+  font-variant-numeric: tabular-nums;
   font-size: 19px;
 }
 
@@ -599,7 +591,6 @@ h3 {
   justify-content: space-between;
   gap: 16px;
   padding: 9px 0;
-  border-top: 1px solid var(--brief-line);
 }
 
 .summary-rows dd {
@@ -739,7 +730,7 @@ h3 {
   border: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
   border-radius: 12px;
   background: var(--brief-surface);
-  box-shadow: 0 16px 38px rgb(18 45 31 / 14%);
+  box-shadow: var(--brief-overlay-shadow, var(--shadow-overlay));
   opacity: 0;
   pointer-events: none;
   text-align: left;
@@ -813,7 +804,7 @@ h3 {
   border: 1px solid color-mix(in srgb, var(--brief-green) 18%, var(--brief-line));
   border-radius: 9px;
   background: var(--brief-surface);
-  box-shadow: 0 10px 26px rgb(18 45 31 / 12%);
+  box-shadow: var(--brief-overlay-shadow, var(--shadow-overlay));
   opacity: 0;
   color: var(--brief-text);
   font-size: 11px;
@@ -882,11 +873,6 @@ h3 {
 }
 
 @media (max-width: 560px) {
-  .financial-section {
-    padding: 17px;
-    border-radius: 17px;
-  }
-
   .section-heading,
   .overview-card header,
   .pending-bank summary,

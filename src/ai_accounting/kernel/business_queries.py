@@ -67,6 +67,21 @@ class BusinessQueries:
             self.reads = QueryReads(self.engine, connection)
         return self.reads
 
+    def _external_obligation_ids_for_period(self, connection, period):
+        """Return current external obligations whose declared interval covers the month."""
+        if "external_obligation" not in self.store.registry.models:
+            return set()
+        month = YearMonth(period).ordinal
+        return {
+            row[0]
+            for row in connection.execute(
+                "SELECT a.subject_id FROM fact_external_obligation f "
+                "JOIN fact_current a ON a.fact_id=f.revision_id "
+                "WHERE f.start_period<=? AND f.end_period>=?",
+                (month, month),
+            )
+        }
+
     def _fact(self, connection, fact_id):
         return dict(self._reads(connection).fact(fact_id))
 
@@ -391,6 +406,17 @@ class BusinessQueries:
                     "basis": "manifest_asset_batch_adoption",
                     "membership_digest": membership_digest,
                 }
+            from .asset_card_adoption import prove_asset_card_adoptions
+
+            independent_proofs.update(
+                prove_asset_card_adoptions(
+                    reads,
+                    close_period=close_period,
+                    manifest=manifest,
+                    metadata=metadata,
+                    independent_proofs=independent_proofs,
+                )
+            )
             # Domain adoption receives the complete independently proven graph;
             # page kind/subject filters must never remove its downstream proof.
             if any(metadata[ident]["kind"] == "opening_package" for ident in manifest_ids):
@@ -2049,13 +2075,21 @@ class BusinessQueries:
                 if readiness.get("order_failure") is not None
                 else readiness
             )
+        external_obligation_ids = self._external_obligation_ids_for_period(
+            connection, period
+        )
         if summary:
             external = Workflow(self.engine)._external_obligations(
                 connection,
                 period,
                 as_of,
                 reads=self._reads(connection),
+                obligation_ids=external_obligation_ids,
                 summary=True,
+            )
+            external.update(
+                scope_period=period,
+                scope_semantics="obligation_interval_includes_selected_period",
             )
             external["fact_issues"] = [] if exact else list(current["issues"])
             checked = (
@@ -2080,6 +2114,7 @@ class BusinessQueries:
                 as_of=as_of,
                 period_readiness=readiness if closure["state"] == "open" else None,
                 reads=self._reads(connection),
+                obligation_ids=external_obligation_ids,
             )
             external = {
                 "status": (
@@ -2095,6 +2130,8 @@ class BusinessQueries:
                 ),
                 "obligations": workflow["obligations"],
                 "fact_issues": workflow["fact_issues"],
+                "scope_period": period,
+                "scope_semantics": "obligation_interval_includes_selected_period",
             }
         current_followups = {
             "knowledge": "current_knowledge",

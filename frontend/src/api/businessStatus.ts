@@ -13,6 +13,9 @@ export interface AccountingSelection {
   cutoff_period: string;
   through_period: {
     status: string;
+    voucher_event_count?: number;
+    state_result_count?: number;
+    unestablished_state_selection_count?: number;
     state_results: Array<{ calculation_id: string; [key: string]: unknown }>;
     unestablished_state_selections: Array<{ candidates: Array<{ calculation_id: string; [key: string]: unknown }>; reason?: string; [key: string]: unknown }>;
   };
@@ -25,6 +28,7 @@ export interface BusinessStatusData {
   settlements: BusinessSettlements;
   current_followups?: { settlements: BusinessSettlements; [key: string]: unknown };
   external: Record<string, unknown>;
+  trace_targets?: Array<{ calculation_id: string; voucher_version_id?: string | null }>;
   collections: DashboardCollections;
   [key: string]: unknown;
 }

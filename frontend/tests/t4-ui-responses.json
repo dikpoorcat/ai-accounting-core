@@ -3906,6 +3906,7 @@
     ],
     "summary": {
       "assets_total_fen": "0",
+      "liabilities_total_fen": "0",
       "liabilities_equity_total_fen": "0",
       "current_net_profit_fen": "0",
       "year_to_date_net_profit_fen": "0",

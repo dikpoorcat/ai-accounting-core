@@ -70,11 +70,12 @@ class FundsRead:
             item["calculation_id"]: item for item in self.selected["state_results"]
         }
         self.opening_ids = [ident for ident, item in self.states.items() if item["opening"]]
-        self.issues = self.selected["unestablished_state_selections"]
+        self.issues = list(self.selected["unestablished_state_selections"])
         self.account_rows = {}
         self.product_rows = {}
         self.profiles = {}
         self.event_queries = {}
+        self.bank_match_calculations = {}
 
     def events(self, *, current=False, accounts=None):
         from .read_indexes import verify_close_references
@@ -294,12 +295,9 @@ class FundsRead:
         }
         return item
 
-    def movement_item(self, row):
-        from .dashboard import _name
-
-        calc = self.snap.calculation(row["calculation_id"])
+    def money_parties(self, calc, sign, *, internal_transfer=False):
+        """Present the exact parties attached to one typed funds calculation."""
         data = calc["fact"]["data"]
-        account = self.account_display(row["category"], row["balance_key"])
         parties = {
             data[field]
             for field in ("counterparty_id", "owner_id", "lender_id", "payer_id", "recipient_id")
@@ -307,13 +305,34 @@ class FundsRead:
         }
         parties.update(
             item["party_id"]
-            for item in self.snap.voucher_relations(calc, row["sign"])
+            for item in self.snap.voucher_relations(calc, sign)
             if item["party_id"]
         )
         if data.get("payment_method") == "bank_batch":
             parties.discard(data.get("counterparty_id"))
         parties.update(
             item["recipient_id"] for item in data.get("allocations", ()) if item.get("recipient_id")
+        )
+        party_sources = [
+            {"party_id": ident, **self.snap.party_details(ident)} for ident in sorted(parties)
+        ]
+        party = (
+            "、".join(dict.fromkeys(item["name"] for item in party_sources))
+            if parties
+            else "公司账户内部划转"
+            if internal_transfer
+            else "未提供往来对象"
+        )
+        return party, party_sources
+
+    def movement_item(self, row):
+        from .dashboard import _name
+
+        calc = self.snap.calculation(row["calculation_id"])
+        data = calc["fact"]["data"]
+        account = self.account_display(row["category"], row["balance_key"])
+        party, party_sources = self.money_parties(
+            calc, row["sign"], internal_transfer=bool(row["internal_transfer"])
         )
         short, label, sources = self.snap.business_summary(calc, row["sign"], include_sources=True)
         amount = row["signed_amount"]
@@ -339,14 +358,8 @@ class FundsRead:
                 for key, value in account["field_sources"].items()
                 if key in {"code", "name"}
             },
-            "party_sources": [
-                {"party_id": ident, **self.snap.party_details(ident)} for ident in sorted(parties)
-            ],
-            "party": "、".join(dict.fromkeys(self.snap.party(ident) for ident in sorted(parties)))
-            if parties
-            else "公司账户内部划转"
-            if row["internal_transfer"]
-            else "未提供往来对象",
+            "party_sources": party_sources,
+            "party": party,
             "internal_transfer": bool(row["internal_transfer"]),
             "component_kinds": [row["kind"]],
         }
@@ -393,6 +406,177 @@ class FundsRead:
         ):
             return None, "conflict", "独立采用的流水计算与对账采用的流水计算不一致。"
         return source, None, None
+
+    def _closed_bank_issue_sources(self, result, parents):
+        """Prove statement/opening display roles from one frozen reconciliation.
+
+        This is page-local source proof.  It deliberately does not add either
+        dependency to the shared independently selected state results.
+        """
+        selected = self.state_selections.get(result["id"])
+        if (
+            selected is None
+            or selected["selection_source"] != "close_manifest"
+            or selected["posting_period"] != result["period"]
+        ):
+            return set()
+        month = YearMonth(selected["posting_period"])
+        manifest = self.snap.closes.get(month.ordinal)
+        members = set(manifest.get("calculations", ())) if manifest else set()
+        if result["id"] not in members:
+            return set()
+        reconciliation = self.snap.reads.connection.execute(
+            "SELECT c.fact_id,f.subject_id,f.period fact_period,r.statement_id,"
+            "r.bank_account_id,json_extract(c.outcome,'$.values.statement_id') "
+            "result_statement_id,json_extract(c.outcome,'$.values.bank_account_id') "
+            "result_bank_account_id,json_extract(c.outcome,'$.values.opening_fen') "
+            "result_opening_fen,json_extract(c.outcome,'$.values.balanced') balanced "
+            "FROM calculation c JOIN fact_revision f ON f.id=c.fact_id "
+            "JOIN fact_bank_reconciliation r ON r.revision_id=c.fact_id WHERE c.id=?",
+            (result["id"],),
+        ).fetchone()
+        if (
+            reconciliation is None
+            or reconciliation["fact_id"] != result["fact_id"]
+            or reconciliation["subject_id"] != result["subject_id"]
+            or reconciliation["fact_period"] != month.ordinal
+            or reconciliation["result_statement_id"] != reconciliation["statement_id"]
+            or reconciliation["result_bank_account_id"] != reconciliation["bank_account_id"]
+            or reconciliation["balanced"] != 1
+        ):
+            return set()
+        statement_parents = [item for item in parents if item["kind"] == "bank_statement"]
+        if len(statement_parents) != 1:
+            return set()
+        statement = statement_parents[0]
+        statement_fact = self.snap.reads.connection.execute(
+            "SELECT c.fact_id,f.subject_id,f.period fact_period,s.bank_account_id "
+            "FROM calculation c JOIN fact_revision f ON f.id=c.fact_id "
+            "JOIN fact_bank_statement s ON s.revision_id=c.fact_id WHERE c.id=?",
+            (statement["id"],),
+        ).fetchone()
+        selected_statements = [
+            item
+            for item in self.states.values()
+            if item["kind"] == "bank_statement" and item["subject_id"] == statement["subject_id"]
+        ]
+        if (
+            statement_fact is None
+            or statement["id"] not in members
+            or statement["posting_period"] != result["period"]
+            or statement["period"] != result["period"]
+            or statement_fact["fact_id"] != statement["fact_id"]
+            or statement_fact["subject_id"] != statement["subject_id"]
+            or statement_fact["fact_period"] != month.ordinal
+            or statement_fact["subject_id"] != reconciliation["statement_id"]
+            or statement_fact["bank_account_id"] != reconciliation["bank_account_id"]
+            or selected_statements
+            and (len(selected_statements) != 1 or selected_statements[0]["id"] != statement["id"])
+        ):
+            return set()
+        proven = {statement["id"]}
+        opening_parents = [item for item in parents if item["kind"] == "bank_opening"]
+        if len(opening_parents) != 1:
+            return proven
+        opening = opening_parents[0]
+        opening_fact = self.snap.reads.connection.execute(
+            "SELECT c.fact_id,f.subject_id,f.period fact_period,o.bank_account_id,o.opening_fen,"
+            "json_extract(c.outcome,'$.values.opening_fen') result_opening_fen "
+            "FROM calculation c JOIN fact_revision f ON f.id=c.fact_id "
+            "JOIN fact_bank_opening o ON o.revision_id=c.fact_id WHERE c.id=?",
+            (opening["id"],),
+        ).fetchone()
+        selected_openings = [
+            item
+            for item in self.states.values()
+            if item["kind"] == "bank_opening" and item["subject_id"] == opening["subject_id"]
+        ]
+        if (
+            opening_fact is not None
+            and opening["id"] in members
+            and opening["posting_period"] == result["period"]
+            and opening["period"] == result["period"]
+            and opening_fact["fact_id"] == opening["fact_id"]
+            and opening_fact["subject_id"] == opening["subject_id"]
+            and opening_fact["fact_period"] == month.ordinal
+            and opening_fact["bank_account_id"] == reconciliation["bank_account_id"]
+            and opening_fact["opening_fen"] == opening_fact["result_opening_fen"]
+            and opening_fact["opening_fen"] == reconciliation["result_opening_fen"]
+            and (
+                not selected_openings
+                or len(selected_openings) == 1
+                and selected_openings[0]["id"] == opening["id"]
+            )
+        ):
+            proven.add(opening["id"])
+        return proven
+
+    def _historical_bank_issue_sources(self, candidate_ids):
+        roots = {
+            ident: item
+            for ident, item in self.states.items()
+            if item["kind"] == "bank_reconciliation" and item["period"] != self.snap.period
+        }
+        if not roots or not candidate_ids:
+            return set()
+        parents_by_root = {ident: [] for ident in roots}
+        for row in self.snap.reads.connection.execute(
+            "SELECT d.calculation_id,d.upstream_id FROM json_each(?) ids "
+            "JOIN dependency_calculation d ON d.calculation_id=ids.value "
+            "JOIN calculation c ON c.id=d.upstream_id "
+            "WHERE c.kind IN ('bank_statement','bank_opening') "
+            "ORDER BY d.calculation_id,d.upstream_id",
+            (canonical(sorted(roots)),),
+        ):
+            parents_by_root[row["calculation_id"]].append(row["upstream_id"])
+        relevant = {
+            ident: parent_ids
+            for ident, parent_ids in parents_by_root.items()
+            if candidate_ids.intersection(parent_ids)
+        }
+        if not relevant:
+            return set()
+        metadata = self.snap.reads.metadata(
+            {parent for parent_ids in relevant.values() for parent in parent_ids}
+        )
+        proven = set()
+        for ident, parent_ids in relevant.items():
+            proven.update(
+                self._closed_bank_issue_sources(
+                    roots[ident], [metadata[parent] for parent in parent_ids]
+                )
+            )
+        return proven & candidate_ids
+
+    def _resolve_bank_source_issues(self, current_proofs):
+        candidate_ids = {
+            candidate["calculation_id"]
+            for issue in self.issues
+            if issue.get("reason") == "manifest_state_adoption_not_proven"
+            for candidate in issue.get("candidates", ())
+            if candidate.get("kind") in {"bank_opening", "bank_statement"}
+        }
+        proven = set(current_proofs) | self._historical_bank_issue_sources(candidate_ids)
+        if not proven:
+            return
+        retained = []
+        for issue in self.issues:
+            candidates = issue.get("candidates", ())
+            bank_candidates = [
+                item
+                for item in candidates
+                if item.get("kind") in {"bank_opening", "bank_statement"}
+            ]
+            resolved = {item["calculation_id"] for item in bank_candidates} & proven
+            if (
+                issue.get("reason") == "manifest_state_adoption_not_proven"
+                and bank_candidates
+                and len(bank_candidates) == len(candidates)
+                and len(resolved) == 1
+            ):
+                continue
+            retained.append(issue)
+        self.issues = retained
 
     def bank_summary(self):
         statement_ids = self.snap.fact_ids_of_kind("bank_statement", period=self.snap.period)
@@ -473,6 +657,7 @@ class FundsRead:
                 for ident, identifiers in parent_ids.items()
             }
         provided, confirmed_accounts, headers = set(), set(), []
+        proven_bank_sources = set()
         self.bank_source_checks = {}
         for statement in statements:
             ident = statement["bank_account_id"]
@@ -523,6 +708,12 @@ class FundsRead:
                 and adopted_reconciliation
                 and (not self.snap.close or source is not None and source_error is None)
             )
+            if self.snap.close and valid:
+                proven_bank_sources.update(
+                    self._closed_bank_issue_sources(
+                        result, parents_by_result[result["id"]]
+                    )
+                )
             review = bool(
                 not confirmed
                 or not unique_reconciliation
@@ -590,6 +781,7 @@ class FundsRead:
                     "subject_id": statement["subject_id"],
                     "account_id": ident,
                     "reconciliation_id": reconciliation["revision_id"] if reconciliation else None,
+                    "reconciliation_calculation_id": result["id"] if result else None,
                     "confirmed": confirmed,
                     "valid": valid,
                     "review": review,
@@ -609,23 +801,34 @@ class FundsRead:
                     if item["closing_fen"] is not None
                     else None,
                 }
+        self._resolve_bank_source_issues(proven_bank_sources)
         self.bank_parameters = [canonical(headers)]
         self.bank_source = (
             "SELECT printf('%s:%012d',json_extract(h.value,'$.subject_id'),e.item_no) page_key,"
-            "json_extract(h.value,'$.account_id') account_id,e.*,CASE WHEN "
+            "json_extract(h.value,'$.account_id') account_id,"
+            "json_extract(h.value,'$.reconciliation_calculation_id') "
+            "reconciliation_calculation_id,m.source_kind,m.source_id,"
+            "count(*) OVER (PARTITION BY "
+            "json_extract(h.value,'$.reconciliation_calculation_id'),m.source_kind,m.source_id) "
+            "source_row_count,sum(abs(e.signed_fen)) OVER (PARTITION BY "
+            "json_extract(h.value,'$.reconciliation_calculation_id'),m.source_kind,m.source_id) "
+            "source_rows_total_fen,e.*,CASE WHEN "
             "json_extract(h.value,'$.valid') "
-            "AND EXISTS(SELECT 1 FROM fact_bank_reconciliation_matches m WHERE m.revision_id="
-            "json_extract(h.value,'$.reconciliation_id') AND m.reference=e.reference) THEN "
+            "AND m.reference IS NOT NULL THEN "
             "'matched' "
             "WHEN json_extract(h.value,'$.review') THEN 'needs_review' ELSE 'unmatched' END state "
             "FROM json_each(?) h JOIN fact_bank_statement_entries e ON "
-            "e.revision_id=json_extract(h.value,'$.fact_id')"
+            "e.revision_id=json_extract(h.value,'$.fact_id') LEFT JOIN "
+            "fact_bank_reconciliation_matches m ON m.revision_id="
+            "json_extract(h.value,'$.reconciliation_id') AND m.reference=e.reference"
         )
         if not headers:
             self.bank_parameters = []
             self.bank_source = (
                 "SELECT NULL page_key,NULL account_id,NULL actual_date,NULL signed_fen,"
-                "NULL description,NULL state WHERE 0"
+                "NULL description,NULL reconciliation_calculation_id,NULL source_kind,"
+                "NULL source_id,NULL source_row_count,NULL source_rows_total_fen,"
+                "NULL reference,NULL state WHERE 0"
             )
         sums = (
             "count(*) transaction_count,coalesce(sum(max(signed_fen,0)),0) inflow_fen,"
@@ -682,15 +885,125 @@ class FundsRead:
             "missing_account_count": len(expected - provided),
         }
 
+    def prepare_bank_items(self, rows):
+        """Bind page rows to the exact funds calculations adopted by reconciliation."""
+        requests = [
+            {
+                "page_key": row["page_key"],
+                "root": row["reconciliation_calculation_id"],
+                "source_kind": row["source_kind"],
+                "source_id": row["source_id"],
+            }
+            for row in rows
+            if row["state"] == "matched"
+            and row["reconciliation_calculation_id"]
+            and row["source_kind"]
+            and row["source_id"]
+        ]
+        if not requests:
+            return
+        matches = self.connection.execute(
+            "SELECT json_extract(r.value,'$.page_key') page_key,min(c.id) calculation_id,"
+            "count(*) candidate_count FROM json_each(?) r JOIN dependency_calculation d ON "
+            "d.calculation_id=json_extract(r.value,'$.root') JOIN calculation c ON "
+            "c.id=d.upstream_id JOIN fact_revision f ON f.id=c.fact_id WHERE "
+            "c.kind=json_extract(r.value,'$.source_kind') AND "
+            "f.subject_id=json_extract(r.value,'$.source_id') GROUP BY page_key",
+            (canonical(requests),),
+        ).fetchall()
+        selected = {
+            row["page_key"]: row["calculation_id"]
+            for row in matches
+            if row["candidate_count"] == 1
+        }
+        self.snap.reads.metadata(selected.values())
+        self.bank_match_calculations.update(
+            {
+                page_key: self.snap.calculation(calculation_id)
+                for page_key, calculation_id in selected.items()
+            }
+        )
+
+    @staticmethod
+    def calculation_is_internal_transfer(calc):
+        if calc["kind"] in {"funds_transfer", "cash_bank_transfer"}:
+            return True
+        return calc["kind"] == "bank_platform_transfer" and (
+            calc["outcome"].get("values", {}).get("accounting_treatment") != "reserve_expense"
+        )
+
+    def bank_batch_presentation(self, calc, row):
+        """Describe a batch without assigning whole-batch recipients to one bank row."""
+        data = calc["fact"]["data"]
+        allocations = data.get("allocations", ())
+        if data.get("payment_method") != "bank_batch" or not allocations:
+            return None, None, []
+
+        items, party_sources, seen_parties = [], [], set()
+        for allocation in allocations:
+            recipient_id = allocation.get("recipient_id")
+            details = self.snap.party_details(recipient_id)
+            name = (
+                details["name"]
+                if details.get("source")
+                else "收款人名称未提供"
+            )
+            items.append({"party": name, "amount_fen": allocation["amount_fen"]})
+            if recipient_id and recipient_id not in seen_parties:
+                party_sources.append({"party_id": recipient_id, **details})
+                seen_parties.add(recipient_id)
+
+        reserve_return_fen = data.get("reserve_return_fen")
+        if reserve_return_fen:
+            items.append({"party": "备用金返池费用", "amount_fen": reserve_return_fen})
+
+        short, _ = self.snap.business_summary(calc, 1)
+        title = {
+            "支付工资奖金": "工资批量代发",
+            "支付社保": "社保批量支付",
+            "支付公积金": "公积金批量支付",
+        }.get(short, "批量付款")
+        recipient_count = len(seen_parties)
+        count_label = (
+            f"{recipient_count} 人"
+            if title == "工资批量代发" and recipient_count == len(allocations)
+            else f"{len(allocations)} 项"
+        )
+        bank_row_count = row["source_row_count"] or 1
+        return (
+            f"{title} · {count_label}",
+            {
+                "bank_row_count": bank_row_count,
+                "total_fen": row["source_rows_total_fen"] or data["amount_fen"],
+                "items": items,
+            },
+            party_sources,
+        )
+
     def bank_item(self, row):
         from .dashboard import _display_sources
 
         account = self.account_display("bank", row["account_id"])
         profile = self.profile("fund_account", row["account_id"])
         amount = row["signed_fen"]
-        return {
+        calc = self.bank_match_calculations.get(row["page_key"])
+        batch_party, batch, batch_party_sources = (
+            self.bank_batch_presentation(calc, row) if calc else (None, None, [])
+        )
+        if batch:
+            party, party_sources = batch_party, batch_party_sources
+        elif calc:
+            party, party_sources = self.money_parties(
+                calc,
+                1,
+                internal_transfer=self.calculation_is_internal_transfer(calc),
+            )
+        else:
+            party, party_sources = "未提供", []
+        item = {
             "id": row["page_key"],
             "date": row["actual_date"],
+            "reference": row["reference"],
             "account_id": row["account_id"],
             "account_code": account["code"],
             "account_name": account["name"],
@@ -700,11 +1013,15 @@ class FundsRead:
             "direction": "inflow" if amount > 0 else "outflow",
             "amount_fen": abs(amount),
             "signed_amount_fen": amount,
-            "party": "未提供",
+            "party": party,
+            "party_sources": party_sources,
             "memo": row["description"] or "",
             "state": row["state"],
             "source_check": self.bank_source_checks[row["revision_id"]],
         }
+        if batch:
+            item["batch_payment"] = batch
+        return item
 
     def investment_source(self, *, current=False):
         source, parameters = self.events(current=current, accounts=None if current else {"1101"})
@@ -951,6 +1268,8 @@ def funds(snap, *, sections=None, cursors=None, limit=100, filters=None, summary
                 snap.reads.prime_calculations(
                     {row["calculation_id"] for row in rows}, ancestors=True
                 )
+            elif section == "statements":
+                read.prepare_bank_items(rows)
             items = [present(row) for row in rows]
         data["collections"][section] = {"items": items, "page": page}
         if section == "accounts":

@@ -14,6 +14,16 @@ const props = defineProps<{
   focusedVoucher?: BriefVoucher | null;
 }>();
 const route = useRoute();
+const ASSET_FOCUSED_KINDS = new Set([
+  "asset",
+  "reimbursed_asset",
+  "reimbursed_asset_batch",
+  "asset_activation",
+  "asset_activation_batch",
+  "asset_consumption",
+  "asset_consumption_month",
+  "asset_disposal",
+]);
 
 const mode = ref<"business" | "voucher">("business");
 const selectedBusinessKey = ref("");
@@ -100,16 +110,26 @@ async function changeVoucherPage(page: number) {
 }
 
 function activityName(item: BriefActivityRow) {
-  if (item.asset) return assetReferenceName(item.asset);
+  const voucher = voucherForReference(item.reference);
+  const assets = activityAssets(item);
+  if (assets.length && (!voucher || ASSET_FOCUSED_KINDS.has(voucher.kind))) {
+    return assets.length === 1 ? assetReferenceName(assets[0]) : `${assets.length} 张资产卡片`;
+  }
   const party = item.party.trim();
   return party && party !== "—" && !party.includes("未提供") ? party : item.title;
 }
 
 function activityMeta(item: BriefActivityRow) {
-  if (item.asset) {
+  const voucher = voucherForReference(item.reference);
+  const assets = activityAssets(item);
+  if (assets.length && (!voucher || ASSET_FOCUSED_KINDS.has(voucher.kind))) {
     return [
       item.title,
-      item.asset.name?.trim() && item.asset.code?.trim() ? item.asset.code.trim() : "",
+      assets.length === 1 && assets[0].name?.trim() && assets[0].code?.trim()
+        ? assets[0].code.trim()
+        : assets.length > 1
+          ? assetReferenceNames(assets)
+          : "",
       item.evidence.length ? `${item.evidence.length} 份凭据` : "",
     ].filter(Boolean).join(" · ");
   }
@@ -121,13 +141,37 @@ function activityMeta(item: BriefActivityRow) {
 }
 
 function assetReferenceName(asset: BriefAssetReference) {
-  return asset.name?.trim() || (asset.code?.trim() ? `资产卡片 ${asset.code.trim()}` : "未命名资产卡片");
+  return asset.name?.trim() || (asset.code?.trim() ? `资产卡片 ${asset.code.trim()}` : `资产卡片 ${asset.asset_id}`);
 }
 
 function assetReferenceLabel(asset: BriefAssetReference) {
   const name = asset.name?.trim();
   const code = asset.code?.trim();
-  return name && code ? `${name}（${code}）` : name || (code ? `资产卡片 ${code}` : "未命名资产卡片");
+  return name && code ? `${name}（${code}）` : name || (code ? `资产卡片 ${code}` : `资产卡片 ${asset.asset_id}`);
+}
+
+function voucherAssets(voucher: BriefVoucher | null | undefined): BriefAssetReference[] {
+  const unique = new Map<string, BriefAssetReference>();
+  if (voucher?.asset) unique.set(voucher.asset.asset_id, voucher.asset);
+  for (const asset of voucher?.asset_members || []) {
+    if (!unique.has(asset.asset_id)) unique.set(asset.asset_id, asset);
+  }
+  return [...unique.values()];
+}
+
+function activityAssets(item: BriefActivityRow) {
+  const assets = voucherAssets(voucherForReference(item.reference));
+  return assets.length ? assets : item.asset ? [item.asset] : [];
+}
+
+function assetReferenceNames(assets: BriefAssetReference[]) {
+  const names = assets.slice(0, 2).map(assetReferenceLabel).join("、");
+  return names + (assets.length > 2 ? "等" : "");
+}
+
+function assetReferencesLabel(assets: BriefAssetReference[]) {
+  if (assets.length === 1) return assetReferenceLabel(assets[0]);
+  return `${assets.length} 张资产卡片：${assetReferenceNames(assets)}`;
 }
 
 function assetCardTarget(asset: BriefAssetReference) {
@@ -160,8 +204,9 @@ function voucherForReference(reference: string) {
 
 function voucherPreviewTitle(item: BriefActivityRow) {
   const voucher = voucherForReference(item.reference);
-  return voucher?.asset
-    ? `${voucher.list_summary} · ${assetReferenceLabel(voucher.asset)}`
+  const assets = voucherAssets(voucher);
+  return voucher && assets.length
+    ? `${voucher.list_summary} · ${assetReferencesLabel(assets)}`
     : voucher?.list_summary || item.title;
 }
 
@@ -276,29 +321,27 @@ watch(() => props.focusedVoucher, () => {
 
     <div v-if="mode === 'business' && groups.length" class="workbench">
       <nav class="index" aria-label="业务分类">
+        <span class="category-heading">业务分类</span>
         <button
           v-for="group in groups"
           :key="group.key"
+          :title="group.type_counts.map((item) => `${item.label} ${item.count}`).join(' · ')"
           type="button"
           :aria-current="selectedBusinessKey === group.key ? 'true' : undefined"
           @click="selectBusiness(group.key)"
         >
-          <span>
+          <span class="category-copy">
             <strong>{{ group.label }}</strong>
-            <small>{{ group.type_counts.map((item) => `${item.label} ${item.count}`).join(" · ") }}</small>
+            <small>{{ group.type_counts.map((item) => `${item.label} ${item.count}`).join(' · ') }}</small>
           </span>
-          <b>{{ group.event_count }}</b>
+          <b>{{ group.event_count }} 项</b>
         </button>
       </nav>
 
-      <div v-if="selectedBusiness" class="detail" aria-live="polite">
-        <header class="detail-heading">
-          <h3>{{ selectedBusiness.label }}</h3>
-          <strong>
-            本月 {{ selectedBusiness.event_count }} 项
-            <template v-if="selectedBusiness.rows.length < selectedBusiness.event_count">· 已加载 {{ selectedBusiness.rows.length }} 项</template>
-          </strong>
-        </header>
+      <div v-if="selectedBusiness" class="detail" :aria-label="`${selectedBusiness.label}明细`" aria-live="polite">
+        <div class="list-columns" aria-hidden="true">
+          <span>期间</span><span>对象与事项</span><span>状态</span><span class="column-money">业务金额</span><span class="column-action">凭证</span>
+        </div>
         <ul class="event-list" aria-label="本月业务明细">
           <li v-for="item in visibleBusinessRows" :key="`${item.reference}-${item.title}`" class="event-row">
             <span class="event-reference">{{ formatDate(item.date, item.recognition) }}</span>
@@ -391,16 +434,23 @@ watch(() => props.focusedVoucher, () => {
             :aria-label="`${voucher.number} 凭证明细`"
           >
             <p v-if="voucher.reverses_version_id" class="voucher-correction">本凭证用于冲销原记录。</p>
-            <RouterLink
-              v-if="voucher.asset"
-              class="voucher-asset-link"
-              :to="assetCardTarget(voucher.asset)"
-              :aria-label="`查看资产卡片：${assetReferenceLabel(voucher.asset)}`"
-            >
-              <span>对应资产</span>
-              <strong>{{ assetReferenceLabel(voucher.asset) }}</strong>
-              <small>查看资产卡片 <span aria-hidden="true">→</span></small>
-            </RouterLink>
+            <div v-if="voucherAssets(voucher).length" class="voucher-asset-references">
+              <span>
+                {{ voucherAssets(voucher).length === 1 ? "对应资产" : `对应资产 · ${voucherAssets(voucher).length} 张` }}
+              </span>
+              <div class="voucher-asset-links">
+                <RouterLink
+                  v-for="asset in voucherAssets(voucher)"
+                  :key="asset.asset_id"
+                  class="voucher-asset-link"
+                  :to="assetCardTarget(asset)"
+                  :aria-label="`查看资产卡片：${assetReferenceLabel(asset)}`"
+                >
+                  <strong>{{ assetReferenceLabel(asset) }}</strong>
+                  <small aria-hidden="true">→</small>
+                </RouterLink>
+              </div>
+            </div>
             <BusinessDetails plain :components="voucher.components" :funds="voucher.funds" :settlements="voucher.settlements" />
 
             <div class="table-wrap">
@@ -496,15 +546,10 @@ watch(() => props.focusedVoucher, () => {
 .event-money b { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .line-party { display: block; margin-bottom: 4px; }
 .brief-section {
-  padding: 20px;
-  border: 1px solid var(--brief-line);
-  border-radius: 20px;
-  background: var(--brief-surface);
-  box-shadow: var(--brief-shadow);
+  padding: 0;
 }
 
-.section-heading,
-.detail-heading {
+.section-heading {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -514,6 +559,7 @@ watch(() => props.focusedVoucher, () => {
 .section-heading {
   align-items: flex-end;
   margin-bottom: 14px;
+  padding: 0 2px;
 }
 
 h2,
@@ -524,7 +570,7 @@ p {
 
 h2 {
   margin-bottom: 3px;
-  font-size: 23px;
+  font-size: 22px;
   letter-spacing: -0.025em;
 }
 
@@ -628,77 +674,111 @@ h3 {
 .view-switch button[aria-pressed="true"] {
   background: var(--brief-surface);
   color: var(--brief-text);
-  box-shadow: 0 2px 8px rgb(18 45 31 / 8%);
 }
 
 .workbench {
+  --list-columns: 100px minmax(110px, 1fr) 88px 144px 80px;
   display: grid;
-  grid-template-columns: 270px minmax(0, 1fr);
-  overflow: visible;
+  min-width: 0;
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: stretch;
   border: 1px solid var(--brief-line);
-  border-radius: 16px;
-  background: var(--brief-soft);
+  border-radius: 14px;
+  background: var(--brief-surface);
 }
 
 .index {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 3px;
+  padding: 12px 10px;
   border-right: 1px solid var(--brief-line);
-  border-radius: 15px 0 0 15px;
+  border-radius: 14px 0 0 14px;
+  background: var(--brief-surface);
+}
+
+.category-heading {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 12px 7px;
+  color: var(--brief-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
 }
 
 .index button {
+  --category-accent: var(--brief-green);
+  --category-soft: var(--brief-green-soft);
   position: relative;
   display: grid;
-  min-height: 66px;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 5px 10px;
   align-items: center;
-  padding: 10px 11px 10px 13px;
+  padding: 11px 12px;
   border: 1px solid transparent;
-  border-radius: 11px;
+  border-radius: 9px;
   background: transparent;
   color: var(--brief-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
 .index button::before {
   position: absolute;
   top: 12px;
   bottom: 12px;
-  left: 0;
-  width: 3px;
+  left: -1px;
+  width: 2px;
   border-radius: 999px;
   background: transparent;
   content: "";
 }
 
 .index button:hover {
-  border-color: var(--brief-line-strong);
+  background: var(--brief-surface);
 }
 
 .index button[aria-current="true"] {
-  border-color: color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
-  background: var(--brief-green-soft);
+  border-color: color-mix(in srgb, var(--category-accent) 16%, transparent);
+  background: color-mix(in srgb, var(--category-soft) 54%, var(--brief-surface));
 }
 
 .index button[aria-current="true"]::before {
-  background: var(--brief-green);
+  background: var(--category-accent);
 }
 
-.index button span,
-.index button small {
-  display: block;
+.index button:focus-visible {
+  outline: 2px solid var(--category-accent);
+  outline-offset: 2px;
+}
+
+.index button strong {
   min-width: 0;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
-.index button small {
+.index button[aria-current="true"] strong {
+  font-weight: 750;
+}
+
+.category-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.category-copy small {
   overflow: hidden;
-  margin-top: 4px;
   color: var(--brief-muted);
   font-size: 11px;
   text-overflow: ellipsis;
@@ -706,34 +786,48 @@ h3 {
 }
 
 .index button b {
-  color: var(--brief-green);
-  font-size: 13px;
   white-space: nowrap;
+  min-width: 22px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: var(--brief-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.index button[aria-current="true"] b {
+  background: var(--brief-surface);
+  color: var(--brief-green);
 }
 
 .detail {
   min-width: 0;
-  padding: 15px;
-  border-radius: 0 15px 15px 0;
-  background: var(--brief-surface);
+  padding: 12px 20px;
 }
 
-.detail-heading {
-  padding-bottom: 13px;
+.list-columns {
+  display: grid;
+  grid-template-columns: var(--list-columns);
+  gap: 12px;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 4px 8px;
   border-bottom: 1px solid var(--brief-line);
+  color: var(--brief-muted);
+  font-size: 11px;
 }
 
-.detail-heading > strong {
-  color: var(--brief-muted);
-  font-size: 13px;
+.column-money,
+.column-action {
+  text-align: right;
 }
 
 .event-list {
   overflow: visible;
-  margin: 10px 0 0;
+  margin: 0;
   padding: 0;
-  border: 1px solid var(--brief-line);
-  border-radius: 12px;
   list-style: none;
 }
 
@@ -744,31 +838,23 @@ h3 {
 .event-row {
   position: relative;
   display: grid;
-  min-height: 54px;
-  grid-template-columns: minmax(90px, 0.55fr) minmax(160px, 1.5fr) auto minmax(104px, 0.6fr) auto;
+  min-height: 76px;
+  grid-template-columns: var(--list-columns);
   gap: 12px;
   align-items: center;
-  padding: 8px 10px;
-  background: var(--brief-surface);
+  padding: 14px 4px;
+  background: transparent;
   transition: background 140ms ease;
 }
 
-.event-row:first-child {
-  border-radius: 11px 11px 0 0;
-}
-
-.event-row:last-child {
-  border-radius: 0 0 11px 11px;
-}
-
-.event-row:only-child {
-  border-radius: 11px;
+.event-row > .state {
+  justify-self: start;
 }
 
 .event-row:hover,
 .event-row:focus-within {
   z-index: 4;
-  background: color-mix(in srgb, var(--brief-green-soft) 38%, var(--brief-surface));
+  background: var(--brief-soft);
 }
 
 .event-reference {
@@ -794,7 +880,7 @@ h3 {
 }
 
 .event-copy strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .event-copy small {
@@ -838,7 +924,7 @@ h3 {
   border: 1px solid color-mix(in srgb, var(--brief-green) 20%, var(--brief-line));
   border-radius: 12px;
   background: var(--brief-surface);
-  box-shadow: 0 18px 42px rgb(18 45 31 / 16%);
+  box-shadow: var(--brief-overlay-shadow, var(--shadow-overlay));
   opacity: 0;
   color: var(--brief-text);
   pointer-events: none;
@@ -1008,7 +1094,11 @@ h3 {
 
 .voucher-list {
   display: grid;
-  gap: 7px;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--brief-line);
+  border-radius: 14px;
+  background: var(--brief-surface);
 }
 
 .voucher-pagination {
@@ -1017,19 +1107,15 @@ h3 {
 
 .voucher-card {
   overflow: hidden;
-  border: 1px solid var(--brief-line);
-  border-radius: 12px;
   background: var(--brief-surface);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
-.voucher-card:hover {
-  border-color: var(--brief-line-strong);
+.voucher-card + .voucher-card {
+  border-top: 1px solid var(--brief-line);
 }
 
 .voucher-card.is-open {
-  border-color: color-mix(in srgb, var(--brief-green) 42%, var(--brief-line));
-  box-shadow: 0 7px 18px rgb(18 45 31 / 6%);
+  background: color-mix(in srgb, var(--brief-soft) 42%, var(--brief-surface));
 }
 
 .voucher-row {
@@ -1040,7 +1126,7 @@ h3 {
   grid-template-areas: "reference copy state amount chevron";
   gap: 14px;
   align-items: center;
-  padding: 9px 13px;
+  padding: 10px 16px;
   border: 0;
   background: transparent;
   color: var(--brief-text);
@@ -1050,11 +1136,11 @@ h3 {
 }
 
 .voucher-row:hover {
-  background: color-mix(in srgb, var(--brief-green-soft) 48%, var(--brief-surface));
+  background: var(--brief-soft);
 }
 
 .voucher-card.is-open > .voucher-row {
-  background: color-mix(in srgb, var(--brief-green-soft) 34%, var(--brief-surface));
+  background: var(--brief-soft);
 }
 
 .voucher-reference,
@@ -1128,9 +1214,10 @@ h3 {
   --voucher-party-width: 33%;
   --voucher-amount-width: 16%;
   min-width: 0;
-  margin: 0 13px;
-  padding: 2px 0 16px;
+  margin: 0;
+  padding: 2px 16px 16px;
   border-top: 1px solid var(--brief-line);
+  background: var(--brief-soft);
 }
 
 .voucher-correction {
@@ -1139,41 +1226,66 @@ h3 {
   font-size: 12px;
 }
 
-.voucher-asset-link {
-  display: flex;
-  align-items: baseline;
+.voucher-asset-references {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   gap: 9px;
   min-width: 0;
   margin: 10px 0 2px;
-  padding: 7px 9px;
-  border-radius: 8px;
+  padding: 6px 8px;
+  border-radius: 9px;
   background: var(--brief-soft);
+}
+
+.voucher-asset-references > span {
+  color: var(--brief-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.voucher-asset-links {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 1px 1px 3px;
+  scrollbar-width: thin;
+}
+
+.voucher-asset-link {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  max-width: min(360px, 68vw);
+  padding: 5px 8px;
+  border: 1px solid var(--brief-line);
+  border-radius: 7px;
+  background: var(--brief-surface);
   color: var(--brief-text);
   text-decoration: none;
 }
 
-.voucher-asset-link > span {
-  flex: none;
-  color: var(--brief-muted);
-  font-size: 11px;
-}
-
 .voucher-asset-link > strong {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   overflow-wrap: anywhere;
   font-size: 12px;
 }
 
 .voucher-asset-link > small {
   flex: none;
-  margin-left: auto;
   color: var(--brief-green);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 750;
 }
 
 .voucher-asset-link:hover {
   background: var(--brief-green-soft);
+  border-color: color-mix(in srgb, var(--brief-green) 38%, var(--brief-line));
 }
 
 .voucher-asset-link:focus-visible {
@@ -1329,6 +1441,7 @@ td:nth-child(2) > small {
   padding: 30px;
   border: 1px dashed var(--brief-line-strong);
   border-radius: 14px;
+  background: var(--brief-surface);
   color: var(--brief-muted);
   text-align: center;
 }
@@ -1348,12 +1461,52 @@ td:nth-child(2) > small {
   color: var(--brief-muted);
 }
 
-@media (max-width: 760px) {
-  .brief-section {
-    padding: 17px;
-    border-radius: 17px;
+@media (min-width: 761px) and (max-width: 1199px) {
+  .workbench {
+    grid-template-columns: 264px minmax(0, 1fr);
   }
 
+  .list-columns {
+    display: none;
+  }
+
+  .event-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 12px 2px;
+  }
+
+  .event-reference {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .event-row > .state {
+    grid-row: 1;
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .event-copy {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  .event-money {
+    grid-row: 3;
+    grid-column: 1;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .event-voucher-link {
+    grid-row: 3;
+    grid-column: 2;
+    justify-self: end;
+  }
+}
+
+@media (max-width: 760px) {
   .section-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -1379,34 +1532,28 @@ td:nth-child(2) > small {
   }
 
   .workbench {
-    display: block;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .list-columns {
+    display: none;
   }
 
   .index {
-    max-height: none;
-    flex-direction: row;
-    overflow-x: auto;
+    gap: 3px;
+    padding: 10px;
     border-right: 0;
     border-bottom: 1px solid var(--brief-line);
-    border-radius: 15px 15px 0 0;
-    scroll-snap-type: x proximity;
+    border-radius: 14px 14px 0 0;
   }
 
   .index button {
-    min-width: 210px;
-    min-height: 64px;
-    scroll-snap-align: start;
+    min-height: 44px;
+    padding: 9px 12px;
   }
 
   .detail {
-    padding: 12px;
-    border-radius: 0 0 15px 15px;
-  }
-
-  .detail-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
+    padding: 4px 12px;
   }
 
   .event-row {

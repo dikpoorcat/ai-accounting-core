@@ -110,7 +110,7 @@ pre {
   overflow: auto;
   max-height: 420px;
   padding: 12px;
-  background: var(--surface-soft);
+  background: var(--brief-soft, var(--surface-soft));
   font-size: 12px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;

@@ -43,7 +43,7 @@ export interface PeriodPreparation {
     accounting: { status: string; issues: BusinessIssue[]; pending_subject_id: unknown; unpublished_count: number };
     close_requirements: { status: string; issues: BusinessIssue[] };
     settlements: { status: string; cutoff_period?: string; current_cutoff_period?: string; complete?: boolean; unestablished_state_selection_count?: number; issues?: BusinessIssue[]; obligation_count: number; movement_count: number; source_amount_fen: string | null; paid_fen: string | null; other_settled_fen: string | null; remaining_fen: string | null };
-    external: { status: string; obligation_count: number; completion_status_counts: Record<string, number>; fact_issues?: BusinessIssue[] };
+    external: { status: string; scope_period?: string; scope_semantics?: string; obligation_count: number; completion_status_counts: Record<string, number>; fact_issues?: BusinessIssue[] };
     file_jobs: { total_count: number; status_counts: Record<string, number>; issue_count: number };
   };
   read_semantics: Record<string, string>;

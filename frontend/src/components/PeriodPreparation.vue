@@ -1,99 +1,466 @@
+<!-- @format -->
+
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
-import { businessStateLabel, type BusinessIssue, type PeriodPreparation } from "../api/dashboardContracts";
-import { formatFen } from "../utils/money";
-import BusinessStatusDetails from "./BusinessStatusDetails.vue";
-const props = defineProps<{ preparation: PeriodPreparation; snapshotVersion?: string | null }>();
-defineEmits<{ changed: [] }>();
-const frozenFields = [["readiness", "核算准备"], ["inventories", "资料清单"], ["material_coverage", "资料覆盖"], ["previous_close_digest", "前次封存依据"]] as const;
-const groups = computed(() => [
-  { key: "readiness", label: "所选月核算条件", issues: props.preparation.readiness?.issues ?? [] },
-  { key: "materials", label: "当前资料核对", issues: props.preparation.current_followups.materials.issues },
-  { key: "accounting", label: "当前核算依据", issues: props.preparation.current_followups.accounting.issues },
-  { key: "requirements", label: "当前业务条件", issues: props.preparation.current_followups.close_requirements.issues },
-  { key: "settlements", label: "款项来源核对", issues: props.preparation.current_followups.settlements.issues ?? [] },
-  { key: "external", label: "外部办理依据", issues: props.preparation.current_followups.external.fact_issues ?? [] },
-].filter(group => group.issues.length));
-const pendingSubject = computed(() => {
-  const pending = props.preparation.current_followups.accounting.pending_subject_id;
-  return typeof pending === "string" ? pending : undefined;
+
+import {
+  type BusinessIssue,
+  type PeriodPreparation,
+} from "../api/dashboardContracts";
+import { fen, formatFen } from "../utils/money";
+
+const props = defineProps<{
+  preparation: PeriodPreparation;
+  snapshotVersion?: string | null;
+  ownerNavigation?: boolean;
+}>();
+const emit = defineEmits<{ changed: []; focusSettlements: [] }>();
+
+const groups = computed(() =>
+  [
+    {
+      key: "readiness",
+      label: "所选月核算条件",
+      issues: props.preparation.readiness?.issues ?? [],
+    },
+    {
+      key: "materials",
+      label: "当前资料核对",
+      issues: props.preparation.current_followups.materials.issues,
+    },
+    {
+      key: "accounting",
+      label: "当前核算依据",
+      issues: props.preparation.current_followups.accounting.issues,
+    },
+    {
+      key: "requirements",
+      label: "当前业务条件",
+      issues: props.preparation.current_followups.close_requirements.issues,
+    },
+    {
+      key: "settlements",
+      label: "款项来源核对",
+      issues: props.preparation.current_followups.settlements.issues ?? [],
+    },
+    {
+      key: "external",
+      label: "外部办理依据",
+      issues: props.preparation.current_followups.external.fact_issues ?? [],
+    },
+  ].filter((group) => group.issues.length),
+);
+const issueCount = computed(() =>
+  groups.value.reduce((total, group) => total + group.issues.length, 0),
+);
+const settlementComplete = computed(() => {
+  const settlement = props.preparation.current_followups.settlements;
+  return (
+    settlement.complete !== false &&
+    !(settlement.unestablished_state_selection_count ?? 0) &&
+    settlement.remaining_fen !== null &&
+    fen(settlement.remaining_fen) === 0n
+  );
 });
-function bank(issue: BusinessIssue) { return typeof issue.bank_account_id === "string" ? issue.bank_account_id : undefined; }
-function collectionLink(section: string) {
-  return { path: "/", query: { company_id: props.preparation.company_id, period: props.preparation.period, section }, hash: `#brief-${section}` };
+const settlementHeadline = computed(() => {
+  const settlement = props.preparation.current_followups.settlements;
+  if (!settlement.obligation_count && settlementComplete.value)
+    return "暂无相关款项";
+  if (settlementComplete.value) return "已结清";
+  if (settlement.remaining_fen === null) return "金额待确认";
+  return formatFen(settlement.remaining_fen);
+});
+const externalPendingCount = computed(() => {
+  const external = props.preparation.current_followups.external;
+  const completed =
+    (external.completion_status_counts.completed ?? 0) +
+    (external.completion_status_counts.not_applicable ?? 0);
+  return Math.max(0, external.obligation_count - completed);
+});
+const fileFailedCount = computed(
+  () => props.preparation.current_followups.file_jobs.status_counts.failed ?? 0,
+);
+const fileProcessingCount = computed(() => {
+  const counts = props.preparation.current_followups.file_jobs.status_counts;
+  return (counts.pending ?? 0) + (counts.running ?? 0);
+});
+const fileHeadline = computed(() => {
+  const jobs = props.preparation.current_followups.file_jobs;
+  if (!jobs.total_count) return "暂无相关任务";
+  if (jobs.issue_count) return `${jobs.issue_count} 项需核对`;
+  if (fileFailedCount.value) return `${fileFailedCount.value} 项未成功`;
+  if (fileProcessingCount.value) return `${fileProcessingCount.value} 项处理中`;
+  return `${jobs.total_count} 项已处理`;
+});
+const hasFollowup = computed(
+  () =>
+    !settlementComplete.value ||
+    externalPendingCount.value > 0 ||
+    fileFailedCount.value > 0 ||
+    fileProcessingCount.value > 0 ||
+    props.preparation.current_followups.file_jobs.issue_count > 0 ||
+    issueCount.value > 0,
+);
+const followupState = computed(() =>
+  hasFollowup.value ? "仍有事项" : "当前无待办",
+);
+const closureMessage = computed(() => {
+  const closure = props.preparation.closure;
+  if (closure.state === "exact_close")
+    return `${props.preparation.period} 已关账；以下进展不改变所选月封存结果。`;
+  if (closure.state === "sealed_by_later_close")
+    return `${props.preparation.period} 已由 ${closure.sealing_boundary} 的后续关账封存；以下显示当前进展。`;
+  return `${props.preparation.period} 尚未关账；以下事项会持续更新。`;
+});
+
+function bank(issue: BusinessIssue) {
+  return typeof issue.bank_account_id === "string"
+    ? issue.bank_account_id
+    : undefined;
+}
+function focusSettlements() {
+  if (props.ownerNavigation && !settlementComplete.value)
+    emit("focusSettlements");
 }
 </script>
+
 <template>
-  <section class="period-preparation" :aria-label="`${preparation.period} 核算与当前后续事项`">
+  <section
+    :class="['period-preparation', { attention: hasFollowup }]"
+    :aria-label="`${preparation.period} 核算与当前后续事项`"
+  >
     <header class="preparation-heading">
       <div>
-        <h2>{{ preparation.period }} · 所选月末核算</h2>
-        <p v-if="preparation.closure.state === 'exact_close'">已关账 · 保留该月封存结果</p>
-        <p v-else-if="preparation.closure.state === 'sealed_by_later_close'">由 {{ preparation.closure.sealing_boundary }} 后续关账封存；没有该月独立准备记录。</p>
-        <p v-else>未关账 · 展示截至所选月末的正式记录</p>
+        <p class="preparation-kicker">当前后续事项</p>
+        <h2>所选月末核算后，还有什么需要处理？</h2>
+        <span>{{ closureMessage }}</span>
       </div>
-      <details class="frozen-details"><summary>查看封存依据</summary>
-        <p v-if="preparation.frozen_readiness?.status === 'ready'"><span v-for="[key, label] in frozenFields" :key="key">{{ label }}：{{ businessStateLabel(preparation.frozen_readiness[key]?.status) }}；</span></p>
-        <p v-else>该月没有可单独展示的封存准备记录。</p>
-      </details>
+      <span :class="['followup-state', { attention: hasFollowup }]">{{
+        followupState
+      }}</span>
     </header>
-    <h3>所选期间相关的当前跟进</h3>
-    <p class="scope-note">全公司 · 截至 {{ preparation.as_of }} 的相关后续事项 · 不改变所选月封存结果</p>
-    <div class="followup-statuses">
-      <span>资料：{{ businessStateLabel(preparation.current_followups.materials.status) }}</span>
-      <span>核算：{{ businessStateLabel(preparation.current_followups.accounting.status) }}</span>
-      <span>业务条件：{{ businessStateLabel(preparation.current_followups.close_requirements.status) }}</span>
-      <span>款项：{{ businessStateLabel(preparation.current_followups.settlements.status) }}</span>
+    <p class="scope-note">
+      全公司 · 截至 {{ preparation.as_of }} 的相关后续事项
+    </p>
+
+    <div class="followup-cards">
+      <component
+        :is="ownerNavigation && !settlementComplete ? 'button' : 'article'"
+        :class="[
+          'followup-card',
+          {
+            attention: !settlementComplete,
+            clickable: ownerNavigation && !settlementComplete,
+          },
+        ]"
+        :type="ownerNavigation && !settlementComplete ? 'button' : undefined"
+        @click="focusSettlements"
+      >
+        <span>收付款跟进</span>
+        <strong>{{ settlementHeadline }}</strong>
+        <small
+          >{{
+            preparation.current_followups.settlements.obligation_count
+          }}
+          项相关款项；包括付款、代付和抵销</small
+        >
+        <span v-if="ownerNavigation && !settlementComplete" class="card-action"
+          >点击查看</span
+        >
+      </component>
+      <article
+        :class="['followup-card', { attention: externalPendingCount > 0 }]"
+      >
+        <span>申报与外部事项</span>
+        <strong>{{
+          preparation.current_followups.external.obligation_count
+            ? `${externalPendingCount} 项待办`
+            : "暂无"
+        }}</strong>
+        <small
+          >所选月份相关共
+          {{
+            preparation.current_followups.external.obligation_count
+          }}
+          项；按实际完成依据判断</small
+        >
+      </article>
+      <article
+        :class="[
+          'followup-card',
+          {
+            attention:
+              fileFailedCount > 0 ||
+              preparation.current_followups.file_jobs.issue_count > 0,
+          },
+        ]"
+      >
+        <span>文件处理</span>
+        <strong>{{ fileHeadline }}</strong>
+        <small
+          >共
+          {{
+            preparation.current_followups.file_jobs.total_count
+          }}
+          项；生成成功不代表付款或申报完成</small
+        >
+      </article>
     </div>
-    <p v-if="preparation.current_followups.settlements.complete === false" class="needs-check" role="status">当前款项金额尚不能完整建立，已知金额仍需连同未知来源核对。</p>
-    <p v-if="preparation.current_followups.settlements.unestablished_state_selection_count" class="needs-check">仍有 {{ preparation.current_followups.settlements.unestablished_state_selection_count }} 组来源尚不能证明已被封存采用，不能据此认定结清。</p>
-    <p v-if="preparation.current_followups.file_jobs.issue_count" class="needs-check">{{ preparation.current_followups.file_jobs.issue_count }} 项文件任务结果或引用依据待核对。<RouterLink :to="collectionLink('file_jobs')">查看任务明细</RouterLink></p>
-    <p v-if="preparation.current_followups.external.obligation_count" class="scope-note">外部办理：{{ businessStateLabel(preparation.current_followups.external.status) }} · {{ preparation.current_followups.external.obligation_count }} 项义务 <RouterLink :to="collectionLink('external_followups')">查看办理明细</RouterLink></p>
-    <div v-if="groups.length" class="issue-groups">
-      <details v-for="group in groups" :key="group.key" class="issue-group">
-        <summary><strong>{{ group.label }} · {{ group.issues.length }} 条核对提示</strong><span class="first-issue">{{ group.issues[0].message || '相关依据需要核对' }}</span></summary>
-        <ol><li v-for="(issue, index) in group.issues" :key="index">
-          <p>{{ issue.message || '相关依据需要核对，见详细来源。' }}</p>
-          <BusinessStatusDetails v-if="issue.subject_id" :subject-id="issue.subject_id" :period="preparation.period" :snapshot-version="snapshotVersion" summary-label="查看相关依据" @changed="$emit('changed')" />
-          <RouterLink v-if="bank(issue)" :to="{ path: '/funds', query: { company_id: preparation.company_id, period: preparation.period, statement_account_id: bank(issue), funds_view: 'bank' }, hash: '#bank-details' }">查看对应账户流水与对账</RouterLink>
-          <details><summary>来源标识与问题详情</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details>
-        </li></ol>
-      </details>
-    </div>
-    <BusinessStatusDetails v-if="pendingSubject" :subject-id="pendingSubject" :period="preparation.period" :snapshot-version="snapshotVersion" summary-label="查看待更正业务依据" @changed="$emit('changed')" />
-    <details class="followup-details"><summary>查看相关款项、外部办理与文件任务</summary>
-      <dl>
-        <div><dt>资料清单</dt><dd>{{ preparation.current_followups.materials.inventory_count }} 份</dd></div>
-        <div><dt>尚未发布业务</dt><dd>{{ preparation.current_followups.accounting.unpublished_count }} 项</dd></div>
-        <div><dt>款项义务</dt><dd>{{ preparation.current_followups.settlements.obligation_count }} 项</dd></div>
-        <div><dt>当前已付款</dt><dd>{{ formatFen(preparation.current_followups.settlements.paid_fen) }}</dd></div>
-        <div><dt>代付、抵销等</dt><dd>{{ formatFen(preparation.current_followups.settlements.other_settled_fen) }}</dd></div>
-        <div><dt>当前未结金额</dt><dd>{{ formatFen(preparation.current_followups.settlements.remaining_fen) }}</dd></div>
-      </dl>
-      <RouterLink :to="collectionLink('settlement_events')">查看相关清偿明细</RouterLink>
-      <p>外部办理：{{ businessStateLabel(preparation.current_followups.external.status) }} · {{ preparation.current_followups.external.obligation_count }} 项义务 <RouterLink :to="collectionLink('external_followups')">查看办理明细</RouterLink></p>
-      <p>文件任务 {{ preparation.current_followups.file_jobs.total_count }} 项，其中 {{ preparation.current_followups.file_jobs.issue_count }} 项任务结果或引用依据待核对 <RouterLink :to="collectionLink('file_jobs')">查看任务明细</RouterLink></p>
-      <p class="scope-note">明细分批读取；上述业务、义务和任务数量不等于待办总数。</p>
+
+    <p
+      v-if="preparation.current_followups.settlements.complete === false"
+      class="needs-check"
+      role="status"
+    >
+      当前款项金额尚不能完整建立，已知金额仍需连同未知来源核对。
+    </p>
+    <p
+      v-if="
+        preparation.current_followups.settlements
+          .unestablished_state_selection_count
+      "
+      class="needs-check"
+    >
+      仍有
+      {{
+        preparation.current_followups.settlements
+          .unestablished_state_selection_count
+      }}
+      组来源尚不能证明已被封存采用，不能据此认定结清。
+    </p>
+    <p
+      v-if="preparation.current_followups.file_jobs.issue_count"
+      class="needs-check"
+    >
+      {{
+        preparation.current_followups.file_jobs.issue_count
+      }}
+      项文件任务结果或引用依据待核对。
+    </p>
+
+    <details v-if="groups.length" class="issue-summary" open>
+      <summary>{{ issueCount }} 条事项需要核对</summary>
+      <div class="issue-groups">
+        <details v-for="group in groups" :key="group.key" class="issue-group">
+          <summary>
+            <strong
+              >{{ group.label }} · {{ group.issues.length }} 条核对提示</strong
+            ><span class="first-issue">{{
+              group.issues[0].message || "相关依据需要核对"
+            }}</span>
+          </summary>
+          <ol>
+            <li v-for="(issue, index) in group.issues" :key="index">
+              <p>{{ issue.message || "相关依据需要核对，见详细来源。" }}</p>
+              <RouterLink
+                v-if="bank(issue)"
+                :to="{
+                  path: '/funds',
+                  query: {
+                    company_id: preparation.company_id,
+                    period: preparation.period,
+                    statement_account_id: bank(issue),
+                    funds_view: 'bank',
+                  },
+                  hash: '#bank-details',
+                }"
+                >查看对应账户流水与对账</RouterLink
+              >
+            </li>
+          </ol>
+        </details>
+      </div>
     </details>
-    <details class="technical-details"><summary>技术状态与完整投影</summary><pre>{{ JSON.stringify(preparation, null, 2) }}</pre></details>
   </section>
 </template>
+
 <style scoped>
-.period-preparation { margin: 18px 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
-.preparation-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-h2, h3 { margin: 0 0 5px; font-size: 16px; } h3 { margin-top: 14px; }
-p { margin: 5px 0; } p, dl, details { font-size: 13px; line-height: 1.65; }
-.scope-note, .technical-details { color: var(--muted); }
-.followup-statuses { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0; font-size: 13px; }
-.needs-check { color: var(--warning); background: var(--warning-soft); padding: 8px 10px; border-radius: 8px; }
-.issue-groups { display: grid; gap: 8px; margin: 12px 0; }
-.issue-group { padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--warning); border-radius: 8px; }
-summary { cursor: pointer; } summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-.first-issue { display: block; margin: 3px 0 0; color: var(--muted); overflow-wrap: anywhere; }
-.issue-group[open] .first-issue { display: none; } li { margin: 10px 0; } ol { padding-left: 22px; }
-.followup-details, .technical-details { margin-top: 12px; }
-dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; } dt { color: var(--muted); } dd { margin: 0; }
-a { color: var(--accent); } pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (max-width: 720px) { .period-preparation { padding: 14px; } .preparation-heading { display: block; } .frozen-details { margin-top: 6px; } dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } summary { min-height: 44px; } }
+.period-preparation {
+  margin: 18px 0;
+  padding: 19px 20px;
+  border: 1px solid var(--brief-line, var(--line));
+  border-radius: var(--radius-panel, 14px);
+  background: var(--surface);
+}
+
+.preparation-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.preparation-kicker {
+  margin: 0 0 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.35;
+}
+.preparation-heading div > span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.followup-state {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 750;
+}
+.followup-state.attention {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+p,
+details {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.scope-note {
+  margin: 8px 0 12px;
+  color: var(--muted);
+}
+.followup-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.followup-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--brief-control-radius, 9px);
+  background: var(--brief-soft, var(--surface-soft));
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.followup-card.attention > strong {
+  color: var(--warning);
+}
+button.followup-card {
+  cursor: pointer;
+}
+button.followup-card:hover {
+  border-color: var(--accent);
+}
+button.followup-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.followup-card > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.followup-card > strong {
+  margin-top: 4px;
+  font-size: 16px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.followup-card > small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.followup-card > .card-action {
+  align-self: flex-start;
+  margin-top: 8px;
+  color: var(--accent);
+  font-weight: 800;
+}
+.needs-check {
+  margin: 9px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+.issue-summary {
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.issue-summary > summary {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.issue-groups {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+.issue-group {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+}
+summary {
+  cursor: pointer;
+}
+summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.first-issue {
+  display: block;
+  margin: 3px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.issue-group[open] .first-issue {
+  display: none;
+}
+li {
+  margin: 10px 0;
+}
+ol {
+  padding-left: 22px;
+}
+a {
+  color: var(--accent);
+}
+pre {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .period-preparation {
+    padding: 16px;
+  }
+  .preparation-heading {
+    display: block;
+  }
+  .followup-state {
+    display: inline-block;
+    margin-top: 9px;
+  }
+  .followup-cards {
+    grid-template-columns: 1fr;
+  }
+  summary {
+    min-height: 44px;
+  }
+}
 </style>

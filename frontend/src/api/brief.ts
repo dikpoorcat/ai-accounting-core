@@ -74,6 +74,7 @@ export interface BriefVoucher {
   number: string;
   date: string | null;
   type: string;
+  kind: string;
   state: string;
   summary: string;
   display_summary: string;
@@ -189,7 +190,13 @@ export interface BriefOpenItem {
   party: string;
   description: string;
   status: "open" | "partial" | string;
+  source_period?: string | null;
+  source_amount_fen?: string | null;
+  paid_fen?: string | null;
+  other_settled_fen?: string | null;
   outstanding_fen: string | null;
+  current_status?: "open" | "partial" | "settled" | string | null;
+  current_outstanding_fen?: string | null;
 }
 
 export interface BriefOpenCategory {

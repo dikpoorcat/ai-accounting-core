@@ -50,12 +50,33 @@ test("actual v2 responses pass runtime consumers and all five pages render histo
       const { default: component } = await server.ssrLoadModule(`/src/views/${name}View.vue`);
       const app = createSSRApp(component); app.use(router);
       const html = await renderToString(app);
-      assert.match(html, /所选月末核算/, name);
-      assert.match(html, /当前后续事项/, name);
-      if (name !== "Reports") assert.match(html, /完整总计.*筛选总计.*已加载/s, name);
+      if (name === "Brief") {
+        assert.match(html, /账务与待办/, name);
+        assert.match(html, /正在检查后续待办/, name);
+      } else if (name === "Funds") {
+        assert.match(html, /月末账面资金/, name);
+        assert.match(html, /本月实际收款/, name);
+        assert.match(html, /公司资金账户/, name);
+        assert.match(html, /所选月末账面余额/, name);
+        assert.match(html, /余额需要核查/, name);
+        assert.match(html, /本月净减少.*−¥8,000\.00/s, name);
+        assert.match(html, /账户流入、流出包含公司账户之间划转/, name);
+        assert.doesNotMatch(html, /点击查看|查看本账户账面明细|查看本账户银行流水|查看账户来源引用与证明/, name);
+      }
+      if (name !== "Brief") assert.doesNotMatch(html, /class="period-preparation|所选月末核算后/, name);
+      if (!["Brief", "Funds", "Reports"].includes(name)) assert.match(html, /完整总计.*筛选总计.*已加载/s, name);
       if (name === "Employees") assert.match(html, /暂无测算记录|未提供/, name);
       if (name === "Employees") assert.match(html, /相关来源历史清偿 · 截至所选月末 · 共 \d+ 项，已加载 \d+ 项/, name);
-      if (name === "Assets") assert.match(html, /相关历史清偿（含关联来源，截至所选月末） · 完整总计/, name);
+      if (name === "Assets") {
+        assert.match(html, /资产名称待补充/, name);
+        assert.match(html, /所选月末还值/, name);
+        assert.match(html, /2026-11-30 取得并可供使用/, name);
+        assert.match(html, /已摊销 0%/, name);
+        assert.match(html, /项目来源款项/, name);
+        assert.match(html, /月末已结清/, name);
+        assert.match(html, /公司已付 ¥8,000\.00.*抵销等 ¥8,000\.00/s, name);
+        assert.doesNotMatch(html, /点击查看|来源变更记录|后续收付款记录|折旧摊销说明|相关历史清偿（含关联来源，截至所选月末）|role="progressbar"/, name);
+      }
     }
   } finally { await server.close(); delete globalThis.t4RenderFixtures; }
 });
@@ -92,7 +113,7 @@ test("business details visibly retain uncertain adopted candidates, historical d
   } finally { await server.close(); delete globalThis.t4BusinessRender; }
 });
 
-test("unestablished employee and mixed-type asset placeholders keep exact candidates without adopted-card fields", async () => {
+test("unestablished employee details keep exact candidates while asset cards stay owner-only", async () => {
   const candidates = [{ reason: "manifest_root_role_unestablished", candidates: [
     { calculation_id: "unknown-exact-candidate-a", amount_fen: "987654321" },
     { calculation_id: "unknown-exact-candidate-b", amount_fen: "987654321" },
@@ -133,14 +154,21 @@ test("unestablished employee and mixed-type asset placeholders keep exact candid
       const app = createSSRApp(component); app.use(router);
       const html = await renderToString(app), visible = html.replace(/<pre[^>]*>[\s\S]*?<\/pre>/g, "");
       assert.match(visible, name === "Employees" ? /待证员工/ : /待证资产/);
-      assert.match(visible, /冻结采用未建立/);
-      assert.match(visible, /相关金额尚未建立/);
-      assert.match(visible, /完整范围内 1 项/);
-      assert.ok((visible.match(/查看核算依据/g) ?? []).length >= 2);
-      assert.match(html, /unknown-exact-candidate-a/); assert.match(html, /unknown-exact-candidate-b/);
       assert.doesNotMatch(visible, /9,876,543\.21/);
-      if (mode === "list") assert.match(visible, /<strong[^>]*>未建立<\/strong>/);
-      if (name === "Assets") assert.doesNotMatch(visible, /role="progressbar"/);
+      if (name === "Assets") {
+        assert.match(visible, /资料待确认/);
+        assert.match(visible, /所选月末还值/);
+        assert.match(visible, /暂不计入资产数量和金额/);
+        assert.match(visible, /由 AI 会计核对/);
+        assert.doesNotMatch(html, /unknown-exact-candidate-a|unknown-exact-candidate-b|查看核算依据|冻结采用未建立|相关金额尚未建立|点击查看|role="progressbar"/);
+      } else {
+        assert.match(visible, /冻结采用未建立/);
+        assert.match(visible, /相关金额尚未建立/);
+        assert.match(visible, /完整范围内 1 项/);
+        assert.ok((visible.match(/查看核算依据/g) ?? []).length >= 2);
+        assert.match(html, /unknown-exact-candidate-a/); assert.match(html, /unknown-exact-candidate-b/);
+        if (mode === "list") assert.match(visible, /<strong[^>]*>未建立<\/strong>/);
+      }
     }
     const actual = JSON.parse(readFileSync(new URL("./t4-unestablished-responses.json", import.meta.url), "utf8"));
     globalThis.t4PlaceholderFixtures = actual;
@@ -153,20 +181,23 @@ test("unestablished employee and mixed-type asset placeholders keep exact candid
       const { default: component } = await server.ssrLoadModule(`/src/views/${name}View.vue`);
       const app = createSSRApp(component); app.use(router);
       const html = await renderToString(app);
-      assert.match(html, /冻结采用未建立/);
-      assert.match(html, /相关金额尚未建立/);
-      assert.match(html, /查看核算依据/);
+      if (name === "Assets") {
+        assert.match(html, /资料待确认/);
+        assert.doesNotMatch(html, /冻结采用未建立|相关金额尚未建立|查看核算依据|点击查看/);
+      } else {
+        assert.match(html, /冻结采用未建立/);
+        assert.match(html, /相关金额尚未建立/);
+        assert.match(html, /查看核算依据/);
+      }
     }
   } finally { await server.close(); delete globalThis.t4PlaceholderFixtures; delete globalThis.t4PlaceholderMode; }
 });
 
-test("historical source pages expose totals and use a separate historical continuation while preparation stays unknown", async () => {
+test("historical source pages expose totals and keep their own continuation without company-wide preparation", async () => {
   const responses = structuredClone(fixtures);
   const labor = responses.employees.data.workforce_cost.personal_labor.items[0];
   labor.movements = labor.movements.slice(0, 1);
   labor.movements_page = { total_count: 120, filtered_count: 120, returned_count: 1, has_more: true, next_cursor: "sealed-history-cursor" };
-  const settlements = responses.employees.data.period_preparation.current_followups.settlements;
-  Object.assign(settlements, { complete: false, status: "partially_established", unestablished_state_selection_count: 2, source_amount_fen: null, paid_fen: null, other_settled_fen: null, remaining_fen: null });
   globalThis.t4HistoryFixtures = responses;
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
     plugins: [{ name: "seed-historical-page", enforce: "pre", transform(code, id) {
@@ -182,13 +213,11 @@ test("historical source pages expose totals and use a separate historical contin
     assert.match(visible, /查看更多历史清偿与精确来源/);
     assert.match(visible, /含关联来源明细；本来源金额见上方汇总/);
     assert.match(visible, /查看精确来源业务/);
-    assert.match(visible, /当前款项金额尚不能完整建立/);
-    assert.match(visible, /仍有 2 组来源尚不能证明已被封存采用/);
-    assert.match(visible, /当前未结金额<\/dt><dd[^>]*>暂无法确定/);
+    assert.doesNotMatch(visible, /class="period-preparation|所选月末核算后/);
   } finally { await server.close(); delete globalThis.t4HistoryFixtures; }
 });
 
-test("R2 unresolved source movements remain visible with null amounts and exact B traces in all five lists", async () => {
+test("R2 source movements stay in operating details and are omitted from owner asset cards", async () => {
   const responses = structuredClone(fixtures);
   const template = responses.assets.data.collections.assets.items[0].settlements[0];
   const page = { total_count: 2, filtered_count: 2, returned_count: 2, has_more: false, next_cursor: null };
@@ -220,7 +249,7 @@ test("R2 unresolved source movements remain visible with null amounts and exact 
       if (match) return code.replace(/const response = ref<[^;\n]+>\(null\)/, `const response = ref(globalThis.t4UnresolvedFixtures.${match[1].toLowerCase()})`);
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
-    for (const [name, slots] of [["Employees", ["payroll", "labor"]], ["Assets", ["asset", "exit", "project"]]]) {
+    for (const [name, slots] of [["Employees", ["payroll", "labor"]], ["Assets", ["project"]]]) {
       const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] });
       await router.push("/?company_id=co&period=2026-11");
       const { default: component } = await server.ssrLoadModule(`/src/views/${name}View.vue`);
@@ -233,17 +262,23 @@ test("R2 unresolved source movements remain visible with null amounts and exact 
         assert.ok(globalThis.t4UnresolvedTraceTargets.includes(`exact-B-${slot}`));
         assert.ok(globalThis.t4UnresolvedTraceTargets.includes(`exact-payment-${slot}`));
       }
+      if (name === "Assets") {
+        assert.doesNotMatch(visible, /R2-asset|R2-exit/);
+        assert.ok(!globalThis.t4UnresolvedTraceTargets.includes("exact-B-asset"));
+        assert.ok(!globalThis.t4UnresolvedTraceTargets.includes("exact-B-exit"));
+      }
     }
   } finally { await server.close(); delete globalThis.t4UnresolvedFixtures; delete globalThis.t4UnresolvedTraceTargets; }
 });
 
-test("T6 preparation retains distinct source issues and exposes incomplete known sums and file-only problems", async () => {
+test("T6 preparation keeps owner-facing issue summaries without technical source navigation", async () => {
   const preparation = structuredClone(fixtures.employees.data.period_preparation);
   preparation.current_followups.materials.issues = [
     { message: "同文资料问题", subject_id: "source-a" },
     { message: "同文资料问题", subject_id: "source-b" },
   ];
   Object.assign(preparation.current_followups.settlements, { complete: false, paid_fen: "12345", remaining_fen: "30000" });
+  Object.assign(preparation.current_followups.external, { obligation_count: 0, completion_status_counts: {} });
   preparation.current_followups.file_jobs.issue_count = 3;
   preparation.current_followups.accounting.pending_subject_id = "pending-correction";
   preparation.current_followups.accounting.issues = [
@@ -259,19 +294,21 @@ test("T6 preparation retains distinct source issues and exposes incomplete known
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }, { path: "/funds", component: {} }] });
     await router.push("/?company_id=co&period=2026-11");
     const { default: component } = await server.ssrLoadModule("/src/components/PeriodPreparation.vue");
-    const app = createSSRApp(component, { preparation }); app.use(router);
+    const app = createSSRApp(component, { preparation, ownerNavigation: true }); app.use(router);
     const html = await renderToString(app);
-    assert.match(html, /所选期间相关的当前跟进/);
+    assert.match(html, /所选月末核算后，还有什么需要处理/);
     assert.match(html, new RegExp(`全公司 · 截至 ${preparation.as_of} 的相关后续事项`));
-    assert.match(html, /不改变所选月封存结果/);
+    assert.match(html, /尚未关账；以下事项会持续更新/);
     assert.match(html, /当前资料核对 · 2 条核对提示/);
-    assert.match(html, /source-a/); assert.match(html, /source-b/);
-    assert.match(html, /class="needs-check"[^>]*>当前款项金额尚不能完整建立/);
-    assert.match(html, /123\.45/);
-    assert.match(html, /class="needs-check"[^>]*>3 项文件任务结果或引用依据待核对/);
+    assert.doesNotMatch(html, /source-a|source-b/);
+    assert.match(html, /class="needs-check"[^>]*>\s*当前款项金额尚不能完整建立/);
+    assert.match(html, /收付款跟进<\/span><strong[^>]*>¥300\.00/);
+    assert.match(html, /<button[^>]*class="followup-card attention clickable"[^>]*>.*点击查看<\/span><\/button>/s);
+    assert.match(html, /申报与外部事项<\/span><strong[^>]*>暂无<\/strong><small[^>]*>所选月份相关共 0 项/);
+    assert.match(html, /class="needs-check"[^>]*>\s*3 项文件任务结果或引用依据待核对/);
     assert.match(html, /另一业务尚未正式处理/);
-    assert.match(html, /查看待更正业务依据/);
-    assert.deepEqual(globalThis.t6PreparationTargets.toSorted(), ["source-a", "source-b", "explicit-accounting-source", "pending-correction"].toSorted());
+    assert.doesNotMatch(html, /查看待更正业务依据|技术状态与完整投影/);
+    assert.deepEqual(globalThis.t6PreparationTargets, []);
     assert.doesNotMatch(html, /总待办数[：:]\s*\d/);
   } finally { await server.close(); delete globalThis.t6PreparationTargets; }
 });
