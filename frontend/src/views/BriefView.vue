@@ -1043,72 +1043,95 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 0;
   background: transparent;
-
-  grid-column: 1 / -1;
 }
 
 .kpi {
+  --kpi-accent: var(--brief-green);
+  --kpi-accent-soft: var(--brief-green-soft);
+
   display: grid;
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto 1fr;
   gap: 6px;
   align-content: start;
-  padding: 0;
+  padding: 0 0 0 12px;
   border: 0;
-  border-left: 0;
+  border-left: 1px solid var(--brief-line);
+  border-radius: var(--brief-control-radius);
   background: transparent;
   color: var(--brief-text);
   font: inherit;
   text-align: left;
-
-  border-radius: 0;
 }
 
 .kpi:first-child {
   border-left: 0;
 }
 
+.kpi.funds {
+  --kpi-accent: var(--brief-green);
+  --kpi-accent-soft: var(--brief-green-soft);
+}
+
+.kpi.asset {
+  --kpi-accent: var(--brief-gold);
+  --kpi-accent-soft: var(--brief-gold-soft);
+}
+
+.kpi.receivable {
+  --kpi-accent: var(--brief-blue);
+  --kpi-accent-soft: var(--brief-blue-soft);
+}
+
+.kpi.payable {
+  --kpi-accent: var(--brief-amber);
+  --kpi-accent-soft: var(--brief-amber-soft);
+}
+
 button.kpi {
   position: relative;
-  border-radius: var(--brief-control-radius);
+  padding-left: 18px;
   cursor: pointer;
-  transition: background-color 150ms ease;
-}
-
-button.kpi:hover,
-button.kpi:focus-visible {
-  background: color-mix(in srgb, var(--brief-soft) 72%, transparent);
-}
-
-button.kpi:hover > strong {
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 4px;
+  transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 button.kpi:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 6px;
+  outline-offset: 2px;
+  /* 让聚焦轮廓的圆角与悬浮底色一致。 */
+  border-radius: calc(var(--brief-control-radius) + 2px);
 }
 
-button.kpi::after {
+/* 左侧分类色标，替代原来的灰底与右上角箭头，表示该模块可以进入。 */
+button.kpi::before {
   position: absolute;
-  top: 0;
-  right: 0;
-  color: var(--brief-muted);
-  font-size: 18px;
-  line-height: 1;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--kpi-accent);
   opacity: 0;
-  transform: translateX(-3px);
-  transition: opacity 150ms ease, transform 150ms ease;
-  content: "›";
+  transform: scaleY(0.4);
+  transition: opacity 160ms ease, transform 160ms ease;
+  content: "";
 }
 
-button.kpi:hover::after,
-button.kpi:focus-visible::after {
-  opacity: 1;
-  transform: translateX(0);
+button.kpi:hover,
+button.kpi:focus-visible {
+  border-color: color-mix(in srgb, var(--kpi-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--kpi-accent-soft) 70%, transparent);
+}
+
+button.kpi:hover::before,
+button.kpi:focus-visible::before {
+  opacity: 0.85;
+  transform: scaleY(1);
+}
+
+button.kpi:hover > strong {
+  text-decoration-color: color-mix(in srgb, var(--kpi-accent) 55%, transparent);
 }
 
 .kpi-label {
@@ -1344,6 +1367,13 @@ button.kpi:focus-visible::after {
 
   .kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 24px;
+  }
+
+  /* 两列时不再用左侧分隔线区分板块。 */
+  .kpi {
+    padding-left: 14px;
+    border-left: 0;
   }
 
   .checks {
@@ -1395,12 +1425,12 @@ button.kpi:focus-visible::after {
 
   .kpi-grid {
     grid-template-columns: 1fr;
+    gap: 0;
   }
 
   .kpi {
-    min-height: 104px;
-    padding: 14px;
-    border-left: 0;
+    padding-top: 13px;
+    padding-bottom: 13px;
   }
 
   .kpi + .kpi {
@@ -1451,9 +1481,5 @@ button.kpi:focus-visible::after {
   }
 }
 
-.brief-hero .kpi-grid > * { min-height: 0; padding: 0; border: 0; background: transparent; }
 .brief-hero .kpi-grid strong { font-variant-numeric: tabular-nums; }
-@media (max-width: 760px) {
-  .brief-hero .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-}
 </style>

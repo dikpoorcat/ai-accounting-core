@@ -40,7 +40,9 @@ function handleChange(event: Event) {
     <div class="module-heading">
       <h1>{{ title }}</h1>
     </div>
-    <slot name="navigation" />
+    <div v-if="$slots.navigation" class="module-navigation">
+      <slot name="navigation" />
+    </div>
     <div class="toolbar">
       <select
         class="control"
@@ -116,6 +118,7 @@ select.control {
 }
 
 .refresh {
+  min-width: 76px;
   cursor: pointer;
 }
 
@@ -147,8 +150,8 @@ select.control {
 }
 
 .period-status.open {
-  background: var(--surface-soft);
-  color: var(--muted);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .header-progress {
@@ -257,6 +260,9 @@ select.control {
 }
 .with-navigation h1 { font-size: 26px; white-space: nowrap; }
 .with-navigation .toolbar { grid-row: 1; grid-column: 3; width: auto; flex-wrap: nowrap; }
+/* The navigation is rendered by each page and disappears while its data is loading;
+   keeping the row height here stops the header and the toolbar from moving. */
+.with-navigation .module-navigation { grid-row: 1; grid-column: 2; min-width: 0; min-height: 42px; }
 .with-navigation :deep(.section-nav) {
   position: static;
   min-width: 0;
@@ -274,14 +280,15 @@ select.control {
 @media (max-width: 1199px) {
   .module-header.with-navigation { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; }
   .with-navigation .toolbar { grid-column: 2; }
-  .with-navigation :deep(.section-nav) { grid-row: 2; grid-column: 1 / -1; }
+  .with-navigation .module-navigation { grid-row: 2; grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
   .module-header.with-navigation { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 2px; }
   .with-navigation h1 { font-size: 24px; }
   .with-navigation .toolbar { display: flex; grid-row: 2; grid-column: 1; gap: 6px; }
   .with-navigation .toolbar select { min-width: 0; width: 0; flex: 1; }
-  .with-navigation :deep(.section-nav) { grid-row: 3; grid-column: 1; gap: 14px; }
+  .with-navigation .module-navigation { grid-row: 3; grid-column: 1; }
+  .with-navigation :deep(.section-nav) { gap: 14px; }
   .with-navigation .period-status { flex: none; padding: 3px 7px; font-size: 11px; }
 }
 </style>

@@ -54,6 +54,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* Loading and loaded pages differ a lot in height; reserving the scrollbar gutter
+     keeps the centred page container from shifting when the scrollbar appears. */
+  scrollbar-gutter: stable;
 }
 
 html,
