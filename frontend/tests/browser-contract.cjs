@@ -43,7 +43,6 @@ async page => {
       const n = query.after_number === "1" ? 2 : 1;
       return reply({ schema_version: 1, selected_period: period, data: { ...f.brief, generated_at: "2026-09-12T00:00:00Z", voucher_count: 2, line_count: 4, vouchers: [voucher(n, current.name)], voucher_page: { has_more: n === 1, next_after_number: n, total_count: 2 }, position: { ...f.position, assets_fen: "9007199254740993", bank_fen: "9007199254740993", equation_valid: true }, cash: f.cash, unmatched_bank_activity: { count: 0, ordinary_count: 0, pending_late_count: 0, inflow_fen: "0", outflow_fen: "0", rows: [] }, open_items: { receivable_count: 0, receivable_fen: "0", payable_count: 0, payable_fen: "0", total_count: 0, categories: [] }, workforce_cost: workforce, long_term_assets: { net_fen: "0", fixed_net_fen: "0", intangible_net_fen: "0", fixed_active_count: 0, intangible_active_count: 0 }, validation: { state: "attention", title: "待核对", summary: "演示账务", integrity_valid: true, attention_count: 0, items: [] }, material_completeness: { closed: false, satisfied: false, issues: [] } } });
     }
-    if (path === "/api/local/trace") return reply({ calculation: { id: query.calculation_id, subject_id: "subject-1", kind: "expense", period: 202609, digest: "fixture", program_version: "test", outcome: { lines: [], values: {}, explanation: [], balances: [] } }, facts: [{ id: "fact-1", subject_id: "subject-1", revision: 2, kind: "expense", data: { recognition_period: "2026-09" }, evidence: ["fixture-evidence"] }], upstream: [] });
     if (path === "/api/dashboard/funds") {
       const second = !!query.after_movement;
       return reply({ schema_version: 1, selected_period: period, data: { ...f.funds, movement_count: 2, movements: [{ id: second ? "m2" : "m1", date: "2026-09", account_code: "1002", account_name: "演示账户", account_type: "bank", direction: "outflow", amount_fen: "100", signed_amount_fen: "-100", reference: second ? "资金第二页" : "资金第一页", type: "费用", summary: "演示付款", display_summary: "演示付款", party: "", internal_transfer: false, component_kinds: [] }], movement_page: { has_more: !second, next_cursor: second ? null : "m1", total_count: 2 }, bank_statement: { ...f.bank, page: pageInfo } } });
@@ -76,8 +75,7 @@ async page => {
   await page.getByRole("heading", { name: "月度经营与财务概览" }).waitFor();
   await page.getByRole("button", { name: "按凭证", exact: true }).click();
   await page.getByRole("button", { name: /演示甲公司月度费用1/ }).click();
-  await page.getByRole("button", { name: "核算追溯", exact: true }).click();
-  await page.getByRole("heading", { name: "费用的核算依据" }).waitFor();
+  await page.getByLabel("1 凭证明细").waitFor();
   if (!(await page.locator("body").innerText()).includes("¥90,071,992,547,409.93")) throw new Error("large amount rounded");
   if ((await page.locator("body").innerText()).includes("NaN")) throw new Error("month precision produced fake day");
   await page.getByRole("button", { name: "加载更多业务与凭证" }).click();

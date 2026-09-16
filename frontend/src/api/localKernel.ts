@@ -81,38 +81,6 @@ export function localJobMessage(job: LocalJob): string {
   return "暂时无法确认任务结果，请刷新核对。";
 }
 
-export interface LocalTrace {
-  evidence_details: EvidenceDetails[];
-  voucher?: { id: string; number: number; period: string; reverses_id: string | null; total: string } | null;
-  related_vouchers?: { id: string; number: number; period: string; role: "original" | "reversal" | "replacement"; label?: string; correction_of_voucher_id?: string; correction_of_number?: number; correction_group?: "current" | "next" }[];
-  calculation: {
-    id: string;
-    subject_id: string;
-    kind: string;
-    period: number;
-    digest: string;
-    program_version: string;
-    outcome: {
-      lines: { account: string; debit: LocalFen; credit: LocalFen; cashflow: string | null }[];
-      opening_lines?: { account: string; debit: LocalFen; credit: LocalFen; cashflow: null }[];
-      opening?: boolean;
-      values: Record<string, unknown>;
-      explanation: Record<string, unknown>[];
-      balances: { key: string; amount: LocalFen; category: string }[];
-    };
-  };
-  facts: {
-    id: string;
-    subject_id: string;
-    revision: number;
-    kind: string;
-    data: Record<string, unknown>;
-    evidence: string[];
-  }[];
-  upstream: string[];
-  upstream_details?: { id: string; label: string }[];
-}
-
 // These labels reuse the existing business presentation vocabulary. The new
 // kernel's fact kinds are separately enumerated; unknown types stay Chinese.
 export const localBusinessNames: Record<string, string> = {
@@ -339,14 +307,6 @@ export function fetchLocalOverview(companyId: string, period: string, signal?: A
 
 export function fetchLocalLedger(companyId: string, period: string, afterNumber = 0, signal?: AbortSignal): Promise<LocalVoucher[]> {
   return localRequest("ledger", { company_id: companyId, period, after_number: String(afterNumber), limit: "50" }, signal);
-}
-
-export function fetchLocalTrace(companyId: string, calculationId: string, signal?: AbortSignal): Promise<LocalTrace> {
-  return localRequest("trace", { company_id: companyId, calculation_id: calculationId }, signal);
-}
-
-export function fetchVoucherTrace(companyId: string, voucherVersionId: string, calculationId?: string, signal?: AbortSignal): Promise<LocalTrace> {
-  return localRequest("trace", { company_id: companyId, voucher_version_id: voucherVersionId, ...(calculationId ? { calculation_id: calculationId } : {}) }, signal);
 }
 
 export function fetchLocalJobs(companyId: string, signal?: AbortSignal): Promise<LocalJob[]> {

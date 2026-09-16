@@ -28,7 +28,6 @@ export interface BusinessStatusData {
   settlements: BusinessSettlements;
   current_followups?: { settlements: BusinessSettlements; [key: string]: unknown };
   external: Record<string, unknown>;
-  trace_targets?: Array<{ calculation_id: string; voucher_version_id?: string | null }>;
   collections: DashboardCollections;
   [key: string]: unknown;
 }

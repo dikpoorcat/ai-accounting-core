@@ -6,7 +6,6 @@ import { dashboardErrorMessage, isDashboardSnapshotChanged } from "../api/client
 import { businessStateLabel } from "../api/dashboardContracts";
 import DashboardPagination from "./DashboardPagination.vue";
 import DashboardBusinessRecords from "./DashboardBusinessRecords.vue";
-import VoucherTrace from "./brief/VoucherTrace.vue";
 import { fen, formatFen } from "../utils/money";
 
 interface BriefStatusContext {
@@ -42,7 +41,6 @@ const notice = ref("");
 const collectionStates = ref<Record<string, { loading: boolean; error: string; notice: string; restart: boolean }>>({});
 const collectionControllers = new Map<string, AbortController>();
 let controller: AbortController | null = null, generation = 0, mounted = true;
-const traceTargets = computed(() => data.value?.trace_targets || []);
 const currentFollowupSettlements = computed(() => data.value?.current_followups?.settlements || null);
 const showCurrentFollowups = computed(() => {
   const selected = data.value?.settlements;
@@ -308,36 +306,6 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
               </span>
             </div>
           </dl>
-
-          <section v-if="traceTargets.length" class="compact-proof-block">
-            <header>
-              <strong>凭证与原始资料</strong>
-              <small>{{ traceTargets.length }} 组</small>
-            </header>
-            <div>
-              <VoucherTrace
-                v-for="target in traceTargets"
-                :key="`${target.calculation_id}-${target.voucher_version_id || ''}`"
-                :calculation-id="target.calculation_id"
-                :voucher-version-id="target.voucher_version_id || undefined"
-                compact
-              />
-            </div>
-          </section>
-
-          <div
-            v-for="(selection, index) in data.selected_accounting.through_period.unestablished_state_selections"
-            :key="index"
-            class="compact-candidates"
-          >
-            <strong>待确认的核算记录</strong>
-            <VoucherTrace
-              v-for="candidate in selection.candidates"
-              :key="candidate.calculation_id"
-              :calculation-id="candidate.calculation_id"
-              compact
-            />
-          </div>
         </details>
 
         <details v-if="compactCollections.length" class="compact-history">
@@ -378,7 +346,6 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
         <strong>尚不能证明冻结采用</strong>
         <p>以下为精确候选，不能当作已采用结果或按零金额处理。</p>
         <div v-for="candidate in selection.candidates" :key="candidate.calculation_id">
-          <VoucherTrace :calculation-id="candidate.calculation_id" />
           <details><summary>查看候选与未建立原因</summary><pre>{{ JSON.stringify({ reason: selection.reason, candidate }, null, 2) }}</pre></details>
         </div>
       </section>
@@ -535,7 +502,6 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
 
 .compact-owner-heading,
 .compact-status-heading,
-.compact-proof-block > header,
 .compact-accounting > summary,
 .compact-history > summary,
 .compact-history > section > header {
@@ -558,7 +524,6 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
 
 .compact-owner-heading small,
 .compact-status-heading small,
-.compact-proof-block small,
 .compact-accounting small,
 .compact-history small,
 .compact-history > section > header span {
@@ -725,25 +690,6 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
   line-height: 1.5;
 }
 
-.compact-proof-block {
-  display: grid;
-  gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--brief-line, var(--line));
-}
-
-.compact-proof-block > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-}
-
-.compact-proof-block :deep(.trace-details) {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
 .compact-accounting,
 .compact-history {
   min-width: 0;
@@ -783,24 +729,6 @@ onBeforeUnmount(() => { mounted = false; invalidate(); });
 
 .compact-history :deep(.business-records article) {
   padding: 9px 0;
-}
-
-.compact-candidates {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  padding: 8px 0;
-}
-
-.compact-candidates > strong {
-  font-size: 11px;
-}
-
-.compact-candidates :deep(.trace-details) {
-  margin: 0;
-  padding: 0;
-  border: 0;
 }
 
 @media (max-width: 720px) {

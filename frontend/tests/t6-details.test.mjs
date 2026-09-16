@@ -23,7 +23,6 @@ async function harness(component, exported, suppliedProps = {}) {
     const withDefaults = (value, defaults) => Object.assign({}, defaults, value);
     const defineEmits = () => (...args) => environment.events.push(args);
     const fetchBusinessStatus = environment.fetch, fetchAssetsDashboard = environment.fetch, fetchEmployeesDashboard = environment.fetch;
-    const fetchLocalTrace = environment.fetch, fetchVoucherTrace = environment.fetch;
     const dashboardErrorMessage = error => error.message, localErrorMessage = error => error.message;
     const isDashboardSnapshotChanged = error => error.code === 'dashboard_snapshot_changed';
   `;
@@ -131,23 +130,5 @@ test("source history continuation retries its old cursor, and snapshot changes c
   const stale = view.load(true); view.calls[3].reject(changedError()); await stale;
   assert.equal(view.collection.value, null);
   assert.deepEqual(view.events, [["changed"]]);
-  view.unmount();
-});
-
-test("voucher retry keeps the failed exact target without adding another back-history entry", async () => {
-  const view = await harness("brief/VoucherTrace", "load, retry, back, history, error, trace", { calculationId: "original-calculation" });
-  const first = view.load(); view.calls[0].resolve({ marker: "original" }); await first;
-  const related = view.load({ voucherVersionId: "exact-related-version" });
-  view.calls[1].reject(new Error("temporary trace failure")); await related;
-  assert.equal(view.history.value.length, 1);
-  view.retry();
-  assert.equal(view.calls[2].args[1], "exact-related-version");
-  assert.equal(view.history.value.length, 1);
-  view.calls[2].resolve({ marker: "related" }); await Vue.nextTick();
-  assert.equal(view.trace.value.marker, "related");
-  view.back();
-  assert.equal(view.calls[3].args[1], "original-calculation");
-  assert.equal(view.history.value.length, 0);
-  view.calls[3].resolve({ marker: "original-again" }); await Vue.nextTick();
   view.unmount();
 });

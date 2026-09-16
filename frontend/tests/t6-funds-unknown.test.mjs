@@ -12,7 +12,6 @@ test("T6 funds keeps historical adoption warnings and exact candidates without t
   const fixtures = JSON.parse(readFileSync(new URL("./t4-ui-responses.json", import.meta.url), "utf8"));
   const previousWindow = globalThis.window, previousFetch = globalThis.fetch;
   globalThis.window = { location: { origin: "http://localhost", search: "?company_id=co" } };
-  globalThis.t6FundsTraceTargets = [];
   const server = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
     plugins: [{ name: "t6-funds-historical-unknown", enforce: "pre", transform(code, id) {
@@ -22,7 +21,6 @@ test("T6 funds keeps historical adoption warnings and exact candidates without t
         .replace("const initializing = ref(true)", "const initializing = ref(false)")
         .replace('const selectedPeriod = ref("")', 'const selectedPeriod = ref("2026-11")')
         .replaceAll("{ immediate: true }", "{ immediate: false }");
-      if (path.endsWith("/src/components/brief/VoucherTrace.vue")) return code.replace("const route = useRoute();", "globalThis.t6FundsTraceTargets.push(props.calculationId);\nconst route = useRoute();");
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom",
   });
   try {
@@ -43,7 +41,6 @@ test("T6 funds keeps historical adoption warnings and exact candidates without t
         { calculation_id: "t6-frozen-candidate-b", amount_fen: "987654321" },
       ] }];
       globalThis.t6FundsData = data;
-      globalThis.t6FundsTraceTargets = [];
       const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/funds", name: "funds", component: {} }, { path: "/", name: "brief", component: {} }] });
       await router.push("/funds?company_id=co&period=2026-11");
       const app = createSSRApp(component); app.use(router);
@@ -60,12 +57,12 @@ test("T6 funds keeps historical adoption warnings and exact candidates without t
         assert.match(visible, /余额需要核查/);
       }
       assert.doesNotMatch(visible, /9,876,543\.21/);
-      assert.deepEqual(globalThis.t6FundsTraceTargets, ["t6-frozen-candidate-a", "t6-frozen-candidate-b"]);
+      assert.match(html, /t6-frozen-candidate-a/); assert.match(html, /t6-frozen-candidate-b/);
       assert.match(html, /manifest_state_adoption_not_proven/);
     }
   } finally {
     await server.close();
     globalThis.window = previousWindow; globalThis.fetch = previousFetch;
-    delete globalThis.t6FundsData; delete globalThis.t6FundsTraceTargets;
+    delete globalThis.t6FundsData;
   }
 });

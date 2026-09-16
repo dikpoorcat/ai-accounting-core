@@ -91,7 +91,6 @@ export interface UnestablishedAssetItem {
   selection_status: "unestablished";
   candidate_selections: UnestablishedSelection[];
   established_card?: EstablishedAssetItem;
-  trace_targets: Array<{ calculation_id: string; voucher_version_id?: string | null }>;
 }
 export type AssetItem = EstablishedAssetItem | UnestablishedAssetItem;
 

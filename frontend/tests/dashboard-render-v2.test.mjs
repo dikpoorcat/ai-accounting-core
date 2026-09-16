@@ -106,7 +106,7 @@ test("business details visibly retain uncertain adopted candidates, historical d
     const visible = html.replace(/<details[^>]*>[\s\S]*?<summary>[^<]*(?:技术依据|精确来源|候选与未建立原因)[^<]*<\/summary>[\s\S]*?<\/details>/g, "");
     assert.match(html, /尚不能证明冻结采用/);
     assert.match(html, /exact-candidate-a/); assert.match(html, /exact-candidate-b/);
-    assert.ok((html.match(/查看核算依据/g) ?? []).length >= 2);
+    assert.ok((html.match(/查看候选与未建立原因/g) ?? []).length >= 2);
     assert.match(visible, /所选月末款项/); assert.match(visible, /本项历史业务相关的当前跟进/);
     assert.match(visible, /2026-02/); assert.match(visible, /已结清/); assert.match(visible, /尚不能确认/);
     assert.match(visible, /暂无法确定/); assert.match(visible, /此项原金额未知/); assert.match(visible, /局部来源缺少精确金额/);
@@ -165,7 +165,7 @@ test("unestablished employee details keep exact candidates while asset cards sta
         assert.match(visible, /冻结采用未建立/);
         assert.match(visible, /相关金额尚未建立/);
         assert.match(visible, /完整范围内 1 项/);
-        assert.ok((visible.match(/查看核算依据/g) ?? []).length >= 2);
+        assert.match(visible, /查看本组候选与未建立原因/);
         assert.match(html, /unknown-exact-candidate-a/); assert.match(html, /unknown-exact-candidate-b/);
         if (mode === "list") assert.match(visible, /<strong[^>]*>未建立<\/strong>/);
       }
@@ -187,7 +187,7 @@ test("unestablished employee details keep exact candidates while asset cards sta
       } else {
         assert.match(html, /冻结采用未建立/);
         assert.match(html, /相关金额尚未建立/);
-        assert.match(html, /查看核算依据/);
+        assert.match(html, /查看本组候选与未建立原因/);
       }
     }
   } finally { await server.close(); delete globalThis.t4PlaceholderFixtures; delete globalThis.t4PlaceholderMode; }
@@ -212,7 +212,8 @@ test("historical source pages expose totals and keep their own continuation with
     assert.match(visible, /相关来源历史清偿 · 截至所选月末 · 共 120 项，已加载 1 项/);
     assert.match(visible, /查看更多历史清偿与精确来源/);
     assert.match(visible, /含关联来源明细；本来源金额见上方汇总/);
-    assert.match(visible, /查看精确来源业务/);
+    assert.match(visible, /非现金抵销 · ¥8,000\.00/);
+    assert.doesNotMatch(visible, /查看精确来源业务/);
     assert.doesNotMatch(visible, /class="period-preparation|所选月末核算后/);
   } finally { await server.close(); delete globalThis.t4HistoryFixtures; }
 });
@@ -241,10 +242,8 @@ test("R2 source movements stay in operating details and are omitted from owner a
   asset.retirement = { date: "2026-11-30", book_value_fen: null, reference: "R2", settlement: source("exit") };
   responses.assets.data.projects = [{ source_id: "R2-project", period: "2026-11", label: "项目来源", party: "相关收款方", cost_fen: null, remaining_fen: null, settlement: source("project") }];
   globalThis.t4UnresolvedFixtures = responses;
-  globalThis.t4UnresolvedTraceTargets = [];
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
     plugins: [{ name: "seed-unresolved-source-movements", enforce: "pre", transform(code, id) {
-      if (id.replaceAll("\\", "/").endsWith("/src/components/brief/VoucherTrace.vue")) return code.replace("const route = useRoute();", "globalThis.t4UnresolvedTraceTargets.push(props.calculationId);\nconst route = useRoute();");
       const match = /\/src\/views\/(Employees|Assets)View\.vue$/.exec(id.replaceAll("\\", "/"));
       if (match) return code.replace(/const response = ref<[^;\n]+>\(null\)/, `const response = ref(globalThis.t4UnresolvedFixtures.${match[1].toLowerCase()})`);
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
@@ -259,16 +258,12 @@ test("R2 source movements stay in operating details and are omitted from owner a
       for (const slot of slots) {
         assert.match(visible, new RegExp(`R2-${slot}[^<]*暂无法确定</p>`));
         assert.match(visible, new RegExp(`R2-resolved-${slot}[^<]*1\\.23</p>`));
-        assert.ok(globalThis.t4UnresolvedTraceTargets.includes(`exact-B-${slot}`));
-        assert.ok(globalThis.t4UnresolvedTraceTargets.includes(`exact-payment-${slot}`));
       }
       if (name === "Assets") {
         assert.doesNotMatch(visible, /R2-asset|R2-exit/);
-        assert.ok(!globalThis.t4UnresolvedTraceTargets.includes("exact-B-asset"));
-        assert.ok(!globalThis.t4UnresolvedTraceTargets.includes("exact-B-exit"));
       }
     }
-  } finally { await server.close(); delete globalThis.t4UnresolvedFixtures; delete globalThis.t4UnresolvedTraceTargets; }
+  } finally { await server.close(); delete globalThis.t4UnresolvedFixtures; }
 });
 
 test("T6 preparation keeps owner-facing issue summaries without technical source navigation", async () => {

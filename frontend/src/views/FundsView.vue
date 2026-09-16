@@ -17,7 +17,6 @@ import {
 import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
-import VoucherTrace from "../components/brief/VoucherTrace.vue";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
@@ -784,9 +783,6 @@ onBeforeUnmount(() => {
           <details v-for="(issue, issueIndex) in funds.fact_issues" :key="issueIndex">
             <summary>查看第 {{ issueIndex + 1 }} 组历史来源与精确候选</summary>
             <p>候选只供核对，不作为已采用金额累计。</p>
-            <div v-for="candidate in issue.candidates" :key="candidate.calculation_id">
-              <VoucherTrace :calculation-id="candidate.calculation_id" />
-            </div>
             <details><summary>未建立原因与原始来源标识</summary><pre>{{ JSON.stringify(issue, null, 2) }}</pre></details>
           </details>
         </section>

@@ -90,7 +90,6 @@ export interface UnestablishedEmployeeItem {
   selection_status: "unestablished";
   candidate_selections: UnestablishedSelection[];
   established_card?: EstablishedEmployeeItem;
-  trace_targets: Array<{ calculation_id: string; voucher_version_id?: string | null }>;
 }
 export type EmployeeDashboardItem = EstablishedEmployeeItem | UnestablishedEmployeeItem;
 

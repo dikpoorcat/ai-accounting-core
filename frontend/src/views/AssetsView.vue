@@ -16,8 +16,6 @@ import DashboardModuleHeader from "../components/DashboardModuleHeader.vue";
 import DashboardSectionNav from "../components/DashboardSectionNav.vue";
 import DashboardPagination from "../components/DashboardPagination.vue";
 import BusinessStatusDetails from "../components/BusinessStatusDetails.vue";
-import VoucherTrace from "../components/brief/VoucherTrace.vue";
-import { localBusinessName } from "../api/localKernel";
 import { useDashboardContext } from "../composables/useDashboardContext";
 import { useDashboardSections } from "../composables/useDashboardSections";
 import { fen, formatFen, formatPositiveFen } from "../utils/money";
@@ -657,7 +655,6 @@ onBeforeUnmount(() => {
               <div v-for="movement in project.settlement.movements" :key="movement.id">
                 <p>{{ movement.date || `${movement.period}（按月确认）` }} · {{ movement.label }} · {{ formatFen(movement.amount_fen) }}</p>
                 <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
-                <details><summary>查看精确来源业务</summary><p>来源业务：{{ localBusinessName(movement.source_business?.kind) }}</p><VoucherTrace v-if="movement.source_calculation_id" :calculation-id="movement.source_calculation_id" /><VoucherTrace v-if="movement.calculation_id" :calculation-id="movement.calculation_id" /></details>
               </div>
               <p v-if="project.settlement.movements_page">相关历史清偿（含关联来源，截至所选月末） · 完整总计 {{ project.settlement.movements_page.total_count }} 项 · 已加载 {{ project.settlement.movements.length }} 项</p>
               <p>明细包含关联来源；本来源付款及未结金额以上方款项汇总为准。</p>

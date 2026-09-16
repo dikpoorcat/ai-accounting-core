@@ -4,7 +4,6 @@ import { useRoute } from "vue-router";
 
 import type { BriefActivityGroup, BriefActivityRow, BriefAssetReference, BriefVoucher, BriefVoucherLine } from "../../api/brief";
 import { fen, formatFen } from "../../utils/money";
-import VoucherTrace from "./VoucherTrace.vue";
 import BusinessDetails from "./BusinessDetails.vue";
 
 const props = defineProps<{
@@ -490,7 +489,7 @@ watch(() => props.focusedVoucher, () => {
               </table>
             </div>
 
-            <div v-if="voucher.evidence_details?.length || voucher.calculation_id" class="voucher-actions">
+            <div v-if="voucher.evidence_details?.length" class="voucher-actions">
               <button
                 v-if="voucher.evidence_details?.length"
                 type="button"
@@ -500,12 +499,6 @@ watch(() => props.focusedVoucher, () => {
               >
                 关联凭据 <span>{{ voucher.evidence_details.length }} 份</span>
               </button>
-              <VoucherTrace
-                v-if="voucher.calculation_id"
-                compact
-                :calculation-id="voucher.calculation_id"
-                :voucher-version-id="voucher.voucher_version_id"
-              />
               <section v-if="evidenceVoucherNumber === voucher.number" class="voucher-evidence" aria-label="关联凭据">
                 <ul>
                   <li
@@ -1304,8 +1297,7 @@ h3 {
   background: var(--brief-soft);
 }
 
-.voucher-action,
-.voucher-actions :deep(.trace-details.compact > .trace-button) {
+.voucher-action {
   flex: 0 0 auto;
   order: 1;
   min-height: 32px;
@@ -1321,8 +1313,7 @@ h3 {
   cursor: pointer;
 }
 
-.voucher-action:hover,
-.voucher-actions :deep(.trace-details.compact > .trace-button:hover) {
+.voucher-action:hover {
   background: var(--brief-green-soft);
 }
 
@@ -1330,17 +1321,6 @@ h3 {
   margin-left: 3px;
   color: var(--brief-muted);
   font-weight: 500;
-}
-
-.voucher-actions :deep(.trace-details.compact) {
-  display: contents;
-}
-
-.voucher-actions :deep(.trace-details.compact > .trace-content) {
-  flex: 1 0 100%;
-  order: 3;
-  min-width: 0;
-  padding-top: 8px;
 }
 
 .voucher-evidence {
