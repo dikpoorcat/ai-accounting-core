@@ -1,6 +1,14 @@
 # 网商银行批量代发
 
-`finance-mybank` 和 MCP 工具从当前公司已过账的内核数据生成导入文件。
+> **已退役实现**：`finance-mybank` 命令行入口、正文中的 `python -m ai_accounting.mybank_export`
+> 调用路径，以及 `finance_import_mybank_payment_source` 来源导入，在当前内核中**都不存在**
+> （`ai_accounting.mybank_export` 已退化为仅供内核引用的格式辅助模块，没有 CLI 入口）；
+> 旧命令名只作历史说明，不应再调用。当前入口是 `finance-local`，导出改用
+> `preview_export`（预览，返回 `digest`）与 `confirm_export`（提交，接收 `template_evidence_digest`、
+> `preview_digest`、`epochs`、`output_directory`、`request_id`，产物为持久任务，用 `jobs`／`run_export_jobs` 查询和推进），
+> 分别对应 `finance_preview_mybank_export` 与 `finance_generate_mybank_export`。
+
+`finance-local` 和 MCP 工具从当前公司已过账的内核数据生成导入文件。
 生成请求只接受公司、期间、范围和文件路径，不接受临时金额覆盖。实际个税等补充事实先从留存原件导入。
 CLI 经过已注册 MCP 工具的负责人认证、公司路由和数据库版本检查，不直接打开指定业务库。
 

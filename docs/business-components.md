@@ -1,5 +1,17 @@
 # 组合式记账
 
+> **已退役实现**：本文描述的 `finance_record_event` + `components` + `funds` 组件协议已整体退役，
+> 正文中的旧命令名只作历史说明，不应再调用，示例请求形状也不被当前内核接受。
+> 当前做法是按事实类型逐个提交：`save_fact`（批量 `save_facts`，单条为
+> `kind`／`subject_id`／`data`／`evidence`／`expected_revision`／`request_id`）登记类型化事实，
+> `preview` 试算并返回 `preview_digest`，`confirm` 用同一摘要与 `epochs` 发布；
+> 事实、命令与字段发现入口是 `schema`（MCP `finance_local_schema`）。
+> 名称对应：`finance_preview_event`→`preview`，`finance_record_event`→`save_fact`／`save_facts` + `confirm`，
+> `finance_get_event_schema`→`schema`，`finance_get_event`→`find_facts`（事实与证据）／`trace`（凭证及审计），
+> `finance_update_business_metadata`→受控字段的 `management`（只接受说明、代发归集月份与代发类别，
+> 不接受任意 `metadata` 字典）。`finance_configure_account` 在当前内核**没有对应入口**：
+> 科目表硬编码在 `kernel/query_semantics.py` 及各领域模块中，不提供在 `business_class` 下登记明细科目。
+
 `finance_record_event` 的一笔请求由公司、记账日期、幂等键、`components` 和 `funds`
 组成。单项业务也使用此协议。业务组件保留稳定 `key`、类型化事实、必要业务日期、
 证据及来源；资金项单独描述真实收付、账户、日期和分配。所有金额都是整数分。

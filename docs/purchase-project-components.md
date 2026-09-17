@@ -1,6 +1,15 @@
 # 供应商预付款与项目成本
 
-业务库使用空库基线 `0001_business_baseline_v4`；目录库保持独立的 v2 基线。
+> **已退役实现**：本文使用已退役的 `finance_preview_event` / `finance_record_event` 组件协议与旧组件名，
+> 旧命令名只作历史说明，不应再调用。当前做法是按类型化事实逐个 `save_fact`
+> （预付款为 `advance`／`advance_fulfillment`／`advance_refund`，项目成本为 `project_cost`／`project_release`），
+> 用 `preview` 试算、`confirm` 发布，读取事实用 `find_facts`。
+> 名称对应：`finance_preview_event`→`preview`，`finance_record_event`→`save_fact`／`save_facts` + `confirm`。
+> `finance_get_event` 返回的 `project_cost_balance` 在当前内核**不存在**，可用余额不作为查询字段发布，
+> 而是在消耗来源时由累计容量校验判定。`finance_configure_account` 在当前内核**没有对应入口**：
+> 科目表硬编码在 `kernel/query_semantics.py` 及各领域模块中，不提供在 `business_class` 下登记明细科目。
+
+当前公司库结构版本为 v12；目录库为 v3。
 所有新增组件使用 `finance_preview_event` / `finance_record_event`，金额为整数分，
 正式写入仍只有统一提交器。缺少关键事实返回 `needs_information`。
 

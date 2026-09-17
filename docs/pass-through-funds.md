@@ -1,6 +1,16 @@
 # 组件式代收代付
 
-运行协议 `business-components-v3`，业务库使用空库基线 `0001_business_baseline_v4`。
+> **已退役实现**：本文正文使用已退役的 `finance_record_event` + `components` + `funds` 组件协议，
+> 旧命令名只作历史说明，不应再调用，示例请求形状也不被当前内核接受。
+> 当前做法：代收代付是 `pass_through` 类型化事实（`payer_id`、`beneficiary_id`、`amount_fen`、
+> `rights_and_obligation_confirmed`），用 `save_fact` 登记、`preview` 试算、`confirm` 发布；
+> 付款核销用 `settlement` 事实，读取事实用 `find_facts`，更正用 `amend_fact`。
+> 名称对应：`finance_record_event`→`save_fact`／`save_facts` + `preview` + `confirm`，
+> `finance_get_event`→`find_facts`／`trace`，`finance_amend_event`→`amend_fact`；
+> `finance_update_business_metadata` 的任意 `metadata` 字典在当前内核**没有对应入口**，
+> `management` 只接受说明、代发归集月份与代发类别。
+
+运行协议 `business-components-v3`；当前公司库结构版本为 v12、目录库为 v3。
 代收与应收核销、预收和其他业务采用相同 `finance_record_event` 组件协议，银行或现金收付
 统一放在 `funds`。代收确认代收代付负债，不形成收入或预收款；不必先登记受益人或债权人。
 

@@ -1,5 +1,16 @@
 # 个人劳务报酬受控工作流
 
+> **已退役实现**：本文使用已退役的 `finance_record_event` 组件协议与旧命令名，正文只作历史说明，不应再调用。
+> 当前做法：劳务事实为 `labor`／`labor_accrual`／`labor_project_cost` 等类型化事实，用 `save_fact` 登记、
+> `preview` 试算、`confirm` 发布；发现入口是 `schema`（MCP `finance_local_schema`）。
+> 名称对应：`finance_record_event`→`save_fact`／`save_facts` + `preview` + `confirm`，
+> `finance_get_event_schema`→`schema`，`finance_amend_event`→`amend_fact`，
+> `finance_delete_event`→`preview_delete` + `delete`，
+> `finance_reverse_event`→`preview`／`confirm` 指定开放期 `correction_period` 生成关联冲正。
+> `finance_register_labor_service_person`、`finance_end_labor_service_person` 在当前内核**没有对应入口**，
+> 不存在与 `Employee` 分离的独立劳务人员登记及结束命令；
+> `finance_confirm_labor_external_declaration` 也没有劳务专用入口，外部完成改由通用 `external_completion` 事实表达。
+
 本模块只处理公司确认不按员工工资口径核算的自然人临时劳务。是否存在法律上的劳动关系不由记账内核判断；按员工工资核算的人员继续使用工资、社保、公积金和累计工资薪金个税模块，也不得通过“免参保”等技术字段把个人劳务塞入工资流程。
 
 ## 身份与批次

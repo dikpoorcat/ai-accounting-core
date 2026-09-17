@@ -2,6 +2,19 @@
 
 # 多公司运行手册
 
+> **已退役实现**：本文描述的 PostgreSQL 17 多库集群、数据库角色与 `pg_dump`／`pg_restore` 备份，
+> 以及 `finance-catalog`／`finance-company`／`finance-backup`／`finance-dashboard`／`finance-mcp`
+> 命令行入口均已退役，正文中的旧命令名只作历史说明，不应再调用。
+> 当前内核是 SQLite 本地服务：入口为 `finance-local`，MCP 为 `finance_local_schema`／
+> `finance_local_command`／`finance_local_security`，公司库 v12、目录库 v3，不依赖 PostgreSQL、ORM 或 Alembic。
+> 名称对应：`finance_list_companies`→`companies`，`finance_create_company`→`create_company`，
+> `finance_get_close_backup_configuration`→`company_settings`，`finance_configure_close_backup`→`configure_backup`，
+> `finance_backup`→`backup`（持久任务，用 `jobs`／`run_jobs` 推进和查询），
+> `finance_confirm_accounting_period_close`→`close`（需 `approval_id`）。
+> `finance_preview_company_profile_change`／`finance_confirm_company_profile_change`、
+> `finance_preview_company_status_change`／`finance_confirm_company_status_change`、
+> `finance_prepare_close_backup` 在当前内核**没有对应入口**：公司资料与状态不可变更，也没有独立的关账备份准备命令。
+
 ## 架构与权限
 
 多公司模式在同一 PostgreSQL 17 集群中使用：

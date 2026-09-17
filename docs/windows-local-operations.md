@@ -1,5 +1,13 @@
 # Windows 本地运行速查
 
+> **已退役实现**：本文的 Docker Desktop／PostgreSQL 容器启动、`ai_accounting.company_cli check-schema`
+> 版本检查与 Alembic 迁移路径均已退役，`restart_dashboard.ps1` 也不存在，正文中的旧命令名只作历史说明，
+> 不应再调用。当前内核是 SQLite 本地服务，入口为 `finance-local`；启动仍使用同一路径的
+> `deploy\windows\start_accounting.ps1`（内部调用 `ai_accounting.kernel.cli serve`，数据根由
+> `-DataRoot` 或 `FINANCE_DATA_ROOT` 指定），数据库结构版本由内核结构合同自动核验。
+> 负责人安全窗口改用 MCP 工具 `finance_local_security(action="request"|"status"|"cancel")`；
+> 事实、凭证与审计改用 `find_facts`、`trace`、`ledger` 读取。
+
 ## 开机后启动
 
 在 Codex 本仓库会话中说“启动”。AI 会启动 Docker Desktop、等待已有 PostgreSQL 容器健康、
@@ -48,8 +56,8 @@ MCP 和看板仍在每次路由时独立检查，不能以曾经启动成功代�
 - `DATABASE_SCHEMA_MISMATCH`：实际查询遇到缺表／缺列。核对上述检查及安全诊断编号；
   即使版本号看似正确也不能跳过审计查询或直接补列掩盖结构偏差。
 
-迁移后重新运行检查、重启看板并重新连接 Codex 管理的 MCP，再验证已存在的
-`finance_get_event` 可读取原事实、`facts_hash`、凭证及审计；最后才恢复预览—确认更正。
+迁移后重新运行检查、重启看板并重新连接 Codex 管理的 MCP，再验证 `find_facts` 可读取原事实与证据、
+`trace` 可读取凭证及审计（当前内核没有 `facts_hash` 字段）；最后才恢复预览—确认更正。
 逐公司比对迁移前后的原业务事实、凭证编号、账务金额、审计和关账快照。
 升级数据库结构不代表已经完成工资更正，也不授权自动撤销旧冲正或重录真实业务。
 
@@ -61,7 +69,7 @@ MCP 和看板仍在每次路由时独立检查，不能以曾经启动成功代�
 统一入口为 `finance-login security-window --kind <操作类型>`，通过
 `finance-login security-window-status --request-id <返回的编号>` 查询当前目标的状态。
 
-MCP 对应 `finance_request_owner_security_window` 与 `finance_get_owner_security_window_status`。
+MCP 对应 `finance_local_security` 的 `action="request"` 与 `action="status"`。
 操作类型为 `bootstrap_owner`、`login`、`approve_period_close`、`change_password`、`recover`、
 `replace_recovery_code`。工具和命令均不接受秘密字段或任意脚本。
 `starting` 表示启动中，`waiting_for_user` 表示原生表单已显示，`succeeded` 表示窗口操作完成；

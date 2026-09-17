@@ -14,9 +14,9 @@
 |management|不影响核算的管理资料|不得因缺少而阻断记账或自动追问；提供时仍验证格式和公司归属|
 |contextual|必须结合组件业务判断|先查组件规则及资金／业务来源，不能仅凭字段名称判为必填|
 
-`x-recognition-precision` 发布组件实际支持的确认精度。`business_date` 表示核算确认截止，
-`recognition_period` 表示截至月末已成立；二者都不是实际付款日期。`funds.payment_date`
-来自真实资金项；个人外部垫付日期保存在可选管理资料中。税务所属期也不能直接充当确认日。
+`x-accounting-fact.precision` 发布字段实际支持的确认精度（`day` 或 `month`）。`business_date` 表示核算确认截止，
+`recognition_period` 表示截至月末已成立；二者都不是实际付款日期。实际付款日期
+来自真实资金项（如 `actual_date`）；个人外部垫付日期保存在可选管理资料中。税务所属期也不能直接充当确认日。
 
 `fact_requirements.py` 提供共享字段类型及结构化诊断，只有含义相同的字段才复用类型。
 例如“登记外部流程完成”专用功能需要的办理日期，不应被一律放宽；该功能的资料要求也不能
@@ -24,7 +24,7 @@
 
 ## 错误与解决顺序
 
-`finance_get_event_schema.fact_issue_schema` 定义 `data.fact_issues`：
+`schema`（MCP `finance_local_schema`）是当前的发现入口；`data.fact_issues` 的项结构如下：
 
 - `code`、`kind`：区分缺少核算事实和现有事实冲突。
 - `fields`、`alternatives`：说明相关字段及可选表达；替代字段不代表必须一并填写。
