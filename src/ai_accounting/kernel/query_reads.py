@@ -211,7 +211,7 @@ class QueryReads:
 
     def fact_versions(self, identifiers):
         identifiers = set(identifiers)
-        missing = identifiers - self._fact_versions.keys()
+        missing = {ident for ident in identifiers if ident not in self._fact_versions}
         if missing:
             self._fact_versions.update(self.store.facts(self.connection, missing))
         return {ident: self._fact_versions[ident] for ident in identifiers}
@@ -359,7 +359,7 @@ class QueryReads:
                     value.pop("line_count")
                     value.pop("opening")
                 self._metadata[value["id"]] = value
-            if missing - self._metadata.keys():
+            if any(ident not in self._metadata for ident in missing):
                 raise KernelError("unknown_calculation", "计算版本不存在")
         return {ident: self._metadata[ident] for ident in identifiers}
 
@@ -375,7 +375,7 @@ class QueryReads:
 
     def calculations(self, identifiers):
         identifiers = set(identifiers)
-        missing = identifiers - self._calculations.keys()
+        missing = {ident for ident in identifiers if ident not in self._calculations}
         if missing:
             metadata = self.metadata(missing)
             facts = self.facts({row["fact_id"] for row in metadata.values()})
@@ -398,7 +398,7 @@ class QueryReads:
         return self.calculations((ident,))[ident]
 
     def prime_parents(self, identifiers):
-        missing = set(identifiers) - self._parents.keys()
+        missing = {ident for ident in identifiers if ident not in self._parents}
         if not missing:
             return
         values = {ident: [] for ident in missing}
@@ -412,7 +412,11 @@ class QueryReads:
         self._parents.update({key: tuple(value) for key, value in values.items()})
 
     def parents(self, ident):
-        self.prime_parents((ident,))
+        # Membership first: prime_parents rebuilds a set difference against the
+        # whole cache, so calling it per identity makes a cache hit ~50x costlier
+        # than a lookup once the parent graph is warm.
+        if ident not in self._parents:
+            self.prime_parents((ident,))
         return self._parents[ident]
 
     def prime_calculations(self, identifiers, *, ancestors=True):
@@ -478,7 +482,7 @@ class QueryReads:
 
     def vouchers(self, identifiers):
         identifiers = set(identifiers)
-        missing = identifiers - self._vouchers.keys()
+        missing = {ident for ident in identifiers if ident not in self._vouchers}
         if missing:
             for row in self.connection.execute(
                 "SELECT v.*,n.number FROM json_each(?) ids "
@@ -487,7 +491,7 @@ class QueryReads:
                 (canonical(sorted(missing)),),
             ):
                 self._vouchers[row["id"]] = dict(row)
-            if missing - self._vouchers.keys():
+            if any(ident not in self._vouchers for ident in missing):
                 raise KernelError("selected_voucher_missing", "冻结期间引用的凭证版本不存在")
         return {ident: self._vouchers[ident] for ident in identifiers}
 
@@ -496,7 +500,7 @@ class QueryReads:
 
     def voucher_lines(self, identifiers):
         identifiers = set(identifiers)
-        missing = identifiers - self._lines.keys()
+        missing = {ident for ident in identifiers if ident not in self._lines}
         if missing:
             self._lines.update({ident: [] for ident in missing})
             for row in self.connection.execute(

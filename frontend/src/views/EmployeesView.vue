@@ -542,13 +542,7 @@ onBeforeUnmount(() => { mounted = false; invalidateRequests(); });
                     <div><dt>代付、抵销等</dt><dd>{{ formatFen(obligation.other_settled_fen) }}</dd></div>
                     <div><dt>月末未结金额</dt><dd>{{ formatFen(obligation.remaining_fen) }}</dd></div>
                   </dl>
-                  <div v-for="movement in source.movements" :key="movement.id">
-                    <p>{{ movement.date || `${movement.period}（按月确认）` }} · {{ movement.label }}{{ movement.reversal ? "（冲正）" : "" }} · {{ payrollObligationLabel(source, movement.obligation) }} {{ formatFen(movement.amount_fen) }}</p>
-                    <p v-if="movement.relation_state === 'unresolved'">清偿关系尚未确认，未计入已结金额。</p>
-                  </div>
-                  <p v-if="source.movements_page" class="scope-label">相关来源历史清偿 · 截至所选月末 · 共 {{ source.movements_page.total_count }} 项，已加载 {{ source.movements.length }} 项</p>
-                  <p class="muted">含关联来源明细；本来源金额见上方汇总。</p>
-                  <BusinessStatusDetails v-if="source.movements_page?.has_more && source.subject_id" :subject-id="source.subject_id" :period="selectedPeriodKey" :snapshot-version="response.snapshot_version" settlement-view="historical" @changed="refresh" />
+                  <p class="muted">含关联来源明细；本来源金额见上方汇总。逐笔清偿记录请在下方按员工查看。</p>
                   <details v-if="source.kind === 'payroll' || source.kind === 'payroll_bounded'" class="tax-details">
                     <summary>查看实际申报记录</summary>
                     <p class="muted">申报记录与工资实际扣税、税款缴纳分别查看。</p>

@@ -1,12 +1,12 @@
 import { requestJson } from "./client";
 import type { DashboardPeriod } from "./context";
-import { pageQuery, type DashboardCollections, type DashboardPage, type DashboardPageQuery, type PeriodPreparation } from "./dashboardContracts";
+import { pageQuery, type DashboardCollections, type DashboardPage, type DashboardPageQuery } from "./dashboardContracts";
 import type { BusinessIssue, UnestablishedSelection } from "./dashboardContracts";
 
 export type Fen = string | null;
 export type OpeningPayrollComponent = "net" | "withheld_tax" | "employee_social" | "employee_housing" | "employer_social" | "employer_housing";
 
-export interface SettlementView {
+export interface SettlementSummary {
   status?: string;
   cutoff_period?: string;
   issues?: BusinessIssue[];
@@ -14,12 +14,17 @@ export interface SettlementView {
   subject_id: string;
   settlement_view: "historical";
   movements_scope: "business_related_settlement_events";
-  movements_page: DashboardPage;
   obligations: Array<{ key: string; name: string; amount_fen: Fen; remaining_fen: Fen; paid_fen: Fen; other_settled_fen: Fen }>;
+}
+
+export interface SettlementView extends SettlementSummary {
+  movements_page: DashboardPage;
   movements: Array<{ id: string; calculation_id: string; source_id: string; label: string; mode: string; period: string; date: string | null; amount_fen: Fen; obligation: string; party: string; reversal: boolean; relation_state: "resolved" | "unresolved"; source_business: { kind: string; subject_id: string } | null; source_calculation_id: string | null }>;
 }
 
-export interface PayrollSource extends SettlementView {
+// Wage sources carry only the obligation summary: the itemised settlement page is
+// fetched per employee on demand, so it is not embedded for every source.
+export interface PayrollSource extends SettlementSummary {
   source_id: string;
   calculation_id: string;
   kind: string;
@@ -190,7 +195,8 @@ export interface WorkforceCost {
 }
 
 export interface EmployeesDashboardData {
-  period_preparation: PeriodPreparation;
+  // 工资页不读准备度：专用端点 /api/dashboard/period-preparation 是它唯一的来源。
+  period_preparation: null;
   collections: DashboardCollections;
   employees: EmployeesSummary;
   workforce_cost: WorkforceCost;
@@ -211,6 +217,7 @@ export interface EmployeesQuery extends DashboardPageQuery {
 
 export function fetchEmployeesDashboard(periodKey: string | null, signal?: AbortSignal, options: EmployeesQuery = {}) {
   const query = new URLSearchParams(periodKey ? { period: periodKey } : {});
+  query.set("preparation", "deferred");
   pageQuery(query, options);
   if (options.employee_filter) query.set("employee_filter", options.employee_filter);
   if (options.employee_id) query.set("employee_id", options.employee_id);

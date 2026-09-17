@@ -135,10 +135,15 @@ function validCollection(value: unknown): boolean {
     && (page.collection_version === undefined || typeof page.collection_version === "string");
 }
 
-function validSettlementPage(value: unknown): boolean {
+function validSettlementSummary(value: unknown): boolean {
   return record(value) && typeof value.subject_id === "string" && value.settlement_view === "historical"
     && value.movements_scope === "business_related_settlement_events"
-    && validCollection({ items: value.movements, page: value.movements_page });
+    && Array.isArray(value.obligations);
+}
+
+function validSettlementPage(value: unknown): boolean {
+  return validSettlementSummary(value)
+    && validCollection({ items: (value as Record<string, unknown>).movements, page: (value as Record<string, unknown>).movements_page });
 }
 
 export function validDashboardContract(path: string, payload: unknown): boolean {
@@ -174,7 +179,10 @@ export function validDashboardContract(path: string, payload: unknown): boolean 
   if (!(endpoint in primaryCollections) && endpoint !== "business-status") return true;
   if (payload.data === null) return true;
   if (!record(payload.data) || !record(payload.data.collections)) return false;
-  if (endpoint in primaryCollections && !(endpoint === "brief" && deferred) && !validPreparation(payload.data.period_preparation)) return false;
+  if (endpoint in primaryCollections) {
+    if (endpoint !== "brief" && payload.projection !== undefined) return false;
+    if (deferred ? payload.data.period_preparation !== null : !validPreparation(payload.data.period_preparation)) return false;
+  }
   const collections = payload.data.collections;
   if (!Object.keys(collections).every(key => allowedCollections[endpoint]?.includes(key))) return false;
   const required = url.searchParams.get("section") ?? primaryCollections[endpoint];
@@ -182,7 +190,7 @@ export function validDashboardContract(path: string, payload: unknown): boolean 
   if (endpoint === "employees" && record(payload.data.employees) && Array.isArray(payload.data.employees.items)
     && !payload.data.employees.items.every(item => record(item) && (item.selection_status === "unestablished"
       ? typeof item.employee_id === "string" && Array.isArray(item.candidate_selections)
-      : validCollection({ items: item.payroll_sources, page: item.payroll_source_page }) && (item.payroll_sources as unknown[]).every(validSettlementPage)))) return false;
+      : validCollection({ items: item.payroll_sources, page: item.payroll_source_page }) && (item.payroll_sources as unknown[]).every(validSettlementSummary)))) return false;
   if (endpoint === "employees" && record(payload.data.workforce_cost) && record(payload.data.workforce_cost.personal_labor)
     && Array.isArray(payload.data.workforce_cost.personal_labor.items) && !payload.data.workforce_cost.personal_labor.items.every(validSettlementPage)) return false;
   if (endpoint === "assets") {

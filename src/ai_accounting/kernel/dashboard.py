@@ -386,8 +386,14 @@ class _Snapshot:
             )
         return self.calculation_cache[ident]
 
-    def calculations_of_kind(self, *kinds):
-        return self.calculations.selected(kinds=set(kinds)).values()
+    def calculations_of_kind(self, *kinds, posting_period=None):
+        """Select by kind; posting_period narrows to one publication month.
+
+        Callers that filter on ``posting_period`` afterwards must pass it here:
+        the unrestricted selection materialises every historical calculation of
+        these kinds and its whole close-adoption graph before the filter runs.
+        """
+        return self.calculations.selected(kinds=set(kinds), posting_period=posting_period).values()
 
     def calculations_for_entity(self, kind, field, ident):
         from .schema import table_name
@@ -1897,7 +1903,9 @@ class Dashboard:
             }
             data["collections"] = {
                 **(
-                    {"vouchers": {"items": vouchers, "page": page}}
+                    # Page envelope only: the rows are already carried as data["vouchers"],
+                    # and repeating them here duplicated 88 KB of a 279 KB response.
+                    {"vouchers": {"items": [], "page": {**page, "returned_count": 0}}}
                     if section in {None, "vouchers"}
                     else {}
                 ),
@@ -1961,8 +1969,11 @@ class Dashboard:
         expected_version: str | None = None,
         section: str | None = None,
         cursor: str | None = None,
+        preparation: Literal["complete", "deferred"] = "complete",
     ):
         validate_page("funds", section, cursor, limit)
+        if preparation not in {"complete", "deferred"}:
+            raise ValueError("不支持的准备检查投影")
         if (movement_account_type is None) != (movement_account_id is None):
             raise ValueError("资金账户筛选须同时提供账户类别与账户标识")
         if movement_account_type is not None and movement_account_type not in FUND_TYPES.values():
@@ -2002,7 +2013,9 @@ class Dashboard:
                 limit=limit,
                 filters=filters,
             )
-            data["period_preparation"] = preparation_view(snap.preparation)
+            data["period_preparation"] = (
+                preparation_view(snap.preparation) if preparation == "complete" else None
+            )
             seal_collections(snap, "funds", data, filters)
             for name, target, field in (
                 ("movements", data, "movement_page"),
@@ -2033,8 +2046,11 @@ class Dashboard:
         expected_version: str | None = None,
         employee_filter: str = "all",
         employee_id: str | None = None,
+        preparation: Literal["complete", "deferred"] = "complete",
     ):
         validate_page("employees", section, cursor, limit)
+        if preparation not in {"complete", "deferred"}:
+            raise ValueError("不支持的准备检查投影")
         if employee_id == "" or section == "settlement_events" and employee_id is None:
             raise ValueError("员工清偿明细须指定有效 employee_id")
         if employee_filter not in {"all", "in_period", "payroll", "no_payroll", "unknown", "ended"}:
@@ -2076,7 +2092,9 @@ class Dashboard:
                     item["payroll_source_page"],
                     filters | {"employee_id": item["employee_id"]},
                 )
-            data["period_preparation"] = preparation_view(snap.preparation)
+            data["period_preparation"] = (
+                preparation_view(snap.preparation) if preparation == "complete" else None
+            )
             return self._response(snap, seal_collections(snap, "employees", data, filters))
 
     def assets(
@@ -2090,8 +2108,11 @@ class Dashboard:
         asset_filter: str = "all",
         asset_id: str | None = None,
         project_id: str | None = None,
+        preparation: Literal["complete", "deferred"] = "complete",
     ):
         validate_page("assets", section, cursor, limit)
+        if preparation not in {"complete", "deferred"}:
+            raise ValueError("不支持的准备检查投影")
         if (
             asset_id == ""
             or project_id == ""
@@ -2134,7 +2155,9 @@ class Dashboard:
                 )
             if section:
                 data["collections"] = {section: data["collections"][section]}
-            data["period_preparation"] = preparation_view(snap.preparation)
+            data["period_preparation"] = (
+                preparation_view(snap.preparation) if preparation == "complete" else None
+            )
             return self._response(snap, seal_collections(snap, "assets", data, filters))
 
     def _external_collection(self, snap, after, limit):
@@ -2716,8 +2739,13 @@ def _open_items(snap, *, historical=None, current=None, after=None, limit=100, s
     }
 
 
-def _source_settlement(snap, calc, *, limit=100):
-    """Project the shared obligation relation; no page-specific settlement arithmetic."""
+def _source_settlement(snap, calc, *, limit=100, include_movements=True):
+    """Project the shared obligation relation; no page-specific settlement arithmetic.
+
+    ``include_movements=False`` keeps the obligation summary and drops the itemised
+    settlement page.  Building that page costs a full separate selection per source,
+    so callers whose view does not display it must opt out.
+    """
     subject = calc["subject_id"]
     snap.prepare_settlements({subject})
     shared = snap.settlement_cache[subject]
@@ -2727,6 +2755,30 @@ def _source_settlement(snap, calc, *, limit=100):
         if (item.get("source_business") or {}).get("subject_id") == subject
     ]
     obligations = [{**item, "amount_fen": item["source_amount_fen"]} for item in source_obligations]
+    current = snap.settlement_current_cache[subject]
+    result = {
+        "subject_id": subject,
+        "settlement_view": "historical",
+        "movements_scope": "business_related_settlement_events",
+        "status": shared["status"],
+        "obligations": obligations,
+        "issues": shared["issues"],
+        "cutoff_period": shared["cutoff_period"],
+        "current_followups": {
+            key: current[key]
+            for key in ("status", "issues", "current_cutoff_period", "cutoff_semantics")
+            if key in current
+        }
+        | {
+            "obligations": [
+                item
+                for item in current["obligations"]
+                if (item.get("source_business") or {}).get("subject_id") == subject
+            ]
+        },
+    }
+    if not include_movements:
+        return result
     if not hasattr(snap, "settlement_page_cache"):
         snap.settlement_page_cache = {}
     if (subject, limit) not in snap.settlement_page_cache:
@@ -2772,36 +2824,15 @@ def _source_settlement(snap, calc, *, limit=100):
                 **snap.party_field(party),
             }
         )
-    current = snap.settlement_current_cache[subject]
-    return {
-        "subject_id": subject,
-        "settlement_view": "historical",
-        "movements_scope": "business_related_settlement_events",
-        "status": shared["status"],
-        "obligations": obligations,
-        "movements": movements,
-        "movements_page": seal_page(
-            snap,
-            "business-status",
-            "settlement_events",
-            collection["page"],
-            {"subject_id": subject, "as_of": snap.as_of, "settlement_view": "historical"},
-        ),
-        "issues": shared["issues"],
-        "cutoff_period": shared["cutoff_period"],
-        "current_followups": {
-            key: current[key]
-            for key in ("status", "issues", "current_cutoff_period", "cutoff_semantics")
-            if key in current
-        }
-        | {
-            "obligations": [
-                item
-                for item in current["obligations"]
-                if (item.get("source_business") or {}).get("subject_id") == subject
-            ]
-        },
-    }
+    result["movements"] = movements
+    result["movements_page"] = seal_page(
+        snap,
+        "business-status",
+        "settlement_events",
+        collection["page"],
+        {"subject_id": subject, "as_of": snap.as_of, "settlement_view": "historical"},
+    )
+    return result
 
 
 def _employees(
@@ -2855,7 +2886,7 @@ def _employees(
             "period": snap.month,
             "metric_cost": 0,
         }
-        for calc in snap.calculations_of_kind(*PAYROLL_KINDS)
+        for calc in snap.calculations_of_kind(*PAYROLL_KINDS, posting_period=snap.period)
         if calc["kind"] in PAYROLL_KINDS
         and calc["posting_period"] == snap.month
         and calc["subject_id"] not in posted
@@ -3070,7 +3101,9 @@ def _employees(
         data = calc["fact"]["data"]
         ident = data["employee_id"]
         known.add(ident)
-        settlement = _source_settlement(snap, calc, limit=limit)
+        # The card shows the obligation summary; the itemised settlement page is
+        # fetched per employee on demand, so it is not built for every source here.
+        settlement = _source_settlement(snap, calc, limit=limit, include_movements=False)
         declarations = [
             {
                 "fact_id": fact["id"],
@@ -3603,7 +3636,9 @@ def _employees(
         },
         "_entity_sources": entity_sources,
         "collections": {
-            "employees": {"items": items, "page": employee_page},
+            # Page envelope only. The rows are already carried above as employees.items,
+            # and repeating them here made the response payload byte-for-byte double.
+            "employees": {"items": [], "page": {**employee_page, "returned_count": 0}},
             "labor_sources": {"items": labor["items"], "page": labor_page},
             **(
                 {

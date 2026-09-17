@@ -289,10 +289,11 @@ class Calculations(Mapping):
         self.snapshot, self.cache = snapshot, {}
         self.unestablished_cache = {}
 
-    def selected(self, *, kinds=None, subjects=None):
+    def selected(self, *, kinds=None, subjects=None, posting_period=None):
         key = (
             tuple(sorted(kinds)) if kinds is not None else None,
             tuple(sorted(subjects)) if subjects is not None else None,
+            posting_period,
         )
         if key not in self.cache:
             selected = self.snapshot.queries._selected_accounting(
@@ -301,6 +302,7 @@ class Calculations(Mapping):
                 self.snapshot.period,
                 kinds=kinds,
                 include_lines=False,
+                posting_period=posting_period,
             )
             self.unestablished_cache[key] = selected["through_period"][
                 "unestablished_state_selections"
@@ -338,16 +340,22 @@ class Calculations(Mapping):
                 old = heads.get(subject)
                 if old is None or event["adoption_period"] >= old["posting_period"]:
                     heads[subject] = record
-            self.cache[key] = {
+            views = {
                 subject: self.snapshot.calculation(record["id"])
                 for subject, record in heads.items()
             }
+            # One batched load instead of a per-view single-identity lookup: every
+            # CalculationView otherwise pays its own metadata/facts/outcome read on
+            # first attribute access.
+            if views:
+                self.snapshot.reads.calculations([view["id"] for view in views.values()])
+            self.cache[key] = views
         return self.cache[key]
 
     def unestablished_entities(self, *, kinds, field):
         """Project exact candidate identity declarations without adopting a result."""
         self.selected(kinds=kinds)
-        selections = self.unestablished_cache[tuple(sorted(kinds)), None]
+        selections = self.unestablished_cache[tuple(sorted(kinds)), None, None]
         identifiers = {
             candidate["calculation_id"]
             for selection in selections

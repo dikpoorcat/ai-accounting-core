@@ -1,6 +1,6 @@
 import { requestJson } from "./client";
 import type { DashboardPeriod } from "./context";
-import { pageQuery, type DashboardCollections, type DashboardPageQuery, type PeriodPreparation } from "./dashboardContracts";
+import { pageQuery, type DashboardCollections, type DashboardPageQuery } from "./dashboardContracts";
 import type { DashboardCollection, UnestablishedSelection } from "./dashboardContracts";
 import type { SettlementView } from "./employees";
 
@@ -133,7 +133,8 @@ export interface IntangibleAssetSummary {
 
 export interface AssetsDashboardData {
   unestablished_count?: number;
-  period_preparation: PeriodPreparation;
+  // 资产页不读准备度：专用端点 /api/dashboard/period-preparation 是它唯一的来源。
+  period_preparation: null;
   collections: DashboardCollections & { assets: DashboardCollection<AssetItem> };
   active_ledger_net_fen: string | null;
   pending_intangible_count: number;
@@ -190,6 +191,7 @@ export interface AssetsQuery extends DashboardPageQuery {
 
 export function fetchAssetsDashboard(period: string, signal?: AbortSignal, options: AssetsQuery = {}) {
   const query = new URLSearchParams({ period });
+  query.set("preparation", "deferred");
   pageQuery(query, options);
   if (options.asset_filter) query.set("asset_filter", options.asset_filter);
   if (options.asset_id) query.set("asset_id", options.asset_id);

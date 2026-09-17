@@ -1,6 +1,6 @@
 import { requestJson } from "./client";
 import type { DashboardPeriod } from "./context";
-import type { DashboardCollections, PeriodPreparation, UnestablishedSelection } from "./dashboardContracts";
+import type { DashboardCollections, UnestablishedSelection } from "./dashboardContracts";
 
 export interface FundPage { has_more: boolean; next_cursor: string | null; total_count: number }
 
@@ -184,7 +184,8 @@ export interface FundInvestments {
 
 export interface FundsData {
   fact_issues: UnestablishedSelection[];
-  period_preparation: PeriodPreparation;
+  // 资金页不读准备度：专用端点 /api/dashboard/period-preparation 是它唯一的来源。
+  period_preparation: null;
   collections: DashboardCollections;
   total_fen: FenValue | null;
   bank_fen: FenValue | null;
@@ -232,6 +233,7 @@ export interface FundsQuery {
 
 export function fetchFundsDashboard(periodKey?: string, signal?: AbortSignal, options: FundsQuery = {}) {
   const query = new URLSearchParams({ limit: "100", ...(periodKey ? { period: periodKey } : {}), ...options });
+  query.set("preparation", "deferred");
   return requestJson<FundsDashboardResponse>(`/api/dashboard/funds?${query}`, {
     signal,
   });

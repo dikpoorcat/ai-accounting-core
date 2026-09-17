@@ -115,6 +115,18 @@ test("deferred request projections remain distinct from complete and unrelated p
   assert(valid(deferred, { schema_version: 2, projection: "dashboard_brief_deferred", data: null, read_context: null }));
   assert(!valid(deferred, { schema_version: 2, data: null, read_context: null }));
   assert(!valid("/api/dashboard/funds?preparation=deferred", { ...brief(), data: { collections: { movements: page() }, period_preparation: null } }));
+  const fundsDeferred = "/api/dashboard/funds?preparation=deferred";
+  const fundsData = { collections: { movements: page() }, period_preparation: null };
+  assert(valid(fundsDeferred, { schema_version: 2, selected_period: null, data: fundsData }));
+  assert(!valid(fundsDeferred, { schema_version: 2, data: { ...fundsData, period_preparation: preparation().data.period_preparation } }));
+  assert(!valid("/api/dashboard/funds", { schema_version: 2, data: fundsData }));
+  assert(!valid(fundsDeferred, { schema_version: 2, projection: "dashboard_brief_deferred", data: fundsData }));
+  const employeesDeferred = "/api/dashboard/employees?preparation=deferred";
+  assert(valid(employeesDeferred, { schema_version: 2, data: { collections: { employees: page() }, period_preparation: null } }));
+  assert(!valid(employeesDeferred, { schema_version: 2, data: { collections: { employees: page() }, period_preparation: preparation().data.period_preparation } }));
+  const assetsDeferred = "/api/dashboard/assets?preparation=deferred";
+  assert(valid(assetsDeferred, { schema_version: 2, data: { collections: { assets: page() }, period_preparation: null } }));
+  assert(!valid("/api/dashboard/assets", { schema_version: 2, data: { collections: { assets: page() }, period_preparation: null } }));
   const quarterly = "/api/dashboard/quarterly-report?company_id=a&year=2026&quarter=1&preparation=deferred";
   assert(valid(quarterly, report())); assert(!valid(quarterly, { ...report(), period_preparations: [] }));
   assert(!valid("/api/dashboard/quarterly-report", report()));
