@@ -107,8 +107,8 @@
 | 威胁                                  | 挡得住吗                                                                                                                                                                                     |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | AI 通过 MCP 改已关账凭证              | ✅ 触发器 + 引擎拒绝                                                                                                                                                                         |
-| 用 SQL 工具直接连库 `UPDATE`          | ✅ 触发器是 schema 的一部分，任何连接都执行                                                                                                                                                  |
-| 用 SQL 工具 `DROP TRIGGER` 再改       | ✅ **挡住**——但**不是靠 `DEFENSIVE`**，而是靠 `verify_schema`：它比对全部 869 个对象（含 650 个触发器），缺陷直接拒绝打开（实测 `verify_file` 报「数据库结构已与发布版本不一致，拒绝写入」） |
+| 用 SQL 工具直接连库 `UPDATE`          | ✅ 触发器是 schema 的一部分，任何连接都执行——**但只对账本表成立**；安全表的授权与凭据行不在其内，见 §2.AB                                                                                     |
+| 用 SQL 工具 `DROP TRIGGER` 再改       | ✅ 挡住——靠的是 `verify_schema` 比对全部 869 个对象（含 650 个触发器），不匹配则拒绝打开（实测 `verify_file` 报「数据库结构已与发布版本不一致，拒绝写入」），**不是靠 `DEFENSIVE`** |
 | **DROP → 改数 → 用原 SQL 重建触发器** | ❌ **挡不住，也没有检测层**——见 §2.Q                                                                                                                                                         |
 | 直接改文件字节 / 磁盘损坏             | ❌ **挡不住**                                                                                                                                                                                |
 | 备份包被替换                          | ❌ 只能靠恢复时校验                                                                                                                                                                          |
@@ -123,34 +123,38 @@
 
 ## 二、架构问题
 
-### 2.0 硬性限制总览（逐项审查的底稿）
+### 2.0 硬性限制总览
 
-**硬性限制最容易导致架构扭曲**，所以先完整罗列，再逐组审查副作用。
+**硬性限制最容易导致架构扭曲。** 下面按层列出内核**实际强制的东西**（不是设计意图），每层末尾指出它牵扯到的架构问题。
 
-密度：**107 个事实类型 / 869 个数据库对象（表 192、触发器 650、索引 27）/ 229 个不同的硬性拒绝错误码 / 52 类不变量**。
+密度：**107 个事实类型 / 869 个数据库对象（表 192、触发器 650、索引 27）/ 290 个硬拒绝码（`KernelError`）+ 89 个追问字段（`NeedsInformation`）/ 52 类不变量**。
 
 #### L0 运行时环境（启动即拒绝）
 
-| 限制                                                                                                           | 作用                                  | 目的                                  |
-| -------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ------------------------------------- |
-| SQLite ≥ 3.51.3                                                                                                | 拒绝旧解释器                          | 规避 WAL reset 损坏 bug               |
-| `foreign_keys=ON` / `recursive_triggers=ON` / `read_uncommitted=OFF` / `synchronous=FULL` / `journal_mode=WAL` | 启动设 + **回读校验**，不达标拒绝连接 | 约束真的生效、掉电不丢已提交事务      |
-| `DEFENSIVE=ON` / `TRUSTED_SCHEMA=OFF` / `LIMIT_ATTACHED=0`                                                     | 连接级                                | 防绕过触发器的 schema 篡改、禁 ATTACH |
-| 必须本地磁盘                                                                                                   | 拒网络盘、映射盘、OneDrive            | 避免锁语义失效与云同步损坏            |
-| 单实例锁                                                                                                       | 一个资料根一个常驻服务                | 避免多写者                            |
+| 限制                                                                                                           | 实际强制的是什么                                                                                                                                            |
+| -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite ≥ 3.51.3（`runtime.py:44-57`）                                                                          | 拒绝旧解释器——规避 WAL reset 损坏 bug                                                                                                                       |
+| `foreign_keys=ON` / `recursive_triggers=ON` / `read_uncommitted=OFF` / `synchronous=FULL` / `journal_mode=WAL` | 启动设定后**逐项回读校验**，不达标拒绝连接（`runtime.py:95-118`）                                                                                            |
+| `DEFENSIVE=ON` / `TRUSTED_SCHEMA=OFF` / `LIMIT_ATTACHED=0`                                                     | 挡直接 `UPDATE sqlite_master`、禁 ATTACH。**不阻止任何 DDL**——`DROP TRIGGER` / `DROP TABLE` / `DROP INDEX` / `CREATE TABLE` 在 ON 下全部允许（与 OFF 相同） |
+| 必须本地磁盘                                                                                                   | 拒网络盘、映射盘、OneDrive                                                                                                                                  |
+| 单实例锁                                                                                                       | 一个资料根一个常驻服务，避免多写者                                                                                                                          |
+
+**相关**：§2.Q（触发器 DROP 后可用原 SQL 重建，整层被绕开且无检测）。
 
 #### L1 结构演进
 
-| 限制                                                   | 作用                                                       | 目的                       |
-| ------------------------------------------------------ | ---------------------------------------------------------- | -------------------------- |
-| 已发布的**表/索引**定义不可变                          | 变了直接 `migration_not_declared`（`versions.py:243-247`） | 冻结历史合同               |
-| 生成的 DDL 必须与已发布合同**指纹一致**                | 含 SQL 原文比对（`versions.py:113-126`）                   | 防"悄悄改结构仍用旧版本号" |
-| 新增事实类型 = 新表 + ~5 触发器 + 迁移快照 + 合同 JSON | 编译期概念                                                 | 封闭世界                   |
-| 迁移只允许"创建缺失对象"+"替换触发器"                  | **没有 ALTER**                                             | 同上                       |
+| 限制                                                   | 实际强制的是什么                                                       |
+| ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| 已发布的**表/索引**定义不可变                          | 变了直接 `migration_not_declared`（`versions.py:243-247`）             |
+| 生成的 DDL 必须与已发布合同**指纹一致**                | 含 SQL 原文比对（`versions.py:113-126`）——防"悄悄改结构仍用旧版本号"   |
+| 迁移只允许"创建缺失对象"+"替换触发器"                  | **没有 ALTER**                                                         |
+| 新增事实类型 = 新表 + ~5 触发器 + 迁移快照 + 合同 JSON | 封闭世界：加一个类型的成本是固定的这四件套                             |
+
+**相关**：§2.C。
 
 #### L2 数据不变量（650 个触发器）
 
-| 类别          | 数量    | 作用                                                                                           |
+| 类别          | 数量    | 实际强制的是什么                                                                               |
 | ------------- | ------- | ---------------------------------------------------------------------------------------------- |
 | `immutable_*` | **360** | 禁止 UPDATE / DELETE                                                                           |
 | `sealed_*`    | **157** | 封存后禁止插入子行                                                                             |
@@ -158,74 +162,82 @@
 | `current_*`   | 7       | 当前指针约束（闭期后不能指向新版本）                                                           |
 | 其他          | 19      | 资产成员身份/归属/封存、计算归属、scope 归属、`fact_seal` 形状、任务载荷冻结、安全批准不可删改 |
 
+触发器由统一模板生成（`schema.py:218-258` 的 `immutable_sql` / `sealed_child_sql` / `ownership_sql`）：每张 `fact_*` 一律有 immutable UPDATE+DELETE + sealed INSERT + owner INSERT，明细表少一个 `owner`。**没有触发器的表只有 6 张**——4 张可重建投影（`balance` / `monthly_account` / `monthly_cashflow` / `opening_account`）+ `pending` + `state`，都是按设计可变的。
+
+650 是**公司库**的触发器总数，里面有 4 个属于安全表（`security_close_approval` 2 个、`security_close_batch_receipt` 2 个，名字不带前缀，算在"其他 19"里）；**目录库**的 `security_owner` / `security_session` / `security_recovery` 一个触发器都没有——见 L6 与 §2.AB。
+
+**相关**：§2.O。注意 `material_*` 与 `asset_batch_member` 的不可变是**对的**（记录"当时收到了什么、如何处置"），不要跟着 §2.O 一起改掉。
+
 #### L3 引擎 API 不变量
 
-| 限制                                                    | 作用                            |
-| ------------------------------------------------------- | ------------------------------- |
-| 只接受**类型化事实**                                    | 无自由科目/借贷/分录入口        |
-| 证据强制 ≥1 且必须已登记                                | 事实必须可追溯                  |
-| 金额整数分、拒浮点                                      | 不给舍入误差留缝                |
-| 预览—确认两段式（digest + 三 epoch）                    | 防用过期预览发布                |
-| 幂等键必填                                              | 防重复入账                      |
-| 单事务原子（`BEGIN IMMEDIATE`）                         | 不留半成品                      |
-| **稳定身份字段不可变**（48 个类型，**不豁免更正**）     | 防身份漂移                      |
-| 事实类型不可变（`identity_mismatch`）                   | 同上                            |
-| 已撤去身份不可复用（`withdrawn_subject`）               | 审计链不断                      |
+| 限制                                                    | 实际强制的是什么               |
+| ------------------------------------------------------- | ------------------------------ |
+| 只接受**类型化事实**                                    | 无自由科目/借贷/分录入口       |
+| 证据强制 ≥1 且必须已登记                                | 事实必须可追溯                 |
+| 金额整数分、拒浮点                                      | 不给舍入误差留缝               |
+| 预览—确认两段式（digest + 三 epoch）                    | 防用过期预览发布               |
+| 幂等键必填                                              | 防重复入账                     |
+| 单事务原子（`BEGIN IMMEDIATE`）                         | 不留半成品                     |
+| **稳定身份字段不可变**（48 个类型，**不豁免更正**）     | 防身份漂移                     |
+| 事实类型不可变（`identity_mismatch`）                   | 同上                           |
+| 已撤去身份不可复用（`withdrawn_subject`）               | 审计链不断                     |
 | 36 个类型 `immutable=True`                              | 实际发生的资金/税务不可原地改写 |
-| 闭期不可原位改、不可删                                  | 冻结账簿                        |
-| 有下游依赖不可删（`has_dependents`）                    | 防拆断依赖图                    |
-| `immutable` 事实删除需误记依据                          | 撤销必须有理由                  |
-| 冲正必须发到开放期                                      | 不动闭期                        |
-| **入账期默认强制等于所属期**（`engine.py:780`）         | 权责发生制                      |
-| 余额必须平衡                                            | 借贷平衡                        |
-| 期初不得带本期活动或现金流                              | 期初口径纯净                    |
-| 7 个类型**必须走专用命令**（`x-registration-command`）  | 防止绕过批次语义                |
-| 某些业务必须等前序期间关账（`required_closed_periods`） | 期间次序                        |
-| 计算依赖不得成环（`dependency_cycle`）                  | 图可终止                        |
+| 闭期不可原位改、不可删                                  | 冻结账簿                       |
+| 有下游依赖不可删（`has_dependents`）                    | 防拆断依赖图                   |
+| `immutable` 事实删除需误记依据                          | 撤销必须有理由                 |
+| 冲正必须发到开放期                                      | 不动闭期                       |
+| **入账期默认强制等于所属期**（`engine.py:780`）         | 权责发生制                     |
+| 余额必须平衡                                            | 借贷平衡                       |
+| 期初不得带本期活动或现金流                              | 期初口径纯净                   |
+| 7 个类型**必须走专用命令**（`x-registration-command`）  | 防止绕过批次语义               |
+| 某些业务必须等前序期间关账（`required_closed_periods`） | 期间次序                       |
+| 计算依赖不得成环（`dependency_cycle`）                  | 图可终止                       |
+
+**相关**：§2.A-2（身份不是一等公民）· §2.P（依赖解析）· §2.R（"本月工资方案"这条控制设计了但没强制力）· §2.AD（拒绝码的出路交付不一致）。
 
 #### L4 读取侧不变量
 
-| 限制                                            | 作用                   |
-| ----------------------------------------------- | ---------------------- |
-| **全公司通配读取不支持**（`unbounded_read`）    | 强制有界查询           |
-| **计算器必须声明它读什么**（`undeclared_read`） | 读取可审计、依赖可推导 |
-| 核算比较必须先选择对应计算来源                  | 不隐式取当前头         |
+| 限制                                            | 实际强制的是什么                                     |
+| ----------------------------------------------- | ---------------------------------------------------- |
+| **全公司通配读取不支持**（`unbounded_read`）    | **只拒绝 `kind="*"` 且 `key="*"` 一种形状**（§2.AA） |
+| **计算器必须声明它读什么**（`undeclared_read`） | 计算器只能读它声明过的东西                           |
+| 核算比较必须先选择对应计算来源                  | 须选中过该版本，且须是冻结依赖                       |
 
-#### L5 业务规则不变量（229 个错误码的主体）
+**相关**：§2.AA。
 
-| 主题       | 数量（约） | 代表                                                                                                                |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------- |
-| 时间序     | ~20        | `activation_before_acquisition`、`drawdown_after_maturity`、`payment_before_obligation`、`consumption_outside_life` |
-| 重复       | ~16        | `duplicate_asset_activation`、`duplicate_consumption`、`duplicate_tax_assessment`                                   |
-| 超额       | ~6         | `overallocated_obligation`、`return_exceeds_sale`、`tax_credit_exceeds_filing`                                      |
-| 资产批次   | ~15        | `asset_batch_command_required`、`asset_batch_unsealed`、`intangible_rounding_policy`                                |
-| 税         | ~15        | `tax_credit_*`(8)、`tax_point_period_conflict`、`tax_precision_conflict`                                            |
-| 材料       | ~12        | `material_funds_direction_mismatch`、`received_material_omitted`、`evidence_too_large`（≤20 MiB）                   |
-| **备用金** | **~22**    | `reserve_cost_*`(8)、`reserve_scope_*`(4)、`reserve_transfer_*`(2)                                                  |
-| 关账/期初  | ~15        | `closed_period`、`awaiting_close`、`opening_identity`                                                               |
+#### L5 业务规则不变量（290 个硬拒绝码的主体）
+
+| 主题       | 数量 | 代表                                                                                                                |
+| ---------- | ---- | ------------------------------------------------------------------------------------------------------------------- |
+| 时间序     | ~20  | `activation_before_acquisition`、`drawdown_after_maturity`、`payment_before_obligation`、`consumption_outside_life` |
+| 重复       | ~28  | `duplicate_asset_activation`、`duplicate_consumption`、`duplicate_tax_assessment`                                   |
+| 超额       | ~8   | `overallocated_obligation`、`return_exceeds_sale`、`tax_credit_exceeds_filing`                                      |
+| 资产批次   | ~11  | `asset_batch_command_required`、`asset_batch_unsealed`、`intangible_rounding_policy`                                |
+| 税         | ~34  | `tax_credit_*`、`tax_point_period_conflict`、`tax_precision_conflict`                                               |
+| 材料       | ~18  | `material_funds_direction_mismatch`、`received_material_omitted`、`evidence_too_large`（≤20 MiB）                   |
+| **备用金** | **31** | `reserve_cost_*`(9)、`reserve_existing_cost_*`(4)、`reserve_scope_*`(4)、`reserve_transfer_*`(3)、`reserve_debt_*`(2) |
+| 关账/期初  | ~39  | `closed_period`、`awaiting_close`、`opening_identity`                                                               |
+
+**相关**：§2.AC（删池规格）· §2.AE（哪些从未被真实数据压过）。
 
 #### L6 安全不变量
 
-关账必须负责人密码（原生窗口，绑定公司/库/期间/摘要/三 epoch/owner/session/凭据版本）；批准**单次消费** + 30 分钟过期；密码**只从原生窗口输入**；会话令牌只存 Windows 凭据管理器，不进参数/环境变量/配置/日志；浏览器需 ticket 建会话、`/api/command` 需 capability；私有安全操作只在交互桌面。
+| 限制                 | 实际强制的是什么                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 公开面最小化         | `dispatch` 只公开 `request` / `status` / `cancel` / `session_status`，其余要私有通道                                          |
+| 关账必须负责人密码   | 原生窗口重认证；批准绑定 11 个字段（公司/库/期间/摘要/三 epoch/owner/session/凭据版本），**单次消费** + 30 分钟过期           |
+| 密码只从原生窗口输入 | 只在 **MCP/daemon 命令层**成立（`daemon.py:217`）；HTTP 层不强制                                                             |
+| 会话令牌             | 只存 Windows 凭据管理器，不进参数/环境变量/配置/日志；库里只存 `token_sha256`                                                |
+| 浏览器               | ticket 建会话（单次、60 秒）+ `/api/command` 需 `X-Local-Capability`                                                         |
+| 交互桌面             | `assert_interactive_desktop()` **只在开窗路径**，不在 `native_execute`                                                       |
+
+**相关**：§2.AB（授权证据与凭据行可被直接 SQL 改写）· §2.V（真正的边界是密码，不是原生窗口）· §2.W（单公司/多公司两条批准路径规则不一致）。
 
 #### L7 读取索引与依赖图不变量
 
 索引必须与源记录**同事务**同步；索引只能引用**已存在**的源（`read_index_source_owner`）；索引与依赖图**不可改删**（14 个 `immutable_*` 触发器）。
 
-#### 审查分组与进度
-
-逐条审 52 项不如**按层审**——同层限制往往有共同副作用。顺序由易到难：
-
-| 组                             | 状态                                               |
-| ------------------------------ | -------------------------------------------------- |
-| L0 运行时环境（11 条，纯配置） | **已审 → §2.Q**（另修正 §1.4 的 `DEFENSIVE` 描述） |
-| L4 读取侧不变量（3 条）        | 待审                                               |
-| L6 安全不变量（6 条）          | 待审                                               |
-| L5 备用金组（22 条）           | 待审                                               |
-| L7 读取索引与依赖图            | **已审 → §2.O**                                    |
-| L1 结构演进                    | **已审 → §2.C**                                    |
-| L2 触发器（650 个）            | 部分已审 → §2.O                                    |
-| L3 引擎 API 不变量（最核心）   | 部分已审 → §2.A-2、§2.P                            |
+**相关**：§2.O。
 
 ### 总览
 
@@ -253,6 +265,11 @@
 | W   | 单公司/多公司两条批准路径绑定规则不一致                                 | 一致性      | 可补（成本低，失败关闭）         |
 | X   | "官方来源 URL"三套标准，最松的一档覆盖个税与社保                        | 合规/可核验 | 可补（成本极低，现有数据已合规） |
 | Y   | 新旧模型并存：资产显式拒绝、银行静默优先                                | 一致性      | 可补（**一行**，当前不可达）     |
+| AA  | "有界读取"界的是形状不是势；被挡的形状从不发生                          | 保障机制    | 可补（成本极低，零命中收紧）     |
+| AB  | 授权证据与它授权的数据同库；口令校验值无任何保护                        | 安全边界    | 需库外密钥，可补但非触发器能修   |
+| AC  | 删池方案缺 3 处规格：`cost_claims` 来源、transfer 分支、两类型分录重合   | 规格缺口    | **实施第 28 项前必须定**         |
+| AD  | 拒绝码的"出路"有时是结构化字段，有时只是中文散文                        | 接口契约    | 可补（成本低）                   |
+| AE  | 107 个事实类型里 50 个零修订；期初与 v12 批次从未带过数据               | 验证覆盖    | 事实记录（重构前须知）           |
 | K   | 无定期备份、完整性检查只在备份时                                        | 耐久性      | **【未来项】**                   |
 | H   | 无跨公司业务                                                            | 业务范围    | **【未来项】**                   |
 
@@ -429,7 +446,7 @@ carry_over_fen                      # 合并承接的累计基数
 
 ### 2.B【缺陷】投影层缺期维度 + 读路径不统一
 
-**修正说明**：本条在审查中被修正过一次。内核**并非没有读模型**——它已有 4 张投影表和一个全量重建函数。问题更精确、也更容易修。
+内核**已有 4 张投影表和一个全量重建函数**；缺陷在这两处具体的地方。
 
 | 表                                                | 粒度       | 有 period 吗 |
 | ------------------------------------------------- | ---------- | ------------ |
@@ -495,6 +512,8 @@ carry_over_fen                      # 合并承接的累计基数
 
 **后果**：内核改字段，前端**晚失败或静默失败**。
 
+**登记侧是例外，别把它拆散**：`save_fact` / `amend_fact` / `save_facts` 的契约是**从 `registry.models` 生成**的（`command_schema.py:162-197`），只跳过声明了 `registration_command` 的 7 个类型；`evidence` 的 `min_length=1`、`request_id` 必填、`expected_revision` 的严格下界也都由这一处统一给出。重构时若把它改回手写列表，§2.AD 那类不一致会立刻回来。
+
 **目标设计**：命令 schema 已能从 pydantic 导出（`command_schemas`），读接口照做；前端从导出的 JSON Schema 校验或生成类型。
 
 ---
@@ -515,8 +534,6 @@ carry_over_fen                      # 合并承接的累计基数
 ---
 
 ### 2.F【缺陷】通用事实层没有重复检测
-
-**修正说明**：本条在审查中被修正过一次。**并非完全没有重复检测。**
 
 **已有的**：银行流水路径按 `transaction_id` 查重——`bank_statements.py:760-762`：
 
@@ -594,7 +611,7 @@ return self._write(
 
 **（2）投影与写模型的一致性校验只覆盖一个科目组，且有豁免条件**
 
-**修正说明**：本条最初写成"全核无任何投影 vs 重算比对"，**不准确**——关账时确实有一道跨来源交叉校验，只是覆盖面很窄。核实结果如下。
+关账时确实有一道跨来源交叉校验，但覆盖面很窄。
 
 先记一个结构性事实：**关账冻结的 `trial_balance` 来自投影表**（`periods.py:285-294`，`SELECT account,sum(debit),sum(credit) FROM (monthly_account UNION ALL opening_account) WHERE period<=?`），而这个值此后就是看板与报表共用的权威基线。**即"关账 = 把投影固化为权威"**，且闭期不可变。所以投影的可信度直接决定冻结数据的可信度。
 
@@ -664,7 +681,7 @@ return self._write(
 - **每期关账要重算全历史传递闭包** → 关账耗时随年份增长
 - `verify_close_references` 的读路径校验也要核这么多行
 
-**根本原因（修正说明）**：不是"重复冻结历史引用"，而是——**每期的关账 manifest 本身是自包含的**（`periods.py:295-322`：含 `vouchers` 全清单、`calculations` 的传递闭包、`facts`、`trial_balance`、`inventories`、`management_snapshot`），而 `close_reference` 只是**从这份 manifest 的 JSON 里抽出的索引**（为了读取时不必加载整个 manifest）。**manifest 每期自包含 → 索引自然每期完整 → 重复是必然结果，不是冗余。**
+**根本原因**：**每期的关账 manifest 本身是自包含的**（`periods.py:295-322`：含 `vouchers` 全清单、`calculations` 的传递闭包、`facts`、`trial_balance`、`inventories`、`management_snapshot`），而 `close_reference` 只是**从这份 manifest 的 JSON 里抽出的索引**（为了读取时不必加载整个 manifest）。**manifest 每期自包含 → 索引自然每期完整 → 重复是必然结果，不是冗余。**
 
 **这个语义是必要的**：要能回答"这一期结算时依据的是什么"，当期记录里就必须有全部依据。只记增量边的话，验证要跨期遍历，而那些期的记录本身也可能已不可信（见 §1.4 的篡改模型）。
 
@@ -905,7 +922,7 @@ read.key in (*upstream.fact.scopes_for(other), "@" + other, str(upstream.fact.pe
 
 ### 2.Q【缺陷】账本内容篡改既不可防、也不可测
 
-**L0 组审查中实测发现。** 结论：内核对"已关账凭证不可变"的保证，防得住手滑，挡不住有意为之，而且**没有任何检测层**。
+内核对"已关账凭证不可变"的保证防得住手滑，挡不住有意为之，而且**没有任何检测层**。
 
 #### 实测（均在公司库的临时副本上进行，未动真实数据）
 
@@ -1337,6 +1354,84 @@ F6 使 **7 个后端 + 1 个前端**用例失败，它们断言的都是被移�
 
 ---
 
+### 2.AA【缺陷·窄】"有界读取"界的是形状，不是势
+
+`unbounded_read` 只拒绝 `kind="*"` 且 `key="*"`（`query_reads.py:292-295`、`storage.py:314-318`），而**这个形状在两库记录在案的读里出现 0 次**。承载读量的是另外三种：
+
+- **`kind` 绑定 + `key="*"`**：势随该类型的历史增长，无上界。今天最大是 `material_resolution_v2`（1047 行，占屋舍在用事实 75%）。
+- **`key` 绑定 + `kind="*"`**：SQL **丢掉了 kind 谓词**（`storage.py:344-345`），而 `fact_scope` / `calculation_scope` 里 `kind` 列就在那儿（`schema.py:73-78`）。所以 `Read("*", key)` 的真实含义是"所有注册到这个 key 下的 kind"，不是"这个业务对象"。
+- **两者都具名**：有界性只来自"作用域键起得好"——而 key 是**没有注册表的自由字符串，默认值还是最粗的那个**：`Fact.scopes()` 默认返回 `(str(self.period),)`（`contracts.py:105-106`），引擎再无条件补 `str(period)`，实测 **21 种 kind 共用 `"2026-03"`**。于是 `Read("*", "2026-08")` = 该月 19 种 kind 的全部在用事实，**正是这条守卫想挡的"整月通读"，而它拦不住**。新写一个不覆盖 `scopes()` 的类型时，`scope` 的默认形态就是"月"。
+
+**后果**："内核的读都是有界的"不是内核的性质，是当前 107 个类型恰好把作用域键起窄了的巧合；而 §2.M 的性能契约只数 SQL 条数，这类读变大没有任何测试会发现。**重构时不要把"读已有界"当前提。**
+
+**修法**（§5.1 第 40 项）：`kind="*"` 时拒绝裸期间键（实测零命中的纯收紧）；`kind="*"` 的 SQL 保留 kind 谓词；性能契约补"单次读返回行数"维度。
+
+### 2.AB【缺陷】授权证据和它授权的数据放在同一个库里
+
+L6 六条限制里，**"关账必须负责人密码"这条的根信任可以被一行 SQL 改写**：
+
+- **凭据行完全没有触发器**：`security_owner` / `security_session` / `security_recovery` 一个都没有（其余安全表各有 UPDATE + DELETE）。
+- **授权行没有 INSERT 触发器**：`security_close_approval`、`security_close_batch`、`security_close_batch_receipt` 都只封 UPDATE / DELETE。消费时**只比对字段，不验证行的来源**（单期 `approval.py:86-114`；批量 `batches.py:48-61` 比 `catalog_instance_id`/`owner_id`/`session_id`/`credential_version` 与 `digest(targets)` 自洽——四个字段库里都能读，digest 谁都能算）。
+
+两条链：
+
+1. **改口令校验值**（`UPDATE security_owner SET password_hash=…`）→ 正常登录 → 正常重认证 → 正常关账。一行 UPDATE，**没有 DROP 触发器、没有 schema 漂移、没有 manifest 不一致**，所以 `verify_schema` / `verify_read_indexes` / `verify_close_references` / 证据与 manifest 摘要全部通过。与关账方式无关：`password_hash` 是登录凭据，拿到它等于同时拿到单期关账、批量关账、改密码与导出批准。
+2. **伪造授权行**（预览取摘要 → 拼出绑定 → INSERT 一行 → 带 `approval_id` 调 `close` / `close_range`）→ **不需要口令**。两条路径防护形状相同、都要加固——批量关账不是历史遗留，重建方案自己就走 `approve_close_batches` → `close_range`（`docs/empty-database-replay.md:229-231`）。
+
+**为什么独立于 §2.Q**：§2.Q 的篡改会破坏账本与自身历史的对应，§5.1 第 10 项的回看比对能发现它。**这两条不能**——产出的都是内核真实计算并冻结的关账，账本自洽、摘要正确。
+
+**为什么触发器修不了**：合法的"改密码"与伪造的"改密码"是同一条 UPDATE；伪造的授权行与内核插入的授权行在 SQL 层同形。SQLite 触发器看不到调用者，这一层只能靠**库外的验证者**。
+
+**修法**（§5.1 第 41 项）：关账授权改带密钥签名（密钥在库外，消费时校签名而非比字段）；口令校验值移出数据库，与会话令牌同处（`credentials.py`）。**§2.G 的私有 DACL 修不了这条**——AI 与负责人同账户运行（§2.V），DACL 防的是别的账户。
+
+---
+
+### 2.AC【规格缺口】删池之后有三件事没有着落
+
+已定的"删池"方案（§2.O-补、§5.1 第 28 项）缺三处规格，不补上会在实现时把池留成残骸：
+
+1. **`cost_claims` 没有来源了。** `ReserveSettlementInput`（调用方输入，`managed_reserve.py:370-388`）不含 `cost_claims`；它由内核在 `reserves.py:32-60` 按 `scope.values["cost_sources"]` 做逐来源 FIFO 贪心分配算出，再写进不可变的结清事实。scope 一删就没有 `cost_sources` 可迭代，**必须改成调用方指定成本来源**——`expense_recovery` 的 `source_expense_id` 就是这个模型。这是事实形状变化，需要前向迁移。把 `cost_claims` 绑死在池上的正是 `reserve_cost_not_adopted`（`:474`）与 `reserve_cost_claim_total` 的"唯一"那一半（`:468`）。
+2. **池会改变另一个事实类型的会计处理。** `bank_platform_transfer` 的核算取决于 scope 是否把这笔标成 `expense_on_boundary`（`platforms.py:490-521`）：有标记 → 借 5602 / 贷 1002，无标记 → 借 1012 / 贷 1002。scope 一删这条分支变死代码，**同一笔业务在重建后会得到不同科目**。§2.O-补 只说"语义并入 `managed_reserve_bank_expense`"，没写这条分支怎么处置；必须显式定：该类型只做 1012/1002，还是自带一个不依赖 scope 的费用化标记。
+3. **两个类型产出的分录完全相同。** `managed_reserve_bank_expense` 与带 `expense_on_boundary` 的 `bank_platform_transfer` 都是借 5602 / 贷 1002，今天唯一的区分依据是池里 `transfer_treatments` 的一个字符串。删池后不给显式规则，同一笔银行退出会有两种记法而账务结果相同。
+
+**31 个 `reserve_*` 硬拒绝码的去向**（§5.1 第 28 项原文写"约 20 个退役"，这里是逐条版）：
+
+| 去向                        | 数量 | 错误码                                                                                                                                                                                                                       |
+| --------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **随池删除**                | 20 | `reserve_scope_overlap` `reserve_scope_cycle` `reserve_scope_accounts` `reserve_scope_continuity` `reserve_duplicate_cost` `reserve_transfer_scope` `reserve_transfer_basis` `reserve_capital_basis` `reserve_existing_cost_basis` `reserve_existing_cost_period` `reserve_existing_payment` `reserve_existing_cost_account` `reserve_existing_cost_total` `reserve_cost_period` `reserve_cost_scope` `reserve_cost_transfer` `reserve_cost_payment` `reserve_cost_account` `reserve_cost_not_adopted` `reserve_settlement_period`，另加两个 `NeedsInformation`（`managed_reserve_scope`、`scope_id`） |
+| **保留但换位置**            | 2  | `reserve_cost_purpose` `reserve_cost_kind`——从"采纳来源时校验"移到"校验调用方给的 `cost_claims`"                                                                                                                            |
+| **保留（`claim_total` 改写）** | 7  | `reserve_cost_claim_total`（"唯一"改成逐来源）`reserve_future_cost` `reserve_debt_date` `reserve_debt_source` `reserve_material_amount` `reserve_evidence_required` `reserve_return_date`                                       |
+| **不在池内、保留**          | 1  | `reserve_return_material_basis`（`payroll_reserve_payment.py:101`，金额口径）                                                                                                                                                 |
+| **随 (2) 的决策定**         | 1  | `reserve_transfer_direction`——分支消失，但"只有银行退出可确认为备用金费用"这条语义要落在替代者身上                                                                                                                           |
+
+同模块内还有三个不带 `reserve_` 前缀但属于这条线的码：`insufficient_reserve_capacity`（`reserves.py:62`）、`excess_settlement`（`managed_reserve.py:520`）、`boundary_material_amount`（`platforms.py:575`）——都不随池删除。
+
+---
+
+### 2.AD【缺陷·窄】拒绝码的"出路"有时是结构化字段，有时只是中文散文
+
+同一语义"你走错入口了，该走哪条"有两种交付：`registration_command_required` 带**结构化字段** `command=`（`engine.py:264-271`）；`asset_batch_command_required` 只有散文"须通过资产专用预览与确认入口"（`engine.py:418`、`:1455`、`asset_batch_models.py:64`），而真实入口是 4 个具名命令（`prepare/confirm_asset_activation_batch`、`prepare/confirm_asset_consumption_month`）。
+
+规模：**290 个 `KernelError` 里只有 30 个带结构化字段**。（`NeedsInformation` 那 89 个追问按设计带 `sources=` / `precision=`，不受影响。）
+
+**后果**：内核与 AI 的接口就是拒绝码，"该改用哪个类型/命令"目前靠读中文句子——这是唯一一条没有机器可校验形式的规则载体。
+
+**修法**：凡拒绝码的出路是一个具体命令或类型，就带上结构化字段（`command=` / `fact_kind=`）。`asset_batch_command_required` 可按在场事实的批次类型给出，或给一个列表。
+
+---
+
+### 2.AE【事实】107 个事实类型里 50 个在两库零修订
+
+把 107 个注册类型与两库的 `fact_revision` 对照，**50 个一次修订都没有**。按对重建的影响分三类：
+
+- **重建即会用，只是现库是历史遗留**：`asset_activation_batch` / `asset_consumption_month`（v12 批次路径，现库是 v11 单卡模型）；**整个期初子系统**——两库 `opening_package` 都是全零包（`counts` 九项全 0），所以 10 个 `opening_*` 明细类型连同 `opening_identity` / `opening_period` / `duplicate_opening*` / `opening_balance` / `ambiguous_opening` / `before_opening` 一组规则**从未带过任何数据**。
+- **业务从未发生**：贷款（`loan_*`）、货基（`money_fund_*`）、项目成本（`project_cost` / `project_release`）、`sale_return`、预收（`advance*` / `service_tax_point`）、`cash_*` / `funds_transfer`、`overpayment`、**退抵税 `tax_credit_confirmation`**、`used_asset_vat_policy`、`filing_calendar_policy_v2`、`company_workflow_scope_v2`、`tax_import_*_v2`、`continuation_report_profile`、`report_carry_forward`。
+- **已被新版取代**：`payroll_plan_v2` / `payroll_plan_bounded` / `payroll` / `labor` / `payroll_change_notice_v2` / `payroll_no_change_v2`（现库用 `payroll_bounded`）、`annual_bonus*`。
+
+**对重构的意义**：290 个硬拒绝码 / 650 个触发器的密度里，相当一部分**从未被执行过**。"保持语义"对这部分只是保持代码，真正的风险是**第一次运行时才发现它不工作**。重建后首次启用期初、资产批次或退抵税时，不要把它当已验证能力。
+
+---
+
 ### 2.K【未来项】无定期备份，完整性检查只在备份时
 
 | 事实                                               | 位置                                      |
@@ -1498,6 +1593,14 @@ digest({"contract", "subject_id", "kind", "period",
 - **期初在其期间关账后不可改**：`engine.py:769-779` 抛 `closed_opening_immutable`，差异须走开放期更正。
 - **期初可以补录到开放期**：`required_closed_periods` 全库**只被一处覆写**——`workflow.py:202` 的 `external_obligation`（季度申报要求该季各月已关）。**没有任何期初类型要求前序关账。**
 
+### L2 触发器与 L3 引擎 API 不变量——**查过，无缺口**
+
+**L2**：650 个触发器覆盖全部 192 张表；只有 6 张按设计没有触发器（4 张可重建投影 + `pending` + `state`），每张 `fact_*` 一律有 immutable UPDATE+DELETE、sealed INSERT、owner INSERT。四类各实测一次，全部按预期拒绝。
+
+**L3**：`save_fact` / `amend_fact` / `save_facts` 的契约从注册表生成（见 §2.D），证据 ≥1、幂等键必填、金额严格整数分（`100.0` / `"100"` / `True` 全拒）都由这一处统一给出；7 个 `registration_command` 类型在 schema 与运行时双重挡住。
+
+**两处都不能在重构里拆散。**
+
 ### 存储、事务与并发保护——**查过，是稳的**
 
 这一层本来最像"重建时才痛"的地方，逐条核实后**没有发现缺陷**，记录证据以免重复怀疑：
@@ -1527,7 +1630,7 @@ digest({"contract", "subject_id", "kind", "period",
 | 导出文件会不会被当成"已付款" | manifest 内置 `notice`（`:523`）原文"本文件仅为代发指令；生成文件不代表已付款，不产生银行流水或付款凭证"，与 `service.py:61` 的 `external_actions` 口径一致                           | ✅ 信任模型自洽 |
 | 模板来源                     | `preview` 从 `evidence` 表按 digest 取原始四列模板（`:179-185`），取不到即 `NeedsInformation`                                                                                         | ✅              |
 
-### 看板对"期初采用依据未建立"的处理——**与报表同样保守（差点被我误记为缺陷）**
+### 看板对"期初采用依据未建立"的处理——**与报表同样保守**
 
 `reports._account_totals` 在 `unestablished_state_selections` 非空时 `return None`（`reports.py:504-505`），`_statements.balance` 随即把**全部 53 行资产负债表科目置 `None`**（`:1562-1563`）——报表**拒绝出数**。
 
@@ -1672,6 +1775,8 @@ digest({"contract", "subject_id", "kind", "period",
 **一处"看起来脆弱、实际有测试兜住"的地方（记录以免重复怀疑）**：`PayrollReservePayment`（代发工资）**继承 `Payment`**，因此它"计入已核销容量"完全依赖继承来的 `Payment.claims()`（`transactions.py:986`）——而该子类已经覆盖了父类的 `validate_funds`、`direction`、`payment_method`、`counterparty_id` 四项语义，仅 `claims()` 靠继承。若有人为改这些字段而切断继承，代发工资会**静默不再占用工资义务容量**，同一份工资即可被重复核销。
 
 **但这一点已被专门测试固定**：`tests/kernel/test_payroll_reserve_payment.py:188` 的 `test_later_ordinary_payment_cannot_reuse_settled_net` —— 先记代发、再造普通付款，断言 `pytest.raises(KernelError)`，并断言义务键 `payroll:wage-one:net` 结清后余额为 0。**所以不是缺陷**，同时它也顺带证明了 scope key 就是 `{kind}:{subject_id}:{name}` 这个格式。
+
+**一条非显然的性质**：容量守卫用期间截断（`_through_month(..., fact.period)`），**本身与登记顺序有关**——把认领补记到更早的开放月份，守卫看不到后登记那笔。兜住它的是另一条链：`_scope_consumers`（`engine.py:347-361`）按 `dependency_scope` 把"读过该 scope 且 `before_period > 本次期间`"的计算标 `pending`，而 `periods.py:455-467` 让 pending 阻断关账。**重构时若把守卫"简化"成全局读取，或去掉 `dependency_scope` / pending，超额会静默漏过。**
 
 ### 核算等价判定（`accounting.py`）与计算器构建身份（`build.py`）——**查过，是稳的**
 
@@ -1847,7 +1952,7 @@ with localcontext(DecimalContext(prec=64, rounding=ROUND_HALF_UP)):
 
 | 项                                   | 结果                                                                                                                                                                                                                                                                                              |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **模板 SHA256 与实际文件一致**       | ✅ 实测：`src/ai_accounting/templates/financial_reports/财务报表报送与信息采集（小企业会计准则）月季报.xlsx` 的哈希 = `TEMPLATE_SHA256` = `BD83011100C52143B3B9A5CF5E13BA4DBE1899191BB1395BD92A5CE0F0C6F7FD`；加载时也会比对（`financial_statement_template.py:147`）。**此前的"未验证"项可关闭** |
+| **模板 SHA256 与实际文件一致**       | ✅ 实测：`src/ai_accounting/templates/financial_reports/财务报表报送与信息采集（小企业会计准则）月季报.xlsx` 的哈希 = `TEMPLATE_SHA256` = `BD83011100C52143B3B9A5CF5E13BA4DBE1899191BB1395BD92A5CE0F0C6F7FD`；加载时也会比对（`financial_statement_template.py:147`） |
 | **渲染输出是否真的填了"本年累计"列** | ❌ **仍未验证**——只验证了 `_periods` 返回年初锚点（`reports.py:314-316`）与数据结构存在，未检查渲染结果                                                                                                                                                                                           |
 
 ### ② 年报导出——**基本没问题**
@@ -1892,7 +1997,7 @@ with localcontext(DecimalContext(prec=64, rounding=ROUND_HALF_UP)):
 | 25  | **关账/代发读 `file_status`**（非 `complete` 即阻断，或提升为 issue）                        | U       | 0.5 天                                                  | 只提升"没有任何月份承接"的那类；不要破坏期间归属语义                                                                                                                                                                                                                                                                                                                                                        |
 | 26  | **合并"官方来源 URL"为单一类型**                                                             | X       | 0.25 天                                                 | 现有 7 条政策 URL **已全部合规**，收紧不会拒绝历史数据；与第 4 项同批做                                                                                                                                                                                                                                                                                                                                     |
 | 27  | **银行期初并存两侧都检查**（并存即报错）                                                     | Y       | 0.1 天                                                  | 并提炼"新旧模型并存"的统一约定（推荐资产的显式拒绝）；当前不可达但方向要统一                                                                                                                                                                                                                                                                                                                                |
-| 28  | **删掉备用金的"池"概念**（`managed_reserve_scope` 整型 + 三个 `scope_id` + 逐来源容量）      | O-补    | **分两步**：停用 0.5–1 天；回收表待第 2 项就绪后 2–3 天 | **规模简化，非缺陷；已决定**（见 §2.O-补"备用金"条、§5.6）。**依赖第 2 项**——现迁移机制只能加不能改，故第一步走"停用"（停止读写 + 删 `platforms.py:495` 前置校验 + 容量改 `expense_recovery` 式逐来源上限），**零迁移、旧 scope 行原样留在历史里**；第二步等前向 ALTER 就绪再 DROP 三张表与 `scope_id` 列。收益：`managed_reserve.py` 641→约 150 行、约 20 个错误码退役、§2.A-2 那串自造 scope key 全消失。 |
+| 28  | **删掉备用金的"池"概念**（`managed_reserve_scope` 整型 + 三个 `scope_id` + 逐来源容量）      | O-补    | **分两步**：停用 0.5–1 天；回收表待第 2 项就绪后 2–3 天 | **规模简化，非缺陷；已决定**（见 §2.O-补"备用金"条、§5.6）。**依赖第 2 项**——现迁移机制只能加不能改，故第一步走"停用"（停止读写 + 删 `platforms.py:495` 前置校验 + 容量改 `expense_recovery` 式逐来源上限），**零迁移、旧 scope 行原样留在历史里**；第二步等前向 ALTER 就绪再 DROP 三张表与 `scope_id` 列。收益：`managed_reserve.py` 641→约 150 行、31 个 `reserve_*` 错误码中 20 个退役（逐条去向见 §2.AC）、§2.A-2 那串自造 scope key 全消失。**⚠️ 实施前先定 §2.AC 的三处规格**——尤其 `cost_claims` 的来源，否则会为了"有东西可分配"把池留成残骸。 |
 | 29  | ~~**准备度改条件式**~~ **✅ 已完成** | Z | 已完成 | 三个端点加 `preparation`（默认 `complete` 保持兼容），前端改发 `deferred`；该项原占单次渲染 **65%**。见 §2.Z |
 | 30  | **跨请求复用不可变派生数据** | T/Z | 1–2 天 | `QueryReads` 按快照新建 → 关账采用证明 / manifest 重取 / 引用重推**每请求从零重算**。是 `brief` 不靠第 37/38 项时的兜底。**用户已决定留给重构。** 见 §2.Z |
 | 31  | ~~**四端点 500 ms 门槛实测**~~ **✅ 已达标 7/8** | Z | 持续跟踪 | 终值：屋舍 **121 / 283 / 104 / 136 ms 全达标**；魂道 **473 / 731 / 285 / 355 ms，仅 `brief` 超标**。见 §2.Z |
@@ -1904,6 +2009,8 @@ with localcontext(DecimalContext(prec=64, rounding=ROUND_HALF_UP)):
 | 37  | **`relations` 批量预取**（`query_reads.py:474` 单条调 `prime_calculations`） | Z | 0.5–1 天 | **`brief` 未达标的两个杠杆之一。** `prime_calculations` 384 次共 138 ms，其中 **382 次来自 `relations` 单条调用**（与 F2/F5 同型：批量 API 被单条使用）。批量化需改关系解析链结构 |
 | 38  | **`_open_items` 全公司结算汇总**（`dashboard.py:2555-2556`，2 次 210 ms） | Z | 待评估 | **另一个杠杆。** 是简报「未结事项」的固有成本，**前端主载荷确实读它（KPI 应收/应付合计），不能像准备度那样整体延迟**；要压只能改汇总算法或走投影，**先评估** |
 | 39  | **`brief` 达标收尾**（魂道 731 → < 500 ms） | Z | 视 37/38 | 八项里七项已达标。**第 37+38 合计约 250–350 ms，做完即可达标且不需新缓存层**；两项都不做则需第 30 项 |
+| 40  | **收紧 `unbounded_read` 的定义** | AA | 0.1 天（实测零命中） | `kind="*"` 时拒绝裸期间键；`kind="*"` 的 SQL 保留 kind 谓词；契约补"单次读返回行数"维度。顺带把 `Context` 改成不可变（2 行） |
+| 41  | **关账授权改带密钥签名 + 口令校验值移出数据库** | AB | 3–5 天 | 改一行 `password_hash` 即可拿到负责人全部权限且不留任何可检测痕迹；单期与批量两条授权路径都可伪造，都要加固（签名须覆盖各自绑定：单期 11 个字段 / 批量 `targets` 全表）。**§2.G 的 DACL 修不了这条**（同账户运行） |
 
 ### 5.2 有推荐方案的设计选择【选择】
 
@@ -2029,4 +2136,3 @@ F1/F2/F5 落地后跑过**全量** `pytest tests/kernel`（26 分 41 秒）得 *
 
 **本次不做**：定期备份（K）、跨公司（H）——触发条件已记录。
 
-**审查到此结束（按用户决定收口）。** 已审范围：§2.0 硬性限制清单的 **L0**（→ §2.Q）、**L1/L7**（→ §2.C/§2.O）、**L2/L3 部分**（→ §2.O/§2.P/§2.A-2），以及**存储、事务、并发、备份与恢复层**（→ §三"存储、事务与并发保护——查过，是稳的"，结论为无缺陷）。**L4、L6、L5 与 L2/L3 的其余部分标记为"未审（已决定不再审）"**——它们不代表已核实，重构时不要当作已被检查过。
