@@ -1,6 +1,7 @@
 """Old dashboard contracts over synthetic typed SQLite business, without the retired ORM."""
 
 import json
+from typing import ClassVar
 
 import pytest
 from test_banking import book as _bank_book
@@ -19,6 +20,7 @@ from test_reports import book as _report_book
 from test_reports import cit
 from test_reports import profile as report_profile
 
+from ai_accounting.kernel.contracts import Fact, Line, Outcome, Registry
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.domains.assets import AssetAcquisition, AssetActivation
@@ -27,6 +29,7 @@ from ai_accounting.kernel.http import wire_money
 from ai_accounting.kernel.reports import Reports
 from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.storage import Store
+from ai_accounting.kernel.types import PositiveFen
 
 bank_book, opening_book, report_book, engine = _bank_book, _opening_book, _report_book, _engine
 payroll_company = _payroll_company
@@ -523,3 +526,101 @@ def test_empty_catalog_company_and_money_precision(bank_book, tmp_path):
     assert dashboard.context()["current_company"]["company_id"] == book.store.company_id
     with pytest.raises(ValueError):
         dashboard.funds("2026-09", limit=501)
+
+
+def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path):
+    """A non-zero account outside every mapping table is collected, not dropped from 收入/费用."""
+
+    class MappedExpense(Fact):
+        kind: ClassVar[str] = "test_mapped_expense"
+        amount: PositiveFen
+
+    class MappedRevenue(Fact):
+        kind: ClassVar[str] = "test_mapped_revenue"
+        amount: PositiveFen
+
+    class UnmappedExpense(Fact):
+        kind: ClassVar[str] = "test_unmapped_expense"
+        amount: PositiveFen
+
+    class UnmappedRevenue(Fact):
+        kind: ClassVar[str] = "test_unmapped_revenue"
+        amount: PositiveFen
+
+    def post(debit, credit):
+        def calculate(version, context):
+            amount = version.fact.amount
+            return Outcome(
+                (Line(debit, debit=amount), Line(credit, credit=amount)), {"amount": amount}
+            )
+
+        return calculate
+
+    registry = Registry()
+    registry.register(MappedExpense, post("5602", "2001"))
+    registry.register(MappedRevenue, post("2001", "5001"))
+    registry.register(UnmappedExpense, post("199901", "2001"))
+    registry.register(UnmappedRevenue, post("2001", "199902"))
+    engine = Engine(
+        Store.create(
+            tmp_path / "unmapped-account.sqlite",
+            registry,
+            "company-u",
+            "91310000123456789U",
+            "db-u",
+        )
+    )
+    proof = engine.register_evidence(
+        b"synthetic unmapped account", "text/plain", "unmapped", request_id="unmapped-evidence"
+    )["digest"]
+    facts = (
+        ("mapped-expense", "test_mapped_expense", 100),
+        ("mapped-revenue", "test_mapped_revenue", 400),
+        ("unmapped-expense", "test_unmapped_expense", 700),
+        ("unmapped-revenue", "test_unmapped_revenue", 900),
+    )
+    for subject, kind, amount in facts:
+        engine.save_fact(
+            kind,
+            subject,
+            {"period": "2026-01", "amount": amount},
+            evidence=(proof,),
+            expected_revision=0,
+            request_id=f"save-{subject}",
+        )
+    subjects = [subject for subject, _, _ in facts]
+    preview = engine.preview(subjects)
+    engine.confirm(
+        subjects,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="post-unmapped-accounts",
+    )
+    position = Dashboard(engine).brief("2026-01")["data"]["position"]
+    # Only the mapped accounts move 收入/费用; the unmapped amounts stay out of both sums.
+    assert position["month_revenue_fen"] == 400
+    assert position["month_expense_fen"] == 100
+    assert position["month_result_fen"] == 300
+    reported = [
+        issue
+        for issue in position["issues"]
+        if issue["field"] == "account_mapping" and "amount_fen" in issue
+    ]
+    assert sorted(reported, key=lambda issue: issue["account"]) == [
+        {
+            "field": "account_mapping",
+            "message": "存在未映射的非零账户余额，本月收入、费用不含该金额",
+            "semantics": "accounting",
+            "account": "199901",
+            "amount_fen": 700,
+        },
+        {
+            "field": "account_mapping",
+            "message": "存在未映射的非零账户余额，本月收入、费用不含该金额",
+            "semantics": "accounting",
+            "account": "199902",
+            "amount_fen": -900,
+        },
+    ]
+    assert position["complete"] is False
+    assert [wire_money(issue)["amount_fen"] for issue in reported] == ["700", "-900"]

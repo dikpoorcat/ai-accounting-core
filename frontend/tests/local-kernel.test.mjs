@@ -77,20 +77,20 @@ test("native security requests carry operation kind and use same-origin cookies"
 });
 
 test("large cents remain exact and numeric money responses are rejected", async () => {
-  const overview = { accounts: [{ account: "1002", debit: "9007199254740993", credit: "0" }] };
+  const jobs = [{ id: "j1", kind: "report_export", status: "succeeded", attempts: 1, last_error: null, result: { total_fen: "9007199254740993" } }];
   globalThis.fetch = async (_url, options) => {
     assert.equal(options.credentials, "same-origin");
-    return new Response(JSON.stringify(overview));
+    return new Response(JSON.stringify(jobs));
   };
-  assert.equal((await api.fetchLocalOverview("company-1", "2026-09")).accounts[0].debit, "9007199254740993");
+  assert.equal((await api.fetchLocalJobs("company-1")).at(0).result.total_fen, "9007199254740993");
   assert.equal(money.formatFen("9007199254740993"), "¥90,071,992,547,409.93");
-  overview.accounts[0].debit = 9007199254740992;
-  await assert.rejects(api.fetchLocalOverview("company-1", "2026-09"), { code: "LOCAL_MONEY_FORMAT" });
+  jobs[0].result.total_fen = 9007199254740992;
+  await assert.rejects(api.fetchLocalJobs("company-1"), { code: "LOCAL_MONEY_FORMAT" });
 });
 
 test("expired identity directs the owner to the native window", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ status: "rejected", code: "OWNER_SESSION_EXPIRED" }), { status: 401 });
-  await assert.rejects(api.fetchLocalCompanies(), (error) => error.message.includes("本机安全窗口"));
+  await assert.rejects(api.fetchLocalJobs("company-1"), (error) => error.message.includes("本机安全窗口"));
 });
 
 test("unlaunched browser is directed to the local launcher", async () => {

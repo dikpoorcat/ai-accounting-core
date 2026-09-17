@@ -2473,6 +2473,19 @@ def _position(snap):
             for account, value in values.items()
             if PROFIT_ACCOUNTS.get(account, (0, 0))[1] == 1
         )
+        # An account outside every mapping table reaches neither sum, so its amount would
+        # silently understate revenue or expense; collect it instead of dropping it.
+        for account, value in values.items():
+            if value and account not in known:
+                source_issues.append(
+                    {
+                        "field": "account_mapping",
+                        "message": "存在未映射的非零账户余额，本月收入、费用不含该金额",
+                        "semantics": "accounting",
+                        "account": account,
+                        "amount_fen": value,
+                    }
+                )
         return revenue, expense, revenue - expense
 
     revenue, expense, monthly = result(snap.month_accounts)
@@ -3481,7 +3494,12 @@ def _employees(
         ],
     }
     labor_items = []
-    labor_calculations = list(snap.calculations_of_kind(*LABOR_KINDS, "labor_project_cost"))
+    all_labor_calculations = list(
+        snap.calculations_of_kind(*LABOR_KINDS, "labor_project_cost")
+    )
+    labor_calculations = [
+        calc for calc in all_labor_calculations if calc["posting_period"] == snap.month
+    ]
     entity_sources = {
         calc["subject_id"]
         for calc in wage_calculations
@@ -3493,10 +3511,10 @@ def _employees(
             for item in unestablished_employees[employee_id]["candidate_selections"]
         )
     if employee_id is not None:
-        labor_scalar = scalar_facts(snap, labor_calculations)
+        labor_scalar = scalar_facts(snap, all_labor_calculations)
         entity_sources.update(
             calc["subject_id"]
-            for calc in labor_calculations
+            for calc in all_labor_calculations
             if labor_scalar[calc["fact_id"]]["person_id"] == employee_id
         )
     labor_keys, labor_page = page_keys(

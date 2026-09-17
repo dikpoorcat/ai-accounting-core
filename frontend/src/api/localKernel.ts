@@ -5,40 +5,10 @@ export class LocalApiError extends Error {
   }
 }
 
-export type LocalFen = string;
-
 export interface EvidenceDetails {
   digest: string;
   name: string;
   media_type: string;
-}
-
-export interface LocalCompany {
-  id: string;
-  name: string;
-  taxpayer_id: string;
-  database_id?: string;
-}
-
-export interface LocalOverview {
-  period: string;
-  epochs: { accounting: number; material: number; management: number };
-  accounts: { account: string; debit: LocalFen; credit: LocalFen }[];
-  opening_balances?: { account: string; debit: LocalFen; credit: LocalFen }[];
-  cashflow: { category: string; amount: LocalFen }[];
-  pending: { subject_id: string; causes: number; kind?: string }[];
-  pending_count?: number;
-  closed?: boolean;
-}
-
-export interface LocalVoucher {
-  number: number;
-  id: string;
-  calculation_id: string;
-  period: number;
-  total: LocalFen;
-  kind?: string;
-  reverses_id: string | null;
 }
 
 export interface LocalJob {
@@ -295,18 +265,6 @@ export async function localSecurity(operation: "request" | "status" | "cancel" |
   });
   if (!record(result)) throw new LocalApiError(502, "LOCAL_SECURITY_RESPONSE", "安全窗口状态无法读取，请重新打开工作台。");
   return result as LocalSecurityState;
-}
-
-export function fetchLocalCompanies(signal?: AbortSignal): Promise<LocalCompany[]> {
-  return localRequest("companies", {}, signal);
-}
-
-export function fetchLocalOverview(companyId: string, period: string, signal?: AbortSignal): Promise<LocalOverview> {
-  return localRequest("overview", { company_id: companyId, period }, signal);
-}
-
-export function fetchLocalLedger(companyId: string, period: string, afterNumber = 0, signal?: AbortSignal): Promise<LocalVoucher[]> {
-  return localRequest("ledger", { company_id: companyId, period, after_number: String(afterNumber), limit: "50" }, signal);
 }
 
 export function fetchLocalJobs(companyId: string, signal?: AbortSignal): Promise<LocalJob[]> {

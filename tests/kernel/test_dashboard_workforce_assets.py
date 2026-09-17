@@ -256,6 +256,40 @@ def test_unpaid_labor_is_explicit_without_inferred_tax_or_gross_settlement(tmp_p
     assert "settled_gross_fen" not in labor and "actual_withholding_tax_fen" not in labor
 
 
+def test_personal_labor_items_only_include_selected_posting_month(tmp_path):
+    company = Company(tmp_path / "labor-period.sqlite")
+    company.save(
+        LaborAccrual(
+            period="2026-01",
+            person_id="january-person",
+            expense_class="management",
+            gross_fee_fen=500000,
+            tax_treatment="not_withheld_not_filed",
+        ),
+        "january-labor",
+    )
+    company.publish("january-labor")
+    company.save(
+        LaborAccrual(
+            period="2026-02",
+            person_id="february-person",
+            expense_class="management",
+            gross_fee_fen=700000,
+            tax_treatment="not_withheld_not_filed",
+        ),
+        "february-labor",
+    )
+    company.publish("february-labor")
+
+    data = Dashboard(company.engine).employees("2026-02")["data"]
+    labor = data["workforce_cost"]["personal_labor"]
+
+    assert labor["total_fen"] == 700000
+    assert [item["source_id"] for item in labor["items"]] == ["february-labor"]
+    assert labor["items"][0]["period"] == "2026-02"
+    assert data["collections"]["labor_sources"]["page"]["total_count"] == 1
+
+
 @pytest.mark.parametrize("activated", [False, True])
 def test_capitalized_labor_and_pending_intangible_are_visible_without_double_cost(
     labor_book, activated
