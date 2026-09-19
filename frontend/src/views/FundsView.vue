@@ -1149,7 +1149,7 @@ onBeforeUnmount(() => {
                           <dt>流水编号</dt>
                           <dd class="bank-record-reference">{{ item.reference || "编号未提供" }}</dd>
                         </div>
-                        <div v-if="item.source_check?.message">
+                    <div v-if="item.source_check?.message && item.source_check.state !== 'confirmed'">
                           <dt>核对说明</dt>
                           <dd>{{ item.source_check.message }}</dd>
                         </div>

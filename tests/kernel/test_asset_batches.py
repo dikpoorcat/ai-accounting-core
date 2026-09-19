@@ -6,7 +6,7 @@ import pytest
 from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
@@ -15,7 +15,7 @@ def asset_engine(tmp_path):
     engine = Engine(
         Store.create(
             tmp_path / "batch.sqlite",
-            default_registry(),
+            production_bundle(),
             "company",
             "91310000123456789A",
             "database",

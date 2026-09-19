@@ -8,9 +8,9 @@
 
 ## 当前实现与已批准目标
 
-当前代码仍是阶段 2 完成时的公司库 v13、目录库 v3，包含既有结构前向升级、旧历史覆盖不足表示和当前便携包兼容；本页其余命令按这份实际代码说明。
+当前代码已采用新系统 `ai-accounting-kernel/2`：目录库、公司库均为严格核验的 `draft / 0`，公司备份格式为 2。旧系统数据库和备份明确拒绝，不能通过改版本、补标识或重建文件绕过。
 
-已经批准但尚未实施的目标是一条全新开发、只创建全新数据库的新谱系：旧数据库和旧便携包明确拒绝，不安排真实换库或重录；保留新谱系内未来前向升级、正常事实历史和更正能力。开发期间使用严格校验的 draft 结构，第 9 阶段完成性能与独立运行包验收后才冻结新首版。实施顺序和退出责任以[内核重构架构](docs/kernel-refactor-architecture.md)及[路线图](docs/kernel-refactor-roadmap.md)为准；在基础修订落地前，不能把目标行为当作当前运行能力。
+本轮按全新开发、全新库推进，不安排真实换库或重录。未来正式版本的迁移能力已建立，正常事实历史和更正能力保留；开发库只接受当前精确结构，不跨开发基线升级，第 9 阶段才冻结正式 v1。期间、身份、备用金等业务改造仍按[整体架构](docs/kernel-refactor-architecture.md)和[路线图](docs/kernel-refactor-roadmap.md)推进。
 
 ## 开发页面手动重启
 
@@ -21,7 +21,7 @@
 2. 在仓库根目录依次执行：
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -I -X utf8 -m ai_accounting.kernel.cli --root .\data stop
+.\.tmp-kernel-venv\Scripts\python.exe -I -X utf8 -m ai_accounting.kernel.cli --root .\data\kernel-draft stop
 .\deploy\windows\start_accounting.ps1 -NoBrowser
 Set-Location .\frontend
 npm run dev
@@ -29,7 +29,7 @@ npm run dev
 
 3. 刷新 `http://127.0.0.1:5173`。
 
-需要重启前端，是因为后台重启后端口可能变化，Vite 必须重新读取新端口。README 确实没把这个开发场景讲清楚。
+后台重启后端口可能变化，重启 Vite 会重新核验同一开发资料根的目录身份和服务协议。开发启动器默认使用仓库 `data/kernel-draft`，不连接原来的裸 `data`；旧目录必须单独保全，不执行转换或清理。
 
 ## 运行
 
@@ -50,7 +50,7 @@ npm run dev
 
 唯一业务命令体系为 `finance-local`，MCP 是同一服务的薄适配：
 
-- `finance_local_schema`：共享类型模型生成的事实、命令及安全窗口 Schema。
+- `finance_local_schema`：共享类型模型生成的事实、命令及安全窗口 Schema，以及 `database_formats` 中的目录库和公司库合同。
 - `finance_local_command(command, payload)`：公司查询、资料登记、事实版本、预览确认、报表及后台任务。
 - `finance_local_security(action, payload)`：请求、查询、取消原生窗口及查询登录状态；不接收密码。
 
@@ -71,7 +71,7 @@ npm run dev
 
 ## 已实现机制
 
-- 目录库和公司库独立版本、结构指纹和事务前向升级。已知旧 SQLite 结构保存于不可变基线；同版本缺表、缺封存触发器也拒绝写入。
+- 新系统标识、数据库类别、开发/正式状态、独立结构版本及完整 SQL 指纹；明确步骤的事务迁移、失败回滚和实际安装历史。开发库不升级，已发布正式版本才允许沿可信路径前向演进。
 - 事实、规则、计算和凭证版本；具体版本与空范围依赖；待更正传播；开放期保号替代、闭期关联冲正、无影响复核和受控误记删除。
 - 凭证封存、借贷平衡、期间保护、幂等和失败回滚。读取与计算在写事务外完成，提交时再次验证状态和负责人权限。
 - 公司创建、恢复的持久操作记录；启动中断恢复。备份、代发、个税和报表导出由常驻服务自动执行，失败最多自动尝试三次，保留可查询结果。
@@ -105,7 +105,7 @@ npm run dev
 
 ## 当前维护能力与历史记录
 
-当前 v13／v3 实现支持 `restore_company` 恢复自身已验证的完整公司包，`verify_integrity` 核验保存内容、投影和引用目录；`rebuild` 维修四张金额投影，`repair_read_indexes` 从冻结原文维修引用目录。两类维修先核验权威来源，实际变化才增加读取修复版本，不改历史事实与关账。当前旧记录采用依据不足会明确报告核验范围；新架构将退出这类兼容，不能把当前行为当作新首版要求。
+当前开发基线支持 `restore_company` 恢复相同结构的格式 2 公司包，`verify_integrity` 核验保存内容、投影和引用目录；`rebuild` 维修四张金额投影，`repair_read_indexes` 从冻结原文维修引用目录。两类维修先核验权威来源，实际变化才增加读取修复版本，不改历史事实与关账。领域层仍有待第 3 阶段整理的旧关账表示及有限覆盖分支，不代表正式首版允许缺少采用依据。
 
 此前旧 ORM、业务服务、MCP、身份接续桥、Alembic 及本项目专属 PostgreSQL 容器和卷已退役，运行包和默认入口已经独立。此前恢复与重录方法保存在[历史流程记录](docs/empty-database-replay.md)，仅作资料和实现索引，不是本轮的后续任务。原件、负责人确认、现有数据库及备份继续保全，本轮不执行重录、身份接续或旧资源清理。
 

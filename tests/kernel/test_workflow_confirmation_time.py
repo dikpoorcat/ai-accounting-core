@@ -220,7 +220,9 @@ def test_all_obligations_share_one_audit_read(tmp_path, monkeypatch):
     assert len(result["obligations"]) == 3
     assert all(value["status"] == "completed" for value in result["obligations"])
     audit_queries = [
-        query for query in queries if "SELECT action,payload,created_at FROM audit" in query
+        query
+        for query in queries
+        if "SELECT a.* FROM audit a" in query and "JOIN audit_reference" in query
     ]
     assert len(audit_queries) == 1
 

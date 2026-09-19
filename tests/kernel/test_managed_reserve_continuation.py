@@ -245,14 +245,16 @@ def test_scope_reads_only_direct_predecessor_merged_directory(book, monkeypatch)
         scope_data() | dict(effective_through="2026-09", predecessor_scope_id="scope-7"),
     )
     calls = []
-    original = engine.store.select
+    original = engine.store.select_many
 
-    def tracked(connection, read):
-        if read.kind == "managed_reserve_scope":
-            calls.append((read.source, read.key))
-        return original(connection, read)
+    def tracked(connection, reads, **kwargs):
+        reads = tuple(reads)
+        calls.extend(
+            (read.source, read.key) for read in reads if read.kind == "managed_reserve_scope"
+        )
+        return original(connection, reads, **kwargs)
 
-    monkeypatch.setattr(engine.store, "select", tracked)
+    monkeypatch.setattr(engine.store, "select_many", tracked)
     preview = engine.preview(["scope-8"])
     assert sorted(calls) == [("calculation", "@scope-7"), ("fact", "@scope-7")]
     values = next(x["values"] for x in preview["results"] if x["subject_id"] == "scope-8")

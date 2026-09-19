@@ -88,9 +88,9 @@ def verify(engine):
     """Explicit full checks are outside instrumented requests."""
     with engine.store.connection(read_only=True) as connection:
         connection.execute("BEGIN")
-        version = verify_schema(connection, registry=engine.store.registry)
-        assert version == current_version("business")
-        return {"business_schema": version, "read_indexes": verify_read_indexes(connection)}
+        version = verify_schema(connection, bundle=engine.store.bundle)
+        assert version == current_version("company", bundle=engine.store.bundle)
+        return {"company_schema": version, "read_indexes": verify_read_indexes(connection)}
 
 
 def inventory(engine):

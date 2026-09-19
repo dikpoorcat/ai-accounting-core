@@ -3,6 +3,7 @@
 from typing import ClassVar
 
 import pytest
+from schema_fixture import test_bundle
 from test_materials import Company, codes
 
 from ai_accounting.kernel.contracts import Fact, Line, Outcome
@@ -25,7 +26,7 @@ def company_with_evaluator(tmp_path, evaluator):
     registry.register(TwoAmounts, evaluator)
     company = object.__new__(Company)
     company.engine = Engine(
-        Store.create(tmp_path / "company.sqlite", registry, "company", "tax", "db")
+        Store.create(tmp_path / "company.sqlite", test_bundle(registry), "company", "tax", "db")
     )
     company.materials = Materials(company.engine)
     company.sequence = 0

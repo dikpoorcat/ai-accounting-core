@@ -4,6 +4,7 @@ import sqlite3
 from typing import ClassVar
 
 import pytest
+from schema_fixture import test_bundle
 
 from ai_accounting.kernel.contracts import Context, Fact, KernelError, Line, Outcome, Read, Registry
 from ai_accounting.kernel.engine import Engine
@@ -41,7 +42,11 @@ def engine(tmp_path):
     registry.register(Charge, calculate)
     return Engine(
         Store.create(
-            tmp_path / "company.sqlite", registry, "company-a", "91310000123456789A", "db-a"
+            tmp_path / "company.sqlite",
+            test_bundle(registry),
+            "company-a",
+            "91310000123456789A",
+            "db-a",
         )
     )
 
@@ -337,7 +342,7 @@ def test_strict_money_month_and_company_binding(engine):
     for month in ("2026-13", "0000-01", "2026-1"):
         with pytest.raises(ValueError):
             YearMonth(month)
-    other = Store(engine.store.path, engine.store.registry, "other", "db-a")
+    other = Store(engine.store.path, engine.store.bundle, "other", "db-a")
     with pytest.raises(KernelError, match="company"):
         with other.connection():
             pass

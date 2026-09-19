@@ -9,6 +9,7 @@ from typing import Literal
 from .contracts import KernelError, NeedsInformation
 from .schema import table_name
 from .types import YearMonth, digest
+from .versions import database_format
 
 DISCOVERY_DDL = """
 CREATE TABLE company_note_revision(id TEXT PRIMARY KEY,
@@ -39,9 +40,14 @@ class Discovery:
     def company_context(self):
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
-            identity = dict(connection.execute("SELECT * FROM identity WHERE id=1").fetchone())
+            identity = dict(
+                connection.execute(
+                    "SELECT company_id,taxpayer_id,database_id FROM identity WHERE id=1"
+                ).fetchone()
+            )
             return {
                 "identity": identity,
+                "database_format": database_format(connection, bundle=self.store.bundle),
                 "company_note": self._note(connection),
                 "epochs": self.store.epochs(connection),
                 "source_kinds": sorted(self.store.registry.models),

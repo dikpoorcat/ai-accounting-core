@@ -115,15 +115,17 @@ def test_historical_coverage_limit_survives_backup_restore_and_catalog_receipt(t
     engine = opening_engine(tmp_path)
     frozen_opening(engine, selected=False)
     before = frozen_state(engine)
-    registry = engine.store.registry
-    archive = create_portable(engine.store.path, tmp_path / "backups", _registry=registry)
+    bundle = engine.store.bundle
+    archive = create_portable(engine.store.path, tmp_path / "backups", _bundle=engine.store.bundle)
     expected = archive["verification"]
     assert expected["status"] == "limited"
     assert "verification" not in archive["manifest"]
-    assert verify_portable(archive["path"], _registry=registry)["verification"] == expected
-    restored = restore_portable(archive["path"], tmp_path / "restored.sqlite", _registry=registry)
+    assert verify_portable(archive["path"], _bundle=engine.store.bundle)["verification"] == expected
+    restored = restore_portable(
+        archive["path"], tmp_path / "restored.sqlite", _bundle=engine.store.bundle
+    )
     assert restored["verification"] == expected
-    catalog = Catalog(tmp_path / "catalog", registry)
+    catalog = Catalog(tmp_path / "catalog", bundle)
     result = catalog.restore_company(
         archive["path"], taxpayer_id="91310000123456789A", name="合成公司"
     )

@@ -12,16 +12,22 @@ from ai_accounting.kernel.command_schema import command_models, validate_command
 from ai_accounting.kernel.contracts import Context, KernelError, NeedsInformation, Read
 from ai_accounting.kernel.domains import assets
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth
 
 
 @pytest.fixture
 def book(tmp_path):
-    registry = default_registry()
+    bundle = production_bundle()
     engine = Engine(
-        Store.create(tmp_path / "synthetic.sqlite", registry, "company", "911100000000000001", "db")
+        Store.create(
+            tmp_path / "synthetic.sqlite",
+            bundle,
+            "company",
+            "911100000000000001",
+            "db",
+        )
     )
     evidence = engine.register_evidence(
         b"Synthetic platform receipts and explicit obligations",
@@ -30,7 +36,7 @@ def book(tmp_path):
         request_id="proof",
     )["digest"]
     counter = itertools.count()
-    wire = command_models(registry)
+    wire = command_models(bundle.registry)
 
     def save(kind, subject, data, revision=0):
         # Existing media scenarios supply explicit actual money. Preserve each as a

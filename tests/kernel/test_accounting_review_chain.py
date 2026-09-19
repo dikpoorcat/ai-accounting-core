@@ -192,9 +192,31 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
     assert source["calculation_id"] == events[0]["calculation_id"]
     employee_net = next(item for item in source["obligations"] if item["name"] == "net")
     assert employee_net["remaining_fen"] == net["remaining_fen"]
-    assert len(source["movements"]) == 1
-    movement = source["movements"][0]
-    assert movement["source_id"] == "payment" and movement["amount_fen"] == 100_000
+    assert "movements" not in source
+    settlement_response = dashboard.employees(
+        "2026-01",
+        section="settlement_events",
+        employee_id="employee",
+        expected_version=employee_response["snapshot_version"],
+    )
+    current_movements = settlement_response["data"]["collections"]["settlement_events"]["items"]
+    assert len(current_movements) == (1 if basis_current else 3)
+    assert sum(item["signed_amount_fen"] for item in current_movements) == 100_000
+    current_payment = [
+        item
+        for item in current_movements
+        if item["source_calculation_id"] == current["january"].id and item["direction"] > 0
+    ]
+    assert len(current_payment) == 1
+    assert current_payment[0]["signed_amount_fen"] == 100_000
+    historical_settlements = dashboard.business_status(
+        "2026-01", "january", section="settlement_events", settlement_view="historical"
+    )
+    movements = historical_settlements["data"]["collections"]["settlement_events"]["items"]
+    assert len(movements) == 1
+    movement = movements[0]
+    assert movement["settlement_business"]["subject_id"] == "payment"
+    assert movement["signed_amount_fen"] == 100_000
     assert movement["source_calculation_id"] == source["calculation_id"]
     funds_response = dashboard.funds("2026-01")
     funds = funds_response["data"]
@@ -211,7 +233,7 @@ def historical_chain_view(company, original_vouchers, current, *, basis_current)
         "accounting": status["selected_accounting"],
         "net": net,
         "employee_source": source["calculation_id"],
-        "employee_movement": movement["calculation_id"],
+        "employee_movement": movement["settlement_calculation_id"],
         "funds_calculation": payments[0]["calculation_id"],
         "trace_calculation": traced["calculation"]["id"],
     }

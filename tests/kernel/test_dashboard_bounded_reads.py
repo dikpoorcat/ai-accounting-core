@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
-import shutil
+import sqlite3
 from contextlib import contextmanager
 from types import MappingProxyType
 
@@ -13,14 +13,16 @@ import pytest
 from test_payroll import contribution_policy, income_tax_policy, opening, payroll, profile
 
 import ai_accounting.kernel.dashboard as dashboard_module
+from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.business_queries import BusinessQueries
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.permissions import create_private_file
 from ai_accounting.kernel.query_reads import QueryReads
 from ai_accounting.kernel.read_indexes import sync_close, sync_job
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth, canonical
 
@@ -28,7 +30,7 @@ from ai_accounting.kernel.types import YearMonth, canonical
 @pytest.fixture(scope="module")
 def layered_book(tmp_path_factory):
     path = tmp_path_factory.mktemp("dashboard-bounded") / "company.sqlite"
-    engine = Engine(Store.create(path, default_registry(), "bounded", "911100000000000001", "db"))
+    engine = Engine(Store.create(path, production_bundle(), "bounded", "911100000000000001", "db"))
     proof = engine.register_evidence(
         b"Synthetic layered dashboard read fixture", "text/plain", "proof", request_id="proof"
     )["digest"]
@@ -113,7 +115,24 @@ def layered_book(tmp_path_factory):
         },
     )
     publish("opening", *(subject for _, subject, _ in legacy))
-    save("asset_consumption", "legacy-charge", {"period": "2024-01", "asset_id": "legacy-asset"})
+    batches = AssetBatches(engine)
+    batch_options = {"evidence": (proof,), "expected_revision": 0}
+    preview = batches.prepare_consumption_month("2024-01", **batch_options)
+    legacy_charge = next(
+        item["subject_id"]
+        for item in preview["fact_changes"]
+        if item["kind"] == "asset_consumption"
+    )
+    result = batches.confirm_consumption_month(
+        "2024-01",
+        **batch_options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="consume-legacy-assets",
+    )
+    calculations.update(
+        {item["subject_id"]: item["calculation_id"] for item in result["results"]}
+    )
     save(
         "cash_payment",
         "legacy-payment",
@@ -134,7 +153,7 @@ def layered_book(tmp_path_factory):
             ],
         },
     )
-    publish("legacy-charge", "legacy-payment")
+    publish("legacy-payment")
     funding_subjects = set()
     for index in range(48):
         month = str(YearMonth.from_ordinal(YearMonth("2024-02").ordinal + index % 23))
@@ -218,6 +237,7 @@ def layered_book(tmp_path_factory):
         "facts": facts,
         "calculations": calculations,
         "funding_subjects": funding_subjects,
+        "legacy_charge": legacy_charge,
     }
 
 
@@ -313,7 +333,9 @@ def test_entity_page_counts_and_next_page_do_not_expand_other_source_rows(
     first = getattr(dashboard, endpoint)("2026-01", section=section, limit=1)
     collection = first["data"]["collections"][section]
     assert collection["page"]["total_count"] == collection["page"]["filtered_count"] == count
-    assert collection["page"]["returned_count"] == len(collection["items"]) == 1
+    items = first["data"][section]["items"] if section == "employees" else collection["items"]
+    assert len(items) == 1
+    assert collection["page"]["returned_count"] == (0 if section == "employees" else 1)
     assert collection["page"]["has_more"]
     second = getattr(dashboard, endpoint)(
         "2026-01",
@@ -322,8 +344,12 @@ def test_entity_page_counts_and_next_page_do_not_expand_other_source_rows(
         cursor=collection["page"]["next_cursor"],
         expected_version=first["snapshot_version"],
     )
-    next_items = second["data"]["collections"][section]["items"]
-    assert next_items[0][identity] != collection["items"][0][identity]
+    next_items = (
+        second["data"][section]["items"]
+        if section == "employees"
+        else second["data"]["collections"][section]["items"]
+    )
+    assert next_items[0][identity] != items[0][identity]
     first_snapshot = read_probe[0][0]
     source_ids = {key[1] for key in first_snapshot.source_metadata if key[0] == "fact"}
     offpage = {
@@ -352,8 +378,13 @@ def test_business_and_source_collections_keep_month_and_entity_scope(layered_boo
 
 def _copy_book(layered_book, tmp_path):
     path = tmp_path / "copy.sqlite"
-    shutil.copyfile(layered_book["path"], path)
-    return Engine(Store(path, default_registry(), "bounded", "db"))
+    create_private_file(path)
+    with (
+        layered_book["engine"].store.connection(read_only=True) as source,
+        sqlite3.connect(path) as target,
+    ):
+        source.backup(target)
+    return Engine(Store(path, production_bundle(), "bounded", "db"))
 
 
 def test_worker_change_rejects_file_cursor_without_changing_business_epochs(layered_book, tmp_path):
@@ -408,7 +439,13 @@ def test_worker_write_during_response_keeps_all_file_reads_on_one_snapshot(
 
 def test_unestablished_frozen_sources_stay_visible_as_employee_and_asset(layered_book, tmp_path):
     engine = _copy_book(layered_book, tmp_path)
-    subjects = {"opening", "legacy-wage", "legacy-asset", "legacy-charge", "legacy-payment"}
+    subjects = {
+        "opening",
+        "legacy-wage",
+        "legacy-asset",
+        layered_book["legacy_charge"],
+        "legacy-payment",
+    }
     calculations = {layered_book["calculations"][subject] for subject in subjects}
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
@@ -443,12 +480,14 @@ def test_unestablished_frozen_sources_stay_visible_as_employee_and_asset(layered
     employee_data = Dashboard(engine).employees("2024-01")["data"]
     asset_data = Dashboard(engine).assets("2024-01")["data"]
     employee_page = employee_data["collections"]["employees"]
+    employee_items = employee_data["employees"]["items"]
     asset_page = asset_data["collections"]["assets"]
-    assert any(item["employee_id"] == "legacy-employee" for item in employee_page["items"])
+    assert employee_page["items"] == []
+    assert any(item["employee_id"] == "legacy-employee" for item in employee_items)
     assert any(item["asset_id"] == "legacy-asset" for item in asset_page["items"])
     assert employee_data["employees"]["unestablished_count"] == 1
     assert asset_data["unestablished_count"] == asset_data["fixed"]["unestablished_count"] == 1
-    employee = employee_page["items"][0]
+    employee = employee_items[0]
     asset = asset_page["items"][0]
     assert employee["employee_id"] == "legacy-employee"
     assert employee["selection_status"] == asset["selection_status"] == "unestablished"

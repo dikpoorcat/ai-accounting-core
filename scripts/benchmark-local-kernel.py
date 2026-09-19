@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -23,6 +24,7 @@ from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
@@ -99,9 +101,22 @@ def benchmark_registry():
     return registry
 
 
+@lru_cache(maxsize=1)
+def benchmark_bundle():
+    """Load the repository-only real-contract fixture for this synthetic registry."""
+    fixture = Path(__file__).resolve().parents[1] / "tests/kernel/schema_fixture.py"
+    spec = importlib.util.spec_from_file_location("benchmark_schema_fixture", fixture)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load the benchmark schema fixture")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.test_bundle(benchmark_registry())
+
+
 def make_engine(path: Path) -> Engine:
-    registry = benchmark_registry()
-    store = CountingStore.create(path, registry, "benchmark-company", TAXPAYER, "benchmark-db")
+    store = CountingStore.create(
+        path, benchmark_bundle(), "benchmark-company", TAXPAYER, "benchmark-db"
+    )
     return Engine(store)
 
 
@@ -129,6 +144,18 @@ def seed_to(
         )
     )
     outcome_json, outcome_digest = canonical(outcome), digest(outcome)
+
+    def calculation_id(fact_id):
+        return "c_" + digest(
+            {
+                "fact": fact_id,
+                "outcome": outcome,
+                "reads": [],
+                "versions": [],
+                "program": PROGRAM_VERSION,
+            }
+        ).hex()
+
     started = time.perf_counter()
     with engine.store.connection() as connection:
         next_number = connection.execute("SELECT next_number FROM state").fetchone()[0]
@@ -139,7 +166,7 @@ def seed_to(
                     n,
                     f"fixture:{n}",
                     f"ff:{n}",
-                    f"fc:{n}",
+                    calculation_id(f"ff:{n}"),
                     f"fv:{n}",
                     f"fh:{n}",
                     periods[n % 120],
@@ -506,7 +533,7 @@ def measure_scale(
         metrics["portable_backup"], archive = measure(
             engine,
             lambda _: create_portable(
-                engine.store.path, directory, _registry=engine.store.registry
+                engine.store.path, directory, _bundle=engine.store.bundle
             ),
             repetitions=1,
         )
@@ -516,7 +543,7 @@ def measure_scale(
                 archive["path"],
                 directory / "restored.sqlite",
                 expected_company_id="benchmark-company",
-                _registry=engine.store.registry,
+                _bundle=engine.store.bundle,
             ),
             repetitions=1,
         )
@@ -526,10 +553,10 @@ def measure_scale(
         close_path = directory / "restored.sqlite"
     else:
         close_path = workspace / f"close-copy-{scale}.sqlite"
-        backup_to_file(engine.store.path, close_path, _registry=engine.store.registry)
+        backup_to_file(engine.store.path, close_path, _bundle=engine.store.bundle)
     restored_engine = Engine(
         CountingStore(
-            close_path, engine.store.registry, engine.store.company_id, engine.store.database_id
+            close_path, engine.store.bundle, engine.store.company_id, engine.store.database_id
         )
     )
     close_result = measure_close_copy(
@@ -560,7 +587,7 @@ def measure_scale(
     result["source_verification"] = verify_file(
         engine.store.path,
         expected_company_id=engine.store.company_id,
-        _registry=engine.store.registry,
+        _bundle=engine.store.bundle,
     )
     result["integrity"] = "ok"
     result["foreign_keys_ok"] = True
@@ -673,7 +700,7 @@ def refresh_existing_report(output: Path):
     tag = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     destination = workspace / ("hotfix-refresh-" + tag)
     destination.mkdir(exist_ok=False)
-    registry = benchmark_registry()
+    bundle = benchmark_bundle()
     sources = sorted((repository / "src/ai_accounting/kernel").rglob("*.py"))
     sources.append(Path(__file__).resolve())
     refresh = {
@@ -696,7 +723,7 @@ def refresh_existing_report(output: Path):
         proof = scale["construction"]["proof"]
         engine = Engine(
             CountingStore(
-                directory / "restored.sqlite", registry, "benchmark-company", "benchmark-db"
+                directory / "restored.sqlite", bundle, "benchmark-company", "benchmark-db"
             )
         )
         with engine.store.connection(read_only=True) as connection:
@@ -719,10 +746,10 @@ def refresh_existing_report(output: Path):
             close_path,
             expected_company_id="benchmark-company",
             expected_database_id="benchmark-db",
-            _registry=registry,
+            _bundle=bundle,
         )
         close_engine = Engine(
-            CountingStore(close_path, registry, "benchmark-company", "benchmark-db")
+            CountingStore(close_path, bundle, "benchmark-company", "benchmark-db")
         )
         close_result = measure_close_copy(
             close_engine,

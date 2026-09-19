@@ -30,7 +30,7 @@ def test_twenty_mib_evidence_limit_preserves_atomic_storage(tmp_path):
         row = connection.execute("SELECT digest, length(content) FROM evidence").fetchone()
         assert bytes(row[0]).hex() == digest
         assert row[1] == metrics["bytes"]
-    assert verify_file(engine.store.path, _registry=engine.store.registry)["evidence_count"] == 1
+    assert verify_file(engine.store.path, _bundle=engine.store.bundle)["evidence_count"] == 1
 
 
 def test_material_limit_counts_data_rows_and_preserves_exact_integer_totals():
@@ -57,7 +57,7 @@ def test_batch_limit_rejects_before_mutation_and_publication_is_balanced(tmp_pat
     ledger = engine.ledger("2026-03", limit=100)
     assert len(ledger) == 12
     assert all(item["total"] == 100 for item in ledger)
-    assert verify_file(engine.store.path, _registry=engine.store.registry)["evidence_count"] == 1
+    assert verify_file(engine.store.path, _bundle=engine.store.bundle)["evidence_count"] == 1
 
 
 def test_background_backup_preserves_overview_and_ready_quarterly_report(tmp_path):

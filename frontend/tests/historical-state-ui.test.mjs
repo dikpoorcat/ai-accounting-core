@@ -63,10 +63,13 @@ test("historical UI separates source uncertainty, missing materials, identity an
       ];
       data.fact_issues = [{ reason: "independent_adoption_not_proven", candidates: [{ calculation_id: "preserved-candidate" }] }];
       const html = await render("Funds", "&funds_view=bank"), text = visible(html);
-      assert.match(text, /本月银行收支/);
-      assert.match(text, /全公司银行流入/);
-      assert.match(text, /另一来源.*AI 会计核对中/s);
-      assert.doesNotMatch(text, /查看账户来源引用与证明|查看流水来源引用与证明|流水已由封存对账精确采用为来源|该来源的历史采用尚不能确认/);
+      assert.match(text, /本月实际收款/);
+      assert.match(text, /本月实际付款/);
+      assert.match(text, /期末 · 全公司/);
+      assert.match(text, /实际收付款不含公司账户间互转/);
+      assert.match(text, /另一来源.*需复核/s);
+      assert.doesNotMatch(text, /查看账户来源引用与证明|查看流水来源引用与证明|流水已由封存对账精确采用为来源/);
+      assert.match(text, /核对说明.*该来源的历史采用尚不能确认/s);
       assert.match(text, /尚不能证明独立封存采用/);
       assert.doesNotMatch(text, /相关金额暂无法完整确定|exact-statement|exact-manifest|reconciliation_dependency/);
       for (const id of ["exact-statement", "exact-reconciliation", "exact-manifest"]) assert.doesNotMatch(html, new RegExp(id));
@@ -79,7 +82,8 @@ test("historical UI separates source uncertainty, missing materials, identity an
         { id: "bank-row-2", reference: "20260710042542175500001", date: "2026-07-10", account_id: "synthetic-bank", account_name: "兴业银行", account_code: "尾号9170", direction: "outflow", amount_fen: "2384139", signed_amount_fen: "-2384139", party: "工资批量代发 · 2 人", memo: "代发工资", state: "matched", batch_payment: { bank_row_count: 2, total_fen: "6290756", items: [{ party: "张三", amount_fen: "2223667" }, { party: "李四", amount_fen: "4067089" }] } },
       ];
       const html = visible(await render("Funds", "&funds_view=bank"));
-      assert.equal((html.match(/工资批量代发 · 2 人/g) ?? []).length, 2);
+      assert.equal((html.match(/class="bank-activity-item"/g) ?? []).length, 2);
+      assert.equal((html.match(/工资批量代发 · 2 人/g) ?? []).length, 4);
       assert.match(html, /20260710042541917000001/);
       assert.match(html, /20260710042542175500001/);
       assert.match(html, /−¥39,066\.17/);
@@ -113,7 +117,7 @@ test("historical UI separates source uncertainty, missing materials, identity an
       assert.match(html, /当前筛选只显示资料已确认的资产/);
       assert.match(html, /当前在用<\/span><strong[^>]*>已确认 /);
       assert.match(html, /已确认 .* 项资产/);
-      assert.match(html, /当前筛选共 0 项，已加载 0 项/);
+      assert.match(html, /完整总计 8 项 · 筛选总计 0 项 · 已加载 0 项/);
     });
     await t.test("reports use report readiness without repeating company-wide month followups", async () => {
       const prep = globalThis.historicalUi.reports.period_preparations[0];

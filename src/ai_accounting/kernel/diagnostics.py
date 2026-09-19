@@ -3,6 +3,7 @@
 import json
 import sqlite3
 
+from .backup import BackupError
 from .contracts import KernelError
 from .permissions import PrivatePathError
 from .runtime import RuntimeConfigurationError
@@ -12,6 +13,20 @@ from .security.primitives import IdentityError
 def error_response(exc):
     if isinstance(exc, KernelError):
         return exc.response()
+    if isinstance(exc, BackupError):
+        return {
+            "status": "rejected",
+            "code": exc.code,
+            "message": {
+                "backup_target_exists": "备份或恢复目标已存在，请选择其他位置",
+                "restore_target_exists": "恢复目标或其数据库辅助文件已存在，请选择其他位置",
+                "backup_identity_mismatch": "备份中的公司或数据库身份不一致",
+                "backup_content_invalid": "备份内容核验未通过，无法使用",
+                "backup_manifest_invalid": "备份说明文件的字段或格式不符合要求",
+                "backup_format_unsupported": "此备份格式不受当前系统支持",
+                "backup_schema_unsupported": "此备份的数据库结构不受当前系统支持",
+            }.get(exc.code, "备份或恢复未完成，请检查备份文件和目标位置"),
+        }
     if isinstance(exc, PrivatePathError):
         return {
             "status": "rejected",

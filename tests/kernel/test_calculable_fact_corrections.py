@@ -1,6 +1,7 @@
 """Fact-range readers follow a changed fact even when that fact also posts a voucher."""
 
 import pytest
+from schema_fixture import test_bundle
 from test_engine import Charge, Source, calculate, evidence, publish, save
 from test_version_reads import Comparison, compare
 
@@ -20,7 +21,9 @@ def test_one_source_republishes_fact_consumers_and_descendants_atomically(tmp_pa
     registry.register(Source, source_calculation)
     registry.register(Charge, calculate)
     registry.register(Comparison, compare)
-    engine = Engine(Store.create(tmp_path / "company.sqlite", registry, "a", "tax", "db"))
+    engine = Engine(
+        Store.create(tmp_path / "company.sqlite", test_bundle(registry), "a", "tax", "db")
+    )
     save(engine)
     if initial_source:
         save(engine, "source", Source.kind, 25, request="first-source")

@@ -13,13 +13,14 @@ from .diagnostics import error_response
 
 def main():
     parser = argparse.ArgumentParser(description="本地 SQLite 确定性会计内核")
-    parser.add_argument("--root", type=Path, default=default_root())
+    parser.add_argument("--root", type=Path)
     commands = parser.add_subparsers(dest="mode", required=True)
     call = commands.add_parser("call", help="执行类型化业务命令")
     call.add_argument("command")
     call.add_argument("--input", type=Path)
     commands.add_parser("mcp", help="通过本地服务提供 stdio MCP")
     commands.add_parser("stop", help="安全停止此资料目录的本地服务")
+    commands.add_parser("service-info", help="只读核验本资料目录的服务连接信息")
     daemon = commands.add_parser("daemon", help="运行每个资料根目录唯一的本地服务")
     daemon.add_argument("--port", type=int, default=0)
     web = commands.add_parser("serve", help="启动本地服务并打开会计界面")
@@ -30,6 +31,20 @@ def main():
     )
     security.add_argument("--input", type=Path)
     args = parser.parse_args()
+    try:
+        args.root = args.root if args.root is not None else default_root()
+    except Exception as exc:
+        print(json.dumps(error_response(exc), ensure_ascii=False))
+        raise SystemExit(1) from None
+    if args.mode == "service-info":
+        from .daemon import _metadata_for_root
+
+        try:
+            print(json.dumps(_metadata_for_root(args.root), ensure_ascii=False))
+        except Exception as exc:
+            print(json.dumps(error_response(exc), ensure_ascii=False))
+            raise SystemExit(1) from None
+        return
     if args.mode == "mcp":
         from .mcp import serve
 

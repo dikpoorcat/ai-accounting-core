@@ -65,18 +65,7 @@ def expected_projections(connection, *, through_period=None):
 def compare_projections(connection, *, through_period=None):
     expected = expected_projections(connection, through_period=through_period)
     differences = []
-    version = connection.execute("SELECT schema_version FROM identity WHERE id=1").fetchone()[0]
     for table, columns in TABLE_COLUMNS.items():
-        if version == 1 and table == "opening_account":
-            if expected[table]:
-                raise KernelError(
-                    "content_integrity_failed",
-                    "旧结构出现不支持的独立期初结果",
-                    component="projections",
-                    record_id=table,
-                    reason="unsupported_opening_projection",
-                )
-            continue
         restriction = (
             " WHERE period<=?" if through_period is not None and table != "balance" else ""
         )

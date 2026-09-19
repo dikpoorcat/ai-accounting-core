@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
+from schema_fixture import test_bundle
 
 from ai_accounting.kernel.contracts import (
     Claim,
@@ -85,7 +86,7 @@ def dependency_engine(tmp_path):
     engine = Engine(
         Store.create(
             tmp_path / "company.sqlite",
-            registry,
+            test_bundle(registry),
             "dependency-company",
             "911100000000000001",
             "dependency-db",

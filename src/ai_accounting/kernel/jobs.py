@@ -31,7 +31,7 @@ class JobRunner:
                             "WHERE status='running' AND attempts>=3"
                         )
                 engine = Engine(store)
-                outcomes.extend(run_backup_jobs(store.path, limit=1))
+                outcomes.extend(run_backup_jobs(store.path, limit=1, _bundle=store.bundle))
                 outcomes.extend(run_export_jobs(engine, limit=1))
                 outcomes.extend(run_report_jobs(engine, limit=1))
                 outcomes.extend(run_tax_import_jobs(engine, limit=1))

@@ -9,23 +9,22 @@ from ai_accounting.kernel.domains.transactions import Expense
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.materials import (
     Materials,
-    MaterialSource,
     Specification,
     inspect_bytes,
-    register,
 )
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
 class Company:
     def __init__(self, tmp_path):
-        registry = default_registry()
-        if MaterialSource.kind not in registry.models:
-            register(registry)
         self.engine = Engine(
             Store.create(
-                tmp_path / "materials.sqlite", registry, "company", "91310000123456789A", "database"
+                tmp_path / "materials.sqlite",
+                production_bundle(),
+                "company",
+                "91310000123456789A",
+                "database",
             )
         )
         self.materials = Materials(self.engine)

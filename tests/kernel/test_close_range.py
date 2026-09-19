@@ -12,6 +12,7 @@ from test_reports import scenario
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+from ai_accounting.kernel.permissions import create_private_file
 from ai_accounting.kernel.reports import Reports
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth, canonical, digest
@@ -355,11 +356,12 @@ def test_range_freezes_same_business_and_reports_as_sequential_close(request, tm
     open_report = reports.report(2026, 1)
     assert open_report["status"] == "ready", open_report["fact_issues"]
     path = tmp_path / "synthetic-sequential.sqlite"
+    create_private_file(path)
     with engine.store.connection(read_only=True) as source, sqlite3.connect(path) as destination:
         source.backup(destination)
     reference = Periods(
         Engine(
-            Store(path, engine.store.registry, engine.store.company_id, engine.store.database_id)
+            Store(path, engine.store.bundle, engine.store.company_id, engine.store.database_id)
         )
     )
     for month in ("2026-01", "2026-02", "2026-03"):

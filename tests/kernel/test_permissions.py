@@ -29,7 +29,7 @@ from ai_accounting.kernel.permissions import (
     ensure_private_file,
 )
 from ai_accounting.kernel.schema import initialize
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 
 COMPANY = "permission-company"
 TAXPAYER = "91330100MA00000001"
@@ -40,7 +40,7 @@ def company_file(tmp_path: Path) -> Path:
     path = tmp_path / "company.sqlite"
     connection = runtime.connect(path)
     try:
-        initialize(connection, default_registry(), COMPANY, TAXPAYER, DATABASE)
+        initialize(connection, production_bundle(), COMPANY, TAXPAYER, DATABASE)
         connection.execute(
             "INSERT INTO evidence VALUES(?,?,?,?)",
             (hashlib.sha256(b"synthetic").digest(), b"synthetic", "text/plain", "x"),
@@ -86,7 +86,7 @@ def test_runtime_and_catalog_reject_linked_parent_before_resolving_it(tmp_path):
     with pytest.raises(PrivatePathError):
         runtime.connect(link / "company.sqlite")
     with pytest.raises(PrivatePathError):
-        Catalog(link, default_registry())
+        Catalog(link, production_bundle())
 
 
 def test_daemon_entry_points_reject_linked_root_before_service_access(tmp_path, monkeypatch):

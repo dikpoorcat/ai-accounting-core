@@ -163,7 +163,7 @@ def main():
         app, server, metadata = verifier.start_resident(root)
         companies = seed(app)
         for company in companies:
-            verifier.assert_current_contracts(app, company["id"])
+            verifier.assert_current_formats(app, company["id"])
         client = ServiceClient(root, metadata=metadata)
         ticket_url = client.browser_url()["url"]
         runner = Path(__file__).resolve().parents[1] / "frontend/tests/browser-t5-integration.cjs"
@@ -195,8 +195,10 @@ def main():
                 "synthetic_root": str(root),
                 "runtime": manifest["runtime"],
                 "browser_assets_sha256": assets,
-                "business_schema_version": 11,
-                "catalog_schema_version": 3,
+                "database_formats": {
+                    kind: verifier.assert_current_formats(app, companies[0]["id"])[kind]
+                    for kind in ("catalog", "company")
+                },
             }
         )
     finally:

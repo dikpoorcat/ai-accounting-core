@@ -8,7 +8,7 @@ from material_fixture import supporting_text
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth, canonical
 
@@ -17,7 +17,7 @@ from ai_accounting.kernel.types import YearMonth, canonical
 def book(tmp_path):
     engine = Engine(
         Store.create(
-            tmp_path / "company.sqlite", default_registry(), "company", "911100000000000001", "db"
+            tmp_path / "company.sqlite", production_bundle(), "company", "911100000000000001", "db"
         )
     )
     proof = engine.register_evidence(

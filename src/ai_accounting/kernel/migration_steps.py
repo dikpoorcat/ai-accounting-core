@@ -13,6 +13,7 @@ ConnectionAction = Callable[[sqlite3.Connection], None]
 
 @dataclass(frozen=True)
 class MigrationStep:
+    family: str
     kind: str
     source_version: int
     source_sha256: str
@@ -23,8 +24,12 @@ class MigrationStep:
     requires_fk_off: bool = False
 
     def __post_init__(self):
-        if self.kind not in {"business", "catalog"} or not (
-            0 <= self.source_version < self.target_version
+        if (
+            not isinstance(self.family, str)
+            or not self.family
+            or (type(self.source_version) is not int or type(self.target_version) is not int)
+            or self.kind not in {"company", "catalog"}
+            or not (1 <= self.source_version < self.target_version)
         ):
             raise ValueError("invalid migration step versions")
         for digest in (self.source_sha256, self.target_sha256):

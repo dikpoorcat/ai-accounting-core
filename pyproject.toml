@@ -56,7 +56,10 @@ only-include = [
   "src/ai_accounting/static/dashboard",
 ]
 sources = ["src"]
-artifacts = ["src/ai_accounting/static/dashboard/**"]
+artifacts = [
+  "src/ai_accounting/static/dashboard/**",
+  "src/ai_accounting/kernel/schema_contracts/**/*.json",
+]
 exclude = ["src/ai_accounting/kernel/security/legacy.py"]
 
 [tool.pytest.ini_options]

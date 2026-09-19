@@ -6,17 +6,20 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import Context, KernelError
 from ai_accounting.kernel.domains.assets import ReimbursedAsset, ReimbursedAssetBatch
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
 @pytest.fixture
 def book(tmp_path):
     engine = Engine(
-        Store.create(tmp_path / "book.sqlite", default_registry(), "co", "911100000000000001", "db")
+        Store.create(
+            tmp_path / "book.sqlite", production_bundle(), "co", "911100000000000001", "db"
+        )
     )
     proof = engine.register_evidence(
         b"accepted expense and asset originals", "text/plain", "proof", request_id="proof"
@@ -98,6 +101,63 @@ def result(engine, subject):
         )
 
 
+def fact_evidence(engine, subject):
+    with engine.store.connection(read_only=True) as connection:
+        return engine.store.current_fact(connection, subject).evidence
+
+
+def activate_assets(
+    engine,
+    batch_subject,
+    period,
+    members,
+    evidence,
+    *,
+    expected_revision=0,
+    request_id=None,
+    correction_period=None,
+):
+    batches = AssetBatches(engine)
+    prepared = [
+        {"subject_id": subject, "expected_revision": expected_revision, "data": data}
+        for subject, data in members
+    ]
+    options = {
+        "evidence": evidence,
+        "expected_revision": expected_revision,
+        "correction_period": correction_period,
+    }
+    preview = batches.prepare_activation_batch(batch_subject, period, prepared, **options)
+    return batches.confirm_activation_batch(
+        batch_subject,
+        period,
+        prepared,
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=request_id or "activate-" + batch_subject,
+    )
+
+
+def consume_assets(engine, period, evidence, *, expected_revision=0, request_id=None):
+    batches = AssetBatches(engine)
+    options = {"evidence": evidence, "expected_revision": expected_revision}
+    preview = batches.prepare_consumption_month(period, **options)
+    subjects = {
+        change["data"]["asset_id"]: change["subject_id"]
+        for change in preview["fact_changes"]
+        if change["kind"] == "asset_consumption"
+    }
+    confirmed = batches.confirm_consumption_month(
+        period,
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=request_id or "consume-" + period,
+    )
+    return confirmed, subjects
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -121,8 +181,15 @@ def test_claim_requires_exact_accepted_cost_and_company_month(changes):
 def test_month_precision_reuses_acceptance_without_inventing_personal_payment_day(book):
     engine, save, publish = book
     save("reimbursed_asset", "computer", asset())
-    save("asset_activation", "activation", activation())
-    publish("computer", "activation")
+    publish("computer")
+    evidence = fact_evidence(engine, "computer")
+    activate_assets(
+        engine,
+        "activation-batch",
+        "2026-02",
+        [("activation", activation())],
+        evidence,
+    )
     adopted = result(engine, "computer")
     assert adopted["values"]["cost_fen"] == 120000
     assert {row["account"] for row in adopted["lines"]} == {"1604", "224101"}
@@ -130,14 +197,14 @@ def test_month_precision_reuses_acceptance_without_inventing_personal_payment_da
         (row["counterparty_id"], row["amount_fen"]) for row in adopted["values"]["obligations"]
     ] == [("alice", 80000), ("bob", 40000)]
     assert engine.overview("2026-02")["cashflow"] == []
-    save("asset_consumption", "march", {"period": "2026-03", "asset_id": "computer"})
     save(
         "payment",
         "alice-reimbursement",
         pay("reimbursed_asset", "computer", "alice", "alice", 80000),
     )
-    publish("march", "alice-reimbursement")
-    assert result(engine, "march")["values"]["consumption_fen"] == 10000
+    publish("alice-reimbursement")
+    _, consumption_subjects = consume_assets(engine, "2026-03", evidence)
+    assert result(engine, consumption_subjects["computer"])["values"]["consumption_fen"] == 10000
     assert engine.overview("2026-03")["cashflow"] == [
         {"category": "asset_acquisition", "amount": -80000}
     ]
@@ -154,11 +221,17 @@ def test_month_precision_reuses_acceptance_without_inventing_personal_payment_da
 
 
 def test_known_company_day_prevents_activation_before_acquisition(book):
-    _, save, publish = book
+    engine, save, publish = book
     save("reimbursed_asset", "computer", asset(acquisition_date="2026-02-28"))
-    save("asset_activation", "activation", activation(in_use_date="2026-02-27"))
+    publish("computer")
     with pytest.raises(KernelError, match="启用日期不能早于取得日期"):
-        publish("computer", "activation")
+        activate_assets(
+            engine,
+            "activation-batch",
+            "2026-02",
+            [("activation", activation(in_use_date="2026-02-27"))],
+            fact_evidence(engine, "computer"),
+        )
 
 
 def test_bank_promotion_reward_preserves_actual_receipt_and_requires_entitlement(book):
@@ -236,9 +309,15 @@ def test_batch_cards_do_not_duplicate_assets_creditors_or_actual_cash(book):
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
     save("reimbursed_asset", "chair", batch_card(30000))
-    save("asset_activation", "activation", activation())
-    save("asset_activation", "chair-use", activation(asset_id="chair"))
-    publish("batch", "computer", "chair", "activation", "chair-use")
+    publish("batch", "computer", "chair")
+    evidence = fact_evidence(engine, "batch")
+    activate_assets(
+        engine,
+        "activation-batch",
+        "2026-02",
+        [("activation", activation()), ("chair-use", activation(asset_id="chair"))],
+        evidence,
+    )
     assert result(engine, "computer")["lines"] == []
     assert result(engine, "chair")["balances"] == []
     assert result(engine, "computer")["values"]["obligations"] == []
@@ -250,14 +329,13 @@ def test_batch_cards_do_not_duplicate_assets_creditors_or_actual_cash(book):
     assert balances["reimbursed_asset_batch:batch:bob"] == 60000
     assert engine.overview("2026-02")["cashflow"] == []
     save("payment", "alice-paid", pay("reimbursed_asset_batch", "batch", "alice", "alice", 90000))
-    save("asset_consumption", "computer-march", {"period": "2026-03", "asset_id": "computer"})
-    save("asset_consumption", "chair-march", {"period": "2026-03", "asset_id": "chair"})
-    publish("alice-paid", "computer-march", "chair-march")
+    publish("alice-paid")
+    _, consumption_subjects = consume_assets(engine, "2026-03", evidence)
     assert engine.overview("2026-03")["cashflow"] == [
         {"category": "asset_acquisition", "amount": -90000}
     ]
-    assert result(engine, "computer-march")["values"]["consumption_fen"] == 10000
-    assert result(engine, "chair-march")["values"]["consumption_fen"] == 2500
+    assert result(engine, consumption_subjects["computer"])["values"]["consumption_fen"] == 10000
+    assert result(engine, consumption_subjects["chair"])["values"]["consumption_fen"] == 2500
     before = engine.overview("2026-03")
     engine.rebuild_projections(request_id="rebuild-batch")
     assert engine.overview("2026-03") == before
@@ -359,8 +437,16 @@ def test_opening_package_cannot_adopt_asset_already_in_accepted_batch(book):
 def test_reimbursed_asset_uses_existing_disposal_and_projection_rebuild(book):
     engine, save, publish = book
     save("reimbursed_asset", "computer", asset())
-    save("asset_activation", "activation", activation())
-    save("asset_consumption", "march", {"period": "2026-03", "asset_id": "computer"})
+    publish("computer")
+    evidence = fact_evidence(engine, "computer")
+    activate_assets(
+        engine,
+        "activation-batch",
+        "2026-02",
+        [("activation", activation())],
+        evidence,
+    )
+    consume_assets(engine, "2026-03", evidence)
     save(
         "asset_disposal",
         "scrap",
@@ -372,7 +458,15 @@ def test_reimbursed_asset_uses_existing_disposal_and_projection_rebuild(book):
             "gross_proceeds_fen": 0,
         },
     )
-    publish("computer", "activation", "march", "scrap")
+    activate_assets(
+        engine,
+        "activation-batch",
+        "2026-02",
+        [("activation", activation())],
+        evidence,
+        expected_revision=1,
+        request_id="activate-after-disposal",
+    )
     assert result(engine, "scrap")["values"]["carrying_fen"] == 0
     assert any(
         row["account"] == "571101" and row["debit"] == 110000

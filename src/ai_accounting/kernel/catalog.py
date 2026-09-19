@@ -10,33 +10,57 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .contracts import KernelError
-from .permissions import create_private_file, ensure_private_directory, reject_reparse_path
-from .runtime import connect, require_local_database
+from .permissions import (
+    create_private_file,
+    ensure_private_directory,
+    private_temporary_directory,
+    reject_reparse_path,
+)
+from .runtime import (
+    connect,
+    initialize_file,
+    private_file_lock,
+    publish_database,
+    require_local_database,
+)
+from .schema_bundle import production_bundle
 from .storage import Store
 from .types import canonical
 from .versions import (
     HISTORY_DDL,
-    baseline,
+    META_DDL,
     check_released_contract,
-    current_version,
+    database_format,
     execute_statements,
-    record_version,
-    upgrade,
+    install_metadata,
     verify_schema,
 )
 
-VERSION = 3
+VERSION = 0
+
+
+@contextmanager
+def _archive_snapshot(archive, parent):
+    """Hash and parse the same private bytes, never successive opens of an external path."""
+    with private_temporary_directory(parent, prefix=".restore-source-") as directory:
+        snapshot = create_private_file(directory / "source.zip")
+        hashed, size = hashlib.sha256(), 0
+        with open(archive, "rb") as source, snapshot.open("wb") as output:
+            while chunk := source.read(1024 * 1024):
+                hashed.update(chunk)
+                size += len(chunk)
+                output.write(chunk)
+        yield snapshot, hashed.hexdigest(), size
 
 
 def catalog_sql():
     from .security.schema import CATALOG_DDL
 
     return (
-        baseline("catalog")["objects"][0]["sql"]
-        + ";"
-        + """
-CREATE TABLE catalog_identity(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL UNIQUE,
- schema_version INTEGER NOT NULL) STRICT;
+        """
+CREATE TABLE company(id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+ path TEXT NOT NULL UNIQUE,database_id TEXT NOT NULL UNIQUE) STRICT;
+CREATE TABLE catalog_identity(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL UNIQUE) STRICT;
 CREATE TRIGGER immutable_catalog_identity_update BEFORE UPDATE ON catalog_identity
  BEGIN SELECT RAISE(ABORT,'immutable directory identity'); END;
 CREATE TRIGGER immutable_catalog_identity_delete BEFORE DELETE ON catalog_identity
@@ -58,51 +82,82 @@ CREATE TRIGGER immutable_company_setting_delete BEFORE DELETE ON company_setting
  BEGIN SELECT RAISE(ABORT,'immutable company setting'); END;
 """  # noqa: E501 -- persisted DDL must retain its exact structural fingerprint
         + HISTORY_DDL
+        + META_DDL
         + ";\n".join(CATALOG_DDL)
         + ";\n"
     )
 
 
-class Catalog:
-    def __init__(self, root, registry, *, fault=None):
-        self.root = reject_reparse_path(root)
-        self.path = require_local_database(self.root / "catalog.sqlite")
-        self.registry, self.fault = registry, fault
-        ensure_private_directory(self.root, parents=True)
-        try:
-            create_private_file(self.path)
-            fresh = True
-        except FileExistsError:
-            fresh = False
-        validator = (
-            None if fresh else lambda c: verify_schema(c, kind="catalog", allow_previous=True)
+def ensure_catalog(root, bundle=None):
+    """Recognize or exclusively create a catalog before any resident-service files."""
+    bundle = bundle if bundle is not None else production_bundle()
+    root = reject_reparse_path(root)
+    path = require_local_database(root / "catalog.sqlite")
+
+    def validate(connection):
+        return verify_schema(connection, bundle=bundle, kind="catalog")
+
+    if path.exists():
+        with closing(connect(path, read_only=True, validator=validate)):
+            pass
+        ensure_private_directory(root)
+        return path
+    reserved = [
+        root / name for name in (".operations", ".service.json", ".resident.lock", "service.log")
+    ]
+    reserved.extend(Path(str(path) + suffix) for suffix in ("-wal", "-shm", "-journal"))
+    if root.exists():
+        # Known company locations only; unrelated documents are not a database inventory.
+        reserved.extend(root.glob("*/company.sqlite*"))
+        reserved.extend(root.glob("companies/*.sqlite*"))
+        reserved.extend(root.glob("company.sqlite*"))
+    if any(reject_reparse_path(candidate).exists() for candidate in reserved):
+        raise KernelError(
+            "database_root_unrecognized", "目录库缺失但存在公司或运行文件，拒绝初始化"
         )
-        with closing(connect(self.path, validator=validator)) as connection:
-            if fresh:
-                try:
-                    connection.execute("BEGIN IMMEDIATE")
-                    script = catalog_sql()
-                    check_released_contract(script, kind="catalog")
-                    execute_statements(connection, script)
-                    connection.execute(
-                        "INSERT INTO catalog_identity VALUES(1,?,?)", (uuid.uuid4().hex, VERSION)
-                    )
-                    connection.execute(f"PRAGMA user_version={VERSION}")
-                    record_version(connection, VERSION)
-                    connection.commit()
-                except BaseException:
-                    connection.rollback()
-                    raise
-            else:
-                upgrade(connection, kind="catalog")
-            verify_schema(connection, kind="catalog")
+    ensure_private_directory(root, parents=True)
+
+    def initialize(connection):
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            script = catalog_sql()
+            check_released_contract(script, bundle=bundle, kind="catalog")
+            execute_statements(connection, script)
+            connection.execute("INSERT INTO catalog_identity VALUES(1,?)", (uuid.uuid4().hex,))
+            install_metadata(connection, bundle=bundle, kind="catalog")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+
+    try:
+        initialize_file(path, initialize, validate)
+    except FileExistsError:
+        # Concurrent creators may only accept the fully published winner.
+        with closing(connect(path, read_only=True, validator=validate)):
+            pass
+    return path
+
+
+class Catalog:
+    def __init__(self, root, bundle=None, *, fault=None):
+        self.root = reject_reparse_path(root)
+        self.bundle = bundle if bundle is not None else production_bundle()
+        self.registry, self.fault = self.bundle.registry, fault
+        self.path = ensure_catalog(self.root, self.bundle)
         self.recover_operations()
+
+    def database_format(self):
+        with self.connection(read_only=True) as connection:
+            return database_format(connection, bundle=self.bundle, kind="catalog")
 
     @contextmanager
     def connection(self, *, read_only=False):
         with closing(
             connect(
-                self.path, read_only=read_only, validator=lambda c: verify_schema(c, kind="catalog")
+                self.path,
+                read_only=read_only,
+                validator=lambda c: verify_schema(c, bundle=self.bundle, kind="catalog"),
             )
         ) as connection:
             try:
@@ -123,10 +178,14 @@ class Catalog:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("company requires a name")
         source_hash = None
+        source_size = None
+        verified = None
         if archive:
-            archive = str(Path(archive).resolve())
-            with open(archive, "rb") as source:
-                source_hash = hashlib.file_digest(source, "sha256").hexdigest()
+            archive = str(reject_reparse_path(archive))
+            with _archive_snapshot(archive, self.root) as (snapshot, source_hash, source_size):
+                verified = verify_portable(
+                    snapshot, expected_taxpayer_id=taxpayer_id, _bundle=self.bundle
+                )
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             company = connection.execute(
@@ -154,13 +213,6 @@ class Catalog:
                     raise KernelError("company_exists", "目标目录已登记该公司")
                 return dict(company)
             else:
-                verified = (
-                    verify_portable(
-                        archive, expected_taxpayer_id=taxpayer_id, _registry=self.registry
-                    )
-                    if archive
-                    else None
-                )
                 identity = (
                     verified["identity"]
                     if verified
@@ -188,6 +240,7 @@ class Catalog:
                     "path": str(destination),
                     "archive": archive,
                     "source_hash": source_hash,
+                    "source_size": source_size,
                 }
                 if verified:
                     payload["verification"] = verified["verification"]
@@ -203,133 +256,116 @@ class Catalog:
     def _operation_result(self, row, payload):
         if not payload.get("archive"):
             return row
-        verification = payload.get("verification")
-        if verification is None:
-            from .backup import verify_file
+        from .backup import verify_file
 
-            verification = verify_file(row["path"], _registry=self.registry)["verification"]
-        return {**row, "verification": verification}
+        result = verify_file(
+            row["path"],
+            _bundle=self.bundle,
+            expected_company_id=row["id"],
+            expected_database_id=row["database_id"],
+            expected_taxpayer_id=row["taxpayer_id"],
+        )
+        return {
+            **row,
+            "verification": result["verification"],
+            "database_format": result["database_format"],
+        }
 
     def _resume(self, operation_id):
-        from .backup import _publish_new, restore_portable
+        from .backup import restore_portable
 
-        # The catalog lock serializes interrupted operation recovery, independently
-        # of accounting transactions in each company's own database.
-        with self.connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            operation = connection.execute(
-                "SELECT * FROM company_operation WHERE id=?", (operation_id,)
-            ).fetchone()
-            payload = json.loads(operation["payload"])
-            row = {
-                key: payload[key] for key in ("id", "taxpayer_id", "name", "path", "database_id")
-            }
-            if operation["status"] == "succeeded":
-                return self._operation_result(row, payload)
+        operations = ensure_private_directory(self.root / ".operations")
+        with private_file_lock(operations / f"{operation_id}.lock") as acquired:
+            if not acquired:
+                raise KernelError("company_operation_busy", "公司创建或恢复正在执行，请稍后重试")
+            with self.connection(read_only=True) as connection:
+                operation = connection.execute(
+                    "SELECT * FROM company_operation WHERE id=?", (operation_id,)
+                ).fetchone()
+                if operation is None:
+                    raise KernelError("unknown_company_operation", "公司操作不存在")
+                payload = json.loads(operation["payload"])
+                row = {
+                    key: payload[key]
+                    for key in ("id", "taxpayer_id", "name", "path", "database_id")
+                }
+                if operation["status"] == "succeeded":
+                    return self._operation_result(row, payload)
             destination = Path(payload["path"])
-            staging = self.root / ".operations" / f"{operation_id}.sqlite"
+            staging = operations / f"{operation_id}.sqlite"
             if destination != self.root / row["taxpayer_id"] / "company.sqlite":
                 raise KernelError("company_path_mismatch", "公司操作路径与资料根目录不一致")
             try:
                 if not destination.exists():
-                    ensure_private_directory(staging.parent)
-                    if staging.exists():
-                        with closing(connect(staging, read_only=True)) as candidate:
-                            empty = (
-                                candidate.execute(
-                                    "SELECT 1 FROM sqlite_schema WHERE sql IS NOT NULL LIMIT 1"
-                                ).fetchone()
-                                is None
-                            )
-                        if empty:
-                            # An interrupted exclusive create can leave a zero-schema file.
-                            # Only this operation's exact private staging file is disposable.
-                            for owned in (
-                                staging,
-                                Path(str(staging) + "-wal"),
-                                Path(str(staging) + "-shm"),
-                            ):
-                                if owned.resolve().parent != (self.root / ".operations").resolve():
-                                    raise KernelError("company_path_mismatch", "暂存路径不一致")
-                                owned.unlink(missing_ok=True)
                     if not staging.exists():
                         if operation["kind"] == "create":
                             Store.create(
                                 staging,
-                                self.registry,
+                                self.bundle,
                                 row["id"],
                                 row["taxpayer_id"],
                                 row["database_id"],
                             )
                         else:
-                            with open(payload["archive"], "rb") as source:
+                            # Freeze the exact scheduled bytes before the backup parser
+                            # opens anything. Hashing a mutable path before and after
+                            # restore can leave an untrusted staging file for a retry.
+                            with _archive_snapshot(payload["archive"], operations) as (
+                                snapshot,
+                                source_hash,
+                                source_size,
+                            ):
                                 if (
-                                    hashlib.file_digest(source, "sha256").hexdigest()
-                                    != payload["source_hash"]
+                                    source_hash != payload["source_hash"]
+                                    or source_size != payload["source_size"]
                                 ):
                                     raise KernelError("restore_source_changed", "恢复资料已改变")
-                            restore_portable(
-                                payload["archive"],
-                                staging,
-                                expected_taxpayer_id=row["taxpayer_id"],
-                                expected_company_id=row["id"],
-                                expected_database_id=row["database_id"],
-                                _registry=self.registry,
-                            )
+                                restore_portable(
+                                    snapshot,
+                                    staging,
+                                    expected_taxpayer_id=row["taxpayer_id"],
+                                    expected_company_id=row["id"],
+                                    expected_database_id=row["database_id"],
+                                    _bundle=self.bundle,
+                                )
                     self._check("file_prepared")
-
-                    def validate_staging(candidate):
-                        verify_schema(candidate, registry=self.registry, allow_previous=True)
-                        identity = candidate.execute("SELECT * FROM identity WHERE id=1").fetchone()
-                        if (
-                            identity["company_id"],
-                            identity["database_id"],
-                            identity["taxpayer_id"],
-                        ) != (row["id"], row["database_id"], row["taxpayer_id"]):
+                    candidate = Store(staging, self.bundle, row["id"], row["database_id"])
+                    with candidate.connection() as connection:
+                        taxpayer_id = connection.execute(
+                            "SELECT taxpayer_id FROM identity WHERE id=1"
+                        ).fetchone()[0]
+                        if taxpayer_id != row["taxpayer_id"]:
                             raise KernelError("company_mismatch", "暂存数据库身份不一致")
-
-                    with closing(connect(staging, validator=validate_staging)) as candidate:
-                        upgrade(candidate, registry=self.registry)
-                    with Store(staging, self.registry, row["id"], row["database_id"]).connection():
-                        pass
+                        if tuple(
+                            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                        ) != (0, 0, 0):
+                            raise KernelError("database_busy", "暂存数据库尚未完成落盘")
                     ensure_private_directory(destination.parent, parents=True)
-                    _publish_new(staging, destination)
+                    publish_database(staging, destination)
                 self._check("file_published")
                 self._bound_store(row)
-                result = row
-                if operation["kind"] == "restore":
-                    from .backup import verify_file
-
-                    # A resumed registration must also check an already-published
-                    # destination; a schema match alone does not verify content.
-                    result = {
-                        **row,
-                        "verification": verify_file(
-                            destination,
-                            expected_company_id=row["id"],
-                            expected_database_id=row["database_id"],
-                            expected_taxpayer_id=row["taxpayer_id"],
-                            _registry=self.registry,
-                        )["verification"],
-                    }
-                connection.execute("INSERT INTO company VALUES(?,?,?,?,?)", tuple(row.values()))
-                connection.execute(
-                    "UPDATE company_operation SET status='succeeded',attempts=attempts+1,"
-                    "last_error=NULL WHERE id=?",
-                    (operation_id,),
-                )
-                self._check("before_registration_commit")
-                connection.commit()
+                result = self._operation_result(row, payload)
+                # Slow archive and company verification never hold the catalog write lock.
+                with self.connection() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute("INSERT INTO company VALUES(?,?,?,?,?)", tuple(row.values()))
+                    connection.execute(
+                        "UPDATE company_operation SET status='succeeded',attempts=attempts+1,"
+                        "last_error=NULL WHERE id=?",
+                        (operation_id,),
+                    )
+                    self._check("before_registration_commit")
+                    connection.commit()
                 self._check("registration_committed")
                 return result
             except BaseException as exc:
-                connection.rollback()
                 if isinstance(exc, Exception):
-                    connection.execute(
-                        "UPDATE company_operation SET status='failed',attempts=attempts+1,"
-                        "last_error=? WHERE id=? AND status!='succeeded'",
-                        (getattr(exc, "code", type(exc).__name__), operation_id),
-                    )
+                    with self.connection() as connection:
+                        connection.execute(
+                            "UPDATE company_operation SET status='failed',attempts=attempts+1,"
+                            "last_error=? WHERE id=? AND status!='succeeded'",
+                            (getattr(exc, "code", type(exc).__name__), operation_id),
+                        )
                 raise
 
     def recover_operations(self):
@@ -420,27 +456,12 @@ class Catalog:
         return self._bound_store(row)
 
     def _bound_store(self, row):
-        """Upgrade only an exactly known, identity-bound company; current reads stay read-only."""
-        store = Store(row["path"], self.registry, row["id"], row["database_id"])
+        """Bind only a current, fully recognized company; opening never upgrades it."""
+        store = Store(row["path"], self.bundle, row["id"], row["database_id"])
         if not store.path.is_file():
-            raise KernelError("company_missing", "company database is missing")
-
-        def validate(connection):
-            version = verify_schema(connection, registry=self.registry, allow_previous=True)
+            raise KernelError("company_missing", "公司数据库不存在")
+        with store.connection(read_only=True) as connection:
             identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
-            if (identity["company_id"], identity["database_id"], identity["taxpayer_id"]) != (
-                row["id"],
-                row["database_id"],
-                row["taxpayer_id"],
-            ):
+            if identity["taxpayer_id"] != row["taxpayer_id"]:
                 raise KernelError("company_mismatch", "数据库身份与目录登记不一致")
-            return version
-
-        with closing(connect(store.path, read_only=True)) as connection:
-            version = validate(connection)
-        if version < current_version("business"):
-            # connect validates the read probe and the actual write handle before
-            # enabling WAL. upgrade rechecks the contract under BEGIN IMMEDIATE.
-            with closing(connect(store.path, validator=validate)) as connection:
-                upgrade(connection, registry=self.registry, fault=self._check)
         return store

@@ -1,108 +1,18 @@
 """Release contracts, explicit job retry, and long-lived adapter recovery."""
 
-from contextlib import closing
-
 import pytest
 
-from ai_accounting.kernel import catalog as catalog_module
-from ai_accounting.kernel import daemon, schema, versions
+from ai_accounting.kernel import daemon
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.migration_steps import MigrationStep
-from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.security.credentials import InMemoryCredentialStore
-from ai_accounting.kernel.service import default_registry
-
-
-def capture_contract(monkeypatch):
-    contracts = dict(versions.known_contracts("catalog"))
-    objects = versions.contract(catalog_module.catalog_sql())
-    contracts[catalog_module.VERSION] = {
-        "version": catalog_module.VERSION,
-        "objects": objects,
-        "sha256": versions.fingerprint(objects).hex(),
-    }
-    original = versions.known_contracts
-    monkeypatch.setattr(
-        versions, "known_contracts", lambda kind: contracts if kind == "catalog" else original(kind)
-    )
-
-
-def test_catalog_forward_version_preserves_identity_and_company_version(tmp_path, monkeypatch):
-    business_version = schema.VERSION
-    current_version = catalog_module.VERSION
-    future_version = current_version + 1
-    catalog = Catalog(tmp_path, default_registry())
-    with catalog.connection() as connection:
-        before = tuple(connection.execute("SELECT * FROM catalog_identity").fetchone())
-        before_history = [
-            r[0] for r in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ]
-    capture_contract(monkeypatch)
-    script = (
-        catalog_module.catalog_sql() + "CREATE TABLE future_setting(id INTEGER PRIMARY KEY) STRICT;"
-    )
-    monkeypatch.setattr(catalog_module, "VERSION", future_version)
-    monkeypatch.setattr(catalog_module, "catalog_sql", lambda: script)
-    capture_contract(monkeypatch)
-    contracts = versions.known_contracts("catalog")
-    monkeypatch.setattr(
-        versions,
-        "_DECLARED_STEPS",
-        (
-            MigrationStep(
-                "catalog",
-                current_version,
-                contracts[current_version]["sha256"],
-                future_version,
-                contracts[future_version]["sha256"],
-                lambda connection: connection.execute(
-                    "CREATE TABLE future_setting(id INTEGER PRIMARY KEY) STRICT"
-                ),
-                lambda connection: None,
-            ),
-        ),
-    )
-    with closing(connect(catalog.path)) as connection:
-
-        def interrupted(stage):
-            if stage == "before_commit":
-                raise OSError("synthetic commit boundary failure")
-
-        with pytest.raises(OSError):
-            versions.upgrade(connection, kind="catalog", fault=interrupted)
-        assert tuple(connection.execute("SELECT * FROM catalog_identity").fetchone()) == before
-        assert (
-            versions.verify_schema(connection, kind="catalog", allow_previous=True)
-            == current_version
-        )
-        assert versions.upgrade(connection, kind="catalog")
-        after = tuple(connection.execute("SELECT * FROM catalog_identity").fetchone())
-        assert after == (before[0], before[1], future_version)
-        assert [
-            r[0] for r in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [*before_history, future_version]
-    assert schema.VERSION == business_version
-
-
-def test_released_ddl_change_requires_a_new_version_even_for_new_database(tmp_path, monkeypatch):
-    capture_contract(monkeypatch)
-    script = (
-        catalog_module.catalog_sql() + "CREATE TABLE undeclared(id INTEGER PRIMARY KEY) STRICT;"
-    )
-    monkeypatch.setattr(catalog_module, "catalog_sql", lambda: script)
-    with pytest.raises(KernelError) as error:
-        Catalog(tmp_path, default_registry())
-    assert error.value.code == "schema_version_bump_required"
-    with closing(connect(tmp_path / "catalog.sqlite")) as connection:
-        assert versions.objects(connection) == []
 
 
 def test_explicit_failed_job_retry_is_bounded_audited_and_idempotent(tmp_path):
     from ai_accounting.kernel.jobs import JobRunner
 
-    catalog = Catalog(tmp_path / "root", default_registry())
+    catalog = Catalog(tmp_path / "root")
     company = catalog.create_company("91310000123456789A", "合成重试公司")
     engine = Engine(catalog.bind(company["id"]))
     blocker = tmp_path / "blocked-directory"
@@ -129,8 +39,25 @@ def test_explicit_failed_job_retry_is_bounded_audited_and_idempotent(tmp_path):
 def test_adapter_reconnect_preserves_request_only_for_same_catalog(
     tmp_path, monkeypatch, same_catalog
 ):
-    original = {"catalog_id": "catalog", "port": 1}
-    fresh = {"catalog_id": "catalog" if same_catalog else "different", "port": 2}
+    catalog = Catalog(tmp_path)
+    with catalog.connection() as connection:
+        catalog_id = connection.execute(
+            "SELECT instance_id FROM catalog_identity WHERE id=1"
+        ).fetchone()[0]
+    original = {
+        "protocol": daemon.SERVICE_PROTOCOL,
+        "catalog_id": catalog_id,
+        "database_format": catalog.database_format(),
+        "pid": 12345,
+        "port": 1,
+        "capability": "synthetic-service-capability",
+        "build_id": "synthetic-build",
+    }
+    fresh = {
+        **original,
+        "catalog_id": original["catalog_id"] if same_catalog else "different",
+        "port": 2,
+    }
     seen = []
 
     def request(metadata, path, payload, **kwargs):

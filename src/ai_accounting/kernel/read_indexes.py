@@ -517,7 +517,7 @@ def verify_read_indexes(connection):
     return {"sources": len(expected)}
 
 
-def repair_read_indexes(connection, *, registry=None, fault=None):
+def repair_read_indexes(connection, *, bundle, fault=None):
     """Restore the four directories in a caller-owned, source-verified transaction.
 
     Only the eight released immutable directory triggers are suspended. Their
@@ -528,7 +528,7 @@ def repair_read_indexes(connection, *, registry=None, fault=None):
 
     if not connection.in_transaction:
         raise ValueError("read-index repair requires the caller's write transaction")
-    verify_schema(connection, registry=registry)
+    verify_schema(connection, bundle=bundle)
     try:
         verified = verify_read_indexes(connection)
         return {"changed": False, **verified}
@@ -571,7 +571,7 @@ def repair_read_indexes(connection, *, registry=None, fault=None):
             fault("before_restore", connection)
         for name in names:
             connection.execute(triggers[name])
-        verify_schema(connection, registry=registry)
+        verify_schema(connection, bundle=bundle)
         result = verify_read_indexes(connection)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             _invalid("directory", "*", "foreign_key_mismatch")

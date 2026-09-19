@@ -1,11 +1,39 @@
 {
-  "version": 9,
-  "sha256": "88901690d76fc5271610bfd1a30578a12d47994e4cfd4e44a8e43a101349f085",
+  "family": "ai-accounting-kernel/2",
+  "kind": "company",
+  "status": "draft",
+  "version": 0,
+  "application_id": 1094796082,
   "objects": [
+    {
+      "type": "index",
+      "name": "asset_batch_member_asset",
+      "sql": "CREATE INDEX asset_batch_member_asset ON asset_batch_member(asset_id,owner_calculation_id)"
+    },
+    {
+      "type": "index",
+      "name": "asset_batch_member_calculation",
+      "sql": "CREATE INDEX asset_batch_member_calculation ON asset_batch_member(member_calculation_id,owner_calculation_id)"
+    },
+    {
+      "type": "index",
+      "name": "asset_batch_member_subject",
+      "sql": "CREATE INDEX asset_batch_member_subject ON asset_batch_member(member_subject_id,owner_calculation_id)"
+    },
+    {
+      "type": "index",
+      "name": "audit_reference_lookup",
+      "sql": "CREATE INDEX audit_reference_lookup ON audit_reference(source_type,source_id,audit_id)"
+    },
     {
       "type": "index",
       "name": "calculation_kind_period",
       "sql": "CREATE INDEX calculation_kind_period ON calculation(kind,period,id)"
+    },
+    {
+      "type": "index",
+      "name": "calculation_obligations",
+      "sql": "CREATE INDEX calculation_obligations ON calculation(\n json_array_length(outcome,'$.values.obligations'),subject_id,id)"
     },
     {
       "type": "index",
@@ -26,6 +54,21 @@
       "type": "index",
       "name": "calculation_subject",
       "sql": "CREATE INDEX calculation_subject ON calculation(subject_id,id)"
+    },
+    {
+      "type": "index",
+      "name": "close_reference_lookup",
+      "sql": "CREATE INDEX close_reference_lookup ON close_reference(reference_type,reference_id,close_period)"
+    },
+    {
+      "type": "index",
+      "name": "close_reference_related",
+      "sql": "CREATE INDEX close_reference_related ON close_reference(related_id,close_period)\n WHERE related_id IS NOT NULL"
+    },
+    {
+      "type": "index",
+      "name": "dependency_scope_any_kind",
+      "sql": "CREATE INDEX dependency_scope_any_kind ON dependency_scope(source,scope_key,kind,calculation_id)"
     },
     {
       "type": "index",
@@ -54,6 +97,16 @@
     },
     {
       "type": "index",
+      "name": "job_reference_lookup",
+      "sql": "CREATE INDEX job_reference_lookup ON job_reference(reference_type,reference_id,job_id)"
+    },
+    {
+      "type": "index",
+      "name": "job_reference_period",
+      "sql": "CREATE INDEX job_reference_period ON job_reference(start_period,end_period,job_id)\n WHERE start_period IS NOT NULL"
+    },
+    {
+      "type": "index",
       "name": "material_period",
       "sql": "CREATE INDEX material_period ON material_revision(period,category,id)"
     },
@@ -74,13 +127,33 @@
     },
     {
       "type": "index",
+      "name": "voucher_line_account",
+      "sql": "CREATE INDEX voucher_line_account ON voucher_line(account,version_id,line_no)"
+    },
+    {
+      "type": "index",
       "name": "voucher_period",
       "sql": "CREATE INDEX voucher_period ON voucher_version(period,voucher_id,id)"
+    },
+    {
+      "type": "index",
+      "name": "voucher_version_reverses",
+      "sql": "CREATE INDEX voucher_version_reverses ON voucher_version(reverses_id,id)"
+    },
+    {
+      "type": "table",
+      "name": "asset_batch_member",
+      "sql": "CREATE TABLE asset_batch_member(\n owner_calculation_id TEXT NOT NULL REFERENCES calculation(id) DEFERRABLE INITIALLY DEFERRED,\n position INTEGER NOT NULL CHECK(position>0), asset_id TEXT NOT NULL,\n member_subject_id TEXT NOT NULL REFERENCES subject(id),\n member_fact_id TEXT NOT NULL REFERENCES fact_revision(id),\n member_calculation_id TEXT NOT NULL REFERENCES calculation(id),\n result_digest BLOB NOT NULL CHECK(length(result_digest)=32),\n summary TEXT NOT NULL CHECK(json_valid(summary)),\n line_start INTEGER, line_count INTEGER NOT NULL CHECK(line_count>=0),\n CHECK((line_count=0 AND line_start IS NULL) OR(line_count>0 AND line_start>0)),\n PRIMARY KEY(owner_calculation_id,position),\n UNIQUE(owner_calculation_id,member_subject_id)) STRICT"
     },
     {
       "type": "table",
       "name": "audit",
       "sql": "CREATE TABLE audit(id INTEGER PRIMARY KEY,request_id TEXT NOT NULL,action TEXT NOT NULL,\n payload TEXT NOT NULL CHECK(json_valid(payload)),created_at TEXT NOT NULL\n DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "audit_reference",
+      "sql": "CREATE TABLE audit_reference(audit_id INTEGER NOT NULL REFERENCES audit(id),\n position TEXT NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL,\n index_source_kind TEXT GENERATED ALWAYS AS ('audit') STORED,\n index_source_id TEXT GENERATED ALWAYS AS (CAST(audit_id AS TEXT)) STORED,\n PRIMARY KEY(audit_id,position),\n FOREIGN KEY(index_source_kind,index_source_id) REFERENCES read_index_source\n DEFERRABLE INITIALLY DEFERRED) STRICT"
     },
     {
       "type": "table",
@@ -111,6 +184,11 @@
       "type": "table",
       "name": "calculation_seal",
       "sql": "CREATE TABLE calculation_seal(calculation_id TEXT PRIMARY KEY REFERENCES calculation) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "close_reference",
+      "sql": "CREATE TABLE close_reference(close_period INTEGER NOT NULL REFERENCES period_close(period),\n path TEXT NOT NULL,position TEXT NOT NULL,reference_type TEXT NOT NULL,\n reference_id TEXT NOT NULL,related_id TEXT,\n source_kind TEXT GENERATED ALWAYS AS ('close') STORED,\n source_id TEXT GENERATED ALWAYS AS (CAST(close_period AS TEXT)) STORED,\n PRIMARY KEY(close_period,path,position,reference_type),\n FOREIGN KEY(source_kind,source_id) REFERENCES read_index_source\n DEFERRABLE INITIALLY DEFERRED) STRICT"
     },
     {
       "type": "table",
@@ -194,6 +272,16 @@
     },
     {
       "type": "table",
+      "name": "fact_asset_activation_batch",
+      "sql": "CREATE TABLE fact_asset_activation_batch(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987)) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fact_asset_activation_batch_members",
+      "sql": "CREATE TABLE fact_asset_activation_batch_members(revision_id TEXT NOT NULL REFERENCES fact_asset_activation_batch(revision_id),item_no INTEGER NOT NULL CHECK(item_no>=0),\"subject_id\" TEXT NOT NULL,PRIMARY KEY(revision_id,item_no)) STRICT"
+    },
+    {
+      "type": "table",
       "name": "fact_asset_advance",
       "sql": "CREATE TABLE fact_asset_advance(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"counterparty_id\" TEXT NOT NULL,\"asset_type\" TEXT NOT NULL,\"amount_fen\" INTEGER NOT NULL,\"contractual_obligation_established\" INTEGER CHECK(\"contractual_obligation_established\" IN(0,1))) STRICT"
     },
@@ -201,6 +289,11 @@
       "type": "table",
       "name": "fact_asset_consumption",
       "sql": "CREATE TABLE fact_asset_consumption(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987),\"asset_id\" TEXT NOT NULL) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "fact_asset_consumption_month",
+      "sql": "CREATE TABLE fact_asset_consumption_month(revision_id TEXT PRIMARY KEY REFERENCES fact_revision(id),\"period\" INTEGER NOT NULL CHECK(\"period\" BETWEEN 0 AND 119987)) STRICT"
     },
     {
       "type": "table",
@@ -885,7 +978,12 @@
     {
       "type": "table",
       "name": "identity",
-      "sql": "CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1), company_id TEXT NOT NULL,\n taxpayer_id TEXT NOT NULL, database_id TEXT NOT NULL, schema_version INTEGER NOT NULL) STRICT"
+      "sql": "CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1), company_id TEXT NOT NULL,\n taxpayer_id TEXT NOT NULL, database_id TEXT NOT NULL) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "job_reference",
+      "sql": "CREATE TABLE job_reference(job_id TEXT NOT NULL REFERENCES jobs(id),path TEXT NOT NULL,\n position TEXT NOT NULL,reference_type TEXT NOT NULL,reference_id TEXT NOT NULL,\n related_id TEXT,start_period INTEGER,end_period INTEGER,\n source_kind TEXT GENERATED ALWAYS AS ('job') STORED,\n source_id TEXT GENERATED ALWAYS AS (job_id) STORED,\n PRIMARY KEY(job_id,path,position,reference_type),\n FOREIGN KEY(source_kind,source_id) REFERENCES read_index_source\n DEFERRABLE INITIALLY DEFERRED) STRICT"
     },
     {
       "type": "table",
@@ -949,13 +1047,23 @@
     },
     {
       "type": "table",
+      "name": "read_index_source",
+      "sql": "CREATE TABLE read_index_source(source_kind TEXT NOT NULL\n CHECK(source_kind IN ('close','job','audit')),source_id TEXT NOT NULL,\n source_digest BLOB NOT NULL CHECK(length(source_digest)=32),\n PRIMARY KEY(source_kind,source_id)) STRICT"
+    },
+    {
+      "type": "table",
       "name": "request",
       "sql": "CREATE TABLE request(id TEXT PRIMARY KEY,digest BLOB NOT NULL CHECK(length(digest)=32),\n result TEXT NOT NULL CHECK(json_valid(result))) STRICT"
     },
     {
       "type": "table",
       "name": "schema_history",
-      "sql": "CREATE TABLE schema_history(version INTEGER PRIMARY KEY, fingerprint BLOB NOT NULL\n CHECK(length(fingerprint)=32), installed_at TEXT NOT NULL\n DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) STRICT"
+      "sql": "CREATE TABLE schema_history(version INTEGER PRIMARY KEY CHECK(version>=0),\n fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32), installed_at TEXT NOT NULL\n DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "schema_meta",
+      "sql": "CREATE TABLE schema_meta(id INTEGER PRIMARY KEY CHECK(id=1), family TEXT NOT NULL,\n kind TEXT NOT NULL CHECK(kind IN('company','catalog')),\n status TEXT NOT NULL CHECK(status IN('draft','released'))) STRICT"
     },
     {
       "type": "table",
@@ -970,7 +1078,7 @@
     {
       "type": "table",
       "name": "state",
-      "sql": "CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1), accounting INTEGER NOT NULL,\n material INTEGER NOT NULL, management INTEGER NOT NULL, next_number INTEGER NOT NULL) STRICT"
+      "sql": "CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1), accounting INTEGER NOT NULL,\n material INTEGER NOT NULL, management INTEGER NOT NULL, next_number INTEGER NOT NULL,\n read_repair_revision INTEGER NOT NULL DEFAULT 0 CHECK(read_repair_revision>=0)) STRICT"
     },
     {
       "type": "table",
@@ -996,6 +1104,31 @@
       "type": "table",
       "name": "voucher_version",
       "sql": "CREATE TABLE voucher_version(id TEXT PRIMARY KEY,voucher_id TEXT NOT NULL REFERENCES voucher,\n calculation_id TEXT NOT NULL REFERENCES calculation,\n period INTEGER NOT NULL CHECK(period BETWEEN 0 AND 119987),\n reverses_id TEXT REFERENCES voucher_version, total INTEGER NOT NULL CHECK(total>0)) STRICT"
+    },
+    {
+      "type": "trigger",
+      "name": "asset_member_identity",
+      "sql": "CREATE TRIGGER asset_member_identity BEFORE INSERT ON asset_batch_member WHEN NOT EXISTS(\n SELECT 1 FROM calculation c JOIN calculation o ON o.id=NEW.owner_calculation_id\n WHERE c.id=NEW.member_calculation_id AND c.subject_id=NEW.member_subject_id\n AND c.fact_id=NEW.member_fact_id AND c.digest=NEW.result_digest AND c.period=o.period\n AND json_extract(c.outcome,'$.values.asset_id')=NEW.asset_id\n AND ((c.kind='asset_activation' AND o.kind='asset_activation_batch')\n OR(c.kind='asset_consumption' AND o.kind='asset_consumption_month')))\n BEGIN SELECT RAISE(ABORT,'asset member identity mismatch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "asset_member_no_publication",
+      "sql": "CREATE TRIGGER asset_member_no_publication BEFORE INSERT ON calculation_publication\n WHEN EXISTS(SELECT 1 FROM calculation WHERE id=NEW.calculation_id\n AND kind IN('asset_activation','asset_consumption'))\n BEGIN SELECT RAISE(ABORT,'asset card requires batch publication'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "asset_member_owner",
+      "sql": "CREATE TRIGGER asset_member_owner BEFORE INSERT ON asset_batch_member WHEN EXISTS(\n SELECT 1 FROM asset_batch_member m JOIN calculation a ON a.id=m.owner_calculation_id\n JOIN calculation b ON b.id=NEW.owner_calculation_id\n WHERE m.member_calculation_id=NEW.member_calculation_id AND a.subject_id<>b.subject_id)\n BEGIN SELECT RAISE(ABORT,'asset member already belongs to another batch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "asset_member_seal",
+      "sql": "CREATE TRIGGER asset_member_seal BEFORE INSERT ON calculation_seal\n WHEN EXISTS(SELECT 1 FROM calculation WHERE id=NEW.calculation_id\n AND kind IN('asset_activation','asset_consumption')) AND NOT EXISTS(\n SELECT 1 FROM asset_batch_member WHERE member_calculation_id=NEW.calculation_id)\n BEGIN SELECT RAISE(ABORT,'orphan asset member'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "asset_owner_seal",
+      "sql": "CREATE TRIGGER asset_owner_seal BEFORE INSERT ON calculation_seal\n WHEN EXISTS(SELECT 1 FROM calculation o WHERE o.id=NEW.calculation_id\n AND o.kind IN('asset_activation_batch','asset_consumption_month') AND (\n json_type(o.outcome,'$.values.member_count') IS NOT 'integer' OR\n json_extract(o.outcome,'$.values.member_count')<>(SELECT count(*) FROM asset_batch_member\n WHERE owner_calculation_id=o.id) OR EXISTS(SELECT 1 FROM asset_batch_member m\n LEFT JOIN calculation_seal s ON s.calculation_id=m.member_calculation_id\n WHERE m.owner_calculation_id=o.id AND s.calculation_id IS NULL)))\n BEGIN SELECT RAISE(ABORT,'incomplete asset batch'); END"
     },
     {
       "type": "trigger",
@@ -1060,12 +1193,22 @@
     {
       "type": "trigger",
       "name": "fact_seal_shape",
-      "sql": "CREATE TRIGGER fact_seal_shape BEFORE INSERT ON fact_seal WHEN NOT EXISTS(\n SELECT 1 FROM fact_revision f JOIN subject s ON s.id=f.subject_id\n WHERE f.id=NEW.fact_id AND (CASE s.kind WHEN 'payroll_contribution_policy' THEN EXISTS(SELECT 1 FROM fact_payroll_contribution_policy t WHERE t.revision_id=f.id) WHEN 'payroll_income_tax_policy' THEN EXISTS(SELECT 1 FROM fact_payroll_income_tax_policy t WHERE t.revision_id=f.id) WHEN 'payroll_profile' THEN EXISTS(SELECT 1 FROM fact_payroll_profile t WHERE t.revision_id=f.id) WHEN 'payroll_contribution_actual' THEN EXISTS(SELECT 1 FROM fact_payroll_contribution_actual t WHERE t.revision_id=f.id) WHEN 'payroll_opening_state' THEN EXISTS(SELECT 1 FROM fact_payroll_opening_state t WHERE t.revision_id=f.id) WHEN 'payroll_first_wage_treatment' THEN EXISTS(SELECT 1 FROM fact_payroll_first_wage_treatment t WHERE t.revision_id=f.id) WHEN 'payroll_withholding_actual' THEN EXISTS(SELECT 1 FROM fact_payroll_withholding_actual t WHERE t.revision_id=f.id) WHEN 'annual_bonus_policy' THEN EXISTS(SELECT 1 FROM fact_annual_bonus_policy t WHERE t.revision_id=f.id) WHEN 'annual_bonus_opening_usage' THEN EXISTS(SELECT 1 FROM fact_annual_bonus_opening_usage t WHERE t.revision_id=f.id) WHEN 'labor_income_tax_policy' THEN EXISTS(SELECT 1 FROM fact_labor_income_tax_policy t WHERE t.revision_id=f.id) WHEN 'payroll' THEN EXISTS(SELECT 1 FROM fact_payroll t WHERE t.revision_id=f.id) WHEN 'payroll_bounded' THEN EXISTS(SELECT 1 FROM fact_payroll_bounded t WHERE t.revision_id=f.id) WHEN 'annual_bonus' THEN EXISTS(SELECT 1 FROM fact_annual_bonus t WHERE t.revision_id=f.id) WHEN 'labor' THEN EXISTS(SELECT 1 FROM fact_labor t WHERE t.revision_id=f.id) WHEN 'labor_accrual' THEN EXISTS(SELECT 1 FROM fact_labor_accrual t WHERE t.revision_id=f.id) WHEN 'vat_policy' THEN EXISTS(SELECT 1 FROM fact_vat_policy t WHERE t.revision_id=f.id) WHEN 'surtax_policy' THEN EXISTS(SELECT 1 FROM fact_surtax_policy t WHERE t.revision_id=f.id) WHEN 'used_asset_vat_policy' THEN EXISTS(SELECT 1 FROM fact_used_asset_vat_policy t WHERE t.revision_id=f.id) WHEN 'tax_assessment' THEN EXISTS(SELECT 1 FROM fact_tax_assessment t WHERE t.revision_id=f.id) WHEN 'income_tax_assessment' THEN EXISTS(SELECT 1 FROM fact_income_tax_assessment t WHERE t.revision_id=f.id) WHEN 'tax_credit_confirmation' THEN EXISTS(SELECT 1 FROM fact_tax_credit_confirmation t WHERE t.revision_id=f.id) WHEN 'service_sale' THEN EXISTS(SELECT 1 FROM fact_service_sale t WHERE t.revision_id=f.id) WHEN 'expense' THEN EXISTS(SELECT 1 FROM fact_expense t WHERE t.revision_id=f.id) WHEN 'expense_recovery' THEN EXISTS(SELECT 1 FROM fact_expense_recovery t WHERE t.revision_id=f.id) WHEN 'project_cost' THEN EXISTS(SELECT 1 FROM fact_project_cost t WHERE t.revision_id=f.id) WHEN 'project_release' THEN EXISTS(SELECT 1 FROM fact_project_release t WHERE t.revision_id=f.id) WHEN 'pass_through' THEN EXISTS(SELECT 1 FROM fact_pass_through t WHERE t.revision_id=f.id) WHEN 'advance' THEN EXISTS(SELECT 1 FROM fact_advance t WHERE t.revision_id=f.id) WHEN 'advance_fulfillment' THEN EXISTS(SELECT 1 FROM fact_advance_fulfillment t WHERE t.revision_id=f.id) WHEN 'advance_refund' THEN EXISTS(SELECT 1 FROM fact_advance_refund t WHERE t.revision_id=f.id) WHEN 'funding' THEN EXISTS(SELECT 1 FROM fact_funding t WHERE t.revision_id=f.id) WHEN 'payment' THEN EXISTS(SELECT 1 FROM fact_payment t WHERE t.revision_id=f.id) WHEN 'service_tax_point' THEN EXISTS(SELECT 1 FROM fact_service_tax_point t WHERE t.revision_id=f.id) WHEN 'overpayment' THEN EXISTS(SELECT 1 FROM fact_overpayment t WHERE t.revision_id=f.id) WHEN 'settlement' THEN EXISTS(SELECT 1 FROM fact_settlement t WHERE t.revision_id=f.id) WHEN 'sale_return' THEN EXISTS(SELECT 1 FROM fact_sale_return t WHERE t.revision_id=f.id) WHEN 'funds_transfer' THEN EXISTS(SELECT 1 FROM fact_funds_transfer t WHERE t.revision_id=f.id) WHEN 'bank_income' THEN EXISTS(SELECT 1 FROM fact_bank_income t WHERE t.revision_id=f.id) WHEN 'refundable_deposit' THEN EXISTS(SELECT 1 FROM fact_refundable_deposit t WHERE t.revision_id=f.id) WHEN 'reimbursed_deposit' THEN EXISTS(SELECT 1 FROM fact_reimbursed_deposit t WHERE t.revision_id=f.id) WHEN 'asset' THEN EXISTS(SELECT 1 FROM fact_asset t WHERE t.revision_id=f.id) WHEN 'reimbursed_asset' THEN EXISTS(SELECT 1 FROM fact_reimbursed_asset t WHERE t.revision_id=f.id) WHEN 'reimbursed_asset_batch' THEN EXISTS(SELECT 1 FROM fact_reimbursed_asset_batch t WHERE t.revision_id=f.id) WHEN 'asset_activation' THEN EXISTS(SELECT 1 FROM fact_asset_activation t WHERE t.revision_id=f.id) WHEN 'asset_consumption' THEN EXISTS(SELECT 1 FROM fact_asset_consumption t WHERE t.revision_id=f.id) WHEN 'asset_disposal' THEN EXISTS(SELECT 1 FROM fact_asset_disposal t WHERE t.revision_id=f.id) WHEN 'loan_agreement' THEN EXISTS(SELECT 1 FROM fact_loan_agreement t WHERE t.revision_id=f.id) WHEN 'loan_drawdown' THEN EXISTS(SELECT 1 FROM fact_loan_drawdown t WHERE t.revision_id=f.id) WHEN 'loan_interest' THEN EXISTS(SELECT 1 FROM fact_loan_interest t WHERE t.revision_id=f.id) WHEN 'asset_advance' THEN EXISTS(SELECT 1 FROM fact_asset_advance t WHERE t.revision_id=f.id) WHEN 'labor_project_cost' THEN EXISTS(SELECT 1 FROM fact_labor_project_cost t WHERE t.revision_id=f.id) WHEN 'bank_opening' THEN EXISTS(SELECT 1 FROM fact_bank_opening t WHERE t.revision_id=f.id) WHEN 'bank_statement' THEN EXISTS(SELECT 1 FROM fact_bank_statement t WHERE t.revision_id=f.id) WHEN 'bank_reconciliation' THEN EXISTS(SELECT 1 FROM fact_bank_reconciliation t WHERE t.revision_id=f.id) WHEN 'employee_advance' THEN EXISTS(SELECT 1 FROM fact_employee_advance t WHERE t.revision_id=f.id) WHEN 'reimbursement_acceptance' THEN EXISTS(SELECT 1 FROM fact_reimbursement_acceptance t WHERE t.revision_id=f.id) WHEN 'pass_through_return' THEN EXISTS(SELECT 1 FROM fact_pass_through_return t WHERE t.revision_id=f.id) WHEN 'cash_payment' THEN EXISTS(SELECT 1 FROM fact_cash_payment t WHERE t.revision_id=f.id) WHEN 'cash_funding' THEN EXISTS(SELECT 1 FROM fact_cash_funding t WHERE t.revision_id=f.id) WHEN 'cash_bank_transfer' THEN EXISTS(SELECT 1 FROM fact_cash_bank_transfer t WHERE t.revision_id=f.id) WHEN 'platform_movement' THEN EXISTS(SELECT 1 FROM fact_platform_movement t WHERE t.revision_id=f.id) WHEN 'platform_expense_confirmation' THEN EXISTS(SELECT 1 FROM fact_platform_expense_confirmation t WHERE t.revision_id=f.id) WHEN 'platform_payment' THEN EXISTS(SELECT 1 FROM fact_platform_payment t WHERE t.revision_id=f.id) WHEN 'platform_funding' THEN EXISTS(SELECT 1 FROM fact_platform_funding t WHERE t.revision_id=f.id) WHEN 'bank_platform_transfer' THEN EXISTS(SELECT 1 FROM fact_bank_platform_transfer t WHERE t.revision_id=f.id) WHEN 'platform_boundary_disposition' THEN EXISTS(SELECT 1 FROM fact_platform_boundary_disposition t WHERE t.revision_id=f.id) WHEN 'managed_reserve_bank_expense' THEN EXISTS(SELECT 1 FROM fact_managed_reserve_bank_expense t WHERE t.revision_id=f.id) WHEN 'managed_reserve_scope' THEN EXISTS(SELECT 1 FROM fact_managed_reserve_scope t WHERE t.revision_id=f.id) WHEN 'managed_reserve_obligation_settlement' THEN EXISTS(SELECT 1 FROM fact_managed_reserve_obligation_settlement t WHERE t.revision_id=f.id) WHEN 'payroll_reserve_payment' THEN EXISTS(SELECT 1 FROM fact_payroll_reserve_payment t WHERE t.revision_id=f.id) WHEN 'money_fund_subscription' THEN EXISTS(SELECT 1 FROM fact_money_fund_subscription t WHERE t.revision_id=f.id) WHEN 'money_fund_redemption' THEN EXISTS(SELECT 1 FROM fact_money_fund_redemption t WHERE t.revision_id=f.id) WHEN 'report_profile' THEN EXISTS(SELECT 1 FROM fact_report_profile t WHERE t.revision_id=f.id) WHEN 'continuation_report_profile' THEN EXISTS(SELECT 1 FROM fact_continuation_report_profile t WHERE t.revision_id=f.id) WHEN 'report_carry_forward' THEN EXISTS(SELECT 1 FROM fact_report_carry_forward t WHERE t.revision_id=f.id) WHEN 'report_classification' THEN EXISTS(SELECT 1 FROM fact_report_classification t WHERE t.revision_id=f.id) WHEN 'report_income_tax_confirmation' THEN EXISTS(SELECT 1 FROM fact_report_income_tax_confirmation t WHERE t.revision_id=f.id) WHEN 'company_workflow_scope_v2' THEN EXISTS(SELECT 1 FROM fact_company_workflow_scope_v2 t WHERE t.revision_id=f.id) WHEN 'filing_calendar_policy_v2' THEN EXISTS(SELECT 1 FROM fact_filing_calendar_policy_v2 t WHERE t.revision_id=f.id) WHEN 'external_obligation' THEN EXISTS(SELECT 1 FROM fact_external_obligation t WHERE t.revision_id=f.id) WHEN 'external_completion' THEN EXISTS(SELECT 1 FROM fact_external_completion t WHERE t.revision_id=f.id) WHEN 'opening_bank' THEN EXISTS(SELECT 1 FROM fact_opening_bank t WHERE t.revision_id=f.id) WHEN 'opening_cash' THEN EXISTS(SELECT 1 FROM fact_opening_cash t WHERE t.revision_id=f.id) WHEN 'opening_obligation' THEN EXISTS(SELECT 1 FROM fact_opening_obligation t WHERE t.revision_id=f.id) WHEN 'opening_asset' THEN EXISTS(SELECT 1 FROM fact_opening_asset t WHERE t.revision_id=f.id) WHEN 'opening_loan' THEN EXISTS(SELECT 1 FROM fact_opening_loan t WHERE t.revision_id=f.id) WHEN 'opening_tax' THEN EXISTS(SELECT 1 FROM fact_opening_tax t WHERE t.revision_id=f.id) WHEN 'opening_payroll_payable' THEN EXISTS(SELECT 1 FROM fact_opening_payroll_payable t WHERE t.revision_id=f.id) WHEN 'opening_payroll_state' THEN EXISTS(SELECT 1 FROM fact_opening_payroll_state t WHERE t.revision_id=f.id) WHEN 'opening_equity' THEN EXISTS(SELECT 1 FROM fact_opening_equity t WHERE t.revision_id=f.id) WHEN 'opening_money_fund' THEN EXISTS(SELECT 1 FROM fact_opening_money_fund t WHERE t.revision_id=f.id) WHEN 'opening_package' THEN EXISTS(SELECT 1 FROM fact_opening_package t WHERE t.revision_id=f.id) WHEN 'material_source_v2' THEN EXISTS(SELECT 1 FROM fact_material_source_v2 t WHERE t.revision_id=f.id) WHEN 'material_resolution_v2' THEN EXISTS(SELECT 1 FROM fact_material_resolution_v2 t WHERE t.revision_id=f.id) WHEN 'material_period_allocation' THEN EXISTS(SELECT 1 FROM fact_material_period_allocation t WHERE t.revision_id=f.id) WHEN 'material_group_resolution' THEN EXISTS(SELECT 1 FROM fact_material_group_resolution t WHERE t.revision_id=f.id) WHEN 'payroll_plan_v2' THEN EXISTS(SELECT 1 FROM fact_payroll_plan_v2 t WHERE t.revision_id=f.id) WHEN 'payroll_plan_bounded' THEN EXISTS(SELECT 1 FROM fact_payroll_plan_bounded t WHERE t.revision_id=f.id) WHEN 'payroll_change_notice_v2' THEN EXISTS(SELECT 1 FROM fact_payroll_change_notice_v2 t WHERE t.revision_id=f.id) WHEN 'payroll_no_change_v2' THEN EXISTS(SELECT 1 FROM fact_payroll_no_change_v2 t WHERE t.revision_id=f.id) WHEN 'tax_import_identity_v2' THEN EXISTS(SELECT 1 FROM fact_tax_import_identity_v2 t WHERE t.revision_id=f.id) WHEN 'tax_import_details_v2' THEN EXISTS(SELECT 1 FROM fact_tax_import_details_v2 t WHERE t.revision_id=f.id) WHEN 'tax_import_mapping_v2' THEN EXISTS(SELECT 1 FROM fact_tax_import_mapping_v2 t WHERE t.revision_id=f.id) WHEN 'payroll_tax_declaration_actual' THEN EXISTS(SELECT 1 FROM fact_payroll_tax_declaration_actual t WHERE t.revision_id=f.id) WHEN 'payroll_disbursement_basis' THEN EXISTS(SELECT 1 FROM fact_payroll_disbursement_basis t WHERE t.revision_id=f.id) ELSE 0 END))\n BEGIN SELECT RAISE(ABORT,'missing typed fact'); END"
+      "sql": "CREATE TRIGGER fact_seal_shape BEFORE INSERT ON fact_seal WHEN NOT EXISTS(\n SELECT 1 FROM fact_revision f JOIN subject s ON s.id=f.subject_id\n WHERE f.id=NEW.fact_id AND (CASE s.kind WHEN 'payroll_contribution_policy' THEN EXISTS(SELECT 1 FROM fact_payroll_contribution_policy t WHERE t.revision_id=f.id) WHEN 'payroll_income_tax_policy' THEN EXISTS(SELECT 1 FROM fact_payroll_income_tax_policy t WHERE t.revision_id=f.id) WHEN 'payroll_profile' THEN EXISTS(SELECT 1 FROM fact_payroll_profile t WHERE t.revision_id=f.id) WHEN 'payroll_contribution_actual' THEN EXISTS(SELECT 1 FROM fact_payroll_contribution_actual t WHERE t.revision_id=f.id) WHEN 'payroll_opening_state' THEN EXISTS(SELECT 1 FROM fact_payroll_opening_state t WHERE t.revision_id=f.id) WHEN 'payroll_first_wage_treatment' THEN EXISTS(SELECT 1 FROM fact_payroll_first_wage_treatment t WHERE t.revision_id=f.id) WHEN 'payroll_withholding_actual' THEN EXISTS(SELECT 1 FROM fact_payroll_withholding_actual t WHERE t.revision_id=f.id) WHEN 'annual_bonus_policy' THEN EXISTS(SELECT 1 FROM fact_annual_bonus_policy t WHERE t.revision_id=f.id) WHEN 'annual_bonus_opening_usage' THEN EXISTS(SELECT 1 FROM fact_annual_bonus_opening_usage t WHERE t.revision_id=f.id) WHEN 'labor_income_tax_policy' THEN EXISTS(SELECT 1 FROM fact_labor_income_tax_policy t WHERE t.revision_id=f.id) WHEN 'payroll' THEN EXISTS(SELECT 1 FROM fact_payroll t WHERE t.revision_id=f.id) WHEN 'payroll_bounded' THEN EXISTS(SELECT 1 FROM fact_payroll_bounded t WHERE t.revision_id=f.id) WHEN 'annual_bonus' THEN EXISTS(SELECT 1 FROM fact_annual_bonus t WHERE t.revision_id=f.id) WHEN 'labor' THEN EXISTS(SELECT 1 FROM fact_labor t WHERE t.revision_id=f.id) WHEN 'labor_accrual' THEN EXISTS(SELECT 1 FROM fact_labor_accrual t WHERE t.revision_id=f.id) WHEN 'vat_policy' THEN EXISTS(SELECT 1 FROM fact_vat_policy t WHERE t.revision_id=f.id) WHEN 'surtax_policy' THEN EXISTS(SELECT 1 FROM fact_surtax_policy t WHERE t.revision_id=f.id) WHEN 'used_asset_vat_policy' THEN EXISTS(SELECT 1 FROM fact_used_asset_vat_policy t WHERE t.revision_id=f.id) WHEN 'tax_assessment' THEN EXISTS(SELECT 1 FROM fact_tax_assessment t WHERE t.revision_id=f.id) WHEN 'income_tax_assessment' THEN EXISTS(SELECT 1 FROM fact_income_tax_assessment t WHERE t.revision_id=f.id) WHEN 'tax_credit_confirmation' THEN EXISTS(SELECT 1 FROM fact_tax_credit_confirmation t WHERE t.revision_id=f.id) WHEN 'service_sale' THEN EXISTS(SELECT 1 FROM fact_service_sale t WHERE t.revision_id=f.id) WHEN 'expense' THEN EXISTS(SELECT 1 FROM fact_expense t WHERE t.revision_id=f.id) WHEN 'expense_recovery' THEN EXISTS(SELECT 1 FROM fact_expense_recovery t WHERE t.revision_id=f.id) WHEN 'project_cost' THEN EXISTS(SELECT 1 FROM fact_project_cost t WHERE t.revision_id=f.id) WHEN 'project_release' THEN EXISTS(SELECT 1 FROM fact_project_release t WHERE t.revision_id=f.id) WHEN 'pass_through' THEN EXISTS(SELECT 1 FROM fact_pass_through t WHERE t.revision_id=f.id) WHEN 'advance' THEN EXISTS(SELECT 1 FROM fact_advance t WHERE t.revision_id=f.id) WHEN 'advance_fulfillment' THEN EXISTS(SELECT 1 FROM fact_advance_fulfillment t WHERE t.revision_id=f.id) WHEN 'advance_refund' THEN EXISTS(SELECT 1 FROM fact_advance_refund t WHERE t.revision_id=f.id) WHEN 'funding' THEN EXISTS(SELECT 1 FROM fact_funding t WHERE t.revision_id=f.id) WHEN 'payment' THEN EXISTS(SELECT 1 FROM fact_payment t WHERE t.revision_id=f.id) WHEN 'service_tax_point' THEN EXISTS(SELECT 1 FROM fact_service_tax_point t WHERE t.revision_id=f.id) WHEN 'overpayment' THEN EXISTS(SELECT 1 FROM fact_overpayment t WHERE t.revision_id=f.id) WHEN 'settlement' THEN EXISTS(SELECT 1 FROM fact_settlement t WHERE t.revision_id=f.id) WHEN 'sale_return' THEN EXISTS(SELECT 1 FROM fact_sale_return t WHERE t.revision_id=f.id) WHEN 'funds_transfer' THEN EXISTS(SELECT 1 FROM fact_funds_transfer t WHERE t.revision_id=f.id) WHEN 'bank_income' THEN EXISTS(SELECT 1 FROM fact_bank_income t WHERE t.revision_id=f.id) WHEN 'refundable_deposit' THEN EXISTS(SELECT 1 FROM fact_refundable_deposit t WHERE t.revision_id=f.id) WHEN 'reimbursed_deposit' THEN EXISTS(SELECT 1 FROM fact_reimbursed_deposit t WHERE t.revision_id=f.id) WHEN 'asset' THEN EXISTS(SELECT 1 FROM fact_asset t WHERE t.revision_id=f.id) WHEN 'reimbursed_asset' THEN EXISTS(SELECT 1 FROM fact_reimbursed_asset t WHERE t.revision_id=f.id) WHEN 'reimbursed_asset_batch' THEN EXISTS(SELECT 1 FROM fact_reimbursed_asset_batch t WHERE t.revision_id=f.id) WHEN 'asset_activation' THEN EXISTS(SELECT 1 FROM fact_asset_activation t WHERE t.revision_id=f.id) WHEN 'asset_consumption' THEN EXISTS(SELECT 1 FROM fact_asset_consumption t WHERE t.revision_id=f.id) WHEN 'asset_disposal' THEN EXISTS(SELECT 1 FROM fact_asset_disposal t WHERE t.revision_id=f.id) WHEN 'loan_agreement' THEN EXISTS(SELECT 1 FROM fact_loan_agreement t WHERE t.revision_id=f.id) WHEN 'loan_drawdown' THEN EXISTS(SELECT 1 FROM fact_loan_drawdown t WHERE t.revision_id=f.id) WHEN 'loan_interest' THEN EXISTS(SELECT 1 FROM fact_loan_interest t WHERE t.revision_id=f.id) WHEN 'asset_activation_batch' THEN EXISTS(SELECT 1 FROM fact_asset_activation_batch t WHERE t.revision_id=f.id) WHEN 'asset_consumption_month' THEN EXISTS(SELECT 1 FROM fact_asset_consumption_month t WHERE t.revision_id=f.id) WHEN 'asset_advance' THEN EXISTS(SELECT 1 FROM fact_asset_advance t WHERE t.revision_id=f.id) WHEN 'labor_project_cost' THEN EXISTS(SELECT 1 FROM fact_labor_project_cost t WHERE t.revision_id=f.id) WHEN 'bank_opening' THEN EXISTS(SELECT 1 FROM fact_bank_opening t WHERE t.revision_id=f.id) WHEN 'bank_statement' THEN EXISTS(SELECT 1 FROM fact_bank_statement t WHERE t.revision_id=f.id) WHEN 'bank_reconciliation' THEN EXISTS(SELECT 1 FROM fact_bank_reconciliation t WHERE t.revision_id=f.id) WHEN 'employee_advance' THEN EXISTS(SELECT 1 FROM fact_employee_advance t WHERE t.revision_id=f.id) WHEN 'reimbursement_acceptance' THEN EXISTS(SELECT 1 FROM fact_reimbursement_acceptance t WHERE t.revision_id=f.id) WHEN 'pass_through_return' THEN EXISTS(SELECT 1 FROM fact_pass_through_return t WHERE t.revision_id=f.id) WHEN 'cash_payment' THEN EXISTS(SELECT 1 FROM fact_cash_payment t WHERE t.revision_id=f.id) WHEN 'cash_funding' THEN EXISTS(SELECT 1 FROM fact_cash_funding t WHERE t.revision_id=f.id) WHEN 'cash_bank_transfer' THEN EXISTS(SELECT 1 FROM fact_cash_bank_transfer t WHERE t.revision_id=f.id) WHEN 'platform_movement' THEN EXISTS(SELECT 1 FROM fact_platform_movement t WHERE t.revision_id=f.id) WHEN 'platform_expense_confirmation' THEN EXISTS(SELECT 1 FROM fact_platform_expense_confirmation t WHERE t.revision_id=f.id) WHEN 'platform_payment' THEN EXISTS(SELECT 1 FROM fact_platform_payment t WHERE t.revision_id=f.id) WHEN 'platform_funding' THEN EXISTS(SELECT 1 FROM fact_platform_funding t WHERE t.revision_id=f.id) WHEN 'bank_platform_transfer' THEN EXISTS(SELECT 1 FROM fact_bank_platform_transfer t WHERE t.revision_id=f.id) WHEN 'platform_boundary_disposition' THEN EXISTS(SELECT 1 FROM fact_platform_boundary_disposition t WHERE t.revision_id=f.id) WHEN 'managed_reserve_bank_expense' THEN EXISTS(SELECT 1 FROM fact_managed_reserve_bank_expense t WHERE t.revision_id=f.id) WHEN 'managed_reserve_scope' THEN EXISTS(SELECT 1 FROM fact_managed_reserve_scope t WHERE t.revision_id=f.id) WHEN 'managed_reserve_obligation_settlement' THEN EXISTS(SELECT 1 FROM fact_managed_reserve_obligation_settlement t WHERE t.revision_id=f.id) WHEN 'payroll_reserve_payment' THEN EXISTS(SELECT 1 FROM fact_payroll_reserve_payment t WHERE t.revision_id=f.id) WHEN 'money_fund_subscription' THEN EXISTS(SELECT 1 FROM fact_money_fund_subscription t WHERE t.revision_id=f.id) WHEN 'money_fund_redemption' THEN EXISTS(SELECT 1 FROM fact_money_fund_redemption t WHERE t.revision_id=f.id) WHEN 'report_profile' THEN EXISTS(SELECT 1 FROM fact_report_profile t WHERE t.revision_id=f.id) WHEN 'continuation_report_profile' THEN EXISTS(SELECT 1 FROM fact_continuation_report_profile t WHERE t.revision_id=f.id) WHEN 'report_carry_forward' THEN EXISTS(SELECT 1 FROM fact_report_carry_forward t WHERE t.revision_id=f.id) WHEN 'report_classification' THEN EXISTS(SELECT 1 FROM fact_report_classification t WHERE t.revision_id=f.id) WHEN 'report_income_tax_confirmation' THEN EXISTS(SELECT 1 FROM fact_report_income_tax_confirmation t WHERE t.revision_id=f.id) WHEN 'company_workflow_scope_v2' THEN EXISTS(SELECT 1 FROM fact_company_workflow_scope_v2 t WHERE t.revision_id=f.id) WHEN 'filing_calendar_policy_v2' THEN EXISTS(SELECT 1 FROM fact_filing_calendar_policy_v2 t WHERE t.revision_id=f.id) WHEN 'external_obligation' THEN EXISTS(SELECT 1 FROM fact_external_obligation t WHERE t.revision_id=f.id) WHEN 'external_completion' THEN EXISTS(SELECT 1 FROM fact_external_completion t WHERE t.revision_id=f.id) WHEN 'opening_bank' THEN EXISTS(SELECT 1 FROM fact_opening_bank t WHERE t.revision_id=f.id) WHEN 'opening_cash' THEN EXISTS(SELECT 1 FROM fact_opening_cash t WHERE t.revision_id=f.id) WHEN 'opening_obligation' THEN EXISTS(SELECT 1 FROM fact_opening_obligation t WHERE t.revision_id=f.id) WHEN 'opening_asset' THEN EXISTS(SELECT 1 FROM fact_opening_asset t WHERE t.revision_id=f.id) WHEN 'opening_loan' THEN EXISTS(SELECT 1 FROM fact_opening_loan t WHERE t.revision_id=f.id) WHEN 'opening_tax' THEN EXISTS(SELECT 1 FROM fact_opening_tax t WHERE t.revision_id=f.id) WHEN 'opening_payroll_payable' THEN EXISTS(SELECT 1 FROM fact_opening_payroll_payable t WHERE t.revision_id=f.id) WHEN 'opening_payroll_state' THEN EXISTS(SELECT 1 FROM fact_opening_payroll_state t WHERE t.revision_id=f.id) WHEN 'opening_equity' THEN EXISTS(SELECT 1 FROM fact_opening_equity t WHERE t.revision_id=f.id) WHEN 'opening_money_fund' THEN EXISTS(SELECT 1 FROM fact_opening_money_fund t WHERE t.revision_id=f.id) WHEN 'opening_package' THEN EXISTS(SELECT 1 FROM fact_opening_package t WHERE t.revision_id=f.id) WHEN 'material_source_v2' THEN EXISTS(SELECT 1 FROM fact_material_source_v2 t WHERE t.revision_id=f.id) WHEN 'material_resolution_v2' THEN EXISTS(SELECT 1 FROM fact_material_resolution_v2 t WHERE t.revision_id=f.id) WHEN 'material_period_allocation' THEN EXISTS(SELECT 1 FROM fact_material_period_allocation t WHERE t.revision_id=f.id) WHEN 'material_group_resolution' THEN EXISTS(SELECT 1 FROM fact_material_group_resolution t WHERE t.revision_id=f.id) WHEN 'payroll_plan_v2' THEN EXISTS(SELECT 1 FROM fact_payroll_plan_v2 t WHERE t.revision_id=f.id) WHEN 'payroll_plan_bounded' THEN EXISTS(SELECT 1 FROM fact_payroll_plan_bounded t WHERE t.revision_id=f.id) WHEN 'payroll_change_notice_v2' THEN EXISTS(SELECT 1 FROM fact_payroll_change_notice_v2 t WHERE t.revision_id=f.id) WHEN 'payroll_no_change_v2' THEN EXISTS(SELECT 1 FROM fact_payroll_no_change_v2 t WHERE t.revision_id=f.id) WHEN 'tax_import_identity_v2' THEN EXISTS(SELECT 1 FROM fact_tax_import_identity_v2 t WHERE t.revision_id=f.id) WHEN 'tax_import_details_v2' THEN EXISTS(SELECT 1 FROM fact_tax_import_details_v2 t WHERE t.revision_id=f.id) WHEN 'tax_import_mapping_v2' THEN EXISTS(SELECT 1 FROM fact_tax_import_mapping_v2 t WHERE t.revision_id=f.id) WHEN 'payroll_tax_declaration_actual' THEN EXISTS(SELECT 1 FROM fact_payroll_tax_declaration_actual t WHERE t.revision_id=f.id) WHEN 'payroll_disbursement_basis' THEN EXISTS(SELECT 1 FROM fact_payroll_disbursement_basis t WHERE t.revision_id=f.id) ELSE 0 END))\n BEGIN SELECT RAISE(ABORT,'missing typed fact'); END"
     },
     {
       "type": "trigger",
       "name": "frozen_job_payload",
       "sql": "CREATE TRIGGER frozen_job_payload BEFORE UPDATE OF id,kind,payload ON jobs\n BEGIN SELECT RAISE(ABORT,'immutable job payload'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_asset_batch_member_delete",
+      "sql": "CREATE TRIGGER immutable_asset_batch_member_delete BEFORE DELETE ON asset_batch_member\n BEGIN SELECT RAISE(ABORT,'immutable asset batch member'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_asset_batch_member_update",
+      "sql": "CREATE TRIGGER immutable_asset_batch_member_update BEFORE UPDATE ON asset_batch_member\n BEGIN SELECT RAISE(ABORT,'immutable asset batch member'); END"
     },
     {
       "type": "trigger",
@@ -1076,6 +1219,16 @@
       "type": "trigger",
       "name": "immutable_audit_UPDATE",
       "sql": "CREATE TRIGGER immutable_audit_UPDATE BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT,'immutable audit'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_audit_reference_DELETE",
+      "sql": "CREATE TRIGGER immutable_audit_reference_DELETE BEFORE DELETE ON audit_reference\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_audit_reference_UPDATE",
+      "sql": "CREATE TRIGGER immutable_audit_reference_UPDATE BEFORE UPDATE ON audit_reference\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
     },
     {
       "type": "trigger",
@@ -1116,6 +1269,16 @@
       "type": "trigger",
       "name": "immutable_calculation_seal_UPDATE",
       "sql": "CREATE TRIGGER immutable_calculation_seal_UPDATE BEFORE UPDATE ON calculation_seal BEGIN SELECT RAISE(ABORT,'immutable calculation_seal'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_reference_DELETE",
+      "sql": "CREATE TRIGGER immutable_close_reference_DELETE BEFORE DELETE ON close_reference\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_close_reference_UPDATE",
+      "sql": "CREATE TRIGGER immutable_close_reference_UPDATE BEFORE UPDATE ON close_reference\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
     },
     {
       "type": "trigger",
@@ -1279,6 +1442,26 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_fact_asset_activation_batch_DELETE",
+      "sql": "CREATE TRIGGER immutable_fact_asset_activation_batch_DELETE BEFORE DELETE ON fact_asset_activation_batch BEGIN SELECT RAISE(ABORT,'immutable fact_asset_activation_batch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_asset_activation_batch_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fact_asset_activation_batch_UPDATE BEFORE UPDATE ON fact_asset_activation_batch BEGIN SELECT RAISE(ABORT,'immutable fact_asset_activation_batch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_asset_activation_batch_members_DELETE",
+      "sql": "CREATE TRIGGER immutable_fact_asset_activation_batch_members_DELETE BEFORE DELETE ON fact_asset_activation_batch_members BEGIN SELECT RAISE(ABORT,'immutable fact_asset_activation_batch_members'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_asset_activation_batch_members_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fact_asset_activation_batch_members_UPDATE BEFORE UPDATE ON fact_asset_activation_batch_members BEGIN SELECT RAISE(ABORT,'immutable fact_asset_activation_batch_members'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_fact_asset_advance_DELETE",
       "sql": "CREATE TRIGGER immutable_fact_asset_advance_DELETE BEFORE DELETE ON fact_asset_advance BEGIN SELECT RAISE(ABORT,'immutable fact_asset_advance'); END"
     },
@@ -1296,6 +1479,16 @@
       "type": "trigger",
       "name": "immutable_fact_asset_consumption_UPDATE",
       "sql": "CREATE TRIGGER immutable_fact_asset_consumption_UPDATE BEFORE UPDATE ON fact_asset_consumption BEGIN SELECT RAISE(ABORT,'immutable fact_asset_consumption'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_asset_consumption_month_DELETE",
+      "sql": "CREATE TRIGGER immutable_fact_asset_consumption_month_DELETE BEFORE DELETE ON fact_asset_consumption_month BEGIN SELECT RAISE(ABORT,'immutable fact_asset_consumption_month'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_fact_asset_consumption_month_UPDATE",
+      "sql": "CREATE TRIGGER immutable_fact_asset_consumption_month_UPDATE BEFORE UPDATE ON fact_asset_consumption_month BEGIN SELECT RAISE(ABORT,'immutable fact_asset_consumption_month'); END"
     },
     {
       "type": "trigger",
@@ -2659,6 +2852,16 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_job_reference_DELETE",
+      "sql": "CREATE TRIGGER immutable_job_reference_DELETE BEFORE DELETE ON job_reference\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_job_reference_UPDATE",
+      "sql": "CREATE TRIGGER immutable_job_reference_UPDATE BEFORE UPDATE ON job_reference\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_management_revision_DELETE",
       "sql": "CREATE TRIGGER immutable_management_revision_DELETE BEFORE DELETE ON management_revision BEGIN SELECT RAISE(ABORT,'immutable management_revision'); END"
     },
@@ -2729,6 +2932,16 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_read_index_source_DELETE",
+      "sql": "CREATE TRIGGER immutable_read_index_source_DELETE BEFORE DELETE ON read_index_source\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_read_index_source_UPDATE",
+      "sql": "CREATE TRIGGER immutable_read_index_source_UPDATE BEFORE UPDATE ON read_index_source\n BEGIN SELECT RAISE(ABORT,'immutable read index'); END"
+    },
+    {
+      "type": "trigger",
       "name": "immutable_request_DELETE",
       "sql": "CREATE TRIGGER immutable_request_DELETE BEFORE DELETE ON request BEGIN SELECT RAISE(ABORT,'immutable request'); END"
     },
@@ -2746,6 +2959,16 @@
       "type": "trigger",
       "name": "immutable_schema_history_update",
       "sql": "CREATE TRIGGER immutable_schema_history_update BEFORE UPDATE ON schema_history\n BEGIN SELECT RAISE(ABORT,'immutable schema history'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_schema_meta_delete",
+      "sql": "CREATE TRIGGER immutable_schema_meta_delete BEFORE DELETE ON schema_meta\n BEGIN SELECT RAISE(ABORT,'immutable schema metadata'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_schema_meta_update",
+      "sql": "CREATE TRIGGER immutable_schema_meta_update BEFORE UPDATE ON schema_meta\n BEGIN SELECT RAISE(ABORT,'immutable schema metadata'); END"
     },
     {
       "type": "trigger",
@@ -2829,6 +3052,11 @@
     },
     {
       "type": "trigger",
+      "name": "owner_fact_asset_activation_batch",
+      "sql": "CREATE TRIGGER owner_fact_asset_activation_batch BEFORE INSERT ON fact_asset_activation_batch WHEN NOT EXISTS(SELECT 1 FROM fact_revision f JOIN subject s ON s.id=f.subject_id WHERE f.id=NEW.revision_id AND s.kind='asset_activation_batch' AND f.period=NEW.period) BEGIN SELECT RAISE(ABORT,'typed fact ownership mismatch'); END"
+    },
+    {
+      "type": "trigger",
       "name": "owner_fact_asset_advance",
       "sql": "CREATE TRIGGER owner_fact_asset_advance BEFORE INSERT ON fact_asset_advance WHEN NOT EXISTS(SELECT 1 FROM fact_revision f JOIN subject s ON s.id=f.subject_id WHERE f.id=NEW.revision_id AND s.kind='asset_advance' AND f.period=NEW.period) BEGIN SELECT RAISE(ABORT,'typed fact ownership mismatch'); END"
     },
@@ -2836,6 +3064,11 @@
       "type": "trigger",
       "name": "owner_fact_asset_consumption",
       "sql": "CREATE TRIGGER owner_fact_asset_consumption BEFORE INSERT ON fact_asset_consumption WHEN NOT EXISTS(SELECT 1 FROM fact_revision f JOIN subject s ON s.id=f.subject_id WHERE f.id=NEW.revision_id AND s.kind='asset_consumption' AND f.period=NEW.period) BEGIN SELECT RAISE(ABORT,'typed fact ownership mismatch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "owner_fact_asset_consumption_month",
+      "sql": "CREATE TRIGGER owner_fact_asset_consumption_month BEFORE INSERT ON fact_asset_consumption_month WHEN NOT EXISTS(SELECT 1 FROM fact_revision f JOIN subject s ON s.id=f.subject_id WHERE f.id=NEW.revision_id AND s.kind='asset_consumption_month' AND f.period=NEW.period) BEGIN SELECT RAISE(ABORT,'typed fact ownership mismatch'); END"
     },
     {
       "type": "trigger",
@@ -3314,6 +3547,11 @@
     },
     {
       "type": "trigger",
+      "name": "read_index_source_owner",
+      "sql": "CREATE TRIGGER read_index_source_owner BEFORE INSERT ON read_index_source\n WHEN (NEW.source_kind='close' AND NOT EXISTS(\n SELECT 1 FROM period_close WHERE period=CAST(NEW.source_id AS INTEGER)\n AND CAST(period AS TEXT)=NEW.source_id))\n OR (NEW.source_kind='job' AND NOT EXISTS(SELECT 1 FROM jobs WHERE id=NEW.source_id\n AND kind IN ('payment_export','tax_import','report_export')))\n OR (NEW.source_kind='audit' AND NOT EXISTS(SELECT 1 FROM audit\n WHERE id=CAST(NEW.source_id AS INTEGER) AND CAST(id AS TEXT)=NEW.source_id AND action IN\n ('confirm_fact','confirm_facts','recording_correction','save_display_profile','payee')))\n BEGIN SELECT RAISE(ABORT,'read index source ownership mismatch'); END"
+    },
+    {
+      "type": "trigger",
       "name": "retained_job",
       "sql": "CREATE TRIGGER retained_job BEFORE DELETE ON jobs\n BEGIN SELECT RAISE(ABORT,'immutable job history'); END"
     },
@@ -3324,6 +3562,16 @@
     },
     {
       "type": "trigger",
+      "name": "sealed_asset_batch_member",
+      "sql": "CREATE TRIGGER sealed_asset_batch_member BEFORE INSERT ON asset_batch_member\n WHEN EXISTS(SELECT 1 FROM calculation_seal WHERE calculation_id=NEW.owner_calculation_id)\n BEGIN SELECT RAISE(ABORT,'sealed asset batch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "sealed_audit_reference_insert",
+      "sql": "CREATE TRIGGER sealed_audit_reference_insert BEFORE INSERT ON audit_reference\n WHEN EXISTS(SELECT 1 FROM read_index_source WHERE source_kind='audit'\n AND source_id=CAST(NEW.audit_id AS TEXT))\n BEGIN SELECT RAISE(ABORT,'sealed read index source'); END"
+    },
+    {
+      "type": "trigger",
       "name": "sealed_calculation_publication_insert",
       "sql": "CREATE TRIGGER sealed_calculation_publication_insert BEFORE INSERT ON calculation_publication WHEN EXISTS(SELECT 1 FROM calculation_seal WHERE calculation_id=NEW.calculation_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
     },
@@ -3331,6 +3579,11 @@
       "type": "trigger",
       "name": "sealed_calculation_scope_insert",
       "sql": "CREATE TRIGGER sealed_calculation_scope_insert BEFORE INSERT ON calculation_scope WHEN EXISTS(SELECT 1 FROM calculation_seal WHERE calculation_id=NEW.calculation_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "sealed_close_reference_insert",
+      "sql": "CREATE TRIGGER sealed_close_reference_insert BEFORE INSERT ON close_reference\n WHEN EXISTS(SELECT 1 FROM read_index_source WHERE source_kind='close'\n AND source_id=CAST(NEW.close_period AS TEXT))\n BEGIN SELECT RAISE(ABORT,'sealed read index source'); END"
     },
     {
       "type": "trigger",
@@ -3384,6 +3637,16 @@
     },
     {
       "type": "trigger",
+      "name": "sealed_fact_asset_activation_batch_insert",
+      "sql": "CREATE TRIGGER sealed_fact_asset_activation_batch_insert BEFORE INSERT ON fact_asset_activation_batch WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "sealed_fact_asset_activation_batch_members_insert",
+      "sql": "CREATE TRIGGER sealed_fact_asset_activation_batch_members_insert BEFORE INSERT ON fact_asset_activation_batch_members WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
+    },
+    {
+      "type": "trigger",
       "name": "sealed_fact_asset_activation_insert",
       "sql": "CREATE TRIGGER sealed_fact_asset_activation_insert BEFORE INSERT ON fact_asset_activation WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
     },
@@ -3396,6 +3659,11 @@
       "type": "trigger",
       "name": "sealed_fact_asset_consumption_insert",
       "sql": "CREATE TRIGGER sealed_fact_asset_consumption_insert BEFORE INSERT ON fact_asset_consumption WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "sealed_fact_asset_consumption_month_insert",
+      "sql": "CREATE TRIGGER sealed_fact_asset_consumption_month_insert BEFORE INSERT ON fact_asset_consumption_month WHEN EXISTS(SELECT 1 FROM fact_seal WHERE fact_id=NEW.revision_id) BEGIN SELECT RAISE(ABORT,'sealed revision'); END"
     },
     {
       "type": "trigger",
@@ -4069,6 +4337,11 @@
     },
     {
       "type": "trigger",
+      "name": "sealed_job_reference_insert",
+      "sql": "CREATE TRIGGER sealed_job_reference_insert BEFORE INSERT ON job_reference\n WHEN EXISTS(SELECT 1 FROM read_index_source WHERE source_kind='job'\n AND source_id=CAST(NEW.job_id AS TEXT))\n BEGIN SELECT RAISE(ABORT,'sealed read index source'); END"
+    },
+    {
+      "type": "trigger",
       "name": "sealed_line",
       "sql": "CREATE TRIGGER sealed_line BEFORE INSERT ON voucher_line WHEN EXISTS(\n SELECT 1 FROM voucher_version WHERE id=NEW.version_id)\n BEGIN SELECT RAISE(ABORT,'sealed voucher'); END"
     },
@@ -4092,5 +4365,6 @@
       "name": "security_close_batch_receipt_no_update",
       "sql": "CREATE TRIGGER security_close_batch_receipt_no_update\n        BEFORE UPDATE ON security_close_batch_receipt\n        BEGIN SELECT RAISE(ABORT,'immutable close batch receipt'); END"
     }
-  ]
+  ],
+  "sha256": "ac38b56bfd5f722c86777c3db73280a8633b99a453e4f192214624ba5c9a655c"
 }

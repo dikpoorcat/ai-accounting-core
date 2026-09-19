@@ -5,14 +5,14 @@ import pytest
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.discovery import Discovery
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
 @pytest.fixture
 def company(tmp_path):
     store = Store.create(
-        tmp_path / "company.sqlite", default_registry(), "co", "911100000000000001", "db"
+        tmp_path / "company.sqlite", production_bundle(), "co", "911100000000000001", "db"
     )
     return Engine(store)
 
@@ -135,7 +135,11 @@ def test_find_sources_distinguishes_saved_published_and_deleted(company):
 def test_context_cannot_cross_company_binding(company, tmp_path):
     different = Engine(
         Store.create(
-            tmp_path / "other.sqlite", default_registry(), "other", "911100000000000002", "other-db"
+            tmp_path / "other.sqlite",
+            production_bundle(),
+            "other",
+            "911100000000000002",
+            "other-db",
         )
     )
     Discovery(company).update_company_note(

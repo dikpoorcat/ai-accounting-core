@@ -1,7 +1,9 @@
 {
+  "family": "ai-accounting-kernel/2",
   "kind": "catalog",
-  "version": 2,
-  "sha256": "ced7b3bb1a4c444172263cd0f9c81c46186887274a9a9f76e63f918fdd57ac47",
+  "status": "draft",
+  "version": 0,
+  "application_id": 1094796082,
   "objects": [
     {
       "type": "index",
@@ -16,12 +18,12 @@
     {
       "type": "table",
       "name": "catalog_identity",
-      "sql": "CREATE TABLE catalog_identity(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL UNIQUE,\n schema_version INTEGER NOT NULL) STRICT"
+      "sql": "CREATE TABLE catalog_identity(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL UNIQUE) STRICT"
     },
     {
       "type": "table",
       "name": "company",
-      "sql": "CREATE TABLE company(id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,path TEXT NOT NULL UNIQUE,database_id TEXT NOT NULL UNIQUE) STRICT"
+      "sql": "CREATE TABLE company(id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,\n path TEXT NOT NULL UNIQUE,database_id TEXT NOT NULL UNIQUE) STRICT"
     },
     {
       "type": "table",
@@ -36,12 +38,22 @@
     {
       "type": "table",
       "name": "schema_history",
-      "sql": "CREATE TABLE schema_history(version INTEGER PRIMARY KEY, fingerprint BLOB NOT NULL\n CHECK(length(fingerprint)=32), installed_at TEXT NOT NULL\n DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) STRICT"
+      "sql": "CREATE TABLE schema_history(version INTEGER PRIMARY KEY CHECK(version>=0),\n fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32), installed_at TEXT NOT NULL\n DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "schema_meta",
+      "sql": "CREATE TABLE schema_meta(id INTEGER PRIMARY KEY CHECK(id=1), family TEXT NOT NULL,\n kind TEXT NOT NULL CHECK(kind IN('company','catalog')),\n status TEXT NOT NULL CHECK(status IN('draft','released'))) STRICT"
     },
     {
       "type": "table",
       "name": "security_audit",
       "sql": "CREATE TABLE security_audit(\n        id INTEGER PRIMARY KEY, occurred_at INTEGER NOT NULL,\n        owner_id TEXT, session_id TEXT, event TEXT NOT NULL,\n        outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','rejected','blocked')),\n        reason TEXT, request_id TEXT NOT NULL\n    ) STRICT"
+    },
+    {
+      "type": "table",
+      "name": "security_close_batch",
+      "sql": "CREATE TABLE security_close_batch(\n        id TEXT PRIMARY KEY, catalog_instance_id TEXT NOT NULL,\n        owner_id TEXT NOT NULL REFERENCES security_owner(id),\n        session_id TEXT NOT NULL REFERENCES security_session(id),\n        credential_version INTEGER NOT NULL CHECK(credential_version>=1),\n        targets TEXT NOT NULL CHECK(json_valid(targets)),\n        digest BLOB NOT NULL CHECK(length(digest)=32),\n        confirmed_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,\n        CHECK(expires_at>confirmed_at)\n    ) STRICT"
     },
     {
       "type": "table",
@@ -100,6 +112,16 @@
     },
     {
       "type": "trigger",
+      "name": "immutable_schema_meta_delete",
+      "sql": "CREATE TRIGGER immutable_schema_meta_delete BEFORE DELETE ON schema_meta\n BEGIN SELECT RAISE(ABORT,'immutable schema metadata'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "immutable_schema_meta_update",
+      "sql": "CREATE TRIGGER immutable_schema_meta_update BEFORE UPDATE ON schema_meta\n BEGIN SELECT RAISE(ABORT,'immutable schema metadata'); END"
+    },
+    {
+      "type": "trigger",
       "name": "retained_company_operation",
       "sql": "CREATE TRIGGER retained_company_operation BEFORE DELETE ON company_operation\n BEGIN SELECT RAISE(ABORT,'retained company operation'); END"
     },
@@ -115,6 +137,16 @@
     },
     {
       "type": "trigger",
+      "name": "security_close_batch_no_delete",
+      "sql": "CREATE TRIGGER security_close_batch_no_delete BEFORE DELETE ON security_close_batch\n        BEGIN SELECT RAISE(ABORT,'retained close batch'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "security_close_batch_no_update",
+      "sql": "CREATE TRIGGER security_close_batch_no_update BEFORE UPDATE ON security_close_batch\n        BEGIN SELECT RAISE(ABORT,'immutable close batch'); END"
+    },
+    {
+      "type": "trigger",
       "name": "security_import_no_delete",
       "sql": "CREATE TRIGGER security_import_no_delete BEFORE DELETE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
     },
@@ -123,5 +155,6 @@
       "name": "security_import_no_update",
       "sql": "CREATE TRIGGER security_import_no_update BEFORE UPDATE ON security_identity_import\n        BEGIN SELECT RAISE(ABORT,'immutable identity import'); END"
     }
-  ]
+  ],
+  "sha256": "8f7df70cc99c95b58a23b52c442b578ea3838c32431b07345203bcf68a478f6e"
 }

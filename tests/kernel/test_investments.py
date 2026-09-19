@@ -10,7 +10,7 @@ from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.reports import Reports
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth
 
@@ -19,9 +19,14 @@ CLASSIFICATION = "readily_redeemable_held_not_over_one_year"
 
 @pytest.fixture
 def book(tmp_path):
-    registry = default_registry()
     engine = Engine(
-        Store.create(tmp_path / "fund.sqlite", registry, "company", "911100000000000001", "db")
+        Store.create(
+            tmp_path / "fund.sqlite",
+            production_bundle(),
+            "company",
+            "911100000000000001",
+            "db",
+        )
     )
     proof = engine.register_evidence(
         b"synthetic fund cost and settlement confirmations",

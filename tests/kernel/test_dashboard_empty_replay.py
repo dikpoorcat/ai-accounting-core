@@ -13,7 +13,8 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import Periods
-from ai_accounting.kernel.service import LocalService, default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
+from ai_accounting.kernel.service import LocalService
 from ai_accounting.kernel.storage import Store
 
 TAXPAYER = "91310000123456789A"
@@ -237,8 +238,11 @@ def test_empty_replay_resumes_lost_confirmation_and_preserves_dashboard_in_porta
     assert replay_sources(resumed, "target-a") == (references, evidence, saved)
     finish_payment(resumed, references, evidence)
     before = assert_dashboard(resumed, references)
-    assert resumed("rebuild", request_id="rebuild:verified:v1") == {"status": "rebuilt"}
-    assert resumed("rebuild", request_id="rebuild:verified:v1") == {"status": "rebuilt"}
+    rebuilt = resumed("rebuild", request_id="rebuild:verified:v1")
+    assert rebuilt["status"] == "rebuilt"
+    assert rebuilt["changed"] is False
+    assert rebuilt["verification"]["status"] == "verified"
+    assert resumed("rebuild", request_id="rebuild:verified:v1") == rebuilt
     assert assert_dashboard(resumed, references) == before
 
     settings = resumed("company_settings")
@@ -311,7 +315,7 @@ def test_replay_preserves_preclose_commentary_and_later_supplement_order(tmp_pat
         engine = Engine(
             Store.create(
                 tmp_path / f"{target}.sqlite",
-                default_registry(),
+                production_bundle(),
                 f"company-{target}",
                 TAXPAYER,
                 f"database-{target}",

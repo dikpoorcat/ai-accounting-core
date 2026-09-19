@@ -7,6 +7,7 @@ from typing import ClassVar, Literal
 
 import pytest
 from pydantic import BaseModel, ConfigDict
+from schema_fixture import test_bundle
 
 from ai_accounting.kernel.contracts import (
     BalanceEffect,
@@ -96,7 +97,13 @@ def audit(tmp_path):
     registry.register(AuditFollow, follow_calculation)
     registry.register(AuditBatch)
     engine = Engine(
-        Store.create(tmp_path / "audit.sqlite", registry, "audit", "91310000123456789A", "audit-db")
+        Store.create(
+            tmp_path / "audit.sqlite",
+            test_bundle(registry),
+            "audit",
+            "91310000123456789A",
+            "audit-db",
+        )
     )
     proof = engine.register_evidence(
         b"isolated audit fixture", "text/plain", "proof", request_id="proof"

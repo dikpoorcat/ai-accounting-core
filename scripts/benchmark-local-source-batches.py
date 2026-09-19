@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from ai_accounting.kernel.engine import PROGRAM_VERSION
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
             engine = shared["CountingEngine"](
                 shared["CountingStore"].create(
                     root / f"{size}-{mode}.sqlite",
-                    default_registry(),
+                    production_bundle(),
                     "benchmark",
                     "91310000123456789A",
                     "benchmark-db",

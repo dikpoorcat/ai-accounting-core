@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from schema_fixture import test_bundle
 from test_deletion_boundaries import book as domain_book_fixture
 from test_deletion_boundaries import prepare_payment
 from test_engine import Charge, Source, close, evidence, publish, save
@@ -97,7 +98,7 @@ def state_review_engine(tmp_path, request):
     return Engine(
         Store.create(
             tmp_path / "state-review.sqlite",
-            registry,
+            test_bundle(registry),
             "company-a",
             "91310000123456789A",
             "db-a",

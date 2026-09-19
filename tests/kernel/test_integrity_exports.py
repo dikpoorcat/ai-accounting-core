@@ -1,6 +1,4 @@
-"""Verify real frozen export plans and the released v1 portable contract."""
-
-from contextlib import closing
+"""Verify real frozen export plans."""
 
 import pytest
 from test_exports import queue
@@ -11,10 +9,8 @@ from test_reports import book as report_book_fixture
 from test_reports import close_quarter, scenario
 from test_tax_import import complete_details
 
-from ai_accounting.kernel.backup import create_portable, verify_file, verify_portable
+from ai_accounting.kernel.backup import verify_file
 from ai_accounting.kernel.contracts import KernelError
-from ai_accounting.kernel.runtime import connect
-from ai_accounting.kernel.versions import known_contracts
 
 payment_setup = payment_setup_fixture
 report_book = report_book_fixture
@@ -62,27 +58,3 @@ def test_actual_report_export_plan_and_frozen_quarter_are_fully_verified(report_
         request_id="report-job",
     )
     assert_plan_is_verified_and_damage_rejected(report_book[0])
-
-
-def test_released_v1_empty_file_verifies_and_backs_up_without_upgrading(tmp_path):
-    contract = known_contracts("business")[1]
-    source = tmp_path / "released-v1.sqlite"
-    with closing(connect(source)) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        for kind in ("table", "index", "view", "trigger"):
-            for item in contract["objects"]:
-                if item["type"] == kind:
-                    connection.execute(item["sql"])
-        connection.execute(
-            "INSERT INTO identity VALUES(1,'v1-company','91310000123456789A','v1-db',1)"
-        )
-        connection.execute("INSERT INTO state VALUES(1,0,0,0,1)")
-        connection.execute("PRAGMA user_version=1")
-        connection.commit()
-    before = source.read_bytes()
-    checked = verify_file(source)
-    assert checked["identity"]["schema_version"] == 1
-    assert checked["verification"]["status"] == "verified"
-    package = create_portable(source, tmp_path / "backup", request_id="v1-backup")
-    assert verify_portable(package["path"])["identity"]["schema_version"] == 1
-    assert source.read_bytes() == before

@@ -1,8 +1,8 @@
 # 本地 SQLite 会计内核
 
-本实现位于 `src/ai_accounting/kernel/`，以确认事实、正式计算和统一事务发布为边界。当前代码使用公司库 v13、目录库 v3 和常驻服务，可以新建公司或恢复当前格式的便携包，保留既有结构升级能力。以下接口和模块说明描述这份实际代码。
+本实现位于 `src/ai_accounting/kernel/`，以确认事实、正式计算和统一事务发布为边界。当前使用新系统 `ai-accounting-kernel/2`，目录库和公司库均为 `draft / 0`，公司备份格式为 2。以下接口和模块说明描述当前实现。
 
-已批准的[目标架构](kernel-refactor-architecture.md)按全新开发、全新库设计，明确拒绝旧系统数据库和备份，同时保留新系统今后的升级、备份恢复、历史与更正能力。目标尚未实施：开发基线严格核对结构，第 9 阶段才冻结首个正式版本；具体进度见[路线图](kernel-refactor-roadmap.md)。本轮不包含真实重录或换库，既有资料索引不构成这些操作的授权。
+[目标架构](kernel-refactor-architecture.md)按全新开发、全新库推进。通用运行层已拒绝旧系统数据库和备份，保留同系统正式版本的未来升级能力；开发库只接受当前精确指纹，不自动升级或重建。第 9 阶段才冻结正式首版，各业务阶段状态见[路线图](kernel-refactor-roadmap.md)。本轮不包含真实重录或换库。
 
 ## 运行
 
@@ -10,7 +10,7 @@
 
 ```powershell
 .\scripts\kernel-runtime.ps1
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\local-kernel call schema
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft call schema
 ```
 
 脚本使用仓库内 uv 0.12.3 创建独立虚拟环境，固定 CPython 3.12.13，安装锁文件中的依赖。
@@ -34,7 +34,7 @@
 ```
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\local-kernel call create_company --input .\create-company.json
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft call create_company --input .\create-company.json
 ```
 
 返回的 `id` 是后续命令的 `company_id`。每次调用都从目录重新绑定公司和数据库实例身份。
@@ -49,7 +49,7 @@
 
 ```powershell
 npm --prefix frontend run build:release
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data serve
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft serve
 ```
 
 通过启动器打开本机页面。服务只监听 `127.0.0.1`，校验本地调用身份、负责人会话及 Host / Origin。
@@ -59,7 +59,7 @@ npm --prefix frontend run build:release
 STDIO MCP 使用同一服务：
 
 ```powershell
-.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data mcp
+.\.tmp-kernel-venv\Scripts\python.exe -m ai_accounting.kernel.cli --root .\data\kernel-draft mcp
 ```
 
 此入口公开 `finance_local_schema`、`finance_local_command` 和 `finance_local_security`，
@@ -288,11 +288,9 @@ npm --prefix frontend run build:release
 
 银行代发文件的生成和恢复见 [银行代发生成与恢复](kernel-payment-exports.md)。
 
-公司库当前 v13、目录库 v3；目录 v1—v3 和公司 v1—v13 合同均已冻结，后续结构变化追加前向
-事务迁移。v10 的 close/job/audit 目录只保存原始精确引用，不保存采用或完成结论；v11 仅对精确
-识别的历史 v10 结构补齐读取索引，不重建引用目录。普通读取核验命中的源引用，不能发现任意
-删除后不再命中的遗漏；迁移及显式完整性验证比较完整引用多重集合。不得在每次连接时全库扫描
-或自动回填。v13 只增加 `state.read_repair_revision`，实际维修后原子增加，供页面、按需检查与导出提交识别读取变化，不成为第四个业务 lane。
+目录库和公司库使用独立类别、`schema_meta`、`user_version` 和不可变 `schema_history`，业务身份不包含结构版本。`npm run db-contracts:check` 只比较生成 DDL 与包内开发合同；`npm run db-contracts:generate` 只更新开发合同文件，不修改数据库。正式 v2 起使用父合同约束的增量结构合同及明确事务迁移，安装历史只记实际经过的步骤。
+
+close/job/audit 目录只保存精确源引用，不保存采用或完成结论。普通读取核验命中的引用，显式完整性验证核对完整引用；普通连接不扫描全部业务或自动回填。`state.read_repair_revision` 在实际维修后原子增加，供页面、按需检查与导出识别读取变化，不成为第四个业务 lane。
 
 显式调用 `verify_integrity` 只读核验完整内容；`rebuild` 原子修复四张金额投影；`repair_read_indexes` 原子修复三张引用表及其来源标记。维修先检查权威源，不能修补历史事实或依赖；无差异不增加读取版本。普通发布核验本次来源和投影变化，新关账额外执行全科目独立核验。内容错误返回 `content_integrity_failed`，不能当成缺少业务事实向老板追问。
 

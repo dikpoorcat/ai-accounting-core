@@ -32,7 +32,7 @@ def test_foreground_sql_counts_do_not_grow_with_accounting_history(tmp_path):
     )
     assert small_metrics["read_calls"] == large_metrics["read_calls"]
     assert small_metrics["driver_calls"] == large_metrics["driver_calls"]
-    assert verify_file(engine.store.path, _registry=engine.store.registry)["evidence_count"] == 1
+    assert verify_file(engine.store.path, _bundle=engine.store.bundle)["evidence_count"] == 1
 
 
 def test_overview_cursor_and_rebuild_work_without_per_voucher_sql(tmp_path):
@@ -65,7 +65,6 @@ def test_empty_pending_checks_do_not_scan_accounting_history(tmp_path, monkeypat
     def prepare_and_measure(size):
         engine = benchmark.make_engine(tmp_path / f"pending-{size}.sqlite")
         fixture = benchmark.seed_to(engine, size)
-        benchmark.prepare_history_closes(engine, fixture["proof"], before="2026-01")
         periods = benchmark.Periods(engine)
         for category in benchmark.MATERIAL_CATEGORIES:
             periods.inventory(
@@ -99,11 +98,14 @@ def test_empty_pending_checks_do_not_scan_accounting_history(tmp_path, monkeypat
             operation()
             return steps
 
+        def current_readiness():
+            with engine.store.connection(read_only=True) as connection:
+                connection.execute("BEGIN")
+                return periods.collect_current_readiness(connection, "2026-01")
+
         return (
             count_steps(lambda: engine.overview("2025-12")),
-            count_steps(
-                lambda: periods.preview_close("2026-01", owner_confirmation=fixture["proof"])
-            ),
+            count_steps(current_readiness),
         )
 
     small = prepare_and_measure(240)

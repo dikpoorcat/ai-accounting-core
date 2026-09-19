@@ -2,16 +2,32 @@
 
 import json
 from copy import deepcopy
-from pathlib import Path
 
 import pytest
+from schema_fixture import TEST_FAMILY
 
 from ai_accounting.kernel.migration_contracts import diff_contracts, load_contracts
-from ai_accounting.kernel.versions import contract, fingerprint, known_contracts
+from ai_accounting.kernel.schema_bundle import APPLICATION_ID, production_bundle
+from ai_accounting.kernel.versions import contract, fingerprint
 
 
-def write(directory, version, data, kind="business"):
-    (directory / f"v{version}_{kind}.json").write_text(json.dumps(data), encoding="utf-8")
+def write(directory, version, data, kind="company"):
+    directory = directory / kind
+    directory.mkdir(exist_ok=True)
+    value = {
+        "family": TEST_FAMILY,
+        "kind": kind,
+        "status": "released",
+        "application_id": APPLICATION_ID,
+        **data,
+    }
+    (directory / f"v{version}.json").write_text(json.dumps(value), encoding="utf-8")
+
+
+def load(directory):
+    return load_contracts(
+        directory / "company", "company", family=TEST_FAMILY, application_id=APPLICATION_ID
+    )
 
 
 def contracts():
@@ -50,10 +66,12 @@ def test_parent_chain_expands_to_independently_compiled_full_contract(tmp_path):
     first, second, third, expected_second, expected_third = contracts()
     for data in (first, second, third):
         write(tmp_path, data["version"], data)
-    expanded = load_contracts(tmp_path, "business")
-    assert expanded[2] == {"version": 2, "objects": expected_second, "sha256": second["sha256"]}
-    assert expanded[3] == {"version": 3, "objects": expected_third, "sha256": third["sha256"]}
-    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    expanded = load(tmp_path)
+    assert expanded[2]["objects"] == expected_second
+    assert expanded[2]["sha256"] == second["sha256"]
+    assert expanded[3]["objects"] == expected_third
+    assert expanded[3]["sha256"] == third["sha256"]
+    before = {path.name: path.read_bytes() for path in (tmp_path / "company").iterdir()}
     assert diff_contracts(expanded[1], expanded[2]) == [
         {
             "type": "index",
@@ -63,7 +81,7 @@ def test_parent_chain_expands_to_independently_compiled_full_contract(tmp_path):
         },
         {"type": "table", "name": "b", "old_sql": None, "new_sql": "CREATE TABLE b(id TEXT)"},
     ]
-    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+    assert {path.name: path.read_bytes() for path in (tmp_path / "company").iterdir()} == before
 
 
 @pytest.mark.parametrize(
@@ -134,10 +152,10 @@ def test_invalid_incremental_contracts_are_rejected(tmp_path, damage):
     elif damage == "boolean_parent":
         second["base_version"] = True
     if damage != "missing_parent":
-        write(tmp_path, 1, first, "catalog" if damage == "wrong_kind_parent" else "business")
+        write(tmp_path, 1, first, "catalog" if damage == "wrong_kind_parent" else "company")
     write(tmp_path, 7 if damage == "wrong_filename" else 2, second)
     with pytest.raises(RuntimeError):
-        load_contracts(tmp_path, "business")
+        load(tmp_path)
 
 
 def test_sql_whitespace_is_part_of_contract_and_visible_in_diff(tmp_path):
@@ -149,81 +167,40 @@ def test_sql_whitespace_is_part_of_contract_and_visible_in_diff(tmp_path):
     )
     write(tmp_path, 1, changed)
     with pytest.raises(RuntimeError, match="damaged"):
-        load_contracts(tmp_path, "business")
+        load(tmp_path)
 
 
-def test_recorded_v10_variant_cannot_be_an_incremental_parent(tmp_path):
-    from ai_accounting.kernel.versions import recorded_business_v10_variant
-
-    recorded = recorded_business_v10_variant()
-    (tmp_path / "recorded_business_v10_pre_account_indexes.json").write_text(
-        json.dumps(recorded), encoding="utf-8"
-    )
-    write(
-        tmp_path,
-        11,
-        {
-            "version": 11,
-            "base_version": 10,
-            "base_sha256": recorded["sha256"],
-            "add": [],
-            "remove": [],
-            "replace": [],
-            "sha256": recorded["sha256"],
-        },
-    )
-    with pytest.raises(RuntimeError, match="missing"):
-        load_contracts(tmp_path, "business")
+def test_only_draft_contracts_are_packaged():
+    bundle = production_bundle()
+    assert bundle.status == "draft"
+    for kind in ("company", "catalog"):
+        assert set(bundle.contracts[kind]) == {0}
+        assert bundle.current(kind)["status"] == "draft"
 
 
-def test_all_packaged_contracts_are_present_and_frozen_sql_is_retained():
-    import ai_accounting.kernel.versions as versions
-
-    directory = Path(versions.__file__).with_name("migrations")
-    for kind, expected_versions in (("business", set(range(1, 13))), ("catalog", {0, 2, 3})):
-        loaded = known_contracts(kind)
-        assert set(loaded) == expected_versions
-        for path in directory.glob(f"v*_{kind}.json"):
-            frozen = json.loads(path.read_text("utf-8"))
-            assert loaded[frozen["version"]]["objects"] == frozen["objects"]
-            assert loaded[frozen["version"]]["sha256"] == frozen["sha256"]
-
-
-@pytest.mark.parametrize(
-    "kind,parent_version,target_version", [("business", 12, 13), ("catalog", 3, 4)]
-)
-def test_future_versions_require_delta_and_expand_the_same_target(
-    tmp_path, kind, parent_version, target_version
-):
-    parent = known_contracts(kind)[parent_version]
-    added = contract("CREATE TABLE migration_contract_probe(id INTEGER PRIMARY KEY) STRICT;")
-    target_objects = sorted(
-        [*parent["objects"], *added], key=lambda row: (row["type"], row["name"])
-    )
-    target = {
-        "version": target_version,
-        "objects": target_objects,
-        "sha256": fingerprint(target_objects).hex(),
-    }
-    write(tmp_path, parent_version, parent, kind)
-    write(tmp_path, target_version, target, kind)
+def test_released_v2_cannot_use_full_snapshot(tmp_path):
+    first, _, _, _, _ = contracts()
+    write(tmp_path, 1, first)
+    second = {**first, "version": 2}
+    write(tmp_path, 2, second)
     with pytest.raises(RuntimeError, match="must be incremental"):
-        load_contracts(tmp_path, kind)
+        load(tmp_path)
 
-    write(
-        tmp_path,
-        target_version,
-        {
-            "version": target_version,
-            "base_version": parent_version,
-            "base_sha256": parent["sha256"],
-            "add": added,
-            "remove": [],
-            "replace": [],
-            "sha256": target["sha256"],
-        },
-        kind,
-    )
-    expanded = load_contracts(tmp_path, kind)
-    assert expanded[parent_version] == parent
-    assert expanded[target_version] == target
+
+def test_draft_cannot_be_a_released_parent(tmp_path):
+    first, second, _, _, _ = contracts()
+    folder = tmp_path / "company"
+    folder.mkdir()
+    draft = {
+        "family": TEST_FAMILY,
+        "kind": "company",
+        "status": "draft",
+        "application_id": APPLICATION_ID,
+        **first,
+        "version": 0,
+    }
+    (folder / "draft.json").write_text(json.dumps(draft), "utf-8")
+    second["base_version"] = 0
+    write(tmp_path, 2, second)
+    with pytest.raises(RuntimeError, match="parent version"):
+        load(tmp_path)

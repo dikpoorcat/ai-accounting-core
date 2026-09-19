@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import ClassVar, Literal
 
 import pytest
+from schema_fixture import test_bundle
 
 from ai_accounting.kernel.contracts import Fact, KernelError, Outcome
 from ai_accounting.kernel.engine import Engine
@@ -40,7 +41,13 @@ def book(tmp_path):
     registry.register(BusinessWithoutJournal, lambda version, context: Outcome((), {}))
     registry.register(CountedObservation, count_observation)
     engine = Engine(
-        Store.create(tmp_path / "company.sqlite", registry, "company", "911100000000000001", "db")
+        Store.create(
+            tmp_path / "company.sqlite",
+            test_bundle(registry),
+            "company",
+            "911100000000000001",
+            "db",
+        )
     )
     proof = engine.register_evidence(
         b"Synthetic idle-account facts and owner confirmation",

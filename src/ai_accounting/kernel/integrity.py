@@ -774,22 +774,16 @@ def _check_closes(engine, connection, source, *, through_period=None):
 
             reads = _FrozenAdoptionReads(source)
             metadata = reads.calculations(members)
-            upstreams = {parent for ident in members for parent in source["dependencies"][ident]}
-            roots = {source["vouchers"][ident]["calculation_id"] for ident in voucher_ids}
-            roots.update(
-                ident
-                for ident in members
-                if ident not in upstreams
-                and metadata[ident]["period"] == manifest["period"]
-                and metadata[ident]["posting_period"] == manifest["period"]
-            )
+            voucher_roots = {source["vouchers"][ident]["calculation_id"] for ident in voucher_ids}
             try:
                 prove_asset_card_adoptions(
                     reads,
                     close_period=period,
                     manifest=manifest,
                     metadata=metadata,
-                    independent_proofs={ident: {} for ident in roots},
+                    independent_proofs={
+                        ident: {"basis": "manifest_voucher_root"} for ident in voucher_roots
+                    },
                 )
             except KernelError:
                 _invalid("close", period, "asset_card_adoption_mismatch")

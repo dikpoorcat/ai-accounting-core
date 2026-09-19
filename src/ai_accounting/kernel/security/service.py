@@ -85,11 +85,11 @@ def utc_microseconds(value: datetime) -> int:
 
 
 def credential_target(catalog_path, catalog_instance_id: str) -> str:
+    from ..schema_bundle import FAMILY, STATUS
+
     # A copied catalogue at another path cannot silently reuse the old session.
     binding = str(Path(catalog_path).resolve()).casefold() + "\0" + catalog_instance_id
-    return (
-        "ai-accounting-core/local-owner-session/v3/" + hashlib.sha256(binding.encode()).hexdigest()
-    )
+    return f"{FAMILY}/{STATUS}/local-owner-session/" + hashlib.sha256(binding.encode()).hexdigest()
 
 
 def _request_id(value):
@@ -106,10 +106,11 @@ class SecurityService:
         self.clock = clock or (lambda: datetime.now(UTC))
         self.random_bytes = random_bytes
         if catalog_validator is None:
+            from ..schema_bundle import production_bundle
             from ..versions import verify_schema
 
             def catalog_validator(connection):
-                verify_schema(connection, kind="catalog")
+                verify_schema(connection, bundle=production_bundle(), kind="catalog")
 
         self.catalog_validator = catalog_validator
         with _GATES_LOCK:
@@ -118,7 +119,9 @@ class SecurityService:
             )
         # Opening a missing/unmigrated catalogue is an error, never provisioning.
         try:
-            with closing(connect(self.path, read_only=True)) as connection:
+            with closing(
+                connect(self.path, read_only=True, validator=self.catalog_validator)
+            ) as connection:
                 self.catalog_validator(connection)
                 row = connection.execute(
                     "SELECT instance_id FROM catalog_identity WHERE id=1"

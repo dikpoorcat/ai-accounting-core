@@ -9,6 +9,7 @@ from test_reimbursement_assets import book as asset_book
 from test_reimbursement_assets import result
 from test_reports import cit, profile
 
+from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.labor_assets import AssetAdvance, LaborProjectCost
 from ai_accounting.kernel.exports import DEFAULT_CATEGORIES, EXPORT_KINDS, _export_obligations
@@ -79,6 +80,18 @@ def asset(cost_fen=1_600_000, **changes):
     }
 
 
+def activation(asset_id="asset"):
+    return {
+        "period": "2026-11",
+        "asset_id": asset_id,
+        "in_use_date": "2026-11-30",
+        "useful_life_months": 60,
+        "residual_fen": 0,
+        "benefit_area": "administration",
+        "rounding_policy": "floor_final_remainder",
+    }
+
+
 def application(amount=800_000, **changes):
     return {
         "period": "2026-11",
@@ -109,20 +122,29 @@ def chain(book, *, activated=True):
     )
     published = publish("labor-cost", "asset", "apply", "balance-paid")
     if activated:
-        save(
-            "asset_activation",
-            "activation",
+        with engine.store.connection(read_only=True) as connection:
+            evidence = engine.store.current_fact(connection, "asset").evidence
+        members = [
             {
-                "period": "2026-11",
-                "asset_id": "asset",
-                "in_use_date": "2026-11-30",
-                "useful_life_months": 60,
-                "residual_fen": 0,
-                "benefit_area": "administration",
-                "rounding_policy": "floor_final_remainder",
-            },
+                "subject_id": "activation",
+                "expected_revision": 0,
+                "data": activation(),
+            }
+        ]
+        batches = AssetBatches(engine)
+        preview = batches.prepare_activation_batch(
+            "activation-batch", "2026-11", members, evidence=evidence, expected_revision=0
         )
-        publish("activation")
+        batches.confirm_activation_batch(
+            "activation-batch",
+            "2026-11",
+            members,
+            evidence=evidence,
+            expected_revision=0,
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            request_id="activate-batch",
+        )
     return published
 
 
@@ -235,12 +257,24 @@ def test_public_types_do_not_accept_free_journals_or_implicit_business_dates(mod
 
 
 def test_same_labor_cost_cannot_create_another_asset_or_be_released_twice(book):
-    engine, save, publish = book
+    engine, save, _ = book
     chain(book)
     save("asset", "duplicate", asset())
     before = engine.ledger("2026-11")
+    with engine.store.connection(read_only=True) as connection:
+        evidence = engine.store.current_fact(connection, "asset").evidence
+    members = [
+        {"subject_id": "activation", "expected_revision": 1, "data": activation()},
+        {
+            "subject_id": "duplicate-activation",
+            "expected_revision": 0,
+            "data": activation("duplicate"),
+        },
+    ]
     with pytest.raises(KernelError) as error:
-        publish("duplicate")
+        AssetBatches(engine).prepare_activation_batch(
+            "activation-batch", "2026-11", members, evidence=evidence, expected_revision=1
+        )
     assert error.value.code == "project_cost_overallocated"
     assert engine.ledger("2026-11") == before
 

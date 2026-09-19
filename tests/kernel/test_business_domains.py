@@ -6,6 +6,7 @@ from decimal import Decimal, localcontext
 
 import pytest
 from pydantic import ValidationError
+from schema_fixture import test_bundle
 
 from ai_accounting.kernel.contracts import (
     Calculation,
@@ -298,7 +299,13 @@ def test_accounting_domains_publish_to_generated_strict_tables(tmp_path):
     registry = Registry()
     for module in (transactions, assets, taxes):
         module.register(registry)
-    store = Store.create(tmp_path / "company.sqlite3", registry, "company", "taxpayer", "instance")
+    store = Store.create(
+        tmp_path / "company.sqlite3",
+        test_bundle(registry),
+        "company",
+        "taxpayer",
+        "instance",
+    )
     engine = Engine(store)
     evidence = engine.register_evidence(
         b"test invoice", "text/plain", "invoice", request_id="evidence"

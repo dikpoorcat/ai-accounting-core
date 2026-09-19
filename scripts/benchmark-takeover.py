@@ -26,7 +26,7 @@ from ai_accounting.kernel.engine import PROGRAM_VERSION, Engine
 from ai_accounting.kernel.http import create_server
 from ai_accounting.kernel.jobs import JobRunner
 from ai_accounting.kernel.materials import Column, Materials, Specification, inspect_bytes
-from ai_accounting.kernel.service import LocalService, default_registry
+from ai_accounting.kernel.service import LocalService
 
 MIB = 1024 * 1024
 
@@ -136,7 +136,7 @@ class SQLCounter:
 
 
 def make_engine(root):
-    catalog = Catalog(root, default_registry())
+    catalog = Catalog(root)
     company = catalog.create_company("91310000123456789A", "合成接管性能验证")
     return catalog, Engine(catalog.bind(company["id"]))
 

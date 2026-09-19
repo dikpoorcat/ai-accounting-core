@@ -23,10 +23,11 @@ from ai_accounting.kernel.daemon import build_native_security_controller
 from ai_accounting.kernel.http import create_server
 from ai_accounting.kernel.jobs import JobRunner
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.security import IdentityError, consume_close_approval
 from ai_accounting.kernel.security.credentials import InMemoryCredentialStore
 from ai_accounting.kernel.security.windows import read_protected_json, write_protected_json
-from ai_accounting.kernel.service import LocalService, default_registry
+from ai_accounting.kernel.service import LocalService
 
 PASSWORD = SecretStr("Synthetic-resident-owner-123")
 TAXPAYER = "91310000123456789A"
@@ -467,6 +468,8 @@ def test_stale_build_is_stopped_and_replaced_by_actual_resident_process(resident
     write_protected_json(
         root / ".service.json",
         {
+            "protocol": 2,
+            "database_format": service.catalog.database_format(),
             "pid": os.getpid(),
             "port": server.server_port,
             "capability": capability,
@@ -505,10 +508,12 @@ def test_copied_service_metadata_cannot_select_or_stop_another_catalog(resident,
     from ai_accounting.kernel.security.windows import write_protected_json
 
     service, server, capability, http, _ = resident
-    other = Catalog(tmp_path / "different-root", default_registry())
+    other = Catalog(tmp_path / "different-root", production_bundle())
     write_protected_json(
         other.root / ".service.json",
         {
+            "protocol": 2,
+            "database_format": service.catalog.database_format(),
             "pid": os.getpid(),
             "port": server.server_port,
             "capability": capability,
@@ -542,7 +547,7 @@ def test_malformed_security_json_returns_stable_redacted_errors(resident, raw, e
 
 
 def make_company(root):
-    catalog = Catalog(root, default_registry())
+    catalog = Catalog(root, production_bundle())
     company = catalog.create_company(TAXPAYER, "合成恢复企业")
     return catalog, company, catalog.bind(company["id"])
 
@@ -586,7 +591,7 @@ def test_background_failures_stop_after_three_attempts_across_restart(tmp_path):
     blocker.write_text("synthetic filesystem failure")
     schedule_backup(store, blocker)
     for _ in range(5):
-        JobRunner(Catalog(catalog.root, default_registry())).run_once()
+        JobRunner(Catalog(catalog.root, production_bundle())).run_once()
     failed = job(store)
     assert failed["status"] == "failed" and failed["attempts"] == 3
     assert failed["last_error"]
@@ -657,12 +662,12 @@ def test_company_operation_survives_real_process_exit(tmp_path, kind, stage):
     script = """
 import os,sys
 from ai_accounting.kernel.catalog import Catalog
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 root,kind,stage,archive = sys.argv[1:]
 def crash(point):
     if point == stage:
         os._exit(76)
-catalog = Catalog(root, default_registry(), fault=crash)
+catalog = Catalog(root, production_bundle(), fault=crash)
 if kind == 'create':
     catalog.create_company('91310000123456789A','合成恢复企业')
 else:
@@ -674,7 +679,7 @@ else:
         timeout=30,
     )
     assert process.returncode == 76, process.stderr.decode("utf-8", errors="replace")
-    recovered = Catalog(root, default_registry())
+    recovered = Catalog(root, production_bundle())
     companies = recovered.companies()
     assert len(companies) == 1 and recovered.operations()[0]["status"] == "succeeded"
     with recovered.bind(companies[0]["id"]).connection(read_only=True) as connection:
@@ -688,4 +693,4 @@ else:
                 == b"retained synthetic evidence"
             )
     assert len(list(root.glob("*/company.sqlite"))) == 1
-    assert Catalog(root, default_registry()).companies() == companies
+    assert Catalog(root, production_bundle()).companies() == companies

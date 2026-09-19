@@ -1,7 +1,8 @@
 """Verify a relocated software bundle using only its isolated interpreter.
 
-All business data below is synthetic and written beside, never inside, the
-software package. The generated ZIP therefore contains software only.
+All business data below is synthetic. Most is written beside the relocated
+package; the default-launcher check writes only after the software-only ZIP has
+already been generated.
 """
 
 from __future__ import annotations
@@ -23,23 +24,35 @@ from pathlib import Path
 
 _SERVICES = {}
 _RUNNERS = {}
+_PRIVATE_NATIVE = {}
 
 
-def assert_current_contracts(app, company_id):
-    """Check installed modules and real synthetic database versions together."""
-    from ai_accounting.kernel.catalog import VERSION as CATALOG_VERSION
+def assert_current_formats(app, company_id):
+    """Check installed contracts and real synthetic database formats together."""
     from ai_accounting.kernel.runtime import connect
-    from ai_accounting.kernel.schema import VERSION as BUSINESS_VERSION
+    from ai_accounting.kernel.schema_bundle import production_bundle
+    from ai_accounting.kernel.versions import database_format
 
-    assert (BUSINESS_VERSION, CATALOG_VERSION) == (11, 3)
+    bundle = production_bundle()
+    expected = {
+        kind: {
+            "family": contract["family"],
+            "kind": contract["kind"],
+            "status": contract["status"],
+            "version": contract["version"],
+            "fingerprint": contract["sha256"],
+        }
+        for kind in ("catalog", "company")
+        for contract in (bundle.current(kind),)
+    }
     with app.engine(company_id).store.connection(read_only=True) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
-        assert connection.execute("SELECT schema_version FROM identity").fetchone()[0] == 11
+        assert database_format(connection, bundle=bundle, kind="company") == expected["company"]
     connection = connect(app.catalog.path, read_only=True)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert database_format(connection, bundle=bundle, kind="catalog") == expected["catalog"]
     finally:
         connection.close()
+    return expected
 
 
 def business_contract(value):
@@ -71,9 +84,9 @@ def start_resident(root, *, native_smoke=False):
     """Exercise the exact daemon components using exclusively synthetic owners."""
     from pydantic import SecretStr
 
+    from ai_accounting.kernel.daemon import build_native_security_controller
     from ai_accounting.kernel.http import create_server
     from ai_accounting.kernel.jobs import JobRunner
-    from ai_accounting.kernel.security.native import NativeSecurityController
     from ai_accounting.kernel.security.transport import (
         NativeHttpClient,
         WindowBridge,
@@ -87,9 +100,13 @@ def start_resident(root, *, native_smoke=False):
     password = SecretStr("Synthetic-package-owner-only-2026")
     app.security.provision("package-test-owner", password)
     server, capability = create_server(app, port=0)
-    controller = NativeSecurityController(app.security, window_opener=lambda request_id: None)
+    controller = build_native_security_controller(
+        app, server, capability, window_opener=lambda request_id: None
+    )
     app.security_controller = controller
     metadata = {
+        "protocol": 2,
+        "database_format": app.catalog.database_format(),
         "pid": os.getpid(),
         "port": server.server_port,
         "capability": capability,
@@ -109,6 +126,7 @@ def start_resident(root, *, native_smoke=False):
         capability=capability,
         catalog_instance_id=app.security.catalog_instance_id,
     )
+    _PRIVATE_NATIVE[root] = (client, password)
 
     if native_smoke:
         spawned = []
@@ -182,6 +200,7 @@ def stop_residents():
             thread.join(timeout=5)
             server.server_close()
     _SERVICES.clear()
+    _PRIVATE_NATIVE.clear()
 
 
 atexit.register(stop_residents)
@@ -221,14 +240,11 @@ def main():
         module = importlib.import_module("ai_accounting.kernel." + name)
         assert Path(module.__file__).resolve().is_relative_to(package)
         assert "kernel/" + name + ".py" in manifest["application_modules"]
-    for name in (
-        "v9_business.json",
-        "v10_business.json",
-        "v11_business.json",
-        "recorded_business_v10_pre_account_indexes.json",
-        "v3_catalog.json",
-    ):
-        assert (package / "app/ai_accounting/kernel/migrations" / name).is_file()
+    contracts = package / "app/ai_accounting/kernel/schema_contracts"
+    assert sorted(
+        path.relative_to(contracts).as_posix() for path in contracts.rglob("*.json")
+    ) == ["catalog/draft.json", "company/draft.json"]
+    assert not (package / "app/ai_accounting/kernel/migrations").exists()
     assert sqlite3.sqlite_version == manifest["runtime"]["sqlite"] == "3.53.1"
     assert sys.version.split()[0] == manifest["runtime"]["python"] == "3.12.13"
     template_bytes = len(_template_bytes())
@@ -274,6 +290,34 @@ def main():
             "needs_information",
         }, response
         return response
+
+    def wait_for_backup(company_id, queued, *, root=data_root):
+        assert queued["status"] == "pending"
+        deadline = time.monotonic() + 30
+        while True:
+            jobs = call("jobs", {"company_id": company_id}, root=root)
+            backup_job = next(row for row in jobs if row["id"] == queued["job_id"])
+            if backup_job["status"] == "succeeded":
+                return backup_job["result"]
+            assert backup_job["status"] != "failed", "Automatic backup failed"
+            assert time.monotonic() < deadline, "Automatic backup did not complete"
+            time.sleep(0.1)
+
+    def approve_close(company, period, preview, *, root=data_root):
+        app = _SERVICES[root][0]
+        client, password = _PRIVATE_NATIVE[root]
+        request = app.security_controller.request(
+            kind="approve_period_close",
+            company_id=company["id"],
+            database_id=company["database_id"],
+            period=period,
+            calculation_hash=preview["digest"],
+            epochs=preview["epochs"],
+        )
+        approved = client.call("native_execute", request["request_id"], password=password)
+        client.call("native_update", request["request_id"], status="succeeded")
+        assert app.security_controller.status(request["request_id"])["status"] == "succeeded"
+        return approved["approval_id"]
 
     schema = call("schema", {})
     assert {"expense", "cash_payment", "cash_funding", "labor"} <= schema["facts"].keys()
@@ -334,7 +378,8 @@ def main():
     readiness_request = {**overview_request, "as_of": "2026-09-30"}
     business = business_contract(call("business_status", business_request))
     readiness = readiness_contract(call("period_readiness", readiness_request))
-    assert_current_contracts(_SERVICES[data_root][0], company_id)
+    database_formats = assert_current_formats(_SERVICES[data_root][0], company_id)
+    assert manifest["runtime"]["database_formats"] == database_formats
     queued = call(
         "backup",
         {
@@ -343,17 +388,7 @@ def main():
             "request_id": "package-backup",
         },
     )
-    assert queued["status"] == "pending"
-    deadline = time.monotonic() + 30
-    while True:
-        jobs = call("jobs", {"company_id": company_id})
-        backup_job = next(row for row in jobs if row["id"] == queued["job_id"])
-        if backup_job["status"] == "succeeded":
-            backup = backup_job["result"]
-            break
-        assert backup_job["status"] != "failed", "Automatic backup failed"
-        assert time.monotonic() < deadline, "Automatic backup did not complete"
-        time.sleep(0.1)
+    backup = wait_for_backup(company_id, queued)
     restored_root = validation / "restored"
     restored = call(
         "restore_company",
@@ -366,11 +401,94 @@ def main():
     )
     assert restored["id"] == company_id and restored["database_id"] == company["database_id"]
     assert call("overview", overview_request, root=restored_root) == overview
-    assert_current_contracts(_SERVICES[restored_root][0], company_id)
+    assert assert_current_formats(_SERVICES[restored_root][0], company_id) == database_formats
     restored_business = call("business_status", business_request, root=restored_root)
     restored_readiness = call("period_readiness", readiness_request, root=restored_root)
     assert business_contract(restored_business) == business
     assert readiness_contract(restored_readiness) == readiness
+
+    from ai_accounting.kernel.periods import MATERIAL_CATEGORIES
+
+    close_company = call(
+        "create_company", {"taxpayer_id": "91310000123456789B", "name": "运行包合成关账企业"}
+    )
+    close_company_id = close_company["id"]
+    close_period = "2026-08"
+    close_proof = call(
+        "evidence",
+        {
+            "company_id": close_company_id,
+            "content_base64": base64.b64encode(
+                b"Explicit synthetic no-business close confirmation"
+            ).decode("ascii"),
+            "media_type": "text/plain",
+            "name": "合成无业务关账确认",
+            "request_id": "package-close-evidence",
+        },
+    )["digest"]
+    for category in MATERIAL_CATEGORIES:
+        call(
+            "inventory",
+            {
+                "company_id": close_company_id,
+                "period": close_period,
+                "category": category,
+                "evidence": [],
+                "expected": 0,
+                "no_business": True,
+                "confirmation_evidence": close_proof,
+                "request_id": f"package-close-inventory-{category}",
+            },
+        )
+    close_preview = call(
+        "preview_close",
+        {
+            "company_id": close_company_id,
+            "period": close_period,
+            "owner_confirmation": close_proof,
+        },
+    )
+    approval_id = approve_close(close_company, close_period, close_preview)
+    closed = call(
+        "close",
+        {
+            "company_id": close_company_id,
+            "period": close_period,
+            "owner_confirmation": close_proof,
+            "preview_digest": close_preview["digest"],
+            "epochs": close_preview["epochs"],
+            "approval_id": approval_id,
+            "request_id": "package-close",
+            "backup_directory": str(validation / "closed-backups"),
+        },
+    )
+    assert closed["status"] == "closed" and closed["backup_job"]
+    frozen_close = call(
+        "closed_report", {"company_id": close_company_id, "period": close_period}
+    )
+    close_backup = wait_for_backup(
+        close_company_id, {"status": "pending", "job_id": closed["backup_job"]}
+    )
+    close_restored_root = validation / "closed-restored"
+    close_restored = call(
+        "restore_company",
+        {
+            "archive": close_backup["path"],
+            "taxpayer_id": close_company["taxpayer_id"],
+            "name": "运行包合成关账恢复企业",
+        },
+        root=close_restored_root,
+    )
+    assert close_restored["id"] == close_company_id
+    assert close_restored["database_id"] == close_company["database_id"]
+    assert (
+        call(
+            "closed_report",
+            {"company_id": close_company_id, "period": close_period},
+            root=close_restored_root,
+        )
+        == frozen_close
+    )
 
     for launcher in (
         [str(package / "finance-local.cmd")],
@@ -392,7 +510,56 @@ def main():
             text=True,
             encoding="utf-8",
         )
-        assert json.loads(result.stdout)[0]["id"] == company_id
+        assert {item["id"] for item in json.loads(result.stdout)} == {
+            company_id, close_company_id,
+        }
+
+    default_environment = {
+        key: value for key, value in os.environ.items() if key != "FINANCE_DATA_ROOT"
+    }
+    default_root = package / "data/kernel-draft"
+    try:
+        result = subprocess.run(
+            [str(package / "finance-local.cmd"), "call", "schema"],
+            cwd=package,
+            env=default_environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert json.loads(result.stdout)["database_formats"] == database_formats
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(package / "finance-local.ps1"),
+                "service-info",
+            ],
+            cwd=package,
+            env=default_environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        default_metadata = json.loads(result.stdout)
+        assert default_metadata["protocol"] == 2
+        assert default_metadata["database_format"] == database_formats["catalog"]
+    finally:
+        subprocess.run(
+            [str(package / "finance-local.cmd"), "stop"],
+            cwd=package,
+            env=default_environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+    assert (default_root / "catalog.sqlite").is_file()
 
     import anyio
     from mcp import ClientSession, StdioServerParameters
@@ -551,16 +718,17 @@ def main():
                 "credit_fen": 123456,
                 "backup_verified_and_restored": True,
                 "background_backup_without_manual_run": True,
+                "native_approved_close_backup_restored_and_frozen": True,
                 "relative_imports_only": True,
                 "http_page_and_authenticated_api": True,
                 "dashboard_five_routes_and_legacy_entries": True,
                 "dashboard_seven_authenticated_queries": True,
-                "business_schema_version": 11,
-                "catalog_schema_version": 3,
+                "database_formats": database_formats,
                 "cli_mcp_business_status_and_period_readiness": True,
                 "dashboard_current_schemas_and_collections": True,
                 "dashboard_integer_cent_strings": True,
                 "relative_cmd_and_powershell_launchers": True,
+                "launchers_default_to_packaged_draft_root": True,
                 "stdio_mcp_handshake_and_query": True,
                 "native_pythonw_window_and_private_transport": True,
                 "tk_form_synthetic_login": True,

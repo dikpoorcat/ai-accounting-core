@@ -8,13 +8,12 @@ from ai_accounting.kernel.command_schema import command_models, validate_command
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.materials import Materials, check_completeness
-from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.types import YearMonth
 
 
 @pytest.fixture
 def source(tmp_path):
-    catalog = Catalog(tmp_path / "root", default_registry())
+    catalog = Catalog(tmp_path / "root")
     company = catalog.create_company("91310000123456789A", "Synthetic material pagination")
     engine = Engine(catalog.bind(company["id"]))
     raw = b"reference,amount\n" + b"synthetic,1.23\n" * 249 + b"last,missing\n"

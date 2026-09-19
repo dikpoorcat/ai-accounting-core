@@ -4,6 +4,7 @@ import json
 from typing import ClassVar
 
 import pytest
+from schema_fixture import test_bundle
 from test_banking import book as _bank_book
 from test_banking import entry, funding, opening, reconciliation, statement
 from test_engine import close, publish, save
@@ -20,6 +21,7 @@ from test_reports import book as _report_book
 from test_reports import cit
 from test_reports import profile as report_profile
 
+from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import Fact, Line, Outcome, Registry
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.display import Display
@@ -27,7 +29,7 @@ from ai_accounting.kernel.domains.assets import AssetAcquisition, AssetActivatio
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.http import wire_money
 from ai_accounting.kernel.reports import Reports
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import PositiveFen
 
@@ -368,23 +370,60 @@ def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path
         cost_fen=120000,
         acquisition_basis="direct_purchase",
     )
-    company.save(asset, "computer")
-    company.save(
-        AssetActivation(
-            period="2026-01",
-            asset_id="computer",
-            in_use_date="2026-01-05",
-            useful_life_months=12,
-            residual_fen=0,
-            benefit_area="administration",
-            rounding_policy="floor_final_remainder",
-        ),
-        "computer-use",
+    saved = company.save(asset, "computer")
+    company.publish("computer")
+    activation_fact = AssetActivation(
+        period="2026-01",
+        asset_id="computer",
+        in_use_date="2026-01-05",
+        useful_life_months=12,
+        residual_fen=0,
+        benefit_area="administration",
+        rounding_policy="floor_final_remainder",
     )
-    company.publish("computer", "computer-use")
+    with company.engine.store.connection(read_only=True) as connection:
+        evidence = company.engine.store.fact(connection, saved["fact_id"]).evidence
+    batches = AssetBatches(company.engine)
+    members = [
+        {
+            "subject_id": "computer-use",
+            "expected_revision": 0,
+            "data": activation_fact.model_dump(mode="json"),
+        }
+    ]
+    options = {"evidence": evidence, "expected_revision": 0}
+    preview = batches.prepare_activation_batch(
+        "activation-batch", "2026-01", members, **options
+    )
+    batches.confirm_activation_batch(
+        "activation-batch",
+        "2026-01",
+        members,
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
     company.close("2026-01")
     company.save(asset.model_copy(update={"cost_fen": 132000}), "computer", revision=1)
-    company.publish("computer", correction_period="2026-02")
+    members[0]["expected_revision"] = 1
+    correction_options = {
+        "evidence": evidence,
+        "expected_revision": 1,
+        "correction_period": "2026-02",
+    }
+    preview = batches.prepare_activation_batch(
+        "activation-batch", "2026-01", members, **correction_options
+    )
+    batches.confirm_activation_batch(
+        "activation-batch",
+        "2026-01",
+        members,
+        **correction_options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=company.request(),
+    )
     dashboard = Dashboard(company.engine)
     january = dashboard.assets("2026-01")["data"]
     february = dashboard.assets("2026-02")["data"]
@@ -398,22 +437,47 @@ def test_closed_asset_cost_correction_is_adjustment_not_new_acquisition(tmp_path
 
 
 def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
-    book, store, commit, _ = bank_book
+    book, store, commit, proof = bank_book
     store("reimbursed_asset_batch", "batch", accepted_batch())
     store("reimbursed_asset", "computer", batch_card())
     store("reimbursed_asset", "chair", batch_card(30000))
-    store("asset_activation", "computer-use", activation())
-    store("asset_activation", "chair-use", activation(asset_id="chair"))
-    commit("batch", "computer", "chair", "computer-use", "chair-use")
+    commit("batch", "computer", "chair")
+    batches = AssetBatches(book)
+    members = [
+        {"subject_id": "computer-use", "expected_revision": 0, "data": activation()},
+        {
+            "subject_id": "chair-use",
+            "expected_revision": 0,
+            "data": activation(asset_id="chair"),
+        },
+    ]
+    options = {"evidence": (proof,), "expected_revision": 0}
+    preview = batches.prepare_activation_batch(
+        "activation-batch", "2026-02", members, **options
+    )
+    batches.confirm_activation_batch(
+        "activation-batch",
+        "2026-02",
+        members,
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="activate-batch",
+    )
     february = Dashboard(book).assets("2026-02")["data"]
     assert february["registered_count"] == 2
     assert february["card_cost_fen"] == february["ledger_cost_fen"] == 150000
     assert february["reconciled"]
     assert all(item["acquisition_date"] is None for item in february["fixed"]["items"])
     assert all(item["acquisition_reference"] == "1" for item in february["fixed"]["items"])
-    for ident in ("computer", "chair"):
-        store("asset_consumption", ident + "-march", {"period": "2026-03", "asset_id": ident})
-    commit("computer-march", "chair-march")
+    preview = batches.prepare_consumption_month("2026-03", **options)
+    batches.confirm_consumption_month(
+        "2026-03",
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="consume-march",
+    )
     march = Dashboard(book).assets("2026-03")["data"]
     assert march["month_charge_fen"] == 12500
     assert march["card_net_fen"] == march["ledger_net_fen"] == 137500
@@ -428,7 +492,20 @@ def test_batch_asset_cards_depreciation_and_disposal_use_single_cost(bank_book):
             "gross_proceeds_fen": 0,
         },
     )
-    commit("computer-scrap")
+    amended_members = [dict(item, expected_revision=1) for item in members]
+    activation_options = {"evidence": (proof,), "expected_revision": 1}
+    preview = batches.prepare_activation_batch(
+        "activation-batch", "2026-02", amended_members, **activation_options
+    )
+    batches.confirm_activation_batch(
+        "activation-batch",
+        "2026-02",
+        amended_members,
+        **activation_options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="activate-after-disposal",
+    )
     disposed = Dashboard(book).assets("2026-03")["data"]
     assert disposed["reconciled"]
     assert disposed["active_count"] == 1
@@ -513,7 +590,11 @@ def test_empty_catalog_company_and_money_precision(bank_book, tmp_path):
     book, store, commit, _ = bank_book
     empty = Engine(
         Store.create(
-            tmp_path / "empty.sqlite", default_registry(), "empty", "911100000000000002", "empty-db"
+            tmp_path / "empty.sqlite",
+            production_bundle(),
+            "empty",
+            "911100000000000002",
+            "empty-db",
         )
     )
     assert Dashboard(empty).context()["periods"] == []
@@ -564,7 +645,7 @@ def test_unmapped_month_account_is_reported_instead_of_silently_dropped(tmp_path
     engine = Engine(
         Store.create(
             tmp_path / "unmapped-account.sqlite",
-            registry,
+            test_bundle(registry),
             "company-u",
             "91310000123456789U",
             "db-u",

@@ -13,7 +13,7 @@ from ai_accounting.kernel.domains.transactions import Allocation, Overpayment, P
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.materials import Materials
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import YearMonth, canonical
 
@@ -23,7 +23,7 @@ class Company:
         self.engine = Engine(
             Store.create(
                 path,
-                default_registry(),
+                production_bundle(),
                 "payroll-company",
                 "91310000123456789A",
                 "payroll-db",

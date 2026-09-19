@@ -3,9 +3,12 @@
 import pytest
 from test_reimbursement_assets import (
     accepted_batch,
+    activate_assets,
     activation,
     asset,
     batch_card,
+    consume_assets,
+    fact_evidence,
     pay,
     result,
 )
@@ -23,11 +26,23 @@ def test_batch_cost_correction_recalculates_activation_and_consumption_without_c
     save("reimbursed_asset_batch", "batch", accepted_batch())
     save("reimbursed_asset", "computer", batch_card())
     save("reimbursed_asset", "chair", batch_card(30000))
-    save("asset_activation", "activation", activation())
-    save("asset_consumption", "march", {"period": "2026-03", "asset_id": "computer"})
+    accepted = publish("batch", "computer", "chair")
+    evidence = fact_evidence(engine, "batch")
+    activated = activate_assets(
+        engine,
+        "activation-batch",
+        "2026-02",
+        [("activation", activation())],
+        evidence,
+    )
     save("payment", "paid", pay("reimbursed_asset_batch", "batch", "alice", "alice", 90000))
-    initial = publish("batch", "computer", "chair", "activation", "march", "paid")
-    before_numbers = {item["subject_id"]: item["voucher_number"] for item in initial["results"]}
+    paid = publish("paid")
+    consumed, consumption_subjects = consume_assets(engine, "2026-03", evidence)
+    before_numbers = {
+        item["subject_id"]: item["voucher_number"]
+        for response in (accepted, activated, paid, consumed)
+        for item in response["results"]
+    }
     with engine.store.connection(read_only=True) as connection:
         payment_fact = engine.store.current_fact(connection, "paid")
     save(
@@ -47,14 +62,31 @@ def test_batch_cost_correction_recalculates_activation_and_consumption_without_c
         revision=1,
     )
     with pytest.raises(KernelError) as error:
-        publish("batch")
+        activate_assets(
+            engine,
+            "activation-batch",
+            "2026-02",
+            [("activation", activation())],
+            evidence,
+            expected_revision=1,
+            request_id="reject-mismatched-acceptance",
+        )
     assert error.value.code == "asset_acceptance_conflict"
-    assert result(engine, "march")["values"]["consumption_fen"] == 10000
+    consumption_subject = consumption_subjects["computer"]
+    assert result(engine, consumption_subject)["values"]["consumption_fen"] == 10000
     save("reimbursed_asset", "computer", batch_card(150000), revision=1)
-    corrected = publish("batch", "computer")
+    corrected = activate_assets(
+        engine,
+        "activation-batch",
+        "2026-02",
+        [("activation", activation())],
+        evidence,
+        expected_revision=1,
+        request_id="correct-accepted-assets",
+    )
     for item in corrected["results"]:
         assert item["voucher_number"] == before_numbers[item["subject_id"]]
-    assert result(engine, "march")["values"]["consumption_fen"] == 12500
+    assert result(engine, consumption_subject)["values"]["consumption_fen"] == 12500
     assert result(engine, "activation")["values"]["cost_fen"] == 150000
     assert result(engine, "paid")["values"]["amount_fen"] == 90000
     with engine.store.connection(read_only=True) as connection:

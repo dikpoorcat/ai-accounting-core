@@ -71,11 +71,24 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
     assert source["obligations"][0]["paid_fen"] == 600
     assert source["obligations"][0]["remaining_fen"] == 1400
     assert source["current_followups"]["obligations"][0]["paid_fen"] == 650
-    assert source["movements_page"]["total_count"] == 6
-    assert source["movements_page"]["returned_count"] == len(source["movements"]) == 2
+    assert "movements" not in source and "movements_page" not in source
+    historical = dashboard.business_status(
+        "2026-01",
+        "prior-net",
+        section="settlement_events",
+        limit=2,
+        expected_version=response["snapshot_version"],
+        settlement_view="historical",
+    )["data"]
+    first_page = historical["collections"]["settlement_events"]
+    assert historical["settlements"]["movements"] == []
+    assert historical["settlements"]["movement_count"] == 6
+    assert first_page["page"]["total_count"] == 6
+    assert first_page["page"]["returned_count"] == len(first_page["items"]) == 2
+    assert {item["posting_period"] for item in first_page["items"]} == {"2026-01"}
     assert summary_modes and all(summary_modes)
-    seen = {item["id"] for item in source["movements"]}
-    cursor = source["movements_page"]["next_cursor"]
+    seen = {item["id"] for item in first_page["items"]}
+    cursor = first_page["page"]["next_cursor"]
     assert cursor
     while cursor:
         following = dashboard.business_status(
@@ -107,7 +120,7 @@ def test_many_payments_page_from_employee_source_into_exact_historical_business(
             "prior-net",
             section="settlement_events",
             limit=2,
-            cursor=source["movements_page"]["next_cursor"],
+            cursor=first_page["page"]["next_cursor"],
             expected_version=response["snapshot_version"],
             settlement_view="current",
         )

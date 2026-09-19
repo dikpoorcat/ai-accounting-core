@@ -12,13 +12,13 @@ from ai_accounting.kernel.contracts import KernelError, NeedsInformation, Read
 from ai_accounting.kernel.domains import banking, taxes, transactions
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
 class Company:
     def __init__(self, path):
-        self.engine = Engine(Store.create(path, default_registry(), "tax-test", "taxpayer", "db"))
+        self.engine = Engine(Store.create(path, production_bundle(), "tax-test", "taxpayer", "db"))
         self.counter = 0
         self.revisions = {}
         self.filing = self.engine.register_evidence(

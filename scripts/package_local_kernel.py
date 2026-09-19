@@ -126,9 +126,9 @@ def copy_application(output: Path):
     # separately above; legacy ORM/services are deliberately not imported.
     for name in ("cli", "http", "mcp", "exports", "reports", "workflow"):
         importlib.import_module("ai_accounting.kernel." + name)
-    from ai_accounting.kernel.service import default_registry
+    from ai_accounting.kernel.schema_bundle import production_bundle
 
-    default_registry().schemas()
+    production_bundle().registry.schemas()
     source_package = REPOSITORY / "src/ai_accounting"
     selected = set((source_package / "kernel").rglob("*.py"))
     selected.discard(source_package / "kernel/security/legacy.py")
@@ -152,7 +152,8 @@ def copy_application(output: Path):
         raise ValueError("The local runtime unexpectedly imports legacy persistence")
     for source in sorted(selected):
         copy_file(source, output / "app/ai_accounting" / source.relative_to(source_package))
-    for source in (source_package / "kernel/migrations").glob("*.json"):
+    contracts = source_package / "kernel/schema_contracts"
+    for source in contracts.rglob("*.json"):
         copy_file(source, output / "app/ai_accounting" / source.relative_to(source_package))
     from ai_accounting.financial_statement_template import TEMPLATE_FILE_NAME, _template_bytes
 
@@ -179,7 +180,12 @@ def bundle_manifest(output, dependencies, modules):
             "utf8",
             "-c",
             "import json,sqlite3,sys; from ai_accounting.kernel.build import calculator_build_id; "
-            "print(json.dumps({'python':sys.version.split()[0],'sqlite':sqlite3.sqlite_version,'build_id':calculator_build_id(),'isolated':sys.flags.isolated}))",
+            "from ai_accounting.kernel.schema_bundle import production_bundle; "
+            "b=production_bundle(); "
+            "formats={k:b.database_format(k) for k in ('catalog','company')}; "
+            "print(json.dumps({'python':sys.version.split()[0],'sqlite':sqlite3.sqlite_version,"
+            "'build_id':calculator_build_id(),'isolated':sys.flags.isolated,"
+            "'database_formats':formats}))",
         ],
         cwd=output,
         check=True,
@@ -230,11 +236,15 @@ def main():
     dependencies = copy_dependencies(output)
     modules = copy_application(output)
     (output / "finance-local.cmd").write_text(
-        '@echo off\nsetlocal\n"%~dp0runtime\\python.exe" -I -X utf8 '
+        '@echo off\nsetlocal\nif not defined FINANCE_DATA_ROOT '
+        'set "FINANCE_DATA_ROOT=%~dp0data\\kernel-draft"\n'
+        '"%~dp0runtime\\python.exe" -I -X utf8 '
         "-m ai_accounting.kernel.cli %*\nexit /b %errorlevel%\n",
         encoding="ascii",
     )
     (output / "finance-local.ps1").write_text(
+        'if (-not $env:FINANCE_DATA_ROOT) { '
+        '$env:FINANCE_DATA_ROOT = Join-Path $PSScriptRoot "data/kernel-draft" }\n'
         '& (Join-Path $PSScriptRoot "runtime/python.exe") -I -X utf8 '
         "-m ai_accounting.kernel.cli @args\nexit $LASTEXITCODE\n",
         encoding="utf-8",
@@ -246,10 +256,12 @@ def main():
         "本地会计内核运行包（Windows x64）\n\n"
         "不需要安装 Python、SQLite、PostgreSQL 或 Node.js。\n"
         "所有命令通过包内 finance-local.cmd 或 finance-local.ps1 运行。\n"
-        "示例：finance-local.cmd --root D:\\会计资料 serve\n"
-        "MCP：finance-local.cmd --root D:\\会计资料 mcp\n"
+        "默认资料目录：包内 data\\kernel-draft。\n"
+        "示例：finance-local.cmd serve\n"
+        "MCP：finance-local.cmd mcp\n"
+        "另选资料目录：finance-local.cmd --root D:\\会计资料 serve\n"
         "命令说明：finance-local.cmd --help\n"
-        "公司数据由 --root 指定，运行包中没有任何公司账务和登录凭据。\n"
+        "初始运行包中没有任何公司账务和登录凭据。\n"
         "不要直接复制活动 SQLite 文件作为备份，请使用内核 backup 命令。\n",
         encoding="utf-8",
     )

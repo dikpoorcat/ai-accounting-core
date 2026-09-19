@@ -179,7 +179,7 @@ def test_closed_wage_four_paid_contributions_transfer_without_date_expense_or_ca
 
 
 @pytest.mark.parametrize("changed_cashflow", (None, "operating"))
-def test_acceptance_rejects_unknown_or_mixed_original_cashflow(book, changed_cashflow):
+def test_acceptance_rejects_unknown_or_mixed_original_cashflow(book, changed_cashflow, monkeypatch):
     engine, save, publish, *_ = book
     original = engine.store.registry.evaluators["payroll"]
 
@@ -192,7 +192,7 @@ def test_acceptance_rejects_unknown_or_mixed_original_cashflow(book, changed_cas
         return replace(outcome, values=outcome.values | {"obligations": obligations})
 
     # An isolated future calculator output cannot silently change repayment classification.
-    engine.store.registry.evaluators["payroll"] = changed_source
+    monkeypatch.setitem(engine.store.registry.evaluators, "payroll", changed_source)
     wage(save, publish)
     save(
         "reimbursement_acceptance",

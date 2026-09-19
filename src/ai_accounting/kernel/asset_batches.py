@@ -551,11 +551,17 @@ class AssetBatches:
                             "legacy_asset_member", "旧单卡发布结果保留历史，不能隐式收编或续写"
                         )
                 for read in version.fact.reads_for(sid):
-                    if read.source == "calculation" and not read.key.startswith("#"):
+                    # A pending lifecycle fact can itself need publication (for
+                    # example disposal after this month's consumption). It has
+                    # no saved calculation edge yet, so include declared fact
+                    # inputs as well as calculation inputs in the same graph.
+                    if read.source in {"fact", "calculation"} and not read.key.startswith("#"):
                         queue.extend(
                             v.subject_id
                             for v in select(Read("fact", read.kind, read.key, read.before_period))
-                            if v.subject_id in pending_subjects and v.subject_id not in facts
+                            if v.subject_id in pending_subjects
+                            and v.subject_id not in facts
+                            and v.fact.kind in self.store.registry.evaluators
                         )
                 # Existing dependants remain in one reviewed graph.
                 queue.extend(self.engine._descendants(connection, {sid}) - set(facts))

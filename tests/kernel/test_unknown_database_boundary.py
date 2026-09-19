@@ -12,8 +12,9 @@ from ai_accounting.kernel.backup import run_backup_jobs
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.permissions import adopt_private_file
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.security import IdentityError, SecurityService
-from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.storage import Store
 
 
@@ -22,6 +23,7 @@ def unknown_database(path):
         connection.execute("CREATE TABLE unrelated_original(value INTEGER)")
         connection.execute("INSERT INTO unrelated_original VALUES(123)")
         connection.commit()
+    adopt_private_file(path)
     return path
 
 
@@ -51,7 +53,7 @@ def open_only(factory):
     "entry", ["catalog_constructor", "catalog_connection", "store", "security", "backup_worker"]
 )
 def test_production_writers_reject_unknown_database_without_changing_it(tmp_path, entry):
-    registry = default_registry()
+    registry = production_bundle()
     if entry in {"catalog_connection", "security"}:
         catalog = Catalog(tmp_path, registry)
         security = SecurityService(catalog.path) if entry == "security" else None
@@ -78,7 +80,11 @@ def test_production_writers_reject_unknown_database_without_changing_it(tmp_path
     before = file_hash(path)
     with pytest.raises(KernelError) as error:
         invoke()
-    assert error.value.code in {"schema_fingerprint_mismatch", "schema_version_unsupported"}
+    assert error.value.code in {
+        "schema_fingerprint_mismatch",
+        "schema_version_unsupported",
+        "schema_family_unsupported",
+    }
     assert_untouched(path, before)
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
         assert connection.execute("SELECT value FROM unrelated_original").fetchone()[0] == 123
@@ -86,7 +92,7 @@ def test_production_writers_reject_unknown_database_without_changing_it(tmp_path
 
 @pytest.mark.parametrize("wrong_field", ["company_id", "database_id"])
 def test_valid_schema_wrong_company_identity_is_not_reconfigured(tmp_path, wrong_field):
-    registry = default_registry()
+    registry = production_bundle()
     actual = Store.create(tmp_path / "company.sqlite", registry, "company", "taxpayer", "database")
     delete_journal(actual.path)
     before = file_hash(actual.path)
@@ -103,7 +109,7 @@ def test_valid_schema_wrong_company_identity_is_not_reconfigured(tmp_path, wrong
 
 
 def test_security_checks_catalog_instance_before_mutating_replacement(tmp_path):
-    registry = default_registry()
+    registry = production_bundle()
     first, second = Catalog(tmp_path / "first", registry), Catalog(tmp_path / "second", registry)
     security = SecurityService(first.path)
     delete_journal(first.path)
@@ -120,7 +126,7 @@ def test_security_checks_catalog_instance_before_mutating_replacement(tmp_path):
 def test_file_change_after_read_probe_is_checked_on_actual_write_handle(
     tmp_path, monkeypatch, change
 ):
-    registry = default_registry()
+    registry = production_bundle()
     store = Store.create(tmp_path / "company.sqlite", registry, "company", "taxpayer", "database")
     delete_journal(store.path)
     replacement = None
@@ -159,14 +165,14 @@ def test_file_change_after_read_probe_is_checked_on_actual_write_handle(
     else:
         assert isinstance(error.value, KernelError)
         assert error.value.code == (
-            "company_mismatch" if change == "different_company" else "schema_version_unsupported"
+            "company_mismatch" if change == "different_company" else "schema_family_unsupported"
         )
         assert_untouched(store.path, before)
 
 
 def test_verified_existing_company_still_enables_wal_and_commits(tmp_path):
     store = Store.create(
-        tmp_path / "company.sqlite", default_registry(), "company", "taxpayer", "database"
+        tmp_path / "company.sqlite", production_bundle(), "company", "taxpayer", "database"
     )
     delete_journal(store.path)
     engine = Engine(store)

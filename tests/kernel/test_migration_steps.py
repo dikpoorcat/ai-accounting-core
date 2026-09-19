@@ -2,22 +2,30 @@
 
 import sqlite3
 from contextlib import closing
+from tempfile import TemporaryDirectory
 
 import pytest
+from schema_fixture import TEST_FAMILY, full_contract, write_contract
 
-from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.contracts import KernelError, Registry
 from ai_accounting.kernel.migration_steps import MigrationStep, TableReplacement
+from ai_accounting.kernel.schema_bundle import APPLICATION_ID, load_bundle
 from ai_accounting.kernel.versions import (
     HISTORY_DDL,
+    META_DDL,
     _execute_steps,
     contract,
     contract_fingerprint,
     execute_statements,
+    install_metadata,
     objects,
     record_version,
+    upgrade,
 )
 
-COMMON = """CREATE TABLE refs(id INTEGER PRIMARY KEY,ledger_id INTEGER NOT NULL
+COMMON = """CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1),company_id TEXT NOT NULL,
+ taxpayer_id TEXT NOT NULL,database_id TEXT NOT NULL) STRICT;
+CREATE TABLE refs(id INTEGER PRIMARY KEY,ledger_id INTEGER NOT NULL
  REFERENCES ledger(id) ON DELETE CASCADE) STRICT;
 """
 OLD_TABLE = (
@@ -39,29 +47,70 @@ OLD_TRIGGER = """CREATE TRIGGER ledger_guard BEFORE INSERT ON ledger
 TRIGGER = """CREATE TRIGGER ledger_guard BEFORE INSERT ON ledger
  BEGIN SELECT CASE WHEN NEW.memo='' THEN RAISE(ABORT,'empty memo') END; END"""
 SCRIPTS = {
-    1: HISTORY_DDL + OLD_TABLE + COMMON + OLD_INDEX + ";" + OLD_TRIGGER + ";",
-    2: HISTORY_DDL + MIDDLE_TABLE + COMMON + INDEX + ";" + TRIGGER + ";",
-    3: HISTORY_DDL + FINAL_TABLE + COMMON + INDEX + ";" + TRIGGER + ";",
+    1: META_DDL + HISTORY_DDL + OLD_TABLE + COMMON + OLD_INDEX + ";" + OLD_TRIGGER + ";",
+    2: META_DDL + HISTORY_DDL + MIDDLE_TABLE + COMMON + INDEX + ";" + TRIGGER + ";",
+    3: META_DDL + HISTORY_DDL + FINAL_TABLE + COMMON + INDEX + ";" + TRIGGER + ";",
 }
+
+
+def migration_bundle(steps=None, current=3):
+    steps = declarations() if steps is None else steps
+    with TemporaryDirectory(prefix="migration-contracts-") as directory:
+        previous = None
+        for version in (1, 2, 3):
+            value = full_contract(
+                SCRIPTS[version], kind="company", version=version, status="released"
+            )
+            if previous is not None:
+                before = {(r["type"], r["name"]): r for r in previous["objects"]}
+                after = {(r["type"], r["name"]): r for r in value["objects"]}
+                delta = {k: v for k, v in value.items() if k != "objects"}
+                delta.update(
+                    base_version=version - 1,
+                    base_sha256=previous["sha256"],
+                    add=[after[k] for k in sorted(after.keys() - before.keys())],
+                    remove=[
+                        {"type": k[0], "name": k[1]} for k in sorted(before.keys() - after.keys())
+                    ],
+                    replace=[
+                        after[k]
+                        for k in sorted(before.keys() & after.keys())
+                        if before[k] != after[k]
+                    ],
+                )
+                write_contract(directory, delta)
+            else:
+                write_contract(directory, value)
+            previous = value
+        write_contract(
+            directory,
+            full_contract(META_DDL + HISTORY_DDL, kind="catalog", version=1, status="released"),
+        )
+        return load_bundle(
+            Registry(),
+            directory,
+            family=TEST_FAMILY,
+            application_id=APPLICATION_ID,
+            status="released",
+            current_versions={"company": current, "catalog": 1},
+            steps=steps,
+        )
 
 
 def source(connection):
     execute_statements(connection, SCRIPTS[1])
-    connection.execute("PRAGMA user_version=1")
     connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("BEGIN")
+    connection.execute("INSERT INTO identity VALUES(1,'c','t','d')")
     connection.execute("INSERT INTO ledger VALUES(7,'kept',25)")
     connection.execute("INSERT INTO refs VALUES(4,7)")
-    record_version(connection, 1)
+    install_metadata(connection, migration_bundle(current=1), "company")
     connection.commit()
-
-
-def verify_source(connection):
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
 
 
 def finish(connection, step):
     connection.execute(f"PRAGMA user_version={step.target_version}")
-    record_version(connection, step.target_version)
+    record_version(connection, step.target_version, expected_fingerprint=step.target_sha256)
 
 
 def declarations(
@@ -100,7 +149,8 @@ def declarations(
 
     return (
         MigrationStep(
-            "business",
+            TEST_FAMILY,
+            "company",
             1,
             contract_fingerprint(SCRIPTS[1]).hex(),
             2,
@@ -109,7 +159,8 @@ def declarations(
             check_data,
         ),
         MigrationStep(
-            "business",
+            TEST_FAMILY,
+            "company",
             2,
             contract_fingerprint(SCRIPTS[2]).hex(),
             3,
@@ -122,14 +173,7 @@ def declarations(
 
 
 def run(connection, steps, **kwargs):
-    return _execute_steps(
-        connection,
-        steps,
-        kind="business",
-        verify_source=verify_source,
-        finish_step=finish,
-        **kwargs,
-    )
+    return upgrade(connection, bundle=migration_bundle(steps), **kwargs)
 
 
 def snapshot(connection):
@@ -221,7 +265,9 @@ def test_validation_and_declared_copy_failures_are_atomic(mode):
             from dataclasses import replace
 
             steps = (steps[0], replace(steps[1], target_sha256="0" * 64))
-        with pytest.raises((AssertionError, RuntimeError, KernelError, sqlite3.IntegrityError)):
+        with pytest.raises(
+            (AssertionError, RuntimeError, ValueError, KernelError, sqlite3.IntegrityError)
+        ):
             run(connection, steps)
         assert snapshot(connection) == before
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -233,7 +279,7 @@ def test_unknown_nearby_source_is_rejected_before_any_migration():
         connection.execute("DROP INDEX ledger_search")
         connection.execute("CREATE INDEX ledger_search ON ledger(amount)")
         before = snapshot(connection)
-        with pytest.raises(KernelError, match="迁移步骤"):
+        with pytest.raises(KernelError):
             run(connection, declarations())
         assert snapshot(connection) == before
 
@@ -255,7 +301,8 @@ def test_source_revalidated_after_lock_and_fk_restored_on_failure():
             _execute_steps(
                 connection,
                 declarations(),
-                kind="business",
+                kind="company",
+                bundle=migration_bundle(),
                 verify_source=changed_after_lock,
                 finish_step=finish,
             )
@@ -281,7 +328,7 @@ def test_competing_schema_change_between_probe_and_write_lock_is_rejected(tmp_pa
 
     with closing(sqlite3.connect(path, factory=Connection)) as connection:
         source(connection)
-        with pytest.raises(KernelError, match="精确结构合同"):
+        with pytest.raises(KernelError):
             run(connection, declarations())
         assert snapshot(connection) == changed[0]
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -331,32 +378,57 @@ def test_failed_fk_restoration_closes_connection(restore_failure):
 
 
 @pytest.mark.parametrize("damage", [None, "missing", "ambiguous", "wrong_hash", "wrong_kind"])
-def test_packaged_plan_requires_one_exact_declared_path(monkeypatch, damage):
+def test_real_loader_planner_executor_require_exact_declared_path(damage):
     from dataclasses import replace
 
-    import ai_accounting.kernel.versions as versions
-
-    # These versions exist only in this private in-memory test mapping.
-    source_contract = {
-        "version": 100,
-        "objects": contract(SCRIPTS[1]),
-        "sha256": contract_fingerprint(SCRIPTS[1]).hex(),
-    }
-    target_contract = {
-        "version": 101,
-        "objects": contract(SCRIPTS[2]),
-        "sha256": contract_fingerprint(SCRIPTS[2]).hex(),
-    }
-    step = replace(declarations()[0], source_version=100, target_version=101)
+    steps = declarations()
     if damage == "wrong_hash":
-        step = replace(step, target_sha256="0" * 64)
+        steps = (steps[0], replace(steps[1], target_sha256="0" * 64))
     elif damage == "wrong_kind":
-        step = replace(step, kind="catalog")
-    declared = () if damage == "missing" else ((step, step) if damage == "ambiguous" else (step,))
-    monkeypatch.setattr(versions, "_DECLARED_STEPS", declared)
-    monkeypatch.setattr(versions, "known_contracts", lambda kind: {101: target_contract})
-    if damage:
-        with pytest.raises(KernelError, match="迁移"):
-            versions._migration_plan("business", source_contract, target_contract)
-    else:
-        assert versions._migration_plan("business", source_contract, target_contract) == (step,)
+        steps = (replace(steps[0], kind="catalog"), steps[1])
+    elif damage == "missing":
+        steps = ()
+    elif damage == "ambiguous":
+        steps = (steps[0], steps[0], steps[1])
+    with closing(sqlite3.connect(":memory:")) as connection:
+        source(connection)
+        before = snapshot(connection)
+        if damage:
+            with pytest.raises((ValueError, KernelError)):
+                run(connection, steps)
+            assert snapshot(connection) == before
+        else:
+            assert run(connection, steps)
+            assert objects(connection) == contract(SCRIPTS[3])
+
+
+def test_direct_current_install_records_only_its_actual_version():
+    with closing(sqlite3.connect(":memory:")) as connection:
+        execute_statements(connection, SCRIPTS[3])
+        connection.execute("BEGIN")
+        connection.execute("INSERT INTO identity VALUES(1,'c','t','d')")
+        install_metadata(connection, migration_bundle(), "company")
+        assert connection.execute("SELECT version FROM schema_history").fetchall() == [(3,)]
+
+
+def test_declared_jump_does_not_invent_an_intermediate_installation():
+    from dataclasses import replace
+
+    first, second = declarations()
+
+    def apply(connection):
+        first.apply(connection)
+        second.apply(connection)
+
+    jump = replace(
+        first,
+        target_version=3,
+        target_sha256=second.target_sha256,
+        apply=apply,
+        validate_data=second.validate_data,
+        requires_fk_off=True,
+    )
+    with closing(sqlite3.connect(":memory:")) as connection:
+        source(connection)
+        assert run(connection, (jump,))
+        assert connection.execute("SELECT version FROM schema_history").fetchall() == [(1,), (3,)]

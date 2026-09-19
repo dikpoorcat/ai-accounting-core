@@ -11,7 +11,7 @@ import pytest
 
 from ai_accounting.kernel import backup, runtime
 from ai_accounting.kernel.schema import initialize
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 
 TAXPAYER = "91330100MA00000001"
 COMPANY = "company-a"
@@ -36,7 +36,7 @@ def company(tmp_path: Path) -> Path:
     path = tmp_path / "company.sqlite"
     connection = runtime.connect(path)
     try:
-        initialize(connection, default_registry(), COMPANY, TAXPAYER, DATABASE)
+        initialize(connection, production_bundle(), COMPANY, TAXPAYER, DATABASE)
     finally:
         connection.close()
     add_evidence(path, b"original invoice bytes")
@@ -265,8 +265,9 @@ def test_archive_digest_manifest_and_size_are_all_verified(company, tmp_path) ->
     entries = archive_entries(archive)
     forged = tmp_path / "forged.zip"
     make_archive(forged, {**entries, "company.sqlite": entries["company.sqlite"] + b"changed"})
-    with pytest.raises(backup.BackupError, match="digest mismatch"):
+    with pytest.raises(backup.BackupError, match="size is invalid") as changed:
         backup.verify_portable(forged)
+    assert changed.value.code == "backup_manifest_invalid"
     manifest = json.loads(entries["manifest.json"])
     manifest["identity"]["company_id"] = "another-company"
     make_archive(forged, {**entries, "manifest.json": json.dumps(manifest)})

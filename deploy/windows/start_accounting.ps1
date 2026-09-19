@@ -13,7 +13,13 @@ if ($NoBrowser -and $OpenBrowser) {
     throw 'START_OPTIONS_CONFLICT: NoBrowser 与 OpenBrowser 不能同时使用。'
 }
 if (-not $DataRoot) {
-    $DataRoot = if ($env:FINANCE_DATA_ROOT) { $env:FINANCE_DATA_ROOT } else { Join-Path $repositoryRoot 'data' }
+    $DataRoot = if ($env:FINANCE_DATA_ROOT) {
+        $env:FINANCE_DATA_ROOT
+    } elseif ($PackageRoot) {
+        Join-Path $PackageRoot 'data/kernel-draft'
+    } else {
+        Join-Path $repositoryRoot 'data/kernel-draft'
+    }
 }
 $accountingRoot = [System.IO.Path]::GetFullPath($DataRoot)
 if ($PackageRoot) {

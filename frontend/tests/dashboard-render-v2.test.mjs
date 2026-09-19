@@ -137,8 +137,10 @@ test("unestablished employee details keep exact candidates while asset cards sta
     plugins: [{ name: "seed-unestablished-entities", enforce: "pre", transform(code, id) {
       const match = /\/src\/views\/(Employees|Assets)View\.vue$/.exec(id.replaceAll("\\", "/"));
       if (!match) return;
-      return code.replace(/const response = ref<[^;\n]+>\(null\)/, `const response = ref(globalThis.t4PlaceholderFixtures.${match[1].toLowerCase()})`)
-        .replace('const displayMode = ref<"cards" | "list">("cards")', 'const displayMode = ref(globalThis.t4PlaceholderMode)');
+      code = code.replace(/const response = ref<[^;\n]+>\(null\)/, `const response = ref(globalThis.t4PlaceholderFixtures.${match[1].toLowerCase()})`);
+      return match[1] === "Employees"
+        ? code.replace('const employeeDisplayMode = ref<"cards" | "list">("cards")', 'const employeeDisplayMode = ref(globalThis.t4PlaceholderMode)')
+        : code.replace('const displayMode = ref<"cards" | "list">("cards")', 'const displayMode = ref(globalThis.t4PlaceholderMode)');
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
     const { requestJson } = await server.ssrLoadModule("/src/api/client.ts");
@@ -236,6 +238,7 @@ test("R2 source movements stay in operating details and are omitted from owner a
   employee.has_payroll_activity = true;
   employee.payroll_sources = [{ ...source("payroll"), period: "2026-11", kind: "opening_payroll", label: "工资来源", opening_period: null, component: "net", declarations: [], disbursements: [] }];
   employee.payroll_source_page = { ...page, total_count: 1, filtered_count: 1, returned_count: 1 };
+  globalThis.t4LazySettlementCollection = { items: source("payroll").movements, page };
   Object.assign(responses.employees.data.workforce_cost.personal_labor.items[0], source("labor"));
   const asset = responses.assets.data.collections.assets.items[0];
   asset.settlements = [source("asset")];
@@ -244,11 +247,15 @@ test("R2 source movements stay in operating details and are omitted from owner a
   globalThis.t4UnresolvedFixtures = responses;
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), configFile: false, optimizeDeps: { noDiscovery: true },
     plugins: [{ name: "seed-unresolved-source-movements", enforce: "pre", transform(code, id) {
-      const match = /\/src\/views\/(Employees|Assets)View\.vue$/.exec(id.replaceAll("\\", "/"));
+      const path = id.replaceAll("\\", "/");
+      if (path.endsWith("/src/components/DashboardSourceHistory.vue")) {
+        return code.replace("const collection = ref<DashboardCollection | null>(null)", "const collection = ref(globalThis.t4LazySettlementCollection)");
+      }
+      const match = /\/src\/views\/(Employees|Assets)View\.vue$/.exec(path);
       if (match) return code.replace(/const response = ref<[^;\n]+>\(null\)/, `const response = ref(globalThis.t4UnresolvedFixtures.${match[1].toLowerCase()})`);
     } }, vue()], server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom" });
   try {
-    for (const [name, slots] of [["Employees", ["payroll", "labor"]], ["Assets", ["project"]]]) {
+    for (const [name, slots] of [["Employees", ["labor"]], ["Assets", ["project"]]]) {
       const router = createRouter({ history: createMemoryHistory(), routes: [{ path: "/", component: {} }] });
       await router.push("/?company_id=co&period=2026-11");
       const { default: component } = await server.ssrLoadModule(`/src/views/${name}View.vue`);
@@ -259,11 +266,16 @@ test("R2 source movements stay in operating details and are omitted from owner a
         assert.match(visible, new RegExp(`R2-${slot}[^<]*暂无法确定</p>`));
         assert.match(visible, new RegExp(`R2-resolved-${slot}[^<]*1\\.23</p>`));
       }
+      if (name === "Employees") {
+        assert.match(visible, /当前后续事项 · 查看精确关联的清偿事件/);
+        assert.match(visible, /R2-payroll[\s\S]*?金额 暂无法确定/);
+        assert.match(visible, /R2-resolved-payroll[\s\S]*?金额 ¥1\.23/);
+      }
       if (name === "Assets") {
         assert.doesNotMatch(visible, /R2-asset|R2-exit/);
       }
     }
-  } finally { await server.close(); delete globalThis.t4UnresolvedFixtures; }
+  } finally { await server.close(); delete globalThis.t4UnresolvedFixtures; delete globalThis.t4LazySettlementCollection; }
 });
 
 test("T6 preparation keeps owner-facing issue summaries without technical source navigation", async () => {

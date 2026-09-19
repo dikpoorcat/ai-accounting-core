@@ -24,7 +24,7 @@ def calculator_build_id():
         for path in files
         if path.relative_to(package).as_posix() != "kernel/security/legacy.py"
     ]
-    files.extend((package / "kernel" / "migrations").glob("*.json"))
+    files.extend((package / "kernel" / "schema_contracts").rglob("*.json"))
     files.extend(package / name for name in SHARED_SOURCE_FILES)
     hashed = hashlib.sha256()
     for path in sorted(files, key=lambda value: value.relative_to(package).as_posix()):

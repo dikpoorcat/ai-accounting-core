@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,21 +15,28 @@ interface LocalServiceMetadata {
 }
 
 function localServiceMetadata(): LocalServiceMetadata {
-  const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data");
+  const dataRoot = resolve(repositoryRoot, process.env.FINANCE_DATA_ROOT || "data/kernel-draft");
   const statePath = resolve(dataRoot, ".service.json");
-  let metadata: Partial<LocalServiceMetadata>;
+  let metadata: unknown;
   try {
-    metadata = JSON.parse(readFileSync(statePath, "utf8")) as Partial<LocalServiceMetadata>;
+    // The kernel verifies the catalog and exact protocol before exposing a local capability.
+    metadata = JSON.parse(execFileSync(
+      resolve(repositoryRoot, ".tmp-kernel-venv/Scripts/python.exe"),
+      ["-I", "-X", "utf8", "-m", "ai_accounting.kernel.cli", "--root", dataRoot, "service-info"],
+      { cwd: repositoryRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ));
   } catch {
     throw new Error(
       `本地会计服务未启动。请先在仓库根目录运行 .\\deploy\\windows\\start_accounting.ps1（资料目录：${dataRoot}）。`,
     );
   }
-  if (!Number.isInteger(metadata.port) || metadata.port! < 1 || metadata.port! > 65535
-      || typeof metadata.capability !== "string" || !metadata.capability) {
+  if (typeof metadata !== "object" || metadata === null
+      || !("port" in metadata) || typeof metadata.port !== "number"
+      || !Number.isInteger(metadata.port) || metadata.port < 1 || metadata.port > 65535
+      || !("capability" in metadata) || typeof metadata.capability !== "string" || !metadata.capability) {
     throw new Error(`本地会计服务状态无效：${statePath}`);
   }
-  return metadata as LocalServiceMetadata;
+  return { port: metadata.port, capability: metadata.capability };
 }
 
 function localApiProxy(metadata: LocalServiceMetadata): ProxyOptions {

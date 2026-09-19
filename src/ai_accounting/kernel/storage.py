@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from typing import get_origin
 
 from pydantic import BaseModel
 
-from .contracts import Calculation, FactVersion, KernelError, Read, Registry
+from .contracts import Calculation, FactVersion, KernelError, Read
 from .dependencies import NO_PERIOD_LIMIT, scope_keys, validate_read
-from .permissions import create_private_file
-from .runtime import connect, require_local_database
+from .runtime import connect, initialize_file, require_local_database
 from .schema import base_type, initialize, sequence_model, table_name
 from .types import YearMonth, canonical
 from .versions import verify_schema
@@ -56,9 +55,10 @@ def decode_fields(model, data):
 
 
 class Store:
-    def __init__(self, path, registry: Registry, company_id: str, database_id: str):
+    def __init__(self, path, bundle, company_id: str, database_id: str):
         self.path = require_local_database(path)
-        self.registry = registry
+        self.bundle = bundle
+        self.registry = bundle.registry
         self.company_id, self.database_id = company_id, database_id
 
     @staticmethod
@@ -82,13 +82,19 @@ class Store:
         return sorted(result, key=lambda item: (item["name"], item["digest"]))
 
     @classmethod
-    def create(cls, path, registry, company_id, taxpayer_id, database_id):
+    def create(cls, path, bundle, company_id, taxpayer_id, database_id):
         path = require_local_database(path)
-        # Exclusive create prevents accidentally initializing an existing real company.
-        create_private_file(path)
-        with closing(connect(path)) as connection:
-            initialize(connection, registry, company_id, taxpayer_id, database_id)
-        return cls(path, registry, company_id, database_id)
+        def validate(connection):
+            verify_schema(connection, bundle=bundle)
+            identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
+            if tuple(identity) != (1, company_id, taxpayer_id, database_id):
+                raise KernelError("company_mismatch", "新建数据库身份不匹配")
+
+        initialize_file(
+            path, lambda conn: initialize(conn, bundle, company_id, taxpayer_id, database_id),
+            validate,
+        )
+        return cls(path, bundle, company_id, database_id)
 
     @contextmanager
     def connection(self, *, read_only=False):
@@ -96,7 +102,7 @@ class Store:
             raise KernelError("company_missing", "company database is missing")
 
         def validate(connection):
-            verify_schema(connection, registry=self.registry)
+            verify_schema(connection, bundle=self.bundle)
             identity = connection.execute("SELECT * FROM identity WHERE id=1").fetchone()
             if (
                 not identity

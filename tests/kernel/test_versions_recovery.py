@@ -1,4 +1,4 @@
-"""Published schema contracts, forward rollback, and crash recovery boundaries."""
+"""Current contract rejection and durable company-creation recovery."""
 
 from contextlib import closing
 
@@ -7,49 +7,9 @@ import pytest
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.runtime import connect
-from ai_accounting.kernel.schema import VERSION
-from ai_accounting.kernel.service import LocalService, default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
+from ai_accounting.kernel.service import LocalService
 from ai_accounting.kernel.storage import Store
-from ai_accounting.kernel.versions import baseline, objects, upgrade, verify_schema
-
-
-def old_file(path, kind):
-    with closing(connect(path)) as connection:
-        connection.execute("BEGIN IMMEDIATE")
-        for typ in ("table", "index", "trigger"):
-            for item in baseline(kind)["objects"]:
-                if item["type"] == typ:
-                    connection.execute(item["sql"])
-        if kind == "business":
-            connection.execute(
-                "INSERT INTO identity VALUES(1,'company','91310000123456789A','database',1)"
-            )
-            connection.execute("INSERT INTO state VALUES(1,0,0,0,1)")
-            connection.execute("PRAGMA user_version=1")
-        connection.commit()
-
-
-def test_known_committed_schema_upgrades_and_partial_ddl_rolls_back(tmp_path):
-    path = tmp_path / "company.sqlite"
-    old_file(path, "business")
-    registry = default_registry()
-    with closing(connect(path)) as connection:
-        before = objects(connection)
-
-        def fail(stage):
-            if stage == "before_commit":
-                raise RuntimeError("interrupted")
-
-        with pytest.raises(RuntimeError):
-            upgrade(connection, registry=registry, fault=fail)
-        assert objects(connection) == before
-        assert connection.execute("SELECT schema_version FROM identity").fetchone()[0] == 1
-        assert upgrade(connection, registry=registry)
-        assert verify_schema(connection, registry=registry) == VERSION
-        assert not upgrade(connection, registry=registry)
-        assert [
-            r[0] for r in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [1, 12, VERSION]
 
 
 @pytest.mark.parametrize(
@@ -58,7 +18,7 @@ def test_known_committed_schema_upgrades_and_partial_ddl_rolls_back(tmp_path):
 )
 def test_advertised_version_never_bypasses_schema_check(tmp_path, mutation):
     store = Store.create(
-        tmp_path / "company.sqlite", default_registry(), "company", "taxpayer", "database"
+        tmp_path / "company.sqlite", production_bundle(), "company", "taxpayer", "database"
     )
     with store.connection(read_only=True):
         pass
@@ -69,14 +29,13 @@ def test_advertised_version_never_bypasses_schema_check(tmp_path, mutation):
             pytest.fail("an unsupported database was opened for writing")
 
 
-def test_catalog_known_v1_upgrades_but_unknown_nonempty_catalog_is_rejected(tmp_path):
-    old_file(tmp_path / "catalog.sqlite", "catalog")
-    catalog = Catalog(tmp_path, default_registry())
+def test_current_catalog_reopens_but_missing_identity_guard_is_rejected(tmp_path):
+    catalog = Catalog(tmp_path, production_bundle())
     assert catalog.companies() == []
     with catalog.connection() as connection:
         connection.execute("DROP TRIGGER immutable_catalog_identity_update")
     with pytest.raises(KernelError):
-        Catalog(tmp_path, default_registry())
+        Catalog(tmp_path, production_bundle())
 
 
 @pytest.mark.parametrize(
@@ -97,10 +56,10 @@ def test_company_creation_recovers_same_file_and_identity(tmp_path, stage):
         if point == stage:
             raise Terminated()
 
-    catalog = Catalog(tmp_path, default_registry(), fault=crash)
+    catalog = Catalog(tmp_path, production_bundle(), fault=crash)
     with pytest.raises(Terminated):
         catalog.create_company("91310000123456789A", "中断恢复测试")
-    recovered = Catalog(tmp_path, default_registry())
+    recovered = Catalog(tmp_path, production_bundle())
     companies = recovered.companies()
     assert len(companies) == 1
     assert recovered.create_company("91310000123456789A", "中断恢复测试") == companies[0]

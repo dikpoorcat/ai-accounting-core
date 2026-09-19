@@ -10,12 +10,7 @@ from pydantic import BaseModel
 from .contracts import Registry
 from .types import YearMonth
 
-VERSION = 13
-
-READ_REPAIR_DDL = """
-ALTER TABLE state ADD COLUMN read_repair_revision INTEGER NOT NULL DEFAULT 0
- CHECK(read_repair_revision>=0);
-"""
+VERSION = 0
 
 COMMENTARY_BASIS_DDL = """
 CREATE TABLE period_commentary_basis(commentary_id TEXT PRIMARY KEY
@@ -35,10 +30,11 @@ CREATE TRIGGER commentary_requires_basis BEFORE INSERT ON period_commentary_revi
 """
 DDL = """
 CREATE TABLE identity(id INTEGER PRIMARY KEY CHECK(id=1), company_id TEXT NOT NULL,
- taxpayer_id TEXT NOT NULL, database_id TEXT NOT NULL, schema_version INTEGER NOT NULL) STRICT;
+ taxpayer_id TEXT NOT NULL, database_id TEXT NOT NULL) STRICT;
 CREATE TABLE state(id INTEGER PRIMARY KEY CHECK(id=1), accounting INTEGER NOT NULL,
- material INTEGER NOT NULL, management INTEGER NOT NULL, next_number INTEGER NOT NULL) STRICT;
-INSERT INTO state VALUES(1,0,0,0,1);
+ material INTEGER NOT NULL, management INTEGER NOT NULL, next_number INTEGER NOT NULL,
+ read_repair_revision INTEGER NOT NULL DEFAULT 0 CHECK(read_repair_revision>=0)) STRICT;
+INSERT INTO state VALUES(1,0,0,0,1,0);
 CREATE TABLE evidence(digest BLOB PRIMARY KEY CHECK(length(digest)=32), content BLOB NOT NULL,
  media_type TEXT NOT NULL, name TEXT NOT NULL) STRICT;
 CREATE TABLE subject(id TEXT PRIMARY KEY, kind TEXT NOT NULL) STRICT;
@@ -379,11 +375,12 @@ def _schema_for_models(models) -> str:
     from .display import DISPLAY_DDL
     from .read_indexes import READ_INDEX_DDL
     from .security.schema import COMPANY_DDL
-    from .versions import HISTORY_DDL
+    from .versions import HISTORY_DDL, META_DDL
 
     return (
         script
         + HISTORY_DDL
+        + META_DDL
         + """
 CREATE TABLE opening_account(period INTEGER NOT NULL, account TEXT NOT NULL,
  debit INTEGER NOT NULL CHECK(debit>=0),credit INTEGER NOT NULL CHECK(credit>=0),
@@ -402,26 +399,24 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + ASSET_BATCH_DDL
         + ";\n".join(COMPANY_DDL)
         + ";\n"
-        + READ_REPAIR_DDL
     )
 
 
-def initialize(connection, registry: Registry, company_id: str, taxpayer_id: str, database_id: str):
-    from .versions import check_released_contract, execute_statements, record_version
+def initialize(connection, bundle, company_id: str, taxpayer_id: str, database_id: str):
+    from .versions import check_released_contract, execute_statements, install_metadata
 
     if connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchone():
         raise ValueError("new company database must be empty")
     try:
         connection.execute("BEGIN IMMEDIATE")
-        script = schema_sql(registry)
-        check_released_contract(script, kind="business", registry=registry)
+        script = schema_sql(bundle.registry)
+        check_released_contract(script, kind="company", bundle=bundle)
         execute_statements(connection, script)
         connection.execute(
-            "INSERT INTO identity VALUES(1,?,?,?,?)",
-            (company_id, taxpayer_id, database_id, VERSION),
+            "INSERT INTO identity VALUES(1,?,?,?)",
+            (company_id, taxpayer_id, database_id),
         )
-        connection.execute(f"PRAGMA user_version={VERSION}")
-        record_version(connection, VERSION)
+        install_metadata(connection, bundle, "company")
         connection.commit()
     except BaseException:
         connection.rollback()

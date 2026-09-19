@@ -14,6 +14,7 @@ from test_reimbursement_assets import accepted_batch, batch_card
 from test_reimbursement_assets import book as _asset_book
 from test_reimbursement_assets import pay as asset_payment
 
+from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.domains.adjustments import EmployeeAdvance
@@ -24,6 +25,15 @@ from ai_accounting.kernel.domains.transactions import Allocation
 
 company, labor_book, asset_book = _company, _labor_book, _asset_book
 opening_book = _opening_book
+
+
+def settlement_events(dashboard, response, period, employee_id):
+    return dashboard.employees(
+        period,
+        section="settlement_events",
+        employee_id=employee_id,
+        expected_version=response["snapshot_version"],
+    )["data"]["collections"]["settlement_events"]["items"]
 
 
 def test_opening_payroll_keeps_source_period_components_and_later_payment(opening_book):
@@ -73,7 +83,9 @@ def test_opening_payroll_keeps_source_period_components_and_later_payment(openin
     )
     publish("prior-net-payment")
     ledger = engine.ledger("2026-01")
-    employees = Dashboard(engine).employees("2026-01")["data"]["employees"]
+    dashboard = Dashboard(engine)
+    response = dashboard.employees("2026-01")
+    employees = response["data"]["employees"]
     employee = employees["items"][0]
     sources = {source["component"]: source for source in employee["payroll_sources"]}
     assert set(sources) == set(components)
@@ -88,7 +100,17 @@ def test_opening_payroll_keeps_source_period_components_and_later_payment(openin
         assert obligation["name"] == "primary"
         assert obligation["amount_fen"] == 50000
         assert obligation["remaining_fen"] == (35000 if component == "net" else 50000)
-    assert sources["net"]["movements"][0]["period"] == "2026-01"
+        assert "movements" not in source
+    movement = next(
+        item
+        for item in settlement_events(dashboard, response, "2026-01", employee["employee_id"])
+        if item["settlement_business"]["subject_id"] == "prior-net-payment"
+    )
+    assert movement["posting_period"] == "2026-01"
+    assert movement["amount_fen"] == 15000
+    assert movement["recipient_id"] == "employee"
+    assert movement["source_business"]["subject_id"] == "prior-net"
+    assert movement["source_calculation_id"] == sources["net"]["calculation_id"]
     assert engine.ledger("2026-01") == ledger
 
 
@@ -169,13 +191,24 @@ def test_retained_disbursement_difference_and_payment_keep_source_period(company
     _, declared = declare(company)
     adopt(company, declared)
     pay(company, 847400)
-    employee = Dashboard(company.engine).employees("2026-02")["data"]["employees"]["items"][0]
+    dashboard = Dashboard(company.engine)
+    response = dashboard.employees("2026-02")
+    employee = response["data"]["employees"]["items"][0]
     january = next(item for item in employee["payroll_sources"] if item["source_id"] == "january")
     net = next(item for item in january["obligations"] if item["name"] == "net")
     assert net["paid_fen"] == 847400
     assert net["remaining_fen"] == 60000
     assert january["disbursements"][0]["held_fen"] == 60000
-    assert january["movements"][0]["period"] == "2026-02"
+    assert "movements" not in january
+    movement = next(
+        item
+        for item in settlement_events(dashboard, response, "2026-02", employee["employee_id"])
+        if item["settlement_business"]["subject_id"] == "payment"
+    )
+    assert movement["posting_period"] == "2026-02"
+    assert movement["amount_fen"] == 847400
+    assert movement["source_business"]["subject_id"] == "january"
+    assert movement["source_calculation_id"] == january["calculation_id"]
     assert employee["direct_net_payments_fen"] == 847400
 
 
@@ -209,12 +242,24 @@ def test_personal_advance_is_clearing_without_company_cash(company):
         "owner-paid",
     )
     company.publish("owner-paid")
-    employee = Dashboard(company.engine).employees("2026-02")["data"]["employees"]["items"][0]
+    dashboard = Dashboard(company.engine)
+    response = dashboard.employees("2026-02")
+    employee = response["data"]["employees"]["items"][0]
     assert employee["recorded_net_payments_fen"] == 907400
     assert employee["direct_net_payments_fen"] == 0
     assert employee["other_net_settlements_fen"] == 907400
     january = next(item for item in employee["payroll_sources"] if item["source_id"] == "january")
-    assert january["movements"][0]["mode"] == "advance"
+    assert "movements" not in january
+    movement = next(
+        item
+        for item in settlement_events(dashboard, response, "2026-02", employee["employee_id"])
+        if item["settlement_business"]["subject_id"] == "owner-paid"
+    )
+    assert movement["mode"] == "advance"
+    assert movement["posting_period"] == "2026-02"
+    assert movement["amount_fen"] == 907400
+    assert movement["source_business"]["subject_id"] == "january"
+    assert movement["source_calculation_id"] == january["calculation_id"]
     assert (
         next(item for item in january["obligations"] if item["name"] == "net")["remaining_fen"] == 0
     )
@@ -295,7 +340,39 @@ def test_capitalized_labor_and_pending_intangible_are_visible_without_double_cos
     labor_book, activated
 ):
     engine, _, _ = labor_book
-    chain(labor_book, activated=activated)
+    chain(labor_book, activated=False)
+    if activated:
+        with engine.store.connection(read_only=True) as connection:
+            evidence = engine.store.current_fact(connection, "asset").evidence
+        members = [
+            {
+                "subject_id": "activation",
+                "expected_revision": 0,
+                "data": {
+                    "period": "2026-11",
+                    "asset_id": "asset",
+                    "in_use_date": "2026-11-30",
+                    "useful_life_months": 60,
+                    "residual_fen": 0,
+                    "benefit_area": "administration",
+                    "rounding_policy": "floor_final_remainder",
+                },
+            }
+        ]
+        batches = AssetBatches(engine)
+        preview = batches.prepare_activation_batch(
+            "activation-batch", "2026-11", members, evidence=evidence, expected_revision=0
+        )
+        batches.confirm_activation_batch(
+            "activation-batch",
+            "2026-11",
+            members,
+            evidence=evidence,
+            expected_revision=0,
+            preview_digest=preview["digest"],
+            epochs=preview["epochs"],
+            request_id="activate-batch",
+        )
     dashboard = Dashboard(engine)
     assets = dashboard.assets("2026-11")["data"]
     workforce = dashboard.employees("2026-11")["data"]["workforce_cost"]

@@ -1,10 +1,8 @@
 """Reference indexes retain source ambiguity and bound cold candidate reads."""
 
 import sqlite3
-from contextlib import closing
 
 import pytest
-from test_close_batch_migrations import previous_file
 from test_engine import close, evidence, publish, save
 from test_engine import engine as engine  # noqa: F401
 
@@ -14,7 +12,6 @@ from ai_accounting.kernel.display import Display
 from ai_accounting.kernel.exports import Exports
 from ai_accounting.kernel.provenance import recorded_times
 from ai_accounting.kernel.read_indexes import (
-    CLOSE_CALCULATIONS,
     CLOSE_REPORT_FACTS,
     audit_rows,
     close_rows,
@@ -26,10 +23,7 @@ from ai_accounting.kernel.read_indexes import (
     verify_read_indexes,
     verify_source,
 )
-from ai_accounting.kernel.runtime import connect
-from ai_accounting.kernel.service import default_registry
 from ai_accounting.kernel.types import YearMonth, canonical, digest
-from ai_accounting.kernel.versions import current_version, objects, upgrade, verify_schema
 
 MONTH = YearMonth("2026-01").ordinal
 RECORDED = "2026-09-12T10:00:00.000Z"
@@ -62,58 +56,6 @@ def insert_job(connection, ident, plan, *, kind="payment_export", synchronize=Tr
     )
     if synchronize:
         sync_job(connection, ident)
-
-
-@pytest.mark.parametrize("previous", [3, 9])
-def test_forward_upgrade_backfills_exact_occurrences_and_rolls_back(tmp_path, previous):
-    path = tmp_path / "retained.sqlite"
-    previous_file(path, "business", previous)
-    manifest = {
-        "calculations": ["dependency", "root", "dependency"],
-        "vouchers": [{"id": "v1", "calculation_id": "root"}],
-        "readiness": {"financial_reports": {"facts": ["report-fact"]}},
-        "management_snapshot": {
-            "typed_facts": [{"id": "typed"}],
-            "profiles": [{"id": "profile"}],
-            "management": [{"id": 7}],
-            "payees": [{"id": "payee"}],
-        },
-    }
-    with closing(connect(path)) as connection:
-        connection.execute(
-            "INSERT INTO period_close VALUES(?,?,?)", (MONTH, canonical(manifest), digest(manifest))
-        )
-        insert_audit(
-            connection,
-            {"status": "confirmed", "results": [fact_result()] * 2},
-            action="confirm_facts",
-            synchronize=False,
-        )
-        insert_job(connection, "damaged", {"period": "2026-01", "rows": {}}, synchronize=False)
-        insert_job(connection, "empty", {}, kind="tax_import", synchronize=False)
-        before_schema = objects(connection)
-        original = tuple(connection.execute("SELECT * FROM period_close").fetchone())
-
-        def interrupt(stage):
-            if stage == "after_read_indexes":
-                raise RuntimeError("synthetic index migration interruption")
-
-        with pytest.raises(RuntimeError, match="interruption"):
-            upgrade(connection, registry=default_registry(), fault=interrupt)
-        assert objects(connection) == before_schema
-        assert verify_schema(connection, allow_previous=True) == previous
-        assert upgrade(connection, registry=default_registry())
-        assert verify_schema(connection) == current_version("business")
-        assert tuple(connection.execute("SELECT * FROM period_close").fetchone()) == original
-        assert verify_read_indexes(connection)["sources"] == 4
-        members = connection.execute(
-            "SELECT reference_id FROM close_reference WHERE path=? ORDER BY position",
-            (CLOSE_CALCULATIONS,),
-        ).fetchall()
-        assert [row[0] for row in members] == ["dependency", "root", "dependency"]
-        assert recorded_times(connection, [("fact", "fact")]) == {}
-        assert [row["id"] for row in job_rows(connection, period="2026-01")] == ["damaged"]
-        assert not upgrade(connection, registry=default_registry())
 
 
 def test_source_transactions_sync_fact_profile_payee_close_and_replay(engine):
@@ -282,7 +224,7 @@ def test_guards_local_hits_and_explicit_omission_detection(engine):
         with pytest.raises(KernelError, match="精确引用目录"):
             verify_read_indexes(connection)
     with pytest.raises(BackupError, match="read_index_integrity_failed"):
-        verify_file(engine.store.path, _registry=engine.store.registry)
+        verify_file(engine.store.path, _bundle=engine.store.bundle)
 
 
 def test_fixed_close_leaf_validation_does_not_return_full_manifest(engine):

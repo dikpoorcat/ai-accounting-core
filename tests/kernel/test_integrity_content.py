@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
+from schema_fixture import test_bundle
 from test_engine import close, evidence, publish, save
 from test_engine import engine as engine  # noqa: F401
 
@@ -174,10 +175,10 @@ def test_read_index_repair_restores_triggers_and_rolls_back_on_fault(engine, sta
                 raise RuntimeError("injected")
 
         with pytest.raises(RuntimeError):
-            repair_read_indexes(connection, registry=engine.store.registry, fault=fail)
+            repair_read_indexes(connection, bundle=engine.store.bundle, fault=fail)
         assert list(connection.iterdump()) == before
-        assert repair_read_indexes(connection, registry=engine.store.registry)["changed"]
-        assert not repair_read_indexes(connection, registry=engine.store.registry)["changed"]
+        assert repair_read_indexes(connection, bundle=engine.store.bundle)["changed"]
+        assert not repair_read_indexes(connection, bundle=engine.store.bundle)["changed"]
         connection.commit()
     assert verify(engine)["status"] == "verified"
 
@@ -204,7 +205,11 @@ def opening_engine(tmp_path):
     )
     return Engine(
         Store.create(
-            tmp_path / "opening.sqlite", registry, "opening", "91310000123456789A", "opening-db"
+            tmp_path / "opening.sqlite",
+            test_bundle(registry),
+            "opening",
+            "91310000123456789A",
+            "opening-db",
         )
     )
 
@@ -309,7 +314,7 @@ def test_orphan_directory_foreign_key_is_repairable_but_sources_remain_verified(
     assert verify(engine, include_indexes=False)["status"] == "verified"
     with engine.store.connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        assert repair_read_indexes(connection, registry=engine.store.registry)["changed"]
+        assert repair_read_indexes(connection, bundle=engine.store.bundle)["changed"]
         connection.commit()
     assert verify(engine)["status"] == "verified"
 

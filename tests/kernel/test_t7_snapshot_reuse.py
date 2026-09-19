@@ -190,7 +190,7 @@ def test_fresh_snapshots_observe_publication_changes_and_company_isolation(engin
     other = Engine(
         Store.create(
             tmp_path / "other.sqlite",
-            engine.store.registry,
+            engine.store.bundle,
             "company-b",
             "91310000123456789B",
             "db-b",

@@ -2,6 +2,7 @@
 
 from typing import ClassVar
 
+from schema_fixture import test_bundle
 from test_engine import Charge, Source, calculate, evidence, publish, save
 
 from ai_accounting.kernel.contracts import Fact, Outcome, Read, Registry
@@ -39,7 +40,9 @@ def test_exact_versions_are_not_replaced_by_current_batch_overlay(tmp_path):
     registry.register(Source)
     registry.register(Charge, calculate)
     registry.register(Comparison, compare)
-    engine = Engine(Store.create(tmp_path / "history.sqlite", registry, "a", "tax-a", "db-a"))
+    engine = Engine(
+        Store.create(tmp_path / "history.sqlite", test_bundle(registry), "a", "tax-a", "db-a")
+    )
     original_fact = save(engine)
     _, published = publish(engine)
     original_id = published["results"][0]["calculation_id"]

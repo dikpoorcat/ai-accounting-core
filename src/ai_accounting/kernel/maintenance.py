@@ -41,7 +41,7 @@ class Maintenance:
             result = (
                 repair_projections(connection, fault=fault)
                 if target == "projections"
-                else repair_read_indexes(connection, registry=self.store.registry, fault=fault)
+                else repair_read_indexes(connection, bundle=self.store.bundle, fault=fault)
             )
             self.engine.fault("repair_applied", connection)
             coverage = verify_integrity(
@@ -50,7 +50,7 @@ class Maintenance:
                 include_projections=target == "projections",
                 include_indexes=target == "read_indexes",
             )
-            verify_schema(connection, registry=self.store.registry)
+            verify_schema(connection, bundle=self.store.bundle)
             if connection.execute("PRAGMA foreign_key_check").fetchone():
                 raise KernelError("content_integrity_failed", "维修后引用核验未通过")
             revision = (

@@ -6,10 +6,11 @@ import sqlite3
 import pytest
 from material_fixture import supporting_text
 
+from ai_accounting.kernel.asset_batches import AssetBatches
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
@@ -18,7 +19,7 @@ def book(tmp_path):
     engine = Engine(
         Store.create(
             tmp_path / "company.sqlite",
-            default_registry(),
+            production_bundle(),
             "company",
             "911100000000000001",
             "database",
@@ -60,6 +61,38 @@ def opening(save, publish, bank="bank-a", month="2026-09", amount=0, basis="new_
         {"period": month, "bank_account_id": bank, "opening_fen": amount, "basis": basis},
     )
     publish(subject)
+
+
+def activate_asset(engine, proof, subject, data):
+    batches = AssetBatches(engine)
+    period = data["period"]
+    members = [{"subject_id": subject, "expected_revision": 0, "data": data}]
+    options = {"evidence": (proof,), "expected_revision": 0}
+    preview = batches.prepare_activation_batch(
+        subject + "-batch", period, members, **options
+    )
+    return batches.confirm_activation_batch(
+        subject + "-batch",
+        period,
+        members,
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id=subject + "-batch",
+    )
+
+
+def consume_assets(engine, proof, period):
+    batches = AssetBatches(engine)
+    options = {"evidence": (proof,), "expected_revision": 0}
+    preview = batches.prepare_consumption_month(period, **options)
+    return batches.confirm_consumption_month(
+        period,
+        **options,
+        preview_digest=preview["digest"],
+        epochs=preview["epochs"],
+        request_id="consume-" + period,
+    )
 
 
 def funding(
@@ -691,8 +724,10 @@ def test_asset_readiness_detects_missing_months_even_without_new_asset_facts(boo
             "acquisition_basis": "direct_purchase",
         },
     )
-    save(
-        "asset_activation",
+    publish("asset")
+    activate_asset(
+        engine,
+        proof,
         "activation",
         {
             "period": "2026-01",
@@ -704,7 +739,6 @@ def test_asset_readiness_detects_missing_months_even_without_new_asset_facts(boo
             "rounding_policy": "floor_final_remainder",
         },
     )
-    publish("asset", "activation")
     close_month(inventories(engine, proof, "2026-01", {"assets"}), proof, "2026-01")
     periods = inventories(engine, proof, target, {"assets"})
     with pytest.raises(KernelError) as failure:
@@ -732,8 +766,10 @@ def test_fully_depreciated_asset_does_not_permanently_block_later_months(book):
             "acquisition_basis": "direct_purchase",
         },
     )
-    save(
-        "asset_activation",
+    publish("asset")
+    activate_asset(
+        engine,
+        proof,
         "activation",
         {
             "period": "2026-01",
@@ -745,10 +781,8 @@ def test_fully_depreciated_asset_does_not_permanently_block_later_months(book):
             "rounding_policy": "floor_final_remainder",
         },
     )
-    publish("asset", "activation")
     close_month(inventories(engine, proof, "2026-01", {"assets"}), proof, "2026-01")
-    save("asset_consumption", "february", {"period": "2026-02", "asset_id": "asset"})
-    publish("february")
+    consume_assets(engine, proof, "2026-02")
     close_month(inventories(engine, proof, "2026-02", {"assets"}), proof, "2026-02")
     assert (
         close_month(inventories(engine, proof, "2026-03", set()), proof, "2026-03")["status"]

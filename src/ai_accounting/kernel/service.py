@@ -132,8 +132,11 @@ def default_registry():
 
 class LocalService:
     def __init__(self, root: str | Path):
-        self.registry = default_registry()
-        self.catalog = Catalog(root, self.registry)
+        from .schema_bundle import production_bundle
+
+        self.bundle = production_bundle()
+        self.registry = self.bundle.registry
+        self.catalog = Catalog(root, self.bundle)
         self.security = SecurityService(self.catalog.path)
         self.close_previews = {}
         self.close_range_previews = {}
@@ -203,6 +206,9 @@ class LocalService:
                     name: model.json_schema() for name, model in self.command_models.items()
                 },
                 "response_schemas": response_schemas(),
+                "database_formats": {
+                    kind: self.bundle.database_format(kind) for kind in ("catalog", "company")
+                },
                 "security_request_schema": NativeRequest.model_json_schema(),
                 "security_operations": ["request", "status", "cancel", "session_status"],
                 "agent_operating_protocol": OPERATING_PROTOCOL,
@@ -369,7 +375,7 @@ class LocalService:
             return engine.queue_backup(**data)
         if command == "run_jobs":
             return {
-                "backups": run_backup_jobs(engine.store.path, **data),
+                "backups": run_backup_jobs(engine.store.path, _bundle=engine.store.bundle, **data),
                 "exports": run_export_jobs(engine, **data),
                 "reports": run_report_jobs(engine, **data),
             }

@@ -296,10 +296,16 @@ def create_server(service, *, port=0, static_directory=None, token=None):
             except Exception as exc:
                 error = error_response(exc)
                 self.json_reply(
-                    500 if error.get("code") in {
-                        "response_contract_mismatch", "content_integrity_failed",
-                        "projection_integrity_failed", "read_index_integrity_failed",
-                    } else 400, error
+                    500
+                    if error.get("code")
+                    in {
+                        "response_contract_mismatch",
+                        "content_integrity_failed",
+                        "projection_integrity_failed",
+                        "read_index_integrity_failed",
+                    }
+                    else 400,
+                    error,
                 )
 
         def do_GET(self):
@@ -319,6 +325,8 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     200,
                     {
                         "status": "ready",
+                        "protocol": 2,
+                        "database_format": service.catalog.database_format(),
                         "build_id": server.build_id,
                         "catalog_id": service.security.catalog_instance_id,
                     },

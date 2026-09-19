@@ -10,20 +10,21 @@ from ai_accounting.kernel import workflow
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
 def setup_company(tmp_path):
-    registry = default_registry()
-    if "external_obligation" not in registry.models:
-        workflow.register(registry)
     company = Company.__new__(Company)
     from collections import defaultdict
 
     company.engine = Engine(
         Store.create(
-            tmp_path / "company.sqlite", registry, "company", "91310000123456789A", "database"
+            tmp_path / "company.sqlite",
+            production_bundle(),
+            "company",
+            "91310000123456789A",
+            "database",
         )
     )
     company.sequence, company.materials = 0, defaultdict(list)

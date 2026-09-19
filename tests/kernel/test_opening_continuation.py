@@ -4,13 +4,14 @@ import itertools
 import json
 
 import pytest
+from test_banking import consume_assets
 
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.domains.opening import CATEGORIES
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
 from ai_accounting.kernel.reports import BALANCE_NAMES, CASH_FLOW_NAMES, PROFIT_NAMES, Reports
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.payroll import CumulativeIncomeTaxPolicy
 
@@ -19,7 +20,7 @@ from ai_accounting.payroll import CumulativeIncomeTaxPolicy
 def book(tmp_path):
     engine = Engine(
         Store.create(
-            tmp_path / "company.sqlite", default_registry(), "co", "911100000000000001", "db"
+            tmp_path / "company.sqlite", production_bundle(), "co", "911100000000000001", "db"
         )
     )
     evidence = engine.register_evidence(
@@ -290,9 +291,9 @@ def test_detail_cannot_be_consumed_before_package_and_later_real_receipt_settles
 
 
 def test_asset_depreciation_and_split_loan_interest_continue_without_fake_drawdown(book):
-    engine, save, publish, package, _ = book
+    engine, save, publish, package, proof = book
     package(complete_members(save))
-    save("asset_consumption", "depreciation", {"period": "2026-01", "asset_id": "machine"})
+    consume_assets(engine, proof, "2026-01")
     save(
         "payment",
         "principal-payment",
@@ -328,7 +329,7 @@ def test_asset_depreciation_and_split_loan_interest_continue_without_fake_drawdo
                 "period_end_exclusive": end,
             },
         )
-    publish("depreciation", "principal-payment", "interest-first", "interest-second")
+    publish("principal-payment", "interest-first", "interest-second")
     with engine.store.connection(read_only=True) as connection:
         calculations = {
             row["subject_id"]: json.loads(row["outcome"])["values"]
@@ -336,8 +337,17 @@ def test_asset_depreciation_and_split_loan_interest_continue_without_fake_drawdo
                 "SELECT c.* FROM calculation c JOIN calculation_current a ON a.calculation_id=c.id"
             )
         }
-        assert calculations["depreciation"]["consumption_fen"] == 10000
-        assert calculations["depreciation"]["closing_accumulated_fen"] == 30000
+        depreciation = [
+            json.loads(row[0])["values"]
+            for row in connection.execute(
+                "SELECT c.outcome FROM calculation c JOIN calculation_current a "
+                "ON a.calculation_id=c.id WHERE c.kind='asset_consumption'"
+            )
+        ]
+        assert len(depreciation) == 1
+        assert depreciation[0]["asset_id"] == "machine"
+        assert depreciation[0]["consumption_fen"] == 10000
+        assert depreciation[0]["closing_accumulated_fen"] == 30000
         assert calculations["interest-first"]["interest_fen"] == 1500
         assert calculations["interest-second"]["interest_fen"] == 1067
         assert connection.execute("SELECT count(*) FROM fact_loan_drawdown").fetchone()[0] == 0

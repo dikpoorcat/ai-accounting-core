@@ -11,7 +11,7 @@ from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.display import Display, DisplayProfile
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import Periods
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
@@ -346,7 +346,7 @@ def test_commentary_preview_cannot_be_reused_for_an_identical_other_company(tmp_
         Engine(
             Store.create(
                 tmp_path / (company + ".sqlite"),
-                default_registry(),
+                production_bundle(),
                 company,
                 company,
                 company + "-db",

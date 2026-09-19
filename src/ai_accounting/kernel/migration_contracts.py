@@ -1,4 +1,4 @@
-"""Read-only expansion of packaged SQLite contracts; SQL text is never normalized."""
+"""Exact package-owned SQLite contracts; no legacy formats or SQL normalization."""
 
 from __future__ import annotations
 
@@ -8,11 +8,8 @@ from pathlib import Path
 
 from .types import canonical
 
-# These released full snapshots remain readable; every later contract is a delta.
-_FULL_CONTRACT_VERSIONS = {
-    "business": frozenset(range(1, 13)),
-    "catalog": frozenset({0, 2, 3}),
-}
+KINDS = frozenset({"company", "catalog"})
+HEADERS = {"family", "kind", "status", "version", "application_id"}
 
 
 def _digest(items):
@@ -20,9 +17,9 @@ def _digest(items):
 
 
 def _object_map(items, *, sql):
-    result = {}
     if not isinstance(items, list):
         raise RuntimeError("invalid database contract objects")
+    result = {}
     fields = {"type", "name", "sql"} if sql else {"type", "name"}
     for item in items:
         if (
@@ -39,28 +36,40 @@ def _object_map(items, *, sql):
     return result
 
 
-def load_contracts(directory: Path, kind: str):
-    """Expand a same-kind, strictly descending parent chain, validating every digest."""
-    if kind not in {"business", "catalog"}:
+def load_contracts(directory: Path, kind: str, *, family: str, application_id: int):
+    """Read one kind directory; draft is independent of every released parent chain."""
+    if kind not in KINDS:
         raise ValueError("unknown database kind")
     raw = {}
-    for path in directory.glob(f"v*_{kind}.json"):
+    for path in sorted(directory.glob("*.json")):
         try:
             data = json.loads(path.read_text("utf-8"))
-            version = data["version"]
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, UnicodeError) as exc:
             raise RuntimeError("invalid database contract") from exc
-        # The frozen initial catalog file is named v1 but advertises user_version 0.
-        initial_catalog = kind == "catalog" and version == 0 and path.name == "v1_catalog.json"
+        if not isinstance(data, dict) or not HEADERS <= data.keys():
+            raise RuntimeError("invalid database contract header")
+        version, status = data["version"], data["status"]
         if (
-            type(version) is not int
-            or version < 0
-            or (not initial_catalog and (version == 0 or path.name != f"v{version}_{kind}.json"))
+            data["family"] != family
+            or data["kind"] != kind
+            or type(data["application_id"]) is not int
+            or data["application_id"] != application_id
+            or type(version) is not int
+            or not (
+                status == "draft"
+                and version == 0
+                and path.name == "draft.json"
+                or status == "released"
+                and version >= 1
+                and path.name == f"v{version}.json"
+            )
         ):
             raise RuntimeError("invalid database version contract")
         if version in raw:
             raise RuntimeError("duplicate database version contract")
         raw[version] = data
+    if not raw:
+        raise RuntimeError("missing database contracts")
     expanded = {}
 
     def expand(version):
@@ -70,18 +79,13 @@ def load_contracts(directory: Path, kind: str):
             raise RuntimeError("missing database parent contract")
         data = raw[version]
         if "objects" in data:
-            if version not in _FULL_CONTRACT_VERSIONS[kind]:
+            if version not in {0, 1}:
                 raise RuntimeError("new database contracts must be incremental")
-            if (
-                not {"version", "objects", "sha256"} <= data.keys()
-                or (data.keys() - {"version", "objects", "sha256", "kind", "source_commit"})
-                or ("kind" in data and data["kind"] != kind)
-            ):
+            if set(data) != HEADERS | {"objects", "sha256"}:
                 raise RuntimeError("invalid full database contract")
             items = _object_map(data["objects"], sql=True)
         else:
-            if set(data) != {
-                "version",
+            if version < 2 or set(data) != HEADERS | {
                 "base_version",
                 "base_sha256",
                 "add",
@@ -91,7 +95,7 @@ def load_contracts(directory: Path, kind: str):
             }:
                 raise RuntimeError("invalid incremental database contract")
             base = data["base_version"]
-            if type(base) is not int or not 0 <= base < version:
+            if type(base) is not int or not 1 <= base < version:
                 raise RuntimeError("invalid database parent version")
             parent = expand(base)
             if parent["sha256"] != data["base_sha256"]:
@@ -115,7 +119,11 @@ def load_contracts(directory: Path, kind: str):
         result = [items[key] for key in sorted(items)]
         if _digest(result) != data["sha256"]:
             raise RuntimeError("packaged database contract is damaged")
-        expanded[version] = {"version": version, "objects": result, "sha256": data["sha256"]}
+        expanded[version] = {
+            **{key: data[key] for key in HEADERS},
+            "objects": result,
+            "sha256": data["sha256"],
+        }
         return expanded[version]
 
     for version in sorted(raw):
@@ -124,7 +132,7 @@ def load_contracts(directory: Path, kind: str):
 
 
 def diff_contracts(old, new):
-    """Return exact changed objects and both SQL strings, suitable for review."""
+    """Exact changed objects and both SQL strings, suitable for human review."""
     before = _object_map(old["objects"], sql=True)
     after = _object_map(new["objects"], sql=True)
     return [

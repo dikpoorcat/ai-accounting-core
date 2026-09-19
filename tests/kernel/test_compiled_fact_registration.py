@@ -5,6 +5,7 @@ from typing import ClassVar
 
 import pytest
 from pydantic import ValidationError
+from schema_fixture import test_bundle
 
 from ai_accounting.kernel.command_schema import command_models
 from ai_accounting.kernel.contracts import Fact, KernelError, Registry
@@ -30,7 +31,9 @@ def book(tmp_path):
     registry.register(OrdinaryFact)
     registry.register(CompiledFact)
     engine = Engine(
-        Store.create(tmp_path / "company.sqlite", registry, "company", "taxpayer", "database")
+        Store.create(
+            tmp_path / "company.sqlite", test_bundle(registry), "company", "taxpayer", "database"
+        )
     )
     evidence = engine.register_evidence(
         b"synthetic compiler source", "text/plain", "source", request_id="evidence"

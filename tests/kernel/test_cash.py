@@ -9,7 +9,7 @@ from test_payroll import labor, labor_policy
 from ai_accounting.kernel.contracts import KernelError, NeedsInformation
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 
@@ -18,7 +18,7 @@ def book(tmp_path):
     engine = Engine(
         Store.create(
             tmp_path / "company.sqlite",
-            default_registry(),
+            production_bundle(),
             "company",
             "911100000000000001",
             "database",

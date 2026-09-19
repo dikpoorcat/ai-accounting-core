@@ -10,7 +10,7 @@ from ai_accounting.kernel.asset_batches import AssetBatches, frozen_members
 from ai_accounting.kernel.contracts import FactVersion, KernelError
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.runtime import connect
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.kernel.types import canonical, digest
 
@@ -19,7 +19,7 @@ from ai_accounting.kernel.types import canonical, digest
 def batch_book(tmp_path):
     engine = Engine(
         Store.create(
-            tmp_path / "batch.sqlite", default_registry(), "company", "taxpayer", "database"
+            tmp_path / "batch.sqlite", production_bundle(), "company", "taxpayer", "database"
         )
     )
     proof = engine.register_evidence(

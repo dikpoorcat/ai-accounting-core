@@ -17,7 +17,7 @@ from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.dashboard import Dashboard
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.http import wire_money
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 
 book = report_cases.book
@@ -228,7 +228,7 @@ def test_changed_read_binding_rejects_before_recomputing(changed, tmp_path, monk
     def create(filename, company="company-a", database="database-a"):
         return Engine(
             Store.create(
-                tmp_path / filename, default_registry(), company, "911100000000000001", database
+                tmp_path / filename, production_bundle(), company, "911100000000000001", database
             )
         )
 
@@ -269,7 +269,11 @@ def test_changed_read_binding_rejects_before_recomputing(changed, tmp_path, monk
 def test_empty_brief_deferred_context_is_explicitly_absent(tmp_path, monkeypatch):
     engine = Engine(
         Store.create(
-            tmp_path / "empty.sqlite", default_registry(), "empty", "911100000000000001", "empty-db"
+            tmp_path / "empty.sqlite",
+            production_bundle(),
+            "empty",
+            "911100000000000001",
+            "empty-db",
         )
     )
     forbid_preparation(monkeypatch)

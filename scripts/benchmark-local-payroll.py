@@ -35,7 +35,7 @@ from ai_accounting.kernel.domains.payroll import (
     TaxBracketFact,
 )
 from ai_accounting.kernel.engine import Engine
-from ai_accounting.kernel.service import default_registry
+from ai_accounting.kernel.schema_bundle import production_bundle
 from ai_accounting.kernel.storage import Store
 from ai_accounting.payroll import CumulativeIncomeTaxPolicy
 
@@ -317,7 +317,7 @@ def run_scale(size, workspace, progress):
     engine = CountingEngine(
         CountingStore.create(
             workspace / f"employees-{size}.sqlite",
-            default_registry(),
+            production_bundle(),
             f"payroll-benchmark-{size}",
             "91310000123456789A",
             f"payroll-benchmark-db-{size}",
@@ -474,7 +474,7 @@ def run_scale(size, workspace, progress):
     affected = list(range(0, size, 2))
     metrics["dense_correction_first"] = correct(affected, "dense-first", 10_000)
     metrics["dense_correction_repeated"] = correct(affected, "dense-repeated", 20_000)
-    stage["verification"] = verify_file(engine.store.path)
+    stage["verification"] = verify_file(engine.store.path, _bundle=engine.store.bundle)
     with engine.store.connection(read_only=True) as connection:
         stage["row_counts"] = {
             name: connection.execute(f"SELECT count(*) FROM {name}").fetchone()[0]

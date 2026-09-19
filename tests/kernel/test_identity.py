@@ -75,9 +75,7 @@ def test_invalid_audit_request_rolls_back_owner_creation(tmp_path):
 def test_real_catalog_schema_tampering_blocks_identity_mutation(tmp_path):
     from ai_accounting.kernel.catalog import Catalog
     from ai_accounting.kernel.contracts import KernelError
-    from ai_accounting.kernel.service import default_registry
-
-    catalog = Catalog(tmp_path / "root", default_registry())
+    catalog = Catalog(tmp_path / "root")
     service = SecurityService(catalog.path)
     with closing(connect(catalog.path)) as connection:
         connection.execute("DROP TRIGGER security_audit_no_update")

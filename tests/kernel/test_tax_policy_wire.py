@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import ClassVar
 
 import pytest
+from schema_fixture import test_bundle
 
 from ai_accounting.kernel.command_schema import command_models, validate_command
 from ai_accounting.kernel.contracts import Fact, KernelError, Registry
@@ -53,7 +54,9 @@ def registry_and_commands():
 @pytest.fixture
 def company(tmp_path, registry_and_commands):
     registry, models = registry_and_commands
-    engine = Engine(Store.create(tmp_path / "company.sqlite", registry, "company", "tax", "db"))
+    engine = Engine(
+        Store.create(tmp_path / "company.sqlite", test_bundle(registry), "company", "tax", "db")
+    )
     evidence = engine.register_evidence(
         b"Synthetic explicitly selected policy", "text/plain", "policy", request_id="evidence"
     )["digest"]

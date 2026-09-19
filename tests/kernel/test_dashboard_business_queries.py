@@ -116,18 +116,44 @@ def test_equal_wage_batch_keeps_each_recipient_and_exact_source(wage_company, re
         )
         company.publish("batch")
         payment_id = "batch"
-    employees = Dashboard(company.engine).employees("2026-02")["data"]["employees"]["items"]
+    dashboard = Dashboard(company.engine)
+    response = dashboard.employees("2026-02")
+    employees = response["data"]["employees"]["items"]
     for employee in employees:
         person = employee["employee_id"]
         source = next(s for s in employee["payroll_sources"] if s["source_id"] == "wage-" + person)
-        movement = next(m for m in source["movements"] if m["source_id"] == payment_id)
-        assert movement["party_id"] == person
-        assert movement["party"] == "合成人员" + person
+        assert "movements" not in source
+        collection = dashboard.employees(
+            "2026-02",
+            section="settlement_events",
+            employee_id=person,
+            expected_version=response["snapshot_version"],
+        )["data"]["collections"]["settlement_events"]
+        movement = next(
+            item
+            for item in collection["items"]
+            if item["settlement_business"]["subject_id"] == payment_id
+        )
+        assert movement["recipient_id"] == person
+        assert movement["source_business"]["subject_id"] == "wage-" + person
         assert movement["source_calculation_id"] == source["calculation_id"]
         assert movement["obligation_key"] == "payroll:wage-" + person + ":net"
-        assert movement["field_sources"]["party"]
-    earlier = Dashboard(company.engine).employees("2026-01")["data"]["employees"]["items"]
-    assert all(not s["movements"] for e in earlier for s in e["payroll_sources"])
+        assert employee["name"] == "合成人员" + person
+        assert employee["field_sources"]["name"]
+    earlier_response = dashboard.employees("2026-01")
+    earlier = earlier_response["data"]["employees"]["items"]
+    assert all("movements" not in source for item in earlier for source in item["payroll_sources"])
+    for employee in earlier:
+        movements = dashboard.employees(
+            "2026-01",
+            section="settlement_events",
+            employee_id=employee["employee_id"],
+            expected_version=earlier_response["snapshot_version"],
+        )["data"]["collections"]["settlement_events"]["items"]
+        assert {
+            (item["settlement_business"]["subject_id"], item["posting_period"])
+            for item in movements
+        } == {(payment_id, "2026-02")}
 
 
 def test_complete_materials_do_not_hide_missing_payroll_in_brief(tmp_path):
