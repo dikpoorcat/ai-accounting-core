@@ -517,6 +517,74 @@ def verify_read_indexes(connection):
     return {"sources": len(expected)}
 
 
+def repair_read_indexes(connection, *, registry=None, fault=None):
+    """Restore the four directories in a caller-owned, source-verified transaction.
+
+    Only the eight released immutable directory triggers are suspended. Their
+    exact schema-verified SQL is restored before validation. No other table or
+    historical dependency is writable through this operation.
+    """
+    from .versions import verify_schema
+
+    if not connection.in_transaction:
+        raise ValueError("read-index repair requires the caller's write transaction")
+    verify_schema(connection, registry=registry)
+    try:
+        verified = verify_read_indexes(connection)
+        return {"changed": False, **verified}
+    except KernelError as exc:
+        if exc.code != "read_index_integrity_failed":
+            raise
+    # Read and validate every frozen source independently of the broken index.
+    sources = []
+    for kind, ident in _all_sources(connection):
+        row = _source(connection, kind, ident)
+        if kind == "close" and (
+            hashlib.sha256(row["manifest"].encode("utf-8")).digest() != row["digest"]
+        ):
+            _invalid(kind, ident, "manifest_digest_mismatch")
+        sources.append((kind, ident))
+    tables = ("close_reference", "job_reference", "audit_reference", "read_index_source")
+    names = tuple(
+        f"immutable_{table}_{event}" for table in tables for event in ("UPDATE", "DELETE")
+    )
+    triggers = {}
+    for name in names:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?", (name,),
+        ).fetchone()
+        if row is None:
+            _invalid("directory", name, "repair_trigger_missing")
+        triggers[name] = row[0]
+    connection.execute("SAVEPOINT read_index_repair")
+    try:
+        for name in names:
+            connection.execute(f'DROP TRIGGER "{name}"')
+        if fault:
+            fault("after_unseal", connection)
+        for table in tables:
+            connection.execute(f"DELETE FROM {table}")
+        for kind, ident in sources:
+            _sync(connection, kind, ident)
+        if fault:
+            fault("after_rebuild", connection)
+            fault("before_restore", connection)
+        for name in names:
+            connection.execute(triggers[name])
+        verify_schema(connection, registry=registry)
+        result = verify_read_indexes(connection)
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            _invalid("directory", "*", "foreign_key_mismatch")
+        if fault:
+            fault("after_verify", connection)
+        connection.execute("RELEASE read_index_repair")
+    except BaseException:
+        connection.execute("ROLLBACK TO read_index_repair")
+        connection.execute("RELEASE read_index_repair")
+        raise
+    return {"changed": True, **result}
+
+
 def close_rows(
     connection,
     *,

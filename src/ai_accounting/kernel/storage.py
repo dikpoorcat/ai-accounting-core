@@ -9,6 +9,8 @@ from typing import get_origin
 from pydantic import BaseModel
 
 from .contracts import Calculation, FactVersion, KernelError, Read, Registry
+from .dependencies import NO_PERIOD_LIMIT, scope_keys, validate_read
+from .permissions import create_private_file
 from .runtime import connect, require_local_database
 from .schema import base_type, initialize, sequence_model, table_name
 from .types import YearMonth, canonical
@@ -82,10 +84,8 @@ class Store:
     @classmethod
     def create(cls, path, registry, company_id, taxpayer_id, database_id):
         path = require_local_database(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         # Exclusive create prevents accidentally initializing an existing real company.
-        with path.open("xb"):
-            pass
+        create_private_file(path)
         with closing(connect(path)) as connection:
             initialize(connection, registry, company_id, taxpayer_id, database_id)
         return cls(path, registry, company_id, database_id)
@@ -122,24 +122,7 @@ class Store:
         if row is None:
             raise KernelError("unknown_fact", "fact revision does not exist")
         model = self.registry.models[row["kind"]]
-        data = dict(
-            connection.execute(
-                f"SELECT * FROM {table_name(row['kind'])} WHERE revision_id=?", (fact_id,)
-            ).fetchone()
-        )
-        del data["revision_id"]
-        decode_fields(model, data)
-        for name, info in model.model_fields.items():
-            item = sequence_model(info.annotation)
-            if item is not None:
-                rows = connection.execute(
-                    f"SELECT * FROM {table_name(row['kind'])}_{name} "
-                    "WHERE revision_id=? ORDER BY item_no",
-                    (fact_id,),
-                )
-                data[name] = [
-                    decode_fields(item, {k: r[k] for k in item.model_fields}) for r in rows
-                ]
+        data = Store._fact_data(connection, fact_id, model, row["kind"])
         evidence = tuple(
             r[0].hex()
             for r in connection.execute(
@@ -155,6 +138,88 @@ class Store:
             model.model_validate_json(canonical(data)),
             evidence,
         )
+
+    def fact_data(self, connection, fact_id) -> dict:
+        """Decode the exact stored fact shape without applying today's model defaults."""
+        row = connection.execute(
+            "SELECT s.kind FROM fact_revision f JOIN subject s ON s.id=f.subject_id "
+            "WHERE f.id=?",
+            (fact_id,),
+        ).fetchone()
+        if row is None:
+            raise KernelError("unknown_fact", "fact revision does not exist")
+        model = self.registry.models[row["kind"]]
+        return Store._fact_data(connection, fact_id, model, row["kind"])
+
+    def fact_data_many(self, connection, fact_ids) -> dict[str, dict]:
+        """Batch raw fact decoding without applying current model validation or defaults."""
+        identifiers = sorted(set(fact_ids))
+        if not identifiers:
+            return {}
+        rows = list(
+            connection.execute(
+                "SELECT f.id,s.kind FROM json_each(?) ids JOIN fact_revision f "
+                "ON f.id=ids.value JOIN subject s ON s.id=f.subject_id",
+                (canonical(identifiers),),
+            )
+        )
+        if len(rows) != len(identifiers):
+            raise KernelError("unknown_fact", "fact revision does not exist")
+        by_kind = {}
+        for row in rows:
+            by_kind.setdefault(row["kind"], []).append(row["id"])
+        result = {}
+        for kind, revision_ids in by_kind.items():
+            model = self.registry.models[kind]
+            keys = canonical(revision_ids)
+            for row in connection.execute(
+                f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)} f "
+                "ON f.revision_id=ids.value",
+                (keys,),
+            ):
+                values = dict(row)
+                ident = values.pop("revision_id")
+                result[ident] = decode_fields(model, values)
+            for name, info in model.model_fields.items():
+                item = sequence_model(info.annotation)
+                if item is None:
+                    continue
+                for ident in revision_ids:
+                    result[ident][name] = []
+                for row in connection.execute(
+                    f"SELECT f.* FROM json_each(?) ids JOIN {table_name(kind)}_{name} f "
+                    "ON f.revision_id=ids.value ORDER BY f.revision_id,f.item_no",
+                    (keys,),
+                ):
+                    result[row["revision_id"]][name].append(
+                        decode_fields(item, {key: row[key] for key in item.model_fields})
+                    )
+        if len(result) != len(identifiers):
+            raise KernelError("unknown_fact", "typed fact data does not exist")
+        return result
+
+    @staticmethod
+    def _fact_data(connection, fact_id, model, kind) -> dict:
+        row = connection.execute(
+            f"SELECT * FROM {table_name(kind)} WHERE revision_id=?", (fact_id,)
+        ).fetchone()
+        if row is None:
+            raise KernelError("unknown_fact", "typed fact data does not exist")
+        data = dict(row)
+        del data["revision_id"]
+        decode_fields(model, data)
+        for name, info in model.model_fields.items():
+            item = sequence_model(info.annotation)
+            if item is not None:
+                rows = connection.execute(
+                    f"SELECT * FROM {table_name(kind)}_{name} "
+                    "WHERE revision_id=? ORDER BY item_no",
+                    (fact_id,),
+                )
+                data[name] = [
+                    decode_fields(item, {k: r[k] for k in item.model_fields}) for r in rows
+                ]
+        return data
 
     def facts(self, connection, fact_ids) -> dict[str, FactVersion]:
         """Load exact revisions in batches, including each kind's typed child tables."""
@@ -260,9 +325,7 @@ class Store:
             [
                 (version.id, fact.kind, key)
                 for key in sorted(
-                    set(fact.scopes_for(version.subject_id))
-                    | {"@" + version.subject_id, str(fact.period)}
-                    | {claim.key for claim in fact.claims()}
+                    scope_keys("fact", fact, version.subject_id)
                 )
             ],
         )
@@ -290,66 +353,82 @@ class Store:
         )
 
     def select(self, connection, read: Read):
-        limit = read.before_period.ordinal if read.before_period else 119988
-        if read.key.startswith("#"):
-            # Published versions are immutable and can be explicitly referenced
-            # even after replacement. A reference never means "the latest".
-            if read.source == "fact":
-                row = connection.execute(
-                    "SELECT f.id,s.kind FROM fact_revision f JOIN fact_seal z ON z.fact_id=f.id "
-                    "JOIN subject s ON s.id=f.subject_id WHERE f.id=? AND f.period<?",
-                    (read.key[1:], limit),
-                ).fetchone()
-                if row is None or read.kind not in ("*", row["kind"]):
-                    return ()
-                return (self.fact(connection, row["id"]),)
-            row = connection.execute(
-                "SELECT c.* FROM calculation c JOIN calculation_seal z ON z.calculation_id=c.id "
-                "WHERE c.id=? AND c.period<?",
-                (read.key[1:], limit),
-            ).fetchone()
-            if row is None or read.kind not in ("*", row["kind"]):
-                return ()
-            return (self.calculation(row),)
-        if read.key == "*":
-            if read.kind == "*":
-                raise KernelError(
-                    "unbounded_read", "whole-company wildcard reads are not supported"
-                )
-            if read.source == "fact":
-                ids = connection.execute(
-                    "SELECT f.id FROM subject s JOIN fact_current a ON a.subject_id=s.id "
+        return self.select_many(connection, (read,))[read]
+
+    def select_many(self, connection, reads, *, fact_loader=None) -> dict[Read, tuple]:
+        """Select declared reads in batches from one shared semantic implementation."""
+        requested = list(dict.fromkeys(reads))
+        for read in requested:
+            validate_read(read)
+        selected: dict[Read, tuple] = {}
+        for source in ("fact", "calculation"):
+            group = [read for read in requested if read.source == source]
+            if not group:
+                continue
+            specifications = [
+                [
+                    index,
+                    read.kind,
+                    read.key,
+                    read.before_period.ordinal if read.before_period else NO_PERIOD_LIMIT,
+                ]
+                for index, read in enumerate(group)
+            ]
+            query = (
+                "WITH requests AS (SELECT json_extract(value,'$[0]') AS slot,"
+                "json_extract(value,'$[1]') AS kind,json_extract(value,'$[2]') AS key,"
+                "json_extract(value,'$[3]') AS cutoff FROM json_each(?)), ids AS ("
+            )
+            if source == "fact":
+                query += (
+                    "SELECT q.slot,f.id FROM requests q JOIN fact_revision f "
+                    "ON f.id=substr(q.key,2) JOIN subject s ON s.id=f.subject_id "
+                    "JOIN fact_seal z ON z.fact_id=f.id WHERE substr(q.key,1,1)='#' "
+                    "AND (q.kind='*' OR q.kind=s.kind) AND f.period<q.cutoff UNION ALL "
+                    "SELECT q.slot,f.id FROM requests q JOIN subject s ON s.kind=q.kind "
+                    "JOIN fact_current a ON a.subject_id=s.id JOIN fact_revision f "
+                    "ON f.id=a.fact_id WHERE q.key='*' AND f.period<q.cutoff UNION ALL "
+                    "SELECT q.slot,f.id FROM requests q JOIN fact_scope x ON x.scope_key=q.key "
+                    "JOIN fact_current a ON a.fact_id=x.fact_id "
                     "JOIN fact_revision f ON f.id=a.fact_id "
-                    "WHERE s.kind=? AND f.period<? ORDER BY s.id",
-                    (read.kind, limit),
-                ).fetchall()
-                return tuple(self.fact(connection, row[0]) for row in ids)
-            rows = connection.execute(
-                "SELECT c.* FROM calculation c JOIN calculation_current a "
-                "ON a.calculation_id=c.id WHERE c.kind=? AND c.period<? "
-                "ORDER BY c.period,c.subject_id",
-                (read.kind, limit),
+                    "WHERE q.key<>'*' AND substr(q.key,1,1)<>'#' "
+                    "AND (q.kind='*' OR q.kind=x.kind) AND f.period<q.cutoff) "
+                    "SELECT ids.slot,f.id,f.subject_id FROM ids "
+                    "JOIN fact_revision f ON f.id=ids.id ORDER BY ids.slot,f.subject_id"
+                )
+            else:
+                query += (
+                    "SELECT q.slot,c.id FROM requests q JOIN calculation c ON c.id=substr(q.key,2) "
+                    "JOIN calculation_seal z ON z.calculation_id=c.id WHERE substr(q.key,1,1)='#' "
+                    "AND (q.kind='*' OR q.kind=c.kind) AND c.period<q.cutoff UNION ALL "
+                    "SELECT q.slot,c.id FROM requests q JOIN calculation c ON c.kind=q.kind "
+                    "JOIN calculation_current a ON a.calculation_id=c.id "
+                    "WHERE q.key='*' AND c.period<q.cutoff UNION ALL "
+                    "SELECT q.slot,c.id FROM requests q "
+                    "JOIN calculation_scope x ON x.scope_key=q.key "
+                    "JOIN calculation_current a ON a.calculation_id=x.calculation_id "
+                    "JOIN calculation c ON c.id=a.calculation_id WHERE q.key<>'*' "
+                    "AND substr(q.key,1,1)<>'#' AND (q.kind='*' OR q.kind=x.kind) "
+                    "AND c.period<q.cutoff) SELECT ids.slot,c.* FROM ids "
+                    "JOIN calculation c ON c.id=ids.id ORDER BY ids.slot,c.period,c.subject_id"
+                )
+            rows = list(connection.execute(query, (canonical(specifications),)))
+            if source == "fact":
+                identifiers = {row["id"] for row in rows}
+                objects = (
+                    fact_loader(identifiers)
+                    if fact_loader is not None
+                    else self.facts(connection, identifiers)
+                )
+            else:
+                objects = {row["id"]: self.calculation(row) for row in rows}
+            grouped = [[] for _ in group]
+            for row in rows:
+                grouped[row["slot"]].append(objects[row["id"]])
+            selected.update(
+                (read, tuple(grouped[index])) for index, read in enumerate(group)
             )
-            return tuple(self.calculation(row) for row in rows)
-        if read.source == "fact":
-            where = "s.scope_key=?" if read.kind == "*" else "s.kind=? AND s.scope_key=?"
-            parameters = (read.key,) if read.kind == "*" else (read.kind, read.key)
-            ids = connection.execute(
-                "SELECT s.fact_id FROM fact_scope s JOIN fact_current c ON c.fact_id=s.fact_id "
-                f"JOIN fact_revision f ON f.id=s.fact_id WHERE {where} "
-                "AND f.period<? ORDER BY c.subject_id",
-                (*parameters, read.before_period.ordinal if read.before_period else 119988),
-            )
-            return tuple(self.fact(connection, r[0]) for r in ids.fetchall())
-        where = "s.scope_key=?" if read.kind == "*" else "s.kind=? AND s.scope_key=?"
-        parameters = (read.key,) if read.kind == "*" else (read.kind, read.key)
-        rows = connection.execute(
-            "SELECT c.* FROM calculation_scope s JOIN calculation_current a "
-            "ON a.calculation_id=s.calculation_id JOIN calculation c ON c.id=s.calculation_id "
-            f"WHERE {where} AND c.period<? ORDER BY c.period,c.subject_id",
-            (*parameters, read.before_period.ordinal if read.before_period else 119988),
-        )
-        return tuple(self.calculation(row) for row in rows)
+        return selected
 
     @staticmethod
     def epochs(connection):

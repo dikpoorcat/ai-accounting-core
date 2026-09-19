@@ -222,76 +222,17 @@ class QueryReads:
     def prime_select(self, reads):
         """Batch the existing Read contract without changing scope or version choice."""
         requested = list(dict.fromkeys(read for read in reads if read not in self._selections))
-        for source in ("fact", "calculation"):
-            group = [read for read in requested if read.source == source]
-            if not group:
-                continue
-            specifications = [
-                [
-                    index,
-                    read.kind,
-                    read.key,
-                    read.before_period.ordinal if read.before_period else 119988,
-                ]
-                for index, read in enumerate(group)
-            ]
-            q = (
-                "WITH requests AS (SELECT json_extract(value,'$[0]') AS slot,"
-                "json_extract(value,'$[1]') AS kind,json_extract(value,'$[2]') AS key,"
-                "json_extract(value,'$[3]') AS cutoff FROM json_each(?)), ids AS ("
-            )
-            if source == "fact":
-                q += (
-                    "SELECT q.slot,f.id FROM requests q JOIN fact_revision f "
-                    "ON f.id=substr(q.key,2) JOIN subject s ON s.id=f.subject_id "
-                    "JOIN fact_seal z ON z.fact_id=f.id WHERE substr(q.key,1,1)='#' "
-                    "AND (q.kind='*' OR q.kind=s.kind) AND f.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,f.id FROM requests q JOIN subject s ON s.kind=q.kind "
-                    "JOIN fact_current a ON a.subject_id=s.id JOIN fact_revision f "
-                    "ON f.id=a.fact_id WHERE q.key='*' AND f.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,f.id FROM requests q JOIN fact_scope x ON x.scope_key=q.key "
-                    "JOIN fact_current a ON a.fact_id=x.fact_id "
-                    "JOIN fact_revision f ON f.id=a.fact_id "
-                    "WHERE q.key<>'*' AND substr(q.key,1,1)<>'#' "
-                    "AND (q.kind='*' OR q.kind=x.kind) AND f.period<q.cutoff) "
-                    "SELECT ids.slot,f.id,f.subject_id,f.period FROM ids "
-                    "JOIN fact_revision f ON f.id=ids.id "
-                    "ORDER BY ids.slot,f.subject_id"
-                )
+        selections = self.store.select_many(
+            self.connection, requested, fact_loader=self.fact_versions
+        )
+        self._selections.update(selections)
+        for read, values in selections.items():
+            if read.source == "fact":
+                self._fact_versions.update((value.id, value) for value in values)
             else:
-                q += (
-                    "SELECT q.slot,c.id FROM requests q JOIN calculation c ON c.id=substr(q.key,2) "
-                    "JOIN calculation_seal z ON z.calculation_id=c.id WHERE substr(q.key,1,1)='#' "
-                    "AND (q.kind='*' OR q.kind=c.kind) AND c.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,c.id FROM requests q JOIN calculation c ON c.kind=q.kind "
-                    "JOIN calculation_current a ON a.calculation_id=c.id "
-                    "WHERE q.key='*' AND c.period<q.cutoff UNION ALL "
-                    "SELECT q.slot,c.id FROM requests q "
-                    "JOIN calculation_scope x ON x.scope_key=q.key "
-                    "JOIN calculation_current a ON a.calculation_id=x.calculation_id "
-                    "JOIN calculation c ON c.id=a.calculation_id WHERE q.key<>'*' "
-                    "AND substr(q.key,1,1)<>'#' AND (q.kind='*' OR q.kind=x.kind) "
-                    "AND c.period<q.cutoff) SELECT ids.slot,c.* FROM ids "
-                    "JOIN calculation c ON c.id=ids.id ORDER BY ids.slot,c.period,c.subject_id"
-                )
-            rows = list(self.connection.execute(q, (canonical(specifications),)))
-            if source == "fact":
-                versions = self.fact_versions({row["id"] for row in rows})
-            else:
-                for row in rows:
-                    if row["id"] not in self._typed_calculations:
-                        self._typed_calculations[row["id"]] = self.store.calculation(row)
-                versions = self._typed_calculations
-            grouped = [[] for _ in group]
-            for row in rows:
-                grouped[row["slot"]].append(versions[row["id"]])
-            self._selections.update(
-                (read, tuple(grouped[index])) for index, read in enumerate(group)
-            )
+                self._typed_calculations.update((value.id, value) for value in values)
 
     def select(self, read):
-        if read.key == "*" and read.kind == "*":
-            raise KernelError("unbounded_read", "whole-company wildcard reads are not supported")
         self.prime_select((read,))
         return self._selections[read]
 

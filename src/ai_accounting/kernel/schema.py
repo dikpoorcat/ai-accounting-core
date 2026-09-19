@@ -10,7 +10,12 @@ from pydantic import BaseModel
 from .contracts import Registry
 from .types import YearMonth
 
-VERSION = 12
+VERSION = 13
+
+READ_REPAIR_DDL = """
+ALTER TABLE state ADD COLUMN read_repair_revision INTEGER NOT NULL DEFAULT 0
+ CHECK(read_repair_revision>=0);
+"""
 
 COMMENTARY_BASIS_DDL = """
 CREATE TABLE period_commentary_basis(commentary_id TEXT PRIMARY KEY
@@ -397,6 +402,7 @@ CREATE TABLE company_note_revision(id TEXT PRIMARY KEY, revision INTEGER NOT NUL
         + ASSET_BATCH_DDL
         + ";\n".join(COMPANY_DDL)
         + ";\n"
+        + READ_REPAIR_DDL
     )
 
 

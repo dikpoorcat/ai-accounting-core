@@ -19,10 +19,13 @@ from pydantic import SecretStr
 from ai_accounting.kernel.backup import create_portable, verify_portable
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
+from ai_accounting.kernel.daemon import build_native_security_controller
 from ai_accounting.kernel.http import create_server
 from ai_accounting.kernel.jobs import JobRunner
+from ai_accounting.kernel.periods import MATERIAL_CATEGORIES, Periods
+from ai_accounting.kernel.security import IdentityError, consume_close_approval
 from ai_accounting.kernel.security.credentials import InMemoryCredentialStore
-from ai_accounting.kernel.security.native import NativeSecurityController
+from ai_accounting.kernel.security.windows import read_protected_json, write_protected_json
 from ai_accounting.kernel.service import LocalService, default_registry
 
 PASSWORD = SecretStr("Synthetic-resident-owner-123")
@@ -35,13 +38,17 @@ def resident(tmp_path):
     service.security.provision("owner", PASSWORD)
     store = InMemoryCredentialStore()
     windows = []
-    service.security_controller = NativeSecurityController(
-        service.security, credential_store=store, window_opener=windows.append
-    )
     static = tmp_path / "static"
     static.mkdir()
     (static / "local.html").write_text("<html>synthetic application surface</html>")
     server, capability = create_server(service, static_directory=static)
+    service.security_controller = build_native_security_controller(
+        service,
+        server,
+        capability,
+        credential_store=store,
+        window_opener=windows.append,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
@@ -224,6 +231,183 @@ def test_security_origin_surface_and_private_capability_are_separate_boundaries(
     assert "synthetic-hidden" not in json.dumps(error)
     assert windows == []
     assert http.native("request", kind="login")[0] == 200
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows protected capability boundary")
+def test_same_account_capability_reaches_password_and_bound_approval_without_real_window(
+    resident, tmp_path
+):
+    service, _, capability, http, windows = resident
+    metadata = tmp_path / "synthetic.service.json"
+    write_protected_json(metadata, {"capability": capability})
+    recovered = read_protected_json(metadata)["capability"]
+
+    status, _, _, requested = http.request(
+        "/api/security",
+        {"operation": "request", "kind": "login"},
+        headers={"X-Local-Capability": recovered},
+    )
+    assert status == 200 and windows == [requested["request_id"]]
+    status, _, _, logged_in = http.request(
+        "/api/security",
+        {
+            "operation": "native_execute",
+            "request_id": requested["request_id"],
+            "password": PASSWORD.get_secret_value(),
+        },
+        headers={"X-Local-Capability": recovered},
+    )
+    assert status == 200 and logged_in["login_completed"]
+    assert (
+        http.request(
+            "/api/security",
+            {
+                "operation": "native_update",
+                "request_id": requested["request_id"],
+                "status": "succeeded",
+            },
+            headers={"X-Local-Capability": recovered},
+        )[0]
+        == 200
+    )
+
+    token = service.security_controller.store.load_session_token()
+    company = service.dispatch(
+        "create_company",
+        {"taxpayer_id": TAXPAYER, "name": "合成测试公司"},
+        session_token=token,
+    )
+    engine = service.engine(company["id"])
+    proof = engine.register_evidence(
+        b"explicit synthetic no-business confirmation",
+        "text/plain",
+        "synthetic close confirmation",
+        request_id="synthetic-close-evidence",
+    )["digest"]
+    periods = Periods(engine)
+    for category in MATERIAL_CATEGORIES:
+        periods.inventory(
+            "2026-09",
+            category,
+            evidence=[],
+            expected=0,
+            no_business=True,
+            confirmation_evidence=proof,
+            request_id=f"synthetic-inventory-{category}",
+        )
+    preview = service.dispatch(
+        "preview_close",
+        {
+            "company_id": company["id"],
+            "period": "2026-09",
+            "owner_confirmation": proof,
+        },
+        session_token=token,
+    )
+    request = {
+        "operation": "request",
+        "kind": "approve_period_close",
+        "company_id": company["id"],
+        "database_id": company["database_id"],
+        "period": "2026-09",
+        "calculation_hash": preview["digest"],
+        "epochs": preview["epochs"],
+    }
+    status, _, _, approval_request = http.request(
+        "/api/security", request, headers={"X-Local-Capability": recovered}
+    )
+    assert status == 200, approval_request
+    assert windows[-1] == approval_request["request_id"]
+    status, _, _, approved = http.request(
+        "/api/security",
+        {
+            "operation": "native_execute",
+            "request_id": approval_request["request_id"],
+            "password": PASSWORD.get_secret_value(),
+        },
+        headers={"X-Local-Capability": recovered},
+    )
+    assert status == 200 and approved["approval_id"]
+    approval_id = approved["approval_id"]
+    with engine.store.connection(read_only=True) as connection:
+        row = connection.execute(
+            "SELECT * FROM security_close_approval WHERE id=?", (approval_id,)
+        ).fetchone()
+        assert row is not None and row["consumed_at"] is None
+
+    with service.security.authorized(token) as authority:
+        invalid_bindings = [
+            {"period": "2026-08", "epochs": preview["epochs"]},
+            {
+                "period": "2026-09",
+                "epochs": {**preview["epochs"], "accounting": preview["epochs"]["accounting"] + 1},
+            },
+        ]
+        for binding in invalid_bindings:
+            with engine.store.connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                with pytest.raises(IdentityError, match="IDENTITY_CLOSE_APPROVAL_INVALID"):
+                    consume_close_approval(
+                        connection,
+                        approval_id,
+                        authority=authority,
+                        company_id=company["id"],
+                        database_id=company["database_id"],
+                        period=binding["period"],
+                        preview_digest=preview["digest"],
+                        epochs=binding["epochs"],
+                        now=service.security.now(),
+                    )
+                connection.rollback()
+
+    closed = service.dispatch(
+        "close",
+        {
+            "company_id": company["id"],
+            "period": "2026-09",
+            "owner_confirmation": proof,
+            "preview_digest": preview["digest"],
+            "epochs": preview["epochs"],
+            "approval_id": approval_id,
+            "request_id": "synthetic-close",
+        },
+        session_token=token,
+    )
+    assert closed["status"] == "closed"
+    with engine.store.connection(read_only=True) as connection:
+        row = connection.execute(
+            "SELECT consumed_at FROM security_close_approval WHERE id=?", (approval_id,)
+        ).fetchone()
+        assert row["consumed_at"] is not None
+        assert connection.execute("SELECT count(*) FROM period_close").fetchone()[0] == 1
+
+
+def test_direct_private_password_failures_share_persistent_throttle(resident):
+    service, _, _, http, _ = resident
+    request = http.native("request", kind="login")[3]
+    for _ in range(5):
+        status, _, _, result = http.native(
+            "native_execute",
+            request_id=request["request_id"],
+            password="wrong-synthetic-password",
+        )
+        assert status == 400 and result["code"] == "IDENTITY_AUTHENTICATION_FAILED"
+    status, _, _, result = http.native(
+        "native_execute",
+        request_id=request["request_id"],
+        password=PASSWORD.get_secret_value(),
+    )
+    assert status == 400 and result["code"] == "IDENTITY_AUTHENTICATION_FAILED"
+    with service.security._transaction() as connection:
+        owner = connection.execute(
+            "SELECT password_failures,password_blocked_until FROM security_owner WHERE singleton=1"
+        ).fetchone()
+        blocked = connection.execute(
+            "SELECT count(*) FROM security_audit WHERE outcome='blocked' "
+            "AND reason='AUTHENTICATION_THROTTLED'"
+        ).fetchone()[0]
+    assert owner["password_failures"] == 5 and owner["password_blocked_until"] is not None
+    assert blocked == 1
 
 
 def test_shutdown_requires_capability_and_valid_origin_without_owner_password(resident):

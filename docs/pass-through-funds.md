@@ -10,7 +10,7 @@
 > `finance_update_business_metadata` 的任意 `metadata` 字典在当前内核**没有对应入口**，
 > `management` 只接受说明、代发归集月份与代发类别。
 
-运行协议 `business-components-v3`；当前公司库结构版本为 v12、目录库为 v3。
+运行协议 `business-components-v3`；当前公司库结构版本为 v13、目录库为 v3。
 代收与应收核销、预收和其他业务采用相同 `finance_record_event` 组件协议，银行或现金收付
 统一放在 `funds`。代收确认代收代付负债，不形成收入或预收款；不必先登记受益人或债权人。
 

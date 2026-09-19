@@ -61,6 +61,8 @@ def _apis():
         ctypes.c_void_p,
     ]
     kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.CreateDirectoryW.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p]
+    kernel.CreateDirectoryW.restype = ctypes.c_int
     kernel.ReadFile.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -115,6 +117,29 @@ def _apis():
         ctypes.POINTER(ctypes.c_uint32),
     ]
     advapi.GetSecurityDescriptorControl.restype = ctypes.c_int
+    advapi.GetSecurityDescriptorDacl.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    advapi.GetSecurityDescriptorDacl.restype = ctypes.c_int
+    advapi.GetSecurityDescriptorOwner.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    advapi.GetSecurityDescriptorOwner.restype = ctypes.c_int
+    advapi.SetSecurityInfo.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    advapi.SetSecurityInfo.restype = ctypes.c_uint32
     advapi.GetAce.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)]
     advapi.GetAce.restype = ctypes.c_int
     return kernel, advapi
@@ -131,17 +156,19 @@ def _sid_string(kernel, advapi, sid):
 
 
 @lru_cache
-def current_windows_sid():
+def _current_token_sid(information_class):
     kernel, advapi = _apis()
     token, needed = ctypes.c_void_p(), ctypes.c_uint32()
     if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 8, ctypes.byref(token)):
         raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
     try:
-        advapi.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
+        advapi.GetTokenInformation(token, information_class, None, 0, ctypes.byref(needed))
         if not 0 < needed.value < 65_536:
             raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
         buffer = ctypes.create_string_buffer(needed.value)
-        if not advapi.GetTokenInformation(token, 1, buffer, needed, ctypes.byref(needed)):
+        if not advapi.GetTokenInformation(
+            token, information_class, buffer, needed, ctypes.byref(needed)
+        ):
             raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
         sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
         return _sid_string(kernel, advapi, sid)
@@ -149,10 +176,19 @@ def current_windows_sid():
         kernel.CloseHandle(token)
 
 
-def _private_descriptor(advapi):
+def current_windows_sid():
+    return _current_token_sid(1)
+
+
+def current_windows_default_owner_sid():
+    return _current_token_sid(4)
+
+
+def _private_descriptor(advapi, *, directory=False):
     sid = current_windows_sid()
     value = ctypes.c_void_p()
-    sddl = f"O:{sid}G:{sid}D:P(A;;FA;;;SY)(A;;FA;;;{sid})"
+    flags = "OICI" if directory else ""
+    sddl = f"O:{sid}G:{sid}D:P(A;{flags};FA;;;SY)(A;{flags};FA;;;{sid})"
     if not advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
         sddl, 1, ctypes.byref(value), None
     ):
@@ -160,7 +196,7 @@ def _private_descriptor(advapi):
     return value
 
 
-def _assert_private_handle(kernel, advapi, handle):
+def _assert_private_handle(kernel, advapi, handle, *, directory=False):
     owner, dacl, descriptor = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
     if advapi.GetSecurityInfo(
         handle, 1, 5, ctypes.byref(owner), None, ctypes.byref(dacl), None, ctypes.byref(descriptor)
@@ -180,7 +216,8 @@ def _assert_private_handle(kernel, advapi, handle):
         ):
             raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
         acl = ctypes.cast(dacl, ctypes.POINTER(_ACL)).contents
-        if not 1 <= acl.count <= 2:
+        expected_subjects = {sid, SYSTEM_SID}
+        if acl.count != len(expected_subjects):
             raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
         subjects = set()
         for index in range(acl.count):
@@ -192,16 +229,137 @@ def _assert_private_handle(kernel, advapi, handle):
             subject = _sid_string(kernel, advapi, ctypes.c_void_p(ace.value + 8))
             if (
                 header[0] != 0
-                or header[1] != 0
+                or header[1] != (3 if directory else 0)
                 or mask != FILE_ALL_ACCESS
                 or subject not in {sid, SYSTEM_SID}
             ):
                 raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
             subjects.add(subject)
-        if sid not in subjects:
+        if subjects != expected_subjects:
             raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
     finally:
         kernel.LocalFree(descriptor)
+
+
+def _open_security_handle(path, *, directory=False, write=False, write_owner=False):
+    kernel, advapi = _apis()
+    access = 0x00020000 | (0x00040000 if write else 0) | (0x00080000 if write_owner else 0)
+    flags = 0x00200000 | (0x02000000 if directory else 0)
+    handle = kernel.CreateFileW(str(path), access, 1 | 2 | 4, None, 3, flags, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise IdentityError("OWNER_SECURITY_STATE_UNAVAILABLE")
+    return kernel, advapi, handle
+
+
+def _assert_current_owner(kernel, advapi, handle):
+    owner, descriptor = ctypes.c_void_p(), ctypes.c_void_p()
+    if advapi.GetSecurityInfo(
+        handle, 1, 1, ctypes.byref(owner), None, None, None, ctypes.byref(descriptor)
+    ):
+        raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
+    try:
+        actual = _sid_string(kernel, advapi, owner)
+        if actual not in {current_windows_sid(), current_windows_default_owner_sid()}:
+            raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
+        return actual == current_windows_sid()
+    finally:
+        kernel.LocalFree(descriptor)
+
+
+def _tighten_private_handle(kernel, advapi, handle, *, directory=False, adopt=False):
+    owner_is_user = False if adopt else _assert_current_owner(kernel, advapi, handle)
+    descriptor = _private_descriptor(advapi, directory=directory)
+    present, defaulted = ctypes.c_int(), ctypes.c_int()
+    owner, dacl = ctypes.c_void_p(), ctypes.c_void_p()
+    try:
+        if not advapi.GetSecurityDescriptorOwner(
+            descriptor, ctypes.byref(owner), ctypes.byref(defaulted)
+        ) or not owner.value:
+            raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
+        if not advapi.GetSecurityDescriptorDacl(
+            descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)
+        ) or not present.value or not dacl.value:
+            raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
+        set_owner = adopt or not owner_is_user
+        information = 0x80000004 | (1 if set_owner else 0)
+        if advapi.SetSecurityInfo(
+            handle, 1, information, owner if set_owner else None, None, dacl, None
+        ):
+            raise IdentityError("OWNER_SECURITY_STATE_ACCESS_DENIED")
+        _assert_private_handle(kernel, advapi, handle, directory=directory)
+    finally:
+        kernel.LocalFree(descriptor)
+
+
+def assert_private_path(path, *, directory=False):
+    path = _safe_path(path)
+    kernel, advapi, handle = _open_security_handle(path, directory=directory)
+    try:
+        _assert_private_handle(kernel, advapi, handle, directory=directory)
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def ensure_private_path(path, *, directory=False):
+    path = _safe_path(path)
+    kernel, advapi, handle = _open_security_handle(
+        path, directory=directory, write=True, write_owner=True
+    )
+    try:
+        _tighten_private_handle(kernel, advapi, handle, directory=directory)
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def adopt_private_path(path):
+    """Secure a file just created by SQLite inside an already-private directory."""
+    path = _safe_path(path)
+    kernel, advapi, handle = _open_security_handle(path, write=True, write_owner=True)
+    try:
+        _tighten_private_handle(kernel, advapi, handle, adopt=True)
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def create_private_empty_file(path):
+    path = _safe_path(path)
+    if not path.parent.is_dir():
+        raise IdentityError("OWNER_SECURITY_STATE_UNAVAILABLE")
+    kernel, advapi = _apis()
+    descriptor = _private_descriptor(advapi)
+    attributes = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, 0)
+    handle = None
+    try:
+        handle = kernel.CreateFileW(
+            str(path), 0x40000000 | 0x00020000, 0, ctypes.byref(attributes), 1, 0x00200000, None
+        )
+        if handle == ctypes.c_void_p(-1).value:
+            handle = None
+            raise FileExistsError(path) if path.exists() else IdentityError(
+                "OWNER_SECURITY_STATE_UNAVAILABLE"
+            )
+        _assert_private_handle(kernel, advapi, handle)
+    finally:
+        if handle is not None:
+            kernel.CloseHandle(handle)
+        kernel.LocalFree(descriptor)
+
+
+def create_private_directory(path):
+    path = _safe_path(path)
+    if not path.parent.is_dir():
+        raise IdentityError("OWNER_SECURITY_STATE_UNAVAILABLE")
+    kernel, advapi = _apis()
+    descriptor = _private_descriptor(advapi, directory=True)
+    attributes = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, 0)
+    try:
+        if not kernel.CreateDirectoryW(str(path), ctypes.byref(attributes)):
+            raise FileExistsError(path) if path.exists() else IdentityError(
+                "OWNER_SECURITY_STATE_UNAVAILABLE"
+            )
+    finally:
+        kernel.LocalFree(descriptor)
+    assert_private_path(path, directory=True)
 
 
 def _safe_path(path):
@@ -238,7 +396,7 @@ def read_protected_bytes(path, *, max_bytes=MAX_METADATA_BYTES):
 
 
 def assert_private_file(path):
-    read_protected_bytes(path)
+    assert_private_path(path)
 
 
 def write_protected_bytes(path, data: bytes):

@@ -244,6 +244,9 @@ class _Snapshot:
         self.month = YearMonth(period).ordinal
         self.as_of = _today_china()
         self.epochs = self.store.epochs(connection)
+        from .read_state import repair_revision
+
+        self.read_repair_revision = repair_revision(connection)
         self.reads = reads or QueryReads(engine, connection)
         self.queries = BusinessQueries(engine, reads=self.reads)
         self.closes = ClosedPeriods(self)
@@ -277,6 +280,7 @@ class _Snapshot:
                     "database": self.store.database_id,
                     "period": period,
                     "epochs": self.epochs,
+                    "read_repair_revision": self.read_repair_revision,
                     "closes": sorted(self.closes),
                 },
                 sort_keys=True,
@@ -1546,6 +1550,7 @@ class Dashboard:
 
     def _read_context(self, connection, as_of):
         from .engine import PROGRAM_VERSION
+        from .read_state import repair_revision
 
         identity = dict(
             connection.execute("SELECT company_id,database_id FROM identity WHERE id=1").fetchone()
@@ -1560,6 +1565,7 @@ class Dashboard:
                     "build": PROGRAM_VERSION,
                     **context,
                     "epochs": epochs,
+                    "read_repair_revision": repair_revision(connection),
                 }
             ).hex(),
         }

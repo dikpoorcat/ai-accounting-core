@@ -330,8 +330,28 @@ def _execute_steps(connection, steps, *, kind, verify_source, finish_step, fault
             raise
 
 
-# Future releases add explicit package-owned steps here; this stage adds no version.
-_DECLARED_STEPS: tuple[MigrationStep, ...] = ()
+def _add_read_repair_revision(connection):
+    from .schema import READ_REPAIR_DDL
+
+    execute_statements(connection, READ_REPAIR_DDL)
+
+
+def _validate_read_repair_revision(connection):
+    rows = connection.execute("SELECT id,read_repair_revision FROM state").fetchall()
+    if len(rows) != 1 or tuple(rows[0]) != (1, 0):
+        raise KernelError("migration_integrity_failed", "读取修复版本未正确初始化")
+
+
+_DECLARED_STEPS: tuple[MigrationStep, ...] = (
+    MigrationStep(
+        "business", 12,
+        "59e74384af964215e11b528e8dcfc0f5dd1ebb2a6f9f03b874f23b0e22e4c85e",
+        13,
+        "8ea0d216451309f2e9fb549514367fac19814b611953837d24ded5d22bef0c13",
+        _add_read_repair_revision,
+        _validate_read_repair_revision,
+    ),
+)
 
 
 def _legacy_step(kind, source, target, fault):

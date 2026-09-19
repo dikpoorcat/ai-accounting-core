@@ -23,6 +23,14 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import KernelError
+from .permissions import (
+    PrivatePathError,
+    adopt_private_file,
+    create_private_file,
+    ensure_private_file,
+    private_temporary_directory,
+    reject_reparse_path,
+)
 from .runtime import connect, require_supported_runtime
 from .versions import verify_schema
 
@@ -95,8 +103,8 @@ def verify_file(
     expected_database_id: str | None = None,
     _registry=None,
 ) -> dict[str, Any]:
-    """Verify SQLite structure, foreign keys, company identity and all evidence."""
-    database = Path(path).resolve()
+    """Verify structure, saved accounting sources and derived data without upgrading."""
+    database = reject_reparse_path(path)
     if not database.is_file():
         raise BackupError("Company database does not exist")
     connection = None
@@ -110,33 +118,31 @@ def verify_file(
             expected_taxpayer_id=expected_taxpayer_id,
             expected_database_id=expected_database_id,
         )
-        checks = connection.execute("PRAGMA integrity_check").fetchall()
-        if len(checks) != 1 or checks[0][0] != "ok":
-            raise BackupError("SQLite integrity check failed")
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            raise BackupError("SQLite foreign-key check failed")
-        if identity["schema_version"] >= 10:
-            from .read_indexes import verify_read_indexes
+        from .engine import Engine
+        from .integrity import verify_integrity
+        from .service import default_registry
+        from .storage import Store
 
-            try:
-                verify_read_indexes(connection)
-            except KernelError as exc:
-                raise BackupError(str(exc)) from exc
-        evidence_count = 0
-        for row in connection.execute("SELECT digest,content FROM evidence"):
-            if hashlib.sha256(row["content"]).digest() != row["digest"]:
-                raise BackupError("Evidence content does not match its digest")
-            evidence_count += 1
-        closes = connection.execute("SELECT period,manifest,digest FROM period_close")
-        latest_closed_period = None
-        for row in closes:
-            if hashlib.sha256(row["manifest"].encode("utf-8")).digest() != row["digest"]:
-                raise BackupError("Period-close manifest does not match its digest")
-            latest_closed_period = max(latest_closed_period or 0, row["period"])
+        # Verify the preserved file in this read snapshot. Constructing a Store
+        # does not open or upgrade it; old archive contracts stay unchanged.
+        store = Store(
+            database,
+            _registry if _registry is not None else default_registry(),
+            identity["company_id"],
+            identity["database_id"],
+        )
+        try:
+            verification = verify_integrity(Engine(store), connection)
+        except KernelError as exc:
+            raise BackupError(f"{exc.code}: {exc}") from exc
+        latest_closed_period = connection.execute(
+            "SELECT max(period) FROM period_close"
+        ).fetchone()[0]
         return {
             "identity": identity,
-            "evidence_count": evidence_count,
+            "evidence_count": verification["counts"]["evidence"],
             "latest_closed_period": latest_closed_period,
+            "verification": verification,
         }
     except sqlite3.Error as exc:
         raise BackupError("The company file is not a valid supported SQLite database") from exc
@@ -148,12 +154,14 @@ def verify_file(
 
 def _publish_new(temporary: Path, destination: Path) -> None:
     """Publish a completed file without ever replacing an existing destination."""
+    ensure_private_file(temporary)
     if os.name == "nt":
         # Windows rename fails if the destination exists; POSIX rename replaces it.
         os.rename(temporary, destination)
     else:
         os.link(temporary, destination)
         temporary.unlink()
+    ensure_private_file(destination)
 
 
 def _sync_file(path: Path) -> None:
@@ -174,7 +182,7 @@ def backup_to_file(
 ) -> dict[str, Any]:
     """Create and verify one standalone snapshot; the target must not exist."""
     require_supported_runtime()
-    source_path, target_path = Path(source).resolve(), Path(target).resolve()
+    source_path, target_path = reject_reparse_path(source), reject_reparse_path(target)
     if source_path == target_path or target_path.exists():
         raise BackupError("Backup target must not exist")
     if not source_path.is_file():
@@ -185,10 +193,9 @@ def backup_to_file(
         "expected_taxpayer_id": expected_taxpayer_id,
         "expected_database_id": expected_database_id,
     }
-    with tempfile.TemporaryDirectory(
-        prefix=".company-backup-", dir=target_path.parent
-    ) as directory:
-        temporary = Path(directory) / DATABASE_MEMBER
+    with private_temporary_directory(target_path.parent, prefix=".company-backup-") as directory:
+        temporary = directory / DATABASE_MEMBER
+        create_private_file(temporary)
         source_connection = connect(source_path, read_only=True)
         destination = sqlite3.connect(temporary, isolation_level=None)
         try:
@@ -268,7 +275,8 @@ def _unpack_verified(
             manifest = _read_manifest(archive, max_database_bytes)
             database = directory / DATABASE_MEMBER
             actual_size = 0
-            with archive.open(DATABASE_MEMBER) as source, database.open("xb") as destination:
+            create_private_file(database)
+            with archive.open(DATABASE_MEMBER) as source, database.open("wb") as destination:
                 while chunk := source.read(1024 * 1024):
                     actual_size += len(chunk)
                     if actual_size > max_database_bytes:
@@ -279,10 +287,15 @@ def _unpack_verified(
         if _digest(database) != manifest["database_sha256"]:
             raise BackupError("Portable database digest mismatch")
         result = verify_file(database, **identity_checks)
-        if any(manifest.get(field) != result[field] for field in result):
+        if any(
+            manifest.get(field) != result[field]
+            for field in ("identity", "evidence_count", "latest_closed_period")
+        ):
             raise BackupError("Portable manifest does not match the contained company database")
         _taxpayer_filename(result["identity"]["taxpayer_id"])
         return {**result, "manifest": manifest, "path": str(path)}, database
+    except PrivatePathError:
+        raise
     except (zipfile.BadZipFile, RuntimeError, OSError) as exc:
         raise BackupError("Portable archive cannot be read") from exc
 
@@ -298,10 +311,12 @@ def verify_portable(
 ) -> dict[str, Any]:
     """Verify member paths, archive hashes, company identity and database contents."""
     require_supported_runtime()
-    with tempfile.TemporaryDirectory(prefix="company-verify-") as directory:
+    with private_temporary_directory(
+        Path(tempfile.gettempdir()), prefix="company-verify-"
+    ) as directory:
         result, _database = _unpack_verified(
             Path(path).resolve(),
-            Path(directory),
+            directory,
             max_database_bytes=max_database_bytes,
             _registry=_registry,
             expected_company_id=expected_company_id,
@@ -324,7 +339,7 @@ def create_portable(
     request_id makes publication retryable if the process exits after publishing
     but before its durable job can record success.
     """
-    output = Path(directory).resolve()
+    output = reject_reparse_path(directory)
     output.mkdir(parents=True, exist_ok=True)
     source_connection = connect(source, read_only=True)
     try:
@@ -336,14 +351,16 @@ def create_portable(
     }
     checks["_registry"] = _registry
     final = output / _taxpayer_filename(identity["taxpayer_id"])
-    existing = verify_portable(final, **checks) if final.exists() else None
+    existing = None
+    if final.exists():
+        ensure_private_file(final)
+        existing = verify_portable(final, **checks)
     if existing is not None:
         if request_id is not None and existing["manifest"].get("request_id") == request_id:
             return {**existing, "idempotent_replay": True}
         if not rollover:
             raise BackupError("Current company backup already exists; rollover was not requested")
-    with tempfile.TemporaryDirectory(prefix=".company-package-", dir=output) as temporary:
-        staging = Path(temporary)
+    with private_temporary_directory(output, prefix=".company-package-") as staging:
         snapshot = backup_to_file(source, staging / DATABASE_MEMBER, **checks)
         manifest = {
             "format": FORMAT,
@@ -360,15 +377,21 @@ def create_portable(
         with zipfile.ZipFile(candidate, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr(MANIFEST_MEMBER, _json(manifest))
             archive.write(staging / DATABASE_MEMBER, DATABASE_MEMBER)
+        adopt_private_file(candidate)
         verified = verify_portable(candidate, **checks)
         _sync_file(candidate)
         if existing is not None:
             previous = output / f"{identity['taxpayer_id']}.previous.finance-company.zip"
             previous_stage = staging / "previous.zip"
+            if previous.exists():
+                ensure_private_file(previous)
             shutil.copyfile(final, previous_stage)
+            adopt_private_file(previous_stage)
             _sync_file(previous_stage)
             os.replace(previous_stage, previous)
+            ensure_private_file(previous)
             os.replace(candidate, final)
+            ensure_private_file(final)
         else:
             try:
                 _publish_new(candidate, final)
@@ -389,18 +412,16 @@ def restore_portable(
 ) -> dict[str, Any]:
     """Restore into an absent company file, never merge or replace an old file."""
     require_supported_runtime()
-    destination = Path(target).resolve()
+    destination = reject_reparse_path(target)
     if destination.exists() or any(
         Path(str(destination) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")
     ):
         raise BackupError("Restore target and its SQLite sidecars must not exist")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix=".company-restore-", dir=destination.parent
-    ) as temporary:
+    with private_temporary_directory(destination.parent, prefix=".company-restore-") as temporary:
         result, database = _unpack_verified(
             Path(archive).resolve(),
-            Path(temporary),
+            temporary,
             max_database_bytes=max_database_bytes,
             _registry=_registry,
             expected_company_id=expected_company_id,
@@ -418,6 +439,7 @@ def restore_portable(
 def _worker_lock(database: Path):
     """Keep one backup worker per file; OS locks automatically release on crash."""
     lock_path = Path(str(database) + ".backup-worker.lock")
+    ensure_private_file(lock_path, create=True)
     with lock_path.open("a+b") as lock:
         if lock.tell() == 0:
             lock.write(b"\0")
@@ -455,7 +477,7 @@ def run_backup_jobs(database: str | Path, *, limit: int = 1) -> list[dict[str, A
     """
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError("limit must be positive")
-    path = Path(database).resolve()
+    path = reject_reparse_path(database)
     if not path.is_file():
         raise BackupError("Source company database does not exist")
     outcomes: list[dict[str, Any]] = []

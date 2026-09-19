@@ -15,6 +15,7 @@ from ai_accounting.kernel.contracts import (
     NeedsInformation,
     Registry,
 )
+from ai_accounting.kernel.dependencies import calculation_matches, fact_matches
 from ai_accounting.kernel.domains import adjustments, assets, taxes, transactions
 from ai_accounting.kernel.engine import Engine
 from ai_accounting.kernel.storage import Store
@@ -42,15 +43,12 @@ def context(source, *, facts=(), calculations=()):
         candidates = facts if read.source == "fact" else calculations
         chosen = []
         for item in candidates:
-            fact = item.fact if read.source == "fact" else item[0].fact
-            subject = item.subject_id if read.source == "fact" else item[0].subject_id
-            if (read.kind != "*" and fact.kind != read.kind) or read.key not in (
-                *fact.scopes_for(subject),
-                "@" + subject,
-                *(claim.key for claim in fact.claims()),
-            ):
-                continue
-            if read.before_period is not None and fact.period >= read.before_period:
+            matches = (
+                fact_matches(read, item)
+                if read.source == "fact"
+                else calculation_matches(read, item[1], item[0].fact)
+            )
+            if not matches:
                 continue
             chosen.append(item if read.source == "fact" else item[1])
         selections[read] = tuple(chosen)

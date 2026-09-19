@@ -164,6 +164,14 @@ class Exports:
     def preview(
         self, period: str, *, template_evidence_digest: str, source_ids: list[str] | None = None
     ):
+        plan, _ = self._prepare(
+            period, template_evidence_digest=template_evidence_digest, source_ids=source_ids
+        )
+        return plan
+
+    def _prepare(self, period, *, template_evidence_digest, source_ids=None):
+        from .read_state import repair_revision
+
         month = YearMonth(period)
         if source_ids is not None and not isinstance(source_ids, list):
             raise ValueError("source_ids must be a list of stable source identities")
@@ -176,6 +184,7 @@ class Exports:
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
             epochs = self.store.epochs(connection)
+            prepared_revision = repair_revision(connection)
             template = connection.execute(
                 "SELECT content FROM evidence WHERE digest=?",
                 (template_digest,),
@@ -380,7 +389,7 @@ class Exports:
             "total_fen": sum_fen(row["amount_fen"] for row in rows),
         }
         result["digest"] = digest(result).hex()
-        return result
+        return result, prepared_revision
 
     def confirm(
         self,
@@ -409,7 +418,7 @@ class Exports:
         cached = self.engine._cached(request_id, request_hash)
         if cached is not None:
             return cached
-        preview = self.preview(
+        preview, prepared_revision = self._prepare(
             period, template_evidence_digest=template_evidence_digest, source_ids=requested
         )
         if preview["digest"] != preview_digest or any(
@@ -424,6 +433,9 @@ class Exports:
         }
 
         def operation(connection):
+            from .read_state import check_repair_revision
+
+            check_repair_revision(connection, prepared_revision)
             job_id = uuid.uuid4().hex
             connection.execute(
                 "INSERT INTO jobs(id,kind,payload,status) "

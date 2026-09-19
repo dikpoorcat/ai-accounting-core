@@ -287,6 +287,9 @@ class LocalService:
         asset_batches = AssetBatches(engine)
         tax_import = TaxImport(engine)
         reserves = Reserves(engine)
+        from .maintenance import Maintenance
+
+        maintenance = Maintenance(engine)
         actions = {
             "save_fact": engine.save_fact,
             "amend_fact": engine.amend_fact,
@@ -308,6 +311,8 @@ class LocalService:
             "close_range": periods.close_range,
             "closed_report": periods.closed_report,
             "rebuild": engine.rebuild_projections,
+            "verify_integrity": maintenance.verify_integrity,
+            "repair_read_indexes": maintenance.repair_read_indexes,
             "report": reports.report,
             "preview_report_export": reports.preview_export,
             "confirm_report_export": reports.confirm_export,

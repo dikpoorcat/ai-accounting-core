@@ -69,7 +69,7 @@ def test_registered_v2_upgrades_once_and_preserves_original_content(tmp_path):
             assert [
                 r[0]
                 for r in connection.execute("SELECT version FROM schema_history ORDER BY version")
-            ] == [2, schema.VERSION]
+            ] == [2, 12, schema.VERSION]
     assert hashlib.sha256(catalog.path.read_bytes()).digest() == catalog_hash
 
 
@@ -87,7 +87,7 @@ def test_current_registered_reads_succeed_while_catalog_and_company_writers_are_
                 assert [
                     row[0]
                     for row in reader.execute("SELECT version FROM schema_history ORDER BY version")
-                ] == [2, schema.VERSION]
+                ] == [2, 12, schema.VERSION]
         finally:
             business_writer.rollback()
             catalog_writer.rollback()
@@ -159,7 +159,7 @@ def test_published_v2_operation_recovers_after_runtime_upgrade_without_original_
             assert [
                 row[0]
                 for row in connection.execute("SELECT version FROM schema_history ORDER BY version")
-            ] == [2, schema.VERSION]
+            ] == [2, 12, schema.VERSION]
         with recovered.connection(read_only=True) as connection:
             assert (
                 connection.execute("SELECT payload FROM company_operation").fetchone()[0] == payload

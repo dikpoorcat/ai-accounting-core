@@ -204,6 +204,9 @@ class Periods:
             "SELECT 1 FROM evidence WHERE digest=?", (bytes.fromhex(owner_confirmation),)
         ).fetchone():
             raise NeedsInformation("owner_confirmation", "需要负责人不可变确认依据")
+        from .integrity import verify_close_integrity
+
+        verify_close_integrity(self.engine, connection, month)
         checked = self.check_readiness(connection, period, previous_close)
         if checked["order_failure"]:
             failure = checked["order_failure"]
@@ -406,7 +409,7 @@ class Periods:
             found = list(evaluate(YearMonth(period), context))
             readiness_issues.extend(found)
             issues.extend(found)
-            used = [item for read in context.used for item in context.selections[read]]
+            used = [item for _read, items in context.trace().selections for item in items]
             readiness[name] = {
                 "facts": sorted({item.id for item in used if isinstance(item, FactVersion)}),
                 "calculations": sorted({item.id for item in used if isinstance(item, Calculation)}),

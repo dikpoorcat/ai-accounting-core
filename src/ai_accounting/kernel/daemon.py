@@ -10,10 +10,10 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
-from pathlib import Path
 
 from .build import calculator_build_id
 from .contracts import KernelError
+from .permissions import ensure_private_directory, ensure_private_file, reject_reparse_path
 from .security.credentials import WindowsCredentialStore
 from .security.service import credential_target
 from .security.windows import read_protected_json, write_protected_json
@@ -22,13 +22,14 @@ from .security.windows import read_protected_json, write_protected_json
 def default_root():
     # Installed launchers pass this explicitly. Repository development shares the
     # same data root rather than creating a second root per adapter.
-    return Path(os.environ.get("FINANCE_DATA_ROOT", "data")).resolve()
+    return reject_reparse_path(os.environ.get("FINANCE_DATA_ROOT", "data"))
 
 
 @contextmanager
 def instance_lock(root):
-    path = Path(root) / ".resident.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = reject_reparse_path(root) / ".resident.lock"
+    ensure_private_directory(path.parent, parents=True)
+    ensure_private_file(path, create=True)
     with path.open("a+b") as handle:
         handle.seek(0)
         if not handle.read(1):
@@ -91,6 +92,7 @@ def _metadata_for_root(root):
     from .runtime import connect
     from .versions import verify_schema
 
+    root = reject_reparse_path(root)
     metadata = read_protected_json(root / ".service.json")
     path = root / "catalog.sqlite"
     if not path.is_file():
@@ -109,8 +111,8 @@ def _metadata_for_root(root):
 
 
 def ensure_service(root, *, timeout=20):
-    root = Path(root).resolve()
-    root.mkdir(parents=True, exist_ok=True)
+    root = reject_reparse_path(root)
+    ensure_private_directory(root, parents=True)
     state = root / ".service.json"
     expected = calculator_build_id()
     started = time.monotonic()
@@ -145,7 +147,8 @@ def ensure_service(root, *, timeout=20):
                     continue
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             # Only safe status is written to this log; requests and tokens are never logged.
-            with (root / "service.log").open("ab") as log:
+            log_path = ensure_private_file(root / "service.log", create=True)
+            with log_path.open("ab") as log:
                 subprocess.Popen(
                     [
                         sys.executable,
@@ -168,10 +171,11 @@ def ensure_service(root, *, timeout=20):
 
 def stop_service(root):
     """Stop only the service proven by this root's protected capability and identity."""
-    state = Path(root).resolve() / ".service.json"
+    root = reject_reparse_path(root)
+    state = root / ".service.json"
     if not state.exists():
         return {"status": "stopped"}
-    metadata = _metadata_for_root(Path(root).resolve())
+    metadata = _metadata_for_root(root)
     try:
         health = _request(metadata, "/api/health", timeout=1)
     except (OSError, urllib.error.URLError):
@@ -183,7 +187,7 @@ def stop_service(root):
 
 class ServiceClient:
     def __init__(self, root=None, *, metadata=None, credential_store=None):
-        self.root = Path(root or default_root()).resolve()
+        self.root = reject_reparse_path(root or default_root())
         self.metadata = metadata or ensure_service(self.root)
         self.credentials = credential_store or WindowsCredentialStore(
             target_name=credential_target(self.root / "catalog.sqlite", self.metadata["catalog_id"])
@@ -221,15 +225,99 @@ class ServiceClient:
         return self._call("/api/browser-ticket", {})
 
 
-def run(root, *, port=0):
-    from .http import create_server
-    from .jobs import JobRunner
+def build_native_security_controller(
+    service, server, capability, *, credential_store=None, window_opener=None
+):
+    """Build the production private controller around one synthetic or resident service."""
+    from .periods import Periods
+    from .security.approval import insert_close_approval
     from .security.batches import CloseBatchHost
     from .security.native import NativeSecurityController
     from .security.transport import launch_native_window
+
+    def inspect_close(request):
+        company = next(
+            (row for row in service.catalog.companies() if row["id"] == request["company_id"]),
+            None,
+        )
+        if company is None:
+            raise KernelError("unknown_company", "公司尚未登记")
+        if request["database_id"] != company["database_id"]:
+            raise KernelError("company_mismatch", "公司数据库身份不一致")
+        preview = service.close_previews.get(
+            (request["company_id"], request["database_id"], request["calculation_hash"])
+        )
+        if (
+            preview is None
+            or preview["manifest"]["period"] != request["period"]
+            or preview["epochs"] != request["epochs"]
+        ):
+            raise KernelError("preview_expired", "请先在当前服务重新预览关账")
+        return {"company_name": company["name"], "period_month": request["period"]}
+
+    def issue_close(request, token, password):
+        with service.security.authorized(token):
+            inspect_close(request)
+            engine = service.engine(request["company_id"])
+            known = service.close_previews[
+                (request["company_id"], request["database_id"], request["calculation_hash"])
+            ]
+            preview = Periods(engine).preview_close(
+                request["period"], owner_confirmation=known["owner_confirmation"]
+            )
+            if (
+                preview["digest"] != request["calculation_hash"]
+                or preview["epochs"] != request["epochs"]
+            ):
+                raise KernelError("preview_expired", "关账预览已变化，请重新预览并确认")
+            authority = service.security.reauthenticate(token, password)
+            with engine.store.connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    if engine.store.epochs(connection) != request["epochs"]:
+                        raise KernelError("preview_expired", "关账预览已变化")
+                    result = insert_close_approval(
+                        connection,
+                        authority=authority,
+                        now=service.security.now(),
+                        company_id=engine.store.company_id,
+                        database_id=engine.store.database_id,
+                        period=request["period"],
+                        preview_digest=request["calculation_hash"],
+                        epochs=request["epochs"],
+                    )
+                    connection.commit()
+                    return result
+                except BaseException:
+                    connection.rollback()
+                    raise
+
+    opener = window_opener or (
+        lambda request_id: launch_native_window(
+            request_id,
+            port=server.server_port,
+            capability=capability,
+            catalog_instance_id=service.security.catalog_instance_id,
+        )
+    )
+    batches = CloseBatchHost(service)
+    return NativeSecurityController(
+        service.security,
+        credential_store=credential_store,
+        window_opener=opener,
+        close_issuer=issue_close,
+        inspect_close=inspect_close,
+        batch_issuer=batches.issue,
+        inspect_batches=batches.inspect,
+    )
+
+
+def run(root, *, port=0):
+    from .http import create_server
+    from .jobs import JobRunner
     from .service import LocalService
 
-    root = Path(root).resolve()
+    root = reject_reparse_path(root)
     with instance_lock(root) as acquired:
         if not acquired:
             return
@@ -237,78 +325,8 @@ def run(root, *, port=0):
         server, capability = create_server(service, port=port)
 
         # Controller owns native request state, separate from business command payloads.
-        def inspect_close(request):
-            company = next(
-                (row for row in service.catalog.companies() if row["id"] == request["company_id"]),
-                None,
-            )
-            if company is None:
-                raise KernelError("unknown_company", "公司尚未登记")
-            if request["database_id"] != company["database_id"]:
-                raise KernelError("company_mismatch", "公司数据库身份不一致")
-            preview = service.close_previews.get(
-                (request["company_id"], request["database_id"], request["calculation_hash"])
-            )
-            if (
-                preview is None
-                or preview["manifest"]["period"] != request["period"]
-                or preview["epochs"] != request["epochs"]
-            ):
-                raise KernelError("preview_expired", "请先在当前服务重新预览关账")
-            return {"company_name": company["name"], "period_month": request["period"]}
-
-        def issue_close(request, token, password):
-            from .periods import Periods
-            from .security.approval import insert_close_approval
-
-            with service.security.authorized(token):
-                inspect_close(request)
-                engine = service.engine(request["company_id"])
-                known = service.close_previews[
-                    (request["company_id"], request["database_id"], request["calculation_hash"])
-                ]
-                preview = Periods(engine).preview_close(
-                    request["period"], owner_confirmation=known["owner_confirmation"]
-                )
-                if (
-                    preview["digest"] != request["calculation_hash"]
-                    or preview["epochs"] != request["epochs"]
-                ):
-                    raise KernelError("preview_expired", "关账预览已变化，请重新预览并确认")
-                authority = service.security.reauthenticate(token, password)
-                with engine.store.connection() as connection:
-                    connection.execute("BEGIN IMMEDIATE")
-                    try:
-                        if engine.store.epochs(connection) != request["epochs"]:
-                            raise KernelError("preview_expired", "关账预览已变化")
-                        result = insert_close_approval(
-                            connection,
-                            authority=authority,
-                            now=service.security.now(),
-                            company_id=engine.store.company_id,
-                            database_id=engine.store.database_id,
-                            period=request["period"],
-                            preview_digest=request["calculation_hash"],
-                            epochs=request["epochs"],
-                        )
-                        connection.commit()
-                        return result
-                    except BaseException:
-                        connection.rollback()
-                        raise
-
-        service.security_controller = NativeSecurityController(
-            service.security,
-            window_opener=lambda request_id: launch_native_window(
-                request_id,
-                port=server.server_port,
-                capability=capability,
-                catalog_instance_id=service.security.catalog_instance_id,
-            ),
-            close_issuer=issue_close,
-            inspect_close=inspect_close,
-            batch_issuer=CloseBatchHost(service).issue,
-            inspect_batches=CloseBatchHost(service).inspect,
+        service.security_controller = build_native_security_controller(
+            service, server, capability
         )
         metadata = {
             "pid": os.getpid(),

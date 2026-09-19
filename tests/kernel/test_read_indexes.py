@@ -257,9 +257,11 @@ def test_audit_duplicate_and_empty_markers_and_cold_batch_reads(engine):
 
 
 def test_guards_local_hits_and_explicit_omission_detection(engine):
+    saved = save(engine)
+    fact_id = saved["fact_id"]
     with engine.store.connection() as connection:
         connection.execute("BEGIN")
-        ident = insert_audit(connection, fact_result())
+        ident = connection.execute("SELECT id FROM audit WHERE request_id='save'").fetchone()[0]
         for sql in (
             "DELETE FROM audit_reference",
             "UPDATE read_index_source SET source_id='other'",
@@ -276,10 +278,10 @@ def test_guards_local_hits_and_explicit_omission_detection(engine):
         connection.execute("DROP TRIGGER immutable_audit_reference_DELETE")
         connection.execute("DELETE FROM audit_reference")
         connection.execute(trigger)
-        assert recorded_times(connection, [("fact", "fact")]) == {}
+        assert recorded_times(connection, [("fact", fact_id)]) == {}
         with pytest.raises(KernelError, match="精确引用目录"):
             verify_read_indexes(connection)
-    with pytest.raises(BackupError, match="精确引用目录"):
+    with pytest.raises(BackupError, match="read_index_integrity_failed"):
         verify_file(engine.store.path, _registry=engine.store.registry)
 
 

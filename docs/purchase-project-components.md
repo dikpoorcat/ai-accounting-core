@@ -9,7 +9,7 @@
 > 而是在消耗来源时由累计容量校验判定。`finance_configure_account` 在当前内核**没有对应入口**：
 > 科目表硬编码在 `kernel/query_semantics.py` 及各领域模块中，不提供在 `business_class` 下登记明细科目。
 
-当前公司库结构版本为 v12；目录库为 v3。
+当前公司库结构版本为 v13；目录库为 v3。
 所有新增组件使用 `finance_preview_event` / `finance_record_event`，金额为整数分，
 正式写入仍只有统一提交器。缺少关键事实返回 `needs_information`。
 

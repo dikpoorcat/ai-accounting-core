@@ -72,7 +72,20 @@ def create_recorded_file(path, *, variant=True, alteration=None, taxpayer_id="sy
             "INSERT INTO evidence VALUES(?,?,?,?)",
             (hashlib.sha256(content).digest(), content, "text/plain", "synthetic source"),
         )
-        manifest = '{"period":"2026-01","calculations":[],"vouchers":[]}'
+        manifest = json.dumps(
+            {
+                "period": "2026-01",
+                "company_id": "synthetic-company",
+                "database_id": "synthetic-db",
+                "previous_close_digest": None,
+                "calculations": [],
+                "facts": [],
+                "vouchers": [],
+                "trial_balance": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         connection.execute(
             "INSERT INTO period_close VALUES(?,?,?)",
             (24300, manifest, hashlib.sha256(manifest.encode()).digest()),
@@ -96,7 +109,13 @@ def table_digest(connection, *, include_metadata=False, table_names=None):
             continue
         if not include_metadata and item["name"] in {"identity", "schema_history"}:
             continue
-        rows = connection.execute('SELECT * FROM "' + item["name"] + '"').fetchall()
+        # v13 appends repair metadata; compare every pre-existing state field.
+        columns = (
+            "id,accounting,material,management,next_number"
+            if item["name"] == "state" and not include_metadata
+            else "*"
+        )
+        rows = connection.execute("SELECT " + columns + ' FROM "' + item["name"] + '"').fetchall()
         retained[item["name"]] = sorted(repr(tuple(row)) for row in rows)
     return hashlib.sha256(json.dumps(retained, sort_keys=True).encode()).hexdigest()
 
@@ -107,9 +126,9 @@ def test_frozen_contracts_and_recorded_source_are_exact():
     assert current_version("business") == VERSION
     assert current_version("catalog") == 3
     assert standard["objects"] == known_contracts("business")[11]["objects"]
-    assert contract(schema_sql(default_registry())) == known_contracts("business")[VERSION][
-        "objects"
-    ]
+    assert (
+        contract(schema_sql(default_registry())) == known_contracts("business")[VERSION]["objects"]
+    )
     assert recorded["sha256"] == "45dd0bba8f9668b552859ff7beea612a8c51fd9838f1a3d9785c76771bc08266"
     assert fingerprint(recorded["objects"]).hex() == recorded["sha256"]
     assert recorded["objects"] == [
@@ -156,21 +175,22 @@ def test_v10_upgrade_keeps_business_tables_and_original_history(tmp_path, monkey
         assert [
             row[0]
             for row in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [10, VERSION]
+        ] == [10, 12, VERSION]
+        assert connection.execute("SELECT read_repair_revision FROM state").fetchone()[0] == 0
         # The recorded v10 repair remains exact, while later versions may append
         # their own tables and replace explicitly declared triggers.
         previous_map = {(item["type"], item["name"]): item for item in previous_objects}
         current_map = {(item["type"], item["name"]): item for item in objects(connection)}
         for key, item in previous_map.items():
-            if item["type"] != "trigger":
+            if item["type"] != "trigger" and key != ("table", "state"):
                 assert current_map[key] == item
         for name in MISSING_INDEXES:
             assert current_map[("index", name)] in known_contracts("business")[11]["objects"]
         for item in objects(connection):
             if item["type"] == "table" and item["name"] not in previous_tables:
-                rows = connection.execute(
-                    'SELECT count(*) FROM "' + item["name"] + '"'
-                ).fetchone()[0]
+                rows = connection.execute('SELECT count(*) FROM "' + item["name"] + '"').fetchone()[
+                    0
+                ]
                 assert rows == 0
         assert not upgrade(connection)
         assert table_digest(connection, table_names=previous_tables) == before
@@ -235,9 +255,7 @@ def test_new_v11_is_strict_and_has_only_v11_history(tmp_path):
             "synthetic-db",
         )
         assert verify_schema(connection) == VERSION
-        versions = [
-            row[0] for row in connection.execute("SELECT version FROM schema_history")
-        ]
+        versions = [row[0] for row in connection.execute("SELECT version FROM schema_history")]
         assert versions == [VERSION]
         for name in MISSING_INDEXES:
             connection.execute('DROP INDEX "' + name + '"')

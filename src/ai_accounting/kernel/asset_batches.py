@@ -706,9 +706,19 @@ class AssetBatches:
             raise KernelError("preview_expired", "资产批次与已审阅预览不同")
 
         def operation(connection):
+            from .integrity import verify_prepared_sources, verify_publication
+            from .projections import prepare_projection_check, verify_projection_change
+
             for item in prepared:
                 if item.compatibility_issue:
                     raise compatibility(item.calculation_id, "asset_comparison_unavailable")
+            verify_prepared_sources(
+                self.engine, connection, prepared,
+                new_fact_ids={version.id for version in changes.values()},
+            )
+            projection_check = prepare_projection_check(
+                connection, prepared, correction_period=correction_period
+            )
             for version in sorted(changes.values(), key=lambda v: v.subject_id):
                 self.store.write_fact(
                     connection, version, digest(version.fact.model_dump(mode="json"))
@@ -789,6 +799,10 @@ class AssetBatches:
                     )
                 else:
                     results.append(self.engine._publish(connection, item, correction_period))
+            verify_publication(
+                self.engine, connection, [item.calculation_id for item in prepared]
+            )
+            verify_projection_change(connection, projection_check)
             return {"status": "published", "results": results, "digest": preview_digest}
 
         return self.engine._write(

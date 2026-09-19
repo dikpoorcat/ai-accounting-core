@@ -49,7 +49,7 @@ def test_known_committed_schema_upgrades_and_partial_ddl_rolls_back(tmp_path):
         assert not upgrade(connection, registry=registry)
         assert [
             r[0] for r in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [1, VERSION]
+        ] == [1, 12, VERSION]
 
 
 @pytest.mark.parametrize(

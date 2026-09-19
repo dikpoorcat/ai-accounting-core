@@ -1063,14 +1063,28 @@ class Reports:
         return plan | {"digest": digest({k: v for k, v in plan.items() if k != "epochs"}).hex()}
 
     def preview_export(self, year: int, quarter: int, *, carry_forward_fact_id: str | None = None):
-        plan = self.report(
-            year, quarter, source="closed", carry_forward_fact_id=carry_forward_fact_id
-        )
+        plan, _ = self._prepare_export(year, quarter, carry_forward_fact_id=carry_forward_fact_id)
+        return plan
+
+    def _prepare_export(self, year, quarter, *, carry_forward_fact_id=None):
+        from .query_reads import QueryReads
+        from .read_state import repair_revision
+
+        with QueryReads.snapshot(self.engine) as reads:
+            prepared_revision = repair_revision(reads.connection)
+            plan = self._report(
+                year,
+                quarter,
+                source="closed",
+                carry_forward_fact_id=carry_forward_fact_id,
+                connection=reads.connection,
+                reads=reads,
+            )
         if plan["fact_issues"]:
             raise KernelError(
                 "needs_information", "季度三表尚不具备导出条件", fact_issues=plan["fact_issues"]
             )
-        return plan
+        return plan, prepared_revision
 
     def confirm_export(
         self,
@@ -1098,13 +1112,18 @@ class Reports:
         cached = self.engine._cached(request_id, hashed)
         if cached is not None:
             return cached
-        plan = self.preview_export(year, quarter, carry_forward_fact_id=carry_forward_fact_id)
+        plan, prepared_revision = self._prepare_export(
+            year, quarter, carry_forward_fact_id=carry_forward_fact_id
+        )
         if plan["digest"] != preview_digest or any(
             plan["epochs"].get(x) != epochs.get(x) for x in ("accounting", "material", "management")
         ):
             raise KernelError("preview_expired", "报表导出预览已过期")
 
         def operation(connection):
+            from .read_state import check_repair_revision
+
+            check_repair_revision(connection, prepared_revision)
             ident = uuid.uuid4().hex
             connection.execute(
                 "INSERT INTO jobs(id,kind,payload,status) VALUES(?,'report_export',?,'pending')",

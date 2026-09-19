@@ -2,7 +2,7 @@
 
 # SQLite 空库重录、完整恢复与结果核对
 
-当前入口是 `finance-local` 和 `finance_local_*` MCP，目录库 v3、公司库 v12；读取结构与前向兼容见 [有界看板查询](bounded-dashboard-queries.md)。
+当前入口是 `finance-local` 和 `finance_local_*` MCP，目录库 v3、公司库 v13；读取结构与前向兼容见 [有界看板查询](bounded-dashboard-queries.md)。
 两类数据库分别检查结构合同并前向升级；不需要 PostgreSQL、ORM 或 Alembic。
 旧 `finance-replay`、`finance-backup`、`ai_accounting.replay_cli`、`finance_record_event`
 及组合协议回放包执行器已经退役，本文替代它们的操作说明。现在没有通用的“导出事实包后自动重放”命令。

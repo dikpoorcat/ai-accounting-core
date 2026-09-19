@@ -6,7 +6,7 @@
 > 以及 `finance-catalog`／`finance-company`／`finance-backup`／`finance-dashboard`／`finance-mcp`
 > 命令行入口均已退役，正文中的旧命令名只作历史说明，不应再调用。
 > 当前内核是 SQLite 本地服务：入口为 `finance-local`，MCP 为 `finance_local_schema`／
-> `finance_local_command`／`finance_local_security`，公司库 v12、目录库 v3，不依赖 PostgreSQL、ORM 或 Alembic。
+> `finance_local_command`／`finance_local_security`，公司库 v13、目录库 v3，不依赖 PostgreSQL、ORM 或 Alembic。
 > 名称对应：`finance_list_companies`→`companies`，`finance_create_company`→`create_company`，
 > `finance_get_close_backup_configuration`→`company_settings`，`finance_configure_close_backup`→`configure_backup`，
 > `finance_backup`→`backup`（持久任务，用 `jobs`／`run_jobs` 推进和查询），

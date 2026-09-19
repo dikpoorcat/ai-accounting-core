@@ -7,7 +7,8 @@ frozen calculation explanations. Journal lines are INTERNAL calculation output.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -215,22 +216,48 @@ class Outcome:
             raise ValueError("unbalanced calculation")
 
 
-@dataclass
+@dataclass(frozen=True)
+class ContextTrace:
+    selections: tuple[tuple[Read, tuple[FactVersion | Calculation, ...]], ...]
+    versions: frozenset[str]
+
+
 class Context:
     """Detached immutable inputs with explicit, including empty, read tracking."""
 
-    selections: dict[Read, tuple[FactVersion | Calculation, ...]]
-    used: set[Read] = field(default_factory=set)
-    versions: set[str] = field(default_factory=set)
-    accounting: Callable[[str], dict] | None = None
+    def __init__(
+        self,
+        selections: dict[Read, tuple[FactVersion | Calculation, ...]],
+        accounting: Callable[[str], dict] | None = None,
+    ):
+        self._selections = MappingProxyType(
+            {read: tuple(items) for read, items in selections.items()}
+        )
+        self._used: set[Read] = set()
+        self._versions: set[str] = set()
+        self.accounting = accounting
+
+    @property
+    def used(self) -> frozenset[Read]:
+        return frozenset(self._used)
+
+    @property
+    def versions(self) -> frozenset[str]:
+        return frozenset(self._versions)
 
     def select(self, read: Read) -> tuple:
-        if read not in self.selections:
+        if read not in self._selections:
             raise KernelError("undeclared_read", f"calculator did not declare {read}")
-        self.used.add(read)
-        result = self.selections[read]
-        self.versions.update(item.id for item in result)
+        self._used.add(read)
+        result = self._selections[read]
+        self._versions.update(item.id for item in result)
         return result
+
+    def trace(self) -> ContextTrace:
+        return ContextTrace(
+            tuple((read, self._selections[read]) for read in sorted(self._used, key=repr)),
+            frozenset(self._versions),
+        )
 
     def facts(self, kind: str, key: str) -> tuple[FactVersion, ...]:
         return self.select(Read("fact", kind, key))
@@ -248,7 +275,7 @@ class Context:
 
     def accounting_signature(self, calculation: Calculation) -> dict:
         """Compare an explicitly selected result using detached frozen inputs."""
-        if calculation.id not in self.versions:
+        if calculation.id not in self._versions:
             raise KernelError("undeclared_read", "核算比较须先选择对应计算来源")
         if self.accounting is None:
             raise KernelError(

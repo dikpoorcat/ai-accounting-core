@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from .accounting import AccountingBook, compatibility
 from .build import calculator_build_id
 from .contracts import Calculation, Context, FactVersion, KernelError, NeedsInformation
+from .dependencies import calculation_matches, checked_lanes, read_matches, scope_keys
 from .storage import Store
 from .types import YearMonth, canonical, checked, digest, sum_fen
 
@@ -231,12 +232,14 @@ class Engine:
                 uuid.uuid4().hex, subject_id, revision + 1, fact, tuple(sorted(set(evidence)))
             )
             self.store.write_fact(connection, version, digest(fact.model_dump(mode="json")))
-            scopes = set(fact.scopes_for(subject_id)) | {"@" + subject_id, str(fact.period)}
-            scopes.update(claim.key for claim in fact.claims())
+            scopes = set(scope_keys("fact", fact, subject_id))
             if old:
-                scopes.update(old.fact.scopes_for(old.subject_id))
-                scopes.add(str(old.fact.period))
-                scopes.update(claim.key for claim in old.fact.claims())
+                scopes.update(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT scope_key FROM fact_scope WHERE fact_id=?", (old.id,)
+                    )
+                )
             affected = self._scope_consumers(
                 connection,
                 "fact",
@@ -401,7 +404,7 @@ class Engine:
                         connection,
                         "calculation",
                         version.fact.kind,
-                        set(version.fact.scopes_for(sid)) | {"@" + sid, str(version.fact.period)},
+                        scope_keys("calculation", version.fact, sid),
                         version.fact.period.ordinal,
                     )
                 extra |= self._descendants(connection, {sid})
@@ -422,9 +425,7 @@ class Engine:
                 for version in facts.values()
                 for read in version.fact.reads_for(version.subject_id)
             }
-            selections = {
-                read: self.store.select(connection, read) for read in sorted(reads, key=repr)
-            }
+            selections = self.store.select_many(connection, sorted(reads, key=repr))
             pending = {r[0] for r in connection.execute("SELECT DISTINCT subject_id FROM pending")}
             closed = {r[0] for r in connection.execute("SELECT period FROM period_close")}
             previous = {
@@ -472,17 +473,17 @@ class Engine:
                 if read.source != "calculation" or read.key.startswith("#"):
                     continue
                 for other, upstream in facts.items():
-                    if (
-                        other != sid
-                        and (upstream.fact.kind == read.kind or read.kind == "*")
-                        and read.key
-                        in (
-                            *upstream.fact.scopes_for(other),
-                            "@" + other,
-                            str(upstream.fact.period),
-                            "*",
-                        )
-                        and (not read.before_period or upstream.fact.period < read.before_period)
+                    if other != sid and calculation_matches(
+                        read,
+                        Calculation(
+                            "",
+                            other,
+                            upstream.fact.kind,
+                            upstream.fact.period,
+                            {},
+                            upstream.id,
+                        ),
+                        upstream.fact,
                     ):
                         dependencies[sid].add(other)
                 for selected in selections[read]:
@@ -511,17 +512,7 @@ class Engine:
                     values = [v for v in values if v.subject_id not in overlays]
                     for upstream_id, calc in overlays.items():
                         upstream = facts[upstream_id]
-                        if (
-                            (calc.kind == read.kind or read.kind == "*")
-                            and read.key
-                            in (
-                                *upstream.fact.scopes_for(upstream_id),
-                                "@" + upstream_id,
-                                str(upstream.fact.period),
-                                "*",
-                            )
-                            and (not read.before_period or calc.period < read.before_period)
-                        ):
+                        if calculation_matches(read, calc, upstream.fact):
                             values.append(calc)
                     values.sort(key=lambda item: (item.period.ordinal, item.subject_id))
                 selected[read] = tuple(values)
@@ -545,12 +536,13 @@ class Engine:
                 ))
                 blocked.add(sid)
                 continue
+            trace = context.trace()
             calculated_hash = digest(
                 {
                     "fact": version.id,
                     "outcome": outcome,
-                    "reads": [asdict(r) for r in sorted(context.used, key=repr)],
-                    "versions": sorted(context.versions),
+                    "reads": [asdict(read) for read, _items in trace.selections],
+                    "versions": sorted(trace.versions),
                     "program": PROGRAM_VERSION,
                 }
             )
@@ -569,10 +561,18 @@ class Engine:
                 old_signature = accounting.signature(previous[sid]) if previous[sid] else None
                 accounting.add(
                     overlays[sid], version, outcome,
-                    (v.id for r in context.used if r.source == "fact"
-                     for v in context.selections[r]),
-                    (v.id for r in context.used if r.source == "calculation"
-                     for v in context.selections[r]),
+                    (
+                        value.id
+                        for read, values in trace.selections
+                        if read.source == "fact"
+                        for value in values
+                    ),
+                    (
+                        value.id
+                        for read, values in trace.selections
+                        if read.source == "calculation"
+                        for value in values
+                    ),
                 )
                 signature = accounting.signature(calc_id)
                 impact = (
@@ -590,17 +590,10 @@ class Engine:
         posting = YearMonth(correction_period) if correction_period is not None else None
         if posting and posting.ordinal <= max(closed, default=-1):
             raise KernelError("closed_period", "冲正必须发布到开放期间")
-        checked_lanes = {"accounting"}
-        for item in prepared:
-            checked_lanes.add(item.version.fact.lane)
-            for read in item.context.used:
-                if read.kind in self.store.registry.models:
-                    checked_lanes.add(self.store.registry.models[read.kind].lane)
-                for selected in item.context.selections[read]:
-                    kind = (
-                        selected.fact.kind if isinstance(selected, FactVersion) else selected.kind
-                    )
-                    checked_lanes.add(self.store.registry.models[kind].lane)
+        checked = checked_lanes(
+            self.store.registry,
+            ((item.version, item.context.trace()) for item in prepared),
+        )
         public = {
             "subjects": sorted(facts),
             "epochs": epochs,
@@ -626,10 +619,10 @@ class Engine:
             ],
             "company_id": self.store.company_id,
             "database_id": self.store.database_id,
-            "checked_lanes": sorted(checked_lanes),
+            "checked_lanes": list(checked),
         }
         public["digest"] = digest(
-            {**public, "epochs": {lane: epochs[lane] for lane in checked_lanes}}
+            {**public, "epochs": {lane: epochs[lane] for lane in checked}}
         ).hex()
         return public, prepared
 
@@ -667,7 +660,16 @@ class Engine:
                         or item.previous_calculation_id or item.calculation_id,
                         item.compatibility_issue.get("reason", "comparison_unavailable"),
                     )
+            from .integrity import verify_prepared_sources, verify_publication
+            from .projections import prepare_projection_check, verify_projection_change
+
+            verify_prepared_sources(self, connection, prepared)
+            projection_check = prepare_projection_check(
+                connection, prepared, correction_period=correction_period
+            )
             results = [self._publish(connection, item, correction_period) for item in prepared]
+            verify_publication(self, connection, [item.calculation_id for item in prepared])
+            verify_projection_change(connection, projection_check)
             return {"status": "published", "results": results, "digest": preview_digest}
 
         lanes = tuple(sorted({item.version.fact.lane for item in prepared}))
@@ -703,12 +705,10 @@ class Engine:
             "INSERT INTO calculation_scope VALUES(?,?,?)",
             [
                 (cid, version.fact.kind, key)
-                for key in sorted(
-                    set(version.fact.scopes_for(version.subject_id))
-                    | {"@" + version.subject_id, str(version.fact.period)}
-                )
+                for key in sorted(scope_keys("calculation", version.fact, version.subject_id))
             ],
         )
+        trace = prepared.context.trace()
         connection.executemany(
             "INSERT INTO dependency_scope VALUES(?,?,?,?,?)",
             [
@@ -719,13 +719,13 @@ class Engine:
                     r.key,
                     r.before_period.ordinal if r.before_period else 119988,
                 )
-                for r in sorted(prepared.context.used, key=repr)
+                for r, _items in trace.selections
             ],
         )
         fact_ids = {version.id}
         calc_ids = set()
-        for read in prepared.context.used:
-            for item in prepared.context.selections[read]:
+        for read, items in trace.selections:
+            for item in items:
                 (fact_ids if read.source == "fact" else calc_ids).add(item.id)
         connection.executemany(
             "INSERT INTO dependency_fact VALUES(?,?)", [(cid, fid) for fid in sorted(fact_ids)]
@@ -1077,41 +1077,9 @@ class Engine:
                 )
 
     def rebuild_projections(self, *, request_id: str):
-        def operation(connection):
-            for table in ("monthly_account", "monthly_cashflow", "balance", "opening_account"):
-                connection.execute(f"DELETE FROM {table}")
-            # SQLite sum(INTEGER) raises on overflow; total() or floating arithmetic is forbidden.
-            connection.execute(
-                "INSERT INTO monthly_account SELECT v.period,l.account,sum(l.debit),sum(l.credit) "
-                "FROM voucher_current c JOIN voucher_version v ON v.id=c.version_id "
-                "JOIN voucher_line l ON l.version_id=v.id GROUP BY v.period,l.account"
-            )
-            connection.execute(
-                "INSERT INTO monthly_cashflow SELECT v.period,l.cashflow,sum(l.debit-l.credit) "
-                "FROM voucher_current c JOIN voucher_version v ON v.id=c.version_id "
-                "JOIN voucher_line l ON l.version_id=v.id WHERE l.cashflow IS NOT NULL "
-                "GROUP BY v.period,l.cashflow HAVING sum(l.debit-l.credit)<>0"
-            )
-            balances = {}
-            for row in connection.execute(
-                "SELECT outcome,c.period FROM calculation_current a JOIN "
-                "calculation c ON c.id=a.calculation_id "
-                "JOIN calculation_publication p ON p.calculation_id=c.id"
-            ):
-                outcome = json.loads(row[0])
-                self._opening_projection(connection, row[1], outcome.get("opening_lines", ()), 1)
-                for effect in outcome["balances"]:
-                    key = (effect["category"], effect["key"])
-                    balances[key] = checked(balances.get(key, 0) + effect["amount"])
-            connection.executemany(
-                "INSERT INTO balance VALUES(?,?,?)",
-                [(category, key, amount) for (category, key), amount in balances.items() if amount],
-            )
-            return {"status": "rebuilt"}
+        from .maintenance import Maintenance
 
-        return self._write(
-            request_id, digest(["rebuild"]), None, (), "rebuild_projections", operation
-        )
+        return Maintenance(self).rebuild_projections(request_id=request_id)
 
     def overview(self, period: str):
         month = YearMonth(period).ordinal
@@ -1443,98 +1411,128 @@ class Engine:
                 ],
             }
 
+    def _delete_plan(self, connection, subject_id, recording_error_evidence):
+        fact = self.store.current_fact(connection, subject_id)
+        from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
+
+        if fact.fact.kind in MEMBER_KINDS | OWNER_KINDS:
+            raise KernelError(
+                "asset_batch_command_required",
+                "资产汇总及成员须通过资产专用撤回入口处理",
+            )
+        if fact.fact.immutable and recording_error_evidence is None:
+            raise KernelError("immutable_fact", "实际资金或原始流水须通过明确的后续业务处理")
+        if (
+            recording_error_evidence is not None
+            and not connection.execute(
+                "SELECT 1 FROM evidence WHERE digest=?",
+                (bytes.fromhex(recording_error_evidence),),
+            ).fetchone()
+        ):
+            raise NeedsInformation("recording_error_evidence", "需要留存误记撤销的明确依据")
+        row = connection.execute(
+            "SELECT c.* FROM calculation_current a JOIN calculation c "
+            "ON c.id=a.calculation_id WHERE a.subject_id=?",
+            (subject_id,),
+        ).fetchone()
+        calculation = self.store.calculation(row) if row else None
+        # Publication owns the posting month even when the calculation produced
+        # no voucher or a later review reused an earlier voucher unchanged.
+        closed = connection.execute(
+            "SELECT 1 FROM calculation c JOIN calculation_publication p "
+            "ON p.calculation_id=c.id WHERE c.subject_id=? "
+            "AND p.posting_period<=(SELECT max(period) FROM period_close) LIMIT 1",
+            (subject_id,),
+        ).fetchone()
+        if closed or connection.execute(
+            "SELECT 1 FROM period_close WHERE period>=?", (fact.fact.period.ordinal,)
+        ).fetchone():
+            raise KernelError("closed_period", "已关账业务只能通过关联冲正更正")
+        consumers = {
+            item[0]
+            for item in connection.execute(
+                "SELECT a.subject_id FROM dependency_fact d JOIN calculation_current a "
+                "ON a.calculation_id=d.calculation_id JOIN fact_revision f ON f.id=d.fact_id "
+                "WHERE f.subject_id=? UNION SELECT a.subject_id FROM dependency_calculation d "
+                "JOIN calculation_current a ON a.calculation_id=d.calculation_id "
+                "JOIN calculation c ON c.id=d.upstream_id WHERE c.subject_id=?",
+                (subject_id, subject_id),
+            )
+        }
+        consumers.discard(subject_id)
+        fact_scopes = {
+            item[0]
+            for item in connection.execute(
+                "SELECT scope_key FROM fact_scope WHERE fact_id=?", (fact.id,)
+            )
+        }
+        calculation_scopes = (
+            {
+                item[0]
+                for item in connection.execute(
+                    "SELECT scope_key FROM calculation_scope WHERE calculation_id=?",
+                    (calculation.id,),
+                )
+            }
+            if calculation is not None
+            else set()
+        )
+        # Initial publications and replacements have no new exact edges yet.
+        # Match pending current facts against the same persisted source scopes
+        # used by database selection; archived dependencies never block deletion.
+        for candidate in connection.execute(
+            "SELECT DISTINCT f.fact_id FROM pending p JOIN fact_current f "
+            "ON f.subject_id=p.subject_id WHERE p.subject_id!=?",
+            (subject_id,),
+        ).fetchall():
+            dependent = self.store.fact(connection, candidate[0])
+            for read in dependent.fact.reads_for(dependent.subject_id):
+                if read_matches(
+                    read,
+                    source="fact",
+                    kind=fact.fact.kind,
+                    ident=fact.id,
+                    period=fact.fact.period,
+                    scopes=fact_scopes,
+                ) or (
+                    calculation is not None
+                    and read_matches(
+                        read,
+                        source="calculation",
+                        kind=calculation.kind,
+                        ident=calculation.id,
+                        period=calculation.period,
+                        scopes=calculation_scopes,
+                    )
+                ):
+                    consumers.add(dependent.subject_id)
+                    break
+        if consumers:
+            raise KernelError(
+                "has_dependents", "仍有有效下游业务，不能撤去", subjects=sorted(consumers)
+            )
+        epochs = self.store.epochs(connection)
+        checked = ("accounting", "management", "material")
+        plan = {
+            "subject_id": subject_id,
+            "kind": fact.fact.kind,
+            "fact_id": fact.id,
+            "calculation_id": calculation.id if calculation else None,
+            "epochs": epochs,
+            "checked_lanes": list(checked),
+            "recording_error_evidence": recording_error_evidence,
+        }
+        plan["digest"] = digest(
+            {**plan, "epochs": {lane: epochs[lane] for lane in checked}}
+        ).hex()
+        return plan
+
     def preview_delete(self, subject_id: str, *, recording_error_evidence: str | None = None):
         with self.store.connection(read_only=True) as connection:
             connection.execute("BEGIN")
-            fact = self.store.current_fact(connection, subject_id)
-            from .asset_batch_models import MEMBER_KINDS, OWNER_KINDS
-
-            if fact.fact.kind in MEMBER_KINDS | OWNER_KINDS:
-                raise KernelError(
-                    "asset_batch_command_required",
-                    "资产汇总及成员须通过资产专用撤回入口处理",
-                )
-            if fact.fact.immutable and recording_error_evidence is None:
-                raise KernelError("immutable_fact", "实际资金或原始流水须通过明确的后续业务处理")
-            if (
-                recording_error_evidence is not None
-                and not connection.execute(
-                    "SELECT 1 FROM evidence WHERE digest=?",
-                    (bytes.fromhex(recording_error_evidence),),
-                ).fetchone()
-            ):
-                raise NeedsInformation("recording_error_evidence", "需要留存误记撤销的明确依据")
-            row = connection.execute(
-                "SELECT c.* FROM calculation_current a JOIN calculation c "
-                "ON c.id=a.calculation_id WHERE a.subject_id=?",
-                (subject_id,),
-            ).fetchone()
-            # Publication owns the posting month even when the calculation produced
-            # no voucher or a later review reused an earlier voucher unchanged.
-            closed = connection.execute(
-                "SELECT 1 FROM calculation c JOIN calculation_publication p "
-                "ON p.calculation_id=c.id WHERE c.subject_id=? "
-                "AND p.posting_period<=(SELECT max(period) FROM period_close) LIMIT 1",
-                (subject_id,),
-            ).fetchone()
-            if (
-                closed
-                or connection.execute(
-                    "SELECT 1 FROM period_close WHERE period>=?", (fact.fact.period.ordinal,)
-                ).fetchone()
-            ):
-                raise KernelError("closed_period", "已关账业务只能通过关联冲正更正")
-            consumers = {
-                r[0]
-                for r in connection.execute(
-                    "SELECT a.subject_id FROM dependency_fact d JOIN calculation_current a "
-                    "ON a.calculation_id=d.calculation_id JOIN fact_revision f ON f.id=d.fact_id "
-                    "WHERE f.subject_id=? UNION SELECT a.subject_id FROM dependency_calculation d "
-                    "JOIN calculation_current a ON a.calculation_id=d.calculation_id "
-                    "JOIN calculation c ON c.id=d.upstream_id WHERE c.subject_id=?",
-                    (subject_id, subject_id),
-                )
-            }
-            consumers.discard(subject_id)
-            # Initial publications and replacements have no new calculation edges
-            # yet. Inspect only pending subjects' CURRENT declared direct reads;
-            # archived facts/calculations must never become permanent blockers.
-            for candidate in connection.execute(
-                "SELECT DISTINCT f.fact_id FROM pending p CROSS JOIN fact_current f "
-                "WHERE f.subject_id=p.subject_id AND p.subject_id!=?",
-                (subject_id,),
-            ).fetchall():
-                dependent = self.store.fact(connection, candidate[0])
-                for read in dependent.fact.reads_for(dependent.subject_id):
-                    selected_period = (
-                        row["period"]
-                        if read.source == "calculation" and row is not None
-                        else fact.fact.period.ordinal
-                    )
-                    if (
-                        read.key == "@" + subject_id
-                        and read.kind in (fact.fact.kind, "*")
-                        and (
-                            read.before_period is None
-                            or selected_period < read.before_period.ordinal
-                        )
-                    ):
-                        consumers.add(dependent.subject_id)
-                        break
-            if consumers:
-                raise KernelError(
-                    "has_dependents", "仍有有效下游业务，不能撤去", subjects=sorted(consumers)
-                )
-            epochs = self.store.epochs(connection)
-            result = {
-                "subject_id": subject_id,
-                "fact_id": fact.id,
-                "calculation_id": row["id"] if row else None,
-                "epochs": {"accounting": epochs["accounting"]},
-                "recording_error_evidence": recording_error_evidence,
-            }
+            plan = self._delete_plan(connection, subject_id, recording_error_evidence)
             connection.commit()
-        return {"status": "preview", **result, "digest": digest(result).hex()}
+        return {"status": "preview", **plan}
 
     def delete(
         self,
@@ -1556,7 +1554,10 @@ class Engine:
             raise KernelError("preview_expired", "撤去业务预览已变化")
 
         def operation(connection):
-            calc = preview["calculation_id"]
+            locked = self._delete_plan(connection, subject_id, recording_error_evidence)
+            if locked["digest"] != preview_digest:
+                raise KernelError("preview_expired", "撤去业务预览已变化")
+            calc = locked["calculation_id"]
             if calc:
                 for header in connection.execute(
                     "SELECT v.* FROM voucher_current a JOIN voucher_version v "
@@ -1584,16 +1585,24 @@ class Engine:
                     connection, calculation[1], outcome.get("opening_lines", ()), -1
                 )
                 self._balance_projection(connection, outcome["balances"], -1)
-                connection.execute(
-                    "DELETE FROM calculation_current WHERE subject_id=?", (subject_id,)
+                removed = connection.execute(
+                    "DELETE FROM calculation_current WHERE subject_id=? AND calculation_id=?",
+                    (subject_id, calc),
                 )
+                if removed.rowcount != 1:
+                    raise KernelError("preview_expired", "当前核算版本与已审阅预览不一致")
             connection.execute(
                 "INSERT INTO disposition(subject_id,cause_id,action,calculation_id,explanation) "
                 "VALUES(?,?,'withdrawn',?,'撤去无有效下游的开放期误记业务')",
-                (subject_id, preview["fact_id"], calc),
+                (subject_id, locked["fact_id"], calc),
             )
             connection.execute("DELETE FROM pending WHERE subject_id=?", (subject_id,))
-            connection.execute("DELETE FROM fact_current WHERE subject_id=?", (subject_id,))
+            removed = connection.execute(
+                "DELETE FROM fact_current WHERE subject_id=? AND fact_id=?",
+                (subject_id, locked["fact_id"]),
+            )
+            if removed.rowcount != 1:
+                raise KernelError("preview_expired", "当前事实版本与已审阅预览不一致")
             return {
                 "status": "withdrawn",
                 "subject_id": subject_id,
@@ -1601,4 +1610,15 @@ class Engine:
                 "recording_error_evidence": recording_error_evidence,
             }
 
-        return self._write(request_id, request_hash, epochs, ("accounting",), "withdraw", operation)
+        lanes = {self.store.registry.models[preview["kind"]].lane}
+        if preview["calculation_id"] is not None:
+            lanes.add("accounting")
+        return self._write(
+            request_id,
+            request_hash,
+            epochs,
+            tuple(sorted(lanes)),
+            "withdraw",
+            operation,
+            checked_lanes=preview["checked_lanes"],
+        )

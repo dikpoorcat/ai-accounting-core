@@ -10,6 +10,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .contracts import KernelError
+from .permissions import create_private_file, ensure_private_directory, reject_reparse_path
 from .runtime import connect, require_local_database
 from .storage import Store
 from .types import canonical
@@ -64,13 +65,12 @@ CREATE TRIGGER immutable_company_setting_delete BEFORE DELETE ON company_setting
 
 class Catalog:
     def __init__(self, root, registry, *, fault=None):
-        self.root = Path(root).resolve()
+        self.root = reject_reparse_path(root)
         self.path = require_local_database(self.root / "catalog.sqlite")
         self.registry, self.fault = registry, fault
-        self.root.mkdir(parents=True, exist_ok=True)
+        ensure_private_directory(self.root, parents=True)
         try:
-            with self.path.open("xb"):
-                pass
+            create_private_file(self.path)
             fresh = True
         except FileExistsError:
             fresh = False
@@ -148,15 +148,22 @@ class Catalog:
                 operation_id = prior["id"]
                 connection.rollback()
                 if prior["status"] == "succeeded":
-                    return dict(company)
+                    return self._operation_result(dict(company), payload)
             elif company:
                 if kind != "create" or company["name"] != name:
                     raise KernelError("company_exists", "目标目录已登记该公司")
                 return dict(company)
             else:
-                identity = (
-                    verify_portable(archive, expected_taxpayer_id=taxpayer_id)["identity"]
+                verified = (
+                    verify_portable(
+                        archive, expected_taxpayer_id=taxpayer_id, _registry=self.registry
+                    )
                     if archive
+                    else None
+                )
+                identity = (
+                    verified["identity"]
+                    if verified
                     else {
                         "company_id": uuid.uuid4().hex,
                         "database_id": uuid.uuid4().hex,
@@ -182,6 +189,8 @@ class Catalog:
                     "archive": archive,
                     "source_hash": source_hash,
                 }
+                if verified:
+                    payload["verification"] = verified["verification"]
                 connection.execute(
                     "INSERT INTO company_operation(id,taxpayer_id,kind,payload,status) "
                     "VALUES(?,?,?,?,'pending')",
@@ -190,6 +199,16 @@ class Catalog:
                 connection.commit()
         self._check("operation_recorded")
         return self._resume(operation_id)
+
+    def _operation_result(self, row, payload):
+        if not payload.get("archive"):
+            return row
+        verification = payload.get("verification")
+        if verification is None:
+            from .backup import verify_file
+
+            verification = verify_file(row["path"], _registry=self.registry)["verification"]
+        return {**row, "verification": verification}
 
     def _resume(self, operation_id):
         from .backup import _publish_new, restore_portable
@@ -206,14 +225,14 @@ class Catalog:
                 key: payload[key] for key in ("id", "taxpayer_id", "name", "path", "database_id")
             }
             if operation["status"] == "succeeded":
-                return row
+                return self._operation_result(row, payload)
             destination = Path(payload["path"])
             staging = self.root / ".operations" / f"{operation_id}.sqlite"
             if destination != self.root / row["taxpayer_id"] / "company.sqlite":
                 raise KernelError("company_path_mismatch", "公司操作路径与资料根目录不一致")
             try:
                 if not destination.exists():
-                    staging.parent.mkdir(exist_ok=True)
+                    ensure_private_directory(staging.parent)
                     if staging.exists():
                         with closing(connect(staging, read_only=True)) as candidate:
                             empty = (
@@ -255,6 +274,7 @@ class Catalog:
                                 expected_taxpayer_id=row["taxpayer_id"],
                                 expected_company_id=row["id"],
                                 expected_database_id=row["database_id"],
+                                _registry=self.registry,
                             )
                     self._check("file_prepared")
 
@@ -272,10 +292,26 @@ class Catalog:
                         upgrade(candidate, registry=self.registry)
                     with Store(staging, self.registry, row["id"], row["database_id"]).connection():
                         pass
-                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    ensure_private_directory(destination.parent, parents=True)
                     _publish_new(staging, destination)
                 self._check("file_published")
                 self._bound_store(row)
+                result = row
+                if operation["kind"] == "restore":
+                    from .backup import verify_file
+
+                    # A resumed registration must also check an already-published
+                    # destination; a schema match alone does not verify content.
+                    result = {
+                        **row,
+                        "verification": verify_file(
+                            destination,
+                            expected_company_id=row["id"],
+                            expected_database_id=row["database_id"],
+                            expected_taxpayer_id=row["taxpayer_id"],
+                            _registry=self.registry,
+                        )["verification"],
+                    }
                 connection.execute("INSERT INTO company VALUES(?,?,?,?,?)", tuple(row.values()))
                 connection.execute(
                     "UPDATE company_operation SET status='succeeded',attempts=attempts+1,"
@@ -285,7 +321,7 @@ class Catalog:
                 self._check("before_registration_commit")
                 connection.commit()
                 self._check("registration_committed")
-                return row
+                return result
             except BaseException as exc:
                 connection.rollback()
                 if isinstance(exc, Exception):
@@ -345,7 +381,7 @@ class Catalog:
             or not backup_directory.strip()
         ):
             raise ValueError("invalid backup setting")
-        target = Path(backup_directory).expanduser().resolve()
+        target = reject_reparse_path(Path(backup_directory).expanduser())
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             revision = connection.execute(

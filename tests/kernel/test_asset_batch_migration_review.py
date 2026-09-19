@@ -106,14 +106,14 @@ def test_v11_upgrade_preserves_single_card_voucher_and_close_without_backfill(
 
     monkeypatch.setattr(read_indexes, "backfill_read_indexes", no_backfill)
     with closing(connect(store.path)) as connection:
-        assert VERSION == 12
+        assert VERSION == 13
         before_tables = {item["name"] for item in objects(connection) if item["type"] == "table"}
         before = table_digest(connection)
         history = tuple(
             connection.execute("SELECT * FROM schema_history WHERE version=11").fetchone()
         )
         assert upgrade(connection, registry=store.registry)
-        assert verify_schema(connection, registry=store.registry) == 12
+        assert verify_schema(connection, registry=store.registry) == VERSION
         assert table_digest(connection, table_names=before_tables) == before
         assert (
             tuple(connection.execute("SELECT * FROM schema_history WHERE version=11").fetchone())
@@ -122,7 +122,7 @@ def test_v11_upgrade_preserves_single_card_voucher_and_close_without_backfill(
         assert [
             row[0]
             for row in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [11, 12]
+        ] == [11, 12, VERSION]
         added_tables = {
             item["name"] for item in objects(connection) if item["type"] == "table"
         } - before_tables

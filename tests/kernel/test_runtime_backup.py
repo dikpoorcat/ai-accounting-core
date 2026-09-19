@@ -164,8 +164,9 @@ def test_evidence_corruption_is_detected_before_backup_is_published(company, tmp
         )
     finally:
         connection.close()
-    with pytest.raises(backup.BackupError, match="Evidence"):
+    with pytest.raises(backup.BackupError, match="content_integrity_failed") as failure:
         backup.backup_to_file(company, tmp_path / "bad.sqlite")
+    assert failure.value.__cause__.details["component"] == "evidence"
     assert not (tmp_path / "bad.sqlite").exists()
 
 
@@ -177,8 +178,9 @@ def test_foreign_key_corruption_is_detected(company) -> None:
         connection.execute("INSERT INTO fact_evidence VALUES(?,?)", ("missing", b"x" * 32))
     finally:
         connection.close()
-    with pytest.raises(backup.BackupError, match="foreign-key"):
+    with pytest.raises(backup.BackupError, match="content_integrity_failed") as failure:
         backup.verify_file(company)
+    assert failure.value.__cause__.details["reason"] == "foreign_key_check_failed"
 
 
 def test_close_manifest_corruption_is_detected(company) -> None:
@@ -187,8 +189,9 @@ def test_close_manifest_corruption_is_detected(company) -> None:
         connection.execute("INSERT INTO period_close VALUES(?,?,?)", (24320, "{}", b"x" * 32))
     finally:
         connection.close()
-    with pytest.raises(backup.BackupError, match="Period-close"):
+    with pytest.raises(backup.BackupError, match="content_integrity_failed") as failure:
         backup.verify_file(company)
+    assert failure.value.__cause__.details["reason"] == "manifest_digest_mismatch"
 
 
 def test_initial_portable_round_trip_and_rollover_are_verified(company, tmp_path) -> None:

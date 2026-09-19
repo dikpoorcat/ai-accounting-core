@@ -4,6 +4,7 @@ import json
 import sqlite3
 
 from .contracts import KernelError
+from .permissions import PrivatePathError
 from .runtime import RuntimeConfigurationError
 from .security.primitives import IdentityError
 
@@ -11,6 +12,12 @@ from .security.primitives import IdentityError
 def error_response(exc):
     if isinstance(exc, KernelError):
         return exc.response()
+    if isinstance(exc, PrivatePathError):
+        return {
+            "status": "rejected",
+            "code": exc.code,
+            "message": "内核文件权限不符合要求，请检查当前用户的文件所有权与访问权限",
+        }
     if isinstance(exc, IdentityError):
         return {
             "status": "rejected",

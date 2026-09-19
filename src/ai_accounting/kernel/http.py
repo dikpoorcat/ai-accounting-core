@@ -102,6 +102,9 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     "unknown_report_job": 404,
                     "report_download_invalid": 409,
                     "response_contract_mismatch": 500,
+                    "content_integrity_failed": 500,
+                    "projection_integrity_failed": 500,
+                    "read_index_integrity_failed": 500,
                 }.get(result.get("code"), 400)
             )
             self.json_reply(status, result)
@@ -293,7 +296,10 @@ def create_server(service, *, port=0, static_directory=None, token=None):
             except Exception as exc:
                 error = error_response(exc)
                 self.json_reply(
-                    500 if error.get("code") == "response_contract_mismatch" else 400, error
+                    500 if error.get("code") in {
+                        "response_contract_mismatch", "content_integrity_failed",
+                        "projection_integrity_failed", "read_index_integrity_failed",
+                    } else 400, error
                 )
 
         def do_GET(self):

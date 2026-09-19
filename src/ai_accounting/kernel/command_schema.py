@@ -16,6 +16,7 @@ from .discovery import Discovery
 from .display import Display
 from .engine import Engine
 from .exports import Exports
+from .maintenance import Maintenance
 from .materials import (
     MaterialGroupResolution,
     MaterialResolution,
@@ -83,6 +84,8 @@ def command_models(registry):
         "run_report_jobs": run_backup_jobs,
         "evidence": Engine.register_evidence,
         "rebuild": Engine.rebuild_projections,
+        "verify_integrity": Maintenance.verify_integrity,
+        "repair_read_indexes": Maintenance.repair_read_indexes,
         "jobs": Engine.jobs,
         "retry_job": Engine.retry_job,
         "operations": Catalog.operations,

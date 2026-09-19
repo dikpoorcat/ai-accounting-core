@@ -52,7 +52,7 @@ def test_recorded_v10_portable_restores_through_catalog_to_v11(tmp_path):
         assert [
             row[0]
             for row in connection.execute("SELECT version FROM schema_history ORDER BY version")
-        ] == [10, VERSION]
+        ] == [10, 12, VERSION]
     assert verify_file(store.path)["identity"]["schema_version"] == VERSION
 
     # Backup and restore must not upgrade the protected source or rewrite its original archive.
