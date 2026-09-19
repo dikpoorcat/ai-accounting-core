@@ -5,7 +5,9 @@ database. Recalculation cannot rewrite the fact that an external filing occurred
 """
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
@@ -16,30 +18,48 @@ from .periods import Periods
 from .provenance import recorded_times
 from .types import ActualDate, YearMonth, digest
 
-ObligationKind = Literal[
-    "contribution_declaration",
-    "individual_income_tax",
-    "quarterly_tax_and_reports",
-    "annual_income_tax",
-    "annual_business_report",
-]
-SOURCES = {
-    "contribution_declaration": PAYROLL_KINDS,
-    "individual_income_tax": (
-        *PAYROLL_KINDS,
-        "annual_bonus",
-        "labor",
-        "labor_accrual",
-        "labor_project_cost",
-    ),
-    # Quarter completion requires prior close, but accepts the explicitly selected
-    # current calculations. These can differ from the old frozen close manifest
-    # after a later correction; basis_current reports that distinction honestly.
-    "quarterly_tax_and_reports": ("*",),
-    "annual_income_tax": ("income_tax_assessment",),
-    "annual_business_report": (),
-}
-MONTHLY_PAYROLL_OBLIGATIONS = {"contribution_declaration", "individual_income_tax"}
+
+@dataclass(frozen=True)
+class ObligationDefinition:
+    basis_kinds: tuple[str, ...]
+    check_payroll_population: bool = False
+    exclude_not_started: bool = False
+
+
+OBLIGATION_DEFINITIONS = MappingProxyType(
+    {
+        "contribution_declaration": ObligationDefinition(
+            PAYROLL_KINDS,
+            check_payroll_population=True,
+        ),
+        "individual_income_tax": ObligationDefinition(
+            (
+                *PAYROLL_KINDS,
+                "annual_bonus",
+                "labor",
+                "labor_accrual",
+                "labor_project_cost",
+            ),
+            check_payroll_population=True,
+            exclude_not_started=True,
+        ),
+        # Quarter completion requires prior close, but accepts the explicitly selected
+        # current calculations. These can differ from the old frozen close manifest
+        # after a later correction; basis_current reports that distinction honestly.
+        "quarterly_tax_and_reports": ObligationDefinition(("*",)),
+        "annual_income_tax": ObligationDefinition(("income_tax_assessment",)),
+        "annual_business_report": ObligationDefinition(()),
+    }
+)
+ObligationKind = Literal[*OBLIGATION_DEFINITIONS]
+SOURCES = MappingProxyType(
+    {kind: definition.basis_kinds for kind, definition in OBLIGATION_DEFINITIONS.items()}
+)
+MONTHLY_PAYROLL_OBLIGATIONS = frozenset(
+    kind
+    for kind, definition in OBLIGATION_DEFINITIONS.items()
+    if definition.check_payroll_population
+)
 NON_ACCOUNTING_CALCULATIONS = {"external_completion", "payroll_disbursement_basis"}
 EXTERNAL_WORKFLOW_KINDS = frozenset(NON_ACCOUNTING_CALCULATIONS)
 
@@ -95,20 +115,25 @@ class CompanyWorkflowScope(Fact):
     def explicit_scope(self):
         if self.established_period > self.effective_from or self.effective_from > self.effective_to:
             raise ValueError("invalid company coverage")
-        if set(self.applicability) != set(SOURCES):
+        if set(self.applicability) != set(OBLIGATION_DEFINITIONS):
             raise ValueError("each external work category needs explicit applicability")
         return self
 
 
 def _basis_reads(kind, start, end):
+    definition = OBLIGATION_DEFINITIONS[kind]
     return (
         *(
             Read(source, source_kind, str(YearMonth.from_ordinal(month)))
             for month in range(start.ordinal, end.ordinal + 1)
-            for source_kind in SOURCES[kind]
+            for source_kind in definition.basis_kinds
             for source in (("calculation",) if source_kind == "*" else ("fact", "calculation"))
         ),
-        *((Read("fact", "payroll_profile", "*"),) if kind in MONTHLY_PAYROLL_OBLIGATIONS else ()),
+        *(
+            (Read("fact", "payroll_profile", "*"),)
+            if definition.check_payroll_population
+            else ()
+        ),
     )
 
 
@@ -228,7 +253,7 @@ def calculate_completion(version, context):
         )
     if (
         not basis
-        and SOURCES[fact.obligation_kind]
+        and OBLIGATION_DEFINITIONS[fact.obligation_kind].basis_kinds
         and fact.no_reportable_activity_confirmed is not True
     ):
         raise NeedsInformation("no_reportable_activity_confirmed", "空计算集合不能证明无申报业务")
@@ -280,12 +305,12 @@ def _accepted_history(fact, select):
             or item.kind in NON_ACCOUNTING_CALCULATIONS
             or not fact.start_period <= item.period <= fact.end_period
             or (
-                "*" not in SOURCES[fact.obligation_kind]
-                and item.kind not in SOURCES[fact.obligation_kind]
+                "*" not in OBLIGATION_DEFINITIONS[fact.obligation_kind].basis_kinds
+                and item.kind not in OBLIGATION_DEFINITIONS[fact.obligation_kind].basis_kinds
             )
             or not item.result_digest
             or (
-                fact.obligation_kind == "individual_income_tax"
+                OBLIGATION_DEFINITIONS[fact.obligation_kind].exclude_not_started
                 and item.kind in PAYROLL_KINDS
                 and item.values.get("tax_status") == "not_started"
             )
@@ -333,10 +358,15 @@ def _basis_state(obligation, select):
                 else (facts if read.source == "fact" else calculations)
             )
             collection[item.subject_id] = item
-    issues = _payroll_population_issues(
-        profiles.values(), facts.values(), obligation.start_period, obligation.end_period
+    definition = OBLIGATION_DEFINITIONS[obligation.obligation_kind]
+    issues = (
+        _payroll_population_issues(
+            profiles.values(), facts.values(), obligation.start_period, obligation.end_period
+        )
+        if definition.check_payroll_population
+        else []
     )
-    if "*" not in SOURCES[obligation.obligation_kind]:
+    if "*" not in definition.basis_kinds:
         for subject in sorted(facts.keys() | calculations.keys()):
             fact, calc = facts.get(subject), calculations.get(subject)
             if fact is None or calc is None or calc.fact_id != fact.id:
@@ -351,7 +381,7 @@ def _basis_state(obligation, select):
         calculations[subject]
         for subject in sorted(calculations)
         if not (
-            obligation.obligation_kind == "individual_income_tax"
+            definition.exclude_not_started
             and calculations[subject].kind in PAYROLL_KINDS
             and calculations[subject].values.get("tax_status") == "not_started"
         )
@@ -436,7 +466,7 @@ def _matches_basis(obligation_version, completion_fact, completion, basis, issue
         return False
     if (
         not basis
-        and SOURCES[fact.obligation_kind]
+        and OBLIGATION_DEFINITIONS[fact.obligation_kind].basis_kinds
         and fact.no_reportable_activity_confirmed is not True
     ):
         return False
@@ -491,7 +521,7 @@ def required_reads(period):
         Read("fact", "payroll_profile", "*"),
         *(
             Read(source, kind, "*")
-            for kind in SOURCES["individual_income_tax"]
+            for kind in OBLIGATION_DEFINITIONS["individual_income_tax"].basis_kinds
             for source in ("fact", "calculation")
         ),
     )
@@ -581,7 +611,7 @@ class Workflow:
                 raise NeedsInformation("filing_calendar_policy", "需要覆盖本月的版本化官方规则")
             policy = policies[0]
             rules = {rule.obligation_kind: rule for rule in policy.fact.rules}
-            if set(rules) != set(SOURCES):
+            if set(rules) != set(OBLIGATION_DEFINITIONS):
                 raise NeedsInformation(
                     "filing_calendar_policy.rules", "需明确全部五类事项的周期规则"
                 )
@@ -591,7 +621,7 @@ class Workflow:
             }
             existing = self.store.select(connection, Read("fact", ExternalObligation.kind, "*"))
             candidates, reused, issues = [], [], []
-            for kind in SOURCES:
+            for kind in OBLIGATION_DEFINITIONS:
                 width = {"monthly": 1, "quarterly": 3, "annual": 12}[rules[kind].cycle]
                 start = YearMonth.from_ordinal(month.ordinal - (int(month[5:]) - 1) % width)
                 end = YearMonth.from_ordinal(start.ordinal + width - 1)

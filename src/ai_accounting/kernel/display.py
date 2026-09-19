@@ -284,7 +284,7 @@ class Display:
     @staticmethod
     def _accounting_context(connection, period):
         """Summarize actual published journal versions; never synthesize missing business facts."""
-        from .reports import PROFIT_ACCOUNTS
+        from .account_definitions import PROFIT_ACCOUNTS
 
         month = YearMonth(period).ordinal
         selection = (

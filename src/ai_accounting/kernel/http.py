@@ -101,6 +101,7 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     "report_job_not_ready": 409,
                     "unknown_report_job": 404,
                     "report_download_invalid": 409,
+                    "response_contract_mismatch": 500,
                 }.get(result.get("code"), 400)
             )
             self.json_reply(status, result)
@@ -290,7 +291,10 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     return
                 self.json_reply(200, result)
             except Exception as exc:
-                self.json_reply(400, error_response(exc))
+                error = error_response(exc)
+                self.json_reply(
+                    500 if error.get("code") == "response_contract_mismatch" else 400, error
+                )
 
         def do_GET(self):
             origin = f"http://127.0.0.1:{self.server.server_port}"
@@ -337,12 +341,20 @@ def create_server(service, *, port=0, static_directory=None, token=None):
                     self.json_reply(401, {"code": "owner_session_required"})
                     return
                 try:
+                    from .response_contracts import RESPONSE_ADAPTERS, http_response
+
+                    command = "dashboard_" + action.replace("-", "_")
                     result = service.dispatch(
-                        "dashboard_" + action.replace("-", "_"),
+                        command,
                         self.query_payload(url.query),
                         session_token=owner_token,
                     )
-                    self.json_reply(200, wire_money(result))
+                    self.json_reply(
+                        200,
+                        http_response(command, result)
+                        if command in RESPONSE_ADAPTERS
+                        else wire_money(result),
+                    )
                 except Exception as exc:
                     self.dashboard_error(exc)
                 return

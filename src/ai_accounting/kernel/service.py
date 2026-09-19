@@ -172,6 +172,7 @@ class LocalService:
     def dispatch(self, command: str, payload: dict, *, session_token=None):
         """Closed set of business commands, with company binding on every request."""
         from .command_schema import validate_command
+        from .response_contracts import validate_response
 
         payload = validate_command(self.command_models, command, payload)
         if command == "schema":
@@ -181,7 +182,7 @@ class LocalService:
             with self.security.authorization_gate:
                 self.security.validate_authority(authority)
                 return self._dispatch(command, payload, authority=authority)
-        return self._dispatch(command, payload, authority=authority)
+        return validate_response(command, self._dispatch(command, payload, authority=authority))
 
     @contextmanager
     def _commit_authority(self, authority):
@@ -193,6 +194,7 @@ class LocalService:
 
     def _dispatch(self, command, payload, *, authority=None):
         if command == "schema":
+            from .response_contracts import response_schemas
             from .security.native import NativeRequest
 
             return {
@@ -200,6 +202,7 @@ class LocalService:
                 "command_schemas": {
                     name: model.json_schema() for name, model in self.command_models.items()
                 },
+                "response_schemas": response_schemas(),
                 "security_request_schema": NativeRequest.model_json_schema(),
                 "security_operations": ["request", "status", "cancel", "session_status"],
                 "agent_operating_protocol": OPERATING_PROTOCOL,

@@ -49,6 +49,7 @@ watch(selectionNotice, (message) => {
 }, { flush: "sync" });
 onBeforeUnmount(() => clearTimeout(selectionNoticeTimer));
 const companyName = computed(() => context.value?.company || "公司财务看板");
+const isArchivedCompany = (status?: string) => status === "archived";
 const companies = computed(() => context.value?.companies ?? []);
 const currentCompany = computed(() => context.value?.current_company ?? null);
 const sidebarCollapsed = ref(
@@ -254,11 +255,11 @@ async function selectPeriod(periodKey: string) {
                 :key="company.company_id"
                 :value="company.company_id"
               >
-                {{ company.name }}{{ company.status === "archived" ? "（已归档）" : "" }}
+                {{ company.name }}{{ isArchivedCompany(company.status) ? "（已归档）" : "" }}
               </option>
             </select>
             <small
-              v-if="currentCompany?.status === 'archived'"
+              v-if="isArchivedCompany(currentCompany?.status)"
               class="archived-company-badge"
             >
               只读 · 已归档

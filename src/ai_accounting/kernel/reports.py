@@ -30,28 +30,21 @@ from ai_accounting.financial_statement_template import (
     render_quarterly_template,
 )
 
+from .account_definitions import (
+    CASH_ACCOUNTS,
+    KNOWN_POSITION_ACCOUNTS,
+    PROFIT_ACCOUNTS,
+    RECLASS,
+)
 from .backup import _worker_lock
 from .contracts import Fact, KernelError, Read
 from .query_semantics import (
-    CASH_ACCOUNTS,
-    CREDIT_BALANCE,
-    DEBIT_BALANCE,
-    PROFIT_ACCOUNTS,
-    RECLASS,
-    TAX_ACCOUNTS,
     classify_financial_position,
     report_party_splits,
 )
 from .types import Fen, NonNegativeFen, PositiveFen, YearMonth, canonical, digest, sum_fen
 
-_POSITION_ACCOUNTS = (
-    CASH_ACCOUNTS
-    | set(PROFIT_ACCOUNTS)
-    | set(DEBIT_BALANCE)
-    | set(CREDIT_BALANCE)
-    | TAX_ACCOUNTS
-    | set(RECLASS)
-)
+_POSITION_ACCOUNTS = KNOWN_POSITION_ACCOUNTS
 
 
 class ReportProfile(Fact):

@@ -2,6 +2,10 @@
   "name": "ai-accounting-core-workspace",
   "private": true,
   "scripts": {
+    "contracts:generate": ".\\.tmp-kernel-venv\\Scripts\\python.exe scripts/export_dashboard_response_schemas.py && npm --prefix frontend run contracts:generate",
+    "contracts:check": ".\\.tmp-kernel-venv\\Scripts\\python.exe scripts/export_dashboard_response_schemas.py --check && npm --prefix frontend run contracts:check",
+    "prebuild": "npm run contracts:check",
+    "prebuild:release": "npm run contracts:check",
     "dev": "npm --prefix frontend run dev",
     "test": "npm --prefix frontend test",
     "type-check": "npm --prefix frontend run type-check",

@@ -10,96 +10,23 @@ from collections import defaultdict
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from typing import Any
 
-CASH_ACCOUNTS = {"1001", "1002", "1012"}
-PROFIT_ACCOUNTS = {
-    "5001": (1, -1),
-    "5111": (20, -1),
-    "5401": (2, 1),
-    "540101": (2, 1),
-    "540104": (2, 1),
-    "540102": (2, 1),
-    "540103": (2, 1),
-    "5403": (3, 1),
-    "5601": (11, 1),
-    "560101": (11, 1),
-    "560102": (11, 1),
-    "560103": (11, 1),
-    "560104": (11, 1),
-    "5602": (14, 1),
-    "560201": (14, 1),
-    "560202": (14, 1),
-    "560203": (14, 1),
-    "560204": (14, 1),
-    "5603": (18, 1),
-    "560301": (18, 1),
-    "6301": (22, -1),
-    "630101": (22, -1),
-    "571101": (24, 1),
-    "571102": (24, 1),
-    "571103": (24, 1),
-    "571104": (24, 1),
-    "5801": (31, 1),
-}
-DEBIT_BALANCE = {
-    "1101": 2,
-    "1121": 3,
-    "1131": 6,
-    "1132": 7,
-    "1403": 10,
-    "1405": 12,
-    "1411": 13,
-    "4301": 9,
-    "1501": 16,
-    "1511": 17,
-    "1601": 18,
-    "1604": 21,
-    "1605": 22,
-    "1606": 23,
-    "1621": 24,
-    "1701": 25,
-    "1801": 27,
-    "189901": 28,
-}
-CREDIT_BALANCE = {
-    "1602": 19,
-    "1702": 25,
-    "2001": 31,
-    "2201": 32,
-    "221101": 35,
-    "221102": 35,
-    "221103": 35,
-    "2231": 37,
-    "2232": 38,
-    "2501": 42,
-    "2701": 43,
-    "2401": 44,
-    "3001": 48,
-    "3002": 49,
-    "3101": 50,
-    "3103": 51,
-    "3104": 51,
-}
-TAX_ACCOUNTS = {"222101", "222102", "222103", "222104", "222105", "222106"}
-RECLASS = {
-    "1122": (4, 34),
-    "1123": (5, 33),
-    "1221": (8, 39),
-    "122101": (8, 39),
-    "122105": (8, 39),
-    "2202": (5, 33),
-    "2203": (4, 34),
-    "2241": (8, 39),
-    "224101": (8, 39),
-    "224102": (8, 39),
-    "224103": (8, 39),
-    "224104": (8, 39),
-    "224105": (8, 39),
-}
+from .account_definitions import (
+    CASH_ACCOUNTS,
+    CREDIT_BALANCE,
+    DEBIT_BALANCE,
+    KNOWN_POSITION_ACCOUNTS,
+    PROFIT_ACCOUNTS,
+    RECLASS,
+    TAX_ACCOUNTS,
+)
+from .domains.money import SETTLEMENT_PAYMENT_KINDS, payment_funds_account
 
-PAYMENT_KINDS = {"payment", "cash_payment", "platform_payment", "payroll_reserve_payment"}
 ACCEPTANCE_KINDS = {"reimbursement_acceptance", "managed_reserve_obligation_settlement"}
 SETTLEMENT_SOURCE_SLOTS = {
-    **{kind: ("allocations", "settlements", "source_calculation") for kind in PAYMENT_KINDS},
+    **{
+        kind: ("allocations", "settlements", "source_calculation")
+        for kind in SETTLEMENT_PAYMENT_KINDS
+    },
     **{
         kind: ("sources", "accepted_sources", "source_calculation_id")
         for kind in {"employee_advance", *ACCEPTANCE_KINDS}
@@ -345,7 +272,7 @@ def resolve_calculation_relations(
             )
         return valid
 
-    if kind in PAYMENT_KINDS:
+    if kind in SETTLEMENT_PAYMENT_KINDS:
         allocations = fact.get("allocations", ())
         frozen = values.get("settlements", ())
         if len(allocations) != len(frozen):
@@ -357,12 +284,7 @@ def resolve_calculation_relations(
                 )
             )
         outgoing = values.get("direction") == "outflow"
-        funds_account = {
-            "payment": "1002",
-            "cash_payment": "1001",
-            "platform_payment": "1012",
-            "payroll_reserve_payment": "1002",
-        }[kind]
+        funds_account = payment_funds_account(kind)
         if values.get("direction") not in {"inflow", "outflow"}:
             issues.append(
                 _issue(
@@ -494,7 +416,7 @@ def resolve_calculation_relations(
             amount = values.get("reserve_return_fen")
             for account, signed in (
                 ("5602", amount),
-                ("1002", -amount if type(amount) is int else amount),
+                (funds_account, -amount if type(amount) is int else amount),
             ):
                 cursor += 1
                 valid = (
@@ -868,14 +790,7 @@ def classify_financial_position(rows: Iterable[Mapping[str, Any]]) -> dict:
     unknown_lines: set[int] = set()
     unknown_account = False
     issues: list[dict] = []
-    known = (
-        CASH_ACCOUNTS
-        | set(PROFIT_ACCOUNTS)
-        | set(DEBIT_BALANCE)
-        | set(CREDIT_BALANCE)
-        | TAX_ACCOUNTS
-        | set(RECLASS)
-    )
+    known = KNOWN_POSITION_ACCOUNTS
     for index, row in enumerate(rows):
         account = row.get("account")
         amount = row.get("amount_fen", row.get("amount"))

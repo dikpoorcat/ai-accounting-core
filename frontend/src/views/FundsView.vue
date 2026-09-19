@@ -278,7 +278,7 @@ async function loadFunds(periodKey: string) {
   const shouldRestoreSection = funds.value !== null;
   snapshotVersion.value = "";
   if (funds.value) {
-    const emptyPage = { has_more: false, next_cursor: null, total_count: 0 };
+    const emptyPage = { has_more: false, next_cursor: null, total_count: 0, filtered_count: 0, returned_count: 0 };
     funds.value = {
       ...funds.value,
       movements: [],
@@ -361,7 +361,9 @@ async function loadMore(kind: PageKind) {
     if (!isCurrent(generation, selection) || pageRequests.get(kind) !== request || !next.data || !funds.value || snapshotVersion.value !== version) return;
     const latest = funds.value;
     const collection = next.data.collections[section];
-    const collections = { ...latest.collections, [section]: { ...collection, items: [...latest.collections[section].items, ...collection.items] } };
+    const previousCollection = latest.collections[section];
+    if (!collection || !previousCollection) return;
+    const collections = { ...latest.collections, [section]: { ...collection, items: [...previousCollection.items, ...collection.items] } };
     if (kind === "book") funds.value = { ...latest, collections, movements: [...latest.movements, ...next.data.movements], movement_page: next.data.movement_page };
     else if (kind === "bank") funds.value = { ...latest, collections, bank_statement: { ...latest.bank_statement, rows: [...latest.bank_statement.rows, ...next.data.bank_statement.rows], page: next.data.bank_statement.page } };
     else if (kind === "accounts") { funds.value = { ...latest, collections, accounts: [...latest.accounts, ...next.data.accounts] }; rememberFundAccounts(queryText("company_id"), selectedPeriod.value, next.data.accounts); }

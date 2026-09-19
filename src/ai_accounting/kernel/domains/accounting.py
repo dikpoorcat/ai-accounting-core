@@ -17,9 +17,9 @@ from __future__ import annotations
 
 from ..contracts import FactVersion, KernelError, Read
 from ..types import digest
+from .money import SETTLEMENT_PAYMENT_KINDS
 
 PAYROLL_KINDS = ("payroll", "payroll_bounded")
-PAYMENT_KINDS = ("payment", "cash_payment", "platform_payment", "payroll_reserve_payment")
 ACTUAL_KIND = "payroll_withholding_actual"
 
 
@@ -240,7 +240,7 @@ def project_payment(version: FactVersion, outcome: dict, refs) -> dict:
 def register(registry):
     for kind in PAYROLL_KINDS:
         registry.register_accounting(kind, project_payroll, payroll_references)
-    for kind in PAYMENT_KINDS:
+    for kind in SETTLEMENT_PAYMENT_KINDS:
         registry.register_accounting(
             kind, project_payment, payment_references, compares_calculations=True,
             comparison_reads=payment_comparison_reads,

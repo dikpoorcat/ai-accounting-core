@@ -5,11 +5,11 @@ import * as Vue from "vue";
 import ts from "typescript";
 
 let harnessNumber = 0;
-async function fundsApi(requestJson = async () => ({})) {
+async function fundsApi(requestDashboardFunds = async () => ({})) {
   const key = `fundsApiHarness${++harnessNumber}`;
-  globalThis[key] = requestJson;
+  globalThis[key] = requestDashboardFunds;
   const source = readFileSync(new URL("../src/api/funds.ts", import.meta.url), "utf8").replace(/import[^;]+;/g, "");
-  const { outputText } = ts.transpileModule(`const requestJson = globalThis.${key};\n` + source, {
+  const { outputText } = ts.transpileModule(`const requestDashboardFunds = globalThis.${key};\n` + source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);

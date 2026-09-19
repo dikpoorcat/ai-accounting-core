@@ -7,6 +7,7 @@ from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..account_definitions import TAX_ACCOUNT_BY_KIND, TaxKind
 from ..contracts import (
     BalanceEffect,
     Context,
@@ -148,15 +149,6 @@ class OpeningLoan(OpeningDetail):
 
     def reads(self):
         return (*super().reads(), Read("fact", "loan_agreement", "@" + self.agreement_id))
-
-
-TaxKind = Literal["vat", "surtax", "individual_income_tax", "enterprise_income_tax"]
-TAX_MAPPING = {
-    "vat": "222101",
-    "surtax": "222102",
-    "individual_income_tax": "222103",
-    "enterprise_income_tax": "222106",
-}
 
 
 class OpeningTax(OpeningDetail):
@@ -448,7 +440,7 @@ def detail_output(version):
         )
     elif isinstance(fact, OpeningTax):
         owed(
-            TAX_MAPPING[fact.tax_kind],
+            TAX_ACCOUNT_BY_KIND[fact.tax_kind],
             "credit" if fact.balance_kind == "payable" else "debit",
             fact.outstanding_fen,
             fact.authority_id,

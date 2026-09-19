@@ -1115,7 +1115,7 @@ class BusinessQueries:
     def _external(
         self, connection, subject_id, period, as_of, period_readiness=None, *, summary=False
     ):
-        from .workflow import SOURCES
+        from .workflow import OBLIGATION_DEFINITIONS
 
         reads = self._reads(connection)
         related_obligations = {subject_id}
@@ -1131,8 +1131,9 @@ class BusinessQueries:
             if current:
                 kinds = [
                     key
-                    for key, values in SOURCES.items()
-                    if "*" in values or current["kind"] in values
+                    for key, definition in OBLIGATION_DEFINITIONS.items()
+                    if "*" in definition.basis_kinds
+                    or current["kind"] in definition.basis_kinds
                 ]
                 candidates.update(
                     row[0]

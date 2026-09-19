@@ -16,6 +16,12 @@ from datetime import UTC, datetime
 from functools import cached_property
 from typing import Literal
 
+from .account_definitions import (
+    ACCOUNT_NAMES,
+    KNOWN_POSITION_ACCOUNTS,
+    PROFIT_ACCOUNTS,
+    RECLASS,
+)
 from .business_queries import BusinessQueries
 from .contracts import KernelError
 from .dashboard_pages import (
@@ -36,18 +42,10 @@ from .dashboard_reads import (
     page_keys,
     scalar_facts,
 )
+from .domains.money import FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 from .provenance import recorded_times
 from .query_reads import QueryReads
-from .query_semantics import (
-    CASH_ACCOUNTS,
-    CREDIT_BALANCE,
-    DEBIT_BALANCE,
-    PROFIT_ACCOUNTS,
-    RECLASS,
-    TAX_ACCOUNTS,
-    classify_financial_position,
-    report_party_splits,
-)
+from .query_semantics import classify_financial_position, report_party_splits
 from .reports import Reports, _workbook_name
 from .types import ActualDate, YearMonth, digest
 
@@ -140,61 +138,6 @@ GROUPS = {
     "correction": "更正与冲正",
     "other": "其他业务",
 }
-ACCOUNT_NAMES = {
-    "1001": "库存现金",
-    "1002": "银行存款",
-    "1012": "其他货币资金",
-    "1101": "短期投资",
-    "1122": "应收账款",
-    "1123": "预付账款",
-    "1221": "其他应收款",
-    "1601": "固定资产",
-    "1602": "累计折旧",
-    "1604": "在建工程",
-    "1701": "无形资产",
-    "1702": "累计摊销",
-    "189901": "待启用无形资产",
-    "2001": "短期借款",
-    "2202": "应付账款",
-    "2203": "预收账款",
-    "221101": "应付工资",
-    "221102": "应付单位社保",
-    "221103": "应付单位公积金",
-    "2241": "其他应付款",
-    "224101": "应付报销款",
-    "224102": "代扣个人社保",
-    "224103": "代扣个人公积金",
-    "224104": "应付劳务报酬",
-    "222103": "应付个人所得税",
-    "3001": "实收资本",
-    "4301": "项目成本",
-    "5001": "主营业务收入",
-    "5401": "主营业务成本",
-    "5601": "销售费用",
-    "5602": "管理费用",
-    "5603": "财务费用",
-    "5801": "所得税费用",
-    "122101": "其他应收款明细",
-    "122105": "应收代收款",
-    "224105": "应付代付款",
-    "222101": "应交增值税",
-    "222102": "应交附加税费",
-    "222104": "待转销项税额",
-    "222105": "应交税费明细",
-    "222106": "应交企业所得税",
-    "5403": "税金及附加",
-    "5111": "投资收益",
-    "6301": "营业外收入",
-    "630101": "资产处置收益",
-    "571101": "固定资产处置损失",
-    "571102": "无形资产处置损失",
-    "571103": "税收滞纳金",
-    "571104": "社保缴费滞纳金",
-    "560301": "利息费用",
-}
-for _prefix, _label in (("5401", "主营业务成本"), ("5601", "销售费用"), ("5602", "管理费用")):
-    for _suffix, _detail in (("01", "职工薪酬"), ("02", "折旧"), ("03", "摊销"), ("04", "劳务")):
-        ACCOUNT_NAMES[_prefix + _suffix] = _label + "—" + _detail
 PAYROLL_KINDS = {"payroll", "payroll_bounded", "annual_bonus"}
 LABOR_KINDS = {"labor", "labor_accrual"}
 ASSET_KINDS = {"asset", "reimbursed_asset", "opening_asset"}
@@ -205,7 +148,7 @@ ASSET_LIFECYCLE_KINDS = {
     "asset_disposal",
 }
 ASSET_BATCH_OWNER_KINDS = {"asset_activation_batch", "asset_consumption_month"}
-FUND_TYPES = {"bank": "bank", "cash": "cash", "platform": "payment_platform"}
+FUND_TYPES = FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 
 
 def _name(kind):
@@ -2417,14 +2360,7 @@ def _position(snap):
             }
     for key in ambiguous_classifications:
         classifications[key] = {}
-    known = (
-        CASH_ACCOUNTS
-        | set(PROFIT_ACCOUNTS)
-        | set(DEBIT_BALANCE)
-        | set(CREDIT_BALANCE)
-        | TAX_ACCOUNTS
-        | set(RECLASS)
-    )
+    known = KNOWN_POSITION_ACCOUNTS
     detailed_accounts = set(RECLASS) | (set(balances) - known)
     rows = [
         {"account": account, "amount": value}

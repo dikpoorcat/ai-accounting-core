@@ -188,7 +188,11 @@ def calculate_payroll_reserve_payment(version, context):
         (
             *payment.lines,
             Line(MANAGEMENT_ACCOUNT, debit=fact.reserve_return_fen),
-            Line("1002", credit=fact.reserve_return_fen, cashflow="managed_reserve_outflow"),
+            Line(
+                fact.funds_account,
+                credit=fact.reserve_return_fen,
+                cashflow="managed_reserve_outflow",
+            ),
         ),
         dict(payment.values)
         | dict(

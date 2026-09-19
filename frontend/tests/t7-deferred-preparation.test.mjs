@@ -55,8 +55,9 @@ async function apiHarness() {
   const calls = [], window = { location: { origin: "http://offline.invalid", search: "?company_id=b" } };
   const contracts = await compile(source("../src/api/dashboardContracts.ts"));
   const environment = { ...contracts, window, LocalApiError: ApiError, verifyMoneyStrings() {},
+    validateDashboardContextResponse: () => true, validateDashboardFundsResponse: () => true,
     requestLocalJson(path, options) { return new Promise((resolve, reject) => calls.push({ path, ...options, resolve, reject })); } };
-  const client = await compile(`const { window, LocalApiError, verifyMoneyStrings, requestLocalJson, validDashboardContract } = environment;\n${withoutImports(source("../src/api/client.ts"))}`, environment);
+  const client = await compile(`const { window, LocalApiError, verifyMoneyStrings, requestLocalJson, validDashboardContract, validateDashboardContextResponse, validateDashboardFundsResponse } = environment;\n${withoutImports(source("../src/api/client.ts"))}`, environment);
   Object.assign(environment, client);
   const api = await compile(`const { requestJson, DashboardApiError } = environment;\n${withoutImports(source("../src/api/periodPreparation.ts"))}`, environment);
   const briefApi = await compile(`const { requestJson, pageQuery } = environment;\n${withoutImports(source("../src/api/brief.ts"))}`, environment);

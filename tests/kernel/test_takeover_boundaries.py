@@ -9,6 +9,7 @@ from ai_accounting.kernel import daemon, schema, versions
 from ai_accounting.kernel.catalog import Catalog
 from ai_accounting.kernel.contracts import KernelError
 from ai_accounting.kernel.engine import Engine
+from ai_accounting.kernel.migration_steps import MigrationStep
 from ai_accounting.kernel.runtime import connect
 from ai_accounting.kernel.security.credentials import InMemoryCredentialStore
 from ai_accounting.kernel.service import default_registry
@@ -44,6 +45,25 @@ def test_catalog_forward_version_preserves_identity_and_company_version(tmp_path
     )
     monkeypatch.setattr(catalog_module, "VERSION", future_version)
     monkeypatch.setattr(catalog_module, "catalog_sql", lambda: script)
+    capture_contract(monkeypatch)
+    contracts = versions.known_contracts("catalog")
+    monkeypatch.setattr(
+        versions,
+        "_DECLARED_STEPS",
+        (
+            MigrationStep(
+                "catalog",
+                current_version,
+                contracts[current_version]["sha256"],
+                future_version,
+                contracts[future_version]["sha256"],
+                lambda connection: connection.execute(
+                    "CREATE TABLE future_setting(id INTEGER PRIMARY KEY) STRICT"
+                ),
+                lambda connection: None,
+            ),
+        ),
+    )
     with closing(connect(catalog.path)) as connection:
 
         def interrupted(stage):

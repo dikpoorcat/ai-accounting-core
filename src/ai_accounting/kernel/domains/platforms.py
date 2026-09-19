@@ -19,6 +19,7 @@ from ..contracts import (
     Read,
 )
 from ..types import ActualDate, PositiveFen, YearMonth, sum_fen
+from .money import payment_funds_account
 from .transactions import (
     EXPENSE_ACCOUNTS,
     Allocation,
@@ -307,7 +308,7 @@ class PlatformPayment(MovementConsumption):
         "amount_fen",
         "movement_ids",
     )
-    funds_account: ClassVar[str] = "1012"
+    funds_account: ClassVar[str] = payment_funds_account(kind)
     funds_category: ClassVar[str] = "platform"
     actual_payment: ClassVar[bool] = True
     actual_date: ActualDate

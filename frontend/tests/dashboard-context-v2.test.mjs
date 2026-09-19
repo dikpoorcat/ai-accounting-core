@@ -101,7 +101,10 @@ const modules = new Map();
 async function moduleUrl(url) {
   if (modules.has(url.href)) return modules.get(url.href);
   let { outputText } = ts.transpileModule(readFileSync(url, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
-  for (const [, relative] of [...outputText.matchAll(/from "(\.[^"]+)"/g)]) outputText = outputText.replaceAll(`"${relative}"`, JSON.stringify(await moduleUrl(new URL(relative + ".ts", url))));
+  for (const [, relative] of [...outputText.matchAll(/from "(\.[^"]+)"/g)]) {
+    const modulePath = /\.[cm]?[jt]s$/.test(relative) ? relative : `${relative}.ts`;
+    outputText = outputText.replaceAll(`"${relative}"`, JSON.stringify(await moduleUrl(new URL(modulePath, url))));
+  }
   const value = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`; modules.set(url.href, value); return value;
 }
 test("actual API consumers reject stale schemas, missing page metadata and mismatched returned counts", async () => {

@@ -1,0 +1,3339 @@
+{
+  "dashboard_context": {
+    "$defs": {
+      "DashboardCompany": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "taxpayer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taxpayer Id"
+          },
+          "status": {
+            "const": "active",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "company_id",
+          "name",
+          "taxpayer_id",
+          "status"
+        ],
+        "title": "DashboardCompany",
+        "type": "object"
+      },
+      "DashboardPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Key",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "short_label": {
+            "title": "Short Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "start_date": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "end_date": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "End Date",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          }
+        },
+        "required": [
+          "key",
+          "year",
+          "month",
+          "label",
+          "short_label",
+          "status",
+          "start_date",
+          "end_date",
+          "closed_at"
+        ],
+        "title": "DashboardPeriod",
+        "type": "object"
+      },
+      "DashboardQuarter": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          },
+          "quarter": {
+            "title": "Quarter",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "year",
+          "quarter",
+          "label",
+          "complete"
+        ],
+        "title": "DashboardQuarter",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 2,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "company": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Company"
+      },
+      "companies": {
+        "items": {
+          "$ref": "#/$defs/DashboardCompany"
+        },
+        "title": "Companies",
+        "type": "array"
+      },
+      "current_company": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DashboardCompany"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "periods": {
+        "items": {
+          "$ref": "#/$defs/DashboardPeriod"
+        },
+        "title": "Periods",
+        "type": "array"
+      },
+      "quarters": {
+        "items": {
+          "$ref": "#/$defs/DashboardQuarter"
+        },
+        "title": "Quarters",
+        "type": "array"
+      },
+      "default_period": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Default Period"
+      },
+      "default_quarter": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Default Quarter"
+      },
+      "generated_at": {
+        "title": "Generated At",
+        "type": "string"
+      },
+      "disclaimer": {
+        "title": "Disclaimer",
+        "type": "string"
+      }
+    },
+    "required": [
+      "schema_version",
+      "company",
+      "companies",
+      "current_company",
+      "periods",
+      "quarters",
+      "default_period",
+      "default_quarter"
+    ],
+    "title": "DashboardContextResponse",
+    "type": "object"
+  },
+  "dashboard_funds": {
+    "$defs": {
+      "AccountStatement": {
+        "additionalProperties": false,
+        "properties": {
+          "inflow_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inflow Fen"
+          },
+          "outflow_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outflow Fen"
+          },
+          "transaction_count": {
+            "minimum": 0,
+            "title": "Transaction Count",
+            "type": "integer"
+          },
+          "matched_count": {
+            "minimum": 0,
+            "title": "Matched Count",
+            "type": "integer"
+          },
+          "unmatched_count": {
+            "minimum": 0,
+            "title": "Unmatched Count",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "minimum": 0,
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "coverage_state": {
+            "enum": [
+              "missing",
+              "partial",
+              "complete",
+              "not_applicable"
+            ],
+            "title": "Coverage State",
+            "type": "string"
+          },
+          "last_activity_date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity Date"
+          },
+          "account_code": {
+            "title": "Account Code",
+            "type": "string"
+          },
+          "account_name": {
+            "title": "Account Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "inflow_fen",
+          "outflow_fen",
+          "transaction_count",
+          "matched_count",
+          "unmatched_count",
+          "needs_review_count",
+          "coverage_state",
+          "last_activity_date",
+          "account_code",
+          "account_name"
+        ],
+        "title": "AccountStatement",
+        "type": "object"
+      },
+      "AccountingFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "pending_subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Subject Id"
+          },
+          "unpublished_count": {
+            "minimum": 0,
+            "title": "Unpublished Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "issues",
+          "pending_subject_id",
+          "unpublished_count"
+        ],
+        "title": "AccountingFollowup",
+        "type": "object"
+      },
+      "BankSourceCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "enum": [
+              "confirmed",
+              "unestablished",
+              "needs_review",
+              "conflict"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "statement_confirmed": {
+            "title": "Statement Confirmed",
+            "type": "boolean"
+          },
+          "reconciliation_valid": {
+            "title": "Reconciliation Valid",
+            "type": "boolean"
+          },
+          "statement_calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement Calculation Id"
+          },
+          "selected_statement_calculation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selected Statement Calculation Ids",
+            "type": "array"
+          },
+          "statement_fact_id": {
+            "title": "Statement Fact Id",
+            "type": "string"
+          },
+          "reconciliation_calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconciliation Calculation Id"
+          },
+          "reconciliation_fact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconciliation Fact Id"
+          },
+          "selection_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Source"
+          },
+          "selection_proof": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SelectionProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proof_method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "frozen_reconciliation_direct_statement",
+                  "independent_statement_selection"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proof Method"
+          }
+        },
+        "required": [
+          "state",
+          "message",
+          "statement_confirmed",
+          "reconciliation_valid",
+          "statement_calculation_id",
+          "selected_statement_calculation_ids",
+          "statement_fact_id",
+          "reconciliation_calculation_id",
+          "reconciliation_fact_id",
+          "selection_source",
+          "selection_proof",
+          "proof_method"
+        ],
+        "title": "BankSourceCheck",
+        "type": "object"
+      },
+      "BankStatement": {
+        "additionalProperties": false,
+        "properties": {
+          "transaction_count": {
+            "minimum": 0,
+            "title": "Transaction Count",
+            "type": "integer"
+          },
+          "inflow_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inflow Fen"
+          },
+          "outflow_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outflow Fen"
+          },
+          "matched_count": {
+            "minimum": 0,
+            "title": "Matched Count",
+            "type": "integer"
+          },
+          "unmatched_count": {
+            "minimum": 0,
+            "title": "Unmatched Count",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "minimum": 0,
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/BankStatementRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "unmatched_totals": {
+            "$ref": "#/$defs/UnmatchedTotals"
+          },
+          "coverage_state": {
+            "enum": [
+              "missing",
+              "partial",
+              "complete",
+              "not_applicable"
+            ],
+            "title": "Coverage State",
+            "type": "string"
+          },
+          "statement_count": {
+            "minimum": 0,
+            "title": "Statement Count",
+            "type": "integer"
+          },
+          "expected_account_count": {
+            "minimum": 0,
+            "title": "Expected Account Count",
+            "type": "integer"
+          },
+          "provided_account_count": {
+            "minimum": 0,
+            "title": "Provided Account Count",
+            "type": "integer"
+          },
+          "missing_account_count": {
+            "minimum": 0,
+            "title": "Missing Account Count",
+            "type": "integer"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "transaction_count",
+          "inflow_fen",
+          "outflow_fen",
+          "matched_count",
+          "unmatched_count",
+          "needs_review_count",
+          "rows",
+          "unmatched_totals",
+          "coverage_state",
+          "statement_count",
+          "expected_account_count",
+          "provided_account_count",
+          "missing_account_count"
+        ],
+        "title": "BankStatement",
+        "type": "object"
+      },
+      "BankStatementRow": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "date": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Date",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "account_code": {
+            "title": "Account Code",
+            "type": "string"
+          },
+          "account_name": {
+            "title": "Account Name",
+            "type": "string"
+          },
+          "field_sources": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SourceMetadata"
+                },
+                {
+                  "items": {
+                    "$ref": "#/$defs/SourceMetadata"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "title": "Field Sources",
+            "type": "object"
+          },
+          "direction": {
+            "enum": [
+              "inflow",
+              "outflow"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "signed_amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Signed Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "party_sources": {
+            "items": {
+              "$ref": "#/$defs/PartySource"
+            },
+            "title": "Party Sources",
+            "type": "array"
+          },
+          "memo": {
+            "title": "Memo",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "matched",
+              "unmatched",
+              "needs_review"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "source_check": {
+            "$ref": "#/$defs/BankSourceCheck"
+          },
+          "batch_payment": {
+            "$ref": "#/$defs/BatchPayment"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "reference",
+          "account_id",
+          "account_code",
+          "account_name",
+          "field_sources",
+          "direction",
+          "amount_fen",
+          "signed_amount_fen",
+          "party",
+          "party_sources",
+          "memo",
+          "state",
+          "source_check"
+        ],
+        "title": "BankStatementRow",
+        "type": "object"
+      },
+      "BatchPayment": {
+        "additionalProperties": false,
+        "properties": {
+          "bank_row_count": {
+            "minimum": 0,
+            "title": "Bank Row Count",
+            "type": "integer"
+          },
+          "total_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Total Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/BatchPaymentItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bank_row_count",
+          "total_fen",
+          "items"
+        ],
+        "title": "BatchPayment",
+        "type": "object"
+      },
+      "BatchPaymentItem": {
+        "additionalProperties": false,
+        "properties": {
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "party",
+          "amount_fen"
+        ],
+        "title": "BatchPaymentItem",
+        "type": "object"
+      },
+      "CalculationTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "calculation_id"
+        ],
+        "title": "CalculationTarget",
+        "type": "object"
+      },
+      "CheckFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "issues"
+        ],
+        "title": "CheckFollowup",
+        "type": "object"
+      },
+      "CollectionPage": {
+        "additionalProperties": false,
+        "properties": {
+          "total_count": {
+            "minimum": 0,
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "filtered_count": {
+            "minimum": 0,
+            "title": "Filtered Count",
+            "type": "integer"
+          },
+          "returned_count": {
+            "minimum": 0,
+            "title": "Returned Count",
+            "type": "integer"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "total_count",
+          "filtered_count",
+          "returned_count",
+          "has_more",
+          "next_cursor"
+        ],
+        "title": "CollectionPage",
+        "type": "object"
+      },
+      "Collection_BankStatementRow_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/BankStatementRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "Collection_FundAccount_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/FundAccount"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "Collection_FundMovement_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/FundMovement"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "Collection_InvestmentEvent_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/InvestmentEvent"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "Collection_InvestmentProduct_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/InvestmentProduct"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "CurrentFollowups": {
+        "additionalProperties": false,
+        "properties": {
+          "knowledge": {
+            "const": "current_knowledge",
+            "title": "Knowledge",
+            "type": "string"
+          },
+          "affects_frozen_readiness": {
+            "const": false,
+            "title": "Affects Frozen Readiness",
+            "type": "boolean"
+          },
+          "materials": {
+            "$ref": "#/$defs/MaterialFollowup"
+          },
+          "accounting": {
+            "$ref": "#/$defs/AccountingFollowup"
+          },
+          "close_requirements": {
+            "$ref": "#/$defs/CheckFollowup"
+          },
+          "settlements": {
+            "$ref": "#/$defs/SettlementFollowup"
+          },
+          "external": {
+            "$ref": "#/$defs/ExternalFollowup"
+          },
+          "file_jobs": {
+            "$ref": "#/$defs/FileJobFollowup"
+          }
+        },
+        "required": [
+          "knowledge",
+          "affects_frozen_readiness",
+          "materials",
+          "accounting",
+          "close_requirements",
+          "settlements",
+          "external",
+          "file_jobs"
+        ],
+        "title": "CurrentFollowups",
+        "type": "object"
+      },
+      "DashboardPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Key",
+            "type": "string"
+          },
+          "year": {
+            "title": "Year",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "short_label": {
+            "title": "Short Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "start_date": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "end_date": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "End Date",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          }
+        },
+        "required": [
+          "key",
+          "year",
+          "month",
+          "label",
+          "short_label",
+          "status",
+          "start_date",
+          "end_date",
+          "closed_at"
+        ],
+        "title": "DashboardPeriod",
+        "type": "object"
+      },
+      "ExactClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "exact_close",
+            "title": "State",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "digest"
+        ],
+        "title": "ExactClosure",
+        "type": "object"
+      },
+      "ExternalFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "completed",
+              "followup_required",
+              "unestablished"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "obligation_count": {
+            "minimum": 0,
+            "title": "Obligation Count",
+            "type": "integer"
+          },
+          "completion_status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "title": "Completion Status Counts",
+            "type": "object"
+          },
+          "basis_issue_count": {
+            "minimum": 0,
+            "title": "Basis Issue Count",
+            "type": "integer"
+          },
+          "scope_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Scope Period",
+            "type": "string"
+          },
+          "scope_semantics": {
+            "const": "obligation_interval_includes_selected_period",
+            "title": "Scope Semantics",
+            "type": "string"
+          },
+          "fact_issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Fact Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "obligation_count",
+          "completion_status_counts",
+          "basis_issue_count",
+          "scope_period",
+          "scope_semantics",
+          "fact_issues"
+        ],
+        "title": "ExternalFollowup",
+        "type": "object"
+      },
+      "FileJobFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "total_count": {
+            "minimum": 0,
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "title": "Status Counts",
+            "type": "object"
+          },
+          "issue_count": {
+            "minimum": 0,
+            "title": "Issue Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_count",
+          "status_counts",
+          "issue_count"
+        ],
+        "title": "FileJobFollowup",
+        "type": "object"
+      },
+      "FundAccount": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "bank",
+              "cash",
+              "payment_platform"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "opening_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Fen"
+          },
+          "inflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Inflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "outflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Outflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "net_change_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Net Change Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "closing_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closing Fen"
+          },
+          "movement_count": {
+            "minimum": 0,
+            "title": "Movement Count",
+            "type": "integer"
+          },
+          "last_activity_date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity Date"
+          },
+          "negative_balance": {
+            "title": "Negative Balance",
+            "type": "boolean"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "field_sources": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SourceMetadata"
+                },
+                {
+                  "items": {
+                    "$ref": "#/$defs/SourceMetadata"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "title": "Field Sources",
+            "type": "object"
+          },
+          "statement": {
+            "$ref": "#/$defs/AccountStatement"
+          },
+          "reconciliation": {
+            "$ref": "#/$defs/Reconciliation"
+          }
+        },
+        "required": [
+          "account_id",
+          "type",
+          "opening_fen",
+          "inflow_fen",
+          "outflow_fen",
+          "net_change_fen",
+          "closing_fen",
+          "movement_count",
+          "last_activity_date",
+          "negative_balance",
+          "code",
+          "name",
+          "active",
+          "field_sources",
+          "statement",
+          "reconciliation"
+        ],
+        "title": "FundAccount",
+        "type": "object"
+      },
+      "FundInvestments": {
+        "additionalProperties": false,
+        "properties": {
+          "opening_cost_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Cost Fen"
+          },
+          "subscription_cost_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Subscription Cost Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "redemption_cost_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Redemption Cost Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "closing_cost_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closing Cost Fen"
+          },
+          "investment_income_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "actual_payments_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Actual Payments Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "actual_receipts_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Actual Receipts Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "products": {
+            "items": {
+              "$ref": "#/$defs/InvestmentProduct"
+            },
+            "title": "Products",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/$defs/InvestmentEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "event_count": {
+            "minimum": 0,
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "opening_cost_fen",
+          "subscription_cost_fen",
+          "redemption_cost_fen",
+          "closing_cost_fen",
+          "investment_income_fen",
+          "actual_payments_fen",
+          "actual_receipts_fen",
+          "products",
+          "events",
+          "event_count"
+        ],
+        "title": "FundInvestments",
+        "type": "object"
+      },
+      "FundMovement": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "account_code": {
+            "title": "Account Code",
+            "type": "string"
+          },
+          "account_name": {
+            "title": "Account Name",
+            "type": "string"
+          },
+          "account_type": {
+            "enum": [
+              "bank",
+              "cash",
+              "payment_platform"
+            ],
+            "title": "Account Type",
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "inflow",
+              "outflow"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "signed_amount_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Signed Amount Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "display_summary": {
+            "title": "Display Summary",
+            "type": "string"
+          },
+          "list_summary": {
+            "title": "List Summary",
+            "type": "string"
+          },
+          "field_sources": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SourceMetadata"
+                },
+                {
+                  "items": {
+                    "$ref": "#/$defs/SourceMetadata"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "title": "Field Sources",
+            "type": "object"
+          },
+          "party_sources": {
+            "items": {
+              "$ref": "#/$defs/PartySource"
+            },
+            "title": "Party Sources",
+            "type": "array"
+          },
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "internal_transfer": {
+            "title": "Internal Transfer",
+            "type": "boolean"
+          },
+          "component_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Component Kinds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "account_id",
+          "account_code",
+          "account_name",
+          "account_type",
+          "direction",
+          "amount_fen",
+          "signed_amount_fen",
+          "reference",
+          "calculation_id",
+          "type",
+          "summary",
+          "display_summary",
+          "list_summary",
+          "field_sources",
+          "party_sources",
+          "party",
+          "internal_transfer",
+          "component_kinds"
+        ],
+        "title": "FundMovement",
+        "type": "object"
+      },
+      "FundsCollections": {
+        "additionalProperties": false,
+        "properties": {
+          "accounts": {
+            "$ref": "#/$defs/Collection_FundAccount_"
+          },
+          "movements": {
+            "$ref": "#/$defs/Collection_FundMovement_"
+          },
+          "statements": {
+            "$ref": "#/$defs/Collection_BankStatementRow_"
+          },
+          "investment_products": {
+            "$ref": "#/$defs/Collection_InvestmentProduct_"
+          },
+          "investment_events": {
+            "$ref": "#/$defs/Collection_InvestmentEvent_"
+          }
+        },
+        "title": "FundsCollections",
+        "type": "object"
+      },
+      "FundsData": {
+        "additionalProperties": false,
+        "properties": {
+          "opening_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Fen"
+          },
+          "net_change_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Net Change Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "inflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Inflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "outflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Outflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "internal_transfer_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Internal Transfer Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "movement_count": {
+            "minimum": 0,
+            "title": "Movement Count",
+            "type": "integer"
+          },
+          "total_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Fen"
+          },
+          "bank_opening_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Opening Fen"
+          },
+          "bank_inflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Bank Inflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "bank_outflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Bank Outflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "bank_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Fen"
+          },
+          "cash_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Fen"
+          },
+          "payment_platform_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Platform Fen"
+          },
+          "account_count": {
+            "minimum": 0,
+            "title": "Account Count",
+            "type": "integer"
+          },
+          "bank_account_count": {
+            "minimum": 0,
+            "title": "Bank Account Count",
+            "type": "integer"
+          },
+          "cash_account_count": {
+            "minimum": 0,
+            "title": "Cash Account Count",
+            "type": "integer"
+          },
+          "payment_platform_account_count": {
+            "minimum": 0,
+            "title": "Payment Platform Account Count",
+            "type": "integer"
+          },
+          "attention_account_count": {
+            "minimum": 0,
+            "title": "Attention Account Count",
+            "type": "integer"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/$defs/FundAccount"
+            },
+            "title": "Accounts",
+            "type": "array"
+          },
+          "movements": {
+            "items": {
+              "$ref": "#/$defs/FundMovement"
+            },
+            "title": "Movements",
+            "type": "array"
+          },
+          "investments": {
+            "$ref": "#/$defs/FundInvestments"
+          },
+          "bank_statement": {
+            "$ref": "#/$defs/BankStatement"
+          },
+          "collections": {
+            "$ref": "#/$defs/FundsCollections"
+          },
+          "fact_issues": {
+            "items": {
+              "$ref": "#/$defs/StateSelectionIssue"
+            },
+            "title": "Fact Issues",
+            "type": "array"
+          },
+          "period_preparation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PeriodPreparation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "movement_page": {
+            "$ref": "#/$defs/CollectionPage"
+          }
+        },
+        "required": [
+          "opening_fen",
+          "net_change_fen",
+          "inflow_fen",
+          "outflow_fen",
+          "internal_transfer_fen",
+          "movement_count",
+          "total_fen",
+          "bank_opening_fen",
+          "bank_inflow_fen",
+          "bank_outflow_fen",
+          "bank_fen",
+          "cash_fen",
+          "payment_platform_fen",
+          "account_count",
+          "bank_account_count",
+          "cash_account_count",
+          "payment_platform_account_count",
+          "attention_account_count",
+          "accounts",
+          "movements",
+          "investments",
+          "bank_statement",
+          "collections",
+          "fact_issues",
+          "period_preparation"
+        ],
+        "title": "FundsData",
+        "type": "object"
+      },
+      "InvestmentEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "fund_id": {
+            "title": "Fund Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "cost_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Fen"
+          },
+          "net_proceeds_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Proceeds Fen"
+          },
+          "investment_income_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Investment Income Fen"
+          },
+          "settlement_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Fen"
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "period",
+          "fund_id",
+          "name",
+          "type",
+          "reference",
+          "cost_fen",
+          "net_proceeds_fen",
+          "investment_income_fen",
+          "settlement_fen"
+        ],
+        "title": "InvestmentEvent",
+        "type": "object"
+      },
+      "InvestmentProduct": {
+        "additionalProperties": false,
+        "properties": {
+          "fund_id": {
+            "title": "Fund Id",
+            "type": "string"
+          },
+          "opening_cost_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening Cost Fen"
+          },
+          "subscription_cost_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Subscription Cost Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "redemption_cost_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Redemption Cost Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "closing_cost_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closing Cost Fen"
+          },
+          "investment_income_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Investment Income Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "field_sources": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SourceMetadata"
+                },
+                {
+                  "items": {
+                    "$ref": "#/$defs/SourceMetadata"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "title": "Field Sources",
+            "type": "object"
+          }
+        },
+        "required": [
+          "fund_id",
+          "opening_cost_fen",
+          "subscription_cost_fen",
+          "redemption_cost_fen",
+          "closing_cost_fen",
+          "investment_income_fen",
+          "name",
+          "field_sources"
+        ],
+        "title": "InvestmentProduct",
+        "type": "object"
+      },
+      "LaterClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "sealed_by_later_close",
+            "title": "State",
+            "type": "string"
+          },
+          "sealing_boundary": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Sealing Boundary",
+            "type": "string"
+          },
+          "sealing_digest": {
+            "title": "Sealing Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "sealing_boundary",
+          "sealing_digest"
+        ],
+        "title": "LaterClosure",
+        "type": "object"
+      },
+      "MaterialFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "needs_information"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "inventory_count": {
+            "minimum": 0,
+            "title": "Inventory Count",
+            "type": "integer"
+          },
+          "coverage_digest": {
+            "title": "Coverage Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "issues",
+          "inventory_count",
+          "coverage_digest"
+        ],
+        "title": "MaterialFollowup",
+        "type": "object"
+      },
+      "OpenClosure": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "const": "open",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "OpenClosure",
+        "type": "object"
+      },
+      "OrderDetails": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "title": "OrderDetails",
+        "type": "object"
+      },
+      "OrderFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "already_closed",
+              "earlier_period_open"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/$defs/OrderDetails"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "details"
+        ],
+        "title": "OrderFailure",
+        "type": "object"
+      },
+      "PartySource": {
+        "additionalProperties": false,
+        "properties": {
+          "party_id": {
+            "title": "Party Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "conflicting_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conflicting Ids",
+            "type": "array"
+          },
+          "field_sources": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SourceMetadata"
+                },
+                {
+                  "items": {
+                    "$ref": "#/$defs/SourceMetadata"
+                  },
+                  "type": "array"
+                }
+              ]
+            },
+            "title": "Field Sources",
+            "type": "object"
+          }
+        },
+        "required": [
+          "party_id",
+          "name",
+          "source"
+        ],
+        "title": "PartySource",
+        "type": "object"
+      },
+      "PeriodPreparation": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "database_id": {
+            "title": "Database Id",
+            "type": "string"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "as_of": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "As Of",
+            "type": "string"
+          },
+          "as_of_semantics": {
+            "const": "current_knowledge",
+            "title": "As Of Semantics",
+            "type": "string"
+          },
+          "closure": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OpenClosure"
+              },
+              {
+                "$ref": "#/$defs/ExactClosure"
+              },
+              {
+                "$ref": "#/$defs/LaterClosure"
+              }
+            ],
+            "title": "Closure"
+          },
+          "read_semantics": {
+            "$ref": "#/$defs/PreparationReadSemantics"
+          },
+          "projection": {
+            "const": "dashboard_period_preparation",
+            "title": "Projection",
+            "type": "string"
+          },
+          "frozen_readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RecordedReadiness"
+              },
+              {
+                "$ref": "#/$defs/UnavailableReadiness"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frozen Readiness"
+          },
+          "readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Readiness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_followups": {
+            "$ref": "#/$defs/CurrentFollowups"
+          }
+        },
+        "required": [
+          "company_id",
+          "database_id",
+          "period",
+          "as_of",
+          "as_of_semantics",
+          "closure",
+          "read_semantics",
+          "projection",
+          "frozen_readiness",
+          "readiness",
+          "current_followups"
+        ],
+        "title": "PeriodPreparation",
+        "type": "object"
+      },
+      "PreparationReadSemantics": {
+        "additionalProperties": false,
+        "properties": {
+          "knowledge": {
+            "const": "current_knowledge",
+            "title": "Knowledge",
+            "type": "string"
+          },
+          "frozen_readiness": {
+            "const": "exact_period_manifest_only",
+            "title": "Frozen Readiness",
+            "type": "string"
+          },
+          "current_followups": {
+            "const": "never_changes_frozen_readiness",
+            "title": "Current Followups",
+            "type": "string"
+          }
+        },
+        "required": [
+          "knowledge",
+          "frozen_readiness",
+          "current_followups"
+        ],
+        "title": "PreparationReadSemantics",
+        "type": "object"
+      },
+      "ReadSemantics": {
+        "additionalProperties": false,
+        "properties": {
+          "knowledge": {
+            "const": "current_knowledge",
+            "title": "Knowledge",
+            "type": "string"
+          },
+          "accounting": {
+            "enum": [
+              "current_published",
+              "frozen_close"
+            ],
+            "title": "Accounting",
+            "type": "string"
+          },
+          "display": {
+            "enum": [
+              "current",
+              "frozen_with_current_supplements"
+            ],
+            "title": "Display",
+            "type": "string"
+          },
+          "system_time_replay": {
+            "const": false,
+            "title": "System Time Replay",
+            "type": "boolean"
+          },
+          "recorded_at": {
+            "const": "system_recording_time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "recording_period": {
+            "const": "business_recording_period",
+            "title": "Recording Period",
+            "type": "string"
+          },
+          "recorded_later": {
+            "const": "business_recording_period_after_selected_period",
+            "title": "Recorded Later",
+            "type": "string"
+          }
+        },
+        "required": [
+          "knowledge",
+          "accounting",
+          "display",
+          "system_time_replay",
+          "recorded_at",
+          "recording_period",
+          "recorded_later"
+        ],
+        "title": "ReadSemantics",
+        "type": "object"
+      },
+      "Readiness": {
+        "additionalProperties": false,
+        "properties": {
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "order_failure": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/OrderFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          }
+        },
+        "required": [
+          "period",
+          "order_failure",
+          "issues"
+        ],
+        "title": "Readiness",
+        "type": "object"
+      },
+      "ReadinessIssue": {
+        "additionalProperties": false,
+        "description": "Fields emitted by material, accounting, report and close checkers.\n\nCheckers may attach the listed diagnostics. Adding a diagnostic requires an\nexplicit contract change; monetary values cannot fall through an open map.",
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "semantics": {
+            "title": "Semantics",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "employee_id": {
+            "title": "Employee Id",
+            "type": "string"
+          },
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "drawdown_id": {
+            "title": "Drawdown Id",
+            "type": "string"
+          },
+          "bank_account_id": {
+            "title": "Bank Account Id",
+            "type": "string"
+          },
+          "obligation_id": {
+            "title": "Obligation Id",
+            "type": "string"
+          },
+          "obligation_kind": {
+            "title": "Obligation Kind",
+            "type": "string"
+          },
+          "evidence_digest": {
+            "title": "Evidence Digest",
+            "type": "string"
+          },
+          "member_location": {
+            "title": "Member Location",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "amount_field": {
+            "title": "Amount Field",
+            "type": "string"
+          },
+          "amount_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Amount Fields",
+            "type": "array"
+          },
+          "period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Period",
+            "type": "string"
+          },
+          "period_start": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "period_end_exclusive": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$",
+            "title": "Period End Exclusive",
+            "type": "string"
+          },
+          "pages": {
+            "minimum": 0,
+            "title": "Pages",
+            "type": "integer"
+          },
+          "voucher_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voucher Version Id"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "calculation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculation Id"
+          },
+          "obligation_key": {
+            "title": "Obligation Key",
+            "type": "string"
+          },
+          "allocation_index": {
+            "minimum": 0,
+            "title": "Allocation Index",
+            "type": "integer"
+          },
+          "source_index": {
+            "minimum": 0,
+            "title": "Source Index",
+            "type": "integer"
+          },
+          "row": {
+            "minimum": 0,
+            "title": "Row",
+            "type": "integer"
+          },
+          "affected_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Affected Lines",
+            "type": "array"
+          },
+          "line_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line No"
+          },
+          "account": {
+            "title": "Account",
+            "type": "string"
+          },
+          "allowed_precision": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Precision",
+            "type": "array"
+          },
+          "reusable_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reusable Sources",
+            "type": "array"
+          },
+          "expected_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Fen"
+          },
+          "actual_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Fen"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/$defs/SelectionCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "trace_targets": {
+            "items": {
+              "$ref": "#/$defs/CalculationTarget"
+            },
+            "title": "Trace Targets",
+            "type": "array"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          },
+          "column": {
+            "title": "Column",
+            "type": "string"
+          },
+          "dimension": {
+            "enum": [
+              "bank",
+              "platform"
+            ],
+            "title": "Dimension",
+            "type": "string"
+          },
+          "expected_direction": {
+            "enum": [
+              "inflow",
+              "outflow"
+            ],
+            "title": "Expected Direction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "title": "ReadinessIssue",
+        "type": "object"
+      },
+      "Reconciliation": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "enum": [
+              "pending",
+              "not_applicable",
+              "complete",
+              "attention"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "source_check": {
+            "$ref": "#/$defs/BankSourceCheck"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "statement_closing_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Statement Closing Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "book_closing_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book Closing Fen"
+          },
+          "difference_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difference Fen"
+          },
+          "unmatched_count": {
+            "minimum": 0,
+            "title": "Unmatched Count",
+            "type": "integer"
+          },
+          "needs_review_count": {
+            "minimum": 0,
+            "title": "Needs Review Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state",
+          "label"
+        ],
+        "title": "Reconciliation",
+        "type": "object"
+      },
+      "RecordedReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "source": {
+            "const": "exact_period_manifest",
+            "title": "Source",
+            "type": "string"
+          },
+          "readiness": {
+            "$ref": "#/$defs/RecordedStatus"
+          },
+          "inventories": {
+            "$ref": "#/$defs/RecordedStatus"
+          },
+          "material_coverage": {
+            "$ref": "#/$defs/RecordedStatus"
+          },
+          "previous_close_digest": {
+            "$ref": "#/$defs/RecordedStatus"
+          }
+        },
+        "required": [
+          "status",
+          "source",
+          "readiness",
+          "inventories",
+          "material_coverage",
+          "previous_close_digest"
+        ],
+        "title": "RecordedReadiness",
+        "type": "object"
+      },
+      "RecordedStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "recorded",
+              "not_recorded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "RecordedStatus",
+        "type": "object"
+      },
+      "ResultReference": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "calculation_id",
+          "fact_id",
+          "result_digest"
+        ],
+        "title": "ResultReference",
+        "type": "object"
+      },
+      "SelectionAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "selection_proof": {
+            "$ref": "#/$defs/SelectionProof"
+          }
+        },
+        "required": [
+          "calculation_id",
+          "fact_id",
+          "result_digest",
+          "selection_proof"
+        ],
+        "title": "SelectionAnchor",
+        "type": "object"
+      },
+      "SelectionCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "calculation_id": {
+            "title": "Calculation Id",
+            "type": "string"
+          },
+          "fact_id": {
+            "title": "Fact Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "has_journal_lines": {
+            "title": "Has Journal Lines",
+            "type": "boolean"
+          },
+          "trace_only": {
+            "const": true,
+            "title": "Trace Only",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "calculation_id",
+          "fact_id",
+          "result_digest",
+          "kind",
+          "has_journal_lines",
+          "trace_only"
+        ],
+        "title": "SelectionCandidate",
+        "type": "object"
+      },
+      "SelectionProof": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "contract_version": {
+            "title": "Contract Version",
+            "type": "integer"
+          },
+          "close_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Close Period",
+            "type": "string"
+          },
+          "close_digest": {
+            "title": "Close Digest",
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/$defs/ResultReference"
+          },
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/SelectionAnchor"
+            },
+            "title": "Anchors",
+            "type": "array"
+          },
+          "member_fact_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Member Fact Ids",
+            "type": "array"
+          },
+          "trial_balance_basis": {
+            "title": "Trial Balance Basis",
+            "type": "string"
+          },
+          "membership_digest": {
+            "title": "Membership Digest",
+            "type": "string"
+          },
+          "acceptance_calculation_id": {
+            "title": "Acceptance Calculation Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis"
+        ],
+        "title": "SelectionProof",
+        "type": "object"
+      },
+      "SettlementFollowup": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Cutoff Period",
+            "type": "string"
+          },
+          "current_cutoff_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Current Cutoff Period",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/$defs/ReadinessIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "obligation_count": {
+            "minimum": 0,
+            "title": "Obligation Count",
+            "type": "integer"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "unestablished_state_selection_count": {
+            "minimum": 0,
+            "title": "Unestablished State Selection Count",
+            "type": "integer"
+          },
+          "movement_count": {
+            "minimum": 0,
+            "title": "Movement Count",
+            "type": "integer"
+          },
+          "source_amount_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Amount Fen"
+          },
+          "paid_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Fen"
+          },
+          "other_settled_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Settled Fen"
+          },
+          "remaining_fen": {
+            "anyOf": [
+              {
+                "pattern": "^(0|-?[1-9][0-9]*)$",
+                "type": "string",
+                "x-fen-int64": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Fen"
+          }
+        },
+        "required": [
+          "status",
+          "obligation_count",
+          "complete",
+          "unestablished_state_selection_count",
+          "movement_count",
+          "source_amount_fen",
+          "paid_fen",
+          "other_settled_fen",
+          "remaining_fen"
+        ],
+        "title": "SettlementFollowup",
+        "type": "object"
+      },
+      "SourceMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "source_type": {
+            "title": "Source Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "evidence_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Digest"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "basis": {
+            "enum": [
+              "frozen",
+              "current_supplement",
+              "current"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At"
+          }
+        },
+        "required": [
+          "source_type",
+          "id",
+          "revision",
+          "field",
+          "source",
+          "evidence_digest",
+          "evidence",
+          "basis",
+          "recorded_at"
+        ],
+        "title": "SourceMetadata",
+        "type": "object"
+      },
+      "StateSelectionIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "event_type": {
+            "const": "state_result_selection",
+            "title": "Event Type",
+            "type": "string"
+          },
+          "status": {
+            "const": "unestablished",
+            "title": "Status",
+            "type": "string"
+          },
+          "reason": {
+            "const": "manifest_state_adoption_not_proven",
+            "title": "Reason",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "posting_period": {
+            "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+            "title": "Posting Period",
+            "type": "string"
+          },
+          "selection_source": {
+            "const": "close_manifest",
+            "title": "Selection Source",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/$defs/SelectionCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "event_type",
+          "status",
+          "reason",
+          "subject_id",
+          "posting_period",
+          "selection_source",
+          "candidates"
+        ],
+        "title": "StateSelectionIssue",
+        "type": "object"
+      },
+      "UnavailableReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "unavailable",
+            "title": "Status",
+            "type": "string"
+          },
+          "reason": {
+            "const": "no_exact_period_manifest",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "reason"
+        ],
+        "title": "UnavailableReadiness",
+        "type": "object"
+      },
+      "UnmatchedTotals": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "inflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Inflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          },
+          "outflow_fen": {
+            "pattern": "^(0|-?[1-9][0-9]*)$",
+            "title": "Outflow Fen",
+            "type": "string",
+            "x-fen-int64": true
+          }
+        },
+        "required": [
+          "count",
+          "inflow_fen",
+          "outflow_fen"
+        ],
+        "title": "UnmatchedTotals",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "schema_version": {
+        "const": 2,
+        "title": "Schema Version",
+        "type": "integer"
+      },
+      "snapshot_version": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Snapshot Version"
+      },
+      "selected_period": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/DashboardPeriod"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "read_semantics": {
+        "$ref": "#/$defs/ReadSemantics"
+      },
+      "data": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/FundsData"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "schema_version",
+      "snapshot_version",
+      "selected_period",
+      "read_semantics",
+      "data"
+    ],
+    "title": "FundsDashboardResponse",
+    "type": "object"
+  }
+}

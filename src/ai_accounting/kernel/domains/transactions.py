@@ -29,7 +29,7 @@ from ..contracts import (
     Registry,
 )
 from ..types import ActualDate, NonNegativeFen, PositiveFen, YearMonth, sum_fen
-from .money import ACTUAL_PAYMENT_KINDS
+from .money import ACTUAL_PAYMENT_KINDS, payment_funds_account
 from .taxes import VatPolicy, split_tax_inclusive
 
 Identifier = Annotated[
@@ -922,7 +922,7 @@ class Allocation(BaseModel):
 class Payment(Fact):
     kind: ClassVar[str] = "payment"
     actual_payment: ClassVar[bool] = True
-    funds_account: ClassVar[str] = "1002"
+    funds_account: ClassVar[str] = payment_funds_account(kind)
     funds_category: ClassVar[str] = "bank"
     immutable: ClassVar[bool] = True
     immutable_fields: ClassVar[tuple[str, ...]] = (

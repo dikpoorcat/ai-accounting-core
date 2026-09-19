@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from .contracts import KernelError
 from .dashboard_reads import page_keys
+from .domains.money import FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 from .types import YearMonth, canonical
 
-FUND_TYPES = {"bank": "bank", "cash": "cash", "platform": "payment_platform"}
+FUND_TYPES = FUNDS_ACCOUNT_TYPE_BY_BALANCE_CATEGORY
 SECTIONS = {"accounts", "movements", "statements", "investment_products", "investment_events"}
 
 

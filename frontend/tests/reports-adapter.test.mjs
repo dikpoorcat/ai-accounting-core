@@ -13,7 +13,8 @@ async function moduleUrl(url) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
   });
   for (const [, relative] of [...outputText.matchAll(/from "(\.[^"]+)"/g)]) {
-    outputText = outputText.replaceAll(`"${relative}"`, JSON.stringify(await moduleUrl(new URL(relative + ".ts", url))));
+    const modulePath = /\.[cm]?[jt]s$/.test(relative) ? relative : `${relative}.ts`;
+    outputText = outputText.replaceAll(`"${relative}"`, JSON.stringify(await moduleUrl(new URL(modulePath, url))));
   }
   outputText = outputText.replace('from "vue"', 'from "data:text/javascript,export const ref=globalThis.dashboardTestVue.ref;export const readonly=globalThis.dashboardTestVue.readonly"');
   const value = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`;
@@ -24,6 +25,18 @@ const reports = await import(await moduleUrl(new URL("../src/api/reports.ts", im
 const local = await import(await moduleUrl(new URL("../src/api/localKernel.ts", import.meta.url)));
 const { useDashboardContext } = await import(await moduleUrl(new URL("../src/composables/useDashboardContext.ts", import.meta.url)));
 const client = await import(await moduleUrl(new URL("../src/api/client.ts", import.meta.url)));
+
+function dashboardContext(companyId, periods = [["2026-01", "open"]]) {
+  const company = { company_id: companyId, name: companyId, taxpayer_id: null, status: "active" };
+  const months = periods.map(([key, status]) => {
+    const [year, month] = key.split("-").map(Number);
+    return { key, year, month, label: key, short_label: key, status, start_date: `${key}-01`, end_date: `${key}-28`, closed_at: null };
+  });
+  return {
+    schema_version: 2, company: company.name, companies: [company], current_company: company,
+    periods: months, quarters: [], default_period: months.at(-1)?.key ?? null, default_quarter: null,
+  };
+}
 
 test("chosen immutable continuation source follows the company through preview and export", async () => {
   globalThis.window = { location: { origin: "http://127.0.0.1:7000", search: "?company_id=company-a" } };
@@ -62,7 +75,7 @@ test("invalid report delivery retains the service reason and is not described as
 test("context refresh preserves the mounted company while replacing its periods", async () => {
   const state = useDashboardContext();
   state.cancel();
-  const initial = { schema_version: 2, current_company: { company_id: "company-a" }, periods: [{ key: "2026-01", status: "open" }] };
+  const initial = dashboardContext("company-a");
   globalThis.fetch = async () => new Response(JSON.stringify(initial));
   await state.load();
   let finish;
@@ -70,7 +83,7 @@ test("context refresh preserves the mounted company while replacing its periods"
   const pending = state.refresh();
   assert.equal(state.context.value.current_company.company_id, "company-a");
   assert.equal(state.context.value.periods[0].status, "open");
-  finish(new Response(JSON.stringify({ ...initial, periods: [{ key: "2026-01", status: "closed" }, { key: "2026-02", status: "open" }] })));
+  finish(new Response(JSON.stringify(dashboardContext("company-a", [["2026-01", "closed"], ["2026-02", "open"]]))));
   await pending;
   assert.equal(state.context.value.periods[0].status, "closed");
   assert.equal(state.context.value.periods.length, 2);
@@ -84,7 +97,7 @@ test("a late context response cannot restore the company cleared during a switch
   globalThis.fetch = () => new Promise(resolve => { finish = resolve; });
   const pending = state.load();
   state.cancel();
-  finish(new Response(JSON.stringify({ schema_version: 2, current_company: { company_id: "old-company" } })));
+  finish(new Response(JSON.stringify(dashboardContext("company-a"))));
   await assert.rejects(pending, { name: "AbortError" });
   assert.equal(state.context.value, null);
 });

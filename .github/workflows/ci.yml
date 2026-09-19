@@ -32,10 +32,21 @@ jobs:
           uv sync --locked --extra dev --managed-python --python 3.12.13
           uv run python -c "from ai_accounting.kernel.runtime import require_supported_runtime; require_supported_runtime()"
           uv pip check --python .tmp-kernel-venv/Scripts/python.exe
-      - name: Check and build the single accounting page
+      - name: Check exported dashboard response schemas
+        run: uv run python scripts/export_dashboard_response_schemas.py --check
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Check generated frontend contracts
         working-directory: frontend
         run: |
           npm ci
+          npm run contracts:check
+      - name: Check and build the single accounting page
+        working-directory: frontend
+        run: |
           npm test
           npm run build:release
       - name: Lint active code
