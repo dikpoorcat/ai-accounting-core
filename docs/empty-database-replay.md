@@ -1,13 +1,14 @@
 <!-- @format -->
 
-# SQLite 空库重录、完整恢复与结果核对
+# 既有 SQLite 重录与恢复流程记录
 
-当前入口是 `finance-local` 和 `finance_local_*` MCP，目录库 v3、公司库 v13；读取结构与前向兼容见 [有界看板查询](bounded-dashboard-queries.md)。
-两类数据库分别检查结构合同并前向升级；不需要 PostgreSQL、ORM 或 Alembic。
-旧 `finance-replay`、`finance-backup`、`ai_accounting.replay_cli`、`finance_record_event`
-及组合协议回放包执行器已经退役，本文替代它们的操作说明。现在没有通用的“导出事实包后自动重放”命令。
+本文归档公司库 v13／目录库 v3 时期的流程、命令示例和验证范围，供理解已保全资料及当时实现使用。第 1–8 节是原流程参考，第 9 节记录当时测试范围；不作为本轮重构的操作清单，也不再承担新系统的接口说明。
 
-## 1. 先选择本次任务
+已批准的[整体架构](kernel-refactor-architecture.md)按全新开发、全新库设计，不包含真实重录、换库或旧备份导入。新版本体系尚未实施，当前代码与目标进度见[路线图](kernel-refactor-roadmap.md)。不能因保留本文而启动真实操作或清理现有资料。
+
+以下记录中的入口为 `finance-local` 和 `finance_local_*` MCP，支持当时两类库的结构核验与前向升级，细节见[有界看板查询](bounded-dashboard-queries.md)。旧 `finance-replay`、`finance-backup`、`ai_accounting.replay_cli`、`finance_record_event` 及组合协议回放包执行器已退役，没有通用的“导出事实包后自动重放”命令。
+
+## 1. 当时的任务分类
 
 | 任务 | 使用什么来源 | 当前操作 | 会保留什么 |
 | --- | --- | --- | --- |
@@ -305,7 +306,7 @@ $restoreRoot = "D:\accounting-replay\本次已确认的恢复目录"
 随后核对看板、`company_context`、`display_profiles`、`closed_report` 和实际业务终态，重新选择目标机备份目录。
 公司备份中包含任务记录，但不保证旧机器的外部导出文件路径仍有效；需要交付的报表重新生成并验证。
 
-## 9. 当前已验证范围
+## 9. 当时记录的验证范围
 
 `tests/kernel/test_dashboard_empty_replay.py` 使用完全合成的临时 SQLite 公司，通过公开
 `LocalService.dispatch` 验证原件→出资/费用/付款→展示档案/公司说明→经营结论→汇总重建→便携恢复。
@@ -320,6 +321,5 @@ $restoreRoot = "D:\accounting-replay\本次已确认的恢复目录"
 .\.tmp-kernel-venv\Scripts\python.exe -m pytest tests/kernel/test_dashboard_empty_replay.py tests/kernel/test_display.py tests/kernel/test_display_migrations.py -q
 ```
 
-这些测试证明程序路径，不证明任何真实公司资料完整或已重录。交付分别记录“私有资料已整理”、
-“隔离合成/公司重录核对通过”、“正式公司已实际写入核对”以及“备份已验证恢复”。
-逐公司核对清单见 [空库重录与恢复检查单](formal-empty-db-startup-checklist-template.md)。
+这些测试只覆盖所列程序路径，不证明任何真实公司资料完整或已重录，也不代表本轮新基线通过。
+当时的检查单区分资料整理、隔离验证、实际写入和备份恢复，保留在[原重录与恢复检查单](formal-empty-db-startup-checklist-template.md)作为历史参考；本轮不执行其中的真实公司步骤。
